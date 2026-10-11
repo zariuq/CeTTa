@@ -1,0 +1,8 @@
+!(import! &self compatibility_ops)
+!(get-type direct-python-operation)
+(: direct-python-operation (-> String))
+!(get-type direct-python-operation)
+!(direct-python-operation)
+(: typed-wrapper (-> String))
+(= (typed-wrapper) (direct-python-operation))
+!(case (typed-wrapper) (((Error $source $reason) typed-wrapper-rejected) ($_ unexpected-success)))

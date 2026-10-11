@@ -2,10 +2,10 @@
 ; two-step relation from typed primitive background knowledge.
 ;
 ; The untyped producer considers every primitive pair.  The typed producer
-; consults exact declarations while it fills the metarule and therefore never
-; constructs pairs whose intermediate types cannot meet.  Both routes still
-; submit complete programs to `type:check`; examples choose among the admitted
-; programs.  This separates search, type authority, and observational fitness.
+; consults declarations formed in Prime's native universe hierarchy while it
+; fills the metarule.  Both routes still submit complete program-code values
+; to `type:check`; examples choose among the admitted programs.  A mismatch
+; outside this native profile supplies no refutation or pruning authority.
 
 !(import! &self ../../lib/ilp/metagol_prime.metta)
 !(import! &self ../../lib/ilp/metarules.metta)
@@ -14,46 +14,52 @@
 
 !(bind! &ho-kb (new-space))
 
-; Closed, problem-local constructor instances.  These are intentionally not
-; `$`-schemes: matcher variables do not masquerade as lexical Pi binders.
-(: MIL.Rel (-> Type Type Type))
-(: MIL.List (-> Type Type))
-(: MIL.MapOperator Type)
+; The code family uses a closed native declaration profile.  MIL.Number is
+; its scalar carrier index; the executable primitives still inspect ordinary
+; numeric values with the built-in Number type.  Native formation of these
+; carriers makes constructor-domain mismatches checked refutations.  Legacy
+; HE Type declarations alone would leave those mismatches Undetermined.
+; These declarations are closed instances, not matcher-variable Pi schemas.
+(: MIL.Number u1)
+(: MIL.Rel (-> u1 u1 u1))
+(: MIL.List (-> u1 u1))
+(: MIL.MapOperator u1)
 (: MIL.MapOp MIL.MapOperator)
 (: MIL.Chain
-   (-> (MIL.Rel Number Number)
-       (MIL.Rel Number Number)
-       (MIL.Rel Number Number)))
+   (-> (MIL.Rel MIL.Number MIL.Number)
+       (MIL.Rel MIL.Number MIL.Number)
+       (MIL.Rel MIL.Number MIL.Number)))
 (: MIL.HO1
    (-> MIL.MapOperator
-       (MIL.Rel Number Number)
-       (MIL.Rel (MIL.List Number) (MIL.List Number))))
+       (MIL.Rel MIL.Number MIL.Number)
+       (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number))))
 
-(: r-succ (MIL.Rel Number Number))
-(: r-double (MIL.Rel Number Number))
-(: r-reverse (MIL.Rel (MIL.List Number) (MIL.List Number)))
-(: r-tail (MIL.Rel (MIL.List Number) (MIL.List Number)))
+(: r-succ (MIL.Rel MIL.Number MIL.Number))
+(: r-double (MIL.Rel MIL.Number MIL.Number))
+(: r-reverse (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
+(: r-tail (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
 
-!(add-atom &ho-kb (: MIL.Rel (-> Type Type Type)))
-!(add-atom &ho-kb (: MIL.List (-> Type Type)))
-!(add-atom &ho-kb (: MIL.MapOperator Type))
+!(add-atom &ho-kb (: MIL.Number u1))
+!(add-atom &ho-kb (: MIL.Rel (-> u1 u1 u1)))
+!(add-atom &ho-kb (: MIL.List (-> u1 u1)))
+!(add-atom &ho-kb (: MIL.MapOperator u1))
 !(add-atom &ho-kb (: MIL.MapOp MIL.MapOperator))
 !(add-atom &ho-kb
    (: MIL.Chain
-      (-> (MIL.Rel Number Number)
-          (MIL.Rel Number Number)
-          (MIL.Rel Number Number))))
+      (-> (MIL.Rel MIL.Number MIL.Number)
+          (MIL.Rel MIL.Number MIL.Number)
+          (MIL.Rel MIL.Number MIL.Number))))
 !(add-atom &ho-kb
    (: MIL.HO1
       (-> MIL.MapOperator
-          (MIL.Rel Number Number)
-          (MIL.Rel (MIL.List Number) (MIL.List Number)))))
-!(add-atom &ho-kb (: r-succ (MIL.Rel Number Number)))
-!(add-atom &ho-kb (: r-double (MIL.Rel Number Number)))
+          (MIL.Rel MIL.Number MIL.Number)
+          (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))))
+!(add-atom &ho-kb (: r-succ (MIL.Rel MIL.Number MIL.Number)))
+!(add-atom &ho-kb (: r-double (MIL.Rel MIL.Number MIL.Number)))
 !(add-atom &ho-kb
-   (: r-reverse (MIL.Rel (MIL.List Number) (MIL.List Number))))
+   (: r-reverse (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number))))
 !(add-atom &ho-kb
-   (: r-tail (MIL.Rel (MIL.List Number) (MIL.List Number))))
+   (: r-tail (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number))))
 
 !(add-atom &ho-kb (MIL.Primitive r-succ ho:succ))
 !(add-atom &ho-kb (MIL.Primitive r-double ho:double))
@@ -83,7 +89,7 @@
      MIL.Functional))
 
 (= (ho:target-type)
-   (MIL.Rel (MIL.List Number) (MIL.List Number)))
+   (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
 
 (= (ho:untyped-candidates)
    (collapse
@@ -98,7 +104,7 @@
             &ho-kb (MIL.T.HO1Chain MIL.MapOp) (ho:target-type) 100000)
        (if (type:check
              &ho-kb $program
-             (MIL.Rel (MIL.List Number) (MIL.List Number)) 100000)
+             (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)) 100000)
            $program
            (superpose ())))))
 
@@ -140,7 +146,7 @@
             &ho-kb (MIL.T.HO1Chain MIL.MapOp) (ho:target-type) 100000)
        (if (type:check
              &ho-kb $program
-             (MIL.Rel (MIL.List Number) (MIL.List Number)) 100000)
+             (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)) 100000)
            (MIL.CandidateVerdict Established NotChecked $program)
            (MIL.CandidateVerdict Refuted NotChecked $program)))))
 
@@ -159,6 +165,7 @@
        HigherOrderMap
        (DeclaredMILCalibration
          (CheckerProvenance RuntimeStats)
+         (TypingProfile NativeDeclaredCode)
          (TypeBudget 100000))
        $untyped $typed $trace $consistent)))
 
@@ -166,12 +173,19 @@
    (let $program (ho:generated)
      (if (type:check
            &ho-kb $program
-           (MIL.Rel (MIL.List Number) (MIL.List Number)) 100000)
+           (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)) 100000)
          $program
          (superpose ()))))
 
 ; The higher-order metarule is inspectable language data.
 !(mil:metarule map-ibk)
+
+; Formation is independently checked before claiming refutation-based pruning.
+!(type:formed &ho-kb MIL.Number)
+!(type:formed &ho-kb (MIL.List MIL.Number))
+!(type:formed &ho-kb (MIL.Rel MIL.Number MIL.Number))
+!(type:formed &ho-kb
+   (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
 
 ; Type pruning changes the route, not the admitted candidate set.
 !(list:len (ho:untyped-candidates))
@@ -185,11 +199,11 @@
 !(type:check
    &ho-kb
    (MIL.HO1 MIL.MapOp (MIL.Chain r-succ r-succ))
-   (MIL.Rel (MIL.List Number) (MIL.List Number)))
+   (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
 !(type:check
    &ho-kb
    (MIL.HO1 MIL.MapOp (MIL.Chain r-reverse r-tail))
-   (MIL.Rel (MIL.List Number) (MIL.List Number)))
+   (MIL.Rel (MIL.List MIL.Number) (MIL.List MIL.Number)))
 
 ; Positive and negative observational controls.
 !(mil:consistent

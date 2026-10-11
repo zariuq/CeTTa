@@ -1021,6 +1021,26 @@ static void ppnative_v1_canonical_entries_free(
     free(entries);
 }
 
+static bool ppnative_v1_canonical_entries_sort(
+    PPNativeV1CanonicalAtom *entries,
+    uint32_t len,
+    bool require_unique,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t index;
+    if (len > 1u)
+        qsort(entries, len, sizeof(*entries), ppnative_v1_canonical_atom_compare);
+    for (index = 1u; require_unique && index < len; index++) {
+        if (strcmp(entries[index - 1u].canonical,
+                   entries[index].canonical) == 0) {
+            ppnative_v1_set_error(error_buf, error_buf_size,
+                               "neutral forest contains a duplicate term");
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool ppnative_v1_canonical_entries_build(
     Atom **atoms,
     uint32_t len,
@@ -1043,17 +1063,9 @@ static bool ppnative_v1_canonical_entries_build(
         if (!entries[index].canonical)
             goto done;
     }
-    if (len > 1u)
-        qsort(entries, len, sizeof(*entries), ppnative_v1_canonical_atom_compare);
-    for (index = 0u; index < len; index++) {
-        if (require_unique && index > 0u &&
-            strcmp(entries[index - 1u].canonical,
-                   entries[index].canonical) == 0) {
-            ppnative_v1_set_error(error_buf, error_buf_size,
-                               "neutral forest contains a duplicate term");
-            goto done;
-        }
-    }
+    if (!ppnative_v1_canonical_entries_sort(
+            entries, len, require_unique, error_buf, error_buf_size))
+        goto done;
     *out = entries;
     return true;
 
@@ -1313,6 +1325,183 @@ static Atom *ppnative_v1_forest_node_atom(
     return ppnative_v1_expr(arena, "pf-epsilon", arguments, 1u);
 }
 
+/* Grammar identities use the ground-term renderer unchanged.  Only the fixed
+ * forest-record constructors are encoded directly, into exact-sized strings.
+ * Caches are parse-local: immutable prepared packs acquire no mutable state.
+ */
+static const char *ppnative_v1_cached_render(
+    char **cache, uint32_t len, uint32_t index, Atom *identity) {
+    if (index >= len || !identity)
+        return NULL;
+    if (!cache[index])
+        cache[index] = ppnative_v1_render(identity);
+    return cache[index];
+}
+
+static const char *ppnative_v1_cached_production_label(
+    char **cache, const PPABIV1Pack *pack, uint32_t index) {
+    Atom *identity;
+    if (index >= pack->production_len)
+        return NULL;
+    identity = pack->productions[index].identity;
+    if (!ppnative_v1_expr_head(identity, "pp-production", 4u))
+        return NULL;
+    return ppnative_v1_cached_render(
+        cache, pack->production_len, index, identity->expr.elems[1]);
+}
+
+static char *ppnative_v1_record_text(const char *format, ...) {
+    va_list args;
+    va_list measured;
+    int len;
+    char *text;
+    va_start(args, format);
+    va_copy(measured, args);
+    len = vsnprintf(NULL, 0u, format, measured);
+    va_end(measured);
+    text = len >= 0 && (uint64_t)len < SIZE_MAX
+        ? malloc((size_t)len + 1u) : NULL;
+    if (text && vsnprintf(text, (size_t)len + 1u, format, args) != len) {
+        free(text);
+        text = NULL;
+    }
+    va_end(args);
+    return text;
+}
+
+static char *ppnative_v1_forest_node_text(
+    const PPABIV1Pack *pack, const CettaLpNativeUtf8ForestNode *node,
+    char **states, char **terminals, char **productions) {
+    const char *identity;
+    switch (node->kind) {
+    case CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL:
+        identity = ppnative_v1_cached_render(
+            states, pack->state_len, node->symbol_id,
+            ppnative_v1_state_identity(pack, NULL, node->symbol_id));
+        return identity ? ppnative_v1_record_text(
+            "(pf-symbol %s %u %u)", identity,
+            node->scalar_left, node->scalar_right) : NULL;
+    case CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE:
+        identity = ppnative_v1_cached_production_label(
+            productions, pack, node->production_index);
+        return identity ? ppnative_v1_record_text(
+            "(pf-intermediate %s %u %u %u)", identity, node->dot,
+            node->scalar_left, node->scalar_right) : NULL;
+    case CETTA_LP_NATIVE_UTF8_FOREST_TERM:
+        identity = ppnative_v1_cached_render(
+            terminals, pack->terminal_len, node->symbol_id,
+            ppnative_v1_terminal_identity(pack, NULL, node->symbol_id));
+        if (!identity)
+            return NULL;
+        switch (node->terminal_value_kind) {
+        case CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_SCALAR:
+            return ppnative_v1_record_text(
+                "(pf-terminal %s (cp %u) %u %u)", identity,
+                node->terminal_scalar, node->scalar_left, node->scalar_right);
+        case CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF:
+            return ppnative_v1_record_text(
+                "(pf-terminal %s eof %u %u)", identity,
+                node->scalar_left, node->scalar_right);
+        case CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS:
+            return ppnative_v1_record_text(
+                "(pf-terminal %s (pf-witness %u) %u %u)", identity,
+                node->terminal_witness_id, node->scalar_left, node->scalar_right);
+        }
+        return NULL;
+    case CETTA_LP_NATIVE_UTF8_FOREST_EPSILON:
+        return ppnative_v1_record_text("(pf-epsilon %u)", node->scalar_left);
+    }
+    return NULL;
+}
+
+static void ppnative_v1_render_cache_free(char **cache, uint32_t len) {
+    if (cache) {
+        for (uint32_t index = 0u; index < len; index++)
+            free(cache[index]);
+        free(cache);
+    }
+}
+
+/* Above the materialization bound, keep the same canonical records, lexical
+ * order, uniqueness checks and hash framing without a temporary Atom graph.
+ * `node_texts` preserves native indexes while `nodes` is sorted for the digest.
+ * Root strings are borrowed; each node and choice string has one owner.
+ */
+static bool ppnative_v1_forest_digest_direct(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const Atom *start_state, char *error_buf, size_t error_buf_size) {
+    const CettaLpNativeUtf8Forest *forest = &result->forest;
+    char **states = calloc(pack->state_len ? pack->state_len : 1u,
+                           sizeof(*states));
+    char **terminals = calloc(pack->terminal_len ? pack->terminal_len : 1u,
+                              sizeof(*terminals));
+    char **productions = calloc(pack->production_len ? pack->production_len : 1u,
+                                sizeof(*productions));
+    char **node_texts = calloc(forest->node_len ? forest->node_len : 1u,
+                               sizeof(*node_texts));
+    PPNativeV1CanonicalAtom *nodes = calloc(
+        forest->node_len ? forest->node_len : 1u, sizeof(*nodes));
+    PPNativeV1CanonicalAtom *roots = calloc(
+        forest->root_len ? forest->root_len : 1u, sizeof(*roots));
+    PPNativeV1CanonicalAtom *choices = calloc(
+        forest->choice_len ? forest->choice_len : 1u, sizeof(*choices));
+    bool ok = false;
+    if (!states || !terminals || !productions || !node_texts ||
+        !nodes || !roots || !choices)
+        goto done;
+    for (uint32_t index = 0u; index < forest->node_len; index++) {
+        nodes[index].canonical = ppnative_v1_forest_node_text(
+            pack, &forest->nodes[index], states, terminals, productions);
+        if (!nodes[index].canonical)
+            goto done;
+        node_texts[index] = nodes[index].canonical;
+    }
+    for (uint32_t index = 0u; index < forest->root_len; index++) {
+        if (forest->roots[index] >= forest->node_len)
+            goto done;
+        roots[index].canonical = node_texts[forest->roots[index]];
+    }
+    for (uint32_t index = 0u; index < forest->choice_len; index++) {
+        const CettaLpNativeUtf8ForestChoice *choice = &forest->choices[index];
+        const char *label = ppnative_v1_cached_production_label(
+            productions, pack, choice->production_index);
+        if (!label || choice->parent_node >= forest->node_len ||
+            choice->child_node >= forest->node_len ||
+            (choice->prefix_node != CETTA_LP_NATIVE_UTF8_FOREST_NONE &&
+             choice->prefix_node >= forest->node_len))
+            goto done;
+        choices[index].canonical = ppnative_v1_record_text(
+            "(pf-choice %s %s %s %s %u)", node_texts[choice->parent_node],
+            label, choice->prefix_node == CETTA_LP_NATIVE_UTF8_FOREST_NONE
+                ? "pf-none" : node_texts[choice->prefix_node],
+            node_texts[choice->child_node], choice->scalar_pivot);
+        if (!choices[index].canonical)
+            goto done;
+    }
+    ok = ppnative_v1_canonical_entries_sort(
+             roots, forest->root_len, true, error_buf, error_buf_size) &&
+        ppnative_v1_canonical_entries_sort(
+             nodes, forest->node_len, true, error_buf, error_buf_size) &&
+        ppnative_v1_canonical_entries_sort(
+             choices, forest->choice_len, true, error_buf, error_buf_size) &&
+        ppnative_v1_forest_digest(
+             start_state, forest->scalar_len, roots, forest->root_len,
+             nodes, forest->node_len, choices, forest->choice_len,
+             result->forest_digest);
+done:
+    free(roots);
+    ppnative_v1_canonical_entries_free(nodes, forest->node_len);
+    ppnative_v1_canonical_entries_free(choices, forest->choice_len);
+    free(node_texts);
+    ppnative_v1_render_cache_free(states, pack->state_len);
+    ppnative_v1_render_cache_free(terminals, pack->terminal_len);
+    ppnative_v1_render_cache_free(productions, pack->production_len);
+    if (!ok && (!error_buf || error_buf_size == 0u || error_buf[0] == '\0'))
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                           "failed to canonicalize neutral GLL forest");
+    return ok;
+}
+
 static bool ppnative_v1_forest_canonicalize(
     PPNativeV1Result *result,
     const PPABIV1Pack *pack,
@@ -1332,6 +1521,13 @@ static bool ppnative_v1_forest_canonicalize(
     Atom *arguments[5];
     uint32_t index;
     bool ok = false;
+
+    if (!extension &&
+        (forest->root_len > materialize_limit ||
+         forest->node_len > materialize_limit ||
+         forest->choice_len > materialize_limit))
+        return ppnative_v1_forest_digest_direct(
+            result, pack, start_state, error_buf, error_buf_size);
 
     arena_init(&canonical_arena);
     node_atoms = calloc(forest->node_len ? forest->node_len : 1u,
@@ -2888,6 +3084,139 @@ done:
     return ok;
 }
 
+typedef struct {
+    const PPABIV1Pack *pack;
+    PPABIV1Pack pack_snapshot;
+    const PPNativeV1ForestExtension *extension;
+    PPNativeV1ForestExtension extension_snapshot;
+} PPNativeV1ReplayScopeImpl;
+
+void ppnative_v1_replay_scope_init(PPNativeV1ReplayScope *scope) {
+    if (scope)
+        scope->implementation = NULL;
+}
+
+void ppnative_v1_replay_scope_free(PPNativeV1ReplayScope *scope) {
+    if (!scope)
+        return;
+    free(scope->implementation);
+    scope->implementation = NULL;
+}
+
+bool ppnative_v1_replay_scope_prepare(
+    PPNativeV1ReplayScope *scope,
+    const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPNativeV1ReplayScopeImpl *prepared;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!scope || !pack || !ppnative_v1_extension_valid(
+            pack, extension, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0')
+            ppnative_v1_set_error(error_buf, error_buf_size,
+                                  "bad ParserPack replay scope arguments");
+        return false;
+    }
+    prepared = calloc(1u, sizeof(*prepared));
+    if (!prepared) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "cannot allocate ParserPack replay scope");
+        return false;
+    }
+    prepared->pack = pack;
+    prepared->pack_snapshot = *pack;
+    prepared->extension = extension;
+    if (extension)
+        prepared->extension_snapshot = *extension;
+    ppnative_v1_replay_scope_free(scope);
+    scope->implementation = prepared;
+    return true;
+}
+
+static bool ppnative_v1_replay_scope_unchanged(
+    const PPNativeV1ReplayScopeImpl *scope) {
+    const PPABIV1Pack *pack = scope->pack;
+    const PPABIV1Pack *snapshot = &scope->pack_snapshot;
+    const PPNativeV1ForestExtension *extension = scope->extension;
+    const PPNativeV1ForestExtension *saved = &scope->extension_snapshot;
+
+    return pack->states == snapshot->states &&
+        pack->state_len == snapshot->state_len &&
+        pack->terminals == snapshot->terminals &&
+        pack->terminal_len == snapshot->terminal_len &&
+        pack->productions == snapshot->productions &&
+        pack->production_len == snapshot->production_len &&
+        pack->class_clauses == snapshot->class_clauses &&
+        pack->class_clause_len == snapshot->class_clause_len &&
+        pack->derivations == snapshot->derivations &&
+        pack->derivation_len == snapshot->derivation_len &&
+        memcmp(pack->source_digest, snapshot->source_digest, 65u) == 0 &&
+        memcmp(pack->compiler_digest, snapshot->compiler_digest, 65u) == 0 &&
+        memcmp(pack->environment_digest,
+               snapshot->environment_digest, 65u) == 0 &&
+        memcmp(pack->pack_digest, snapshot->pack_digest, 65u) == 0 &&
+        (!extension ||
+         (extension->states == saved->states &&
+          extension->state_len == saved->state_len &&
+          extension->terminals == saved->terminals &&
+          extension->terminal_len == saved->terminal_len &&
+          extension->productions == saved->productions &&
+          extension->production_len == saved->production_len &&
+          extension->witness_values == saved->witness_values &&
+          extension->witness_len == saved->witness_len));
+}
+
+static bool ppnative_v1_finish_validated(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!result || !pack || !start_state || replay_depth == 0u ||
+        result_limit == 0u) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "bad ParserPack finish arguments");
+        return false;
+    }
+    return ppnative_v1_forest_canonicalize(
+               result, pack, start_state, extension,
+               PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT,
+               error_buf, error_buf_size) &&
+        ppnative_v1_replay(
+               result, pack, extension, replay_depth, result_limit,
+               error_buf, error_buf_size);
+}
+
+bool ppnative_v1_finish_in_scope(
+    PPNativeV1Result *result,
+    const PPNativeV1ReplayScope *scope,
+    const Atom *start_state,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    const PPNativeV1ReplayScopeImpl *prepared =
+        scope ? scope->implementation : NULL;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!prepared || !ppnative_v1_replay_scope_unchanged(prepared)) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "unbound or changed ParserPack replay scope");
+        return false;
+    }
+    return ppnative_v1_finish_validated(
+        result, prepared->pack, start_state,
+        prepared->extension ? &prepared->extension_snapshot : NULL,
+        replay_depth, result_limit, error_buf, error_buf_size);
+}
+
 bool ppnative_v1_finish_extended(
     PPNativeV1Result *result,
     const PPABIV1Pack *pack,
@@ -2907,13 +3236,9 @@ bool ppnative_v1_finish_extended(
         }
         return false;
     }
-    return ppnative_v1_forest_canonicalize(
-               result, pack, start_state, extension,
-               PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT,
-               error_buf, error_buf_size) &&
-        ppnative_v1_replay(
-               result, pack, extension, replay_depth, result_limit,
-               error_buf, error_buf_size);
+    return ppnative_v1_finish_validated(
+        result, pack, start_state, extension, replay_depth, result_limit,
+        error_buf, error_buf_size);
 }
 
 bool ppnative_v1_finish(PPNativeV1Result *result,

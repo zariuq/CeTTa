@@ -1,10 +1,9 @@
-; Answers that depend on the evaluation route.
+; Answer boundaries that previously depended on the evaluation route.
 ;
 ; With a finite `--fuel` the canonical evaluator runs every query; without it
 ; the optimized routes (prepared calls, the Need machine, the evaluation
 ; stack) take the calls they admit.  The two must agree.  On the queries
-; below they do not: `inv_01b_route_divergence.expected` is the default
-; route and `inv_01b_route_divergence.fuel.expected` is `--fuel 20000`.
+; below they now agree: both expected files observe the same values.
 ; Every query passes an argument through the identity equation `observe`.
 
 (= (observe $v) $v)
@@ -17,17 +16,17 @@
 !(observe *(+ 1 2))
 
 ; D2. A call no equation matches is data, also as an argument.
-;     default: no answer            fuel: [(only-one (Crate 1))]
+;     both: [(only-one (Crate 1))]
 (= (only-one (Box $x)) $x)
 !(only-one (Crate 1))
 !(observe (only-one (Crate 1)))
 
 ; D3. Fields of a constructor argument.
-;     default: [(pair 3 0)]         fuel: [(pair (+ 1 2) 0)]
+;     both: [(pair 3 0)]
 ;     The top-level (pair (+ 1 2) 0) gives (pair 3 0) on both routes.
 !(pair (+ 1 2) 0)
 !(observe (pair (+ 1 2) 0))
-;     default: prints "field", [(pair () 0)]   fuel: [(pair (println! "field") 0)]
+;     both: prints "field", [(pair () 0)]
 !(observe (pair (println! "field") 0))
 
 ; D4. A parameter both demanded and quoted.  Resolved by the seal: a
@@ -44,8 +43,8 @@
 !(quoted-kind (quote-then-force (+ 1 2)))
 !(quoted-kind (force-then-quote (+ 1 2)))
 
-; D5. A field built under a variable head is printed unforced.
-;     default: [(receipt (three))]  fuel: [(receipt 3)]
+; D5. A field built under a variable head is observed as its value.
+;     both: [(receipt 3)]
 (= (shown $c) (receipt $c))
 (= (three) 3)
 (= (apply-to-three $f) ($f (three)))

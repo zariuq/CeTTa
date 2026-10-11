@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 125 + 45,
+    ABT_EXPECTED_CHECKS = 125 + 45 + 35,
 };
 
 static unsigned failures = 0;
@@ -1101,6 +1101,149 @@ static void test_grounded_dispatch_symbol_table_lifetime(
           "grounded dispatch survives same-address symbol-table reuse");
 }
 
+static void test_logical_binding_instances(Arena *arena) {
+    AbtSignature signature;
+    abt_signature_init(&signature);
+    Atom *declarations = sx(arena,
+        "(AbtSignatures (AbtNames Variables)"
+        " (AbtSignature Local (Fields pattern value body)"
+        "   (BindPattern pattern (Scope body)))"
+        " (AbtSignature Group (Fields names definitions body)"
+        "   (BindTelescope names (Scope definitions body) Names)))");
+    CHECK(abt_signature_add_set(&signature, declarations),
+          "logical-variable binding declarations admitted");
+    Atom *x = atom_var(arena, "x"), *y = atom_var(arena, "y");
+    Atom *p = atom_var(arena, "p"), *q = atom_var(arena, "q");
+    Atom *none = atom_expr(arena, NULL, 0u);
+    Atom *source = node3(arena, "Local", x, x, node2(arena, "Pair", x, y));
+    check_atom_eq("the value stays outside its pattern scope",
+                  abt_free_names(&signature, arena, source),
+                  atom_expr(arena, (Atom *[]){x, y}, 2u));
+    Atom *first = abt_instantiate(&signature, arena, none, source);
+    Atom *second = abt_instantiate(&signature, arena, none, source);
+    CHECK(first && second, "two actual logical binding instances constructed");
+    if (!first || !second) exit(1);
+    Atom *a = first->expr.elems[1], *b = second->expr.elems[1];
+    Atom *fresh = a->expr.elems[1];
+    CHECK(fresh->kind == ATOM_VAR && var_epoch_suffix(fresh->var_id) != 0u &&
+              fresh->var_id != x->var_id,
+          "a local is a fresh private identity, not a spelling variant");
+    CHECK(fresh->var_id != b->expr.elems[1]->var_id,
+          "separate instances cannot alias their local slot");
+    CHECK(a->expr.elems[2] == x,
+          "freshening never captures an occurrence in the value");
+    CHECK(a->expr.elems[3]->expr.elems[1] == fresh,
+          "binding occurrence and its body keep one shared slot");
+    CHECK(a->expr.elems[3]->expr.elems[2] == y,
+          "a free dependency retains its actual identity");
+    check_atom_eq("free dependencies are preserved by instantiation",
+                  abt_free_names(&signature, arena, a),
+                  atom_expr(arena, (Atom *[]){x, y}, 2u));
+    bool equal = false;
+    CHECK(abt_named_alpha_equal(&signature, arena, source, a, &equal) && equal,
+          "instantiation preserves declared alpha meaning");
+    CHECK(abt_named_alpha_equal(&signature, arena, a, b, &equal) && equal,
+          "independent identities still have equal declared alpha meaning");
+    CHECK(abt_named_alpha_equal(&signature, arena, source,
+              node3(arena, "Local", p, x, node2(arena, "Pair", p, q)),
+              &equal) && !equal,
+          "declared alpha equality distinguishes changed free dependencies");
+    Atom *receipt = first->expr.elems[2]->expr.elems[1];
+    CHECK(first->expr.elems[2]->expr.len == 2u &&
+              receipt->expr.len == 4u && receipt->expr.elems[1]->ground.ival == 0 &&
+              receipt->expr.elems[2] == x && receipt->expr.elems[3] == fresh,
+          "an instance retains its exact source-to-local receipt");
+    Atom *nested = node3(arena, "Local", x, y,
+        node3(arena, "Local", x, x, node2(arena, "Pair", x, y)));
+    Atom *nested_instance = abt_instantiate(&signature, arena, none, nested);
+    CHECK(nested_instance != NULL, "nested same-spelled scopes instantiate");
+    if (!nested_instance) exit(1);
+    Atom *outer = nested_instance->expr.elems[1];
+    Atom *inner = outer->expr.elems[3];
+    CHECK(outer->expr.elems[1]->var_id != inner->expr.elems[1]->var_id &&
+              inner->expr.elems[2] == outer->expr.elems[1] &&
+              inner->expr.elems[3]->expr.elems[1] == inner->expr.elems[1],
+          "shadowed locals stay distinct and the inner value uses the outer slot");
+    CHECK(nested_instance->expr.elems[2]->expr.len == 3u,
+          "receipts retain both binding occurrences of one source name");
+    Atom *members = atom_expr(arena, (Atom *[]){x, y}, 2u);
+    Atom *group = node3(arena, "Group", members,
+        node2(arena, "Definitions", node2(arena, "calls", x, y),
+                                      node2(arena, "calls", y, x)),
+        node2(arena, "entry", x, q));
+    Atom *group_instance = abt_instantiate(&signature, arena, none, group);
+    CHECK(group_instance != NULL, "a recursive group instantiates together");
+    if (!group_instance) exit(1);
+    Atom *g = group_instance->expr.elems[1];
+    Atom *gx = g->expr.elems[1]->expr.elems[0];
+    Atom *gy = g->expr.elems[1]->expr.elems[1];
+    CHECK(gx != gy && gx->var_id != gy->var_id &&
+              g->expr.elems[2]->expr.elems[1]->expr.elems[1] == gx &&
+              g->expr.elems[2]->expr.elems[1]->expr.elems[2] == gy &&
+              g->expr.elems[2]->expr.elems[2]->expr.elems[1] == gy &&
+              g->expr.elems[2]->expr.elems[2]->expr.elems[2] == gx,
+          "both directions of mutual recursion retain the declared links");
+    check_atom_eq("recursive-group free dependencies remain exposed",
+                  abt_free_names(&signature, arena, g),
+                  atom_expr(arena, &q, 1u));
+    Atom *pairs = atom_expr(arena,
+        (Atom *[]){atom_expr(arena, (Atom *[]){y, x}, 2u)}, 1u);
+    Atom *substituted = abt_substitute(&signature, arena, pairs, source);
+    CHECK(substituted && substituted->expr.elems[1]->var_id != x->var_id &&
+              substituted->expr.elems[3]->expr.elems[2] == x,
+          "substitution avoids capture when logical variable values cross a binder");
+    Atom *nominal = sx(arena, ABT_NAMED_MIXED_SIGNATURE);
+    AbtSignature nominal_signature;
+    abt_signature_init(&nominal_signature);
+    CHECK(abt_signature_add_set(&nominal_signature, nominal),
+          "nominal signatures remain available alongside identity signatures");
+    Atom *nominal_instance = abt_instantiate(&nominal_signature, arena,
+        sx(arena, "(X1)"), sx(arena, "(∀ (X) (p X Y))"));
+    check_atom_eq("nominal instantiation is fresh relative to declared avoidance",
+                  nominal_instance ? nominal_instance->expr.elems[1] : NULL,
+                  sx(arena, "(∀ (X2) (p X2 Y))"));
+    CHECK(!abt_instantiate(&signature, arena, x, source),
+          "a malformed avoidance context is refused");
+    CHECK(!abt_instantiate(&signature, arena, none,
+              node3(arena, "Group", x, none, x)),
+          "malformed declared syntax is refused");
+    Atom *cycle = node1(arena, "Loop", x);
+    cycle->expr.elems[1] = cycle;
+    CHECK(!abt_instantiate(&signature, arena, none, cycle),
+          "instantiation rejects a cyclic scope graph");
+    CHECK(!abt_instantiate(&signature, arena, none,
+              node3(arena, "Local", cycle, y, x)),
+          "instantiation rejects a cyclic pattern before collecting its names");
+    CHECK(!abt_substitute(&signature, arena,
+              atom_expr(arena, (Atom *[]){atom_expr2(arena, x, cycle)}, 1u), source),
+          "named substitution rejects a cyclic replacement");
+    CHECK(!abt_rename_bound(&signature, arena, none, cycle),
+          "renaming apart rejects a cyclic scope graph");
+    CHECK(!abt_free_names(&signature, arena,
+              node3(arena, "Local", cycle, y, x)),
+          "free-name collection rejects a cyclic pattern");
+    Atom *wrong_arity = node2(arena, "Local", x, x);
+    CHECK(!abt_instantiate(&signature, arena, none, wrong_arity),
+          "a declared binder of wrong arity cannot become transparent data");
+    CHECK(!abt_free_names(&signature, arena, wrong_arity),
+          "free names refuse the same malformed declared binder");
+    CHECK(!abt_substitute(&signature, arena, none, wrong_arity),
+          "substitution refuses the same malformed declared binder");
+    CHECK(!abt_rename_bound(&signature, arena, none, wrong_arity),
+          "freshening refuses the same malformed declared binder");
+    CHECK(!abt_named_alpha_equal(&signature, arena,
+              wrong_arity, wrong_arity, &equal),
+          "alpha equality does not validate a malformed declared binder");
+    Atom *dispatch_args[] = {declarations, none, source};
+    Atom *dispatched = abt_grounded_dispatch(arena,
+        atom_symbol(arena, "__cetta_abt_instantiate"), dispatch_args, 3u);
+    CHECK(dispatched && abt_named_alpha_equal(&signature, arena,
+              dispatched->expr.elems[1], source, &equal) && equal,
+          "the ordinary grounded interface uses the same declaration traversal");
+    abt_signature_free(&nominal_signature);
+    abt_signature_free(&signature);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1123,6 +1266,7 @@ int main(void) {
     test_named_readback(&arena, &signature);
     test_deep_and_cyclic_inputs(&arena, &signature);
     test_named_binders(&arena);
+    test_logical_binding_instances(&arena);
 
     abt_signature_free(&signature);
     arena_free(&arena);

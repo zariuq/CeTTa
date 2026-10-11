@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
             "(type:check 7 Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(type:check 7 String)", "Refuted") ||
+            "(type:check 7 String)", "Undetermined") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
             "(type:analyze 7 %Undefined%)", "Established") ||
@@ -471,8 +471,9 @@ int main(int argc, char **argv) {
             true, 1000u, "Incomplete", "producer-cutoff") ||
         !expect_direct_typing_status_and_evidence_symbol(
             &scratch, &space, typing_service,
-            "(type:must (PrimeAnswers Complete (PrimeValue 7) "
-            "(PrimeValue \"not-a-number\")) Number)",
+            "(type:must (PrimeAnswers Complete "
+            "(PrimeValue (Sort (LevelConst 0))) "
+            "(PrimeValue (Sort (LevelConst 1)))) (Sort (LevelConst 1)))",
             true, 1000u, "Refuted", "MustCounterexample")) {
         goto cleanup;
     }

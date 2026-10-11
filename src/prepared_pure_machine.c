@@ -2104,6 +2104,11 @@ static bool prepared_pure_head_index_admitted(
     uint32_t *index_out) {
     if (!program || head == SYMBOL_ID_NONE || !index_out)
         return false;
+    if (program->source_view.head_admitted &&
+        !program->source_view.head_admitted(
+            program->source_view.context, program->space, head))
+        return prepared_pure_reject(
+            program, "rule policy is outside the pure machine fragment", NULL);
     if (prepared_pure_head_bucket_lookup(program, head, index_out))
         return true;
     if (program->head_len >= PREPARED_PURE_MAX_HEADS ||
@@ -2899,6 +2904,10 @@ static bool prepared_pure_compile_eval_with_role(
         return ok;
     }
     SymbolId head = head_atom->sym_id;
+    if (program->source_view.head_admitted &&
+        !program->source_view.head_admitted(program->source_view.context, program->space, head))
+        return prepared_pure_reject(program, "rule policy requires canonical evaluation", source);
+
     CettaExprLen arity = source->expr.len - 1u;
     CettaGsltFoldControl control;
     if (prepared_pure_control_program(head, arity, &control)) {
@@ -5502,6 +5511,33 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
     return false;
 }
 
+/* Whether structural equality of two operand values would read their fields.
+ *
+ * Under call by need a value is computed as far as its outer constructor;
+ * what its fields hold may still be suspended, and this machine holds a
+ * suspension as its syntax.  Equality is a relation between values, so the
+ * machine decides it only where no field is read: an operand is atomic, the
+ * two are one atom, their lengths differ, or their heads already differ.
+ * Every other case is left to the evaluator, which computes both values in
+ * full. */
+static bool prepared_pure_equality_reads_fields(
+    const CettaPreparedPureProgram *program, const Atom *left,
+    const Atom *right) {
+    if (!program ||
+        program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
+        !left || !right || left == right ||
+        left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+        left->expr.len != right->expr.len || left->expr.len == 0u)
+        return false;
+    const Atom *left_head = left->expr.elems[0];
+    const Atom *right_head = right->expr.elems[0];
+    if (left_head && right_head &&
+        left_head->kind == ATOM_SYMBOL && right_head->kind == ATOM_SYMBOL &&
+        left_head->sym_id != right_head->sym_id)
+        return false;
+    return true;
+}
+
 static bool prepared_pure_operands_share_type(
     const CettaPreparedPureProgram *program, Arena *arena,
     uint8_t undefined_type_operands, Atom *left, Atom *right) {
@@ -5554,6 +5590,10 @@ static Atom *prepared_pure_execute_register(
     Atom *const *arguments, uint32_t arity) {
     if (!program || !program->boolean_value || !arena || !arguments ||
         arity != 2u)
+        return NULL;
+    if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL &&
+        prepared_pure_equality_reads_fields(
+            program, arguments[0], arguments[1]))
         return NULL;
     CettaGsltRegisterOperandDiscipline discipline;
     if (!cetta_gslt_register_operand_discipline(
@@ -5760,6 +5800,16 @@ static Atom *prepared_pure_execute_register_intrinsic(
             head->sym_id, arity, &intrinsic_instruction) ||
         intrinsic_instruction !=
             CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
+        return NULL;
+    /* The general arm of structural equality declines where the register
+     * arm does (prepared_pure_equality_reads_fields). */
+    CettaGsltRegisterInstruction register_instruction;
+    if (arity == 2u && arguments &&
+        prepared_pure_register_program(
+            program, head->sym_id, arity, NULL, &register_instruction) &&
+        register_instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL &&
+        prepared_pure_equality_reads_fields(
+            program, arguments[0], arguments[1]))
         return NULL;
     Atom *result = prepared_pure_execute_intrinsic(
         program, arena, intrinsic_instruction, head, arguments, arity);
@@ -6038,6 +6088,10 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
             return false;
         bool equal;
         Atom integer_leaf;
+        if (left.atom && right.atom &&
+            prepared_pure_equality_reads_fields(
+                program, left.atom, right.atom))
+            return false;
         if (left.atom && right.atom) {
             /* Two integers are equal by value, as value equality has it. */
             equal = left.atom->kind == ATOM_GROUNDED &&
@@ -10306,6 +10360,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
     *out = (PreparedPureScalar){0};
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+            prepared_pure_equality_reads_fields(
+                program, left_atom, right_atom) ||
             (!program->total_structural_equality &&
              !prepared_pure_scalar_operands_share_type(
                  program, node, &left, &right)))
@@ -10939,6 +10995,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 return prepared_pure_runtime_decline(
                     program, "runtime frame has no expression", NULL);
             if (frame->state == 0u) {
+                if (program->source_view.head_admitted && source->kind == ATOM_EXPR &&
+                    source->expr.len && source->expr.elems[0]->kind == ATOM_SYMBOL &&
+                    !program->source_view.head_admitted(program->source_view.context,
+                        program->space, source->expr.elems[0]->sym_id))
+                    return prepared_pure_runtime_decline(program,
+                        "runtime rule policy requires canonical evaluation", NULL);
                 if (source->kind == ATOM_EXPR &&
                     program->expression_view) {
                     CettaPreparedPureExpressionView view = {0};

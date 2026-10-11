@@ -1,0 +1,8 @@
+(= (module-space-no-deps $space) $space)
+(= ((closure x) $argument) $argument)
+(= (make-variable) $fresh)
+!(let $result (let $head (make-variable) ($head payload))
+   (get-metatype $result))
+!(== (module-space-no-deps &self) &self)
+!(let $own (module-space-no-deps &self)
+   (== (module-space-no-deps $own) $own))

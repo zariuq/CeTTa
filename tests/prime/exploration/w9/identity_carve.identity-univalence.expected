@@ -1,6 +1,6 @@
 [identity-univalence]
-[False]
-[False]
+[(type:check (id:assumed-unique Bool true true p q) (id (id Bool true true) p q))]
+[(type:check (id:assumed-unique (u 0) Bool Bool (refl Bool) (refl Bool)) (id (id (u 0) Bool Bool) (refl Bool) (refl Bool)))]
 [(id (u 0) Bool Bool)]
 [(id (u 0) Bool Bool)]
 [False]

@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 
 #include "atom.h"
+#include "rule_binding.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include "gslt_term_view_v1.h"
 #include "name_key.h"
@@ -41,10 +42,14 @@ void disc_lookup_expression_coordinates(
  * candidate vector.  The observation is admitted only when no stored-variable
  * edge can match at any traversed prefix.  A missing rigid edge is an exact
  * zero; unsupported grounded values and wildcard overlap decline. */
-/* Count ground rows of a flat expression whose free variables, if any,
- * are a trailing run.  False means the trie cannot answer alone. */
+/* Fold occurrence multiplicities for a flat expression with a rigid prefix
+ * and a trailing run of distinct free variables. Stored wildcard overlap in
+ * the rigid prefix, approximate paths and nested suffixes decline. */
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count);
+bool disc_count_flat_expression_coordinates(
+    const DiscNode *root, Atom *const *coordinates,
+    CettaExprLen coordinate_count, CettaIndex *out_count);
 bool disc_count_rigid_exact_path(
     const DiscNode *root, const Atom *query, CettaIndex *out_count);
 bool disc_count_rigid_exact_expression_coordinates(
@@ -83,6 +88,11 @@ typedef struct {
     EqBucket buckets[EQ_INDEX_BUCKETS];
     EqBucket wildcard; /* equations with variable/structured LHS head */
     EqHeadSet heads;
+    /* Separate declaration projection. Ordinary callable lookup never reads
+     * these heads; an extended execution view must opt in explicitly. */
+    EqHeadSet directional_heads;
+    bool directional_wildcard;
+    bool directional_present;
 } EqIndex;
 
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
@@ -170,6 +180,8 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* A live projection of a module's own storage, not a writable overlay. */
+    bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
        within one Space lifetime; instance_id prevents pointer reuse from
        reviving cached state from a freed Space at the same address. */
@@ -224,6 +236,18 @@ typedef struct Space {
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
+/* Borrow the module's own rows, excluding its imported prefix/dependencies.
+ * Mutations reach the original storage. Free this view before its owner, or
+ * let owner teardown detach it; the view never owns that owner's storage. */
+bool space_init_module_own_view(Space *s, Space *module);
+/* Select observed storage without changing the view's identity. Transaction
+   storage is watched until release; its previous storage remains watched so
+   restoring that selection requires no allocation. */
+bool space_module_own_view_select(Space *view, Space *storage);
+void space_module_own_view_release(Space *view, Space *storage);
+static inline Space *space_mutation_target(Space *s) {
+    return s && s->module_own_view ? (Space *)s->overlay_base : s;
+}
 void space_init(Space *s);
 /* Mark the current contents as imported-module atoms.  False, leaving the
    space unchanged, for an overlay or a stack, queue or hash space. */
@@ -239,13 +263,19 @@ bool space_add_dependency(Space *importer, Space *dependency);
 /* The dependencies a read composes after `s`'s own atoms: an overlay reads
    through those of the space at the bottom of its overlay chain. */
 static inline uint32_t space_dependency_count(const Space *s) {
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return 0u;
         s = s->overlay_base;
+    }
     return s ? s->dep_count : 0u;
 }
 static inline Space *space_dependency_at(const Space *s, uint32_t index) {
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return NULL;
         s = s->overlay_base;
+    }
     return s && index < s->dep_count ? s->deps[index] : NULL;
 }
 /* The rows a query of `s` reads, as one sequence: `s`'s logical atoms, then
@@ -450,6 +480,8 @@ bool space_equation_token_matches_live_space(
     SpaceEquationToken token, const Space *live_space);
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
+bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
+    unsigned admitted_forms, SpaceEquationOccurrence *out);
 
 /*
  * Revision-pinned, declaration-order cursor over equations whose left-hand
@@ -476,6 +508,7 @@ typedef struct {
        are visited in phase 0 and the imported ones in phase 1. */
     CettaIndex imported;
     uint8_t phase;
+    unsigned admitted_forms;
 } SpaceEquationCursor;
 
 typedef enum {
@@ -486,6 +519,11 @@ typedef enum {
 
 bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor);
+/* The extended projection uses the same revision-qualified occurrence order.
+ * Its initial realization scans the logical member; ordinary-only readers
+ * keep the indexed cursor. The mask is part of the captured query policy. */
+bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
+                            SpaceEquationCursor *cursor);
 SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
 
@@ -493,8 +531,9 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
- * Several matching trie nodes are merged once into that order; later steps
- * read the next index. Appends at or after the ceiling are invisible.  A removal while the pin
+ * Matching trie nodes are merged lazily in that order. The frontier retains
+ * one position per node, independently of the candidate bag's length.
+ * Appends at or after the ceiling are invisible. A removal while the pin
  * is live leaves the cursor draining the rows it captured, while the Space
  * itself shows only the survivors; any other prefix rewrite invalidates the
  * pin.  Read a yielded index through space_occurrence_cursor_atom.  Release
@@ -511,7 +550,12 @@ typedef struct {
     DiscNode **nodes;
     CettaIndex *leaf_pos;
     uint32_t node_len;
-    /* Declaration order of a multi-node frontier, built once. */
+    /* Cached (occurrence, node) keys packed into one index when the captured
+     * ranges permit it. Inactive heap slots also hold tied-head advances. */
+    CettaIndex *heap;
+    uint32_t heap_len;
+    uint32_t heap_node_bits;
+    /* A cold selector can supply a compact declaration-ordered candidate list. */
     CettaIndex *flat;
     CettaIndex flat_len;
     CettaIndex flat_next;
@@ -635,6 +679,11 @@ CettaCount query_equations_visit_planned(
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* Apply an explicitly admitted descriptor. Mismatch, invalid input and
+ * capacity remain distinct; emitted is zero unless a body was published. */
+CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
+    Atom *query, Arena *a, QueryResultVisitor visitor, void *ctx,
+    CettaCount *emitted);
 /* Execute a complete logical equation query whose candidate selection has
    already proved that `equation` is the only candidate.  Unlike the
    lower-level per-candidate primitive above, this preserves the ordinary
@@ -650,6 +699,20 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+/* A clean local equation index is already a maintained absence certificate.
+ * Mutations dirty or update it; composed/overlay views need their full reader. */
+static inline bool space_directional_index_proves_absent(const Space *s) {
+    return s && !s->overlay_base && !s->dep_count &&
+        !s->native.eq_idx_dirty && !s->native.eq_idx.directional_present;
+}
+bool space_directional_rules_may_match_general(Space *s, SymbolId head);
+static inline bool space_directional_rules_may_match_known_head(Space *s, SymbolId head) {
+    return !space_directional_index_proves_absent(s) &&
+        space_directional_rules_may_match_general(s, head);
+}
+bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms);
 /* Revision-pinned least fixed point of the generated relational-effect
  * algebra over user-equation dependencies.  A named symbol with no visible
  * equation is inert at the pinned revision; malformed, variable-headed, or
@@ -668,6 +731,17 @@ bool space_equation_head_arity_bounds(
     Space *s, SymbolId head, CettaExprLen *minimum,
     CettaExprLen *maximum, bool *has_exact,
     CettaExprLen query_arity);
+static inline bool space_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms) {
+    if ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+         space_directional_index_proves_absent(s)))
+        return space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity);
+    return space_extended_rule_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity, admitted_forms);
+}
 /* MAM loop-body view entry guard: head resolves to exactly one equation in a
  * clean single-head bucket, no overlay base (necessary condition for the
  * deterministic-tail loop lane; conservative, cheap). */
@@ -743,6 +817,9 @@ struct RegistryStates;
 typedef struct {
     RegistryEntry *entries;
     uint32_t len, cap;
+    /* Bindings not beginning with `&`. HE reads both kinds as tokens;
+       other dialects retain their own named-space evaluation policy. */
+    uint32_t word_len;
     RegistryEntry inline_entries[16];
     NameKeyTable *name_keys;
     /* Open-addressed entry index. Slots store entry-index + 1; zero is empty.
@@ -827,14 +904,28 @@ bool space_native_flat_pattern_each_int(
     Space *space, Atom *pattern, size_t column,
     bool (*each)(int64_t value, void *ctx), void *ctx);
 
-/* Count, and the sum of one integer column, over the join of a chain of
- * at most three flat patterns (consecutive patterns share exactly one
- * variable), by variable elimination: work proportional to the patterns'
- * rows, not to the join.  false declines. */
+/* Count, and the sum of one integer column, over a finite path of flat
+ * patterns. Neighbours share exactly one variable; non-neighbours share
+ * none. Keyed messages preserve occurrence multiplicity without expanding
+ * the join. Each stage scans the captured space rows; false declines. */
 bool space_native_flat_chain_aggregate(
     Space *space, Atom *const *patterns, size_t pattern_count,
     bool with_column, size_t column_pattern, size_t column,
     __int128 *count_out, __int128 *sum_out);
+
+/* The count observation of the same path, with caller bindings resolved
+ * before planning. Temporary pattern views belong to scratch; no answer
+ * binding escapes. Failure leaves count_out unchanged. */
+bool space_native_flat_chain_count(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, uint64_t *count_out);
+
+/* Select the grouped path realization or a prepared cyclic intersection.
+ * Complete cardinality is the observation; ordinary matching retains all
+ * other observations and any encoding/equality the realizations decline. */
+bool space_native_relational_count(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, uint64_t *count_out);
 
 /* The same ordered walk for a pattern with nested structure: each matching
  * ground row yields the integer bound to `variable`. */

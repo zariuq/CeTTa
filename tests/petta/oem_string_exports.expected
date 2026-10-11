@@ -1,0 +1,4 @@
+true
+((StringObservation 3000 3 "B") (StringObservation 3000 3 "D"))
+(UnicodeObservation 4 true true true)
+(Kept $V0 $V0)

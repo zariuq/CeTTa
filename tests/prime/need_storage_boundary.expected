@@ -2,6 +2,7 @@
 [()]
 [stored]
 [0]
+[0]
 [(prime-need:store-bump)]
 [()]
 [(delay (prime-need:store-bump))]

@@ -1,0 +1,1 @@
+{"types":[["->",0],["bool",0],["fun",2]],"constants":[["arrow-control-rep",["op","fun",[["op","->",[]],["op","bool",[]]]]],["arrow-control-abs",["op","fun",[["op","bool",[]],["op","->",[]]]]],["=",["op","fun",[["var","A"],["op","fun",[["var","A"],["op","bool",[]]]]]]]],"definition_roots":[875,876],"axiom_roots":[]}

@@ -12,10 +12,13 @@
 
 !(prime-need:store-unused (prime-need:store-bump))
 !(get-state &prime-need:store-counter)
-; A variable retrieves the persistent graph node with its identity intact;
-; an evaluator-created hidden thunk returns its source form, not explicit
-; delay syntax.
+; Storage reifies the source without running the pending effect. Ordinary
+; return subsequently observes its value. A declared Data view retrieves
+; the stored source without executing it; neither view exposes heap IDs.
 !(match &prime-need:stored (Stored $saved) $saved)
+(: prime-need:stored-code (-> (Data Atom) (Data Atom)))
+(= (prime-need:stored-code $value) $value)
+!(match &prime-need:stored (Stored $saved) (prime-need:stored-code $saved))
 !(match &prime-need:stored (Stored (__prime_need_ref_v1 $s $t)) leaked-ref)
 
 ; An explicit suspension remains explicit across the same data boundary.

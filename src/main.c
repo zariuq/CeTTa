@@ -1967,6 +1967,7 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
 static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
     static const struct { const char *name; const char *sig; } ops[] = {
         {"prime-package", "u"},
+        {"prime:elaborate", "A"},
         {"type:of", "A"},
         {"type:check", "AA"},
         {"type:analyze", "AA"},
@@ -2249,6 +2250,24 @@ static int main_he_compiled_file_backend(
         error_buf, error_buf_size);
 }
 
+static int main_he_compiled_file_prefix_backend(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    return he_compiled_reader_v1_parse_file_prefix_ids(
+        context, filename, universe, out_ids, complete_count,
+        error_buf, error_buf_size);
+}
+
+static int main_he_compiled_bytes_prefix_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    return he_compiled_reader_v1_parse_bytes_prefix_ids(
+        context, bytes, length, universe, out_ids, complete_count,
+        error_buf, error_buf_size);
+}
+
 static int main_petta_compiled_text_backend(
     void *context, const char *text, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
@@ -2347,6 +2366,8 @@ typedef struct {
     bool parser_universal_names_old;
     bool parser_list_syntax_set;
     bool parser_list_syntax_old;
+    bool parser_namespace_sugar_set;
+    bool parser_namespace_sugar_old;
     void *document_reader_context;
     void (*document_reader_free)(void *context);
     CettaGsltLanguage *gslt_language;
@@ -2406,6 +2427,10 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (cleanup->parser_list_syntax_set) {
         parser_set_list_syntax_enabled(cleanup->parser_list_syntax_old);
         cleanup->parser_list_syntax_set = false;
+    }
+    if (cleanup->parser_namespace_sugar_set) {
+        parser_set_namespace_sugar_enabled(cleanup->parser_namespace_sugar_old);
+        cleanup->parser_namespace_sugar_set = false;
     }
 
     if (cleanup->output_spool) {
@@ -3496,6 +3521,7 @@ static int cetta_main(int argc, char **argv) {
         if (!run_cli) { fputs("error: could not allocate run report\n", stderr); free(inline_buf); return 1; }
     }
     char document_reader_error[512] = {0};
+    bool he_source_fault = false;
     int n = 0;
 
     g_count_only = count_only;
@@ -3655,6 +3681,9 @@ static int cetta_main(int argc, char **argv) {
     cleanup.parser_list_syntax_old =
         parser_set_list_syntax_enabled(list_syntax);
     cleanup.parser_list_syntax_set = true;
+    cleanup.parser_namespace_sugar_old =
+        parser_set_namespace_sugar_enabled(lang->id != CETTA_LANGUAGE_HE);
+    cleanup.parser_namespace_sugar_set = true;
 
     const char *document_reader_capability = NULL;
     if (lang->id == CETTA_LANGUAGE_HE)
@@ -3707,6 +3736,8 @@ static int cetta_main(int argc, char **argv) {
             .context = he_compiled_reader,
             .parse_text_ids = main_he_compiled_text_backend,
             .parse_file_ids = main_he_compiled_file_backend,
+            .parse_file_prefix_ids = main_he_compiled_file_prefix_backend,
+            .parse_bytes_prefix_ids = main_he_compiled_bytes_prefix_backend,
         };
         if (!parser_set_document_ids_backend(&reader_backend)) {
             fprintf(stderr,
@@ -3803,8 +3834,10 @@ static int cetta_main(int argc, char **argv) {
     cetta_provenance_assert_not_transient(self_value, "main.registry.self");
     registry_bind_id(&registry, g_builtin_syms.self, self_value);
     /* HE's program is the top of its module tree. */
-    if (lang->id == CETTA_LANGUAGE_HE)
+    if (lang->id == CETTA_LANGUAGE_HE) {
         cetta_library_set_top_module_space(&libraries, &space);
+        cetta_library_set_top_module_registry(&libraries, &registry);
+    }
 
     if (!lang_is_mm2) {
         /* The Prime scope experiment: another default profile for the
@@ -3833,6 +3866,31 @@ static int cetta_main(int argc, char **argv) {
                   filename, &libraries.term_universe, &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
         prime_scope_document_reading(false);
+        if (n < 0 && lang->id == CETTA_LANGUAGE_HE) {
+            /* HE reads one form at a time: the forms before a syntax fault
+               run, and the fault is reported only if the run reaches it. */
+            size_t source_len = inline_text ? strlen(inline_text) : 0u;
+            uint8_t *source = inline_text
+                ? NULL : read_file_bytes(filename, &source_len);
+            const uint8_t *bytes = inline_text
+                ? (const uint8_t *)inline_text : source;
+            int complete = 0;
+            if (bytes) {
+                free(atom_ids);
+                atom_ids = NULL;
+                (void)parse_metta_bytes_prefix_ids(
+                    bytes, source_len, &libraries.term_universe, &atom_ids,
+                    &complete, document_reader_error,
+                    sizeof(document_reader_error));
+                if (complete > 0 &&
+                    tu_kind(&libraries.term_universe, atom_ids[complete - 1]) == ATOM_SYMBOL &&
+                    tu_sym(&libraries.term_universe, atom_ids[complete - 1]) == g_builtin_syms.bang)
+                    complete--;
+                n = complete;
+                he_source_fault = true;
+            }
+            free(source);
+        }
         cleanup.atom_ids = atom_ids;
         if (n < 0) {
             if (document_reader_error[0]) {
@@ -4125,7 +4183,7 @@ process_petta_document:
             Atom *declaration = term_universe_get_atom(
                 &libraries.term_universe,
                 atom_ids[declaration_index]);
-            if (petta_program_is_equation(declaration) &&
+            if (petta_program_admits_equation(libraries.petta_program, declaration) &&
                 !petta_program_predeclare_equation(
                     libraries.petta_program, &space, declaration)) {
                 fprintf(
@@ -4330,8 +4388,12 @@ process_petta_document:
                     goto cleanup;
                 }
             }
-            Atom *expr = term_universe_copy_atom(&libraries.term_universe, &arena,
-                                                 payload_id);
+            /* HE reads a form with the tokens bound before it. */
+            Atom *expr = lang->id == CETTA_LANGUAGE_HE
+                ? eval_copy_read_registry_form(&registry,
+                      &libraries.term_universe, &arena, payload_id)
+                : term_universe_copy_atom(&libraries.term_universe, &arena,
+                                           payload_id);
             libraries.session.test_verdict = run_cli ? run_cli_test_verdict : NULL;
             libraries.session.test_verdict_context = run_cli;
             ResultSet rs;
@@ -4367,8 +4429,9 @@ process_petta_document:
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
                        lang->id == CETTA_LANGUAGE_PETTA ||
-                       lang->id == CETTA_LANGUAGE_PRIME) {
-                /* A PeTTa directive publishes its whole answer stream, which
+                       lang->id == CETTA_LANGUAGE_PRIME ||
+                       (profile && profile->id == CETTA_PROFILE_HE_EXTENDED)) {
+                /* PeTTa and HE/extended directives publish a whole stream, which
                  * claims there are no further answers, so it is always
                  * observed with a completion tracker.  Finite fuel reaches
                  * the search machine through the same tracker; unlimited
@@ -4390,6 +4453,9 @@ process_petta_document:
                         &detailed, NULL, NULL);
                 }
             } else {
+                /* Prime's local judgment budgets return unsettled syntax;
+                 * preserve that observation instead of promoting its local
+                 * producer cutoff to failure of the enclosing directive. */
                 result_set_init(&rs);
                 eval_top_with_registry(
                     &space, &eval_arena, &arena, &registry,
@@ -4627,6 +4693,13 @@ process_petta_document:
             i++;
             continue;
         }
+        if (lang->id == CETTA_LANGUAGE_HE) {
+            /* HE reads a form with the tokens bound before it. */
+            for (int form = i; form < block_end; form++)
+                atom_ids[form] = eval_read_registry_words_id(
+                    &registry, &libraries.term_universe, &eval_arena, &arena,
+                    atom_ids[form]);
+        }
         bool prime_relational_plan =
             libraries.prime_relational_plan_enabled;
         bool loaded = prime_relational_plan
@@ -4685,7 +4758,17 @@ petta_document_complete:
     if (petta_answer_without_text && !petta_uncaught_error)
         fputs("error: a PeTTa answer is not a finite term, so it has no "
               "text\n", stderr);
-    bool write_answers = !petta_uncaught_error && !petta_answer_without_text;
+    bool he_fault_reached = he_source_fault && !stop_document_sequence;
+    if (he_fault_reached) {
+        fprintf(stderr, "error: compiled HE reader: %s\n",
+                document_reader_error[0] ? document_reader_error
+                                         : "MeTTa source parse failed");
+        fprintf(stderr, inline_text
+                ? "error: could not parse inline MeTTa text\n"
+                : "error: could not read %s\n", filename);
+    }
+    bool write_answers = !petta_uncaught_error && !petta_answer_without_text &&
+        !he_fault_reached;
     if (write_answers && fseek(output_spool, 0, SEEK_SET) != 0) {
         fprintf(stderr, "error: could not rewind output spool\n");
         rc = 1;
@@ -4709,7 +4792,7 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed || prime_incomplete_seen ? 1
+    rc = prime_need_trace_failed || prime_incomplete_seen || he_fault_reached ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
     prime_arith_oracle_report_audit(stderr);
     if (prime_oracle_check_failed) rc = 3;

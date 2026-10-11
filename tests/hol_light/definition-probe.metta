@@ -1,0 +1,8 @@
+!(import! &self ../../lib/hol_light/data.metta)
+!(import! &self ../../lib/hol_light/syntax.metta)
+!(import! &self ../../lib/hol_light/kernel.metta)
+!(import! &self ../../lib/hol_light/definitions.metta)
+!(import! &self ../../lib/hol_light/derived.metta)
+!(import! &self ../../lib/hol_light/profile.metta)
+!(import! &self ../../lib/hol_light/receive.metta)
+!(test (hol-light:check-result (hol-light:run HOL:Nil (HOL:Cons (HOL:Step "def" (DEFINITION "I" (Tyapp "fun" (HOL:Cons (Tyvar "A") (HOL:Cons (Tyvar "A") HOL:Nil))) (Abs (Var "x" (Tyvar "A")) (Var "x" (Tyvar "A"))))) (HOL:Cons (HOL:Step "rx" (REFL (Var "x" (Tyvar "A")))) (HOL:Cons (HOL:Step "app" (MK_COMB "def" "rx")) (HOL:Cons (HOL:Step "beta" (BETA (Comb (Abs (Var "x" (Tyvar "A")) (Var "x" (Tyvar "A"))) (Var "x" (Tyvar "A"))))) (HOL:Cons (HOL:Step "law" (TRANS "app" "beta")) HOL:Nil)))))) "law" HOL:Nil (Comb (Comb (Const "=" (Tyapp "fun" (HOL:Cons (Tyvar "A") (HOL:Cons (Tyapp "fun" (HOL:Cons (Tyvar "A") (HOL:Cons (Tyapp "bool" HOL:Nil) HOL:Nil))) HOL:Nil)))) (Comb (Const "I" (Tyapp "fun" (HOL:Cons (Tyvar "A") (HOL:Cons (Tyvar "A") HOL:Nil)))) (Var "x" (Tyvar "A")))) (Var "x" (Tyvar "A")))) True)

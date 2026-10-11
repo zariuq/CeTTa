@@ -1,0 +1,21 @@
+name-tree-parent
+name-tree-leaf
+name-tree-part
+[()]
+[()]
+[()]
+[(leaf)]
+[ModuleSpace(GroundingSpace-top:name_tree_root:inner:leaf)]
+[()]
+[(1 2)]
+[loaded]
+[caught]
+[()]
+[file]
+[()]
+[ModuleSpace(GroundingSpace-top:name_tree_root:bare)]
+[()]
+[1]
+[()]
+[beside]
+[Failed to resolve module top:name_tree_root:absent]

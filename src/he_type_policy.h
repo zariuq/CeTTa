@@ -14,6 +14,8 @@ typedef enum {
 
 HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
                             Atom *metatype);
+/* The source adapter derives the subject's native metatype identity directly. */
+HeTypeDemand he_type_source_demand(const Atom *subject, Atom *expected);
 
 /* A borrowed arrow view. Freshening and ownership belong to the existing
  * application continuation. Mode arrows are not ordinary HE function types. */
@@ -48,6 +50,9 @@ Atom *he_type_result_demand(Arena *arena, Atom *codomain);
  * Lookups build them on first use; false reports tables that failed to
  * load. */
 bool he_library_tables_init(void);
+/* Native module operation identity, supplied by the existing HE catalog.
+ * The process's shared catalog is initialized before HE execution. */
+extern SymbolId g_he_module_space_no_deps_symbol;
 /* HE's grounded operations type themselves, as upstream's grounded atoms do
  * (Grounded::type_): the type is not a declaration atom in any space, and a
  * declaration a program writes for the name does not change it.  The types

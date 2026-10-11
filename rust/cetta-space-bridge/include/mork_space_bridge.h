@@ -129,8 +129,12 @@ MorkStatus mork_space_remove_contextual_exact_expr_bytes(MorkSpace *space,
                                                          const uint8_t *context_bytes,
                                                          size_t context_len);
 MorkStatus mork_space_contains_expr_bytes(const MorkSpace *space,
-                                          const uint8_t *expr_bytes,
-                                          size_t len);
+                                        const uint8_t *expr_bytes,
+                                        size_t len);
+/* Structural occurrence multiplicity, not relational match cardinality. */
+MorkStatus mork_space_count_expr_bytes(const MorkSpace *space,
+                                      const uint8_t *expr_bytes,
+                                      size_t len);
 MorkStatus mork_space_add_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_remove_sexpr(MorkSpace *space, const uint8_t *text, size_t len);
 MorkStatus mork_space_unique_size(const MorkSpace *space);

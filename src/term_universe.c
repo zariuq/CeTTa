@@ -153,6 +153,8 @@ typedef struct {
     TermUniverseCopyMemoSlot *slots;
     size_t cap;
     size_t used;
+    TermUniverseSymbolRead read_symbol;
+    void *read_context;
 } TermUniverseCopyMemo;
 
 typedef struct {
@@ -2727,19 +2729,26 @@ int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
 
 PeTTaValueRepresentation tu_petta_value_representation(
     const TermUniverse *universe, AtomId id) {
-    if (tu_kind(universe, id) != ATOM_EXPR)
+    const CettaTermHdr *header = tu_hdr(universe, id);
+    if ((header ? (AtomKind)header->tag : tu_kind(universe, id)) != ATOM_EXPR)
         return PETTA_VALUE_ORDINARY;
-    CettaExprLen length = tu_arity(universe, id);
+    CettaExprLen length = header
+        ? (CettaExprLen)term_universe_aux_data(header) : tu_arity(universe, id);
     if (length != 2u && length != 3u)
         return PETTA_VALUE_ORDINARY;
-    int64_t head = tu_internal_tag(universe, tu_child(universe, id, 0u));
+    /* A recorded symbol head cannot be a private internal tag. Domain-based
+     * callable identity is still checked below for ordinary symbol heads. */
+    int64_t head = header && header->sym_or_head != SYMBOL_ID_NONE
+        ? 0 : tu_internal_tag(universe, header
+            ? tu_child_from_header(universe, header, 0u) : tu_child(universe, id, 0u));
     if ((length == 2u && head == CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND) ||
         (length == 3u && head == CETTA_INTERNAL_TAG_PETTA_PARTIAL))
         return PETTA_VALUE_COMPOUND;
     if (length == 3u) {
         if (head == CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
             return PETTA_VALUE_REGISTERED_CALLABLE;
-        AtomId domain = tu_child(universe, id, 1u);
+        AtomId domain = header
+            ? tu_child_from_header(universe, header, 1u) : tu_child(universe, id, 1u);
         if (tu_kind(universe, domain) == ATOM_EXPR &&
             tu_arity(universe, domain) == 2u &&
             tu_internal_tag(universe, tu_child(universe, domain, 0u)) ==
@@ -4194,6 +4203,8 @@ static void term_universe_copy_memo_init(TermUniverseCopyMemo *memo) {
     memo->slots = memo->inline_slots;
     memo->cap = CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP;
     memo->used = 0;
+    memo->read_symbol = NULL;
+    memo->read_context = NULL;
     term_universe_copy_memo_clear_slots(memo->slots, memo->cap);
 }
 
@@ -4341,6 +4352,13 @@ static size_t term_universe_copy_estimated_arena_bytes(
     return bytes;
 }
 
+static Atom *term_universe_copy_read_leaf(Arena *dst, Atom *atom, void *context) {
+    TermUniverseCopyMemo *memo = context;
+    Atom *value = atom->kind == ATOM_SYMBOL
+        ? memo->read_symbol(memo->read_context, atom->sym_id) : NULL;
+    return atom_deep_copy(dst, value ? value : atom);
+}
+
 static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
                                           Arena *dst, AtomId id,
                                           uint32_t epoch,
@@ -4362,20 +4380,30 @@ static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
         if (!stored)
             return NULL;
         out = rename_epoch_vars ? atom_freshen_epoch(dst, stored, epoch)
-                                : atom_deep_copy(dst, stored);
+            : memo->read_symbol
+                ? atom_deep_copy_mapped(dst, stored,
+                      term_universe_copy_read_leaf, memo)
+                : atom_deep_copy(dst, stored);
         goto done;
     }
 
     switch ((AtomKind)hdr->tag) {
-    case ATOM_SYMBOL:
-        out = atom_symbol_id(dst, hdr->sym_or_head);
+    case ATOM_SYMBOL: {
+        Atom *value = memo->read_symbol
+            ? memo->read_symbol(memo->read_context, hdr->sym_or_head) : NULL;
+        out = value ? atom_deep_copy(dst, value)
+                    : atom_symbol_id(dst, hdr->sym_or_head);
         break;
+    }
     case ATOM_VAR: {
         VarId var_id = tu_var_id(universe, id);
         if (rename_epoch_vars)
             var_id = var_epoch_id(var_id, epoch);
         if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
-            Atom *key = children ? children[0] : NULL;
+            Atom *key = memo->read_symbol
+                ? term_universe_copy_atom(universe, dst,
+                      tu_var_name_key_id(universe, id))
+                : children ? children[0] : NULL;
             out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
         } else {
             out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
@@ -4491,7 +4519,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         const CettaTermHdr *hdr = tu_hdr(universe, frame.id);
         bool name_key = hdr && hdr->tag == ATOM_VAR &&
             hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY;
-        CettaExprLen count = name_key ? 1u :
+        CettaExprLen count = name_key ? (memo->read_symbol ? 0u : 1u) :
             (hdr && hdr->tag == ATOM_EXPR ? tu_arity(universe, frame.id) : 0u);
         if (!frame.finish && count) {
             if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
@@ -4526,6 +4554,19 @@ Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
+    Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
+    term_universe_copy_memo_free(&memo);
+    return out;
+}
+
+Atom *term_universe_copy_atom_read_symbols(
+    const TermUniverse *universe, Arena *dst, AtomId id,
+    TermUniverseSymbolRead read, void *context) {
+    TermUniverseCopyMemo memo;
+    term_universe_copy_memo_init(&memo);
+    memo.read_symbol = read;
+    memo.read_context = context;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
     Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
     term_universe_copy_memo_free(&memo);

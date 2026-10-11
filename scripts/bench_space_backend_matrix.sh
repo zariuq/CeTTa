@@ -192,7 +192,7 @@ emit_range_inserts() {
                 cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $start $stop))
+     (let \$xs (list:range $start $stop)
        (let \$i (superpose \$xs)
          (add-atom &space (friend sam \$i)))))
    ())
@@ -202,7 +202,7 @@ EOF
                 cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $start $stop))
+     (let \$xs (list:range $start $stop)
        (let \$i (superpose \$xs)
          (mork:add-atom &space (friend sam \$i)))))
    ())
@@ -357,11 +357,11 @@ render_program() {
         mode_insert "$mode"
 
         printf '!(assertEqualToResult %s (%s))\n' "$(space_size_expr "$mode")" "$FACT_COUNT"
-        printf '!(println! (bench initial_size_rows %s))\n' "$(space_size_expr "$mode")"
+        printf '!(let $rows %s (println! (bench initial_size_rows $rows)))\n' "$(space_size_expr "$mode")"
 
         case "$scenario" in
             insert_only)
-                printf '!(println! (bench scenario_rows %s))\n' "$(space_size_expr "$mode")"
+                printf '!(let $rows %s (println! (bench scenario_rows $rows)))\n' "$(space_size_expr "$mode")"
                 ;;
             exact_hit_after_insert)
                 printf '!(let $rows %s\n' "$(match_count_expr "$mode" '(friend sam 42)' '(friend sam 42)')"
@@ -374,7 +374,7 @@ render_program() {
                     printf '!(let $rows %s\n' "$(match_count_expr "$mode" '(friend $y $x)' '(friend $y $x)')"
                     printf '   (change-state! &acc (+ (get-state &acc) $rows)))\n'
                 done
-                printf '!(println! (bench scenario_rows (get-state &acc)))\n'
+                printf '!(let $rows (get-state &acc) (println! (bench scenario_rows $rows)))\n'
                 printf '!(assertEqualToResult (get-state &acc) (%s))\n' "$expected_full_scan"
                 ;;
             post_remove_count_after_insert)
@@ -403,7 +403,8 @@ render_program() {
                 ;;
         esac
         printf '!(let $bench-finished-ns (system:monotonic-ns)\n'
-        printf '   (println! (bench scenario_ns (- $bench-finished-ns &bench-start-ns))))\n'
+        printf '   (let $elapsed (- $bench-finished-ns &bench-start-ns)\n'
+        printf '     (println! (bench scenario_ns $elapsed))))\n'
     } >"$out"
 }
 

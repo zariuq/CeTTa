@@ -126,6 +126,10 @@ typedef struct {
      * not CETTA_ATOM_ID_NONE.  Required when the plan has lists. */
     AtomId (*list)(void *context, const AtomId *elems, size_t elem_len,
                    AtomId rest);
+    /* Optional failure receiver. Returning true transfers ownership of
+     * the complete-prefix vector; the parse itself still fails. */
+    void *retain_context;
+    bool (*retain_prefix)(void *context, AtomId *forms, uint32_t count);
 } GSLTDirectAtomProjectionV1;
 
 /*

@@ -42,12 +42,35 @@ typedef int (*ParserDocumentTextIdsBackend)(
 typedef int (*ParserDocumentFileIdsBackend)(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size);
+typedef int (*ParserDocumentFilePrefixIdsBackend)(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
+typedef int (*ParserDocumentBytesPrefixIdsBackend)(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
 
 typedef struct {
     void *context;
     ParserDocumentTextIdsBackend parse_text_ids;
     ParserDocumentFileIdsBackend parse_file_ids;
+    /* Optional: retain complete forms when a later form fails to parse. */
+    ParserDocumentFilePrefixIdsBackend parse_file_prefix_ids;
+    ParserDocumentBytesPrefixIdsBackend parse_bytes_prefix_ids;
 } ParserDocumentIdsBackend;
+
+/* Parse still fails on invalid source. The caller owns any complete prefix
+ * returned by the active reader. A reader without this capability remains
+ * atomic, returning no prefix on failure. */
+int parse_metta_file_prefix_ids(
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size);
+/* Execute and identify the same captured source bytes. The terminating byte
+ * at bytes[length] must be readable, as for the other counted text entries. */
+int parse_metta_bytes_prefix_ids(
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size);
 
 /* Install one process-wide immutable document reader for the active session. */
 bool parser_set_document_ids_backend(
@@ -132,6 +155,14 @@ bool parser_rest_is_delimiters_n(const char *text, size_t text_len,
    foo.metta or bench.act must be left unchanged. The returned pointer is
    either the original token or an arena-owned canonical copy. */
 const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
+
+/* Dotted names are literal in HE; the other readers retain namespace sugar.
+ * The session option also controls legacy parsing and host name publication.
+ * A compiled projection can select its policy without changing the session. */
+bool parser_set_namespace_sugar_enabled(bool enabled);
+bool parser_namespace_sugar_enabled(void);
+void parser_host_projection_v1_set_namespace_sugar(
+    ParserHostProjectionV1 *projection, bool enabled);
 
 /* Reader option used by he-compat: Rust HE treats slash tokens such as 2/4 as
    ordinary symbols unless an operation explicitly interprets them. */

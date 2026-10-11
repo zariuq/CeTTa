@@ -1,0 +1,8 @@
+[(MixedHistoryControl earned-boolean True)]
+[(MixedHistoryControl retained-polymorphic-premise True)]
+[(MixedHistoryControl exact-ordered-receipts True)]
+[(MixedHistoryControl complete-state-resumption True)]
+[(MixedHistoryControl occupied-key-refused True)]
+[(MixedHistoryControl missing-premise-refused True)]
+[(MixedHistoryControl wrong-resumption-state-refused True)]
+[(MixedHistoryControl wrong-type-claim-refused True)]

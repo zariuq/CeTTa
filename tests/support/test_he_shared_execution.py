@@ -11,6 +11,48 @@ import tempfile
 # The last field requires the shared machine. Intrinsic demands and closed
 # calls can select their existing qualified realizations.
 CASES = [
+    ('tuple-constructed-error', '!(metta (a Error) %Undefined% &self)\n', '[(Error)]\n', False),
+    ('tuple-child-error', '!(metta (a (Error)) %Undefined% &self)\n', '[(Error)]\n', False),
+    ('tuple-rightmost-error',
+     '!(metta (a Error b Error c) %Undefined% &self)\n',
+     '[(Error c)]\n',
+     False),
+    ('tuple-nested-error', '!(metta (a (b Error)) %Undefined% &self)\n', '[(Error)]\n', False),
+    ('tuple-singleton-wrapper', '!(metta (a) %Undefined% &self)\n', '[(a)]\n', False),
+    ('tuple-suffix-effect',
+     '!(metta (a Error (let $u (println! tail) z)) %Undefined% &self)\n',
+     'tail\n[(Error z)]\n',
+     False),
+    ('tuple-child-error-short-circuit',
+     '!(metta (a (Error bad code) (println! unexpected)) %Undefined% &self)\n',
+     '[(Error bad code)]\n',
+     False),
+    ('tuple-raw-argument',
+     '(: held (-> Atom Atom))\n'
+     '(= (held $x) $x)\n'
+     '!(held (a Error))\n'
+     '!(held (a Error (println! unexpected)))\n',
+     '[(a Error)]\n[(a Error (println! unexpected))]\n',
+     False),
+    ('tuple-late-error-binding',
+     '(= (bind Error) tail)\n!(metta (a $x (bind $x)) %Undefined% &self)\n',
+     '[(Error tail)]\n',
+     False),
+    ('tuple-private-error-binding',
+     '(= (bind Error) tail)\n(= (tuple) (a $x (bind $x)))\n!(metta (tuple) %Undefined% &self)\n',
+     '[(Error tail)]\n',
+     False),
+    ('tuple-duplicate-errors',
+     '(= (choose) Error)\n(= (choose) Error)\n!(metta (a (choose) z) %Undefined% &self)\n',
+     '[(Error z), (Error z)]\n',
+     False),
+    ('tuple-error-alternative-filter',
+     '(= (choose) Error)\n'
+     '(= (choose) Error)\n'
+     '(= (choose) keep)\n'
+     '!(metta (a (choose) z) %Undefined% &self)\n',
+     '[(a keep z)]\n',
+     False),
     ("shared-dag-type-input", "(= (dag $n $leaf) (if (== $n 0) $leaf "
      "(let $t (dag (- $n 1) $leaf) (node $t $t))))\n"
      "!(== (dag 40 1) (dag 40 1.0))\n"

@@ -13,6 +13,8 @@
 ; outputs, then continue.  Reflective exec queries are rejected by the basic
 ; translator, so omitting exec atoms from the data space is unobservable in
 ; the supported subset.
+; Every stored datum is wrapped in mm2-data, so removal also works for bare
+; symbols and empty expressions under each dialect's data rules.
 
 (= (mm2-member $x $items)
    (if (== $items ())
@@ -34,15 +36,15 @@
              (cons-atom $head $rest)))))
 
 (= (mm2-add $space $atom)
-   (let $present (collapse (match $space $atom present))
+   (let $present (collapse (match $space (mm2-data $atom) present))
      (if (== $present ())
-         (add-atom $space $atom)
+         (add-atom $space (mm2-data $atom))
          ())))
 
 (= (mm2-op $space (mm2add $atom))
    (mm2-add $space $atom))
 (= (mm2-op $space (mm2del $atom))
-   (remove-atom $space $atom))
+   (remove-atom $space (mm2-data $atom)))
 
 (= (mm2-ops $space $ops)
    (foldl-atom $ops () $acc $op (mm2-op $space $op)))

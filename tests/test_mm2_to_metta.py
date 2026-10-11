@@ -160,10 +160,20 @@ class TranslatorGate(unittest.TestCase):
 
     def corpus_rows(self):
         aihub = ROOT.parent.parent
+        roots = {
+            "$AIHUB": aihub,
+            "$CETTA_ROOT": ROOT,
+            "$MORK_REPO_DIR": Path(os.environ.get("MORK_REPO_DIR", ROOT.parent / "MORK")),
+            "$MM2_CHAINER_REPO_DIR": Path(os.environ.get(
+                "MM2_CHAINER_REPO_DIR", aihub / "repos" / "mm2-chainer")),
+        }
         manifest = ROOT / "benchmarks" / "mm2_corpus" / "manifest.tsv"
         with manifest.open(newline="", encoding="utf-8") as handle:
             for row in csv.DictReader(handle, delimiter="\t"):
-                path = Path(row["path"].replace("$AIHUB", str(aihub)))
+                path_text = row["path"]
+                for marker, directory in roots.items():
+                    path_text = path_text.replace(marker, str(directory))
+                path = Path(path_text)
                 yield row["name"], path
 
     def test_mm2_syntax_alpha_normalization(self) -> None:
@@ -257,6 +267,13 @@ class TranslatorGate(unittest.TestCase):
 
     def test_semantic_witnesses_match_native_in_all_lanes(self) -> None:
         witnesses = {
+            "bare and empty data removal": """
+                START
+                ()
+                (exec (0 mark)
+                      (, START ())
+                      (O (+ MATCHED) (- START) (- ())))
+            """,
             "priority competition": """
                 (ready)
                 (exec (1 second)

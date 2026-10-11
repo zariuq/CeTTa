@@ -3,6 +3,7 @@
 #include "petta_semantics.h"
 #include "stats.h"
 #include "symbol.h"
+#include "term_canon.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -1277,6 +1278,313 @@ done:
     free(product.edges);
     free(product.slots);
     return result;
+}
+
+/* A matched suffix or node remains a view. Reifying it never unfolds a cycle
+ * or traverses its shared payload. The caller owns input lifetimes until the
+ * binding layer has captured or transported the returned substitution. */
+static Atom *term_view_value(Arena *arena, TermView view) {
+    view = term_view_resolve(view);
+    if (view.kind == VIEW_ATOM)
+        return (Atom *)view.ptr;
+    if (view.kind == VIEW_SUFFIX)
+        return atom_expr_suffix(arena, (Atom *)view.ptr, view.index);
+    CettaTermGraph *graph = (CettaTermGraph *)view.ptr;
+    uint32_t count = 0u;
+    const uint32_t *params = term_graph_node_params(graph, view.index, &count);
+    Atom *node = atom_term_graph(arena, graph, view.index);
+    if (!node || !count)
+        return node;
+    Atom **items = arena_alloc(arena, ((size_t)count + 2u) * sizeof(*items));
+    items[0] = term_graph_carrier_tag(arena);
+    items[1] = node;
+    for (uint32_t i = 0u; i < count; i++) {
+        items[i + 2u] = term_graph_value_param(view.env, params[i]);
+        if (!items[i + 2u])
+            return NULL;
+    }
+    return atom_expr(arena, items, (CettaExprLen)count + 2u);
+}
+
+typedef struct {
+    VarId id;
+    Atom *variable;
+    TermView value;
+} TermMatchBinding;
+
+typedef struct {
+    TermViewPair pair;
+    bool rigid;
+} TermMatchTask;
+
+/* Inventory actual subject variables, following carriers rather than their
+ * internal encoding. A shared subject identity is rigid everywhere, even if
+ * the pattern first encounters it at a different position. */
+static CettaTermMatchStatus term_match_subject_vars(
+        const CettaTermMatchPair *pairs, size_t pair_count,
+        CettaTermMatchMode mode, CettaVarMap *variables) {
+    TermPairSet seen = {0};
+    TermView *work = NULL;
+    size_t len = 0u, cap = 0u;
+    CettaTermMatchStatus result = CETTA_TERM_MATCH_NO_MEMORY;
+    bool failed = false;
+    if (!term_graph_work_reserve((void **)&work, &cap, pair_count, sizeof(*work)))
+        goto done;
+    for (size_t i = 0u; i < pair_count; ++i)
+        work[len++] = term_view_atom(mode == CETTA_TERM_MATCH_REVERSE
+            ? pairs[i].left : pairs[i].right);
+    while (len) {
+        TermView view = term_view_resolve(work[--len]);
+        if (!term_pair_set_add(&seen, (TermViewPair){view, view}, &failed)) {
+            if (failed)
+                goto done;
+            continue;
+        }
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_MATCH_SUBJECT_VIEW);
+        TermShape shape = term_view_shape(view);
+        if (shape.kind == SHAPE_LEAF) {
+            if (!shape.leaf || shape.leaf->kind == ATOM_EXPR) {
+                result = CETTA_TERM_MATCH_INVALID;
+                goto done;
+            }
+            if (shape.leaf->kind == ATOM_VAR &&
+                !cetta_var_map_lookup(variables, shape.leaf->var_id) &&
+                !cetta_var_map_add(variables, shape.leaf->var_id, shape.leaf))
+                goto done;
+        }
+        if (shape.arity > SIZE_MAX - len ||
+            !term_graph_work_reserve((void **)&work, &cap,
+                                     len + shape.arity, sizeof(*work)))
+            goto done;
+        for (uint32_t i = 0u; i < shape.arity; i++)
+            work[len++] = term_shape_child(&shape, i);
+    }
+    result = CETTA_TERM_MATCH_OK;
+done:
+    free(work);
+    free(seen.slots);
+    free(seen.used);
+    return result;
+}
+
+CettaTermMatchStatus term_graph_match_extend(
+        Arena *arena, const CettaTermMatchState *previous,
+        const CettaTermMatchPair *pairs, size_t pair_count,
+        CettaTermMatchMode mode, bool (*leaf_eq)(Atom *, Atom *),
+        CettaTermMatchState *out) {
+    if (!arena || (!pairs && pair_count) || !leaf_eq || !out ||
+        (unsigned)mode > CETTA_TERM_MATCH_VARIANT ||
+        (previous && (previous->mode != mode ||
+            (previous->images.count &&
+             (!previous->images.variables || !previous->images.values)) ||
+            (previous->protected_count && !previous->protected_variables))))
+        return CETTA_TERM_MATCH_INVALID;
+    if (pair_count > SIZE_MAX / sizeof(TermMatchTask))
+        return CETTA_TERM_MATCH_NO_MEMORY;
+    for (size_t i = 0u; i < pair_count; ++i)
+        if (!pairs[i].left || !pairs[i].right)
+            return CETTA_TERM_MATCH_INVALID;
+    CettaVarMap subject_vars, reverse_vars;
+    cetta_var_map_init(&subject_vars);
+    cetta_var_map_init(&reverse_vars);
+    CettaTermMatchStatus result = CETTA_TERM_MATCH_NO_MEMORY;
+    TermPairSet seen[2] = {0};
+    TermMatchTask *work = NULL;
+    size_t work_len = 0u, work_cap = 0u;
+    TermMatchBinding *bindings = NULL;
+    size_t count = 0u, capacity = 0u;
+    CettaVarIndex index = {0};
+    if (previous) {
+        for (uint32_t i = 0u; i < previous->protected_count; ++i) {
+            Atom *variable = previous->protected_variables[i];
+            if (!variable || variable->kind != ATOM_VAR ||
+                mode == CETTA_TERM_MATCH_VARIANT) {
+                result = CETTA_TERM_MATCH_INVALID;
+                goto done;
+            }
+            if (!cetta_var_map_lookup(&subject_vars, variable->var_id) &&
+                !cetta_var_map_add(&subject_vars, variable->var_id, variable))
+                goto done;
+        }
+    }
+    if (mode != CETTA_TERM_MATCH_VARIANT) {
+        result = term_match_subject_vars(pairs, pair_count, mode, &subject_vars);
+        if (result != CETTA_TERM_MATCH_OK) goto done;
+        result = CETTA_TERM_MATCH_NO_MEMORY;
+    }
+    if (previous) {
+        if (!term_graph_work_reserve((void **)&bindings, &capacity,
+                previous->images.count, sizeof(*bindings))) goto done;
+        for (uint32_t i = 0u; i < previous->images.count; ++i) {
+            Atom *variable = previous->images.variables[i];
+            Atom *value = previous->images.values[i];
+            if (!variable || variable->kind != ATOM_VAR || !value ||
+                cetta_var_index_find_records(&index, bindings, sizeof(*bindings),
+                    count, variable->var_id) != SIZE_MAX) {
+                result = CETTA_TERM_MATCH_INVALID;
+                goto done;
+            }
+            /* A subject discovered later can invalidate a previously legal
+             * image, but can never refine it by binding the subject. */
+            if (cetta_var_map_lookup(&subject_vars, variable->var_id)) {
+                if (value->kind != ATOM_VAR || value->var_id != variable->var_id) {
+                    result = CETTA_TERM_MATCH_MISMATCH;
+                    goto done;
+                }
+                continue;
+            }
+            if (mode == CETTA_TERM_MATCH_VARIANT) {
+                if (value->kind != ATOM_VAR ||
+                    cetta_var_map_lookup(&reverse_vars, value->var_id)) {
+                    result = CETTA_TERM_MATCH_INVALID;
+                    goto done;
+                }
+                if (!cetta_var_map_add(&reverse_vars, value->var_id, variable))
+                    goto done;
+            }
+            bindings[count++] = (TermMatchBinding){
+                variable->var_id, variable, term_view_atom(value)};
+            if (!cetta_var_index_note_records(&index, bindings,
+                    sizeof(*bindings), count)) goto done;
+        }
+    }
+    if (!term_graph_work_reserve((void **)&work, &work_cap, pair_count, sizeof(*work)))
+        goto done;
+    for (size_t i = pair_count; i > 0u; --i) {
+        Atom *pattern = mode == CETTA_TERM_MATCH_REVERSE
+            ? pairs[i - 1u].right : pairs[i - 1u].left;
+        Atom *subject = mode == CETTA_TERM_MATCH_REVERSE
+            ? pairs[i - 1u].left : pairs[i - 1u].right;
+        work[work_len++] = (TermMatchTask){
+            .pair = {term_view_atom(pattern), term_view_atom(subject)}};
+    }
+    while (work_len) {
+        TermMatchTask task = work[--work_len];
+        task.pair.left = term_view_resolve(task.pair.left);
+        task.pair.right = term_view_resolve(task.pair.right);
+        bool failed = false;
+        if (!term_pair_set_add(&seen[task.rigid], task.pair, &failed)) {
+            if (failed)
+                goto done;
+            continue;
+        }
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_MATCH_PAIR_VISIT);
+        TermShape a = term_view_shape(task.pair.left);
+        TermShape b = term_view_shape(task.pair.right);
+        if ((a.kind == SHAPE_LEAF && (!a.leaf || a.leaf->kind == ATOM_EXPR)) ||
+            (b.kind == SHAPE_LEAF && (!b.leaf || b.leaf->kind == ATOM_EXPR))) {
+            result = CETTA_TERM_MATCH_INVALID;
+            goto done;
+        }
+        if (!task.rigid && a.kind == SHAPE_LEAF && a.leaf->kind == ATOM_VAR) {
+            if (mode == CETTA_TERM_MATCH_VARIANT) {
+                if (b.kind != SHAPE_LEAF || b.leaf->kind != ATOM_VAR) {
+                    result = CETTA_TERM_MATCH_MISMATCH;
+                    goto done;
+                }
+                Atom *previous = cetta_var_map_lookup(&reverse_vars, b.leaf->var_id);
+                if (previous && previous->var_id != a.leaf->var_id) {
+                    result = CETTA_TERM_MATCH_MISMATCH;
+                    goto done;
+                }
+                if (!previous &&
+                    !cetta_var_map_add(&reverse_vars, b.leaf->var_id, a.leaf))
+                    goto done;
+            }
+            if (cetta_var_map_lookup(&subject_vars, a.leaf->var_id)) {
+                if (b.kind != SHAPE_LEAF || b.leaf->kind != ATOM_VAR ||
+                    a.leaf->var_id != b.leaf->var_id) {
+                    result = CETTA_TERM_MATCH_MISMATCH;
+                    goto done;
+                }
+                continue;
+            }
+            size_t old = cetta_var_index_find_records(
+                &index, bindings, sizeof(*bindings), count, a.leaf->var_id);
+            if (old != SIZE_MAX) {
+                if (!term_graph_work_reserve((void **)&work, &work_cap,
+                                             work_len + 1u, sizeof(*work)))
+                    goto done;
+                work[work_len++] = (TermMatchTask){
+                    .pair = {bindings[old].value, task.pair.right}, .rigid = true};
+            } else {
+                if (count == UINT32_MAX ||
+                    !term_graph_work_reserve((void **)&bindings, &capacity,
+                                             count + 1u, sizeof(*bindings)))
+                    goto done;
+                bindings[count++] = (TermMatchBinding){
+                    a.leaf->var_id, a.leaf, task.pair.right};
+                if (!cetta_var_index_note_records(&index, bindings,
+                                                  sizeof(*bindings), count))
+                    goto done;
+            }
+            continue;
+        }
+        if (a.kind != b.kind || a.arity != b.arity ||
+            (a.kind == SHAPE_COMPOUND && a.name != b.name) ||
+            (a.kind == SHAPE_LEAF && !leaf_eq(a.leaf, b.leaf))) {
+            result = CETTA_TERM_MATCH_MISMATCH;
+            goto done;
+        }
+        if (a.arity > SIZE_MAX - work_len ||
+            !term_graph_work_reserve((void **)&work, &work_cap,
+                                     work_len + a.arity, sizeof(*work)))
+            goto done;
+        /* Stack order retains left-to-right first occurrence of bindings. */
+        for (uint32_t i = a.arity; i > 0u; i--)
+            work[work_len++] = (TermMatchTask){
+                .pair = {term_shape_child(&a, i - 1u), term_shape_child(&b, i - 1u)},
+                .rigid = task.rigid};
+    }
+    CettaTermMatch staged = {.count = (uint32_t)count};
+    if (count) {
+        staged.variables = arena_alloc(arena, count * sizeof(*staged.variables));
+        staged.values = arena_alloc(arena, count * sizeof(*staged.values));
+        for (size_t i = 0u; i < count; i++) {
+            staged.variables[i] = bindings[i].variable;
+            staged.values[i] = term_view_value(arena, bindings[i].value);
+            if (!staged.values[i])
+                goto done;
+        }
+    }
+    Atom **protected_variables = subject_vars.len
+        ? arena_alloc(arena, (size_t)subject_vars.len * sizeof(*protected_variables)) : NULL;
+    for (uint32_t i = 0u; i < subject_vars.len; ++i)
+        protected_variables[i] = subject_vars.items[i].mapped_var;
+    *out = (CettaTermMatchState){.images = staged,
+        .protected_variables = protected_variables,
+        .protected_count = subject_vars.len, .mode = mode};
+    result = CETTA_TERM_MATCH_OK;
+done:
+    cetta_var_map_free(&reverse_vars);
+    cetta_var_map_free(&subject_vars);
+    cetta_var_index_free(&index);
+    free(bindings);
+    free(work);
+    for (unsigned i = 0u; i < 2u; i++) {
+        free(seen[i].slots);
+        free(seen[i].used);
+    }
+    return result;
+}
+
+CettaTermMatchStatus term_graph_match_many(
+        Arena *arena, const CettaTermMatchPair *pairs, size_t pair_count,
+        CettaTermMatchMode mode, bool (*leaf_eq)(Atom *, Atom *), CettaTermMatch *out) {
+    if (!out) return CETTA_TERM_MATCH_INVALID;
+    CettaTermMatchState state;
+    CettaTermMatchStatus status = term_graph_match_extend(arena, NULL, pairs,
+        pair_count, mode, leaf_eq, &state);
+    if (status == CETTA_TERM_MATCH_OK) *out = state.images;
+    return status;
+}
+
+CettaTermMatchStatus term_graph_match_pattern(
+        Arena *arena, Atom *pattern, Atom *subject,
+        bool (*leaf_eq)(Atom *, Atom *), CettaTermMatch *out) {
+    const CettaTermMatchPair pair = {pattern, subject};
+    return term_graph_match_many(arena, &pair, 1u, CETTA_TERM_MATCH_FORWARD,
+                                 leaf_eq, out);
 }
 
 /* ── Assumptions ────────────────────────────────────────────────────────── */

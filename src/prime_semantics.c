@@ -1340,8 +1340,12 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
         return PRIME_FORM_UNDETERMINED;
     }
 
-    *detail = prime_expr2(a, "invalid-type-application", type);
-    return PRIME_FORM_REFUTED;
+    /* Only HE's inference was asked here, and it found no `Type`: that is no
+     * evidence that the form is ill-formed.  Prime never refutes through
+     * HE's type engine. */
+    *detail = prime_expr2(a, "outside-kernel-fragments",
+                          prime_expr2(a, "invalid-type-application", type));
+    return PRIME_FORM_UNDETERMINED;
 }
 
 static Atom *prime_synth_closed_regular(
@@ -1588,9 +1592,15 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
         free(types);
         return prime_incomplete(a, judgment, reason);
     }
+    /* The kernel's fragments have declined the term, and this enumeration
+     * is HE's inference, not a judgment of Prime: finding no type is no
+     * evidence against one.  Prime never refutes through HE's type engine. */
     if (count == 0) {
         free(types);
-        return prime_refuted(a, judgment, prime_expr1(a, "no-inferred-type"));
+        return prime_undetermined(
+            a, judgment,
+            prime_expr2(a, "outside-kernel-fragments",
+                        prime_expr1(a, "no-inferred-type")));
     }
 
     uint32_t known_count = 0;
@@ -2722,7 +2732,8 @@ prime_elaborate_declared_regular_term_with_trail(
  * The univalence guest adds an abstract equivalence former and the univalence
  * axiom as declarations without computation; they exist only under that
  * policy, so that the cost of an axiom without a computation rule can be
- * observed rather than argued. */
+ * observed rather than argued.  The policy is the space's own
+ * (prime_space_identity_policy): two spaces of one program may differ. */
 typedef struct {
     const char *name;
     const char *type;
@@ -2757,14 +2768,15 @@ static const PrimeLanguageDeclaration PRIME_LANGUAGE_DECLARATIONS[] = {
      CETTA_PRIME_IDENTITY_UNIVALENCE},
 };
 
-static Atom *prime_language_owned_declaration(Arena *arena, Atom *name) {
+static Atom *prime_language_owned_declaration(Space *space, Arena *arena,
+                                              Atom *name) {
     for (size_t i = 0; i < sizeof PRIME_LANGUAGE_DECLARATIONS /
                            sizeof PRIME_LANGUAGE_DECLARATIONS[0]; i++) {
         const PrimeLanguageDeclaration *declaration =
             &PRIME_LANGUAGE_DECLARATIONS[i];
         if (!is_symbol_named(name, declaration->name)) continue;
         if (declaration->policy >= 0 &&
-            cetta_prime_identity_policy() != declaration->policy)
+            prime_space_identity_policy(space) != declaration->policy)
             return NULL;
         Atom **atoms = NULL;
         int count = parse_metta_text(declaration->type, arena, &atoms);
@@ -2799,7 +2811,7 @@ prime_resolve_declared_regular_name(
     SpaceDeclaredTypeLookupCost cost = {0};
     uint32_t declared_count = space_get_declared_types_costed(
         space, arena, name, &declared_types, &cost);
-    Atom *builtin = prime_language_owned_declaration(arena, name);
+    Atom *builtin = prime_language_owned_declaration(space, arena, name);
     if (builtin) {
         /* A language-owned constant is declared by the language, not by the
          * space: its type is fixed so that the kernel's rules compute on a
@@ -2807,12 +2819,10 @@ prime_resolve_declared_regular_name(
         free(declared_types);
         declared_types = NULL;
         declared_count = 0u;
-        if (builtin) {
-            declared_types = malloc(sizeof(Atom *));
-            if (declared_types) {
-                declared_types[0] = builtin;
-                declared_count = 1u;
-            }
+        declared_types = malloc(sizeof(Atom *));
+        if (declared_types) {
+            declared_types[0] = builtin;
+            declared_count = 1u;
         }
     }
     bool charged = prime_regular_declaration_charge(
@@ -3253,7 +3263,7 @@ prime_elaborate_declared_regular_term_with_trail(
             return (PrimeRegularDeclaredElaboration){0};
 
         if (g_prime_admit_open_parameters && !trail &&
-            !prime_language_owned_declaration(arena, name)) {
+            !prime_language_owned_declaration(space, arena, name)) {
             Atom **declared = NULL;
             uint32_t declared_count = space_get_declared_types(
                 space, arena, name, &declared);
@@ -4259,9 +4269,14 @@ static Atom *prime_check_or_analyze(
             edge_atom, detail ? detail : expected);
         return prime_established(a, judgment, evidence);
     }
+    /* A mismatch in HE's consistency relation is no refutation in Prime:
+     * the kernel's fragments declined the term, and Prime never refutes
+     * through HE's type engine. */
     if (status == CETTA_NIK_OUTCOME_REFUTED)
-        return prime_refuted(a, judgment,
-                             detail ? detail : prime_expr1(a, "type-mismatch"));
+        return prime_undetermined(
+            a, judgment,
+            prime_expr2(a, "outside-kernel-fragments",
+                        detail ? detail : prime_expr1(a, "type-mismatch")));
     if (status == CETTA_NIK_OUTCOME_INCOMPLETE)
         return prime_incomplete(
             a, judgment,
@@ -5280,10 +5295,14 @@ static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
     if (status == CETTA_HE_REFINEMENT_VALID)
         return prime_established(a, judgment,
                                  prime_expr2(a, "RefinementEvidence", type));
+    /* HE's refinement check is not a judgment of Prime: its failure leaves
+     * the refinement undetermined. */
     if (status == CETTA_HE_REFINEMENT_INVALID)
-        return prime_refuted(a, judgment,
-                             detail ? detail
-                                    : prime_expr1(a, "refinement-failed"));
+        return prime_undetermined(
+            a, judgment,
+            prime_expr2(a, "outside-kernel-fragments",
+                        detail ? detail
+                               : prime_expr1(a, "refinement-failed")));
     if (status == CETTA_HE_REFINEMENT_INCOMPLETE)
         return prime_incomplete(
             a, judgment,
@@ -7891,10 +7910,7 @@ static bool prime_scope_copy(Arena *arena, CettaFrameIdentityScope *identities,
                              Atom *const *names, size_t count,
                              bool store_names) {
     for (size_t i = 0u; i < count; i++) {
-        CettaFrameIdentity instance =
-            cetta_frame_identity_scope_fresh(identities);
-        Atom *fresh = atom_var_like(arena, names[i],
-                                    var_epoch_id(fresh_var_id(), instance));
+        Atom *fresh = atom_fresh_private_var(arena, identities, names[i]);
         /* A store name the template owns is its slot alone, so it is
          * renamed wherever it occurs, quoted code included, which shares
          * it (an opening of code does the same, prime_code_opening).  A
@@ -13715,7 +13731,7 @@ static bool prime_reduct_in_vocabulary(
         Atom *name = term->expr.len == 2u ? term->expr.elems[1] : NULL;
         if (!name || name->kind != ATOM_SYMBOL) return false;
         if (prime_regular_declaration_context_contains(declarations, name) ||
-            prime_language_owned_declaration(arena, name))
+            prime_language_owned_declaration(space, arena, name))
             return true;
         Atom **declared = NULL;
         uint32_t count = space_get_declared_types(space, arena, name, &declared);
@@ -14183,10 +14199,13 @@ Atom *prime_semantics_rules_normal_form(Arena *arena, Space *space,
 }
 
 /* A refutation by the conversion algorithm assumes the algorithm complete
- * for the package.  Lean proves that for the bare tower and the object
- * package; where the comparison meets other declarations, the reason says
- * which kinds (prime_scoped_judgment_completeness_assumed), and a refutation
- * inside the proven packages prints no qualifier.  A refutation because the
+ * for the package.  Lean proves that for the bare tower, the object package
+ * and the object package with one admissible simple datatype (see
+ * regular_unrelated_refuted).  Where the comparison meets declarations other
+ * than the bare tower's and the object package's, declared datatypes
+ * included, the reason says which kinds
+ * (prime_scoped_judgment_completeness_assumed), and a refutation inside the
+ * bare tower or the object package prints no qualifier.  A refutation because the
  * two sides' types are apart rests on the same assumption: the algorithm
  * found the types unrelated.  Where Lean refutes the equation itself, with no
  * assumption about the algorithm, the reason names that theorem instead
@@ -14513,7 +14532,7 @@ Atom *prime_semantics_theorem_context(
             continue;
         Atom *name = constant->expr.elems[1];
         if (!name || name->kind != ATOM_SYMBOL ||
-            prime_language_owned_declaration(a, name) ||
+            prime_language_owned_declaration(space, a, name) ||
             prime_theorem_names_contain(names, name_count, name))
             continue;
         if (name_count == name_capacity) {
@@ -14833,11 +14852,12 @@ bool cetta_prime_typing_direct_authority_token_v1_is_current(
            cetta_nik_direct_authority_token_v1_equal(token, &current);
 }
 
-static const char *const PRIME_OP_NAMES[] = {"prime-package"};
+static const char *const PRIME_OP_NAMES[] = {"prime-package", "prime:elaborate"};
 
 bool prime_semantics_is_op_id(SymbolId id) {
     return id != SYMBOL_ID_NONE &&
-           id == g_builtin_syms.prime_package;
+           (id == g_builtin_syms.prime_package ||
+            id == g_builtin_syms.prime_elaborate);
 }
 
 bool prime_semantics_is_op(const char *name) {
@@ -14848,9 +14868,7 @@ bool prime_semantics_is_op(const char *name) {
 }
 
 bool prime_semantics_op_data_arg(const char *name, uint32_t arg_index) {
-    (void)name;
-    (void)arg_index;
-    return false;
+    return name && strcmp(name, "prime:elaborate") == 0 && arg_index == 0u;
 }
 
 Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
@@ -14861,6 +14879,22 @@ Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
     }
     const char *name = atom_name_cstr(head);
     if (!prime_semantics_is_op(name)) return NULL;
+
+    /* An explicit ingress for raw Prime syntax produced by a guest lowering.
+     * The same pass forms reader/parse output. It records binding structure
+     * under the current scope profile without executing the resulting code.
+     * Return sealed code so storing/inspecting it cannot execute its body.
+     * Existing formed values keep their scope records. */
+    if (strcmp(name, "prime:elaborate") == 0) {
+        if (nargs != 1u)
+            return prime_refuted(a, atom_expr(a, &head, 1u),
+                                 prime_expr1(a, "prime-elaborate-arity"));
+        Atom *formed = prime_semantics_elaborate_form(a, args[0]);
+        return formed
+            ? atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), formed)
+            : prime_refuted(a, args[0],
+                            prime_expr1(a, "prime-elaboration-failed"));
+    }
 
     if (strcmp(name, "prime-package") == 0) {
         Atom *call = atom_expr(a, (Atom *[]){head}, 1);

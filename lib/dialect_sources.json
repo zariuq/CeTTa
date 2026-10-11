@@ -1,0 +1,20 @@
+{
+  "schema": "metta-library-dialect-sources-v1",
+  "groups": [
+    {
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "sort_values": "closed-strings",
+      "sources": [
+        "hol_light/data.metta",
+        "hol_light/syntax.metta",
+        "hol_light/kernel.metta",
+        "hol_light/definitions.metta",
+        "hol_light/derived.metta",
+        "hol_light/profile.metta",
+        "hol_light/receive.metta",
+        "hol_light/resumption.metta"
+      ]
+    }
+  ]
+}

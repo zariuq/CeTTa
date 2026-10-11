@@ -453,6 +453,10 @@ fail:
 
 static bool abt_parse_name_class(Atom *atom, AbtNameClass *out) {
     memset(out, 0, sizeof(*out));
+    if (atom_is_symbol(atom, "Variables")) {
+        out->kind = ABT_NAME_LOGICAL_VARIABLE;
+        return true;
+    }
     if (abt_expr_head(atom, "Form", 1u)) {
         out->kind = ABT_NAME_FORM;
         return abt_parse_head_prefix(atom->expr.elems[1], &out->prefix,
@@ -2193,6 +2197,7 @@ static const AbtSignatureEntry *abt_named_entry(const AbtSignature *signature,
    ends in one string, such as (var "X"). */
 static bool abt_name_shaped(Atom *atom) {
     if (!atom) return false;
+    if (atom->kind == ATOM_VAR) return true;
     if (atom->kind == ATOM_SYMBOL) return true;
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING)
         return true;
@@ -2210,6 +2215,10 @@ bool abt_is_name(const AbtSignature *signature, const Atom *atom) {
     Atom *candidate = (Atom *)atom;
     for (uint32_t i = 0; i < signature->names_len; i++) {
         const AbtNameClass *name_class = &signature->names[i];
+        if (name_class->kind == ABT_NAME_LOGICAL_VARIABLE) {
+            if (candidate->kind == ATOM_VAR) return true;
+            continue;
+        }
         if (name_class->kind == ABT_NAME_FORM) {
             if (candidate->kind == ATOM_EXPR &&
                 candidate->expr.len ==
@@ -2397,6 +2406,7 @@ typedef enum {
     ABT_NAMED_SUBST,
     ABT_NAMED_APART,
     ABT_NAMED_CANON,
+    ABT_NAMED_INSTANCE,
 } AbtNamedMode;
 
 typedef struct {
@@ -2416,10 +2426,15 @@ typedef struct {
     AbtNameSet declared;   /* APART: names of the binders seen so far */
     AbtNameSet free_seen;  /* FREE */
     bool free_all;         /* FREE: every unbound name, not only variables */
+    bool contextual_indices; /* CANON export: references use relative indices */
     Atom **free_list;
     size_t free_len;
     size_t free_cap;
     AbtFrameBlock *frames;
+    CettaFrameIdentityScope identities;
+    Atom **receipts;
+    size_t receipts_len;
+    size_t receipts_cap;
 } AbtNamed;
 
 static void abt_named_init(AbtNamed *ctx, const AbtSignature *signature,
@@ -2443,6 +2458,8 @@ static void abt_named_free(AbtNamed *ctx) {
     abt_name_set_free(&ctx->declared);
     abt_name_set_free(&ctx->free_seen);
     free(ctx->free_list);
+    free(ctx->receipts);
+    cetta_frame_identity_scope_clear(&ctx->identities);
     abt_frame_pool_free(ctx->frames);
 }
 
@@ -2459,9 +2476,11 @@ static bool abt_named_record_free(AbtNamed *ctx, Atom *name) {
     return true;
 }
 
-/* A fresh variant of name: its text without trailing digits, followed by
-   the smallest positive number whose result occurs nowhere yet. */
+/* Logical names receive private identities. A nominal name keeps its text
+   without trailing digits, followed by the smallest unused positive number. */
 static Atom *abt_named_fresh(AbtNamed *ctx, Atom *name) {
+    if (name->kind == ATOM_VAR)
+        return atom_fresh_private_var(ctx->arena, &ctx->identities, name);
     const char *text = NULL;
     uint32_t len = 0u;
     if (!abt_name_text(name, &text, &len)) return NULL;
@@ -2515,6 +2534,25 @@ static Atom *abt_named_decide(AbtNamed *ctx, const AbtFrame *env,
              abt_name_set_has(&ctx->declared, name));
         Atom *result = rename ? abt_named_fresh(ctx, name) : name;
         if (!result || !abt_name_set_add(&ctx->declared, result)) return NULL;
+        return result;
+    }
+    case ABT_NAMED_INSTANCE: {
+        if (ctx->receipts_len > INT64_MAX) return NULL;
+        Atom *result = abt_named_fresh(ctx, name);
+        if (!result) return NULL;
+        if (ctx->receipts_len == ctx->receipts_cap) {
+            size_t cap = ctx->receipts_cap ? ctx->receipts_cap * 2u : 16u;
+            if (cap < ctx->receipts_cap || cap > SIZE_MAX / sizeof(Atom *))
+                return NULL;
+            ctx->receipts = cetta_realloc(ctx->receipts, cap * sizeof(Atom *));
+            ctx->receipts_cap = cap;
+        }
+        Atom *items[] = {atom_symbol(ctx->arena, "AbtBinding"),
+                        atom_int(ctx->arena, (int64_t)ctx->receipts_len),
+                        name, result};
+        Atom *receipt = atom_expr(ctx->arena, items, 4u);
+        if (!receipt) return NULL;
+        ctx->receipts[ctx->receipts_len++] = receipt;
         return result;
     }
     }
@@ -2775,49 +2813,76 @@ done:
     return ok;
 }
 
-/* The distinct variable names of a pattern, in first-occurrence order. */
-static bool abt_named_pattern_names(const AbtSignature *signature, Atom *pattern,
-                                    Atom ***names_out, size_t *count_out) {
-    AbtNameSet seen;
+/* Collect names once in occurrence order, rejecting cyclic expression paths.
+ * A NULL signature collects every name shape for freshness avoidance. */
+static bool abt_named_collect(AbtNameSet *seen, const AbtSignature *signature,
+                               Atom *root, Atom ***ordered, size_t *count_out) {
+    AbtTaskStack stack;
+    AbtActiveSet active;
     Atom **names = NULL;
     size_t count = 0u, cap = 0u;
-    Atom **stack = cetta_malloc(sizeof(*stack) * 64u);
-    size_t len = 0u, stack_cap = 64u;
     bool ok = true;
-    abt_name_set_init(&seen);
-    stack[len++] = pattern;
-    while (len > 0u && ok) {
-        Atom *atom = stack[--len];
-        if (abt_is_name(signature, atom)) {
-            if (abt_name_set_has(&seen, atom)) continue;
-            if (!abt_name_set_add(&seen, atom)) {
+    abt_tasks_init(&stack);
+    abt_active_init(&active);
+    ok = abt_task_push(&stack, (AbtTask){
+        ABT_TASK_VISIT, root, 0u, NULL, NULL});
+    while (stack.len > 0u && ok) {
+        AbtTask task = stack.tasks[--stack.len];
+        Atom *atom = task.term;
+        if (task.kind == ABT_TASK_BUILD) {
+            abt_active_leave(&active, atom);
+            continue;
+        }
+        if (!atom) {
+            ok = false;
+            break;
+        }
+        if (signature ? abt_is_name(signature, atom) : abt_name_shaped(atom)) {
+            if (abt_name_set_has(seen, atom)) continue;
+            if (!abt_name_set_add(seen, atom)) {
                 ok = false;
                 break;
             }
+            if (!ordered) continue;
             if (count == cap) {
-                cap = cap ? cap * 2u : 8u;
+                size_t next = cap ? cap * 2u : 8u;
+                if (next < cap || next > SIZE_MAX / sizeof(*names)) {
+                    ok = false;
+                    break;
+                }
+                cap = next;
                 names = cetta_realloc(names, sizeof(*names) * cap);
             }
             names[count++] = atom;
             continue;
         }
         if (atom->kind != ATOM_EXPR) continue;
-        if (atom->expr.len > stack_cap - len) {
-            while (atom->expr.len > stack_cap - len) stack_cap *= 2u;
-            stack = cetta_realloc(stack, sizeof(*stack) * stack_cap);
-        }
-        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
-            stack[len++] = atom->expr.elems[i - 1u];
+        ok = abt_active_enter(&active, atom) &&
+             abt_task_push(&stack, (AbtTask){
+                 ABT_TASK_BUILD, atom, 0u, NULL, NULL});
+        for (CettaExprIndex i = atom->expr.len; i > 0u && ok; i--)
+            ok = abt_task_push(&stack, (AbtTask){
+                ABT_TASK_VISIT, atom->expr.elems[i - 1u], 0u, NULL, NULL});
     }
-    free(stack);
-    abt_name_set_free(&seen);
+    abt_tasks_free(&stack);
+    abt_active_free(&active);
     if (!ok) {
         free(names);
         return false;
     }
-    *names_out = names;
-    *count_out = count;
+    if (ordered) *ordered = names;
+    if (count_out) *count_out = count;
     return true;
+}
+
+/* The distinct variable names of a pattern, in first-occurrence order. */
+static bool abt_named_pattern_names(const AbtSignature *signature, Atom *pattern,
+                                    Atom ***names_out, size_t *count_out) {
+    AbtNameSet seen;
+    abt_name_set_init(&seen);
+    bool ok = abt_named_collect(&seen, signature, pattern, names_out, count_out);
+    abt_name_set_free(&seen);
+    return ok;
 }
 
 static bool abt_named_expand_pattern(AbtNamed *ctx, AbtNamedStack *stack,
@@ -2873,13 +2938,14 @@ static const AbtNamedBinding *abt_named_binding(const AbtNamed *ctx,
 }
 
 /* One traversal for every mode.  NULL means malformed or cyclic input. */
-static Atom *abt_named_run(AbtNamed *ctx, Atom *term) {
+static Atom *abt_named_run_from(AbtNamed *ctx, Atom *term,
+                                const AbtFrame *environment) {
     Atom *result = NULL;
     AbtNamedStack stack;
     AbtActiveSet active;
     abt_named_stack_init(&stack);
     abt_active_init(&active);
-    if (!abt_named_visit(&stack, term, NULL, &result)) goto fail;
+    if (!abt_named_visit(&stack, term, environment, &result)) goto fail;
     while (stack.len > 0u) {
         AbtNamedTask task = stack.tasks[--stack.len];
         if (task.kind == ABT_NAMED_TASK_BUILD) {
@@ -2909,7 +2975,16 @@ static Atom *abt_named_run(AbtNamed *ctx, Atom *term) {
             }
             const AbtFrame *frame = abt_frame_lookup(task.env, current, hash);
             if (frame) {
-                *task.destination = frame->value;
+                if (ctx->contextual_indices) {
+                    uint64_t index = task.env->level - frame->level;
+                    if (index > INT64_MAX) goto fail;
+                    *task.destination = atom_expr2(ctx->arena,
+                        atom_symbol(ctx->arena, "idx"),
+                        atom_int(ctx->arena, (int64_t)index));
+                    if (!*task.destination) goto fail;
+                } else {
+                    *task.destination = frame->value;
+                }
                 continue;
             }
             if (binding) {
@@ -2940,6 +3015,17 @@ static Atom *abt_named_run(AbtNamed *ctx, Atom *term) {
         const AbtSignatureEntry *entry = task.each_role == ABT_EACH_LIST
             ? NULL : abt_named_entry(ctx->signature, current);
         if (!entry) {
+            /* Undeclared data stays structural, but a declared binder cannot
+             * evade its scope by appearing with a different arity. A list of
+             * fields under Each is a carrier, not a constructor occurrence. */
+            if (task.each_role != ABT_EACH_LIST) {
+                for (uint32_t j = 0u; j < ctx->signature->len; j++) {
+                    const AbtSignatureEntry *decl = &ctx->signature->entries[j];
+                    if (decl->kind != ABT_ENTRY_FIXED &&
+                        abt_prefix_matches(decl->prefix, decl->prefix_len, current))
+                        goto fail;
+                }
+            }
             for (CettaExprIndex i = len; i > 0u; i--) {
                 CettaExprIndex child = i - 1u;
                 Atom *value = current->expr.elems[child];
@@ -2977,28 +3063,41 @@ fail:
     return NULL;
 }
 
+static Atom *abt_named_run(AbtNamed *ctx, Atom *term) {
+    return abt_named_run_from(ctx, term, NULL);
+}
+
+/* Export the same canonical scope reading used by named alpha equality.
+ * The explicit ambient frame is ordered newest first. Unbound dependencies
+ * remain names; only an admitted binder or frame entry supplies a level. */
+Atom *abt_contextual_canonical(const AbtSignature *signature, Arena *arena,
+                               Atom *context, Atom *term) {
+    Atom *const *names = NULL;
+    CettaExprLen count = 0u;
+    if (!signature || !arena || !term || signature->names_len == 0u ||
+        !context || atom_is_list_rest(context) ||
+        !atom_sequence_view(context, &names, &count)) return NULL;
+    AbtNamed ctx;
+    abt_named_init(&ctx, signature, arena, ABT_NAMED_CANON);
+    ctx.contextual_indices = true;
+    const AbtFrame *environment = NULL;
+    Atom *result = NULL;
+    for (CettaExprIndex i = count; i > 0u; i--) {
+        Atom *name = names[i - 1u];
+        if (!abt_is_name(signature, name) ||
+            abt_frame_lookup(environment, name, atom_hash(name))) goto done;
+        environment = abt_named_frame(&ctx, environment, name, name);
+        if (!environment) goto done;
+    }
+    result = abt_named_run_from(&ctx, term, environment);
+done:
+    abt_named_free(&ctx);
+    return result;
+}
+
 /* Every name-shaped atom of term. */
 static bool abt_named_collect_names(AbtNameSet *set, Atom *term) {
-    Atom **stack = cetta_malloc(sizeof(*stack) * 64u);
-    size_t len = 0u, cap = 64u;
-    bool ok = true;
-    stack[len++] = term;
-    while (len > 0u && ok) {
-        Atom *atom = stack[--len];
-        if (abt_name_shaped(atom)) {
-            ok = abt_name_set_add(set, atom);
-            continue;
-        }
-        if (atom->kind != ATOM_EXPR) continue;
-        if (atom->expr.len > cap - len) {
-            while (atom->expr.len > cap - len) cap *= 2u;
-            stack = cetta_realloc(stack, sizeof(*stack) * cap);
-        }
-        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
-            stack[len++] = atom->expr.elems[i - 1u];
-    }
-    free(stack);
-    return ok;
+    return abt_named_collect(set, NULL, term, NULL, NULL);
 }
 
 /* Every unbound name of term, variable or not: any of them is captured by
@@ -3092,6 +3191,39 @@ done:
     return result;
 }
 
+Atom *abt_instantiate(const AbtSignature *signature, Arena *arena,
+                      Atom *avoid, Atom *term) {
+    Atom *const *names = NULL;
+    CettaExprLen count = 0u;
+    if (!signature || !arena || !term || !avoid ||
+        signature->names_len == 0u || atom_is_list_rest(avoid) ||
+        !atom_sequence_view(avoid, &names, &count)) return NULL;
+    AbtNamed ctx;
+    abt_named_init(&ctx, signature, arena, ABT_NAMED_INSTANCE);
+    Atom *result = NULL;
+    for (CettaExprIndex i = 0u; i < count; i++)
+        if (!abt_name_shaped(names[i]) || !abt_name_set_add(&ctx.used, names[i]))
+            goto done;
+    if (!abt_named_collect_names(&ctx.used, term)) goto done;
+    Atom *instance = abt_named_run(&ctx, term);
+    if (!instance || ctx.receipts_len == SIZE_MAX ||
+        !cetta_expr_len_mul_fits_size((CettaExprLen)ctx.receipts_len + 1u,
+                                    sizeof(Atom *))) goto done;
+    Atom **receipts = arena_alloc(
+        arena, (ctx.receipts_len + 1u) * sizeof(Atom *));
+    if (!receipts) goto done;
+    receipts[0] = atom_symbol(arena, "AbtBindings");
+    for (size_t i = 0u; i < ctx.receipts_len; i++)
+        receipts[i + 1u] = ctx.receipts[i];
+    Atom *evidence = atom_expr(arena, receipts, (CettaExprLen)ctx.receipts_len + 1u);
+    result = evidence
+        ? atom_expr3(arena, atom_symbol(arena, "AbtInstance"), instance, evidence)
+        : NULL;
+done:
+    abt_named_free(&ctx);
+    return result;
+}
+
 bool abt_named_alpha_equal(const AbtSignature *signature, Arena *arena,
                            Atom *left, Atom *right, bool *equal) {
     if (!signature || !arena || !left || !right || !equal) return false;
@@ -3158,6 +3290,9 @@ typedef enum {
     ABT_OP_SUBSTITUTE,
     ABT_OP_RENAME_BOUND,
     ABT_OP_NAMED_ALPHA_EQ,
+    ABT_OP_INSTANTIATE,
+    ABT_OP_CONTEXTUAL_CANONICAL,
+    ABT_OP_QUOTE_SYNTAX,
 } AbtOpKind;
 
 /* Hot paths compare interned SymbolIds, not bytes.  These fixed internal
@@ -3194,6 +3329,12 @@ static AbtOpKind abt_op_kind(SymbolId id) {
         return ABT_OP_RENAME_BOUND;
     if (id == g_builtin_syms.abt_named_alpha_eq)
         return ABT_OP_NAMED_ALPHA_EQ;
+    if (id == g_builtin_syms.abt_instantiate)
+        return ABT_OP_INSTANTIATE;
+    if (id == g_builtin_syms.abt_contextual_canonical)
+        return ABT_OP_CONTEXTUAL_CANONICAL;
+    if (id == g_builtin_syms.abt_quote_syntax)
+        return ABT_OP_QUOTE_SYNTAX;
     return ABT_OP_NONE;
 }
 
@@ -3203,6 +3344,8 @@ bool abt_is_op(SymbolId id) {
 
 bool abt_op_data_arg(SymbolId id, uint32_t arg_index) {
     AbtOpKind kind = abt_op_kind(id);
+    if (kind == ABT_OP_QUOTE_SYNTAX)
+        return arg_index == 0u;
     if (kind == ABT_OP_DEFAULT_SIGNATURES)
         return arg_index == 0u;
     if (kind == ABT_OP_SIGNATURE_ADMITTED)
@@ -3223,7 +3366,8 @@ bool abt_op_data_arg(SymbolId id, uint32_t arg_index) {
     if (kind == ABT_OP_FREE_NAMES)
         return arg_index <= 1u;
     if (kind == ABT_OP_SUBSTITUTE || kind == ABT_OP_RENAME_BOUND ||
-        kind == ABT_OP_NAMED_ALPHA_EQ)
+        kind == ABT_OP_NAMED_ALPHA_EQ || kind == ABT_OP_INSTANTIATE ||
+        kind == ABT_OP_CONTEXTUAL_CANONICAL)
         return arg_index <= 2u;
     return false;
 }
@@ -3233,6 +3377,16 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
     SymbolId id = head->sym_id;
     AbtOpKind kind = abt_op_kind(id);
+    if (kind == ABT_OP_QUOTE_SYNTAX) {
+        if (nargs != 1u)
+            return abt_grounded_error(arena, head, args, nargs,
+                                      "ABTIncorrectArity");
+        /* Reify raw guest syntax without forming Prime values inside it.
+         * The chosen language's elaborator/interpreter remains an explicit
+         * later operation. Supplied identities and scope records are kept. */
+        return atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.quote),
+                          args[0]);
+    }
     if (kind == ABT_OP_DEFAULT_SIGNATURES) {
         if (nargs != 1u)
             return abt_grounded_error(
@@ -3254,7 +3408,8 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
             ? atom_true(arena) : atom_false(arena);
     }
     if (kind == ABT_OP_FREE_NAMES || kind == ABT_OP_SUBSTITUTE ||
-        kind == ABT_OP_RENAME_BOUND || kind == ABT_OP_NAMED_ALPHA_EQ) {
+        kind == ABT_OP_RENAME_BOUND || kind == ABT_OP_NAMED_ALPHA_EQ ||
+        kind == ABT_OP_INSTANTIATE || kind == ABT_OP_CONTEXTUAL_CANONICAL) {
         uint32_t expected = kind == ABT_OP_FREE_NAMES ? 2u : 3u;
         if (nargs != expected)
             return abt_grounded_error(
@@ -3278,6 +3433,15 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
             named_result = abt_substitute(&named, arena, args[1], args[2]);
         } else if (kind == ABT_OP_RENAME_BOUND) {
             named_result = abt_rename_bound(&named, arena, args[1], args[2]);
+        } else if (kind == ABT_OP_INSTANTIATE) {
+            named_result = abt_instantiate(&named, arena, args[1], args[2]);
+        } else if (kind == ABT_OP_CONTEXTUAL_CANONICAL) {
+            named_result = abt_contextual_canonical(&named, arena, args[1], args[2]);
+            /* The scope readout is code. A caller inspecting it must not
+             * implicitly execute a command occurring in its payload. */
+            if (named_result)
+                named_result = atom_expr2(arena,
+                    atom_symbol_id(arena, g_builtin_syms.quote), named_result);
         } else {
             bool equal = false;
             if (abt_named_alpha_equal(&named, arena, args[1], args[2], &equal))

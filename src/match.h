@@ -743,6 +743,10 @@ static inline bool bindings_structure_quotes_children(const Atom *atom) {
 }
 
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
+/* Same substitution and borrowed-result contract, retaining shared open
+ * syntax under each lexical reading for acyclic binding environments.
+ * Cyclic environments keep the ordinary active-path interpretation. */
+Atom     *bindings_apply_graph(Bindings *b, Arena *a, Atom *atom);
 static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
     if (!b || !bindings_has_bound_values(b) ||
         !atom || !atom_has_vars(atom))
@@ -801,6 +805,14 @@ bool      binding_value_equal(BindingValue left, BindingValue right);
  * bindings_to_atom is only the explicit structural observation/codec. */
 Atom *bindings_capture_value(Arena *arena, const Bindings *bindings);
 bool bindings_restore_captured_value(const Atom *atom, Bindings *out);
+/* A simultaneous, injective variable renaming. Unlike a logical environment,
+ * this may contain permutations and must not be transitively dereferenced. */
+Atom *bindings_capture_renaming(Arena *arena, Atom *const *variables,
+                                Atom *const *values, size_t count);
+Atom *bindings_apply_saved(Arena *arena, const Atom *value, Atom *term);
+/* Publish the images of a checked relation as one owning witness. */
+Atom *bindings_capture_images(Arena *arena, Atom *const *variables,
+                              Atom *const *values, size_t count, bool renaming);
 /* Exact logical support of an environment, including saved environments in
  * its range. The caller owns the returned array. No syntax is materialized. */
 bool bindings_collect_support(const Bindings *bindings,

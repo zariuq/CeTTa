@@ -310,6 +310,7 @@ bool he_library_declares_arity(const Atom *subject, CettaExprLen arity) {
     return false;
 }
 
+SymbolId g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
 static bool g_he_tables_loaded;
 static pthread_once_t g_he_tables_once = PTHREAD_ONCE_INIT;
 
@@ -342,7 +343,9 @@ static void he_library_tables_build(void) {
                              HE_GROUNDED_EXTENSION_TYPES[i].type, true))
             return;
     }
-    g_he_tables_loaded = true;
+    g_he_module_space_no_deps_symbol =
+        symbol_lookup_cstr(g_symbols, "module-space-no-deps");
+    g_he_tables_loaded = g_he_module_space_no_deps_symbol != SYMBOL_ID_NONE;
 }
 
 bool he_library_tables_init(void) {
@@ -363,19 +366,35 @@ uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
     return count;
 }
 
-HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
-                            Atom *metatype) {
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
-        atom_eq(expected, metatype) ||
+static HeTypeDemand he_type_demand_after_atom(
+    const Atom *subject, Atom *expected, bool same_metatype, bool variable) {
+    if (same_metatype ||
         (atom_is_symbol_id(expected, g_builtin_syms.expression) &&
-         atom_is_list(subject)) ||
-        atom_is_symbol_id(metatype, g_builtin_syms.variable))
+         atom_is_list(subject)) || variable)
         return HE_TYPE_KEEP;
     if (subject->kind == ATOM_SYMBOL || subject->kind == ATOM_GROUNDED ||
         (subject->kind == ATOM_EXPR && subject->expr.len == 0u) ||
         atom_is_list_form(subject))
         return HE_TYPE_CAST;
     return HE_TYPE_INTERPRET;
+}
+
+HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
+                            Atom *metatype) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom))
+        return HE_TYPE_KEEP;
+    return he_type_demand_after_atom(subject, expected,
+        atom_eq(expected, metatype),
+        atom_is_symbol_id(metatype, g_builtin_syms.variable));
+}
+
+HeTypeDemand he_type_source_demand(const Atom *subject, Atom *expected) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom))
+        return HE_TYPE_KEEP;
+    SymbolId metatype = atom_meta_type_id(subject);
+    return he_type_demand_after_atom(subject, expected,
+        atom_is_symbol_id(expected, metatype),
+        metatype == g_builtin_syms.variable);
 }
 
 bool he_type_call_open(Atom *signature, HeTypeCall *call) {

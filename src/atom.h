@@ -706,7 +706,8 @@ typedef struct {
     uint32_t frame_identity_len;
 } ArenaMark;
 
-/* An immutable saved substitution. The binding layer owns its representation;
+/* An immutable saved substitution. The binding layer owns its representation
+ * and every syntax/frame lifetime it uses, independently of the source arena;
  * atom copying only retains the owner, and printing asks for a projection.
  * Ordinary syntax substitution cannot traverse or rewrite its domain. */
 typedef struct CettaBindingsValue {
@@ -715,6 +716,7 @@ typedef struct CettaBindingsValue {
     Atom *(*observe)(Arena *, const struct CettaBindingsValue *);
     bool (*equal)(const struct CettaBindingsValue *,
                   const struct CettaBindingsValue *);
+    Atom *(*apply)(Arena *, const struct CettaBindingsValue *, Atom *);
     const VarId *support;
     size_t support_count;
 } CettaBindingsValue;
@@ -927,6 +929,9 @@ extern VarInternTable *g_var_intern;
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
+/* A symbol spelled by static, immutable storage. Uses the literal cache;
+ * dynamic or mutable name buffers must use atom_symbol instead. */
+Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
@@ -938,6 +943,10 @@ Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id);
 Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
                                  Atom *name_key, VarId id);
 Atom *atom_var_like(Arena *a, Atom *source, VarId id);
+/* A fresh private slot with source's presentation. The caller's scope keeps
+   the frame alive until the returned variable is owned by its arena. */
+Atom *atom_fresh_private_var(Arena *a, CettaFrameIdentityScope *scope,
+                             Atom *source);
 Atom *atom_int(Arena *a, int64_t val);
 Atom *atom_bigint(Arena *a, const char *val);
 const char *atom_bigint_cstr(const Atom *atom);
@@ -1274,6 +1283,8 @@ Atom *atom_variable_type(Arena *a);    /* Symbol "Variable" */
 Atom *atom_expression_type(Arena *a);  /* Symbol "Expression" */
 Atom *atom_grounded_type(Arena *a);    /* Symbol "Grounded" */
 Atom *atom_list_type(Arena *a);        /* Symbol "List": metatype and type of a list */
+/* Metatype identity in the current symbol context, without constructing an atom. */
+SymbolId atom_meta_type_id(const Atom *atom);
 Atom *get_meta_type(Arena *a, Atom *atom);  /* Meta-type of atom */
 bool atom_is_meta_type(Atom *type);
 bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
@@ -1408,6 +1419,11 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+/* A single publication root, with the same ownership policy as a default
+ * copy session: reuse a destination-closed graph, otherwise copy it while
+ * preserving its internal sharing. Related exported roots still require a
+ * shared session. */
+Atom *atom_deep_copy_single(Arena *dst, Atom *src);
 typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
 typedef Atom *(*AtomDeepCopyLeafMap)(Arena *dst, Atom *src, void *context);
 /* A fixed observation policy may expose another expression's children, or

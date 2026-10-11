@@ -1,0 +1,7 @@
+!(let $state (include include_frontier_space)
+   (case (get-state $state)
+     (((Error $source $reason) default-unit)
+      ($space (== $space &self)))))
+!(== &inside-context &self)
+!(add-atom &inside-context (include-context 43))
+!(match &self (include-context $x) $x)

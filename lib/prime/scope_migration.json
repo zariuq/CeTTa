@@ -100,9 +100,9 @@
     {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "fe5c229dca0c75e5e4360e86e60b2c228fa30b344826af902a5c3012c1473d04",
-      "output_sha256": "27385ec802a2b4910c03dc32380e038553bf7523bd3785cfe18a41966d984bc0",
-      "edits": 41,
+      "source_sha256": "92295bfaa8857a7fe26741dffaa155acd2ae1f614bb8d492cf05320eb8b1e183",
+      "output_sha256": "333746274d2171e2144d8e4435be4f575a17111b96252b930932804e33b217dc",
+      "edits": 44,
       "code_diagnostics": 0
     },
     {
@@ -242,6 +242,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "pat/clause.metta",
+      "output": "pat/clause.metta",
+      "source_sha256": "e92fcb8b1a481d8ae9a871abd6733e7ef6ca014ddf97c77f5fcf18f57562edbc",
+      "output_sha256": "84daef3228c411f63aef1544577d8ef71cae001682c1624f4c851865d7480244",
+      "edits": 11,
+      "code_diagnostics": 0
+    },
+    {
       "source": "path.metta",
       "output": "path.metta",
       "source_sha256": "e07b4f6842008d8a3c9258d4ac5696d83ee08bed1d0f6fe6a05ce131a2a25056",
@@ -331,6 +339,86 @@
     }
   ],
   "delegated": [
+    {
+      "source": "hol_light/data.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "58b381dd871ccf1e4424d986d7da964cb7cb5606ec2da77a693a76946a2f5020",
+      "output_sha256": "083aadd42487823185d86f73e348f94f2cbb2af083e42d248c7e1ec4bc3b36e4",
+      "scope_edits": 100,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/definitions.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "4a508e14121e56801eca6de16601e6e8462d7198648347a25919503e4c4c19f1",
+      "output_sha256": "f1412286b3cb2eff7e433833bae306c69fc97116ceb085453667656da55aeacb",
+      "scope_edits": 334,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/derived.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "4f1a892496d2308e8b13399cc9f9e47011730e9f0dc98ec2a394fc0e455869e5",
+      "output_sha256": "9e74b0cccc04915cadda0e25cc4308d5c9b85b72de6235ee4f775a4d724c430a",
+      "scope_edits": 81,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/kernel.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "2e1f1eac49a84a341fe330dac94cfae7870e9e3578ca66e2971eb08aaf7f85aa",
+      "output_sha256": "9272f48a255e340c6e060da7289cad14c8de7bca69788538f2c8d01fc5dfc1b7",
+      "scope_edits": 511,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/profile.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "ec5f7504a50823155ec4c3985262dbcd513755caaa42cc91065fc1dafb677296",
+      "output_sha256": "cf3330ff2e2e35e0854b8c25226c479fa8ec92a2e2fd5b1a5ef86e3d99d2a2eb",
+      "scope_edits": 9,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/receive.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "8c84769e4964af17b904f6a9b7c0a7988cdf775f8dc5bed3da4450dd628a1c94",
+      "output_sha256": "b5a3ecb6b50a964e545134ec43796aeaa6cd7f158c7d3cc26b001dfa5452974a",
+      "scope_edits": 100,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/resumption.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "c3ddc0ccc6d3da6ddff8d648f9f4b296086bb72382e45435534274a64d4a8c51",
+      "output_sha256": "a2ec004e7b9ca62447d0090b6a16bfe528dbe22bfbcc49eae04d33da0964cb96",
+      "scope_edits": 41,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
+    {
+      "source": "hol_light/syntax.metta",
+      "dialect": "petta",
+      "generator": "petta-prime-guest-v1",
+      "source_sha256": "f5eeac80d3afcb344360695a8bc979c7ba87c69055f62e1cf20399a5c39bdb35",
+      "output_sha256": "e7278e2c20a1f109da049d78d1455c3f96e34b9059139b648b85b8b0926d56a2",
+      "scope_edits": 303,
+      "scope_diagnostics": [],
+      "source_sort_values": "closed-strings"
+    },
     {
       "source": "json.metta",
       "generator": "library_spelling.py",

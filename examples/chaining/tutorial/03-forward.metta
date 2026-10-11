@@ -1,0 +1,35 @@
+!(import! &self pat)
+(edge alice bob)
+(edge bob carol)
+(edge carol dana)
+(reach alice bob)
+(reach bob carol)
+(reach carol dana)
+
+; This client explicitly chooses set-valued reachability. It does not merge
+; proof or evidence occurrences in the general matching API.
+(= (insert-new $fact)
+   (if (== (collapse (pat:match% &self $fact present)) ())
+       (add-atom &self $fact)
+       ()))
+(= (install $facts)
+   (if (== $facts ())
+       ()
+       (let $_ (insert-new (car-atom $facts)) (install (cdr-atom $facts)))))
+(= (forward-round)
+   (let $next
+        (collapse (pat:match% &self
+                    (, (reach $x $y) (edge $y $z)) (reach $x $z)))
+     (install $next)))
+(= (run-rounds $remaining)
+   (if (> $remaining 0)
+       (let $_ (forward-round) (run-rounds (- $remaining 1)))
+       done))
+
+!(run-rounds 1)
+!(collapse (pat:match% &self (reach alice $to) $to))
+!(run-rounds 1)
+!(collapse (pat:match% &self (reach alice $to) $to))
+!(run-rounds 1)
+!(collapse (pat:match% &self (reach alice $to) $to))
+!(collapse (pat:match% &self (reach dana alice) unexpected))

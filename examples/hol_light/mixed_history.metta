@@ -1,0 +1,8 @@
+!(import! &self ../../lib/hol_light/data.metta)
+!(import! &self ../../lib/hol_light/syntax.metta)
+!(import! &self ../../lib/hol_light/kernel.metta)
+!(import! &self ../../lib/hol_light/definitions.metta)
+!(import! &self ../../lib/hol_light/derived.metta)
+!(import! &self ../../lib/hol_light/profile.metta)
+!(import! &self ../../lib/hol_light/receive.metta)
+!(import! &self ../../tests/hol_light/mixed-history.metta)

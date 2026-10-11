@@ -49,6 +49,33 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     return st ? st->instance_id : 0u;
 }
 
+typedef struct {
+    const char *bytes;
+    uint32_t len;
+} SymbolSpelling;
+
+/* One publication check for both parts of a spelling. Interned bytes and
+ * lengths never change; the bytes remain borrowed from the table until it
+ * is freed. The length includes bytes following an embedded zero. */
+static inline SymbolSpelling symbol_spelling(
+    const SymbolTable *st, SymbolId id) {
+    SymbolSpelling spelling = { .bytes = "", .len = 0u };
+    if (!st || id == SYMBOL_ID_NONE)
+        return spelling;
+    uint32_t count = atomic_load_explicit(
+        &st->entry_len, memory_order_acquire);
+    if (id >= count || !st->entry_chunks)
+        return spelling;
+    const SymbolEntry *chunk =
+        st->entry_chunks[id >> SYMBOL_ENTRY_CHUNK_BITS];
+    if (!chunk)
+        return spelling;
+    const SymbolEntry *entry = &chunk[id & SYMBOL_ENTRY_CHUNK_MASK];
+    spelling.bytes = entry->bytes ? entry->bytes : "";
+    spelling.len = entry->len;
+    return spelling;
+}
+
 #define CETTA_BUILTIN_SYMBOLS(X) \
     X(empty, "Empty") \
     X(not_reducible, "NotReducible") \
@@ -118,6 +145,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(abt_parse, "__cetta_abt_parse") \
     X(abt_scope_check, "__cetta_abt_scope_check") \
     X(abt_alpha_eq, "__cetta_abt_alpha_eq")     X(abt_free_names, "__cetta_abt_free_names")     X(abt_substitute, "__cetta_abt_substitute")     X(abt_rename_bound, "__cetta_abt_rename_bound")     X(abt_named_alpha_eq, "__cetta_abt_named_alpha_eq") \
+    X(abt_instantiate, "__cetta_abt_instantiate") \
+    X(abt_contextual_canonical, "__cetta_abt_contextual_canonical") \
+    X(abt_quote_syntax, "langdef:quote-syntax") \
     X(collect, "collect") \
     X(fold, "fold") \
     X(fold_by_key, "fold-by-key") \
@@ -185,6 +215,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(get_type, "get-type") \
     X(get_type_space, "get-type-space") \
     X(prime_package, "prime-package") \
+    X(prime_elaborate, "prime:elaborate") \
     X(nik_colon_check, "nik:check") \
     X(assertEqual, "assertEqual") \
     X(assertEqualToResult, "assertEqualToResult") \
@@ -524,13 +555,28 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(term_lt, "@<") \
     X(term_gt, "@>") \
     X(term_le, "@<=") \
-    X(term_ge, "@>=")
+    X(term_ge, "@>=") \
+    X(equals_percent, "=%") \
+    X(pat_solve, "pat:solve") \
+    X(pat_apply, "pat:apply") \
+    X(pat_view, "pat:view") \
+    X(pat_query, "pat:query") \
+    X(pat_match_forward, "pat:match%") \
+    X(pat_match_reverse, "pat:%match") \
+    X(pat_unify_forward, "pat:unify%") \
+    X(pat_let_forward, "pat:let%") \
+    X(pat_case_forward, "pat:case%") \
+    X(pat_is_instance, "pat:is-instance") \
+    X(pat_is_variant, "pat:is-variant")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
    SymbolEntry flags, so evaluator dispatch reads one capability bit instead
    of reclassifying an interned opcode by name. */
 #define CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_quote_syntax) \
+    X(abt_instantiate) \
+    X(abt_contextual_canonical) \
     X(abt_default_signatures) \
     X(abt_signature_admitted) \
     X(abt_shift) \
@@ -635,6 +681,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
    during builtin initialization, before the table is exposed, so admission
    paths do not repeatedly reclassify opcodes. */
 #define CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_quote_syntax) \
     X(abt_default_signatures) \
     X(abt_signature_admitted) \
     X(abt_shift) \

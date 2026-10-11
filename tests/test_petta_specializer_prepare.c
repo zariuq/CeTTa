@@ -102,6 +102,14 @@ int main(void) {
         &result, atom_symbol(&result, "relevance-deep"),
         wide_first_order_value(&result));
 
+    Atom *cold_out = NULL;
+    CHECK(petta_specializer_prepare_call(
+              &space, NULL, &persistent, &result, plain_call, &cold_out) ==
+              PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
+          "a cold relation proof filters before concrete query inspection");
+    CHECK(cold_out == plain_call,
+          "cold relation filtering retains the authoritative call");
+
     CHECK(petta_specializer_relation_execution_admission(
               &space, route_call->expr.elems[0]->sym_id) ==
               PETTA_SPECIALIZER_RELATION_DEFER,

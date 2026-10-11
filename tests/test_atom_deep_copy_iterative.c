@@ -169,6 +169,47 @@ int main(void) {
     assert(atom_is_symbol(first_spelling, "mutable-spelling-first"));
     assert(!atom_is_symbol(second_spelling, "mutable-spelling-first"));
 
+    /* Names 64 bytes apart collide in the literal cache. Hits, evictions
+       and fallback lookup must all preserve positive and negative tests. */
+    static const char colliding_names[][64] = {
+        "literal-cache-left", "literal-cache-right", "literal-cache-third"
+    };
+    Atom *colliding_symbols[3];
+    for (unsigned i = 0u; i < 3u; i++)
+        colliding_symbols[i] = atom_symbol(&source, colliding_names[i]);
+    for (unsigned turn = 0u; turn < 30u; turn++) {
+        for (unsigned i = 0u; i < 3u; i++) {
+            assert(atom_eq(atom_symbol_literal(&source, colliding_names[i]),
+                           colliding_symbols[i]));
+            assert(atom_is_symbol(colliding_symbols[i], colliding_names[i]));
+            assert(!atom_is_symbol(colliding_symbols[i],
+                                   colliding_names[(i + 1u) % 3u]));
+        }
+    }
+    SymbolTable other_symbols;
+    symbol_table_init(&other_symbols);
+    (void)symbol_intern_cstr(&other_symbols, "different-table-prefix");
+    g_symbols = &other_symbols;
+    Atom *other_literal = atom_symbol_literal(&destination, colliding_names[0]);
+    assert(atom_eq(other_literal, atom_symbol(&destination, colliding_names[0])));
+    assert(atom_is_symbol(other_literal, colliding_names[0]));
+    assert(!atom_is_symbol(other_literal, colliding_names[1]));
+    g_symbols = &symbols;
+    assert(atom_is_symbol(colliding_symbols[0], colliding_names[0]));
+    symbol_table_free(&other_symbols);
+    /* Reusing a table's address does not reuse its literal-symbol identities. */
+    symbol_table_init(&other_symbols);
+    (void)symbol_intern_cstr(&other_symbols, "reused-table-prefix-one");
+    (void)symbol_intern_cstr(&other_symbols, "reused-table-prefix-two");
+    g_symbols = &other_symbols;
+    Atom *reused_literal = atom_symbol_literal(&destination, colliding_names[0]);
+    assert(reused_literal->sym_id != other_literal->sym_id);
+    assert(atom_eq(reused_literal, atom_symbol(&destination, colliding_names[0])));
+    assert(atom_is_symbol(reused_literal, colliding_names[0]));
+    assert(!atom_is_symbol(reused_literal, colliding_names[1]));
+    g_symbols = &symbols;
+    symbol_table_free(&other_symbols);
+
     /* Immutable symbols are canonical only within their owning arena. */
     Atom *source_symbol_first = atom_symbol(&source, "arena-symbol-cache");
     Atom *source_symbol_second = atom_symbol(&source, "arena-symbol-cache");
@@ -183,10 +224,10 @@ int main(void) {
     arena_init(&reset_probe);
     arena_set_runtime_kind(&reset_probe, CETTA_ARENA_RUNTIME_KIND_EVAL);
     ArenaMark reset_origin = arena_mark(&reset_probe);
-    Atom *before_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    Atom *before_reset = atom_symbol_literal(&reset_probe, "reset-symbol-cache");
     arena_reset(&reset_probe, reset_origin);
     (void)arena_alloc(&reset_probe, sizeof(Atom));
-    Atom *after_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    Atom *after_reset = atom_symbol_literal(&reset_probe, "reset-symbol-cache");
     assert(after_reset != before_reset);
     assert(arena_owns_atom(&reset_probe, after_reset));
     assert(atom_is_symbol(after_reset, "reset-symbol-cache"));
@@ -334,10 +375,36 @@ int main(void) {
     assert(mixed_min_id == destination.identity &&
            mixed_max_id == destination.identity);
     atom_deep_copy_session_free(session);
+
+    /* A single publication uses the same full-graph ownership boundary.
+     * An owned header with a nursery child must still be repaired. */
+    assert(atom_deep_copy_single(NULL, old_child) == NULL);
+    assert(atom_deep_copy_single(&destination, NULL) == NULL);
+    assert(atom_deep_copy_single(&destination, old_child) == old_child);
+    Atom *single_parent = atom_deep_copy_single(&destination, young_parent);
+    Atom *single_mixed = atom_deep_copy_single(&destination, mixed_parent);
+    assert(single_parent && single_parent != young_parent);
+    assert(single_parent->expr.elems[1] == old_child);
+    assert(single_mixed && single_mixed != mixed_parent);
+    assert(single_mixed->expr.elems[1] != young_child);
+    assert(atom_eq(single_mixed, closed_mixed_parent));
+    assert(atom_graph_arena_id_bounds(single_mixed, &mixed_min_id, &mixed_max_id));
+    assert(mixed_min_id == destination.identity &&
+           mixed_max_id == destination.identity);
+    Atom *single_shared = atom_deep_copy_single(&destination,
+        atom_expr2(&nursery, young_child, young_child));
+    assert(single_shared && single_shared->expr.elems[0] ==
+                            single_shared->expr.elems[1]);
+    Atom *owned_resource = atom_space(&destination, &external_space_identity);
+    Atom *copied_resource = atom_deep_copy_single(&destination, owned_resource);
+    assert(copied_resource && copied_resource != owned_resource);
+    assert(copied_resource->ground.ptr == &external_space_identity);
     arena_free(&nursery);
     assert(atom_is_symbol(
         closed_mixed_parent->expr.elems[1]->expr.elems[0],
         "temporary"));
+    assert(atom_is_symbol(single_mixed->expr.elems[1]->expr.elems[0], "temporary"));
+    assert(atom_is_symbol(single_parent->expr.elems[1]->expr.elems[0], "old"));
 
     arena_free(&destination);
     arena_free(&source);

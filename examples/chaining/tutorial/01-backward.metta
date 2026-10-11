@@ -1,0 +1,6 @@
+!(include backward-core)
+!(include graph-facts)
+!(collapse (bc depth-gate 4 (reachable alice dana)))
+!(collapse (bc depth-gate 3 (reachable alice dana)))
+!(collapse (bc depth-gate 2 (reachable alice $where)))
+!(collapse (bc depth-gate 5 (reachable dana alice)))

@@ -8954,17 +8954,17 @@ typedef struct {
 /* Families with a set model. */
 static const SjKnownFamily SJ_FAMILY_MODELS[] = {
     /* Streams over a set, read as the functions from the numbers into it:
-     * Instances/MegalodonHOTG/Streams.lean:732, over a chain of
+     * Instances/MegalodonHOTG/Streams.lean:803, over a chain of
      * closed universes (`chain`) with the numbers in the universe of the sets
      * (`omegaMem`) and its ground typed (`groundTyped`).
-     * Its law is extensionality, `streams_ext` (the same file:221): two
+     * Its law is extensionality, `streams_ext` (the same file:226): two
      * streams over one set with the same element at every position are
      * equal, where the element at position k is the head after k tails
      * (`observeSet`).  The law writes the positions as the pairs reached from
      * (s, t) by applying the tail to both: the least relation that holds of
      * (s, t) and is closed under the two tails, which in the set model holds
      * exactly of the k-th tails.  Agreement at the first position alone is
-     * not enough (`not_streams_ext_at_first`, the same file:292). */
+     * not enough (`not_streams_ext_at_first`, the same file:350). */
     {"TowerInterpretation.MegalodonHOTG.Streams.streamFamily_setModel", NULL,
      "CofinalInaccessibles", "chain omegaMem groundTyped",
      "(: Stream (-> set set))\n"
@@ -8988,7 +8988,7 @@ static const SjKnownFamily SJ_FAMILY_MODELS[] = {
      "              (eq law~A (shead law~A law~u) (shead law~A law~v)))))))"
      "       (eq (Stream law~A) law~s law~t)))))))\n"},
     /* Lists over a set, read as the finite lists of its members:
-     * Instances/MegalodonHOTG/Lists.lean:443, with the same
+     * Instances/MegalodonHOTG/Lists.lean:444, with the same
      * hypotheses. */
     {"TowerInterpretation.MegalodonHOTG.Lists.listFamily_setModel", NULL,
      "CofinalInaccessibles", "chain omegaMem groundTyped",
@@ -9005,7 +9005,7 @@ static const SjKnownFamily SJ_FAMILY_MODELS[] = {
 static const SjKnownFamily SJ_FAMILY_NON_MODELS[] = {
     /* The stream equation at lists, over the list family read as lists: it
      * puts a list in front of itself
-     * (Instances/MegalodonHOTG/Streams.lean:1396), on the
+     * (Instances/MegalodonHOTG/Streams.lean:1467), on the
      * stages of cofinally many inaccessibles, at the readings of `List` and
      * `cons` as the lists (`readsList`, `readsCons`), which the draft takes
      * from the admitted list family. */
@@ -9868,7 +9868,9 @@ static size_t sj_type_arity(Atom *type) {
 
 static Atom *sj_equation_lower(SjProofState *st, Atom *source,
                               Atom **variables, size_t count) {
-    Atom *locals[16] = {0};
+    /* The equation's telescope, innermost variable first: one slot for each
+     * of its pattern variables, however many it binds. */
+    Atom **locals = arena_alloc(st->arena, sizeof(*locals) * (count ? count : 1u));
     for (size_t i = 0u; i < count; i++) locals[i] = variables[count - 1u - i];
     for (;;) {
         size_t capacity = st->env->signature_count + st->env->constant_count;
@@ -12138,12 +12140,67 @@ static Atom *sj_manifest_context(Arena *a, Space *space, const char *head,
     return atom_expr(a, items, (CettaExprLen)found);
 }
 
-static const char *sj_identity_policy_name(void) {
-    switch (cetta_prime_identity_policy()) {
+static int sj_identity_policy_from_name(Atom *name) {
+    if (atom_is_symbol(name, "identity-j")) return CETTA_PRIME_IDENTITY_J;
+    if (atom_is_symbol(name, "identity-scoped")) return CETTA_PRIME_IDENTITY_SCOPED;
+    if (atom_is_symbol(name, "identity-uip")) return CETTA_PRIME_IDENTITY_UIP;
+    if (atom_is_symbol(name, "identity-univalence")) return CETTA_PRIME_IDENTITY_UNIVALENCE;
+    return -1;
+}
+
+/* What a space's own `(id:profile NAME)` atoms select: none, one known
+ * profile, or a conflict.  Cached at an exact space instance and revision,
+ * as the theory profile is (sj_space_profile). */
+enum { SJ_IDENTITY_NONE = -2, SJ_IDENTITY_CONFLICT = -1 };
+
+static int sj_space_identity_selection(Space *space) {
+    static uint64_t cached_instance;
+    static uint64_t cached_revision;
+    static int cached_selection = SJ_IDENTITY_NONE;
+    uint64_t instance = space_instance_id(space);
+    uint64_t revision = space_revision(space);
+    if (cached_instance == instance && cached_revision == revision)
+        return cached_selection;
+    Arena arena;
+    arena_init_detached(&arena);
+    Atom *pattern = sj_expr2(&arena, "id:profile", atom_var(&arena, "profile"));
+    CettaIndex *candidates = NULL;
+    CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    int selected = SJ_IDENTITY_NONE;
+    for (CettaIndex i = 0u; i < count; i++) {
+        Atom *record = space_match_candidate_at64(space, candidates[i]);
+        if (!sj_is_expr(record, "id:profile", 2u)) continue;
+        int policy = sj_identity_policy_from_name(record->expr.elems[1]);
+        if (policy < 0 || (selected != SJ_IDENTITY_NONE && selected != policy)) {
+            selected = SJ_IDENTITY_CONFLICT;
+            break;
+        }
+        selected = policy;
+    }
+    free(candidates);
+    arena_free(&arena);
+    cached_instance = instance;
+    cached_revision = revision;
+    cached_selection = selected;
+    return selected;
+}
+
+int prime_space_identity_policy(Space *space) {
+    /* A view built over a space (an overlay) is in that space's mode. */
+    for (const Space *s = space; s; s = s->overlay_base) {
+        int selected = sj_space_identity_selection((Space *)s);
+        if (selected != SJ_IDENTITY_NONE) return selected;
+    }
+    return cetta_prime_identity_policy();
+}
+
+static const char *sj_identity_policy_name(int policy) {
+    switch (policy) {
+    case CETTA_PRIME_IDENTITY_J: return "identity-j";
     case CETTA_PRIME_IDENTITY_SCOPED: return "identity-scoped";
     case CETTA_PRIME_IDENTITY_UIP: return "identity-uip";
     case CETTA_PRIME_IDENTITY_UNIVALENCE: return "identity-univalence";
-    default: return "identity-j";
+    default: return "identity-unselected";
     }
 }
 
@@ -12192,7 +12249,8 @@ static Atom *sj_foundation_manifest(Arena *a, Space *space) {
         sj_expr2(a, "profile", sj_sym(a, sj_profile_name(g_sj_signature_profile))),
         sj_expr2(a, "signature-digest", atom_string(a, sj_signature_digest())),
         sj_expr2(a, "checker", sj_sym(a, "native-scoped-hol-v1")),
-        sj_expr2(a, "identity-policy", sj_sym(a, sj_identity_policy_name())),
+        sj_expr2(a, "identity-policy",
+                 sj_sym(a, sj_identity_policy_name(prime_space_identity_policy(space)))),
         sj_expr2(a, "identity-region-assumptions", sj_manifest_identity_regions(a, space)),
         sj_expr2(a, "typed-declarations", sj_manifest_context(a, space, ":", 3u, NULL)),
         sj_expr2(a, "admitted-type-rules", type_rules),
@@ -12540,8 +12598,10 @@ static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
 }
 
 /* ------------------------------------------------------------------------ */
-/* Identity profile: the active policy as data, and region declaration where */
-/* the policy admits regions.  A region here is an explicit ASSUMPTION,       */
+/* Identity profile: the space's policy as data, and region declaration     */
+/* where the policy admits regions.  A space selects its policy with        */
+/* `(id:profile NAME)` (prime_space_identity_policy); one that selects none */
+/* has the run's.  A region here is an explicit ASSUMPTION,                 */
 /* published into the space as the declaration of a per-carrier constant      */
 /* `id:assumed-unique@A : Π a b (p q : id A a b). id (id A a b) p q`, used    */
 /* through elimination and never as a conversion rule.  It is not a proved   */
@@ -12549,13 +12609,16 @@ static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
 /* The space carries it visibly, so its consequences and withdrawal can run. */
 /* ------------------------------------------------------------------------ */
 
-static Atom *sj_identity_policy(Arena *a, Atom *judgment) {
+static Atom *sj_identity_policy(Arena *a, Space *space, Atom *judgment) {
+    int policy = prime_space_identity_policy(space);
+    if (policy < 0)
+        return sj_undetermined(a, judgment, sj_expr1(a, "id:profile-conflict"));
     return sj_established(a, judgment,
-                         sj_expr2(a, "PrimeScopedValue", sj_sym(a, sj_identity_policy_name())));
+                         sj_expr2(a, "PrimeScopedValue", sj_sym(a, sj_identity_policy_name(policy))));
 }
 
-static Atom *sj_identity_region(Arena *a, Atom *judgment, Atom *carrier) {
-    int policy = cetta_prime_identity_policy();
+static Atom *sj_identity_region(Arena *a, Space *space, Atom *judgment, Atom *carrier) {
+    int policy = prime_space_identity_policy(space);
     if (policy != CETTA_PRIME_IDENTITY_SCOPED &&
         policy != CETTA_PRIME_IDENTITY_UNIVALENCE)
         return sj_undetermined(a, judgment,
@@ -12623,11 +12686,11 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
 
     if (head == g_builtin_syms.id_colon_policy) {
         if (len != 1u) return sj_refuted(a, judgment, sj_expr1(a, "id:policy-arity"));
-        return sj_identity_policy(a, judgment);
+        return sj_identity_policy(a, space, judgment);
     }
     if (head == g_builtin_syms.id_colon_region) {
         if (len != 2u) return sj_refuted(a, judgment, sj_expr1(a, "id:region-arity"));
-        return sj_identity_region(a, judgment, judgment->expr.elems[1]);
+        return sj_identity_region(a, space, judgment, judgment->expr.elems[1]);
     }
     if (head == g_builtin_syms.try_judgment) {
         if (len != 2u) return sj_refuted(a, judgment, sj_expr1(a, "try-arity"));
@@ -14072,9 +14135,11 @@ Atom *prime_scoped_implicit_call(Arena *a, Space *space, Atom *call) {
 /* ------------------------------------------------------------------------ */
 /* What a refutation by the conversion algorithm assumes.  The refutation    */
 /* is `not_equal_of_unrelated`, whose hypothesis is that the algorithm is    */
-/* complete for the package.  Lean proves that for the bare tower and for    */
-/* the object package (see regular_unrelated_refuted).  A comparison that    */
-/* meets declarations outside those assumes it for them, and the reason      */
+/* complete for the package.  Lean proves that for the bare tower, for the   */
+/* object package, and for the object package with one admissible simple     */
+/* datatype (see regular_unrelated_refuted).  A comparison that meets        */
+/* declarations other than the bare tower's and the object package's         */
+/* assumes it for them, declared datatypes included, and the reason          */
 /* names which kinds: the constants of the two sides, closed under the       */
 /* declared types of the constants and under the statements of the           */
 /* definitions and families they come from, are classified by the record or */

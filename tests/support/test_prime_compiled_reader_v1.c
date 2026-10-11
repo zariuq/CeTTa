@@ -426,6 +426,26 @@ int main(void) {
         free(ids);
     }
     {
+        static const char source[] = "m.foo $m.foo";
+        bool old_namespace = parser_set_namespace_sugar_enabled(false);
+        AtomId *ids = NULL;
+        int len = prime_compiled_reader_v1_parse_bytes_ids(
+            reader, (const uint8_t *)source, sizeof(source) - 1u,
+            &compiled_universe, &ids, &receipt, error, sizeof(error));
+        parser_set_namespace_sugar_enabled(old_namespace);
+        Arena printed;
+        arena_init(&printed);
+        expect(&counts,
+               len == 2 && ids &&
+                   strcmp(term_universe_atom_to_string(
+                              &printed, &compiled_universe, ids[0]), "m:foo") == 0 &&
+                   strcmp(term_universe_atom_to_string(
+                              &printed, &compiled_universe, ids[1]), "$m:foo") == 0,
+               "nested Prime reader retains its own namespace spelling policy");
+        arena_free(&printed);
+        free(ids);
+    }
+    {
         static const uint8_t malformed[] = {0xff};
         AtomId *ids = NULL;
         int len = prime_compiled_reader_v1_parse_bytes_ids(

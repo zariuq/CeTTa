@@ -136,6 +136,7 @@ dependencies = [
  "mork-frontend",
  "mork-interning",
  "pathmap",
+ "smallvec",
 ]
 
 [[package]]
@@ -145,10 +146,12 @@ dependencies = [
  "cetta-mork-adapter",
  "cetta-pathmap-adapter",
  "cetta-space",
+ "log",
  "mork",
  "mork-expr",
  "mork-frontend",
  "pathmap",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -678,7 +681,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "pathmap"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrayvec",
  "dyn-clone",
@@ -692,13 +695,14 @@ dependencies = [
  "pathmap-derive",
  "reusing-vec",
  "smallvec",
+ "span-timing",
  "tikv-jemallocator",
  "xxhash-rust",
 ]
 
 [[package]]
 name = "pathmap-derive"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -899,6 +903,12 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "span-timing"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6d18f132ea17d8e294fe77795171f281b1c3bf4e72aa59be1dd5db087ea260f"
 
 [[package]]
 name = "strsim"

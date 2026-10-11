@@ -1508,17 +1508,23 @@ static bool regular_written_principal(PrimeRegularKernelInfer result) {
  * whose hypothesis is that the algorithm is complete for the package
  * (`AlgorithmicComplete`), and the printed reason names it.  Lean proves that
  * completeness for the bare tower (Normalization.TowerModel.complete,
- * Instances/TowerDecidability.lean:34) and for the object package, given its
- * facts about weak-head forms and its lifting of spines
- * (object_algorithmicComplete, PrimeCandidates/DeclarationBased/
- * CertifiedTransformProgram/ExecutableModel/ObjectAlgorithmic.lean:605); not
- * yet for packages with declared datatypes, recursion, or rules admitted by a
- * bound or a set solution.  There the refutation rests on the algorithm being
- * complete for them, as Abel, Öhman and Vezzosi (2018) show for a type
- * theory with such rules, and on the rules being confluent and terminating,
- * which Lean does not state yet; the printed reason then says which kinds
- * of declaration it assumes completeness for
- * (prime_scoped_judgment_completeness_assumed). */
+ * Instances/TowerDecidability.lean:34); for the object package, given its
+ * facts about the weak-head forms of its types
+ * (object_algorithmicComplete_of_facts, PrimeCandidates/DeclarationBased/
+ * CertifiedTransformProgram/ExecutableModel/ObjectSpineLift.lean:365); for
+ * the object package with one admissible declared datatype whose fields are
+ * the datatype itself or closed types and whose names avoid the model's own
+ * (dataRules_algorithmicComplete, ExecutableModel/DataAlgorithmic.lean:438);
+ * and for the lists at a closed element type (listAt_algorithmicComplete,
+ * ExecutableModel/ParameterizedLists.lean:274).  It does not state it for
+ * several datatypes, for datatypes with parameters in general, for families,
+ * recursion, or rules admitted by a bound or a set solution.  There the
+ * refutation rests on the algorithm being complete for them, as Abel, Öhman
+ * and Vezzosi (2018) show for a type theory with such rules, and on the
+ * rules being confluent and terminating, which Lean does not state yet; the
+ * printed reason then says which kinds of declaration it assumes
+ * completeness for (prime_scoped_judgment_completeness_assumed).  It names
+ * declared datatypes even where the one-datatype theorem applies. */
 static bool regular_unrelated_refuted(PrimeRegularKernelInfer left,
                                       PrimeRegularKernelInfer right) {
     return regular_written_principal(left) || regular_written_principal(right);
@@ -2940,8 +2946,12 @@ static PrimeRegularKernelNormal regular_normalize(
 /* inspects.  Otherwise it reduces in the function position of an             */
 /* application or under a projection, and stops.  It never reduces under a    */
 /* binder or in an argument the rules do not inspect.  This is the reduction  */
-/* of the normalization model, deterministic, and every typed term reaches    */
-/* its weak-head normal form; conversion needs nothing more.                  */
+/* of the normalization model, and it is deterministic.  Every typed term     */
+/* reaches its weak-head normal form in the packages whose strong             */
+/* normalization Lean states (objectRules_sn, objectRulesInstances_sn and     */
+/* dataRules_sn, PrimeCandidates/DeclarationBased/CertifiedTransformProgram/  */
+/* ExecutableModel); elsewhere that is not a theorem, and the budget bounds   */
+/* the reduction.  Conversion needs nothing more than this reduction.         */
 /* ------------------------------------------------------------------------ */
 
 static PrimeRegularKernelNormal regular_whnf(
@@ -3772,7 +3782,9 @@ static PrimeRegularKernelInfer regular_infer(
 /* argument, at the types the head's type assigns.  Terms and types are      */
 /* brought to weak-head normal form only where the comparison inspects them,  */
 /* never under a binder and never by eta, so on typed inputs the comparison   */
-/* follows the derivation of each side's equality with itself and ends.       */
+/* follows the derivation of each side's equality with itself.  It ends       */
+/* where the package's reduction terminates (see the weak-head normal forms   */
+/* above); elsewhere the budget ends it.                                      */
 /* All inputs are terms the kernel has already typed.                         */
 /* ------------------------------------------------------------------------ */
 

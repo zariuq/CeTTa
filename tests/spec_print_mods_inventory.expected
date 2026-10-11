@@ -1,6 +1,8 @@
 top = 0
- ├─import_pkg:moduleA = 1
- └─Helper = 2
+ └─import_pkg = 1
+    └─moduleA = 2
+       └─Helper = 3
+
 [()]
 [()]
 [()]

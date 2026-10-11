@@ -45,8 +45,8 @@
              (-> (u : (id (id Nat z z) p1 p2)) (id C (f p1) (f p2))))
 ; 7. Discharge with the explicit assumption, where the profile admits it.
 ;    Under identity-j the region is inert, so the assumption's name is
-;    undeclared, and the type: layer refutes an application whose head is
-;    undeclared in the default space (it abstains under an explicit space).
+;    undeclared, and the type: layer abstains on an application whose head
+;    is undeclared, in the default space as under an explicit space.
 !(id:region Nat)
 !(type:check (id:eliminate (id Nat z z) p1 (lam y (lam e (id C (f p1) (f y)))) (refl (f p1)) p2 (id:assumed-unique@Nat z z p1 p2))
              (id C (f p1) (f p2)))
