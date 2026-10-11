@@ -18,11 +18,15 @@ typedef struct {
 /* One evaluator-thread owner for this source. Service/store/config outlive it.
  * Rebuilds pending output from immutable intents; no live config/admin writers.
  * Limits are explicit backpressure, not silent eviction of unresolved work.
- * Construction/step may publish worker tasks and admit HTTP through service. */
+ * Construction only rebuilds ready candidates. Step may publish worker tasks
+ * and admit HTTP through service. */
 CettaDurableStatus cetta_telegram_scheduler_new(CettaDurableStore *store,
     CettaDurableService *service, const CettaTelegramSchedulerConfig *config,
     CettaTelegramScheduler **out);
 /* Bounded number (1..64) of candidate visits, alternating input and output.
+ * A retained task is visited within its current queue length of that queue's
+ * visits, including when earlier tasks retire and new arrivals are admitted.
+ * Inbox/outbox discovery still scans storage; this is not a wall-time bound.
  * Metadata watches skip unchanged blocked work. Call service_step separately
  * even when no cognitive worker is connected. Storage/queue faults latch. */
 CettaDurableStatus cetta_telegram_scheduler_step(CettaTelegramScheduler *scheduler,

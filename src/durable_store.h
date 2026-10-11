@@ -78,7 +78,8 @@ CettaDurableStatus cetta_durable_detach_runtime(CettaDurableStore *store, const 
 
 /* Copies a consistent snapshot, releasing the connection before returning.
  * NULL space reads all named spaces. Even filtered reads carry the global
- * revision: committing with it validates absence and range reads too. */
+ * revision: committing with it validates absence and range reads too.
+ * Records are ordered by revision, operation position, space, then key. */
 CettaDurableStatus cetta_durable_snapshot(CettaDurableStore *store,
     const char *space, CettaDurableSnapshot *out);
 void cetta_durable_snapshot_free(CettaDurableSnapshot *snapshot);

@@ -1030,6 +1030,27 @@ intent, channel version, cancellation and attempt/outcome when claiming.
 Construction checks that the configured bot source, worker, credential route
 and action-policy object agree with the service's native registry.
 
+Both candidate queues use the reusable native `ready_queue.h` order. Admission
+appends a stable link, each visit rotates the head to the tail, and retirement
+removes only that link. A duplicate admission preserves its position; a full
+queue rejects admission without evicting work. Retained candidates receive a
+visit within their initial queue length of visits to that queue, even when
+competitors finish and new candidates arrive. The former compact-array cursor
+could skip a waiter after retiring the preceding entry: `[A,B]`, visit/remove
+`A`, append `C` would select `C` before `B`.
+
+Recovery only discovers candidates; admission runs through the same visit loop.
+This keeps recovered effects inside the step's visit budget. Ready links are
+disposable single-owner bookkeeping, not durable IDs or commit authority.
+Message interpretation, reaction selection and effect eligibility remain in
+the MeTTa libraries. Removing a link never cancels transport or deletes its
+durable input, intent or outcome.
+Outbox recovery retains the exact `(revision, position)` of the first
+untracked effect. Resuming at the revision alone would repeatedly discover the
+first effect of a multi-effect commit when the ready queue has capacity one.
+Worker backpressure retains a separate retry cursor and reopens discovery when
+the worker-ready metadata changes.
+
 This ordering contract requires one application-state owner: service callbacks
 record outcomes but never change actors, and administrative actor repair runs
 only with the service stopped. Application reactions and transport admission
@@ -1060,6 +1081,30 @@ copies its bounded current contents when its metadata watch changes and merges
 them with the pending queue. It does not repeatedly copy an unchanged inbox or
 evaluate a blocked policy. Incremental persistent indexes and retention remain
 operational work before long-running production qualification.
+Consequently the queue bound counts candidate visits, not elapsed time. The
+whole-slot latency assumptions in the event-pump model still require bounded
+storage discovery and evaluation.
+
+`make BUILD=core test-ready-queue` checks capacity, membership and service under
+completion/arrival churn without building the evaluator. The executable Lean
+reference and service proof are in
+[MeTTapedia's ReadyQueue model](https://github.com/godelclaw/MeTTapedia/blob/262e6f38993617ba8a438432299e658d3988fe21/lean/pettaclaw/ReadyQueue.lean).
+For sibling CeTTa and MeTTapedia checkouts, run from CeTTa:
+
+```sh
+python3 ../MeTTapedia/lean/pettaclaw/check_observed_strategy.py \
+  --suite event-pump --output-dir ../MeTTapedia/build/event-pump
+python3 tests/check_ready_queue_lean.py --mettapedia ../MeTTapedia \
+  --lean-build ../MeTTapedia/build/event-pump --output-dir build/ready-queue
+```
+
+The comparator builds fresh C, rejects stale qualified Lean sources, and
+compares native transitions with `ReadyQueueOracle.lean`, which executes the
+proved definitions. It includes all length-four traces over its small operation
+alphabet, longer seeded traces, and deliberately broken native queues. Receipts
+record source hashes and replace previous success before running. This finite
+comparison and sanitizer testing do not prove the C pointer implementation or
+establish the complete host refinement and wall-time obligations.
 
 `test-telegram-scheduler` runs separate native service and synthetic worker
 processes against HTTP, HTTPS and negotiated HTTP/2. It kills/restarts the

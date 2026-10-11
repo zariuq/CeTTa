@@ -64,12 +64,20 @@ int main(int argc,char **argv) {
     CettaTelegramActionPolicy other_policy=actions; wrong=ac; wrong.agent.actions=&other_policy;
     assert(cetta_telegram_scheduler_new(store,service,&wrong,&scheduler)==DURABLE_INVALID && !scheduler);
     assert(cetta_telegram_scheduler_new(store,service,&ac,&scheduler)==DURABLE_OK);
+    CettaTelegramSchedulerStats previous;
+    cetta_telegram_scheduler_stats(scheduler,&previous);
+    /* Recovery discovers candidates without running unbudgeted admissions. */
+    assert(previous.evaluations==0 && previous.admissions==0 && previous.published==0);
     while (!stopped) {
         assert(cetta_service_step(service,25)==DURABLE_OK);
-        CettaDurableStatus status=cetta_telegram_scheduler_step(scheduler,pause?1:8);
+        unsigned visits=pause?1:8;
+        CettaDurableStatus status=cetta_telegram_scheduler_step(scheduler,visits);
         assert(status==DURABLE_OK);
+        CettaTelegramSchedulerStats now; cetta_telegram_scheduler_stats(scheduler,&now);
+        assert(now.evaluations-previous.evaluations + now.admissions-previous.admissions +
+               now.published-previous.published <= visits);
+        previous=now;
         if (pause) {
-            CettaTelegramSchedulerStats now; cetta_telegram_scheduler_stats(scheduler,&now);
             if (now.accepted==3) { puts("paused-after-accept"); fflush(stdout); raise(SIGSTOP); }
         }
     }
