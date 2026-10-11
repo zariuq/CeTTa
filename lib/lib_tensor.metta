@@ -212,6 +212,33 @@
    (function (chain (eval (__cetta_lib_tensor_top_k_masked $scores $mask $k)) $result (return $result))))
 
 ; Selectors and masks never require an Atom for each matrix element.
+(: __cetta_lib_tensor_cast (-> Atom Atom Atom))
+(: tensor:cast (-> %Undefined% %Undefined% Atom))
+(= (tensor:cast $dtype $tensor)
+   (function (chain (eval (__cetta_lib_tensor_cast $dtype $tensor)) $result (return $result))))
+
+(: __cetta_lib_tensor_row_error_bounds (-> Atom Atom Atom))
+(: tensor:row-error-bounds (-> %Undefined% %Undefined% Atom))
+(= (tensor:row-error-bounds $source $compact)
+   (function (chain (eval (__cetta_lib_tensor_row_error_bounds $source $compact)) $result (return $result))))
+
+(: __cetta_lib_tensor_matvec_bounds_selected (-> Atom Atom Atom Atom Atom Atom))
+(: tensor:matvec-bounds-selected (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% Atom))
+(= (tensor:matvec-bounds-selected $compact $query $certificate $indices $scale)
+   (function (chain (eval (__cetta_lib_tensor_matvec_bounds_selected $compact $query $certificate $indices $scale)) $result (return $result))))
+
+(: __cetta_lib_tensor_top_k_candidates (-> Atom Atom Atom Atom))
+(: tensor:top-k-candidates (-> %Undefined% %Undefined% %Undefined% Atom))
+(= (tensor:top-k-candidates $lower $upper $k)
+   (function (chain (eval (__cetta_lib_tensor_top_k_candidates $lower $upper $k)) $result (return $result))))
+
+; Bounds and compact storage must belong to the same immutable source view.
+; Returned indices are candidates, including every ambiguous boundary tie.
+(= (tensor:screen-candidates $compact $certificate $query $indices $k)
+   (case (tensor:matvec-bounds-selected $compact $query $certificate $indices 1.0)
+     (((TensorFailure $why) (TensorFailure $why))
+      (($lower $upper) (tensor:top-k-candidates $lower $upper $k)))))
+
 (= (tensor:indices $values) (tensor:from i64 ((size-atom $values)) $values))
 ; Row norms must belong to this immutable matrix and be positive and finite.
 ; The matrix kernel uses a fixed four-lane reduction; cosine stays composition.

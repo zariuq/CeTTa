@@ -551,9 +551,9 @@ static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
         Atom *caps[] = {atom_symbol(a,"conditional-batches"),atom_symbol(a,"snapshot-pages"),
             atom_symbol(a,"bounded-receipts"),atom_symbol(a,"journal-checkpoint"),atom_symbol(a,"no-eval"),
             atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index"),
-            atom_symbol(a,"tensor-ctn1-native")};
+            atom_symbol(a,"tensor-ctn1-native"),atom_symbol(a,"tensor-f32-native")};
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,8)};
+            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,9)};
         return reply(a,request,true,form(a,"service",args,5));
     }
     if (atom_is_symbol(part(request,2),"fetch") || atom_is_symbol(part(request,2),"close")) {

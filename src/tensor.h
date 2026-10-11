@@ -12,6 +12,7 @@ typedef enum {
     CETTA_TENSOR_I64 = 1,
     CETTA_TENSOR_F64 = 2,
     CETTA_TENSOR_U8 = 3,
+    CETTA_TENSOR_F32 = 4,
 } CettaTensorDType;
 
 typedef enum {
@@ -53,6 +54,8 @@ bool cetta_tensor_shares_storage(const CettaTensor *left, const CettaTensor *rig
 CettaTensorStatus cetta_tensor_reshape(const CettaTensor *tensor,
     const size_t *shape, size_t rank, CettaTensor **out);
 CettaTensorStatus cetta_tensor_copy(const CettaTensor *tensor, CettaTensor **out);
+CettaTensorStatus cetta_tensor_cast(const CettaTensor *tensor,
+    CettaTensorDType dtype, CettaTensor **out);
 CettaTensorStatus cetta_tensor_with(const CettaTensor *tensor, size_t index,
     const void *element, CettaTensor **out);
 CettaTensorStatus cetta_tensor_binary(const CettaTensor *left,
@@ -67,7 +70,8 @@ CettaTensorStatus cetta_tensor_reduce(const CettaTensor *left,
 /* Axis-zero gather preserves order and repeated indices. Selectors are i64. */
 CettaTensorStatus cetta_tensor_gather(const CettaTensor *source,
     const CettaTensor *indices, CettaTensor **out);
-/* Dense f64 matrix/vector product. NULL indices selects all rows. Four ordered
+/* Dense f64/f32 matrix with an f64 query, accumulation and result. NULL indices
+ * selects all rows. Four ordered
  * accumulation lanes are combined in a fixed order, without FMA contraction.
  * This is a different reduction order from tensor:dot's scalar reference. */
 CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix,
@@ -96,6 +100,20 @@ CettaTensorStatus cetta_tensor_nonzero(const CettaTensor *mask, CettaTensor **ou
  * Enabled nonfinite scores are refused, including when k is zero. */
 CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores,
     const CettaTensor *mask, size_t k, CettaTensor **out);
+/* Derived row certificate: [L1 conversion error upper bound, combined L1
+ * magnitude upper bound]. Must belong to this exact source/compact pair. */
+CettaTensorStatus cetta_tensor_row_error_bounds(const CettaTensor *source,
+    const CettaTensor *compact, CettaTensor **out);
+/* Conservative bounds on the existing f64 lane4 score times positive scale.
+ * A rounding environment outside the admitted fragment yields [-inf, inf],
+ * retaining every row. NULL indices selects all rows. */
+CettaTensorStatus cetta_tensor_matvec_bounds(const CettaTensor *compact,
+    const CettaTensor *query, const CettaTensor *certificate,
+    const CettaTensor *indices, double scale, CettaTensor **lower, CettaTensor **upper);
+/* Keep every upper bound reaching the k-th largest lower bound; ties survive.
+ * This returns a candidate superset, never a final approximate ranking. */
+CettaTensorStatus cetta_tensor_top_k_candidates(const CettaTensor *lower,
+    const CettaTensor *upper, size_t k, CettaTensor **out);
 /* CTN1: dtype:u8, rank:u32 LE, dimensions:u64 LE, ordered element bits LE.
  * Encoding is pointer-free, lossless and portable for the supported dtypes. */
 CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *tensor, size_t *size);

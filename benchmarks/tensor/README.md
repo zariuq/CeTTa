@@ -154,7 +154,7 @@ python3 benchmarks/tensor/collection.py --server SERVER --worker WORKER \
   --chroma required --output runtime/resident-collection.json
 ```
 
-The queries cover unfiltered top-k, 25% group filters, single-row equality,
+The queries cover unfiltered top-k, 1%, 10%, 25% and 50% filters, single-row equality,
 nested conjunction/disjunction and empty selections. A separate scalar
 `math.fsum` oracle checks exact native results with boundary-tie tolerance;
 eight deliberately wrong results must be rejected. Updates change a vector
@@ -182,6 +182,75 @@ semantic relevance, persistent Chroma performance, million-record ANN capacity
 or full tensor-library completion. The CI profile uses smaller generated
 inputs, omits optional Chroma, and checks correctness and lifecycle without a
 machine-dependent latency threshold.
+
+`--batch-sizes 1 4 16` measures correlated query batches, checking every answer
+against the same scalar oracle. `--profile-stages` adds per-stage medians and
+resident allocation observations; `--resident-repeats` changes the probe
+length. `--scan-tier f32` selects compact screening with f64 reranking; the
+default remains `wide`. Include both dimensions and filter selectivity when
+comparing tiers. The warm worker may retain previously unseen row values and
+up to 128 filter masks; growth before these caches plateau is not itself
+evidence of a per-query leak. `make test-memory-residency` exercises 3,000 row
+queries and 3,000 unique filter queries and checks their observed plateaus.
+
+## Native screening size sweep
+
+[screening.py](screening.py) drives the C tensor API directly, separately from
+the collection/interpreter benchmark. Generated matrices stay in RAM and are
+released after each size; only an aggregate receipt is written to disk.
+
+```sh
+make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 \
+  ENABLE_MANAGED_SYMBOLS=1 benchmark-tensor-screening \
+  TENSOR_SCREEN_ARGS="--records 1000 4000 32000 128000 --dimension 1024"
+```
+
+The sweep alternates tier order, discards the first sample, measures complete
+scan/selection paths and records retained-candidate counts. Every interval
+must contain the original f64 kernel result, and screened reranking must
+return the identical top-k indices. A separate long-double scalar calculation
+checks selected scores. The receipt binds binary/source hashes; changing an
+artifact or failing a run replaces a previous pass with failure. This is not
+an end-to-end million-record collection or ANN benchmark. A million rows can
+be requested with `--records 1000000`, choosing the dimension explicitly.
+
+## Measured scaling sample
+
+The [2026-10-11 receipts](results/scaling-20261011/) contain seeded aggregate
+measurements, source/binary hashes and reference checks. They retain no corpus
+or query identifiers. These are shared-host observations, not latency targets
+for other machines.
+
+At 5,514 rows of 1,024 dimensions, the collection's warm unfiltered top-5
+median was 2.06 ms with the default wide scan and 1.87 ms with f32 screening.
+Chroma 1.5.9 measured 1.76–1.82 ms in those two runs, with `ef_search=128` and
+one index thread. Each profile used twelve queries. Both native tiers passed
+the independent scalar reference; Chroma's mean recall over nonempty filter
+and unfiltered queries was 98.5% and 97.6%. This generated workload is not a
+replay of a deployed application's records. Repeated query batches warmed
+differently and are reported separately in the receipts.
+
+The direct C scan/selection sweep isolates another tradeoff:
+
+| Rows | Dimensions | Wide median ms | Screen/rerank median ms |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 1,024 | 0.102 | 0.124 |
+| 4,000 | 1,024 | 0.419 | 0.498 |
+| 32,000 | 1,024 | 5.925 | 4.440 |
+| 128,000 | 1,024 | 19.964 | 16.911 |
+| 1,000,000 | 128 | 33.083 | 41.756 |
+
+All tested screened results matched the original f64 kernel's top-k indices.
+Short vectors can make the extra bounds and selection passes more expensive
+than the saved matrix traffic, even at a million rows. There is no universal
+row-count crossover, and the library keeps the wide tier as its default.
+
+The collection sweep also checks 1%, 10% and 50% eligibility at 32,000 × 128.
+An unfiltered native query measured 2.15 ms versus Chroma's 1.13 ms; native
+filtered medians were 0.65–1.42 ms versus 11.36–25.47 ms. Chroma's mean recall
+on that sample was 95.1%, with a minimum of 40%. It must not be treated as an
+exact reference. Native evaluation occupied most of the measured worker wait;
+the wait cannot be attributed wholly to transport overhead.
 
 ## Coverage and completion
 

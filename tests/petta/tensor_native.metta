@@ -16,7 +16,7 @@
    (collapse (tensor:to-expr (superpose ((tensor:with $x 0 99) $x)))))
 !(tensor:from i64 (2) (1))
 !(tensor:from u8 (1) (256))
-!(tensor:from f32 (1) (1))
+!(tensor:from f16 (1) (1))
 !(tensor:add (tensor:from i64 (2) (1 2)) (tensor:from i64 (1 2) (1 2)))
 !(tensor:add (tensor:from i64 (1) (9223372036854775807)) (tensor:from i64 (1) (1)))
 !(tensor:with (tensor:from i64 (2) (1 2)) 2 7)

@@ -91,6 +91,20 @@ class ServiceTests(unittest.TestCase):
     def space(self, backend="native"):
         return self.client.open("test-" + backend, backend)
 
+    def test_f32_capability_and_durable_bits(self):
+        from array import array
+        self.assertIn(S("tensor-f32-native"), self.client.hello()[5])
+        compact = csp.Tensor.from_buffer(array("f", [1., -0., .125]))
+        space = self.space()
+        space.add(E("Compact", compact))
+        self.assertEqual(space.match(E("Compact", Var(0)), Var(0)), [compact])
+        self.fixture.restart(crash=True)
+        self.client.close()
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.space()
+        self.assertEqual(space.match(E("Compact", Var(0)), Var(0)), [compact])
+
     def denied(self, reason, function, *args, **kwargs):
         with self.assertRaises(csp.ServiceError) as caught:
             function(*args, **kwargs)

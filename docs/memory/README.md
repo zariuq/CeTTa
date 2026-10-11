@@ -37,6 +37,9 @@ updates, index invalidation and cosine retrieval. The C layer supplies owned
 tensor values, bulk numeric kernels, binary transport and durable named spaces.
 The Python adapter translates the existing collection interface into values;
 it does not implement a second ranking or filtering policy.
+The native query path has no NumPy or PyTorch dependency. Array libraries may
+provide copying ingress through the buffer protocol, or serve as independent
+benchmark oracles. Numerical queries execute in the CeTTa worker.
 
 ```
 application / embedding provider
@@ -78,6 +81,28 @@ This is the collection subset exercised by the memory bridge, not every Chroma
 API. Operations requiring documents/metadata supply them explicitly.
 
 Queries use exact cosine search and return nearest-first cosine distances.
+Multiple query embeddings share one revision validation and one correlated
+worker request. Each query is still evaluated separately in MeTTa; this is
+transport batching, not a fused matrix-matrix kernel. Empty query batches
+return empty results without constructing a worker.
+
+`NativeCollection(..., profile_requests=True)` records worker decoding and
+evaluation time, client encoding/decoding, transfer time and arena/symbol
+allocation counters in `last_query_metrics`. Transfer time includes evaluation
+and scheduling: it must not be called IPC overhead. Replies already use the
+binary value protocol. Measurements omit some native encoding/cleanup work and
+are diagnostic observations rather than exclusive CPU accounting.
+
+The default `scan_tier="wide"` preserves the f64 scan. An opt-in
+`scan_tier="f32"` builds a compact copy and row error certificates, screens
+with outward score bounds, and reranks every surviving candidate with the
+original f64 kernel. MeTTa composes these general tensor operations. Source
+embeddings, profile identity, filter eligibility and tie order are preserved.
+Unsupported rounding environments retain all rows. This tier adds storage,
+build cost and selection work; it can be slower, especially on short vectors
+or selective filters. Bounds may retain the entire corpus. Qualify it on the
+target workload before selecting it. The C interval construction is tested,
+not formally verified IEEE arithmetic.
 Embeddings are finite, nonzero `f64` vectors of the declared dimension.
 Candidates tied at the boundary retain source occurrence order. That order
 can change after updates; callers must not infer an ID-based tie rule.

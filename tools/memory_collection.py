@@ -66,7 +66,9 @@ def where_atom(where):
 
 
 class NativeCollection:
-    def __init__(self, socket, name, profile, binary, module=None):
+    def __init__(self, socket, name, profile, binary, module=None, profile_requests=False, scan_tier="wide"):
+        if scan_tier not in ("wide", "f32"):
+            raise ValueError("scan tier must be wide or f32")
         self.client = Client(str(socket), timeout=30)
         if S("tensor-ctn1-native") not in self.client.hello()[5][1:]:
             raise RuntimeError("space service does not advertise native tensors")
@@ -94,6 +96,9 @@ class NativeCollection:
         self.binary = str(binary)
         self.module = str(module or Path(__file__).resolve().parents[1] / "lib/petta/lib_memory_collection.metta")
         self.worker = None
+        self.profile_requests = profile_requests
+        self.scan_tier = scan_tier
+        self.last_query_metrics = None
         self.revision = None
         self.churn = 0
         self.lock = threading.RLock()
@@ -168,8 +173,10 @@ class NativeCollection:
         rows.sort(key=lambda r: r[1])
         if len({r[1] for r in rows}) != len(rows):
             raise ValueError("duplicate memory identities in source")
-        worker = Worker(self.binary, self.module, "memory:dispatch")
+        worker = Worker(self.binary, self.module, "memory:dispatch", profile=self.profile_requests)
         try:
+            if worker.call(E("scan-tier", S(self.scan_tier))) != E("ScanTier", S(self.scan_tier)):
+                raise RuntimeError("worker scan tier initialization failed")
             if worker.call(E("load", self.profile, self.dimensions, ())) != E("Loaded", 0):
                 raise RuntimeError("worker profile initialization failed")
             for start in range(0, len(rows), 32):
@@ -246,11 +253,31 @@ class NativeCollection:
             raise ValueError("n_results must be between 1 and 1000")
         include = ["documents", "metadatas", "distances"] if include is None else include
         with self.lock:
-            self._refresh()
+            queries = tuple(self._vector(q) for q in query_embeddings)
+            filter_value = where_atom(where)
             result = {k: [] for k in ("ids", "documents", "metadatas", "distances")}
-            for query in query_embeddings:
-                tensor = self._vector(query)
-                found = self._call(E("query", self.profile, tensor, n_results, where_atom(where)))
+            if not queries:
+                return {key: value if key == "ids" or key in include else None for key, value in result.items()}
+            refresh_started = time.perf_counter_ns() if self.profile_requests else 0
+            self._refresh()
+            refreshed_at = time.perf_counter_ns() if self.profile_requests else 0
+            # A batch captures one owner revision and uses one worker frame.
+            # Explicit query ordinals preserve correlation across alternatives.
+            if len(queries) == 1:
+                batches = [self._call(E("query", self.profile, queries[0], n_results, filter_value))]
+            else:
+                numbered = self._call(E("query-many", self.profile, queries, n_results, filter_value))
+                if (not isinstance(numbered, tuple) or len(numbered) != len(queries) or
+                    any(not isinstance(row, tuple) or len(row) != 2 or not isinstance(row[0], int) for row in numbered) or
+                    sorted(row[0] for row in numbered) != list(range(len(queries)))):
+                    raise RuntimeError("uncorrelated query batch")
+                batches = [row[1] for row in sorted(numbered)]
+            if self.profile_requests:
+                self.last_query_metrics = dict(self.worker.last_metrics, revision_check_ns=refreshed_at-refresh_started,
+                                               queries=len(queries))
+            for found in batches:
+                if isinstance(found, tuple) and found and found[0] == S("MemoryFailure"):
+                    raise ValueError("MeTTa collection refused: " + repr(found))
                 result["ids"].append([r[1][1] for r in found])
                 result["documents"].append([r[1][3] for r in found])
                 result["metadatas"].append([metadata_python(r[1][4]) for r in found])

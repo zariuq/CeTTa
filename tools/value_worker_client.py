@@ -11,8 +11,10 @@ from space_service_client import E, S, encode, decode, MAX_BYTES
 
 
 class Worker:
-    def __init__(self, binary, module, entry, timeout=30):
+    def __init__(self, binary, module, entry, timeout=30, profile=False):
         self.timeout = timeout
+        self.profile = profile
+        self.last_metrics = None
         self.lock = threading.Lock()
         self.process = subprocess.Popen([str(binary), str(module), entry],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -36,9 +38,11 @@ class Worker:
 
     def call(self, value):
         with self.lock:
+            started = time.perf_counter_ns() if self.profile else 0
             request_id = uuid.uuid4().hex
-            data = encode(E("work", request_id, value))
+            data = encode(E("work-profile" if self.profile else "work", request_id, value))
             packet = b"CSP1" + struct.pack(">I", len(data)) + data
+            encoded_at = time.perf_counter_ns() if self.profile else 0
             deadline = time.monotonic() + self.timeout
 
             def transfer(data=None, size=0):
@@ -70,9 +74,21 @@ class Worker:
                 length = struct.unpack(">I", header[4:])[0]
                 if header[:4] != b"CSP1" or not 4 <= length <= MAX_BYTES:
                     raise ValueError("invalid worker frame")
-                response = decode(transfer(size=length))
-                if not isinstance(response, tuple) or len(response) != 4 or response[:2] != (S("reply"), request_id):
+                raw = transfer(size=length)
+                received_at = time.perf_counter_ns() if self.profile else 0
+                response = decode(raw)
+                decoded_at = time.perf_counter_ns() if self.profile else 0
+                if not isinstance(response, tuple) or len(response) != (5 if self.profile else 4) or response[:2] != (S("reply"), request_id):
                     raise ValueError("uncorrelated worker reply")
+                if self.profile:
+                    fields = response[4]
+                    if not isinstance(fields, tuple) or len(fields) != 7 or fields[0] != S("WorkerMetrics") or not all(isinstance(x, int) and x >= 0 for x in fields[1:]):
+                        raise ValueError("invalid worker metrics")
+                    self.last_metrics = dict(zip(("native_decode_ns", "native_eval_ns", "permanent_bytes",
+                        "scratch_bytes", "data_symbols", "symbol_bytes"), fields[1:]))
+                    self.last_metrics.update(client_encode_ns=encoded_at-started,
+                        transfer_and_worker_ns=received_at-encoded_at, client_decode_ns=decoded_at-received_at,
+                        request_bytes=len(packet), reply_bytes=length+8)
                 if response[2] != S("ok"):
                     raise RuntimeError("worker refused: " + repr(response[3]))
                 return response[3]

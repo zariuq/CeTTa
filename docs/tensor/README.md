@@ -299,6 +299,34 @@ links. The optional shadow adapter compares retrieval without choosing the
 agent's answers. Its queues, failure receipts and rollback must be qualified
 separately from the storage and numerical kernels.
 
+## Compact floating-point screening
+
+`f32` storage now supports construction, immutable update/copy/reshape,
+arithmetic, f64-accumulated reductions, gather, top-k, bit identity and portable
+CTN1 encoding (dtype code 4). `tensor:cast` converts between f64 and f32;
+finite out-of-range conversions fail. Matrix-vector products accept f32 or f64
+matrices and an f64 query, and retain the existing four-lane f64 accumulation
+order. Row normalization and division remain f64 operations in this slice.
+The space service advertises `tensor-f32-native` separately from the base
+tensor capability; earlier servers do not accept dtype code 4.
+
+`tensor:row-error-bounds` derives an L1 conversion-error upper bound and a
+combined magnitude bound from one immutable source/compact pair.
+`tensor:matvec-bounds-selected` combines these with query magnitude, arithmetic
+error and gradual-underflow allowances. It returns lower/upper score tensors;
+nonfinite arithmetic or unsupported rounding disables pruning for the row.
+The supplied certificate must belong to that exact pair; a matching shape is
+insufficient. The memory library constructs and retains the pair together.
+
+`tensor:top-k-candidates` retains every row whose upper bound reaches the k-th
+largest lower bound. Its result is a complete candidate set under sound
+intervals, including ambiguous ties. It is not a final approximate ranking.
+`tensor:screen-candidates` is MeTTa composition; an application then gathers
+the survivors and uses its original scoring kernel for exact reranking.
+No fixed candidate-count or speedup bound follows from this method. The Lean
+screen/rerank law assumes sound intervals; it does not verify the C bound
+implementation, IEEE environment or compiler.
+
 ## Completion programme
 
 The initial usable release includes generic CPU tensor work, Python exchange

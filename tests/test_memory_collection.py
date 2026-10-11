@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--module", type=Path)
+    parser.add_argument("--scan-tier", choices=("wide", "f32"), default="wide")
     args = parser.parse_args()
     receipt = {"status": "failed", "checks": [], "programme_complete": False}
     def check(name, condition):
@@ -53,12 +54,15 @@ def main():
                 raise RuntimeError("service failed to start")
             server = start()
             profile = {"embedding_output_dim": 16, "embedding_model": "seeded-fixture", "hnsw:space": "cosine"}
-            collection = NativeCollection(socket, "qualification", profile, args.worker.resolve(), args.module)
+            collection = NativeCollection(socket, "qualification", profile, args.worker.resolve(), args.module,
+                                          profile_requests=True, scan_tier=args.scan_tier)
             raw = array('d', [1., 2., 3.]); tensor = Tensor.from_buffer(raw); raw[0] = 99.
             check("buffer-ownership-copy", tensor == Tensor.vector([1.,2.,3.]))
             check("tensor-wire-roundtrip", decode(encode(tensor)) == tensor)
             refused("noncontiguous-buffer", lambda: Tensor.from_buffer(memoryview(raw)[::2]))
-            refused("wrong-buffer-dtype", lambda: Tensor.from_buffer(array('f', [1.])))
+            compact = Tensor.from_buffer(array('f', [1., -0., .5]))
+            check("f32-buffer-wire-roundtrip", decode(encode(compact)) == compact and compact.encoded[4] == 4)
+            refused("wrong-buffer-dtype", lambda: Tensor.from_buffer(array('h', [1])))
             refused("truncated-tensor", lambda: Tensor(tensor.encoded[:-1]))
             rng = random.Random(77109)
             rows = {f"r{i:04d}": [rng.uniform(-1,1) for _ in range(16)] for i in range(257)}
@@ -91,6 +95,12 @@ def main():
                         scored.append((i,1-score))
                 return sorted(scored,key=lambda x:(x[1],x[0]))[:7]
             times=[]
+            queries = [[rng.uniform(-1,1) for _ in range(16)] for _ in range(4)]
+            batch = collection.query(queries, 7)
+            check("batched-query-order", batch['ids'] == [[r[0] for r in oracle(q)] for q in queries])
+            check("batched-query-single-worker-frame", collection.last_query_metrics['queries'] == 4)
+            check("empty-query-batch", collection.query([], 7)['ids'] == [])
+            refused("invalid-batch-query", lambda: collection.query([queries[0], [0.]*16], 7))
             base_view = None
             for stage in range(3):
                 for query_index in range(12):
@@ -163,7 +173,8 @@ def main():
             collection.client.call('compact',collection.space.uuid)
             collection.close();collection=None
             server.terminate();server.wait();server=start()
-            collection=NativeCollection(socket,'qualification',profile,args.worker.resolve(),args.module)
+            collection=NativeCollection(socket,'qualification',profile,args.worker.resolve(),args.module,
+                                        scan_tier=args.scan_tier)
             check('checkpoint-recovery',collection.count()==len(rows))
             refused('profile-mismatch',lambda: NativeCollection(socket,'qualification',dict(profile,embedding_model='other'),args.worker.resolve()))
             collection.delete(where={'group':2})

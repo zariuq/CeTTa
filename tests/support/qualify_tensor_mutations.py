@@ -71,6 +71,12 @@ def main():
         ("unaccounted-buffer", "src/atom.c",
          "arena_account_external_bytes(a, cetta_tensor_retained_bytes(value));",
          "/* omitted allocation charge */"),
+        ("screening-drops-boundary-tie", "src/tensor.c",
+         "double threshold = count ? lo[heap[0]] : INFINITY;",
+         "double threshold = count ? nextafter(lo[heap[0]], INFINITY) : INFINITY;"),
+        ("screening-ignores-error", "src/tensor.c",
+         "double radius = add_up(mul_up(multiplier, add_up(error, mul_up(relative, magnitude))), underflow);",
+         "double radius = 0 * (multiplier + error + relative + magnitude + underflow);"),
     )
     for label, name, old, replacement in controls:
         original = (ROOT / name).read_text()
@@ -83,7 +89,7 @@ def main():
         inputs = list(objects)
         inputs[SOURCES.index(name)] = target
         run(label, inputs, broken=True)
-    print("PASS: five compiled tensor defects rejected")
+    print(f"PASS: {len(controls)} compiled tensor defects rejected")
 
 
 if __name__ == "__main__":

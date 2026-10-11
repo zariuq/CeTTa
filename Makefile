@@ -43078,6 +43078,14 @@ $(TENSOR_TEST_BIN): $(TENSOR_TEST_SOURCES) src/tensor.h src/atom.h src/symbol.h 
 test-tensor-unit: $(TENSOR_TEST_BIN)
 	@$(call cetta_exec,./$(TENSOR_TEST_BIN))
 
+TENSOR_SCREEN_BIN = runtime/tensor-screening-$(BUILD_OBJ_TAG)
+$(TENSOR_SCREEN_BIN): benchmarks/tensor/screening.c $(filter-out tests/test_tensor.c,$(TENSOR_TEST_SOURCES)) src/tensor.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ benchmarks/tensor/screening.c $(filter-out tests/test_tensor.c,$(TENSOR_TEST_SOURCES)) $(LDFLAGS)
+.PHONY: benchmark-tensor-screening
+benchmark-tensor-screening: $(TENSOR_SCREEN_BIN)
+	python3 benchmarks/tensor/screening.py --binary $(TENSOR_SCREEN_BIN) \
+		--output runtime/tensor-screening-$(BUILD_OBJ_TAG).json $(TENSOR_SCREEN_ARGS)
+
 test-tensor-native: $(BIN) test-tensor-unit test-library-spellings-v1
 	CETTA_BIN=./$(BIN) python3 tests/support/test_tensor_native.py
 
@@ -43427,6 +43435,10 @@ test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 test-memory-index-mutations: $(VALUE_WORKER_BIN)
 	python3 tests/support/qualify_memory_index_mutations.py --worker $(VALUE_WORKER_BIN) \
 		--output runtime/memory-index-mutations-$(BUILD_OBJ_TAG).json
+.PHONY: test-memory-residency
+test-memory-residency: $(VALUE_WORKER_BIN)
+	python3 tests/support/test_memory_residency.py --worker $(VALUE_WORKER_BIN) \
+		--output runtime/memory-residency-$(BUILD_OBJ_TAG).json
 install-memory-service: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 scripts/install_memory_service.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) $(MEMORY_SERVICE_INSTALL_ARGS)
 runtime/cetta-telegram-control: src/telegram_control_main.c

@@ -7,6 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static uint64_t monotonic_ns(void) {
+    struct timespec t;
+    if (clock_gettime(CLOCK_MONOTONIC, &t)) return 0;
+    return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+}
 
 /* A private, parent-owned PeTTa worker. The operator selects the module and
  * entry point; CSP1 carries values, never generated source text. This is an
@@ -58,25 +65,42 @@ int main(int argc, char **argv) {
         unsigned char *bytes = malloc(length);
         if (!bytes) break;
         Atom *request = NULL;
-        bool valid = fread(bytes, 1, length, stdin) == length &&
-            cetta_atom_wire_decode(&scratch, bytes, length, &request) == ATOM_WIRE_OK;
+        bool valid = fread(bytes, 1, length, stdin) == length;
+        uint64_t decode_start = monotonic_ns();
+        valid = valid && cetta_atom_wire_decode(&scratch, bytes, length, &request) == ATOM_WIRE_OK;
+        uint64_t decode_ns = monotonic_ns() - decode_start;
         free(bytes);
         if (!valid || request->kind != ATOM_EXPR || request->expr.len != 3 ||
-            !atom_is_symbol(request->expr.elems[0], "work") ||
+            (!atom_is_symbol(request->expr.elems[0], "work") &&
+             !atom_is_symbol(request->expr.elems[0], "work-profile")) ||
             request->expr.elems[1]->kind != ATOM_GROUNDED ||
             request->expr.elems[1]->ground.gkind != GV_STRING) break;
+        bool profile = atom_is_symbol(request->expr.elems[0], "work-profile");
         Atom *input = atom_expr2(&scratch, atom_symbol(&scratch, "quote"), request->expr.elems[2]);
         Atom *call = atom_expr2(&scratch, atom_symbol(&scratch, argv[2]), input);
         EvalOutcome outcome; eval_outcome_init(&outcome);
+        uint64_t eval_start = profile ? monotonic_ns() : 0;
         eval_top_with_registry_outcome(&top, &scratch, &permanent, &registry,
             call, &outcome, NULL, NULL);
+        uint64_t eval_ns = profile ? monotonic_ns() - eval_start : 0;
         bool complete = outcome.completion == CETTA_EVAL_COMPLETE &&
             !outcome.petta_raised_error && outcome.results.len == 1 &&
             !atom_is_error(outcome.results.items[0]);
-        Atom *parts[] = {atom_symbol(&scratch,"reply"), request->expr.elems[1],
+        Atom *parts[5] = {atom_symbol(&scratch,"reply"), request->expr.elems[1],
             atom_symbol(&scratch,complete ? "ok" : "error"), complete ? outcome.results.items[0] :
             atom_symbol(&scratch,"incomplete-or-nonsingle-result")};
-        Atom *reply = atom_expr(&scratch, parts, 4);
+        if (profile) {
+            SymbolTableStats stats;
+            symbol_table_stats_snapshot(&symbols, &stats);
+            Atom *fields[] = {atom_symbol(&scratch, "WorkerMetrics"),
+                atom_int(&scratch, (int64_t)decode_ns), atom_int(&scratch, (int64_t)eval_ns),
+                atom_int(&scratch, (int64_t)arena_accounted_live_bytes(&permanent)),
+                atom_int(&scratch, (int64_t)arena_accounted_live_bytes(&scratch)),
+                atom_int(&scratch, (int64_t)stats.data_count),
+                atom_int(&scratch, (int64_t)(stats.owned_bytes + stats.data_allocated_bytes + stats.metadata_bytes))};
+            parts[4] = atom_expr(&scratch, fields, sizeof(fields)/sizeof(fields[0]));
+        }
+        Atom *reply = atom_expr(&scratch, parts, profile ? 5 : 4);
         bytes = NULL;
         valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
         if (valid) {

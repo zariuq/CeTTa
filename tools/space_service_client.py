@@ -58,14 +58,14 @@ class Tensor:
 
     def __post_init__(self):
         data = bytes(self.encoded)
-        if len(data) < 9 or data[:4] != b"CTN1" or data[4] not in (1, 2, 3):
+        if len(data) < 9 or data[:4] != b"CTN1" or data[4] not in (1, 2, 3, 4):
             raise ValueError("invalid tensor header")
         rank = struct.unpack_from("<I", data, 5)[0]
         if rank > (len(data) - 9) // 8:
             raise ValueError("invalid tensor shape")
         shape = struct.unpack_from("<" + "Q" * rank, data, 9)
         import math
-        size = math.prod(shape) * (1 if data[4] == 3 else 8)
+        size = math.prod(shape) * ({3: 1, 4: 4}.get(data[4], 8))
         if size != len(data) - 9 - 8 * rank:
             raise ValueError("tensor payload size mismatch")
         object.__setattr__(self, "encoded", data)
@@ -82,12 +82,12 @@ class Tensor:
         try:
             if not view.c_contiguous:
                 raise ValueError("contiguous buffer required; copy explicitly first")
-            formats = {"q": (1, 8), "d": (2, 8), "B": (3, 1)}
+            formats = {"q": (1, 8), "d": (2, 8), "B": (3, 1), "f": (4, 4)}
             fmt = view.format
             if fmt.startswith(("@", "=")):
                 fmt = fmt[1:]
             if fmt not in formats:
-                raise ValueError("buffer dtype must be i64, f64 or u8")
+                raise ValueError("buffer dtype must be i64, f64, f32 or u8")
             dtype, width = formats[fmt]
             if width != view.itemsize or (width > 1 and sys.byteorder != "little"):
                 raise ValueError("buffer representation requires explicit conversion")

@@ -37,6 +37,18 @@ def main():
                     sys.stderr.write(parallel.stderr + parallel.stdout)
                     return 1
                 print(f"PASS: tensor alternatives and hyperpose ({threads} threads)")
+    for dialect in ("petta", "he", "prime"):
+        source = ROOT / "tests" / dialect / "tensor_screening.metta"
+        expected = source.with_suffix(".expected").read_text()
+        result = subprocess.run([str(binary), "--lang", dialect, str(source)],
+                                cwd=ROOT, text=True, capture_output=True, timeout=60)
+        if result.returncode or result.stdout != expected:
+            sys.stderr.write(result.stderr)
+            sys.stderr.writelines(difflib.unified_diff(expected.splitlines(True), result.stdout.splitlines(True),
+                fromfile=f"{dialect}/tensor_screening.expected", tofile="actual"))
+            return 1
+        outputs += len(expected.splitlines())
+        print(f"PASS: {dialect}/tensor_screening")
     print(f"PASS: native tensor and retrieval fixtures ({outputs} results)")
     return 0
 

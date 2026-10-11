@@ -9,10 +9,14 @@ on:
       - 'tests/test_memory_collection.py'
       - 'tests/test_tensor.c'
       - 'tests/support/test_tensor_native.py'
+      - 'tests/support/test_memory_residency.py'
+      - 'tests/support/qualify_tensor_mutations.py'
       - 'tests/support/qualify_memory_index_mutations.py'
       - 'tests/petta/**'
       - 'tests/he/tensor_native.*'
+      - 'tests/he/tensor_screening.*'
       - 'tests/prime/tensor_native.*'
+      - 'tests/prime/tensor_screening.*'
       - 'benchmarks/tensor/**'
       - 'Makefile'
       - '.github/workflows/native-memory.yml'
@@ -30,7 +34,18 @@ jobs:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config python3 libgmp-dev
       - name: Build and qualify without optional runtimes
-        run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection test-tensor-native test-memory-index-mutations
+        run: make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1 test-memory-collection test-tensor-native test-memory-index-mutations test-memory-residency
+      - name: Qualify compact screening through the collection lifecycle
+        run: >-
+          python3 tests/test_memory_collection.py
+          --server runtime/cetta-space-service-core.prime-need-heap-index.prime-eval-stack.managed-symbols
+          --worker runtime/cetta-value-worker-core.prime-need-heap-index.prime-eval-stack.managed-symbols
+          --scan-tier f32 --output runtime/memory-f32-qualification.json
+      - name: Qualify native screening without an external numerical runtime
+        run: >-
+          make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1
+          benchmark-tensor-screening
+          TENSOR_SCREEN_ARGS="--records 1000 4000 --dimension 384 --repeats 4"
       - name: Resident queries, filters and write recovery
         run: >-
           make BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 ENABLE_MANAGED_SYMBOLS=1
