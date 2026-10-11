@@ -1,4 +1,5 @@
 #include "json_value_v1.h"
+#include "json_direct_v1.h"
 
 #include "lib_parse_native_grammar.h"
 
@@ -9,7 +10,7 @@
 
 typedef struct {
     Arena *arena;
-    uint32_t work;
+    uint64_t work;
     uint32_t work_limit;
     uint32_t depth_limit;
     CettaJsonValueV1Status status;
@@ -41,7 +42,8 @@ static bool json_value_error(JsonValueCtxV1 *ctx,
 }
 
 static bool json_value_work(JsonValueCtxV1 *ctx, uint32_t amount) {
-    if (!ctx || amount > ctx->work_limit - ctx->work) {
+    if (!ctx || amount > UINT64_MAX - ctx->work ||
+        (ctx->work_limit && (ctx->work > ctx->work_limit || amount > ctx->work_limit - ctx->work))) {
         return json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
                                 "JSON value work limit exceeded");
     }
@@ -120,35 +122,51 @@ static bool json_member_span_valid(Atom *span) {
  * while the newly parsed source is expected to carry different spans. */
 static bool json_value_equal_ignoring_source_spans(
     JsonValueCtxV1 *ctx, Atom *left, Atom *right, uint32_t depth) {
-    CettaExprIndex index;
-    CettaExprLen compared_len;
-
-    if (!left || !right || depth > ctx->depth_limit ||
-        !json_value_work(ctx, 1u)) {
-        return false;
-    }
-    if (json_expr_is(left, "JsonMemberV1", 5u) &&
-        json_expr_is(right, "JsonMemberV1", 5u)) {
-        if (!json_member_span_valid(left->expr.elems[4]) ||
-            !json_member_span_valid(right->expr.elems[4])) {
-            return false;
+    typedef struct { Atom *left, *right; size_t depth; } Pair;
+    Pair local[16], *pairs = local;
+    size_t len = 1u, cap = 16u;
+    bool ok = false;
+    pairs[0] = (Pair){left, right, depth};
+    while (len) {
+        Pair pair = pairs[--len];
+        left = pair.left; right = pair.right;
+        if (!left || !right || (ctx->depth_limit && pair.depth > ctx->depth_limit) ||
+            !json_value_work(ctx, 1u)) goto done;
+        CettaExprLen count;
+        if (json_expr_is(left, "JsonMemberV1", 5u) && json_expr_is(right, "JsonMemberV1", 5u)) {
+            if (!json_member_span_valid(left->expr.elems[4]) || !json_member_span_valid(right->expr.elems[4])) goto done;
+            count = 4u;
+        } else {
+            if (left->kind != right->kind || left->kind != ATOM_EXPR || left->expr.len != right->expr.len) {
+                if (!atom_eq(left, right)) goto done;
+                continue;
+            }
+            count = left->expr.len;
         }
-        compared_len = 4u;
-    } else {
-        if (left->kind != right->kind || left->kind != ATOM_EXPR ||
-            left->expr.len != right->expr.len) {
-            return atom_eq(left, right);
+        if (count > SIZE_MAX - len) goto allocation;
+        size_t needed = len + count;
+        if (needed > cap) {
+            size_t next = cap;
+            while (next < needed) {
+                if (next > SIZE_MAX / 2u) goto allocation;
+                next *= 2u;
+            }
+            if (next > SIZE_MAX / sizeof(*pairs)) goto allocation;
+            Pair *grown = pairs == local ? malloc(next * sizeof(*pairs)) : realloc(pairs, next * sizeof(*pairs));
+            if (!grown) goto allocation;
+            if (pairs == local) memcpy(grown, local, len * sizeof(*pairs));
+            pairs = grown; cap = next;
         }
-        compared_len = left->expr.len;
+        for (CettaExprIndex i = count; i > 0u; i--)
+            pairs[len++] = (Pair){left->expr.elems[i-1u], right->expr.elems[i-1u], pair.depth + 1u};
     }
-    for (index = 0u; index < compared_len; index++) {
-        if (!json_value_equal_ignoring_source_spans(
-                ctx, left->expr.elems[index], right->expr.elems[index],
-                depth + 1u)) {
-            return false;
-        }
-    }
-    return true;
+    ok = true;
+    goto done;
+allocation:
+    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory comparing JSON values");
+done:
+    if (pairs != local) free(pairs);
+    return ok;
 }
 
 static bool json_scalar_list_view(JsonValueCtxV1 *ctx, Atom *string,
@@ -269,16 +287,7 @@ static bool json_canonical_string_utf8(JsonValueCtxV1 *ctx, Atom *string,
     return true;
 }
 
-static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
-                            uint32_t depth) {
-    CettaExprIndex index;
-    if (!value || depth > ctx->depth_limit || !json_value_work(ctx, 1u)) {
-        if (ctx->status == CETTA_JSON_VALUE_V1_OK) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
-                             "JSON value nesting limit exceeded");
-        }
-        return NULL;
-    }
+static Atom *json_to_legacy_scalar(JsonValueCtxV1 *ctx, Atom *value) {
     if (atom_is_symbol(value, "JsonNullV1"))
         return atom_symbol(ctx->arena, "JsonNull");
     if (json_expr_is(value, "JsonBoolV1", 2u)) {
@@ -315,71 +324,9 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
         free(utf8.bytes);
         return result;
     }
-    if (json_expr_is(value, "JsonArrayV1", 2u)) {
-        Atom *items = value->expr.elems[1];
-        Atom **converted;
-        Atom *list;
-        if (!items || items->kind != ATOM_EXPR) goto malformed;
-        converted = (Atom **)calloc(items->expr.len ? items->expr.len : 1u,
-                                    sizeof(*converted));
-        if (!converted) goto allocation;
-        for (index = 0u; index < items->expr.len; index++) {
-            converted[index] = json_to_legacy(
-                ctx, items->expr.elems[index], depth + 1u);
-            if (!converted[index]) {
-                free(converted);
-                return NULL;
-            }
-        }
-        list = atom_expr(ctx->arena, converted, items->expr.len);
-        free(converted);
-        return json_app1(ctx->arena, "JsonArray", list);
-    }
-    if (json_expr_is(value, "JsonObjectV1", 2u)) {
-        Atom *members = value->expr.elems[1];
-        Atom **pairs;
-        Atom *list;
-        if (!members || members->kind != ATOM_EXPR) goto malformed;
-        pairs = (Atom **)calloc(members->expr.len ? members->expr.len : 1u,
-                               sizeof(*pairs));
-        if (!pairs) goto allocation;
-        for (index = 0u; index < members->expr.len; index++) {
-            Atom *member = members->expr.elems[index];
-            JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
-            Atom *member_value;
-            if (!json_expr_is(member, "JsonMemberV1", 5u) ||
-                !member->expr.elems[1] ||
-                member->expr.elems[1]->kind != ATOM_GROUNDED ||
-                member->expr.elems[1]->ground.gkind != GV_INT ||
-                member->expr.elems[1]->ground.ival != (int64_t)index ||
-                !json_member_span_valid(member->expr.elems[4]) ||
-                !json_canonical_string_utf8(
-                    ctx, member->expr.elems[2], &utf8) ||
-                !(member_value = json_to_legacy(
-                      ctx, member->expr.elems[3], depth + 1u))) {
-                free(utf8.bytes);
-                free(pairs);
-                if (ctx->status == CETTA_JSON_VALUE_V1_OK) goto malformed;
-                return NULL;
-            }
-            pairs[index] = json_app2(
-                ctx->arena, "JsonPair",
-                atom_string_n(ctx->arena, (const char *)utf8.bytes, utf8.len),
-                member_value);
-            free(utf8.bytes);
-        }
-        list = atom_expr(ctx->arena, pairs, members->expr.len);
-        free(pairs);
-        return json_app1(ctx->arena, "JsonObject", list);
-    }
 
-malformed:
     json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                      "malformed canonical JSON value");
-    return NULL;
-allocation:
-    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
-                     "out of memory converting JSON value");
     return NULL;
 }
 
@@ -438,16 +385,7 @@ static size_t json_text_len(Atom *atom, const char *text) {
     return atom->kind == ATOM_GROUNDED ? atom_string_len(atom) : strlen(text);
 }
 
-static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
-                              uint32_t depth) {
-    CettaExprIndex index;
-    if (!value || depth > ctx->depth_limit || !json_value_work(ctx, 1u)) {
-        if (ctx->status == CETTA_JSON_VALUE_V1_OK) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
-                             "JSON value nesting limit exceeded");
-        }
-        return NULL;
-    }
+static Atom *json_from_legacy_scalar(JsonValueCtxV1 *ctx, Atom *value) {
     if (atom_is_symbol(value, "JsonNull"))
         return atom_symbol(ctx->arena, "JsonNullV1");
     if (json_expr_is(value, "JsonBool", 2u)) {
@@ -480,68 +418,110 @@ static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
                          atom_string_n(ctx->arena, text,
                              json_text_len(value->expr.elems[1], text)));
     }
-    if (json_expr_is(value, "JsonArray", 2u)) {
-        Atom *items = value->expr.elems[1];
-        Atom **converted;
-        Atom *list;
-        if (!items || items->kind != ATOM_EXPR) goto malformed;
-        converted = (Atom **)calloc(items->expr.len ? items->expr.len : 1u,
-                                    sizeof(*converted));
-        if (!converted) goto allocation;
-        for (index = 0u; index < items->expr.len; index++) {
-            converted[index] = json_from_legacy(
-                ctx, items->expr.elems[index], depth + 1u);
-            if (!converted[index]) {
-                free(converted);
-                return NULL;
-            }
-        }
-        list = atom_expr(ctx->arena, converted, items->expr.len);
-        free(converted);
-        return json_app1(ctx->arena, "JsonArrayV1", list);
-    }
-    if (json_expr_is(value, "JsonObject", 2u)) {
-        Atom *pairs = value->expr.elems[1];
-        Atom **members;
-        Atom *list;
-        if (!pairs || pairs->kind != ATOM_EXPR) goto malformed;
-        members = (Atom **)calloc(pairs->expr.len ? pairs->expr.len : 1u,
-                                 sizeof(*members));
-        if (!members) goto allocation;
-        for (index = 0u; index < pairs->expr.len; index++) {
-            Atom *pair = pairs->expr.elems[index];
-            const char *key;
-            Atom *key_value;
-            Atom *member_value;
-            if (!json_expr_is(pair, "JsonPair", 3u) ||
-                !(key = json_text(pair->expr.elems[1])) ||
-                !(key_value = json_scalar_list_from_utf8(
-                      ctx, key, json_text_len(pair->expr.elems[1], key))) ||
-                !(member_value = json_from_legacy(
-                      ctx, pair->expr.elems[2], depth + 1u))) {
-                free(members);
-                if (ctx->status == CETTA_JSON_VALUE_V1_OK) goto malformed;
-                return NULL;
-            }
-            members[index] = json_app4(
-                ctx->arena, "JsonMemberV1",
-                atom_int(ctx->arena, (int64_t)index),
-                key_value, member_value,
-                atom_symbol(ctx->arena, "JsonNoSourceSpanV1"));
-        }
-        list = atom_expr(ctx->arena, members, pairs->expr.len);
-        free(members);
-        return json_app1(ctx->arena, "JsonObjectV1", list);
-    }
 
-malformed:
     json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                      "malformed legacy JSON value");
     return NULL;
-allocation:
-    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
-                     "out of memory converting JSON value");
+}
+
+typedef struct {
+    Atom *items;
+    Atom **converted;
+    Atom *key;
+    CettaExprIndex index;
+    bool object;
+} JsonConvertFrameV1;
+
+static Atom *json_convert_child(JsonValueCtxV1 *ctx, JsonConvertFrameV1 *frame,
+                                bool to_legacy) {
+    Atom *child = frame->items->expr.elems[frame->index];
+    if (!frame->object) return child;
+    if (to_legacy) {
+        JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
+        bool ok = json_expr_is(child, "JsonMemberV1", 5u) &&
+            child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
+            child->expr.elems[1]->ground.gkind == GV_INT &&
+            child->expr.elems[1]->ground.ival == (int64_t)frame->index &&
+            json_member_span_valid(child->expr.elems[4]) &&
+            json_canonical_string_utf8(ctx, child->expr.elems[2], &utf8);
+        if (ok) frame->key = atom_string_n(ctx->arena, (const char *)utf8.bytes, utf8.len);
+        free(utf8.bytes);
+        if (ok) return child->expr.elems[3];
+    } else if (json_expr_is(child, "JsonPair", 3u)) {
+        const char *key = json_text(child->expr.elems[1]);
+        if (key && (frame->key = json_scalar_list_from_utf8(
+                ctx, key, json_text_len(child->expr.elems[1], key))))
+            return child->expr.elems[2];
+    }
+    if (ctx->status == CETTA_JSON_VALUE_V1_OK)
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON object member");
     return NULL;
+}
+
+static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_legacy) {
+    JsonConvertFrameV1 *frames = NULL;
+    size_t len = 0u, cap = 0u;
+    Atom *current = value;
+    for (;;) {
+        if (!current) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "missing JSON value");
+            goto failed;
+        }
+        if (ctx->depth_limit && len >= ctx->depth_limit) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT, "JSON value nesting limit exceeded");
+            goto failed;
+        }
+        if (!json_value_work(ctx, 1u)) goto failed;
+        bool object = json_expr_is(current, to_legacy ? "JsonObjectV1" : "JsonObject", 2u);
+        if (object || json_expr_is(current, to_legacy ? "JsonArrayV1" : "JsonArray", 2u)) {
+            Atom *items = current->expr.elems[1];
+            if (!items || items->kind != ATOM_EXPR) {
+                json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON container");
+                goto failed;
+            }
+            if (len == cap) {
+                size_t next = cap ? cap * 2u : 16u;
+                if (next < cap || next > SIZE_MAX / sizeof(*frames)) goto allocation;
+                JsonConvertFrameV1 *grown = realloc(frames, next * sizeof(*frames));
+                if (!grown) goto allocation;
+                frames = grown; cap = next;
+            }
+            Atom **converted = items->expr.len ? calloc(items->expr.len, sizeof(*converted)) : NULL;
+            if (items->expr.len && !converted) goto allocation;
+            frames[len++] = (JsonConvertFrameV1){.items = items, .converted = converted, .object = object};
+            if (!items->expr.len) goto closed;
+            current = json_convert_child(ctx, &frames[len-1u], to_legacy);
+            if (!current) goto failed;
+            continue;
+        }
+        current = to_legacy ? json_to_legacy_scalar(ctx, current) : json_from_legacy_scalar(ctx, current);
+        if (!current) goto failed;
+        for (;;) {
+            if (!len) { free(frames); return current; }
+            JsonConvertFrameV1 *frame = &frames[len-1u];
+            if (frame->object) current = to_legacy
+                ? json_app2(ctx->arena, "JsonPair", frame->key, current)
+                : json_app4(ctx->arena, "JsonMemberV1", atom_int(ctx->arena, frame->index),
+                            frame->key, current, atom_symbol(ctx->arena, "JsonNoSourceSpanV1"));
+            frame->converted[frame->index++] = current;
+            if (frame->index < frame->items->expr.len) {
+                current = json_convert_child(ctx, frame, to_legacy);
+                if (!current) goto failed;
+                break;
+            }
+closed:
+            frame = &frames[len-1u];
+            current = json_app1(ctx->arena, frame->object ? (to_legacy ? "JsonObject" : "JsonObjectV1") :
+                               (to_legacy ? "JsonArray" : "JsonArrayV1"),
+                               atom_expr(ctx->arena, frame->converted, frame->items->expr.len));
+            free(frame->converted); len--;
+        }
+    }
+allocation:
+    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory converting JSON value");
+failed:
+    for (size_t i = 0u; i < len; i++) free(frames[i].converted);
+    free(frames); return NULL;
 }
 
 static bool json_convert(Arena *arena, Atom *value,
@@ -554,7 +534,7 @@ static bool json_convert(Arena *arena, Atom *value,
     Atom *result;
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
-    if (!arena || !value || !out || work_limit == 0u || depth_limit == 0u) {
+    if (!arena || !value || !out) {
         if (error_buf && error_buf_size > 0u) {
             (void)snprintf(error_buf, error_buf_size,
                            "bad JSON value conversion arguments");
@@ -570,9 +550,7 @@ static bool json_convert(Arena *arena, Atom *value,
         .error = error_buf,
         .error_size = error_buf_size,
     };
-    result = to_legacy
-        ? json_to_legacy(&ctx, value, 1u)
-        : json_from_legacy(&ctx, value, 1u);
+    result = json_convert_value(&ctx, value, to_legacy);
     if (!result) {
         arena_reset(arena, mark);
         if (status) *status = ctx.status;
@@ -632,16 +610,11 @@ static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
     return json_bytes_char(out, '"');
 }
 
-static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value,
-                            JsonBytesV1 *out, uint32_t depth) {
-    CettaExprIndex index;
-    if (!value || depth > ctx->depth_limit || !json_value_work(ctx, 1u)) {
-        if (ctx->status == CETTA_JSON_VALUE_V1_OK) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
-                             "JSON value nesting limit exceeded");
-        }
-        return false;
-    }
+static bool json_number_lexeme_valid(const char *bytes, size_t len) {
+    return cetta_json_direct_v1_number_valid((const uint8_t *)bytes, len);
+}
+
+static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
     if (atom_is_symbol(value, "JsonNullV1"))
         return json_bytes_append(out, "null", 4u);
     if (json_expr_is(value, "JsonBoolV1", 2u)) {
@@ -663,49 +636,90 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value,
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                     "JsonNumberV1 expects exact text");
         }
+        if (!json_number_lexeme_valid(number->ground.sval, number->ground.slen))
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
+                                    "JSON syntax rejected by authored grammar");
         return json_bytes_append(out, number->ground.sval,
                                  number->ground.slen);
     }
-    if (json_expr_is(value, "JsonArrayV1", 2u)) {
-        Atom *items = value->expr.elems[1];
-        if (!items || items->kind != ATOM_EXPR ||
-            !json_bytes_char(out, '[')) goto malformed;
-        for (index = 0u; index < items->expr.len; index++) {
-            if ((index > 0u && !json_bytes_char(out, ',')) ||
-                !json_emit_value(ctx, items->expr.elems[index],
-                                 out, depth + 1u)) return false;
-        }
-        return json_bytes_char(out, ']');
-    }
-    if (json_expr_is(value, "JsonObjectV1", 2u)) {
-        Atom *members = value->expr.elems[1];
-        if (!members || members->kind != ATOM_EXPR ||
-            !json_bytes_char(out, '{')) goto malformed;
-        for (index = 0u; index < members->expr.len; index++) {
-            Atom *member = members->expr.elems[index];
-            if (!json_expr_is(member, "JsonMemberV1", 5u) ||
-                !member->expr.elems[1] ||
-                member->expr.elems[1]->kind != ATOM_GROUNDED ||
-                member->expr.elems[1]->ground.gkind != GV_INT ||
-                member->expr.elems[1]->ground.ival != (int64_t)index ||
-                !json_member_span_valid(member->expr.elems[4]) ||
-                (index > 0u && !json_bytes_char(out, ',')) ||
-                !json_emit_string(ctx, member->expr.elems[2], out) ||
-                !json_bytes_char(out, ':') ||
-                !json_emit_value(ctx, member->expr.elems[3],
-                                 out, depth + 1u)) {
-                if (ctx->status == CETTA_JSON_VALUE_V1_OK) goto malformed;
-                return false;
-            }
-        }
-        return json_bytes_char(out, '}');
-    }
-malformed:
-    return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                            "malformed canonical JSON value");
+    return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
 }
 
-bool cetta_json_value_v1_stringify(
+typedef struct { Atom *items; CettaExprIndex index; bool object; } JsonEmitFrameV1;
+
+static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out) {
+    Atom *child = frame->items->expr.elems[frame->index];
+    if (frame->index && !json_bytes_char(out, ',')) return NULL;
+    if (!frame->object) return child;
+    if (json_expr_is(child, "JsonMemberV1", 5u) &&
+        child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
+        child->expr.elems[1]->ground.gkind == GV_INT &&
+        child->expr.elems[1]->ground.ival == (int64_t)frame->index &&
+        json_member_span_valid(child->expr.elems[4]) &&
+        json_emit_string(ctx, child->expr.elems[2], out) && json_bytes_char(out, ':'))
+        return child->expr.elems[3];
+    if (ctx->status == CETTA_JSON_VALUE_V1_OK)
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
+    return NULL;
+}
+
+static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
+    JsonEmitFrameV1 *frames = NULL;
+    size_t len = 0u, cap = 0u;
+    Atom *current = value;
+    for (;;) {
+        if (!current) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "missing JSON value");
+            goto failed;
+        }
+        if (ctx->depth_limit && len >= ctx->depth_limit) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT, "JSON value nesting limit exceeded");
+            goto failed;
+        }
+        if (!json_value_work(ctx, 1u)) goto failed;
+        bool object = json_expr_is(current, "JsonObjectV1", 2u);
+        if (object || json_expr_is(current, "JsonArrayV1", 2u)) {
+            Atom *items = current->expr.elems[1];
+            if (!items || items->kind != ATOM_EXPR) {
+                json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
+                goto failed;
+            }
+            if (!json_bytes_char(out, object ? '{' : '[')) goto failed;
+            if (len == cap) {
+                size_t next = cap ? cap * 2u : 16u;
+                if (next < cap || next > SIZE_MAX / sizeof(*frames)) goto allocation;
+                JsonEmitFrameV1 *grown = realloc(frames, next * sizeof(*frames));
+                if (!grown) goto allocation;
+                frames = grown; cap = next;
+            }
+            frames[len++] = (JsonEmitFrameV1){.items = items, .object = object};
+            if (!items->expr.len) goto closed;
+            current = json_emit_child(ctx, &frames[len-1u], out);
+            if (!current) goto failed;
+            continue;
+        }
+        if (!json_emit_scalar(ctx, current, out)) goto failed;
+        while (len) {
+            JsonEmitFrameV1 *frame = &frames[len-1u];
+            if (++frame->index < frame->items->expr.len) {
+                current = json_emit_child(ctx, frame, out);
+                if (!current) goto failed;
+                break;
+            }
+closed:
+            frame = &frames[len-1u];
+            if (!json_bytes_char(out, frame->object ? '}' : ']')) goto failed;
+            len--;
+        }
+        if (!len) { free(frames); return true; }
+    }
+allocation:
+    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory emitting JSON continuations");
+failed:
+    free(frames); return false;
+}
+
+static bool json_stringify_impl(
     const CettaJsonRuntimeV1 *runtime, Atom *value, bool legacy_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out,
@@ -724,16 +738,18 @@ bool cetta_json_value_v1_stringify(
 
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
-    if (!runtime || !value || !bytes_out || !byte_len_out ||
-        work_limit == 0u || depth_limit == 0u || byte_limit == 0u) {
+    if (!value || !bytes_out || !byte_len_out) {
         if (error_buf && error_buf_size > 0u) {
             (void)snprintf(error_buf, error_buf_size,
                            "bad JSON stringify arguments");
         }
         return false;
     }
-    arena_init(&normalized_arena);
-    arena_init(&reparsed_arena);
+    /* These values are borrowed only until emission finishes. Interning a
+     * temporary conversion retains needless global roots and compares long,
+     * similar prefixes at hash-table collisions. Keep it wholly local. */
+    arena_init_detached(&normalized_arena);
+    arena_init_detached(&reparsed_arena);
     if (legacy_input && !cetta_json_value_v1_from_legacy(
             &normalized_arena, value, work_limit, depth_limit,
             &canonical, &convert_status, error_buf, error_buf_size)) {
@@ -747,21 +763,23 @@ bool cetta_json_value_v1_stringify(
         .error = error_buf,
         .error_size = error_buf_size,
     };
-    bytes = (JsonBytesV1){.limit = byte_limit, .ctx = &ctx};
-    if (!json_emit_value(&ctx, canonical, &bytes, 1u)) {
+    bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
+    if (!json_emit_value(&ctx, canonical, &bytes)) {
         if (status) *status = ctx.status;
         goto done_bytes;
     }
     cetta_json_runtime_v1_default_limits(&limits);
-    limits.recognizer_work_limit = work_limit;
-    limits.elaboration_work_limit = work_limit;
-    limits.value_depth_limit = depth_limit;
-    if (!cetta_json_runtime_v1_parse(
+    if (work_limit) {
+        limits.recognizer_work_limit = work_limit;
+        limits.elaboration_work_limit = work_limit;
+    }
+    if (depth_limit) limits.value_depth_limit = depth_limit;
+    if (runtime && (!cetta_json_runtime_v1_parse(
             runtime, &reparsed_arena, bytes.bytes, bytes.len,
             &limits, &reparsed, &parse_status,
             error_buf, error_buf_size) ||
         !json_value_equal_ignoring_source_spans(
-            &ctx, canonical, reparsed, 1u)) {
+            &ctx, canonical, reparsed, 1u))) {
         if (status) *status = CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT;
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
             (void)snprintf(
@@ -782,6 +800,27 @@ done:
     arena_free(&reparsed_arena);
     arena_free(&normalized_arena);
     return ok;
+}
+
+bool cetta_json_value_v1_stringify(
+    const CettaJsonRuntimeV1 *runtime, Atom *value, bool legacy_input,
+    uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
+    uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    if (!runtime) {
+        if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
+        return false;
+    }
+    return json_stringify_impl(runtime, value, legacy_input, work_limit,
+        depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
+}
+
+bool cetta_json_value_v1_emit(Atom *value, bool legacy_input,
+    uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
+    uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    return json_stringify_impl(NULL, value, legacy_input, work_limit,
+        depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status) {

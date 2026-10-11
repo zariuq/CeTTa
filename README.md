@@ -109,6 +109,43 @@ The service is a separate executable so it need not link Python; both builds
 use the same source. Managed symbols are still an experimental memory feature,
 not a complete collector for every legacy numeric symbol ID.
 
+## JSON ingestion
+
+`lib/json.metta` uses a build-time predictive parser for the authored
+RFC-8259 grammar. Regular lexical spans use generated DFA tables; container
+actions construct values while reading the input. Ordinary parsing and
+stringifying do not materialize forests, render certificates, hash a parse
+tree, or reparse emitted output.
+
+Canonical `json:*` values preserve exact number text, ordered duplicate
+members, Unicode scalars, occurrence IDs and source spans. Historical
+`json-parse` values retain their compatibility representation, including NUL
+bytes. Parse failures report a byte position and expectation, and preserve
+the caller's arena and output. Parsing, value conversion, Boolean respelling
+and writing use explicit continuations, with no default nesting cap. C callers
+can request explicit work, depth and byte budgets independently of the grammar.
+
+`json:parse-reference`, `json:parse-legacy-reference` and
+`json:stringify-reference` explicitly select the prepared GLL reference.
+`json:capabilities` identifies the default as `PredictiveDfaV1`; its remaining
+digests describe that reference. Diagnostic preparation is lazy.
+
+The compiler reads the lowered syntax, lexical profile, occurrence-value
+language and elaboration plan. It checks semantic layouts and FIRST/FOLLOW
+conflicts after lexical folding and erasing value-inert whitespace. It
+supports this JSON elaboration fragment and refuses unsupported changes;
+it is not a general parser generator with GLL fallback islands.
+
+The C entry `cetta_json_direct_v1_lines` consumes JSONL one row at a time.
+Its callback borrows the row's value until returning; retaining it requires
+copying it. Completed rows remain delivered if a subsequent row fails.
+
+Run `make test-json-direct-v1` for differential, malformed-input, concurrency,
+streaming and generator-conflict checks. The qualification binary also
+accepts `--bench FILE`, `--check FILE`, `--corpus DIRECTORY` and
+`--corpus-fast DIRECTORY`. Reference resource exhaustion is reported
+separately in corpus checks; complete-file agreement requires every row.
+
 ## Bridge Setup
 
 The bridge-enabled modes build `rust/cetta-space-bridge` and link it

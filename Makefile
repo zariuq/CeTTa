@@ -689,11 +689,14 @@ JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.gener
 JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
 JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
 JSON_GSLT_VALUE_TARGET_SOURCE_V1 = langdef/json/occurrence_preserving_value_v1.metta
+JSON_PREDICTIVE_OUTPUTS_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/lexical_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.inc
+JSON_DFA_EMITTER_V1 = runtime/emit-regular-span-dfa-v1
 JSON_GSLT_RUNTIME_SRC =
 ifeq ($(ENABLE_JSON_GSLT),1)
 JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
+	native/json_direct_v1.c \
 	native/json_runtime_v1.c \
 	native/json_nik_v1.c \
 	native/json_elaboration_plan_v1.c \
@@ -39781,6 +39784,15 @@ test-language-def-contextual-runner-v1: \
 
 # C-only deterministic source embedding for build-time language packages.
 # Generated artifacts stay under runtime/generated and are never checked in.
+$(JSON_DFA_EMITTER_V1): tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc -Iexperiments/gslt2parse_foundation/native tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c src/lib_parse_native_grammar.c -Wl,--gc-sections -o $@
+
+$(JSON_PREDICTIVE_OUTPUTS_V1) &: tools/json_predictive_v1.py tools/gslt2parse_schema_v1.py $(JSON_DFA_EMITTER_V1) $(JSON_GSLT_LANGUAGE_SOURCE_V1) $(JSON_GSLT_PROFILE_SOURCE_V1) $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) native/json_elaboration_plan_v1.c
+	python3 tools/json_predictive_v1.py --syntax $(JSON_GSLT_LANGUAGE_SOURCE_V1) --profile $(JSON_GSLT_PROFILE_SOURCE_V1) --target $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) --elaboration native/json_elaboration_plan_v1.c --dfa-compiler $(JSON_DFA_EMITTER_V1) --output $(JSON_GSLT_GENERATED_DIR_V1)
+
+native/json_direct_v1.$(BUILD_OBJ_TAG).o native/json_direct_v1.$(BUILD_OBJ_TAG).stage0.o native/json_direct_v1.$(BUILD_OBJ_TAG).runtime-stats.o: $(JSON_PREDICTIVE_OUTPUTS_V1)
+
 $(JSON_SOURCE_EMBED_TOOL_V1): $(JSON_SOURCE_EMBED_TOOL_V1_SRC)
 	@mkdir -p $(dir $@)
 	@set -eu; \
@@ -39850,6 +39862,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_nik_v1.c \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
+	native/json_direct_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
@@ -39890,6 +39903,8 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	native/json_nik_v1.h \
 	native/json_runtime_v1.h \
 	native/json_value_v1.h \
+	native/json_direct_v1.h \
+	$(JSON_PREDICTIVE_OUTPUTS_V1) \
 	$(LANGUAGE_DEF_CORE_V1_HEADER) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.h \
@@ -39922,6 +39937,26 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
+
+JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
+$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-direct-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread $(if $(filter 1,$(ENABLE_GMP)),$(GMP_LDFLAGS),); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-json-direct-v1-body
+test-json-direct-v1-body: $(JSON_DIRECT_V1_TEST_BIN)
+	@$(JSON_DIRECT_V1_TEST_BIN)
+	@python3 tests/test_json_predictive_v1.py
+
+.PHONY: test-json-direct-v1
+test-json-direct-v1:
+	@$(MAKE) --no-print-directory BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-json-direct-v1-body
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
@@ -42939,6 +42974,7 @@ test-io-json-bridge:
 
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
+		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
 		tests/test_json_gslt_hostile_constructors.petta.expected \
@@ -42976,7 +43012,14 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
 	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
-	echo "(JsonGsltLibrarySummary 21 21 0)"
+	$(BIN) --lang he tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.petta.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	python3 tests/test_json_deep_v1.py "$(BIN)"; \
+	echo "(JsonGsltLibrarySummary 24 24 0)"
 
 .PHONY: test-json-gslt-library
 test-json-gslt-library:
@@ -43029,6 +43072,7 @@ test-json-gslt-sanitizers:
 .PHONY: test-json-gslt
 .NOTPARALLEL: test-json-gslt
 test-json-gslt: \
+		test-json-direct-v1 \
 		test-language-def-parser-pack-v1 \
 		test-parser-pack-forest-encoding-v1 \
 		test-json-nik-v1 \
