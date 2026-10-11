@@ -1186,9 +1186,25 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
     return false;
 }
 
+/* A langdef native answers data: a parse, a forest, a handle, an
+ * inspection or a refusal.  It reports that answer as a completed value, so
+ * no dialect interprets it again.  Interpretation in the library is
+ * explicit, never implied by a constructor that shares its name with a
+ * program's equation. */
+static bool langdef_module_call(CettaLibraryContext *ctx, Space *space,
+                                Arena *a, Atom *head, Atom **args,
+                                uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result =
+        cetta_langdef_module_dispatch(ctx, space, a, head, args, nargs);
+    if (!result)
+        return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch, NULL, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
 #if CETTA_BUILD_WITH_DURABLE
     {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},

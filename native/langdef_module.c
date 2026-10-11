@@ -24,6 +24,7 @@
 #include "native/utf8_scalar_v1.h"
 #include "native/operational_language_def_v1.h"
 #include "native/structural_tree_relabel_v1.h"
+#include "native/syntax_gslt_v1.h"
 #include "native_handle.h"
 #include "finite_horn_ground_term_v1.h"
 #include "parser_pack_gll_v1.h"
@@ -1015,6 +1016,17 @@ static CettaAuthoredParserV1 *authored_parser_resource_load_values(
 failed:
     authored_parser_resource_free(resource);
     return NULL;
+}
+
+static bool syntax_gslt_admission_v1(
+    Atom *language, Atom *profile, char *error, size_t error_size) {
+    CettaAuthoredParserV1 *resource = authored_parser_resource_load_values(
+        language, profile, error, error_size);
+    if (!resource) return false;
+    /* Admission installs no handle or module. The existing compiler and its
+     * closure check are authoritative; the temporary realization is released. */
+    authored_parser_resource_free(resource);
+    return true;
 }
 #endif
 
@@ -8689,6 +8701,31 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         result = atom_symbol(arena, joined);
         free(joined);
         return langdef_return(arena, result);
+    }
+
+    /* Syntax GSLT values close the chain: the earlier operations keep their
+     * existing dispatch cost. */
+    if (atom_is_symbol(head, "__cetta_lib_syntax_gslt_admit_v1")) {
+        return cetta_syntax_gslt_admit_v1(
+            arena, nargs == 4u ? args[0] : NULL, nargs == 4u ? args[1] : NULL,
+            nargs == 4u ? args[2] : NULL, nargs == 4u ? args[3] : NULL,
+            syntax_gslt_admission_v1);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_syntax_gslt_inspect_v1")) {
+        return cetta_syntax_gslt_inspect_v1(
+            arena, nargs == 1u ? args[0] : NULL, syntax_gslt_admission_v1);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_syntax_gslt_join_v1") ||
+        atom_is_symbol(head, "__cetta_lib_syntax_gslt_join_coherent_v1")) {
+        CettaGsltOriginPolicyV1 policy =
+            atom_is_symbol(head, "__cetta_lib_syntax_gslt_join_coherent_v1")
+                ? CETTA_GSLT_ORIGIN_COHERENT_V1 : CETTA_GSLT_ORIGIN_VIEW_V1;
+        return cetta_syntax_gslt_join_v1(
+            arena, nargs == 4u ? args[0] : NULL, nargs == 4u ? args[1] : NULL,
+            nargs == 4u ? args[2] : NULL, nargs == 4u ? args[3] : NULL,
+            policy, syntax_gslt_admission_v1);
     }
 
     return NULL;

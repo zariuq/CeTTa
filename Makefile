@@ -794,6 +794,7 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/language_def_pattern_atom_v1.c \
 	native/structural_tree_relabel_v1.c \
 	native/gslt_composition_v1.c \
+	native/syntax_gslt_v1.c \
 	native/deterministic_equation_plan_v1.c \
 	native/deterministic_equation_descent_v1.c \
 	native/ebnf_derivation_projection_native_v1.c \
@@ -39480,6 +39481,33 @@ $(STRUCTURED_PARSER_VALUE_V1_TEST_BIN): $(STRUCTURED_PARSER_VALUE_V1_TEST_OBJ) \
 .PHONY: test-structured-parser-value-v1
 test-structured-parser-value-v1: $(STRUCTURED_PARSER_VALUE_V1_TEST_BIN)
 	@$(STRUCTURED_PARSER_VALUE_V1_TEST_BIN)
+
+GSLT_ORIGIN_JOIN_V1_TEST_OBJ = runtime/bootstrap/test_gslt_origin_join_v1.$(BUILD_OBJ_TAG).o
+GSLT_ORIGIN_JOIN_V1_TEST_BIN = runtime/test_gslt_origin_join_v1-$(BUILD_OBJ_TAG)
+GSLT_ORIGIN_JOIN_V1_LINK_OBJ = $(filter-out native/gslt_composition_v1.%,$(OBJ))
+
+$(GSLT_ORIGIN_JOIN_V1_TEST_OBJ): tests/support/test_gslt_origin_join_v1.c \
+		native/gslt_composition_v1.c native/gslt_composition_v1.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+-include $(GSLT_ORIGIN_JOIN_V1_TEST_OBJ:.o=.d)
+
+$(GSLT_ORIGIN_JOIN_V1_TEST_BIN): $(GSLT_ORIGIN_JOIN_V1_TEST_OBJ) \
+		$(GSLT_ORIGIN_JOIN_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--wrap=main -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-origin-join-v1
+test-gslt-origin-join-v1: $(GSLT_ORIGIN_JOIN_V1_TEST_BIN)
+	@$(GSLT_ORIGIN_JOIN_V1_TEST_BIN)
+
+.PHONY: test-composable-syntax-v1
+test-composable-syntax-v1: $(BIN) lib/langdef.metta lib/petta/langdef.metta \
+		tools/test_composable_syntax_v1.py examples/langdef/composable_syntax_v1.metta
+	python3 tools/test_composable_syntax_v1.py --cetta $(BIN)
+
+test: test-gslt-origin-join-v1 test-composable-syntax-v1
 
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_OBJ = runtime/bootstrap/test_petta_open_cons_summary_v1.$(BUILD_OBJ_TAG).o
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_BIN = runtime/test_petta_open_cons_summary_v1-$(BUILD_OBJ_TAG)

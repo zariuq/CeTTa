@@ -654,3 +654,101 @@ void cetta_gslt_composition_free_v1(CettaGsltCompositionV1 *composition) {
     free(composition->presentations);
     *composition = (CettaGsltCompositionV1){0};
 }
+
+bool cetta_gslt_origin_join_v1(
+    const CettaGsltOriginEntryV1 *first, size_t first_len,
+    const CettaGsltOriginEntryV1 *second, size_t second_len,
+    CettaGsltOriginPolicyV1 policy,
+    CettaGsltOriginEntryV1 **entries_out, size_t *len_out,
+    CettaGsltOriginJoinWitnessV1 *witness) {
+    CettaGsltOriginEntryV1 *joined = NULL;
+    size_t *labels = NULL, *origins = NULL, *positions = NULL;
+    size_t total, capacity = 1u, length = 0u;
+    CettaGsltOriginJoinWitnessV1 failure = {
+        .status = CETTA_GSLT_ORIGIN_JOIN_BAD_ARGUMENT_V1,
+    };
+    if (entries_out) *entries_out = NULL;
+    if (len_out) *len_out = 0u;
+    if (!entries_out || !len_out || (!first && first_len) ||
+        (!second && second_len) ||
+        (policy != CETTA_GSLT_ORIGIN_VIEW_V1 &&
+         policy != CETTA_GSLT_ORIGIN_COHERENT_V1)) goto failed;
+    if (first_len > SIZE_MAX - second_len) goto too_large;
+    total = first_len + second_len;
+    if (total == 0u) {
+        if (witness) *witness = (CettaGsltOriginJoinWitnessV1){0};
+        return true;
+    }
+    if (total > SIZE_MAX / (2u * sizeof(size_t)) ||
+        total > SIZE_MAX / sizeof(*joined)) goto too_large;
+    while (capacity <= 2u * total) {
+        if (capacity > SIZE_MAX / 2u) goto too_large;
+        capacity *= 2u;
+    }
+    if (capacity > SIZE_MAX / sizeof(*labels)) goto too_large;
+    joined = malloc(total * sizeof(*joined));
+    positions = malloc(total * sizeof(*positions));
+    labels = calloc(capacity, sizeof(*labels));
+    if (policy == CETTA_GSLT_ORIGIN_COHERENT_V1)
+        origins = calloc(capacity, sizeof(*origins));
+    if (!joined || !positions || !labels ||
+        (policy == CETTA_GSLT_ORIGIN_COHERENT_V1 && !origins)) {
+        failure.status = CETTA_GSLT_ORIGIN_JOIN_ALLOCATION_FAILURE_V1;
+        goto failed;
+    }
+    for (size_t index = 0u; index < total; ++index) {
+        CettaGsltOriginEntryV1 entry = index < first_len
+            ? first[index] : second[index - first_len];
+        failure.second = index;
+        if (!entry.origin || !entry.label || !entry.body) {
+            failure.status = CETTA_GSLT_ORIGIN_JOIN_BAD_ARGUMENT_V1;
+            goto failed;
+        }
+        size_t slot = (size_t)atom_hash(entry.label) & (capacity - 1u);
+        while (labels[slot] &&
+               !atom_eq(joined[labels[slot] - 1u].label, entry.label))
+            slot = (slot + 1u) & (capacity - 1u);
+        if (labels[slot]) {
+            size_t previous = labels[slot] - 1u;
+            if (atom_eq(joined[previous].origin, entry.origin) &&
+                atom_eq(joined[previous].body, entry.body)) continue;
+            failure.status = CETTA_GSLT_ORIGIN_JOIN_LABEL_CONFLICT_V1;
+            failure.first = positions[previous];
+            goto failed;
+        }
+        size_t origin_slot = 0u;
+        if (origins) {
+            origin_slot = (size_t)atom_hash(entry.origin) & (capacity - 1u);
+            while (origins[origin_slot] &&
+                   !atom_eq(joined[origins[origin_slot] - 1u].origin,
+                            entry.origin))
+                origin_slot = (origin_slot + 1u) & (capacity - 1u);
+            if (origins[origin_slot]) {
+                failure.status = CETTA_GSLT_ORIGIN_JOIN_ORIGIN_CONFLICT_V1;
+                failure.first = positions[origins[origin_slot] - 1u];
+                goto failed;
+            }
+        }
+        joined[length] = entry;
+        positions[length] = index;
+        labels[slot] = length + 1u;
+        if (origins) origins[origin_slot] = length + 1u;
+        ++length;
+    }
+    free(origins);
+    free(labels);
+    free(positions);
+    *entries_out = joined;
+    *len_out = length;
+    if (witness) *witness = (CettaGsltOriginJoinWitnessV1){0};
+    return true;
+too_large:
+    failure.status = CETTA_GSLT_ORIGIN_JOIN_RESOURCE_LIMIT_V1;
+failed:
+    free(origins);
+    free(labels);
+    free(positions);
+    free(joined);
+    if (witness) *witness = failure;
+    return false;
+}

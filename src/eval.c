@@ -39,6 +39,7 @@
 #include "term_canon.h"
 #include "variant_shape.h"
 #include "langdef_pack.h"
+#include "native/syntax_gslt_v1.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <inttypes.h>
 #include <limits.h>
@@ -64,6 +65,10 @@ static bool prime_need_atom_has_observable_ref(Atom *root);
 static bool eval_get_metatype_intrinsic(
     Space *space, Arena *arena, Atom *value, Atom **type);
 #include "eval_gc.h"
+
+/* Small evaluator-only clients need not link the langdef library. */
+extern bool cetta_syntax_gslt_data_arg_v1(const char *, uint32_t)
+    __attribute__((weak));
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static __thread Registry *g_registry = NULL;
@@ -3721,6 +3726,9 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
         return true;
     const char *name =
         head_id == SYMBOL_ID_NONE ? NULL : symbol_bytes(g_symbols, head_id);
+    if (name && name[0] == '_' && cetta_syntax_gslt_data_arg_v1 &&
+        cetta_syntax_gslt_data_arg_v1(name, arg_index))
+        return true;
     /* A canonical grammar term is printed as read: its constructors are
      * grammar rules, not host operations.  Every argument of a printer is a
      * value (grammar, reader, rule, term), so the whole contract is data and
