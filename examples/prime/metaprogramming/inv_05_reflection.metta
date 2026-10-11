@@ -43,8 +43,9 @@
 !(try (parse "(A B"))
 !(try (parse "(syn:var (compound x))"))
 
-; 17-18. Text to code and back: parse a program text, run it as code.
-!(let $t (parse "(+ 20 22)") (let $c (quote $t) (pair $c *$c)))
+; 17-18. Text to code and back: parse a program text, lift it to code, run
+;        it as code.
+!(let $c (lift (parse "(+ 20 22)")) (pair $c *$c))
 !(let $t (parse "(pair $a $a)") (repr $t))
 
 ; --- a program that reads its own source ----------------------------------------
@@ -56,18 +57,18 @@
 
 ; Parse each line; keep each line that reads as one equation, as a code
 ; value.  A line that is not one form (a comment, a fragment of a longer
-; form) is reported Failed by `try`.  Quoting keeps the parsed syntax as written: a
-; bare parsed equation in an evaluated position would have its left side
-; evaluated (see query 22).
+; form) is reported Failed by `try`.  The verdict is lifted to code and taken
+; apart as code, so the equation is kept as written: a bare parsed equation
+; in an evaluated position would have its left side evaluated (see query 22).
 (= (own-equations $lines)
    (if (== $lines ())
        ()
        (let ($line $rest) (decons-atom $lines)
          (let $more (own-equations $rest)
-           (let $read (try (parse $line))
-             (unify $read (Established ((= $lhs $rhs)))
+           (let $read (lift (try (parse $line)))
+             (unify $read (quote (Established ((= $lhs $rhs))))
                (cons-atom (quote (= $lhs $rhs)) $more)
-               $more))))))
+               $more)){$read}){$more}){$line $rest}))
 
 ; The head symbol and arity of an equation, read from its code.  (The result
 ; type is a variable: a declared result type Atom would hold the body, see
@@ -80,7 +81,7 @@
 ; The code is opened with `unify`, so its payload is used as written.
 (= (loaded $code)
    (unify $code (quote $eq)
-     (if (== (collapse (match &self $eq found)) ()) missing loaded)
+     (if (== (collapse (match &self $eq found){$eq}) ()) missing loaded)
      not-code))
 
 ; 19. The one-line equations of this file, read from its own text.
@@ -99,4 +100,4 @@
 ; 22. Contrast: the same parsed equation placed bare in a constructor field is
 ;     evaluated there, so its left side (double $x) becomes (* 2 $x).
 !(let $f (parse "(= (double $x) (* 2 $x))") (Bare $f))
-!(let $f (parse "(= (double $x) (* 2 $x))") (Quoted (quote $f)))
+!(let $f (lift (parse "(= (double $x) (* 2 $x))")) (Quoted $f))

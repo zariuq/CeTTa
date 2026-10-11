@@ -1,10 +1,12 @@
+(set:profile hol)
+
 ; A published fact is reusable only while everything it was checked against
 ; is unchanged: the definitions it mentions, and everything those definitions
 ; mention in turn, with the bodies they had.  A change behind an alias whose
 ; own equation is unchanged is a change.
 
 ; A theorem reaches a definition through two aliases (the review probe).
-!(bind! &review (new-space))
+!(bind! &review (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &review (: A prop))
 !(set:define &review leaf prop (= leaf (imp A A)))
 !(set:define &review middle prop (= middle leaf))
@@ -45,7 +47,7 @@
 
 ; Renewing the aliases over a changed body does not revive a fact checked
 ; against the old one: the fact records the whole closure it relied on.
-!(bind! &renew (new-space))
+!(bind! &renew (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &renew (: A prop))
 !(add-atom &renew (: B prop))
 !(set:define &renew leaf prop (= leaf (imp A A)))
@@ -86,7 +88,7 @@
 
 ; The same with a body under which the old proof would prove any
 ; proposition: the renewed alias does not revive the fact.
-!(bind! &sharp (new-space))
+!(bind! &sharp (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &sharp (: A prop))
 !(set:define &sharp leaf prop (= leaf (imp A A)))
 !(set:define &sharp middle prop (= middle leaf))
@@ -109,7 +111,7 @@
 
 ; A plain recheck that fails withdraws the fact: restoring the theory does
 ; not revive it, until it is published again or rechecked with success.
-!(bind! &withdraw (new-space))
+!(bind! &withdraw (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &withdraw (: A prop))
 !(add-atom &withdraw (: B prop))
 !(set:define &withdraw leaf prop (= leaf (imp A A)))
@@ -132,7 +134,7 @@
 !(try (set:proves &withdraw (pf:known kept) leaf))
 
 ; An unrelated definition changes nothing that was relied on.
-!(bind! &quiet (new-space))
+!(bind! &quiet (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &quiet (: A prop))
 !(set:define &quiet leaf prop (= leaf (imp A A)))
 !(set:define &quiet root prop (= root leaf))

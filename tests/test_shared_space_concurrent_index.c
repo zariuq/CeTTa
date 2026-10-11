@@ -279,6 +279,186 @@ static void assert_concurrent_snapshot(Space *space, Arena *scratch,
     cetta_shared_transition_scope_leave();
 }
 
+/* Concurrent reads begin with dirty indices. Each worker owns its result
+ * arena; the caller keeps the shared spaces, universe and symbols live.
+ * Mutations occur only after joining the previous episode. */
+typedef struct {
+    SymbolTable *symbols;
+    Space *space;
+    Atom *subject;
+    const SymbolId *expected;
+    uint32_t expected_count;
+    uint32_t mode;
+    pthread_barrier_t *start;
+    uint64_t checks;
+} TypeReaderTask;
+
+static void check_type_result(TypeReaderTask *task, Atom **types,
+                               uint32_t count, bool inferred) {
+    if (inferred && task->expected_count == 0u) {
+        assert(count == 1u);
+        assert(atom_is_symbol_id(types[0], g_builtin_syms.undefined_type));
+        task->checks += 2u;
+        return;
+    }
+    assert(count == task->expected_count);
+    task->checks++;
+    for (uint32_t i = 0u; i < count; ++i) {
+        assert(atom_is_symbol_id(types[i], task->expected[i]));
+        task->checks++;
+    }
+}
+
+static void *type_reader_main(void *raw) {
+    TypeReaderTask *task = raw;
+    assert(g_symbols == task->symbols);
+    g_hashcons = NULL;
+    assert(g_var_intern == NULL);
+    Arena results;
+    arena_init(&results);
+    int started = pthread_barrier_wait(task->start);
+    assert(started == 0 || started == PTHREAD_BARRIER_SERIAL_THREAD);
+    cetta_shared_transition_scope_enter();
+    for (uint32_t round = 0u; round < 80u; ++round) {
+        ArenaMark mark = arena_mark(&results);
+        Atom **types = NULL;
+        uint32_t count = 0u;
+        bool inferred = task->mode == 0u;
+        if (task->mode == 0u) {
+            count = get_atom_types(task->space, &results, task->subject, &types);
+        } else if (task->mode == 1u) {
+            assert(space_get_declared_types_checked(task->space, &results,
+                task->subject, &types, &count));
+            task->checks++;
+        } else {
+            assert(space_head_declares_type(task->space, task->subject->sym_id)
+                == (task->expected_count != 0u));
+            count = space_get_declared_types(task->space, &results,
+                task->subject, &types);
+            task->checks++;
+        }
+        check_type_result(task, types, count, inferred);
+        free(types);
+        assert(!cetta_shared_transition_guard_held_by_current_thread());
+        assert(cetta_shared_transition_scope_active());
+        task->checks += 2u;
+        if (round == 0u) {
+            CETTA_SCOPED_SHARED_TRANSITION(outer_read);
+            assert(cetta_shared_transition_guard_held_by_current_thread());
+            types = NULL;
+            assert(space_get_declared_types_checked(task->space, &results,
+                task->subject, &types, &count));
+            check_type_result(task, types, count, false);
+            free(types);
+            assert(cetta_shared_transition_guard_held_by_current_thread());
+            task->checks += 3u;
+        }
+        assert(!cetta_shared_transition_guard_held_by_current_thread());
+        task->checks++;
+        arena_reset(&results, mark);
+        if ((round & 7u) == 0u) sched_yield();
+    }
+    cetta_shared_transition_scope_leave();
+    assert(!cetta_shared_transition_scope_active());
+    assert(!cetta_shared_transition_guard_held_by_current_thread());
+    task->checks += 2u;
+    arena_free(&results);
+    bindings_thread_cache_free();
+    return NULL;
+}
+
+static uint64_t type_read_episode(SymbolTable *symbols, Space *space,
+        Atom *subject, const SymbolId *expected, uint32_t count) {
+    enum { READERS = 6 };
+    pthread_barrier_t start;
+    pthread_t threads[READERS];
+    TypeReaderTask tasks[READERS];
+    assert(pthread_barrier_init(&start, NULL, READERS) == 0);
+    for (uint32_t i = 0u; i < READERS; ++i) {
+        tasks[i] = (TypeReaderTask){.symbols=symbols, .space=space,
+            .subject=subject, .expected=expected, .expected_count=count,
+            .mode=i%3u, .start=&start};
+        assert(pthread_create(&threads[i], NULL, type_reader_main, &tasks[i]) == 0);
+    }
+    uint64_t checks = 0u;
+    for (uint32_t i = 0u; i < READERS; ++i) {
+        assert(pthread_join(threads[i], NULL) == 0);
+        checks += tasks[i].checks;
+    }
+    assert(pthread_barrier_destroy(&start) == 0);
+    return checks;
+}
+
+static AtomId type_row(TermUniverse *universe, Arena *construction,
+                       Atom *subject, SymbolId type) {
+    Atom *items[] = {atom_symbol_id(construction, g_builtin_syms.colon),
+        subject, atom_symbol_id(construction, type)};
+    AtomId id = term_universe_store_atom_id(universe, NULL,
+        atom_expr(construction, items, 3u));
+    assert(id != CETTA_ATOM_ID_NONE);
+    return id;
+}
+
+static void check_concurrent_declared_types(SymbolTable *symbols) {
+    Arena persistent, construction;
+    arena_init(&persistent); arena_init(&construction);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Space own, dependency, empty;
+    space_init_with_universe(&own, &universe);
+    space_init_with_universe(&dependency, &universe);
+    space_init_with_universe(&empty, &universe);
+    SymbolId name = symbol_intern_cstr(symbols, "cold-concurrent-subject");
+    Atom *subject = atom_symbol_id(&construction, name);
+    SymbolId types[5];
+    const char *names[] = {"ColdT0", "ColdT1", "ColdT2", "ColdT3", "ColdT4"};
+    AtomId rows[5];
+    for (uint32_t i = 0u; i < 5u; ++i) {
+        types[i] = symbol_intern_cstr(symbols, names[i]);
+        rows[i] = type_row(&universe, &construction, subject, types[i]);
+    }
+    space_add_atom_id(&own, rows[0]); space_add_atom_id(&own, rows[0]);
+    space_add_atom_id(&own, rows[1]); space_add_atom_id(&own, rows[4]);
+    space_add_atom_id(&dependency, rows[2]);
+    space_add_atom_id(&dependency, rows[2]);
+    space_add_atom_id(&dependency, rows[4]);
+    assert(space_remove_atom_id(&own, rows[4]));
+    assert(space_remove_atom_id(&dependency, rows[4]));
+    assert(space_add_dependency(&own, &dependency));
+    assert(own.native.ty_idx_dirty && dependency.native.ty_idx_dirty);
+    SpaceReadToken before = space_read_token(&own);
+    SymbolId first[] = {types[0], types[0], types[1], types[2], types[2]};
+    uint64_t checks = type_read_episode(symbols, &own, subject, first, 5u);
+    assert(space_read_token_is_current(before));
+    assert(!own.native.ty_idx_dirty && !dependency.native.ty_idx_dirty);
+    assert(space_remove_atom_id(&own, rows[1]));
+    space_add_atom_id(&own, rows[3]);
+    assert(!space_read_token_is_current(before));
+    SpaceReadToken after_own = space_read_token(&own);
+    space_add_atom_id(&dependency, rows[4]);
+    assert(!space_read_token_is_current(after_own));
+    assert(own.native.ty_idx_dirty);
+    /* Removing and restoring a dependency row makes its next read cold too. */
+    assert(space_remove_atom_id(&dependency, rows[4]));
+    space_add_atom_id(&dependency, rows[4]);
+    assert(dependency.native.ty_idx_dirty);
+    SymbolId second[] = {types[0], types[0], types[3], types[2], types[2], types[4]};
+    checks += type_read_episode(symbols, &own, subject, second, 6u);
+    checks += type_read_episode(symbols, &empty, subject, NULL, 0u);
+    Atom **serial = NULL;
+    uint32_t count = space_get_declared_types(&own, &construction, subject, &serial);
+    assert(count == 6u && !cetta_shared_transition_scope_active());
+    for (uint32_t i = 0u; i < count; ++i)
+        assert(atom_is_symbol_id(serial[i], second[i]));
+    free(serial);
+    space_free(&empty); space_free(&own); space_free(&dependency);
+    term_universe_free(&universe);
+    arena_free(&construction); arena_free(&persistent);
+    printf("PASS: cold concurrent type reads, revisions, nested guards (%llu checks)\n",
+        (unsigned long long)checks);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -379,6 +559,7 @@ int main(void) {
     arena_free(&construction);
     arena_free(&persistent);
     bindings_thread_cache_free();
+    check_concurrent_declared_types(&symbols);
     g_symbols = NULL;
     symbol_table_free(&symbols);
     puts("PASS: shared Space concurrent index snapshots");

@@ -37,6 +37,21 @@ typedef struct {
     bool ok;
 } RunRequest;
 
+static pthread_key_t worker_lifetime;
+static atomic_uint live_thread_states;
+static unsigned shutdown_gate_calls;
+
+static bool refuse_shutdown(void *context) {
+    assert(context == &shutdown_gate_calls);
+    shutdown_gate_calls++;
+    return false;
+}
+
+static void worker_lifetime_end(void *value) {
+    assert(value == &live_thread_states);
+    atomic_fetch_sub_explicit(&live_thread_states, 1u, memory_order_relaxed);
+}
+
 static void episode_init(Episode *episode, bool block) {
     pthread_mutex_init(&episode->gate.mutex, NULL);
     pthread_cond_init(&episode->gate.condition, NULL);
@@ -56,6 +71,10 @@ static void episode_free(Episode *episode) {
 static void episode_worker_enter(CettaParallelWorker *worker, void *user) {
     Episode *episode = user;
     (void)worker;
+    if (!pthread_getspecific(worker_lifetime)) {
+        assert(pthread_setspecific(worker_lifetime, &live_thread_states) == 0);
+        atomic_fetch_add_explicit(&live_thread_states, 1u, memory_order_relaxed);
+    }
     atomic_fetch_add_explicit(&episode->entered, 1u,
                               memory_order_relaxed);
 }
@@ -72,6 +91,7 @@ static bool episode_task(CettaParallelWorker *worker, void *task,
     Episode *episode = user;
     (void)worker;
     assert(task == episode);
+    assert(!cetta_parallel_executor_shutdown());
     atomic_fetch_add_explicit(&episode->executed, 1u,
                               memory_order_relaxed);
 
@@ -194,6 +214,112 @@ static void assert_worker_exit_does_not_deadlock(const char *self) {
     assert(false && "worker-triggered process exit deadlocked");
 }
 
+typedef struct {
+    Atom *root;
+    Atom *child;
+    Atom *leaf;
+    uint32_t expected;
+} SharedHash;
+
+static void assert_hash_unpublished(const SharedHash *hash) {
+    assert((hash->root->flags & ATOM_FLAG_HASH_VALID) == 0u);
+    assert((hash->child->flags & ATOM_FLAG_HASH_VALID) == 0u);
+    assert((hash->leaf->flags & ATOM_FLAG_HASH_VALID) == 0u);
+}
+
+static void hash_worker_hook(CettaParallelWorker *worker, void *user) {
+    (void)worker;
+    SharedHash *hash = user;
+    assert(cetta_parallel_worker_active());
+    assert(atom_hash(hash->root) == hash->expected);
+    assert_hash_unpublished(hash);
+}
+
+static bool hash_worker_task(CettaParallelWorker *worker, void *task,
+                              void *user) {
+    assert(task == user);
+    hash_worker_hook(worker, user);
+    /* An inner scope must not restore publication while the episode's outer
+     * scope still owns these concurrent reads. */
+    atom_hash_read_scope_enter();
+    hash_worker_hook(worker, user);
+    atom_hash_read_scope_leave();
+    hash_worker_hook(worker, user);
+    return true;
+}
+
+static void test_shared_hash_cache(void) {
+    for (unsigned persistent = 0u; persistent < 2u; persistent++) {
+        Arena arena;
+        arena_init(&arena);
+        SharedHash hash = {0};
+        hash.leaf = atom_int(&arena, 173);
+        hash.child = atom_expr(&arena, &hash.leaf, 1u);
+        hash.root = atom_expr2(&arena, hash.child, hash.leaf);
+        assert_hash_unpublished(&hash);
+        atom_hash_read_scope_enter();
+        atom_hash_read_scope_enter();
+        hash.expected = atom_hash(hash.root);
+        atom_hash_read_scope_leave();
+        assert(atom_hash(hash.root) == hash.expected);
+        assert_hash_unpublished(&hash);
+        atom_hash_read_scope_leave();
+
+        CettaParallelExecutor executor;
+        CettaParallelExecutorConfig config = {
+            .thread_count = 3u,
+            .prefer_persistent_workers = persistent != 0u,
+            .user = &hash,
+            .task_fn = hash_worker_task,
+            .worker_enter = hash_worker_hook,
+            .worker_leave = hash_worker_hook,
+        };
+        assert(cetta_parallel_executor_init(&executor, &config));
+        for (unsigned task = 0u; task < 32u; task++)
+            assert(cetta_parallel_executor_push(&executor, &hash));
+        assert(cetta_parallel_executor_run(&executor));
+        assert_hash_unpublished(&hash);
+        cetta_parallel_executor_free(&executor);
+        /* The joined coordinator retains its ordinary miss-cache behavior. */
+        assert(atom_hash(hash.root) == hash.expected);
+        assert((hash.root->flags & ATOM_FLAG_HASH_VALID) != 0u);
+        assert((hash.child->flags & ATOM_FLAG_HASH_VALID) != 0u);
+        assert((hash.leaf->flags & ATOM_FLAG_HASH_VALID) != 0u);
+        atom_hash_read_scope_enter();
+        assert(atom_hash(hash.root) == hash.expected);
+        atom_hash_read_scope_leave();
+        arena_free(&arena);
+    }
+    puts("PASS: worker hash reads preserve recursive shared metadata and nested scopes");
+}
+
+static void *compare_owned_state_cells(void *unused) {
+    (void)unused;
+    Arena arena;
+    arena_init_detached(&arena);
+    StateCell left = {.value = atom_int(&arena, 7)};
+    StateCell right = {.value = atom_int(&arena, 7)};
+    Atom *a = atom_state(&arena, &left);
+    Atom *b = atom_state(&arena, &right);
+    assert(atom_eq(a, b));
+    right.value = atom_int(&arena, 8);
+    assert(!atom_eq(a, b));
+    right.value = left.value;
+    assert(atom_eq(a, b));
+    arena_free(&arena);
+    return NULL;
+}
+
+static void test_state_comparison_thread_retirement(void) {
+    for (unsigned i = 0u; i < 3u; i++) {
+        pthread_t thread;
+        assert(pthread_create(&thread, NULL,
+                              compare_owned_state_cells, NULL) == 0);
+        assert(pthread_join(thread, NULL) == 0);
+    }
+    puts("PASS: state comparisons reuse scratch and release it at thread retirement");
+}
+
 int main(int argc, char **argv) {
     CettaParallelExecutor empty_executor;
     CettaParallelExecutor first_executor;
@@ -213,7 +339,11 @@ int main(int argc, char **argv) {
 
     if (argc == 2 && strcmp(argv[1], "--worker-exit") == 0)
         return run_worker_exit_child();
+    atomic_init(&live_thread_states, 0u);
+    assert(pthread_key_create(&worker_lifetime, worker_lifetime_end) == 0);
     assert_worker_exit_does_not_deadlock(argv[0]);
+    test_shared_hash_cache();
+    test_state_comparison_thread_retirement();
 
     cetta_runtime_stats_reset();
     cetta_runtime_stats_enable();
@@ -235,15 +365,24 @@ int main(int argc, char **argv) {
     assert(pthread_create(&first_thread, NULL, run_request_main,
                           &first_request) == 0);
     assert(episode_wait_started(&first_episode, 5));
+    assert(!cetta_parallel_executor_shutdown());
+    assert(!cetta_parallel_executor_shutdown_if(refuse_shutdown,
+                                                &shutdown_gate_calls));
+    assert(shutdown_gate_calls == 0u);
 
-    episode_init(&second_episode, false);
+    episode_init(&second_episode, true);
     config = episode_config(&second_episode, 1u);
     assert(cetta_parallel_executor_init(&second_executor, &config));
     assert(cetta_parallel_executor_push(&second_executor, &second_episode));
     second_request.executor = &second_executor;
     assert(pthread_create(&second_thread, NULL, run_request_main,
                           &second_request) == 0);
-
+    assert(episode_wait_started(&second_episode, 5));
+    /* The busy pool sends this independent episode to one-shot workers.
+     * Refusal neither closes their admission nor retires either context. */
+    assert(!cetta_parallel_executor_shutdown());
+    cetta_parallel_executor_cancel(&second_executor);
+    episode_release(&second_episode);
     episode_release(&first_episode);
     assert(pthread_join(first_thread, NULL) == 0);
     assert(pthread_join(second_thread, NULL) == 0);
@@ -251,6 +390,9 @@ int main(int argc, char **argv) {
     assert(second_request.ok);
     assert_episode_completed(&first_episode, 1u);
     assert_episode_completed(&second_episode, 1u);
+    assert(!cetta_parallel_executor_shutdown_if(refuse_shutdown,
+                                                &shutdown_gate_calls));
+    assert(shutdown_gate_calls == 1u);
 
     episode_init(&growth_episode, false);
     config = episode_config(&growth_episode, 3u);
@@ -297,6 +439,24 @@ int main(int argc, char **argv) {
     episode_free(&growth_episode);
     episode_free(&shrink_episode);
     cetta_runtime_stats_disable();
+    assert(atomic_load_explicit(&live_thread_states, memory_order_relaxed) > 0u);
+    assert(cetta_parallel_executor_shutdown());
+    assert(atomic_load_explicit(&live_thread_states, memory_order_relaxed) == 0u);
+    assert(cetta_parallel_executor_shutdown());
+    Episode refused;
+    CettaParallelExecutor refused_executor;
+    episode_init(&refused, false);
+    config = episode_config(&refused, 1u);
+    assert(cetta_parallel_executor_init(&refused_executor, &config));
+    assert(cetta_parallel_executor_push(&refused_executor, &refused));
+    assert(!cetta_parallel_executor_run(&refused_executor));
+    assert(!refused_executor.run_started);
+    assert_episode_completed(&refused, 0u);
+    cetta_parallel_executor_free(&refused_executor);
+    episode_free(&refused);
+    assert(pthread_key_delete(worker_lifetime) == 0);
+    puts("PASS: final shutdown refuses live and cancelled work, joins thread state,"
+         " and seals admission once");
     puts("PASS: parallel executor preserves completion, lifecycle balance,"
          " and worker-exit liveness");
     return 0;

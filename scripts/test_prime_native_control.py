@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import random
 import re
+import resource
 import subprocess
 import sys
 import time
@@ -80,18 +81,55 @@ def valid(query, chosen):
         a in chosen and b in chosen for a, b in query['incompatible'])
 
 
+def unchanged_policy_splits(gate):
+    """Fixed-policy splits preserve accepted ticks and duplicate prefixes."""
+    source = '''
+(= (rows) (lag 7 9))
+(= (rows) (lag 2 1))
+(= (rows) (lag 2 1))
+(= (rows) (lag 4 5))
+(= (lag 0 $v) (Item $v))
+(= (lag $n $v) (if (> $n 0) (lag (- $n 1) $v) (empty)))
+'''
+    pattern = '(Observation $prefix (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))'
+    def policy(budget, age, width):
+        return (f'(search-policy (control WO (key (lag $n $v) $v) '
+                f'(age {age}) (workers {width}) (budget {budget})))')
+    for width in (1, 2):
+        for age in (1, 2, 3):
+            for total in (37, 97, 251, 2000):
+                name = f'unchanged schedule width{width} age{age} total{total}'
+                _, whole = gate.run(name + ' whole', source +
+                    f'!(select 3 {policy(total, age, width)} (rows))')
+                assert whole, gate.receipts[-1]
+                expected = whole[-1]
+                for cut in (0, 1, 2, 3, 7, 19, 31):
+                    trees, parts = gate.run(name + f' cut{cut}', source +
+                        f'!(let {pattern} (select 3 {policy(cut, age, width)} (rows)) '
+                        f'(Split $prefix (select 3 {policy(total-cut, age, width)} $r)))')
+                    assert parts, gate.receipts[-1]
+                    actual = {**parts[-1], 'values': trees[-1][0][1] + parts[-1]['values']}
+                    for field in ('values', 'work', 'satisfied', 'closed', 'status'):
+                        assert actual[field] == expected[field], (
+                            name, cut, field, expected[field], actual[field])
+                gate.passed_case(name + ': exact prefix, accepted work and completion through seven cuts')
+
+
 class Gate:
     def __init__(self, args):
         self.args = args
         self.receipts = []
         self.passed = 0
 
-    def run(self, name, source, language='prime', profile=None):
+    def run(self, name, source, language='prime', profile=None, arguments=(), expected_exit=0,
+            source_path=None):
         command = [str(self.args.binary), '--lang', language]
         if profile:
             command += ['--profile', profile]
-        command += ['-e', source]
+        command += list(arguments)
+        command += [str(source_path)] if source_path else ['-e', source]
         before = time.monotonic()
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
             result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
                                     timeout=self.args.timeout)
@@ -101,13 +139,21 @@ class Gate:
                 'exit': 'timeout', 'seconds': time.monotonic() - before})
             raise AssertionError(f'{name}: execution exceeded {self.args.timeout} seconds') from error
         receipt = {'name': name, 'language': language, 'profile': profile,
+                   'arguments': list(arguments),
+                   'source_path': str(source_path) if source_path else None,
                    'source': source, 'source_sha256': sha256(source.encode()).hexdigest(),
                    'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr,
                    'seconds': time.monotonic() - before}
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        receipt['cpu_seconds'] = (after.ru_utime - usage.ru_utime) + (after.ru_stime - usage.ru_stime)
         self.receipts.append(receipt)
-        assert result.returncode == 0, f'{name}: exit {result.returncode}: {result.stderr}'
+        assert result.returncode == expected_exit, f'{name}: exit {result.returncode}: {result.stderr}'
         trees = [parse(line)[0] for line in result.stdout.splitlines() if line.startswith('[')]
         return trees, list(observations(trees))
+
+    def run_file(self, name, path, **kwargs):
+        path = path.resolve()
+        return self.run(name, path.read_text(), source_path=path, **kwargs)
 
     def passed_case(self, name):
         self.passed += 1
@@ -119,6 +165,22 @@ class Gate:
         return self.run(name, source)
 
     def fixed(self):
+        unchanged_policy_splits(self)
+        # Descriptor vocabulary is table-relative syntax, not globally owned
+        # builtin vocabulary. PeTTa can still import functions with these names.
+        names = ('control', 'PO', 'WO', 'FIFO', 'key', 'age', 'budget',
+                 'retain', 'receipts', 'goal', 'best', 'bound', 'demand',
+                 'absolute', 'additional', 'all')
+        source = '\n'.join(
+            f'!(translatePredicate (assertz (Predicate ({name} {index}))))\n'
+            f'!(import_prolog_function {name})'
+            for index, name in enumerate(names))
+        source += '\n!(' + ' '.join(['Names'] + [f'({name})' for name in names]) + ')'
+        self.run('native-control vocabulary remains PeTTa function vocabulary',
+                 source, language='petta', profile='extended')
+        assert self.receipts[-1]['stdout'].splitlines()[-1] == (
+            '(Names ' + ' '.join(map(str, range(len(names)))) + ')')
+        self.passed_case('native-control descriptor names preserve PeTTa foreign ownership')
         trees, obs = self.fixture('any_seven')
         assert trees[0] == [list(range(7))]
         assert trees[2] == [list(range(10, 17))]
@@ -187,6 +249,12 @@ class Gate:
         fields = {x[0]: x[1] for x in revisions[0][1:]}
         assert fields['from'] == 1 and fields['to'] == 2
         assert fields['retained-witnesses'] == 1
+        ungraded = (ROOT / 'tests/prime/native_control/joint_feedback.metta').read_text()
+        ungraded = ungraded.replace('../../../lib/', str(ROOT / 'lib') + '/')
+        ungraded = ungraded.replace('(- 0 (new-coverage $coverage $seed))', '0')
+        _, ungraded_obs = self.run('joint-feedback-neutral-control', ungraded)
+        neutral_arrival = [r[1] for r in ungraded_obs[-1]['values']]
+        assert neutral_arrival.index('b') < neutral_arrival.index('c')
         self.passed_case('coverage feedback regrades retained joint work without committing the seed')
         _, obs = self.fixture('shared_derivations')
         assert [r[2] for r in obs[-1]['values']] == [2, 2, 3, 3, 4, 4, 5]
@@ -218,6 +286,18 @@ class Gate:
         assert obs[1]['values'] == [['Item', 'a', 1]] and obs[1]['satisfied'] == 'True'
         assert obs[2]['values'] == [['Job', 1, 'Done']]
         self.passed_case('divergent advisory scores preserve answers; finite scores reprioritize live work')
+        fifo, literal, computed, complete, nested_literal, nested_computed = obs[3:9]
+        assert fifo['values'] == [['Lane', 1, 'Low', 'Done']]
+        assert literal['values'] == computed['values'] == [['Lane', 0, 'High', 'Done']]
+        # The computed key must save nearly the work the literal key saves.
+        # Before inheritance reached the running body, it saved none.
+        assert fifo['work'] - computed['work'] >= 0.9 * (fifo['work'] - literal['work']), (
+            fifo['work'], literal['work'], computed['work'])
+        assert bag(complete['values']) == bag([['Lane', 0, 'High', 'Done'], ['Lane', 1, 'Low', 'Done']])
+        self.passed_case('a late computed key steers the work that still inherits it')
+        assert nested_literal['values'] == nested_computed['values'] == [
+            ['Lane', 1, 'Low', ['Lane', 1, 'Inner', 'Done']]]
+        self.passed_case('a late inherited score leaves a descendant key of its own in force')
         _, revised = self.fixture('consumer_revision')
         for obs in revised[:2]:
             assert obs['values'] == [] and obs['closed'] == 'True' and obs['satisfied'] == 'False'
@@ -231,6 +311,37 @@ class Gate:
         assert revised[4]['status'] == 'fault' and revised[4]['values'] == []
         assert revised[5]['values'] == [1, 2] and revised[5]['closed'] == 'True'
         self.passed_case('consumer cancellation receipts isolate new goals, costs and source capabilities')
+
+    def controller_scaling(self):
+        """Controller bookkeeping grows with the work, not with the work times
+        the depth of the waiting return graph."""
+        count = '(= (count $n) (if (== $n 0) Done (count (- $n 1))))\n'
+        sources = {
+            'select': lambda n: count +
+                f'!(select 1 (search-policy (control FIFO (budget 100000000))) (count {n}))',
+            'weight:read': lambda n: '!(pragma! prefer-rationals True)\n' + count +
+                f'(=w (one) (count {n}) 1/2)\n!(weight:read (algebra 0 1 + *) (one))',
+        }
+        # Processor time of the evaluator, least of five runs: other load on
+        # the machine stretches elapsed time but hardly this.
+        depth = 4000
+        for kind, source in sources.items():
+            seconds, results = {}, {}
+            for n in (depth, 2 * depth):
+                samples = []
+                for attempt in range(5):
+                    trees, obs = self.run(f'controller scaling {kind} depth {n} run {attempt}', source(n))
+                    samples.append(self.receipts[-1]['cpu_seconds'])
+                seconds[n], results[n] = min(samples), (trees, obs)
+            if kind == 'select':
+                small, large = results[depth][1][-1], results[2 * depth][1][-1]
+                assert small['values'] == large['values'] == ['Done']
+                assert 1.9 < large['work'] / small['work'] < 2.1, (small['work'], large['work'])
+            else:
+                assert results[depth][0] == results[2 * depth][0]
+            ratio = seconds[2 * depth] / seconds[depth]
+            assert ratio < 3.0, (kind, seconds)
+            self.passed_case(f'controlled {kind} time doubles with depth (ratio {ratio:.2f})')
 
     def joint_budget_splits(self):
         # The slow goal retains real native Need work across the split.  The
@@ -324,7 +435,8 @@ class Gate:
             self.passed_case(f'generated exact residual budget split {case}')
 
     def mutation_controls(self, mutation=None):
-        kinds = [mutation] if mutation else ['DROP', 'DUPLICATE', 'INVENT', 'FALSE_CLOSED', 'EARLY_BEST']
+        kinds = [mutation] if mutation else ['DROP', 'DUPLICATE', 'INVENT', 'FALSE_CLOSED', 'EARLY_BEST',
+                                             'UNLICENSED_PRUNE']
         for kind in kinds:
             if kind == 'FALSE_CLOSED':
                 source = '(= (loop) (loop)) !(select 7 (search-policy (control FIFO (budget 0))) (loop))'
@@ -335,6 +447,12 @@ class Gate:
                 source += '!(select 1 (search-policy (control FIFO (best (Item $id $cost) $cost) (budget 1000))) (items))'
                 _, obs = self.run('mutation-control-' + kind, source)
                 valid_result = obs[-1]['values'] == [['Item', 'delayed', 0]]
+            elif kind == 'UNLICENSED_PRUNE':
+                # A coefficient above one: pruning by a pending step's bound
+                # stops at rain (27/50) and misses the sprinkler (2).
+                source = (ROOT / 'tests/prime/weights/law_breaking.metta').read_text()
+                _, obs = self.run('mutation-control-' + kind, source)
+                valid_result = obs[0]['values'][0][1] == ['Via', 'sprinkler', ['Seen', 'timer']]
             else:
                 source = '(= (items) 1) (= (items) 2) (= (items) 2) (= (items) 3) '
                 source += '!(select 8 (search-policy (control FIFO (budget 1000))) (items))'
@@ -476,7 +594,10 @@ def main():
     parser.add_argument('--lean-reference', type=Path)
     parser.add_argument('--demand-reference', type=Path)
     parser.add_argument('--receipt', type=Path)
-    parser.add_argument('--mutation', choices=['DROP', 'DUPLICATE', 'INVENT', 'FALSE_CLOSED', 'EARLY_BEST'])
+    # Checking builds (the whole-graph scan audit) are deliberately slower.
+    parser.add_argument('--no-timing', action='store_true')
+    parser.add_argument('--mutation', choices=['DROP', 'DUPLICATE', 'INVENT', 'FALSE_CLOSED', 'EARLY_BEST',
+                                               'UNLICENSED_PRUNE'])
     args = parser.parse_args()
     args.binary = args.binary.resolve()
     gate = Gate(args)
@@ -485,6 +606,8 @@ def main():
             gate.mutation_controls(args.mutation)
         else:
             gate.fixed()
+            if not args.no_timing:
+                gate.controller_scaling()
             gate.joint_budget_splits()
             gate.generated(args.cases)
             gate.budget_splits(args.cases)

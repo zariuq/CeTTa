@@ -52,13 +52,13 @@
 (= (in-list $x $xs)
    (if (== $xs ()) False
        (let $h (car-atom $xs)
-         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t))))))
+         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t)){$t})){$h}))
 (= (append $xs $ys)
    (if (== $xs ()) $ys
-       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r))))
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r)){$h $t $r}))
 (= (nth $xs $i)
    (if (== $xs ()) out-of-range
-       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)))))
+       (if (== $i 0) (car-atom $xs) (let* (($t (cdr-atom $xs)) ($j (- $i 1))) (nth $t $j)){$t $j})))
 
 ; ---- the problems -----------------------------------------------------------------
 
@@ -86,20 +86,20 @@
 (= (version-of $a $x)
    (if (== $a ()) none
        (let* ((($y $d) (car-atom $a)) ($rest (cdr-atom $a)))
-         (if (== $y $x) $d (version-of $rest $x)))))
+         (if (== $y $x) $d (version-of $rest $x))){$y $d $rest}))
 (= (values $a $xs)
    (if (== $xs ()) ()
        (let* (($x (car-atom $xs)) ($d (version-of $a $x)))
          (if (== $d none) none
              (let* (($t (cdr-atom $xs)) ($ds (values $a $t)))
-               (if (== $ds none) none (cons-atom $d $ds)))))))
+               (if (== $ds none) none (cons-atom $d $ds))){$t $ds})){$x $d}))
 (= (violated $c $a)
    (let* (($s (scope $c)) ($ds (values $a $s)))
      (if (== $ds none) False (not (allows $c $ds)))))
 (= (first-violation $cs $a $i)
    (if (== $cs ()) none
        (let* (($c (car-atom $cs)) ($t (cdr-atom $cs)) ($j (+ $i 1)))
-         (if (violated $c $a) $i (first-violation $t $a $j)))))
+         (if (violated $c $a) $i (first-violation $t $a $j))){$c $t $j}))
 
 ; ---- strategies ------------------------------------------------------------------------
 
@@ -111,7 +111,7 @@
 (= (least-by $cs $a $x $xs)
    (if (== $xs ()) $x
        (let* (($y (car-atom $xs)) ($ys (cdr-atom $xs)) ($best (least-by $cs $a $y $ys)))
-         (if (<= (score $cs $a $x) (score $cs $a $best)) $x $best))))
+         (if (<= (score $cs $a $x) (score $cs $a $best)) $x $best)){$y $ys $best}))
 (= (choose first $cs $a $pending) (car-atom $pending))
 (= (choose fewest $cs $a $pending)
    (let* (($x (car-atom $pending)) ($xs (cdr-atom $pending))) (least-by $cs $a $x $xs)))
@@ -124,8 +124,8 @@
      (if (== $i none)
          (if (== $pending ()) (found $a)
              (let* (($x (choose $strat $cs $a $pending)) ($ds (versions $x))
-                    ($rest (filter-atom $pending $y (not (== $y $x)))))
-               (try-versions $cs $strat $a $x $ds $rest ())))
+                    ($rest (filter-atom $pending $y (not (== $y $x))){$y}))
+               (try-versions $cs $strat $a $x $ds $rest ())){$x $ds $rest})
          (refutation (conflict $i)))))
 (= (try-versions $cs $strat $a $x $ds $rest $trees)
    (if (== $ds ()) (refutation (split $x $trees))
@@ -133,7 +133,7 @@
               ($r (backtrack $cs $strat $a2 $rest)) ($tag (car-atom $r)))
          (if (== $tag found) $r
              (let* (($t (index-atom $r 1)) ($trees2 (append $trees ($t))))
-               (try-versions $cs $strat $a $x $dt $rest $trees2))))))
+               (try-versions $cs $strat $a $x $dt $rest $trees2)){$t $trees2})){$d $dt $a2 $r $tag}))
 ; The total search, as an outcome: a plan or a refutation, never Incomplete.
 (= (solve $strat $cs)
    (let* (($ps (packages)) ($r (backtrack $cs $strat () $ps)) ($tag (car-atom $r)) ($v (index-atom $r 1)))
@@ -151,7 +151,7 @@
        (if (== $bs ()) False
            (let* (($d (car-atom $ds)) ($dt (cdr-atom $ds)) ($b (car-atom $bs)) ($bt (cdr-atom $bs))
                   ($a2 (cons-atom ($x $d) $a)))
-             (and (check $cs $a2 $b) (check-branches $cs $a $x $dt $bt))))))
+             (and (check $cs $a2 $b) (check-branches $cs $a $x $dt $bt))){$d $dt $b $bt $a2})))
 ; A plan: every package has one of its versions, and every constraint holds.
 (= (is-plan $cs $f)
    (let* (($ps (packages))
@@ -167,8 +167,8 @@
 (= (run-for $machine $k $s)
    (if (== $k 0) (Incomplete $s)
        (let $r (step-of $machine $s)
-         (unify $r (continue $s2) (let $k2 (- $k 1) (run-for $machine $k2 $s2))
-           (unify $r (stop $b) (Established $b) (bad-step $r))))))
+         (unify $r (continue $s2) (let $k2 (- $k 1) (run-for $machine $k2 $s2)){$k2}
+           (unify $r (stop $b) (Established $b) (bad-step $r)))){$r}))
 ; Candidate n: the assignment numbered n mod 36, web slowest and auth fastest.
 (= (candidate $n)
    (let* (($i (% $n 36)) ($iw (// $i 12)) ($r (% $i 12)) ($id (// $r 6)) ($r2 (% $r 6))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write a set proof C has checked as a Megalodon article, to be checked again.
 
-The draft's `set:` theory is higher-order logic over `set` and `prop`; its
+The explicit `megalodon-hotg` profile is higher-order logic over `set` and `prop`; its
 seeds are the eleven laws of the sets and their universes.  Part 7 of the
 Megalodon development of the tower inside the sets states the same eleven
 laws as the theorems `law_...` of Megalodon's higher-order Tarski-Grothendieck
@@ -17,27 +17,62 @@ The article is the development followed by what the exporter writes:
 * each cited seed as C states it, proved by its Part 7 law, so that Megalodon
   also compares the two statements;
 * a Megalodon definition for each definition of the space the statements use;
+* each cited axiom of the space that is an axiom of Megalodon's foundation
+  outside the eleven laws (the law of the choice operator), as C states it,
+  proved by that axiom;
 * each cited theorem of the space, written the same way, before its use;
 * the theorem.
+
+The space is `&self` unless `--space` names another, such as the `&thy` of
+the curricula.
 
 Formulas.  C writes conjunction, equivalence, existence, negation and falsity
 out by `imp` and `all`.  Megalodon's preamble defines `/\\`, `<->`, `exists`,
 `~` and `False` by the same formulas, so the exporter prints those forms with
 Megalodon's notation and Megalodon's conversion unfolds them where a proof
 instantiates them.  Equality is the one connective whose definitions differ:
-C declares `eq`, Megalodon defines Leibniz equality.  No authored proof rule
-builds or uses an equation, so `eq` occurs only inside statements, where it
-is printed as `=`.
+C declares `eq`, Megalodon defines Leibniz equality, and `eq` is printed as
+`=`.  Megalodon's `exists` and `=` are polymorphic, and the body of a
+definition may not use them; there the exporter writes both out by
+Megalodon's definitions.
 
 Proofs.  At the goal, an introduction of the quantifier is `let` and of
 implication `assume`; anything else is a term given to `exact`, in which an
 elimination is an application, an introduction is `fun`, a hypothesis is its
 name and a cited seed is its Part 7 law.
 
-Not written: the readable forms `pf:have` and `pf:by`, which C's native
-compiler does not compile either; a definition other than one equation of a
-non-recursive constant; a citation of anything but a seed or a theorem with a
-native package; carriers other than `set`, `prop` and functions between them.
+Readable steps.  The proof the exporter reads is the one C's native package
+carries: the proof as C compiled it.  There a `pf:by` step is already the
+eliminations C's checker found for it, so the article writes C's own
+instance, never one Megalodon would search for.  A local lemma
+`(pf:have h P p body)`, with P stated or synthesized from p, is Megalodon's
+`claim` where it stands at the goal: `claim h: P.`, the proof of P in braces,
+then the rest of the proof with h.  Inside a term it is the redex
+`(fun h:P => body) p`, which is also the proof term Megalodon builds for a
+`claim` and the term C compiles the lemma to.  An implication eliminated at
+the goal with a proof that reads as steps, before a lemma, is `apply` of the
+major premise, whose every quantifier is already instantiated, then those
+steps; where the goal is the premise's conclusion only up to its
+definitions, `prove` first states it as that conclusion.
+
+Substitution.  In a theory that adopts the rule of substitution, `(pf:eq-subst P e h)` proves `P b` from `e : a = b` and
+`h : P a`.  Megalodon's `a = b` holds when every relation `Q` that holds of
+`(a, b)` holds of `(b, a)`, so the step is
+`e (fun x y => P y -> P b) (fun q => q) h`: at that `Q`, the relation at
+`(a, b)` is `P b -> P b` and at `(b, a)` it is `P a -> P b`.
+
+Citations.  C's native package of a theorem cites each earlier theorem by
+name, as a constant whose type is that theorem's statement, and declares the
+laws and axioms its own proof uses; the cited proofs are their own packages.
+The article does the same: a cited theorem is written once, before its first
+use, and cited by its Megalodon name.  For every theorem the article writes,
+what its package declares must be exactly what its proof cites.
+
+Not written: a `pf:by` step left unwritten in a package's proof, which C
+compiles only once it has written it; a definition other than one equation of
+a non-recursive constant; a citation of anything but a seed, an axiom of the
+foundation or a theorem with a native package; carriers other than `set`,
+`prop` and functions between them.
 The article is evidence only once Megalodon has checked it.
 """
 
@@ -69,6 +104,16 @@ SEED_LAWS = {
     "universeTransitive": "law_universe_transitive",
     "universeClosed": "law_universe_closed",
     "universeMinimal": "law_universe_minimal",
+}
+
+# Axioms of Megalodon's foundation outside the eleven laws, with the
+# statement C gives each.  An axiom of the space whose statement is one of
+# these is cited as the Megalodon axiom; the article states it as C states it,
+# proved by that axiom, so that Megalodon compares the two statements.  Any
+# other axiom of the space is not written.
+FOUNDATION_AXIOMS = {
+    # choice: the choice operator picks a witness of a predicate that has one
+    "Eps_i_ax": "(all (-> set prop) (lam P (all set (lam x (imp (P x) (P (Eps_set P)))))))",
 }
 
 SET, PROP = "set", "prop"
@@ -410,6 +455,11 @@ def megalodon_name(name: str) -> str:
     return "prime_" + re.sub(r"[^A-Za-z0-9_]", "_", name)
 
 
+def axiom_name(name: str) -> str:
+    """The Megalodon name of the statement of an axiom of the space."""
+    return "prime_axiom_" + re.sub(r"[^A-Za-z0-9_]", "_", name)
+
+
 class Names:
     """Names in scope while printing; a bound name never shadows another."""
 
@@ -442,10 +492,18 @@ class Names:
 
 
 class Printer:
-    def __init__(self, names: Names, constant_names: dict[str, str], used: set[str]):
+    """Prints formulas with Megalodon's notation.  Megalodon's existential
+    quantifier and equality are polymorphic definitions of its preamble, which
+    the body of a definition may not use; a `monomorphic` printer writes both
+    out by their definitions instead, and Megalodon's conversion unfolds the
+    notation where a theorem meets them."""
+
+    def __init__(self, names: Names, constant_names: dict[str, str], used: set[str],
+                 monomorphic: bool = False):
         self.names = names
         self.constant_names = constant_names
         self.used = used
+        self.monomorphic = monomorphic
 
     def bound(self, binder: Binder, body_printer):
         name = self.names.fresh(binder.hint, "x")
@@ -466,6 +524,13 @@ class Printer:
             self.used.add(term.name)
             return self.constant_names[term.name], ATOM
         if isinstance(term, Eq):
+            if self.monomorphic:
+                # Megalodon's equality: every Q that holds of (left, right)
+                # holds of (right, left)
+                q = Binder("Q", arrow(term.type, term.type, PROP))
+                return self.quantifier(All(q.type, Lam(q, Imp(
+                    apply(Var(q), term.left, term.right),
+                    apply(Var(q), term.right, term.left)))))
             return f"{self.at(term.left, APPL)} = {self.at(term.right, APPL)}", REL
         if isinstance(term, Imp):
             if isinstance(term.right, Const) and term.right.name == "Falsum":
@@ -511,7 +576,9 @@ class Printer:
                         return f"{self.at(a.left, NOT)} <-> {self.at(a.right, NOT)}", IFF
                     return f"{self.at(a, NOT)} /\\ {self.at(b, NOT)}", AND
             # existence: every r that follows from each witness
-            if (isinstance(body, Imp) and isinstance(body.right, Var) and body.right.binder is r
+            if (not self.monomorphic
+                    and isinstance(body, Imp) and isinstance(body.right, Var)
+                    and body.right.binder is r
                     and isinstance(body.left, All) and isinstance(body.left.family, Lam)):
                 inner = body.left.family
                 if (isinstance(inner.body, Imp) and isinstance(inner.body.right, Var)
@@ -590,6 +657,8 @@ class Theorem:
     name: str
     proposition: sx.SExpr
     proof: sx.SExpr
+    # what the package declares: the laws and axioms the proof uses and the
+    # theorems it cites by name
     assumptions: tuple[str, ...]
 
 
@@ -639,13 +708,16 @@ def run_queries(cetta: Path, source: Path, queries: list[str]) -> list[sx.SExpr]
     return answers
 
 
-def ask(cetta: Path, source: Path, names: list[str]) -> list[tuple[sx.SExpr, sx.SExpr]]:
+def ask(cetta: Path, source: Path, names: list[str],
+        space: str | None = None) -> list[tuple[sx.SExpr, sx.SExpr]]:
     """One run of the space: for each name, its native package and its
-    proposition, as `try` reports them."""
+    proposition, as `try` reports them.  Without a space the names are asked
+    about in `&self`."""
+    target = f"{space} " if space else ""
     queries = []
     for name in names:
-        queries.append(f"!(try (set:native-proof {name}))")
-        queries.append(f"!(try (set:known-proposition {name}))")
+        queries.append(f"!(try (set:native-proof {target}{name}))")
+        queries.append(f"!(try (set:known-proposition {target}{name}))")
     answers = run_queries(cetta, source, queries)
     return [(answers[2 * i], answers[2 * i + 1]) for i in range(len(names))]
 
@@ -687,7 +759,7 @@ def read_definition(name: str, proposition: sx.SExpr, known: Known) -> Definitio
     return Definition(name, declared, tuple(binders), (rhs, tuple(zip(names, binders)), t))
 
 
-def gather(cetta: Path, source: Path, names: list[str]) -> Known:
+def gather(cetta: Path, source: Path, names: list[str], space: str | None = None) -> Known:
     """Ask C, run by run, about the seeds, the named theorems and every name
     they reach.  C answers about the space as the source leaves it."""
     known = Known()
@@ -700,7 +772,7 @@ def gather(cetta: Path, source: Path, names: list[str]) -> Known:
         if not batch:
             break
         asked.update(batch)
-        for name, (package, proposition) in zip(batch, ask(cetta, source, batch)):
+        for name, (package, proposition) in zip(batch, ask(cetta, source, batch, space)):
             known.verdicts[name] = package
             stated = established(proposition)
             if stated is not None:
@@ -758,9 +830,19 @@ class Block:
     lines: list[str]
 
 
+def has_lemma(proof) -> bool:
+    """Whether a proof has a local lemma (pf:have) anywhere in it."""
+    if isinstance(proof, tuple):
+        if proof and sym(proof[0]) == "pf:have":
+            return True
+        return any(has_lemma(part) for part in proof)
+    return False
+
+
 class Writer:
     """Writes theorems of one space.  `cite` maps a seed to the Part 7 law a
-    proof cites (the negative controls change it)."""
+    proof cites, and may map an axiom of the space to the axiom of the
+    foundation cited for it (the negative controls change both)."""
 
     def __init__(self, known: Known, cite: dict[str, str] | None = None, width: int = 100):
         self.known = known
@@ -769,12 +851,17 @@ class Writer:
         self.constant_names = {c: m for c, (m, _) in SIGNATURE.items()}
         self.constant_names.update({d: megalodon_name(d) for d in known.definitions})
         self.reserved = (set(self.constant_names.values()) | set(SEED_LAWS.values())
-                         | set(self.cite.values())
+                         | set(self.cite.values()) | set(FOUNDATION_AXIOMS)
                          | {megalodon_name(t) for t in known.theorems}
-                         | {"prime_seed_" + s for s in SEED_LAWS})
+                         | {"prime_seed_" + s for s in SEED_LAWS}
+                         | {axiom_name(a) for a in known.assumed})
         self.blocks: list[Block] = []
         self.written: set[str] = set()
         self.cited_seeds: list[str] = []
+        self.cited_axioms: list[str] = []
+        # what the proof of each written theorem cites itself, in order
+        self.citing: list[list[str]] = []
+        self.cited_by: dict[str, tuple[str, ...]] = {}
         self.seed_propositions: dict[str, object] = {}
         self.used_constants: set[str] = set()
 
@@ -792,8 +879,8 @@ class Writer:
             self.seed_propositions[name] = self.statement(self.known.propositions[name])
         return self.seed_propositions[name]
 
-    def printer(self, names: Names) -> Printer:
-        return Printer(names, self.constant_names, self.used_constants)
+    def printer(self, names: Names, monomorphic: bool = False) -> Printer:
+        return Printer(names, self.constant_names, self.used_constants, monomorphic)
 
     def show(self, formula, names: Names) -> str:
         try:
@@ -817,10 +904,65 @@ class Writer:
 
     @staticmethod
     def refuse_readable(proof) -> None:
-        if isinstance(proof, tuple) and proof and sym(proof[0]) in ("pf:have", "pf:by"):
+        if isinstance(proof, tuple) and proof and sym(proof[0]) == "pf:by":
             raise CannotRender(
-                f"{sym(proof[0])} is a readable step, not a rule of the logic; neither C's "
-                "native compiler nor this exporter translates it")
+                "pf:by is a readable step whose eliminations C has not written into the "
+                "package's proof; it is not a rule of the logic")
+
+    @staticmethod
+    def local_lemma(proof):
+        """A local lemma: its name, its statement (None when it is synthesized
+        from its proof), its proof, and the proof that uses it."""
+        if is_form(proof, "pf:have", 4) and sym(proof[1]) is not None:
+            return sym(proof[1]), None, proof[2], proof[3]
+        if is_form(proof, "pf:have", 5) and sym(proof[1]) is not None:
+            return sym(proof[1]), proof[2], proof[3], proof[4]
+        return None
+
+    def applied_step(self, proof, ctx: Context, names: Names):
+        """An implication eliminated with a proof that reads as steps, an
+        introduction or a local lemma: the major premise as a term for
+        `apply`, which leaves its antecedent as the goal, that antecedent, the
+        conclusion, and the proof of the antecedent.  The major premise is
+        fully instantiated, so `apply` has nothing to find.  Only where a
+        local lemma follows, which then becomes a claim; a proof without one
+        stays a single `exact`."""
+        if not is_form(proof, "pf:imp-elim", 3):
+            return None
+        minor = proof[2]
+        if ((self.introduction(minor) is None and self.local_lemma(minor) is None)
+                or not has_lemma(minor)):
+            return None
+        term, formula = self.synth(proof[1], ctx, names)
+        shape = whnf(formula, self.known.definitions)
+        if not isinstance(shape, Imp):
+            raise CannotRender(f"implication eliminated at {self.show(formula, names)}")
+        return term, shape.left, shape.right, minor
+
+    def lemma_formula(self, lemma, ctx: Context, names: Names):
+        _, stated, lemma_proof, _ = lemma
+        if stated is None:
+            return self.synth(lemma_proof, ctx, names)[1]
+        formula = Scope(self.known, ctx.proof_vars, ctx.fixed).parse(stated)
+        annotate(formula, PROP, self.known)
+        return formula
+
+    def redex(self, lemma, goal, ctx: Context, names: Names) -> Doc:
+        """A local lemma inside a term: `(fun h:P => body) p`."""
+        c_name, _, lemma_proof, body = lemma
+        formula = self.lemma_formula(lemma, ctx, names)
+        argument = self.check(lemma_proof, formula, ctx, names)
+        shown = self.printer(names).at(formula, ATOM)
+        key = Binder(c_name)
+        name = names.fresh(c_name, "H")
+        names.push(key, name)
+        try:
+            inner = Context(ctx.proof_vars, ctx.fixed,
+                            ctx.hypotheses + ((c_name, name, formula),))
+            function = Doc("fun", f"{name}:{shown}", parts=[self.check(body, goal, inner, names)])
+        finally:
+            names.pop(key)
+        return app_doc(function, argument)
 
     def hypothesis_name(self, names: Names) -> str:
         n = 0
@@ -851,6 +993,9 @@ class Writer:
         return name, key, Context(ctx.proof_vars, ctx.fixed, hypotheses), shape.right, shape.left
 
     def check(self, proof, goal, ctx: Context, names: Names) -> Doc:
+        lemma = self.local_lemma(proof)
+        if lemma is not None:
+            return self.redex(lemma, goal, ctx, names)
         intro = self.introduction(proof)
         if intro is None:
             return self.synth(proof, ctx, names)[0]
@@ -900,9 +1045,29 @@ class Writer:
             annotate(witness, shape.type, self.known)
             printed, level = self.printer(names).formula(witness)
             return app_doc(function, leaf(printed, level)), instantiate(shape.family, witness)
+        if is_form(proof, "pf:eq-subst", 4):
+            equation, formula = self.synth(proof[2], ctx, names)
+            shape = whnf(formula, self.known.definitions)
+            if not isinstance(shape, Eq):
+                raise CannotRender(f"substitution along {self.show(formula, names)}")
+            motive = scope.parse(proof[1])
+            annotate(motive, arrow(shape.type, PROP), self.known)
+            before = instantiate(motive, shape.left)
+            after = instantiate(motive, shape.right)
+            minor = self.check(proof[3], before, ctx, names)
+            # Q x y := P y -> P b, at which a = b turns P b -> P b into P a -> P b
+            x, y = Binder("x", shape.type), Binder("y", shape.type)
+            relation = Lam(x, Lam(y, Imp(instantiate(motive, Var(y)), after)))
+            printed, level = self.printer(names).formula(relation)
+            name = self.hypothesis_name(names)
+            shown = self.printer(names).at(after, ATOM)
+            identity = leaf(f"fun {name}:{shown} => {name}", BIND)
+            return app_doc(app_doc(app_doc(equation, leaf(printed, level)), identity), minor), after
         raise CannotRender(f"{text(proof)[:120]} is not a rule of the logic")
 
     def citation(self, name: str):
+        if self.citing and name not in self.citing[-1]:
+            self.citing[-1].append(name)
         if name in SEED_LAWS:
             if name not in self.cited_seeds:
                 self.cited_seeds.append(name)
@@ -911,8 +1076,14 @@ class Writer:
             self.theorem(name)
             return leaf(megalodon_name(name)), self.statement(self.known.theorems[name].proposition)
         if name in self.known.assumed:
-            raise CannotRender(
-                f"{name} is cited, and is an assumption of the space, not one of the eleven laws")
+            law = self.foundation_axiom(name)
+            if law is None:
+                raise CannotRender(
+                    f"{name} is cited, and is an assumption of the space, not one of the eleven "
+                    "laws nor an axiom of Megalodon's foundation")
+            if name not in self.cited_axioms:
+                self.cited_axioms.append(name)
+            return leaf(self.cite.get(name, law)), self.statement(self.known.propositions[name])
         if name in self.known.propositions:
             raise CannotRender(
                 f"{name} is cited, and is neither one of the eleven laws nor a theorem with a "
@@ -941,25 +1112,103 @@ class Writer:
         names = Names(self.reserved)
         lines = [f"(** {name}, checked by C. **)",
                  f"Theorem {megalodon_name(name)} : {self.printer(names).formula(proposition)[0]}."]
-        lines += self.tactics(record.proof, proposition, names)
+        self.citing.append([])
+        try:
+            lines += self.tactics(record.proof, proposition, names)
+        finally:
+            self.cited_by[name] = tuple(self.citing.pop())
         lines.append("Qed.")
         block = Block(name, lines)
         self.blocks.append(block)
         return block
 
-    def tactics(self, proof, goal, names: Names) -> list[str]:
-        """Introductions at the goal as `let` and `assume`, then `exact`."""
-        lines, ctx = [], Context()
-        while (intro := self.introduction(proof)) is not None:
-            kind, c_name, proof = intro
-            name, _, ctx, goal, assumed = self.introduce(kind, c_name, goal, ctx, names)
-            lines.append(f"let {name}." if assumed is None else
-                         f"assume {name}: {self.printer(names).formula(assumed)[0]}.")
-        term = self.synth(proof, ctx, names)[0]
-        body = term.lines(0, self.width - len("exact ."), BIND)
-        body[0] = "exact " + body[0]
-        body[-1] += "."
-        return lines + body
+    def tactics(self, proof, goal, names: Names, ctx: Context | None = None,
+                indent: int = 0) -> list[str]:
+        """Introductions at the goal as `let` and `assume`, a local lemma as
+        `claim` with its proof in braces, then `exact`."""
+        lines, ctx = [], ctx if ctx is not None else Context()
+        pad = " " * indent
+        keys = []
+        try:
+            while True:
+                intro = self.introduction(proof)
+                if intro is not None:
+                    kind, c_name, proof = intro
+                    name, key, ctx, goal, assumed = self.introduce(kind, c_name, goal, ctx, names)
+                    keys.append(key)
+                    lines.append(pad + (f"let {name}." if assumed is None else
+                                        f"assume {name}: {self.printer(names).formula(assumed)[0]}."))
+                    continue
+                step = self.applied_step(proof, ctx, names)
+                if step is not None:
+                    term, antecedent, conclusion, proof = step
+                    # `apply` compares the conclusion with the goal without
+                    # unfolding the goal's definitions; `prove` states the
+                    # goal as the conclusion, which Megalodon checks by
+                    # conversion, first.
+                    shown = self.printer(names).formula(conclusion)[0]
+                    if shown != self.printer(names).formula(goal)[0]:
+                        lines.append(pad + f"prove {shown}.")
+                    goal = antecedent
+                    applied = term.lines(indent, self.width - len("apply ."), BIND)
+                    applied[0] = pad + "apply " + applied[0][indent:]
+                    applied[-1] += "."
+                    lines += applied
+                    continue
+                lemma = self.local_lemma(proof)
+                if lemma is None:
+                    break
+                c_name, _, lemma_proof, body = lemma
+                formula = self.lemma_formula(lemma, ctx, names)
+                shown = self.printer(names).formula(formula)[0]
+                inner = self.tactics(lemma_proof, formula, names, ctx, indent + 2)
+                key = Binder(c_name)
+                name = names.fresh(c_name, "H")
+                names.push(key, name)
+                keys.append(key)
+                lines.append(pad + f"claim {name}: {shown}.")
+                lines.append(pad + "{")
+                lines += inner
+                lines.append(pad + "}")
+                ctx = Context(ctx.proof_vars, ctx.fixed,
+                              ctx.hypotheses + ((c_name, name, formula),))
+                proof = body
+            term = self.synth(proof, ctx, names)[0]
+            body = term.lines(indent, self.width - len("exact ."), BIND)
+            body[0] = pad + "exact " + body[0][indent:]
+            body[-1] += "."
+            return lines + body
+        finally:
+            for key in reversed(keys):
+                names.pop(key)
+
+    def foundation_axiom(self, name: str) -> str | None:
+        """The axiom of Megalodon's foundation that an axiom of the space
+        states, compared up to the names of bound variables."""
+        if name not in self.known.propositions:
+            return None
+        try:
+            stated = self.statement(self.known.propositions[name])
+        except CannotRender:
+            return None
+        for law, source in FOUNDATION_AXIOMS.items():
+            expected, = sx.parse_sexprs(source, source="foundation")
+            if alpha_equal(stated, self.statement(expected)):
+                return law
+        return None
+
+    def axiom_blocks(self, axioms) -> list[Block]:
+        blocks = []
+        for name in axioms:
+            law = self.foundation_axiom(name)
+            shown = self.printer(Names(self.reserved)).formula(
+                self.statement(self.known.propositions[name]))[0]
+            blocks.append(Block("axiom " + name, [
+                f"(** The axiom {name} of the space, as C states it, is {law}. **)",
+                f"Theorem {axiom_name(name)} : {shown}.",
+                f"exact {self.cite.get(name, law)}.",
+                "Qed."]))
+        return blocks
 
     def seed_blocks(self, seeds) -> list[Block]:
         blocks = []
@@ -995,7 +1244,7 @@ class Writer:
                 param = names.fresh(binder.hint, "x")
                 names.push(binder, param)
                 params.append(f"({param}:{type_text(binder.type)})")
-            body = self.printer(names).formula(definition.body)[0]
+            body = self.printer(names, monomorphic=True).formula(definition.body)[0]
             value = f"fun {' '.join(params)} => {body}" if params else body
             blocks.append(Block("definition " + name, [
                 f"(** {name}, as C defines it. **)",
@@ -1035,6 +1284,7 @@ class Article:
     cited_seeds: tuple[str, ...]
     definitions: tuple[str, ...]
     theorems: tuple[str, ...]
+    cited_axioms: tuple[str, ...] = ()
 
 
 def source_label(source: Path) -> str:
@@ -1053,14 +1303,20 @@ def write_article(known: Known, theorem: str | None, development: str, source_la
     writer = Writer(known, cite)
     if seeds is None:
         main = writer.theorem(theorem, statement)
+        # The axioms are printed before the definitions are collected, since a
+        # definition may be used by an axiom's statement; they come after them.
+        axioms = writer.axiom_blocks(writer.cited_axioms)
         blocks = (writer.seed_blocks(writer.cited_seeds) + writer.definition_blocks()
-                  + writer.blocks)
-        # The laws the article cites are the laws C's package assumes.
-        package = known.theorems[theorem].assumptions
-        if statement is None and cite is None and set(package) != set(writer.cited_seeds):
-            raise CannotRender(
-                f"the package of {theorem} assumes {sorted(package)}, the proof cites "
-                f"{sorted(writer.cited_seeds)}")
+                  + axioms + writer.blocks)
+        # What C's package of each written theorem declares is what its proof
+        # cites: the laws and axioms it uses, and the theorems it cites by name.
+        if statement is None and cite is None:
+            for name, cited in writer.cited_by.items():
+                package = known.theorems[name].assumptions
+                if set(package) != set(cited):
+                    raise CannotRender(
+                        f"the package of {name} declares {sorted(package)}, its proof cites "
+                        f"{sorted(cited)}")
     else:
         main = None
         blocks = writer.seed_blocks(seeds)
@@ -1071,6 +1327,10 @@ def write_article(known: Known, theorem: str | None, development: str, source_la
             "    Each seed C cites is stated as C states it and proved by its Part 7 law;",
             "    the proofs cite the Part 7 laws themselves. **)",
         ]
+        if writer.cited_axioms:
+            header[-1] = header[-1][:-len(" **)")]
+            header.append("    Each axiom of the space C cites is an axiom of Megalodon's foundation,")
+            header.append("    stated as C states it and proved by that axiom. **)")
     else:
         header = [
             "",
@@ -1091,7 +1351,8 @@ def write_article(known: Known, theorem: str | None, development: str, source_la
                    tuple(writer.cited_seeds if main else seeds),
                    tuple(b.name.split(" ", 1)[1] for b in blocks
                          if b.name.startswith("definition ")),
-                   tuple(b.name for b in writer.blocks))
+                   tuple(b.name for b in writer.blocks),
+                   tuple(writer.cited_axioms if main else ()))
 
 
 def check_article(megalodon: Path, preamble: Path, article: Path) -> subprocess.CompletedProcess:
@@ -1109,6 +1370,9 @@ def main(argv=None) -> int:
     parser.add_argument("--cetta", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True,
                         help="the .metta file whose space holds the theorem")
+    parser.add_argument("--space",
+                        help="the space of the source that holds the theorem, such as &thy "
+                             "(default: &self)")
     what = parser.add_mutually_exclusive_group(required=True)
     what.add_argument("--theorem", help="the theorem of the space to export")
     what.add_argument("--seeds", action="store_true",
@@ -1121,7 +1385,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     label = args.theorem or "seeds"
     try:
-        known = gather(args.cetta, args.source, [args.theorem] if args.theorem else [])
+        known = gather(args.cetta, args.source, [args.theorem] if args.theorem else [],
+                       args.space)
         article = write_article(known, args.theorem,
                                 args.development.read_text(encoding="utf-8"),
                                 source_label(args.source),
@@ -1137,7 +1402,8 @@ def main(argv=None) -> int:
         verdict = "accepted" if run.returncode == 0 else "rejected"
         if run.returncode != 0:
             sys.stdout.write(run.stdout + run.stderr)
-    print(f"(MegalodonSetProofExportV1 {label} cites ({' '.join(article.cited_seeds)}) "
+    axioms = f"axioms ({' '.join(article.cited_axioms)}) " if article.cited_axioms else ""
+    print(f"(MegalodonSetProofExportV1 {label} cites ({' '.join(article.cited_seeds)}) {axioms}"
           f"definitions ({' '.join(article.definitions)}) theorems ({' '.join(article.theorems)}) "
           f"lines {article.theorem_lines[0]}-{article.theorem_lines[1]} megalodon {verdict})")
     return 0 if verdict != "rejected" else 1

@@ -13,6 +13,13 @@ BindingsFrameSchema *bindings_frame_schema_new(
 BindingsFrameSchema *bindings_frame_schema_new_presented(
     const VarId *source_ids, Atom *const *source_variables,
     uint32_t source_len);
+/* Borrow an already completed schema image without acquiring a hold. */
+BindingsFrameSchema *bindings_frame_schema_copy_lookup(
+    const BindingsFrameSchema *source, const AtomDeepCopySession *atoms);
+/* Copy immutable presentation roots through the enclosing Atom session,
+ * preserving shared schema identity. Returns one owned reference. */
+BindingsFrameSchema *bindings_frame_schema_copy_with_session(
+    const BindingsFrameSchema *source, AtomDeepCopySession *atoms);
 void bindings_frame_schema_retain(BindingsFrameSchema *schema);
 void bindings_frame_schema_release(BindingsFrameSchema *schema);
 const VarId *bindings_frame_schema_source_ids(const BindingsFrameSchema *schema);

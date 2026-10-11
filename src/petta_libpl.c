@@ -244,9 +244,15 @@ static bool g_petta_libpl_ready;
 static bool g_petta_libpl_message_hook_installed;
 static bool g_petta_libpl_owns_engine;
 static PL_engine_t g_petta_libpl_worker_engine;
-/* SWI's main engine was given back by the worker thread that started it. */
-static bool g_petta_libpl_main_released;
+/* The actual engine returned by our initialization. PL_ENGINE_MAIN is an
+ * alias, and re-selecting an already current engine reports INUSE. */
+static PL_engine_t g_petta_libpl_main_engine;
 static _Atomic uint64_t g_petta_libpl_runtime_counter = 1u;
+/* UINT64_MAX seals context creation for final shutdown. Live contexts keep
+ * their engine authority until their last foreign handles are released. */
+static _Atomic uint64_t g_petta_libpl_live_contexts;
+static bool g_petta_libpl_shutdown_complete;
+static bool g_petta_libpl_reclaim_failed;
 static _Thread_local Arena *g_petta_libpl_active_arena;
 static _Thread_local CettaLibPrologRuntime *g_petta_libpl_active_runtime;
 static _Thread_local uint32_t g_petta_libpl_enter_depth;
@@ -1277,37 +1283,67 @@ static bool petta_libpl_import_admission_maybe_contains(
     return true;
 }
 
-static void petta_libpl_global_cleanup(void) {
+static bool petta_libpl_cleanup(bool reclaim) {
     if (!g_petta_libpl_ready)
-        return;
+        return !g_petta_libpl_reclaim_failed;
     /* PL_cleanup runs in the main engine, so the thread that ends the run
      * takes it back first. */
-    if (g_petta_libpl_main_released &&
-        PL_set_engine(PL_ENGINE_MAIN, NULL) == PL_ENGINE_SET)
-        g_petta_libpl_main_released = false;
+    if (g_petta_libpl_owns_engine &&
+        PL_current_engine() != g_petta_libpl_main_engine &&
+        PL_set_engine(g_petta_libpl_main_engine, NULL) != PL_ENGINE_SET)
+        return false;
     if (g_petta_libpl_worker_engine) {
         if (!PL_destroy_engine(g_petta_libpl_worker_engine)) {
-            fputs(
-                "fatal: failed to destroy pooled libpl engine\n",
-                stderr);
-            abort();
+            return false;
         }
         g_petta_libpl_worker_engine = NULL;
     }
-    /* The memory stays until the process ends, as with halt/1: a worker
-     * thread that crossed may still end after this, and its thread-exit
-     * handlers must not meet freed engine state. */
-    if (g_petta_libpl_owns_engine)
-        (void)PL_cleanup(PL_CLEANUP_NO_CANCEL | PL_CLEANUP_NO_RECLAIM_MEMORY);
+    bool ok = true;
+    if (g_petta_libpl_owns_engine) {
+        int flags = PL_CLEANUP_NO_CANCEL |
+            (reclaim ? 0 : PL_CLEANUP_NO_RECLAIM_MEMORY);
+        ok = PL_cleanup(flags) == PL_CLEANUP_SUCCESS;
+        if (reclaim && !ok) g_petta_libpl_reclaim_failed = true;
+    }
     g_petta_libpl_ready = false;
     g_petta_libpl_owns_engine = false;
+    g_petta_libpl_main_engine = NULL;
+    return ok;
 }
 
-void cetta_lib_prolog_global_shutdown(void) {
-    if (pthread_mutex_lock(&g_petta_libpl_lock) != 0)
+static void petta_libpl_global_cleanup(void) {
+    /* Emergency process exit may still have live contexts or participating
+     * workers. Do not wait for a nested call or reclaim their engine state.
+     * Normal shutdown uses the checked, quiescent path below. */
+    if (g_petta_libpl_enter_depth ||
+        pthread_mutex_trylock(&g_petta_libpl_lock) != 0)
         return;
-    petta_libpl_global_cleanup();
+    (void)petta_libpl_cleanup(false);
     (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+}
+
+static bool petta_libpl_close_context_admission(void *unused) {
+    (void)unused;
+    uint64_t expected = 0u;
+    return atomic_compare_exchange_strong_explicit(&g_petta_libpl_live_contexts,
+        &expected, UINT64_MAX, memory_order_acq_rel, memory_order_acquire) ||
+        expected == UINT64_MAX;
+}
+
+bool cetta_lib_prolog_global_shutdown(void) {
+    if (g_petta_libpl_enter_depth ||
+        !cetta_parallel_executor_shutdown_if(
+            petta_libpl_close_context_admission, NULL)) return false;
+    /* A finalizer may ask again while cleanup owns this mutex. It must not
+     * deadlock or re-enter cleanup. A failed join/cleanup leaves admission
+     * sealed and can be retried; only a live-context/episode refusal leaves
+     * admission open. */
+    if (pthread_mutex_trylock(&g_petta_libpl_lock) != 0) return false;
+    if (!g_petta_libpl_shutdown_complete)
+        g_petta_libpl_shutdown_complete = petta_libpl_cleanup(true);
+    bool complete = g_petta_libpl_shutdown_complete;
+    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    return complete;
 }
 
 static void petta_libpl_global_init(void) {
@@ -1341,15 +1377,15 @@ static void petta_libpl_global_init(void) {
         if (!g_petta_libpl_ready)
             return;
         g_petta_libpl_owns_engine = true;
+        g_petta_libpl_main_engine = PL_current_engine();
         /* A parallel worker that starts the engine does not keep SWI's main
          * engine: it may outlive nothing (a one-shot worker) or idle until
          * the run ends (a pooled one), and the run's end must be able to
          * stop every Prolog thread.  It gives the engine back; every
          * crossing then claims the pooled engine, as a worker always does,
          * and the cleanup takes the main engine back. */
-        if (cetta_parallel_worker_active() &&
-            PL_set_engine(NULL, NULL) == PL_ENGINE_SET)
-            g_petta_libpl_main_released = true;
+        if (cetta_parallel_worker_active())
+            (void)PL_set_engine(NULL, NULL);
     }
 
     if (atexit(petta_libpl_global_cleanup) != 0) {
@@ -4679,6 +4715,12 @@ static bool petta_libpl_retract_predicate(
 }
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
+    uint64_t live = atomic_load_explicit(&g_petta_libpl_live_contexts,
+                                         memory_order_acquire);
+    do {
+        if (live >= UINT64_MAX - 1u) return NULL;
+    } while (!atomic_compare_exchange_weak_explicit(&g_petta_libpl_live_contexts,
+        &live, live + 1u, memory_order_acq_rel, memory_order_acquire));
     CettaLibPrologRuntime *runtime =
         cetta_malloc(sizeof(*runtime));
     memset(runtime, 0, sizeof(*runtime));
@@ -4690,6 +4732,8 @@ CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
         instance_id > (uint64_t)INT64_MAX) {
         arena_free(&runtime->callable_codes);
         free(runtime);
+        atomic_fetch_sub_explicit(&g_petta_libpl_live_contexts, 1u,
+                                  memory_order_release);
         return NULL;
     }
     runtime->instance_id = instance_id;
@@ -4777,6 +4821,8 @@ void cetta_lib_prolog_runtime_free(
     free(runtime->solver_module_name);
     free(runtime->working_dir);
     free(runtime);
+    atomic_fetch_sub_explicit(&g_petta_libpl_live_contexts, 1u,
+                              memory_order_release);
 }
 
 CettaLibPrologReadToken cetta_lib_prolog_read_token(

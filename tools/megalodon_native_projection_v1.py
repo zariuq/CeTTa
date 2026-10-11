@@ -22,23 +22,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import argparse
+import gc
 import hashlib
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Protocol
 
 import megalodon_declaration_import_v1 as source
+from megalodon_article_store_v1 import ArticleStoreError, CompressedArticleStore
 
 sx, poly, definitions = source.sx, source.poly, source.evidence
+
+
+class ArticleStorage(Protocol):
+    def get(self, address: str, default=None): ...
+    def __setitem__(self, address: str, text: str): ...
 
 
 def expr(head: str, *args: sx.SExpr) -> sx.SExpr:
     return (sx.Symbol(head), *args)
 
 
-def hosted_article_address(article: sx.SExpr, bodies: dict[str, str]) -> sx.SExpr:
+def hosted_article_address(article: sx.SExpr, bodies: ArticleStorage) -> sx.SExpr:
     """Address a proof article without treating the address as the article.
 
     Small articles are the rendered text. A large article is stored once in
@@ -127,7 +135,7 @@ class Projection:
     primitive_instances: dict = field(default_factory=dict, init=False)
     prefix_digests: list[bytes] = field(default_factory=list, init=False)
     # sha256 address -> rendered article text. The address is not the article.
-    hosted_articles: dict[str, str] = field(default_factory=dict, init=False)
+    hosted_articles: ArticleStorage = field(default_factory=dict, init=False)
 
     def prefix_digest(self, position: int) -> str:
         """Content-address the actual ordered prefix, including proof provenance.
@@ -186,6 +194,19 @@ class Projection:
         if reduced != value:
             self.note(article)
         return reduced
+
+    def retire_completed_memos(self) -> None:
+        """Retire recomputable trees after a complete declaration translation.
+
+        Emitted proofs, representation articles, source occurrences and instance
+        registrations remain. Recursive materialization keeps its memo tables
+        until its top-level frame has finished.
+        """
+        if self.frames:
+            raise RuntimeError("cannot retire an active translation frame")
+        self.head_cache.clear()
+        poly._type_proof.cache_clear()
+        definitions._project_signature.cache_clear()
 
     def type(self, value: poly.Tp) -> sx.SExpr:
         match value:
@@ -437,7 +458,7 @@ class Projection:
                     "MegalodonHostedConversionV1", symbol, sx.Symbol("THM"),
                     sx.StringLiteral(item.label),
                     self.term(inferred, position), proposition,
-                    sx.StringLiteral(sx.render(article)))
+                    self.host_article(article))
                 self.retain_specialization(symbol, item.kind, arguments, body_articles)
         else:
             raise ValueError("unsupported source declaration")
@@ -481,7 +502,10 @@ class Projection:
         elif (isinstance(node, tuple) and len(node) == 2
               and node[0] == sx.Symbol("sha256")
               and isinstance(node[1], sx.StringLiteral)):
-            text = self.hosted_articles.get(node[1].text)
+            try:
+                text = self.hosted_articles.get(node[1].text)
+            except ArticleStoreError:
+                return None
             if text is None:
                 return None
             if hashlib.sha256(text.encode()).hexdigest() != node[1].text:
@@ -534,7 +558,7 @@ class Projection:
             tuple(self.host_article(article) for article in articles))))
 
     def render(self) -> str:
-        return "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
+        return "(set:profile hol)\n" + "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
 
 
 def dependent_use(instance: Instance) -> str:
@@ -567,6 +591,8 @@ def main() -> int:
                         help="save the source export and requested instances; never overwrite a file")
     parser.add_argument("--consumer", type=Path,
                         help="subsequent MeTTa program to run after the checked library declarations")
+    parser.add_argument("--article-store", type=Path,
+                        help="retain large representation articles as losslessly compressed source evidence")
     parser.add_argument("--cetta", type=Path, required=True)
     parser.add_argument("--profile", choices=["empty", "egal"])
     parser.add_argument("--theorem", action="append", default=[],
@@ -590,7 +616,8 @@ def main() -> int:
         library = SourceLibrary.select(exported, args.profile or "empty",
                                        args.theorem, args.axiom, args.type)
     items, requests = library.resolve()
-    projection, instances, prefix_length = library.replay(args.cetta)
+    projection, instances, prefix_length = library.replay(args.cetta,
+                                                        article_store=args.article_store)
     selected_theorems = {items[i].label for i, _ in requests if items[i].kind == "THM"}
     selected_axioms = {items[i].label for i, _ in requests if items[i].kind == "AXIOM"}
     if args.save_library:
@@ -608,6 +635,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="megalodon-native-") as directory:
         path = Path(directory) / "checked-source.metta"
         path.write_text(program, encoding="utf-8")
+        # The receiving program now owns its rendered proof syntax. Retained
+        # source and instance records remain available for checking the results;
+        # the translator's working representation need not coexist with replay.
+        del projection, program
+        gc.collect()
         result = subprocess.run([str(args.cetta.resolve()), "--lang", "prime", str(path)],
                                 capture_output=True, text=True, check=True)
     print(result.stdout, end="")
@@ -616,6 +648,68 @@ def main() -> int:
             raise SystemExit(f"dependent use failed for source {instance.declaration.kind} "
                              f"{instance.declaration.label}")
     return 0
+
+
+def compile_library_admission(goal: sx.SExpr, initial: list[poly.Tp],
+                              prefix: list[source.Declaration]) -> sx.SExpr:
+    """Return the compact certificate without retaining its expanded input.
+
+    Keeping the expanded proof in the replay frame makes both representations
+    coexist throughout receiving-checker replay and native projection. Its
+    construction frame ends here; the complete compact article remains the
+    untrusted evidence checked against the independently reconstructed claim.
+    """
+    _, expanded = source.compile_document(source.State(primitives=list(initial)), prefix)
+    return source.dag.compile_shared_article(goal, expanded).article
+
+
+def prepare_library_admission(library_path: Path, query_path: Path) -> None:
+    """Produce one canonical source query; this operation grants no acceptance.
+
+    Generation ends before the receiving checker runs, so its memoized proof
+    trees do not coexist with the checker's representation of the certificate.
+    """
+    library = SourceLibrary.loads(library_path.read_text(encoding="utf-8"))
+    items, requests = library.resolve()
+    initial = source.egal_initial_primitives() if library.profile == "egal" else []
+    prefix = items[:max(i for i, _ in requests) + 1]
+    goal = source.document_claim(source.State(primitives=list(initial)), prefix)
+    article = compile_library_admission(goal, initial, prefix)
+    budget = source.dag.replay_node_budget(article)
+    with query_path.open("x", encoding="utf-8") as output:
+        output.write("!(nik:check MEGALODON-TERM " + sx.render(goal) + " ")
+        output.write(sx.render(article))
+        if budget is not None:
+            output.write(" " + str(budget))
+        output.write(")\n")
+
+
+def replay_generated_library(cetta: Path, library: "SourceLibrary", goal: sx.SExpr) -> str:
+    """Run the source checker after the internally generated query is closed.
+
+    No external command file is accepted here. The producer receives the
+    validated library, serializes its evidence as one canonical expression,
+    and exits. The caller independently reconstructs and compares the requested
+    claim. A producer exit code or namespace hash never substitutes for checking.
+    """
+    with tempfile.TemporaryDirectory(prefix="megalodon-source-replay-") as directory:
+        root = Path(directory)
+        library_path, query_path = root / "library.json", root / "query.metta"
+        library_path.write_text(library.dumps(), encoding="utf-8")
+        producer = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                                   "--prepare-library-admission", str(library_path), str(query_path)],
+                                  text=True, capture_output=True, check=False)
+        if producer.returncode:
+            raise ValueError("source evidence generation failed: " + producer.stderr)
+        expected = ("!(nik:check MEGALODON-TERM " + sx.render(goal) + " ").encode("utf-8")
+        with query_path.open("rb") as generated:
+            if generated.read(len(expected)) != expected:
+                raise ValueError("generated certificate has a different source claim")
+        result = subprocess.run([str(cetta.resolve()), "--lang", "prime", str(query_path)],
+                                text=True, capture_output=True, check=False)
+        if result.returncode:
+            raise ValueError("source checker invocation failed: " + result.stdout + result.stderr)
+        return result.stdout
 
 
 @dataclass(frozen=True)
@@ -702,7 +796,8 @@ class SourceLibrary:
             raise ValueError("a library must request at least one theorem or explicit assumption")
         return items, requests
 
-    def replay(self, cetta: Path, *, admission_article: sx.SExpr | None = None):
+    def replay(self, cetta: Path, *, admission_article: sx.SExpr | None = None,
+               article_store: Path | None = None):
         """Replay evidence against this source's claim before projecting it.
 
         An optional retained article saves evidence generation, not checking.
@@ -717,11 +812,20 @@ class SourceLibrary:
         prefix = items[:prefix_length]
         goal = source.document_claim(source.State(primitives=list(initial)), prefix)
         if admission_article is None:
-            _, proof = source.compile_document(source.State(primitives=list(initial)), prefix)
-            admission_article = source.dag.compile_shared_article(goal, proof).article
-        poly.require_public_result(poly.run_cetta(cetta, goal, admission_article), accepted=True)
+            replay_result = replay_generated_library(cetta, self, goal)
+        else:
+            replay_result = poly.run_cetta(cetta, goal, admission_article)
+        poly.require_public_result(replay_result, accepted=True)
+        # The complete evidence has been checked. Projection uses the source
+        # declarations and need not retain the admission graph in this frame.
+        del admission_article
         projection = Projection(items, initial)
-        instances = [projection.materialize(i, types) for i, types in requests]
+        if article_store is not None:
+            projection.hosted_articles = CompressedArticleStore(article_store)
+        instances = []
+        for i, types in requests:
+            instances.append(projection.materialize(i, types))
+            projection.retire_completed_memos()
         return projection, instances, prefix_length
 
 
@@ -738,4 +842,7 @@ def select_positions(items, theorems, axioms):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if len(sys.argv) == 4 and sys.argv[1] == "--prepare-library-admission":
+        prepare_library_admission(Path(sys.argv[2]), Path(sys.argv[3]))
+    else:
+        raise SystemExit(main())

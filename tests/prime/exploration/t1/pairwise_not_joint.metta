@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Composing components along interfaces.  Each component has local choices,
 ; and each interface relates the choices of two components.  A joint
 ; completion is a choice for every component that satisfies every interface.
@@ -35,7 +37,7 @@
 (= (pairwise $net)
    (let* (($ifaces (interfaces $net))
           ($bad (collapse (let ($relation $i $j) (superpose $ifaces)
-                            (if (satisfiable $net $relation) (empty) $relation)))))
+                            (if (satisfiable $net $relation) (empty) $relation)){$relation $i $j})))
      (== $bad ())))
 
 ; A joint completion: a choice at a, b and c satisfying every interface.
@@ -47,7 +49,7 @@
        (let ($relation $i $j) (car-atom $ifaces)
          (let $rest (cdr-atom $ifaces)
            (and (holds $relation (value $i $x) (value $j $x))
-                (satisfies $x $rest))))))
+                (satisfies $x $rest))){$rest}){$relation $i $j}))
 (= (joint $net)
    (let* (($va (choice $net)) ($vb (choice $net)) ($vc (choice $net))
           ($x ($va $vb $vc)) ($ifaces (interfaces $net)))
@@ -79,7 +81,7 @@
 ; derives falsum from the two interfaces, while each alone has a model.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(pf:equality &thy bool refl@bool subst@bool)
 !(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))

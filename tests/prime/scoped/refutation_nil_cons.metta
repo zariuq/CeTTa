@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; What a refutation at declared datatypes rests on.  The conversion
 ; algorithm refutes an equation when the two sides have different normal
 ; forms at their principal type; that rests on the algorithm being complete
@@ -43,17 +45,17 @@
 ; Lists of another element type: the same constructor names, but not the
 ; lists of numbers Lean declares.  The same lists of numbers in another space
 ; cite the theorem there.
-!(bind! &bits (new-space))
+!(bind! &bits (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &bits bit (u 0) (: b0 bit) (: b1 bit))
 !(set:inductive &bits list (u 0) (: nil list) (: cons (-> bit list list)))
 !(try (type:eq &bits nil (cons b0 nil)))
 ; Numbers with a third constructor: the lists over them are not Lean's
 ; either, though the two sides are written alike.
-!(bind! &extended (new-space))
+!(bind! &extended (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &extended num (u 0) (: zero num) (: suc (-> num num)) (: infinity num))
 !(set:inductive &extended list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &extended nil (cons zero nil)))
-!(bind! &numbers (new-space))
+!(bind! &numbers (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &numbers num (u 0) (: zero num) (: suc (-> num num)))
 !(set:inductive &numbers list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &numbers nil (cons (suc (suc zero)) nil)))

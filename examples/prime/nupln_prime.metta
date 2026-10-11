@@ -73,7 +73,7 @@
 ;; readable binder names; it does not run the predicate.
 !(let (MkSized $n (: $h $type))
       (nu:type &kb nil 8 (: (conjunction) $type))
-   (Test 3 (nu:source &kb $h) $type (TypingSize $n)))
+   (Test 3 (nu:source &kb $h) $type (TypingSize $n))){$type}
 
 ;; Test 4: the individual itself is a term, not a singleton combinator.
 !(Test 4 (nu:type &kb nil 1 (: @0 $type)))
@@ -95,13 +95,13 @@
    (let (MkSized $n (: $proof $judgment))
         (nu:eval &kb 3 (: $proof (≞ $statement $tv)))
      (Test 6 $proof $judgment (ProofSize $n)
-       (SameProof (== $proof (cet f0t g0t))))))
+       (SameProof (== $proof (cet f0t g0t))))){$proof})
 
 !(let $statement (nu:at (conjunction) (1))
    (let (MkSized $n (: $proof $judgment))
         (nu:eval &kb 2 (: $proof (≞ $statement $tv)))
      (Test 7 $proof $judgment (ProofSize $n)
-       (SameProof (== $proof (cefl f1f))))))
+       (SameProof (== $proof (cefl f1f))))){$proof})
 
 ;; A comma is the product of two proof obligations.  It is the constructor
 ;; from Nil's learner, not punctuation for a simultaneous substitution.
@@ -109,7 +109,7 @@
       (nu:eval &kb 5 (: $proof
         (, (≞ @(F 0) ⊤) (, (≞ @(F 1) ⊥) (≞ @(F 2) ⊤)))))
    (Test 8 $proof (ProofSize $n)
-     (SameProof (== $proof (, f0t (, f1f f2t))))))
+     (SameProof (== $proof (, f0t (, f1f f2t)))))){$proof}
 
 ;; The examples say what a candidate must explain.  nu:obligations makes the
 ;; conjunction of those requirements; the supplied labels are not inferred.
@@ -119,13 +119,13 @@
 !(let $goal (nu:obligations (conjunction) ((Example (0) ⊤) (Example (1) ⊥)))
    (let (MkSized $n (: $proof $judgment)) (nu:eval &kb 6 (: $proof $goal))
      (Test 9 $proof (ProofSize $n)
-       (SameProof (== $proof (, (cet f0t g0t) (cefl f1f)))))))
+       (SameProof (== $proof (, (cet f0t g0t) (cefl f1f)))))){$proof})
 
 !(let $goal (nu:obligations (conjunction) (training))
    (let (MkSized $n (: $proof $judgment)) (nu:eval &kb 9 (: $proof $goal))
      (Test 10 $proof (ProofSize $n)
        (SameProof (== $proof
-         (, (cet f0t g0t) (, (cefl f1f) (cefr g2f))))))))
+         (, (cet f0t g0t) (, (cefl f1f) (cefr g2f))))))){$proof})
 
 ;;;;;;;;;;;;;;
 ;; Learning ;;
@@ -168,7 +168,7 @@
 !(match &self (learned-predicate $h)
    (let $f *$h
      (Run (collapse
-       (let $x (superpose (0 1 2 3)) (At $x ($f $x)))))))
+       (let $x (superpose (0 1 2 3)) (At $x ($f $x))){$x}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; What failure does not assert ;;

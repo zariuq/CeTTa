@@ -1,0 +1,61 @@
+; Fresh spaces use the common material fragment. Extra laws and proof
+; capabilities are visible in their exact context, and receipts keep the
+; profile under which they were checked.
+!(set:signature profiles)
+!(let (SetFoundationManifest (profile $profile) (signature-digest $digest)
+        (checker $checker) (identity-policy $identity)
+        (identity-region-assumptions $regions) (typed-declarations $declarations) (admitted-type-rules $type_rules)
+        (profile-source $source) (adopted-rules $rules)
+        (interpretations $interpretations) (admitted-assumptions $assumptions)
+        (admitted-definitions $definitions) (admitted-constructions $constructions)) (set:signature manifest)
+    (CommonManifest $profile $checker $rules $interpretations
+      (size-atom $assumptions) (size-atom $definitions)))
+!(car-atom (set:known-proposition coreEmpty))
+!(car-atom (set:known-proposition corePairing))
+!(car-atom (set:known-proposition coreUnion))
+!(car-atom (set:known-proposition coreInfinity))
+!(car-atom (set:known-proposition coreExtensionality))
+!(car-atom (try (set:known-proposition foundationLaw)))
+!(car-atom (try (set:known-proposition excludedMiddle)))
+!(car-atom (try (set:known-proposition universeIn)))
+!(car-atom (try (set:of Empty)))
+!(car-atom (try (set:of Power)))
+!(set:theorem self-member-implication
+    (all set (lam x (imp (In x x) (In x x))))
+    (pf:all-intro (pf:imp-intro (pf:hyp 0))))
+!(car-atom (try (set:native-proof self-member-implication)))
+!(let $law (set:known-proposition corePairing)
+    (set:theorem retained-pairing $law (pf:known corePairing)))
+!(match &self (set:known retained-pairing $p $origin $proof $dependencies $revision $signature)
+    (MaterialDependencies $origin (map-atom $dependencies $entry (car-atom $entry))))
+!(car-atom (try (set:proves (pf:known coreEmpty) Falsum)))
+
+; Context assumptions and definitions are distinct from the profile source.
+!(add-atom &self (set:rule eq-subst))
+!(set:axiom local-premise (all prop (lam p (imp p p))))
+!(set:define plain-id (-> set set) (= (plain-id $x) $x))
+!(let (SetFoundationManifest (profile $profile) (signature-digest $digest)
+        (checker $checker) (identity-policy $identity)
+        (identity-region-assumptions $regions) (typed-declarations $declarations) (admitted-type-rules $type_rules)
+        (profile-source $source) (adopted-rules $rules)
+        (interpretations $interpretations) (admitted-assumptions $assumptions)
+        (admitted-definitions $definitions) (admitted-constructions $constructions)) (set:signature manifest)
+    (ContextManifest $profile $rules $interpretations
+      (size-atom $assumptions) (size-atom $definitions)))
+
+; Another fresh space has no inherited assumption, definition, or rule.
+!(bind! &other (new-space))
+!(let (SetFoundationManifest (profile $profile) (signature-digest $digest)
+        (checker $checker) (identity-policy $identity)
+        (identity-region-assumptions $regions) (typed-declarations $declarations) (admitted-type-rules $type_rules)
+        (profile-source $source) (adopted-rules $rules)
+        (interpretations $interpretations) (admitted-assumptions $assumptions)
+        (admitted-definitions $definitions) (admitted-constructions $constructions)) (set:signature &other manifest)
+    (OtherManifest $profile $rules $interpretations
+      (size-atom $assumptions) (size-atom $definitions)))
+!(add-atom &self (set:profile foundation-common))
+!(car-atom (set:known-proposition foundationLaw))
+!(car-atom (try (set:known-proposition excludedMiddle)))
+!(car-atom (try (set:native-proof retained-pairing)))
+!(remove-atom &self (set:profile foundation-common))
+!(car-atom (try (set:native-proof retained-pairing)))

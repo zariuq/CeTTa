@@ -11,7 +11,7 @@
 (= (atp:superposition:singleton $clause)
    (if (== (size-atom $clause) 1)
        (let ($literal $rest) (decons-atom $clause)
-         (ATP.Singleton $literal))
+         (ATP.Singleton $literal)){$literal $rest}
        ATP.NotSingleton))
 
 (= (atp:superposition:index-list-valid ()) True)
@@ -38,7 +38,7 @@
        (let ($head $tail) (decons-atom $arguments)
          (if (== $index 1)
              (ATP.Subterm $head)
-             (atp:superposition:nth-argument $tail (- $index 1))))))
+             (atp:superposition:nth-argument $tail (- $index 1)))){$head $tail}))
 
 (= (atp:superposition:subterm-in-arguments
      $arguments $index $rest-path)
@@ -48,7 +48,7 @@
          (if (== $index 1)
              (atp:superposition:subterm-at-path $head $rest-path)
              (atp:superposition:subterm-in-arguments
-               $tail (- $index 1) $rest-path)))))
+               $tail (- $index 1) $rest-path))){$head $tail}))
 
 (= (atp:superposition:subterm-at-path $term $path)
    (if (== $path ())
@@ -62,8 +62,8 @@
                     (let ($head $arguments) (decons-atom $term)
                       (let ($index $rest) (decons-atom $path)
                         (atp:superposition:subterm-in-arguments
-                          $arguments $index $rest))))
-                ATP.NoSubterm))))))
+                          $arguments $index $rest)){$index $rest}){$head $arguments})
+                ATP.NoSubterm)))){$name $_}))
 
 (= (atp:superposition:subterm-at $term (ATP.Position $path))
    (atp:superposition:subterm-at-path $term $path))
@@ -78,12 +78,12 @@
                      $head $rest-path $replacement)
                (((ATP.ReplaceOK $new-head)
                   (ATP.ReplaceOK (cons-atom $new-head $tail)))
-                ($_ ATP.ReplaceMissing)))
+                ($_ ATP.ReplaceMissing))){$new-head $_}
              (case (atp:superposition:replace-nth
                      $tail (- $index 1) $rest-path $replacement)
                (((ATP.ReplaceOK $new-tail)
                   (ATP.ReplaceOK (cons-atom $head $new-tail)))
-                ($_ ATP.ReplaceMissing)))))))
+                ($_ ATP.ReplaceMissing))){$new-tail $_})){$head $tail}))
 
 (= (atp:superposition:replace-at-path $term $path $replacement)
    (if (== $path ())
@@ -101,8 +101,8 @@
                           (((ATP.ReplaceOK $new-arguments)
                              (ATP.ReplaceOK
                                (cons-atom $head $new-arguments)))
-                           ($_ ATP.ReplaceMissing))))))
-                ATP.ReplaceMissing))))))
+                           ($_ ATP.ReplaceMissing))){$new-arguments $_}){$index $rest-path}){$head $arguments})
+                ATP.ReplaceMissing)))){$name $_}))
 
 (= (atp:superposition:replace-at
      $term (ATP.Position $path) $replacement)
@@ -112,13 +112,13 @@
    (case $literal
      (((ATP.Pos $atom) (ATP.LiteralAtom $atom))
       ((ATP.Neg $atom) (ATP.LiteralAtom $atom))
-      ($_ ATP.MalformedLiteral))))
+      ($_ ATP.MalformedLiteral))){$atom})
 
 (= (atp:superposition:literal-with-atom $literal $atom)
    (case $literal
      (((ATP.Pos $old) (ATP.Pos $atom))
       ((ATP.Neg $old) (ATP.Neg $atom))
-      ($_ ATP.MalformedLiteral))))
+      ($_ ATP.MalformedLiteral))){$old})
 
 (= (atp:superposition:literal-subterm $literal $position)
    (case (atp:superposition:literal-atom $literal)
@@ -136,8 +136,8 @@
              (ATP.ReplaceOK
                (atp:superposition:literal-with-atom
                  $literal $new-atom)))
-           ($_ ATP.ReplaceMissing))))
-      ($_ ATP.ReplaceMissing))))
+           ($_ ATP.ReplaceMissing))){$new-atom $_})
+      ($_ ATP.ReplaceMissing))){$_})
 
 (= (atp:superposition:object-variable $term)
    (case $term
@@ -150,7 +150,7 @@
         (ATP.Oriented $left $right))
       (((ATP.Pos (ATP.Eq $left $right)) ATP.RightToLeft)
         (ATP.Oriented $right $left))
-      ($_ ATP.NotOrientedEquality))))
+      ($_ ATP.NotOrientedEquality))){$left $right})
 
 (= (atp:superposition:check-unit-rewrite
      $instantiated-target $position $from $to $ordering $expected)
@@ -164,9 +164,9 @@
                   (((ATP.ReplaceOK $child-literal)
                      (atp:resolution:multiset-equal
                        (cons-atom $child-literal ()) $expected))
-                   ($_ False)))
+                   ($_ False))){$child-literal $_}
                 False))
-          ($_ False)))
+          ($_ False))){$selected-subterm $_}
        False))
 
 (= (atp:superposition:check-unit-instantiated
@@ -206,7 +206,7 @@
                     (atp:superposition:check-unit-original
                       $bindings $equality-literal $direction
                       $target-literal $position $ordering $expected)))
-              ($_ False)))
+              ($_ False))){$original-subterm $_}
            False)
        False))
 
@@ -221,7 +221,7 @@
                (atp:superposition:check-unit-literals
                  $bindings $source-literal $equality-literal
                  $only-target-literal $target-literal $direction $position
-                 $ordering $expected)))
+                 $ordering $expected)){$only-target-literal $target-rest}){$source-literal $source-rest}
            False)
        False))
 

@@ -62,8 +62,19 @@ typedef enum {
     REGISTRY_RESOLUTION_AMBIGUOUS = 3,
 } RegistryResolutionStatus;
 
+/* Each capability carries a serial that is never issued twice in a process
+ * and never wraps (identity_counter.h).  Returns NULL once the serials are
+ * exhausted; a NULL capability guards no route. */
 RegistryCapability *registry_capability_new(void);
 void registry_capability_delete(RegistryCapability *capability);
+#ifndef CETTA_REGISTRY_CAPABILITY_TEST_HOOKS
+#define CETTA_REGISTRY_CAPABILITY_TEST_HOOKS 0
+#endif
+#if CETTA_REGISTRY_CAPABILITY_TEST_HOOKS
+/* Test builds only: place the next serial; zero is refused. */
+bool registry_capability_test_seed(uint64_t next);
+uint64_t registry_capability_test_next(void);
+#endif
 
 void registry_resolver_init(RegistryResolver *resolver);
 void registry_resolver_free(RegistryResolver *resolver);

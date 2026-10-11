@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; A later development uses the loaded source theorem as a retained premise,
 ; proves a new theorem, then consumes its native proof dependently.  The
 ; signature defines Falsum as the proposition implying every proposition, as

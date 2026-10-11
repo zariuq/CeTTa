@@ -39,7 +39,7 @@
                       False
                       (if (== (get-metatype $head) Expression)
                           False
-                          (atp:kbo:term-list-valid $arguments))))
+                          (atp:kbo:term-list-valid $arguments)))){$head $arguments}
                 True))))))
 
 (= (atp:kbo:weights-valid () $seen) True)
@@ -115,7 +115,7 @@
                  (atp:kbo:arguments-weight
                    (ATP.KBO $variable-weight $default-weight
                             $weights $precedence)
-                   $arguments)))
+                   $arguments))){$head $arguments}
             (atp:kbo:symbol-weight $weights $term $default-weight))))))
 
 (= (atp:kbo:variable-count-list $name ()) 0)
@@ -183,7 +183,7 @@
       ($_
         (if (== (get-metatype $term) Expression)
             (let ($head $arguments) (decons-atom $term)
-              (ATP.KBORoot $head $arguments))
+              (ATP.KBORoot $head $arguments)){$head $arguments}
             (ATP.KBORoot $term ()))))))
 
 (= (atp:kbo:equal-weight-greater
@@ -227,7 +227,7 @@
                        (atp:kbo:equal-weight-greater
                          (ATP.KBO $variable-weight $default-weight
                                   $weights $precedence)
-                         $left $right)))))
+                         $left $right)))){$right-weight}){$left-weight}
            False)))
 
 ; Public comparison predicate.  Invalid terms/configurations fail closed.

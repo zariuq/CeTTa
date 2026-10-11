@@ -66,6 +66,15 @@ PeTTa realization from the top-level directory, as PeTTa resolves them:
   !(import! &self ../langdef/he/generated/NAME.metta)
       -> !(import! &self langdef/petta/generated/NAME.metta)
 
+HE's map-atom and foldl-atom, written out by their definitions at a call
+(as a library that forwards its caller's variable and template writes
+them, so that Prime reads them as data rather than as a literal template),
+are PeTTa's map-atom and foldl-atom (the PeTTa spelling):
+
+  (function (eval (_minimal-map-atom L V T))) -> (map-atom L V T)
+  (function (chain (context-space) $s
+     (eval (_minimal-foldl-atom L I A X O $s)))) -> (foldl-atom L I A X O)
+
 The output file is generated: it carries no comments, and a gate compares
 it with this transformation of its source.
 """
@@ -219,6 +228,26 @@ def spell_value_handoff(call, dialect: str):
             [Symbol("case"), call, [[result, [Symbol("return"), result]]]]]
 
 
+def written_out_iteration(form):
+    """(map-atom L V T) or (foldl-atom L I A X O) of HE's definition of
+    map-atom or foldl-atom written out at a call, or None."""
+    if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"):
+        return None
+    inner = form[1]
+    if (isinstance(inner, list) and len(inner) == 2 and inner[0] == "eval"
+            and isinstance(inner[1], list) and len(inner[1]) == 4
+            and inner[1][0] == "_minimal-map-atom"):
+        return [Symbol("map-atom")] + inner[1][1:]
+    if (isinstance(inner, list) and len(inner) == 4 and inner[0] == "chain"
+            and inner[1] == [Symbol("context-space")] and is_variable(inner[2])
+            and isinstance(inner[3], list) and len(inner[3]) == 2
+            and inner[3][0] == "eval" and isinstance(inner[3][1], list)
+            and len(inner[3][1]) == 7 and inner[3][1][0] == "_minimal-foldl-atom"
+            and inner[3][1][6] == inner[2]):
+        return [Symbol("foldl-atom")] + inner[3][1][1:6]
+    return None
+
+
 def realization_import(form):
     """The PeTTa spelling of an import of a generated HE realization."""
     if (isinstance(form, list) and len(form) == 3 and form[0] == "import!"
@@ -297,6 +326,9 @@ def transform(form, dialect: str):
                 left, right, then, otherwise = (transform(item, dialect)
                                                 for item in form[1:])
                 return [Symbol("if"), [Symbol("="), left, right], then, otherwise]
+            iteration = written_out_iteration(form)
+            if iteration is not None:
+                return transform(iteration, dialect)
             unwrapped = unwrap_function(form)
             if unwrapped is not None:
                 return transform(unwrapped, dialect)

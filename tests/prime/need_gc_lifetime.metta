@@ -21,5 +21,5 @@
     (let $work (prime-need:gc-work (force (delay 1600)))
       (if (== $work 1600)
           (force $promise)
-          impossible)))
+          impossible)){$work}){$promise}
   (A B))

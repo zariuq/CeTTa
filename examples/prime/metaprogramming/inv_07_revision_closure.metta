@@ -1,22 +1,25 @@
+(set:profile hol)
+
 ; Revision-aware definitions.
 ;
 ; A published fact is reusable only while everything it was checked against
-; is unchanged: the definitions it mentions and, transitively, the bodies of
-; the definitions those mention.  Changing a definition behind an alias whose
+; is unchanged: the selected typed declarations, admitted computation rules,
+; definitions it mentions and, transitively, the bodies of the definitions
+; those mention.  Changing a definition behind an alias whose
 ; own equation is unchanged is a change; restoring the body restores reuse; an
 ; unrelated definition changes nothing.
 
-!(bind! &theory (new-space))
+!(bind! &theory (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &theory (: A prop))
 !(add-atom &theory (: B prop))
 
 ; Withdraw one admitted definition: its record, its rule and its declaration.
 (= (withdraw $space $name)
    (let $known (collapse (match $space (set:known $name $p $o $proof $deps $r $s)
-                            (remove-atom $space (set:known $name $p $o $proof $deps $r $s))))
+                            (remove-atom $space (set:known $name $p $o $proof $deps $r $s))){$name})
      (let $rules (collapse (match $space (type:rule $name $n $pats $rhs)
-                              (remove-atom $space (type:rule $name $n $pats $rhs))))
-       (let $decls (collapse (match $space (: $name $t) (remove-atom $space (: $name $t))))
+                              (remove-atom $space (type:rule $name $n $pats $rhs))){$name})
+       (let $decls (collapse (match $space (: $name $t) (remove-atom $space (: $name $t))){$name})
          (Withdrawn $name)))))
 
 ; 1-4. root -> middle -> leaf = (imp A A), and a theorem about root.

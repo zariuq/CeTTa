@@ -8,6 +8,7 @@
 #include "gslt_term_view_v1.h"
 #include "name_key.h"
 #include "match.h"
+#include "checkpoint_compare.h"
 #include "subst_tree.h"
 #include "term_universe.h"
 
@@ -142,6 +143,7 @@ typedef struct {
     bool exact_idx_dirty;
     bool has_non_exact_atoms;
     bool has_non_exact_atoms_dirty;
+    bool has_graded_equations; /* derived alongside the ordinary equation index */
     uint32_t secondary_index_deferral_depth;
 } SpaceNativeStorage;
 
@@ -166,6 +168,7 @@ typedef struct Space {
             bool exact_idx_dirty;
             bool has_non_exact_atoms;
             bool has_non_exact_atoms_dirty;
+            bool has_graded_equations;
             uint32_t secondary_index_deferral_depth;
         };
     };
@@ -222,6 +225,40 @@ typedef struct Space {
     uint64_t module_dependency_epoch;
 } Space;
 
+/* NativeFlatWorldV1. Source headers, their TermUniverse generation and the
+ * symbol service are held and quiescent throughout these calls. This is an
+ * explicit target-world image, not a clone of foreign or opaque services.
+ * Encoded AtomIds remain rigid in the same held, append-only TermUniverse.
+ * Neither admission nor comparison decodes a row or warms an index. */
+typedef struct {
+    size_t work_limit, byte_limit;
+    size_t work, retained_bytes, copied_bytes, allocation_attempts;
+    size_t attempted_bytes; /* includes a failed malloc request, never counted as retained */
+    size_t observer_work, observer_bytes; /* actual retained observer-capacity growth */
+    size_t observer_requested_bytes; /* reserved full replacement-table allocation */
+    const char *refusal;
+} SpaceCheckpointBudget;
+
+typedef struct {
+    uint64_t instance, prefix;
+} SpaceCheckpointIssuance;
+
+SpaceCheckpointIssuance space_checkpoint_issuance(void);
+/* The Space and universe headers are independently live and quiescent.
+ * Verify the actual unique format-observer edge with bounded paid reads. */
+bool space_universe_registration_current(const Space *, SpaceCheckpointBudget *);
+bool space_checkpoint_native_admitted(const Space *, SpaceCheckpointBudget *);
+/* destination is uninitialized and *destination_ready is false on entry.
+ * Once initialized it remains a real owner, including after failure. The
+ * caller must retain/census/free it, and must not execute a partial image.
+ * A preflight refusal leaves destination and its ready flag untouched.
+ * Successful return is the completion capability; ready alone is not one. */
+bool space_checkpoint_native_copy(const Space *source, Space *destination,
+    bool *destination_ready, SpaceCheckpointBudget *);
+bool space_checkpoint_native_compare(const Space *, const Space *,
+    CettaCheckpointCompare *, SpaceCheckpointBudget *);
+
+
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
@@ -273,7 +310,30 @@ uint32_t space_session_grounded_symbol_types(SymbolId symbol,
                                              Atom *const **types)
     __attribute__((weak));
 void space_free(Space *s);
+/* Owned index allocations; the Space object and borrowed TermUniverse have
+ * independent owners and are not charged by this visitor. */
+void space_storage_census(const Space *s, CettaStorageCensus *census);
 void space_execution_analysis_cache_free_for_current_thread(void);
+
+/* A selected image of the existing query-effect cache. Selection borrows
+ * the image until the caller restores the previous one; no source lifetime
+ * is acquired by copying revision tokens. All operations are serial. */
+typedef struct SpaceExecutionAnalysisCache SpaceExecutionAnalysisCache;
+SpaceExecutionAnalysisCache *space_execution_analysis_cache_current(void);
+SpaceExecutionAnalysisCache *space_execution_analysis_cache_new(void);
+/* Raw selection preserves NULL/default separately from the effective store. */
+SpaceExecutionAnalysisCache *space_execution_analysis_cache_selected(void);
+SpaceExecutionAnalysisCache *space_execution_analysis_cache_select(
+    SpaceExecutionAnalysisCache *image);
+bool space_execution_analysis_cache_admitted(const SpaceExecutionAnalysisCache *,
+    size_t inspection_limit);
+bool space_execution_analysis_cache_copy(const SpaceExecutionAnalysisCache *,
+    size_t entry_limit, SpaceExecutionAnalysisCache **out);
+void space_execution_analysis_cache_destroy(SpaceExecutionAnalysisCache *);
+void space_execution_analysis_cache_storage(const SpaceExecutionAnalysisCache *,
+    CettaStorageCensus *);
+bool space_execution_analysis_cache_compare(const SpaceExecutionAnalysisCache *,
+    const SpaceExecutionAnalysisCache *, const CettaCheckpointCompare *);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
@@ -304,6 +364,7 @@ void space_replace_contents(Space *dst, Space *src);
 typedef void (*SpaceContentsMovedHook)(uint64_t from_instance,
                                        uint64_t to_instance);
 void space_set_contents_moved_hook(SpaceContentsMovedHook hook);
+SpaceContentsMovedHook space_contents_moved_hook(void);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 bool space_is_ordered(const Space *s);
@@ -365,6 +426,36 @@ typedef struct {
     uint64_t base_prefix_epoch;
     uint64_t base_dependency_epoch;
 } SpaceReadToken;
+
+/* The caller holds both actual target headers and has authenticated their
+ * completed world-copy relation. Historical wrong-instance and unrelated
+ * keys stay rigid, including initialized buckets in inactive shards. */
+bool space_execution_analysis_cache_transport_target(SpaceExecutionAnalysisCache *,
+    SpaceReadToken source, SpaceReadToken destination, size_t inspection_limit);
+bool space_execution_analysis_cache_compare_targets(const SpaceExecutionAnalysisCache *,
+    const SpaceExecutionAnalysisCache *, SpaceReadToken left_target,
+    SpaceReadToken right_target, const CettaCheckpointCompare *);
+
+/* Original authorities for one logical Space view. The caller retains every
+ * Space and its universe; this view owns only its captured token array. A
+ * non-overlay view has no allocation. Cloning preserves the issued tokens,
+ * including stale ones, rather than capturing a later revision. Capture and
+ * clone require an empty output; release that output exactly once. */
+typedef struct {
+    SpaceReadToken root;
+    SpaceReadToken *bases;
+    size_t base_count;
+} SpaceReadView;
+
+bool space_read_view_capture(const Space *space, SpaceReadView *out);
+bool space_read_view_clone(const SpaceReadView *source, SpaceReadView *out);
+bool space_read_view_is_current(const SpaceReadView *view);
+bool space_read_view_has_native_occurrences(const SpaceReadView *view);
+bool space_read_view_visit(const SpaceReadView *view,
+    bool (*visitor)(SpaceReadToken read, void *context), void *context);
+void space_read_view_release(SpaceReadView *view);
+void space_read_view_storage_census(const SpaceReadView *view,
+                                   CettaStorageCensus *census);
 
 /* Lifetime-qualified identity of the ordered equation-occurrence projection.
    This token deliberately ignores data-only Space mutations. */
@@ -472,6 +563,8 @@ typedef struct {
     CettaIndex wildcard_position;
     CettaIndex overlay_position;
     bool overlay;
+    bool incomplete;
+    bool include_graded;
     /* With imported atoms (Space.imported_len), the member's own equations
        are visited in phase 0 and the imported ones in phase 1. */
     CettaIndex imported;
@@ -484,6 +577,26 @@ typedef enum {
     SPACE_EQUATION_CURSOR_INVALIDATED,
 } SpaceEquationCursorStep;
 
+/* Experimental authored syntax is a view: stored rows and ordinary equation
+ * dispatch are unchanged. A non-NULL grade belongs to the same variable scope
+ * as lhs/rhs. Lowering returns one canonical equation for joint freshening. */
+bool space_equation_view(Atom *row, bool include_graded,
+                         Atom **lhs, Atom **rhs, Atom **grade);
+Atom *space_equation_execution_view(Arena *arena, Atom *row);
+Atom *space_match_where_grade(const Atom *call);
+Atom *space_grade_admission_predicate(const Atom *descriptor);
+Atom *space_match_execution_view(Arena *arena, Atom *call);
+bool space_has_graded_equations(Space *space);
+bool space_equation_head_arity_bounds_view(Space *space, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity);
+bool space_equations_may_match_known_head_view(Space *space, SymbolId head);
+bool space_equation_occurrence_resolve_view(SpaceEquationOccurrenceId id,
+    bool include_graded, SpaceEquationOccurrence *out);
+/* SYMBOL_ID_NONE selects every physical equation in the captured prefix;
+ * the full-term matcher decides applicability of a computed/compound head. */
+bool space_equation_cursor_init_view(Space *space, SymbolId head,
+    bool include_graded, SpaceEquationCursor *cursor);
 bool space_equation_cursor_init(Space *s, SymbolId head,
                                 SpaceEquationCursor *cursor);
 SpaceEquationCursorStep space_equation_cursor_next(
@@ -513,12 +626,17 @@ typedef struct {
     uint32_t node_len;
     /* Declaration order of a multi-node frontier, built once. */
     CettaIndex *flat;
+    CettaIndex flat_capacity;
     CettaIndex flat_len;
     CettaIndex flat_next;
     bool flat_mode;
     bool full_scan;
     CettaIndex full_next;
     bool pinned;
+    /* init_scan may borrow a live native overlay's logical view instead of
+     * a detached occurrence pin. Every access checks all original sources. */
+    bool logical_scan;
+    SpaceReadView logical_reads;
 } SpaceOccurrenceCursor;
 
 typedef enum {
@@ -530,6 +648,13 @@ typedef enum {
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor);
+/* Capture the same physical view without building a candidate array or trie.
+ * Each next operation visits one declaration-order occurrence. For overlays
+ * with native bases, use the canonical logical order and masking under the
+ * captured read chain. Any source change invalidates that live scan; it does
+ * not inherit the native pin's drain-after-removal law. The caller retains
+ * all Spaces and their universes. General indexed init remains pin-only. */
+bool space_occurrence_cursor_init_scan(Space *s, SpaceOccurrenceCursor *cursor);
 /* New attempt over the same pin and discrimination frontier: copy the
  * borrowed trie nodes, reset the leaf cursor, and take one pin. */
 bool space_occurrence_cursor_clone_unstarted(
@@ -545,6 +670,8 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
+void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
+                                           CettaStorageCensus *census);
 
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
@@ -635,6 +762,14 @@ CettaCount query_equations_visit_planned(
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* Same per-row freshening/matching/projection, with absence certified only
+ * by a completed refutation. Incomplete matching or RHS/projection failure
+ * never becomes an empty successful visit. pair_budget limits the matcher's
+ * worklist quanta; UINT64_MAX requests its ordinary unbounded finite visit. */
+CettaMatchCompletion query_equation_visit_checked(
+    Atom *equation, Atom *query, Arena *arena,
+    QueryResultVisitor visitor, void *context, uint64_t pair_budget,
+    CettaCount *emitted);
 /* Execute a complete logical equation query whose candidate selection has
    already proved that `equation` is the only candidate.  Unlike the
    lower-level per-candidate primitive above, this preserves the ordinary
@@ -758,12 +893,42 @@ typedef struct {
 void registry_init(Registry *r);
 void registry_free(Registry *r);
 void registry_bind_id(Registry *r, SymbolId key, Atom *value);
+bool registry_bind_id_checked(Registry *r, SymbolId key, Atom *value);
 Atom *registry_lookup_id(Registry *r, SymbolId key);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);
+/* Both key graph and value are independently owned until registry disposal. */
+bool registry_bind_snapshot_name(Registry *r, const AtomDeepCopySession *snapshot,
+    const Arena *destination, const Atom *source_key, Atom *value);
 Atom *registry_lookup_name(Registry *r, Atom *name_key);
 const Atom *registry_entry_name_key(const Registry *r, uint32_t index);
+
+/* An admission-time value view and the names actually read from it.  Values
+ * are copied into the caller's arena; pointed-to resources keep their own
+ * revision/lifetime contracts.  A stale view is never silently rebased. */
+typedef struct RegistryReadView {
+    Registry initial;
+    Registry consulted;
+    Arena *arena;
+    bool initialized;
+    bool stale;
+    bool incomplete;
+    const char *refusal;
+    Atom *stale_name;
+    Atom *stale_expected;
+    Atom *stale_actual;
+    Registry *active_source;
+    struct RegistryReadView *active_parent;
+} RegistryReadView;
+
+bool registry_read_view_init(RegistryReadView *view, Registry *source,
+                            Arena *arena);
+void registry_read_view_free(RegistryReadView *view);
+bool registry_read_view_validate(RegistryReadView *view, Registry *source);
+RegistryReadView *registry_read_view_enter(RegistryReadView *view,
+                                          Registry *source);
+void registry_read_view_leave(RegistryReadView *previous);
 
 /* PeTTa's named state: the reference's global variables, whose names are
    independent of the names bound above.  Each state owns its value's
@@ -883,6 +1048,73 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
                                  const Bindings *seed, Arena *a, Bindings *out);
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
+bool space_query_is_connective(const Atom *pattern);
+bool space_query_bindings(Space *space, Arena *arena, Atom *pattern,
+                          const Bindings *seed, BindingSet *out);
+
+typedef struct SpaceQueryCursor SpaceQueryCursor;
+typedef enum {
+    SPACE_QUERY_CURSOR_PROGRESS,
+    SPACE_QUERY_CURSOR_ROW,
+    SPACE_QUERY_CURSOR_END,
+    SPACE_QUERY_CURSOR_INCOMPLETE,
+    SPACE_QUERY_CURSOR_INVALIDATED,
+    SPACE_QUERY_CURSOR_CAPACITY,
+} SpaceQueryCursorStep;
+
+/* The caller retains the Space and its overlay bases, query syntax and result arena. The cursor
+ * owns its traversal, seed bindings and native occurrence pins. One native
+ * step advances a connective or checks up to 32 canonical matcher nodes of
+ * one physical candidate. Equality/occurs-check/binding primitives have
+ * separate byte and CPU complexity; a node grant is not a CPU bound.
+ * Backends without this capability retain their canonical atomic query and
+ * an owned result cursor. Such fallback preparation is not incremental.
+ * Completed fallback leaves may publish rows even if another leaf refuses;
+ * that remainder stays INCOMPLETE after these rows, without replaying the
+ * backend or accepting its unqualified partial rows. INCOMPLETE parks this
+ * query's undecided work; CAPACITY reports failed cursor construction or
+ * representation growth. Neither permits END or discarding the cursor. */
+SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
+                                         Atom *pattern, const Bindings *seed);
+/* Clone a quiescent query's exact continuation, captured reads, last row
+ * witnesses and prepared matcher/fallback state without querying or matching.
+ * The original is unchanged on refusal. Mutable cursor metadata is independent;
+ * syntax, Spaces/universes and the result arena retain the same borrowed
+ * lifetime contract as new(). Destroying the original cursor is safe, but this
+ * does not make a clone independent of its source parent/arena lifetime. */
+SpaceQueryCursor *space_query_cursor_clone(const SpaceQueryCursor *source);
+/* Relocate private syntax, all binding carriers and prepared matcher state
+ * through one allocation-domain copy. Query-sequence pointer spans gain
+ * destination storage while their Atom entries use that same graph map.
+ * Spaces/universes, occurrence pins and original read/witness tokens remain
+ * under their existing external lifetime and revision authority. Explicit
+ * identity pairs retain closed external Atom regions; these are not retired.
+ * No query or matcher step is performed. Refusal leaves the source unchanged;
+ * discard the unpublished enclosing copy and its destination arenas. */
+SpaceQueryCursor *space_query_cursor_copy_to_arena(const SpaceQueryCursor *source,
+    Arena *arena, AtomDeepCopySession *atoms);
+bool space_query_cursor_incremental(const SpaceQueryCursor *cursor);
+SpaceQueryCursorStep space_query_cursor_step(SpaceQueryCursor *cursor,
+                                             Bindings *out);
+SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *cursor,
+    uint64_t match_nodes, Bindings *out);
+/* Captured source authorities, including every inherited overlay source even
+ * when the query has no rows. Consumers retain these reads after the cursor
+ * returns so later result publication can revalidate the same observation.
+ * The visitor sees the original tokens, including an invalidated token. */
+typedef bool (*SpaceQueryReadVisitor)(SpaceReadToken read, void *context);
+bool space_query_cursor_visit_reads(const SpaceQueryCursor *cursor,
+    SpaceQueryReadVisitor visitor, void *context);
+/* Witnesses name physical rows, including repeated equal payloads. Valid
+ * only after ROW and before the next step. Atomic backend fallbacks cannot
+ * manufacture such witnesses and return false. */
+typedef bool (*SpaceQueryWitnessVisitor)(SpaceReadToken read,
+    CettaIndex logical_index, void *context);
+bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
+    SpaceQueryWitnessVisitor visitor, void *context);
+void space_query_cursor_free(SpaceQueryCursor *cursor);
+void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
+                                       CettaStorageCensus *census);
 
 /* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */
 
@@ -905,6 +1137,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);
+/* Preserve the shared lookup's refusal status; a refused projection cannot
+ * certify that the declaration set is empty. */
+bool space_get_declared_types_checked(Space *s, Arena *a, Atom *subject,
+    Atom ***out_types, uint32_t *count);
 
 /* Conservative exclusion for relational (: subject type) queries. False
  * certifies that no current occurrence can have the requested subject's
@@ -954,5 +1190,8 @@ uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
 uint32_t get_atom_types_structural_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);
+
+
+void registry_storage_census(const Registry *registry, CettaStorageCensus *census);
 
 #endif /* CETTA_SPACE_H */

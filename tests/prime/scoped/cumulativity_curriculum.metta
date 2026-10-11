@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; The cumulativity curriculum: the programs that tell the cumulativity rules
 ; apart, in one theory. A : Sort 0; F : A -> Sort 0; G : A -> A -> Sort 0;
 ; p : Sigma (y : A). Sort 0; X Y : Sort 0; e : Id (Sort 0) X Y. Cumulativity
@@ -158,7 +160,7 @@
 ; A program: a family of types defined by recursion, fam : num -> Sort 0,
 ; used where a family into Sort 1 is expected (Below.pi_iff), with no eta
 ; wrapper; its eta-expansion and a value at a raised universe too.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))
 !(set:define &thy fam (-> num (u 0))
    (= (fam zero) num)

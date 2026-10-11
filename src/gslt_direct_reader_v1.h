@@ -212,6 +212,24 @@ typedef struct {
     uint32_t list_token_rule_len;
     /* The prefix forms inside a list, in the order of prefix_rules. */
     const GSLTDirectPrefixRuleV1 *list_prefix_rules;
+    /* Meta-arguments, a bracket list or a braces node TOUCHING a term's
+     * end, T[...] and T{...}: the brackets (the braces are braces_open and
+     * braces_close), the binding mark and where the mark ends; binding_mark
+     * is NULL when the presentation has no meta-arguments.  The elements of
+     * a touching bracket are read as list elements, among which the mark is
+     * a word; in a list after layout a word that is the mark is refused.  A
+     * prefix form takes no meta-argument of its own (the prefix binds
+     * tighter). */
+    uint32_t meta_open;
+    uint32_t meta_close;
+    const uint32_t *binding_mark;
+    uint32_t binding_mark_len;
+    GSLTDirectBoundaryV1 binding_mark_boundary;
+    /* {x y}, a braces node: its elements are read as an expression's;
+     * braces_open is 0 when the presentation has no braces.  Every token
+     * ends at either brace and none starts with one. */
+    uint32_t braces_open;
+    uint32_t braces_close;
     /* Explicit nesting budget, not a C recursion bound. Generated readers
      * use the representable source-size bound; callers may choose less. */
     uint32_t depth_limit;
@@ -244,6 +262,13 @@ typedef struct {
      * not CETTA_ATOM_ID_NONE.  Required when the plan has lists. */
     AtomId (*list)(void *context, const AtomId *elems, size_t elem_len,
                    AtomId rest);
+    /* The meta-argument wrapper of a term and the list or braces node
+     * touching it.  Required when the plan has meta-arguments. */
+    AtomId (*meta)(void *context, AtomId term, AtomId argument);
+    /* The braces node of the elements.  Required when the plan has
+     * braces. */
+    AtomId (*braces)(void *context, const AtomId *children,
+                     size_t child_len);
 } GSLTDirectPrefixProjectionV1;
 
 /*

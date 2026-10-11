@@ -2,22 +2,26 @@
 
 #include <stdlib.h>
 #include <assert.h>
+#include <stdatomic.h>
 
 struct BindingsOwners {
-    size_t references;
+    _Atomic size_t references;
     size_t count;
     CettaBindingsValue *values[];
 };
 
 void bindings_owners_retain(BindingsOwners *owners) {
     if (owners) {
-        assert(owners->references < SIZE_MAX);
-        owners->references++;
+        size_t previous = atomic_fetch_add_explicit(&owners->references, 1u, memory_order_relaxed);
+        assert(previous > 0u && previous < SIZE_MAX);
     }
 }
 
 void bindings_owners_release(BindingsOwners *owners) {
-    if (!owners || --owners->references != 0u) return;
+    if (!owners) return;
+    size_t previous = atomic_fetch_sub_explicit(&owners->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u) return;
     for (size_t i = 0; i < owners->count; i++)
         owners->values[i]->release(owners->values[i]);
     free(owners);
@@ -54,24 +58,34 @@ void bindings_inherit_owners(Bindings *destination, const Bindings *source) {
 
 typedef struct {
     CettaBindingsValue value;
-    size_t references;
+    _Atomic size_t references;
     Arena syntax;
     Bindings bindings;
 } CapturedBindings;
 
 static void captured_bindings_retain(void *raw) {
     CapturedBindings *captured = raw;
-    assert(captured->references < SIZE_MAX);
-    captured->references++;
+    size_t previous = atomic_fetch_add_explicit(&captured->references, 1u, memory_order_relaxed);
+    assert(previous > 0u && previous < SIZE_MAX);
 }
 
 static void captured_bindings_release(void *raw) {
     CapturedBindings *captured = raw;
-    if (--captured->references != 0u) return;
+    size_t previous = atomic_fetch_sub_explicit(&captured->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u) return;
     free((void *)captured->value.support);
     bindings_free(&captured->bindings);
     arena_free(&captured->syntax);
     free(captured);
+}
+
+static void captured_bindings_storage(const void *raw, CettaStorageCensus *census) {
+    const CapturedBindings *captured = raw;
+    if (!cetta_storage_object(census, captured, sizeof(*captured), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, captured->value.support, captured->value.support_count, sizeof(VarId), 0u);
+    arena_storage_census(&captured->syntax, census);
+    bindings_storage_census(&captured->bindings, census);
 }
 
 static Atom *captured_bindings_observe(
@@ -95,6 +109,7 @@ Atom *bindings_capture_value(Arena *arena, const Bindings *bindings) {
             .release = captured_bindings_release,
             .observe = captured_bindings_observe,
             .equal = captured_bindings_equal,
+            .storage = captured_bindings_storage,
         },
         .references = 1u,
     };
@@ -207,4 +222,15 @@ fail:
 
 bool bindings_from_atom(Atom *atom, Bindings *out) {
     return bindings_from_atom_scoped(atom, NULL, NULL, out);
+}
+
+
+void bindings_owners_storage_census(const BindingsOwners *owners, CettaStorageCensus *census) {
+    if (!owners || !cetta_storage_array(census, owners, owners->count,
+            sizeof(*owners->values), sizeof(*owners))) return;
+    for (size_t i = 0; i < owners->count; i++) {
+        const CettaBindingsValue *value = owners->values[i];
+        if (value->storage) value->storage(value, census);
+        else cetta_storage_refuse(census, "OpaqueCapturedBindings");
+    }
 }

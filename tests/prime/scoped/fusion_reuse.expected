@@ -12,6 +12,6 @@
 [length-unfused]
 [length-fused]
 [reuse-any]
-[(subst@list list map-fusion mapf length-unfused nat length)]
+[((: zero nat) (: nil list) (: succ (-> nat nat)) (: cons (-> elem list list)) (: g (-> elem elem)) (: f (-> elem elem)) (: mapf (-> (-> elem elem) list list)) mapf (: elem (u 0)) (: length (-> list nat)) length (: nat (u 0)) nat (: list (u 0)) list (PrimeRule length 1 ((App (App (DeclConst cons) (PVar 0)) (PVar 1))) (App (DeclConst succ) (App (DeclConst length) (PVar 1)))) (PrimeRule length 1 ((DeclConst nil)) (DeclConst zero)) (PrimeRule mapf 2 ((PVar 0) (App (App (DeclConst cons) (PVar 1)) (PVar 2))) (App (App (DeclConst cons) (App (PVar 0) (PVar 1))) (App (App (DeclConst mapf) (PVar 0)) (PVar 2)))) (PrimeRule mapf 2 ((PVar 0) (DeclConst nil)) (DeclConst nil)) subst@list map-fusion length-unfused)]
 [pf:fix]
 [False]

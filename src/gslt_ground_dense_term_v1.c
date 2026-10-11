@@ -791,3 +791,18 @@ CettaGsltGroundDenseStatusV1 cetta_gslt_ground_dense_term_instantiate_v1(
     *result_out = workspace_impl->results[program_impl->root];
     return CETTA_GSLT_GROUND_DENSE_OK_V1;
 }
+
+void cetta_gslt_ground_dense_term_program_storage_v1(
+    const CettaGsltGroundDenseTermProgramV1 *program, CettaStorageCensus *census) {
+    const CettaGsltGroundDenseTermProgramImplV1 *impl = program ? program->impl : NULL;
+    if (!impl || !cetta_storage_object(census, impl, sizeof(*impl), CETTA_STORAGE_BLOCK)) return;
+    if (impl->node_len > impl->node_cap || impl->edge_len > impl->edge_cap ||
+        (impl->node_cap && !impl->nodes) || (impl->edge_cap && !impl->edges) ||
+        (impl->variable_width && !impl->first_binding_offsets)) {
+        cetta_storage_refuse(census, "DenseProgramShape"); return;
+    }
+    cetta_storage_array(census, impl->nodes, impl->node_cap, sizeof(*impl->nodes), 0u);
+    cetta_storage_array(census, impl->edges, impl->edge_cap, sizeof(*impl->edges), 0u);
+    cetta_storage_array(census, impl->first_binding_offsets, impl->variable_width,
+        sizeof(*impl->first_binding_offsets), 0u);
+}

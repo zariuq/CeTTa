@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; Booleans, with the safeguard that a definition needs a datatype, not an
 ; induction-shaped statement: negation is not a constructor, so a "height"
 ; that steps on negation is not admitted, although Booleans do satisfy an
 ; induction principle with false as zero and negation as successor.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy bool refl@bool subst@bool)

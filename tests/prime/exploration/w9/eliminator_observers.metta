@@ -1,9 +1,11 @@
+(set:profile hol)
+
 ; Identity as observation: two boolean functions, the identity and case
 ; analysis that returns its argument's constructor, compared by two kinds of
 ; observer.  The eliminators (application to each boolean, then reading the
 ; result) identify them; an observer that reads code separates them.
 
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: tt bool) (: ff bool))
 ; lam x. if x then tt else ff, as case analysis
 !(set:define &thy cond-id (-> bool bool) (= (cond-id tt) tt) (= (cond-id ff) ff))

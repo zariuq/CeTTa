@@ -1,4 +1,6 @@
-!(bind! &thy (new-space))
+(set:profile hol)
+
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
@@ -28,8 +30,8 @@
 !(let $r (try (set:define &thy fabricateWitness
     (-> (A : (u 2)) (x : A) (y : A) (id A x y))
     (= (fabricateWitness $A $x $y) (refl $x)))) (car-atom $r))
-!(== (collapse (match &thy (: fabricateWitness $type) $type)) ())
-!(== (collapse (match &thy (type:rule fabricateWitness $n $pats $rhs) $rhs)) ())
+!(== (collapse (match &thy (: fabricateWitness $type) $type){$type}) ())
+!(== (collapse (match &thy (type:rule fabricateWitness $n $pats $rhs) $rhs){$n $pats $rhs}) ())
 
 ; An uninterpreted witness does not acquire a type from its position.
 !(type:check &thy (relayWitness A a b unresolvedWitness) (id A a b))

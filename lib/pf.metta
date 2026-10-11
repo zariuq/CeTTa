@@ -4,6 +4,9 @@
 ;   (pf:fix x body)        (pf:assume h body)        (pf:have h proof body)
 ;   (pf:by name p1 ... pk) a known fact or hypothesis, instantiated by
 ;                          matching its conclusion against the goal
+; and, in a theory whose space declares (set:rule eq-subst), the rule of
+; substitution:
+;   (pf:eq-subst P e h)    P b from e : eq A a b and h : P a, at any carrier
 ; The verbs below are ordinary programs that return core proof terms;
 ; nothing they produce is believed until the checker has seen it.  The
 ; equational verbs expand to the two equality axioms of a carrier, refl and
@@ -12,6 +15,8 @@
 ;
 ;   (pf:theory &t (decl ...))          declare the object theory in a space
 ;   (pf:equality &t A refl subst)      publish refl and substitution for A
+;   (pf:equality &t A refl subst p)    the same, with refl a theorem proved
+;                                      by p, where the theory proves it
 ;   (pf:refl A a)                      eq A a a
 ;   (pf:sym A a b p)                   eq A b a from p : eq A a b
 ;   (pf:trans A a b c p q)             eq A a c from p, q
@@ -21,6 +26,9 @@
 ;      proves the step reversed, or (cong A' F a b p) for the step
 ;      F a = F b in carrier A
 ;   (pf:induction principle motive base step)
+;   (pf:rests-on &t name)              the laws and axioms a theorem's
+;                                      native package rests on, through the
+;                                      theorems it cites by name
 
 (= (pf:theory $space $decls) (let $added (map-atom $decls $d (add-atom $space $d)) ()))
 
@@ -99,13 +107,66 @@
        (let $qprop (cons-atom quote ($prop))
          (set:proves $space $qp $qprop)))))
 
+; The binders of the two axioms are chosen apart from the carrier, so that a
+; carrier that mentions a binder's name (a type named P, or a) is not
+; captured by it: each is the first of base, base1, base2, ... that the
+; carrier does not mention.
+; The chosen binder names are symbols computed here, so each statement is
+; built from them, (all A (lam x body)) by pf:all: a lambda's parameter is
+; its own (lexical), and no substitution may replace it.
 (= (pf:equality $space $A $refl $subst)
-   (let $r (set:axiom $space $refl (all $A (lam a (eq $A a a))))
-     (let $s (set:axiom $space $subst
-               (all (-> $A prop) (lam P (all $A (lam a (all $A (lam b
-                 (imp (eq $A a b) (imp (P a) (P b))))))))))
+   (let $P (pf:binder-apart P $A)
+   (let $x (pf:binder-apart a $A)
+   (let $y (pf:binder-apart b $A)
+   (let $refl-statement (pf:all $A $x (eq $A $x $x))
+   (let $r (set:axiom $space $refl $refl-statement)
+   (let $subst-statement (pf:substitution-statement $A $P $x $y)
+     (let $s (set:axiom $space $subst $subst-statement)
        (let $t (add-atom &self (pf:equality-of $A $refl $subst))
-         ($r $s)))))
+         ($r $s))))))))))
+; A carrier whose reflexivity the theory proves, as extensionality proves it
+; for set: reflexivity is published as a theorem with the given proof, so
+; that no provable statement is declared, and only substitution is an axiom.
+(= (pf:equality $space $A $refl $subst $refl-proof)
+   (let $P (pf:binder-apart P $A)
+   (let $x (pf:binder-apart a $A)
+   (let $y (pf:binder-apart b $A)
+   (let $refl-statement (pf:all $A $x (eq $A $x $x))
+   (let $r (pf:theorem $space $refl $refl-statement $refl-proof)
+   (let $subst-statement (pf:substitution-statement $A $P $x $y)
+     (let $s (set:axiom $space $subst $subst-statement)
+       (let $t (add-atom &self (pf:equality-of $A $refl $subst))
+         ($r $s))))))))))
+; (all A (lam x body)) with the name x as its binder.
+(: pf:all (-> Atom Atom Atom Atom))
+(= (pf:all $A $x $body)
+   (let $binder (cons-atom lam ($x $body))
+     (cons-atom all ($A $binder))))
+; all P : A -> prop. all x y : A. eq A x y -> P x -> P y
+(: pf:substitution-statement (-> Atom Atom Atom Atom Atom))
+(= (pf:substitution-statement $A $P $x $y)
+   (let $inner (pf:all $A $y (imp (eq $A $x $y) (imp ($P $x) ($P $y))))
+     (let $middle (pf:all $A $x $inner)
+       (pf:all (-> $A prop) $P $middle))))
+(= (pf:binder-apart $base $t) (pf:binder-apart-from $base $base 0 $t))
+(= (pf:binder-apart-from $base $name $k $t)
+   (if (pf:mentions $t $name)
+       (let $k1 (+ $k 1)
+         (let $next (parse (format-args "{}{}" ($base $k1)))
+           (pf:binder-apart-from $base $next $k1 $t)))
+       $name))
+; whether the symbol s occurs in t; t is walked as syntax
+(: pf:mentions-tail (-> (Data Atom) Atom Bool))
+(= (pf:mentions $t $s)
+   (if (== $t $s) True
+       (if (== (get-metatype $t) Expression)
+           (pf:mentions-tail $t $s)
+           False)))
+(= (pf:mentions-tail $t $s)
+   (if (== $t ()) False
+       (let $h (car-atom $t)
+         (let $rest (cdr-atom $t)
+           (if (pf:mentions $h $s) True (pf:mentions-tail $rest $s))))))
 ; the carrier is compared after the match, so that an arrow carrier is
 ; never placed inside a query pattern
 (= (pf:at refl $A) (let $rows (collapse (match &self (pf:equality-of $c $r $s) ($c $r))) (pf:find-carrier $A $rows)))
@@ -159,12 +220,14 @@
    (pf:subst-with $A (lam pf-z (eq $A $a pf-z)) $b $c $q $p))
 
 ; A lambda is a value, so the motive's body is computed before the lambda is
-; built: F applied to the name pf-z, which the lambda then binds.
+; built: F applied to the name pf-z, which the lambda then binds.  The
+; lambda is built from that body (cons-atom): substitution into a lambda is
+; capture-avoiding, so it would rename the binder instead.
 (= (pf:cong $A $B $F $a $b $p)
    (let $Fa (pf:apply $F $a)
      (let $Fz (pf:apply $F pf-z)
-       (pf:subst-with $A (lam pf-z (eq $B $Fa $Fz)) $a $b $p
-                      (pf:refl $B $Fa)))))
+       (let $motive (cons-atom lam (pf-z (eq $B $Fa $Fz)))
+         (pf:subst-with $A $motive $a $b $p (pf:refl $B $Fa))))))
 
 ; ---- calc ----------------------------------------------------------------
 
@@ -208,3 +271,39 @@
        (let $c (car-atom $cases)
          (let $rest (cdr-atom $cases)
            (pf:induction-from (pf:imp-elim $proof $c) $rest)))))
+
+; ---- what a theorem rests on ---------------------------------------------
+
+; A native package cites an earlier theorem by name, as a declared constant
+; whose type is the theorem's statement, and assumes the laws and axioms its
+; own proof uses.  What a theorem rests on is what its package assumes,
+; with what the theorems it cites rest on: each name once, in the order the
+; proof first meets it.  The package of a law or an axiom assumes its own
+; name.  Every package is asked of the space, so each is checked there; a
+; theorem it reaches that has no package gives no answer.
+(= (pf:rests-on $space $name)
+   (let $todo (cons-atom $name ()) (pf:rests-on-walk $space $todo () ())))
+(: pf:rests-on-walk (-> Atom (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
+(= (pf:rests-on-walk $space $todo $seen $found)
+   (if (== $todo ()) $found
+       (let $name (car-atom $todo)
+         (let $rest (cdr-atom $todo)
+           (if (pf:member $name $seen)
+               (pf:rests-on-walk $space $rest $seen $found)
+               (let (SetNativeProofV1 $n $p $proof $term $type $context $rules $rows $digest)
+                    (set:native-proof $space $name)
+                 (let $cited (map-atom $rows $row (car-atom $row))
+                   (let $seen1 (cons-atom $name $seen)
+                     (if (pf:member $name $cited)
+                         (let $last (cons-atom $name ())
+                           (let $found1 (pf:append $found $last)
+                             (pf:rests-on-walk $space $rest $seen1 $found1)))
+                         (let $todo1 (pf:append $cited $rest)
+                           (pf:rests-on-walk $space $todo1 $seen1 $found)))))))))))
+(: pf:append (-> (Data Atom) (Data Atom) (Data Atom)))
+(= (pf:append $xs $ys)
+   (if (== $xs ()) $ys
+       (let $h (car-atom $xs)
+         (let $t (cdr-atom $xs)
+           (let $rest (pf:append $t $ys)
+             (cons-atom $h $rest))))))

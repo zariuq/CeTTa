@@ -163,3 +163,39 @@ BindingsFrameSchema *bindings_frame_schema_clone(
     bindings_frame_schema_publish(copy, source->len);
     return copy;
 }
+
+static const char bindings_frame_schema_copy_kind;
+
+BindingsFrameSchema *bindings_frame_schema_copy_lookup(
+    const BindingsFrameSchema *source, const AtomDeepCopySession *atoms) {
+    if (!source || !atoms || source->len > source->cap ||
+        (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
+        return NULL;
+    size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
+    return atom_deep_copy_session_object_forwarded(
+        atoms,&bindings_frame_schema_copy_kind,source,bytes);
+}
+
+BindingsFrameSchema *bindings_frame_schema_copy_with_session(
+    const BindingsFrameSchema *source, AtomDeepCopySession *atoms) {
+    if (!source || !atoms || source->len > source->cap ||
+        (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
+        return NULL;
+    size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
+    BindingsFrameSchema *known=atom_deep_copy_session_object_forwarded(
+        atoms,&bindings_frame_schema_copy_kind,source,bytes);
+    if(known){bindings_frame_schema_retain(known);return known;}
+    BindingsFrameSchema *image=bindings_frame_schema_clone(source);
+    if(!image)return NULL;
+    for(uint32_t i=0u;i<source->len;i++) {
+        if(!source->name_keys[i])continue;
+        image->name_keys[i]=atom_deep_copy_session_copy(atoms,source->name_keys[i]);
+        if(!image->name_keys[i])goto fail;
+    }
+    if(!atom_deep_copy_session_object_record(atoms,&bindings_frame_schema_copy_kind,
+            source,image,bytes))goto fail;
+    return image;
+fail:
+    bindings_frame_schema_release(image);
+    return NULL;
+}

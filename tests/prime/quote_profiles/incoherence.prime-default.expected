@@ -1,0 +1,5 @@
+[(Pair 3 Variable)]
+[False]
+[(Pair 3 (quote $x))]
+[(Pair 3 Variable)]
+[(Pair 3 Variable)]

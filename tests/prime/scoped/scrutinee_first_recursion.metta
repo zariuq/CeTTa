@@ -1,10 +1,12 @@
+(set:profile hol)
+
 ; A recursive definition whose calls change an argument before the scrutinee,
 ; such as an accumulator, is admitted through its scrutinee-first form: that
 ; form takes the scrutinee first and recurses structurally while every other
 ; argument may change, and the authored definition passes its arguments to it.
 ; The authored equations then hold by conversion.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: a elem) (: b elem) (: c elem)))
 !(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(set:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))

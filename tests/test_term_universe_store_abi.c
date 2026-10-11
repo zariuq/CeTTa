@@ -63,28 +63,28 @@ static void test_arena_accounting_saturation_contract(void) {
     assert(arena_accounted_live_bytes(NULL) == 0u);
     arena.live_bytes = 11u;
     arena.external_bytes = 7u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == 23u);
     arena.live_bytes = SIZE_MAX - 3u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 0u;
+    arena.persistent_bytes = 0u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
     arena.live_bytes = SIZE_MAX - 7u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
 
     mark.live_bytes = 13u;
     mark.external_bytes = 3u;
-    mark.symbol_cache_bytes = 2u;
+    mark.persistent_bytes = 2u;
     assert(arena_mark_accounted_live_bytes(mark) == 18u);
     mark.live_bytes = SIZE_MAX - 1u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 0u;
+    mark.persistent_bytes = 0u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
     mark.live_bytes = SIZE_MAX - 4u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 3u;
+    mark.persistent_bytes = 3u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
 }
 
@@ -692,9 +692,15 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 

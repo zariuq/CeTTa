@@ -23,7 +23,8 @@ bool cetta_lib_prolog_runtime_set_working_dir(
     return runtime && path && path[0] != '\0';
 }
 
-void cetta_lib_prolog_global_shutdown(void) {
+bool cetta_lib_prolog_global_shutdown(void) {
+    return true;
 }
 
 bool cetta_lib_prolog_runtime_available(

@@ -13,5 +13,5 @@
 [True]
 [False]
 [()]
-[False]
-[False]
+[True]
+[(error (BadArgType 2 String Number))]

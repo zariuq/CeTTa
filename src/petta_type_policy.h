@@ -18,6 +18,10 @@ typedef struct {
     Atom *signature;
     CettaExprLen arity;
     Atom *result_type;
+    /* An HE activation may refine caller-visible variables while selecting
+     * its contract. This is an owned binding value, not a printed binding
+     * list; cached PeTTa declaration plans leave it NULL. */
+    Atom *source_refinement;
     bool guard_result;
     bool hold_result;
     /* Compact literal modes for the leading word of arguments. Larger
@@ -98,7 +102,9 @@ bool petta_type_intrinsic_answers(Space *space, Arena *arena,
                                   CettaEvalCompletion *completion);
 /* Release this thread's bounded intrinsic facts before its evaluator and
  * hash-cons ownership domain are torn down. Returned answers own their atoms
- * in the request arena and do not borrow these retained schemes. */
+ * in the request arena and do not borrow these retained schemes. Ground
+ * facts may borrow those request-owned answers until the next arena reset;
+ * no cache operation extends the request arena's lifetime. */
 void petta_type_facts_free_for_current_thread(void);
 
 #endif

@@ -12,6 +12,7 @@ from petta_corpus_manifest import (
     STDOUT_EXACT_STREAM,
     STDOUT_OCCURRENCE_BAG,
     STDOUT_OBSERVATION_CONTRACTS,
+    alpha_canonicalize_output,
     stdout_observation,
 )
 
@@ -25,9 +26,15 @@ def report_bag_delta(expected: Counter[str], actual: Counter[str]) -> None:
             print(f"{label} x{count}: {line.rstrip()!r}")
 
 
-def compare_paths(contract: str, expected_path: Path, actual_path: Path) -> bool:
+def compare_paths(
+    contract: str, expected_path: Path, actual_path: Path,
+    *, alpha_variables: bool = False,
+) -> bool:
     expected_text = expected_path.read_text(encoding="utf-8")
     actual_text = actual_path.read_text(encoding="utf-8")
+    if alpha_variables:
+        expected_text = alpha_canonicalize_output(expected_text)
+        actual_text = alpha_canonicalize_output(actual_text)
     expected = stdout_observation(expected_text, contract)
     actual = stdout_observation(actual_text, contract)
     if actual == expected:
@@ -54,6 +61,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--expected", required=True, type=Path)
     parser.add_argument("--actual", required=True, type=Path)
+    parser.add_argument(
+        "--alpha-variables", action="store_true",
+        help="Compare printed variables up to renaming, preserving sharing and strings.",
+    )
     return parser.parse_args()
 
 
@@ -61,7 +72,8 @@ def main() -> int:
     args = parse_args()
     try:
         return 0 if compare_paths(
-            args.contract, args.expected, args.actual
+            args.contract, args.expected, args.actual,
+            alpha_variables=args.alpha_variables,
         ) else 1
     except (OSError, ValueError) as error:
         print(f"FAIL: {error}")

@@ -2,7 +2,9 @@
 """Actual source admission, retained-proof projection and dependent use."""
 
 import argparse
+import hashlib
 from dataclasses import replace
+import gzip
 import json
 from pathlib import Path
 import subprocess
@@ -16,8 +18,33 @@ import megalodon_native_projection_v1 as native
 source, sx = native.source, native.sx
 
 
+def cited_facts(projection, instance) -> int:
+    """How many known facts the C proof of a theorem instance cites, each
+    once: the declarations of its native package, which cites an earlier
+    theorem by name, as it assumes an axiom."""
+    def walk(term, found):
+        if (isinstance(term, tuple) and len(term) == 2
+                and term[0] == sx.Symbol("pf:known")):
+            found.add(sx.render(term[1]))
+        elif isinstance(term, tuple):
+            for part in term:
+                walk(part, found)
+        return found
+    for command in projection.commands:
+        if (isinstance(command, tuple) and len(command) == 4
+                and command[0] == sx.Symbol("set:theorem")
+                and command[1] == sx.Symbol(instance.name)):
+            return len(walk(command[3], set()))
+    raise AssertionError(f"no theorem command for {instance.name}")
+
+
 def normalized_use(instance):
-    """Compute dependent identity evidence while retaining the source package."""
+    """Compute dependent identity evidence and compare retained syntax.
+
+    Compare the bound values as syntax without evaluating their contents.
+    Written quotations seal their variables and cannot capture these values;
+    noreduce-eq inspects the retained evidence without running its calls.
+    """
     return f'''!(let $package (set:native-proof {instance.name})
  (unify $package (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
   (let $consumer (Lam $type (Refl (idx 0)))
@@ -26,8 +53,9 @@ def normalized_use(instance):
     (let (Refl $value) $normal
      (let (Id $carrier $left $right) $normal-type
       (ImportedNativeNormal {instance.position}
-        (== $checked $package) (== $application (App $consumer $term))
-        (== $left $value) (== $right $value)
+        (noreduce-eq $checked $package)
+        (noreduce-eq $application (App $consumer $term))
+        (noreduce-eq $left $value) (noreduce-eq $right $value)
         (size-atom $assumptions))))))
   (ImportedNativeNormalMalformedPackage {instance.position})))\n'''
 
@@ -112,17 +140,22 @@ class NativeProjectionTests(unittest.TestCase):
             native.dependent_use(proof) + normalized_use(proof) for proof in proofs)
         result = self.run_program(program)
         for proof in proofs:
-            if f"[(ImportedNativeUse {proof.position} True True 0)]" not in result:
+            # A proof that cites an earlier theorem cites it by name: its
+            # package declares what it cites and assumes nothing else.
+            cited = cited_facts(projection, proof)
+            if f"[(ImportedNativeUse {proof.position} True True {cited})]" not in result:
                 diagnostics = projection.render()
                 diagnostics += "\n".join("!(try " + sx.render(c) + ")"
                     for c in projection.commands if c[0] == sx.Symbol("set:theorem"))
                 diagnostics += f"\n!(try (set:native-proof {proof.name}))\n"
                 result += self.run_program(diagnostics)
-            self.assertIn(f"[(ImportedNativeUse {proof.position} True True 0)]", result,
+            self.assertIn(f"[(ImportedNativeUse {proof.position} True True {cited})]", result,
                           msg=f"source theorem {proof.declaration.label}:\n{result}")
-            self.assertIn(f"[(ImportedNativeNormal {proof.position} True True True True 0)]", result,
-                          msg=f"computed source theorem {proof.declaration.label}:\n{result}")
+            self.assertIn(f"[(ImportedNativeNormal {proof.position} True True True True {cited})]",
+                          result, msg=f"computed source theorem {proof.declaration.label}:\n{result}")
         self.assertEqual(len(proofs), 10)
+        # Two of them cite an earlier theorem.
+        self.assertEqual(sum(cited_facts(projection, proof) for proof in proofs), 2)
         self.assertEqual(sum(i.declaration.kind == "AXIOM" for i in projection.instances.values()), 0)
         identity = next(i for i in proofs if i.declaration.label == "test_assume")
         # The signature defines Falsum as the proposition implying every
@@ -150,13 +183,14 @@ class NativeProjectionTests(unittest.TestCase):
 
     def test_annotation_checks_formation_and_proof(self):
         result = self.run_program('''
+(set:profile hol)
 !(set:theorem annotated (all prop (lam p (imp p p)))
  (pf:typed (all prop (lam p (imp p p)))
    (pf:all-intro (pf:imp-intro (pf:hyp 0)))))
 !(let $r (try (set:theorem false-annotation (all prop (lam p p))
  (pf:typed (all prop (lam p p))
    (pf:all-intro (pf:imp-intro (pf:hyp 0)))))) (car-atom $r))
-!(let $r (try (set:proves (pf:typed Empty (pf:hyp 0))
+!(let $r (try (set:proves (pf:typed prop (pf:hyp 0))
  (all prop (lam p p)))) (car-atom $r))
 ''')
         self.assertEqual(result.count("[Refuted]"), 2, result)
@@ -323,7 +357,8 @@ class NativeProjectionTests(unittest.TestCase):
         # that exact source proof.  The program is written over Prime's sets;
         # it is read here over the source's own carrier, whose type is a type
         # of the least universe: the pair holds two of its values.
-        pair_program = (root.parent.parent / "prime/scoped/native_higher_order_pair.metta").read_text()
+        pair_program = (root.parent.parent / "prime/profiles/megalodon_hotg/scoped/native_higher_order_pair.metta").read_text()
+        pair_program = pair_program.replace("(set:profile megalodon-hotg)", "(set:profile hol)")
         for prime_spelling, source_spelling in [
                 ("(Sort (LevelAbove 1))", "(Sort (LevelConst 0))"),
                 ("(Sort (LevelAbove 0))", "(DeclConst mg-base-0)"),
@@ -593,9 +628,11 @@ class NativeProjectionTests(unittest.TestCase):
       (ImportedWithdrawn (car-atom $verdict))))))))
 '''
         result = self.run_program(program)
-        self.assertIn("[(ImportedUniversePair True True True True True 2)]", result)
+        # The pipeline's proof cites the three derived theorems by name, and
+        # computing its pair goes through their proofs.
+        self.assertIn("[(ImportedUniversePair True True True True True 3)]", result)
         self.assertIn("[(ImportedUniverseValue True True)]", result)
-        self.assertIn("[(ImportedRuntimePipeline True True 2)]", result)
+        self.assertIn("[(ImportedRuntimePipeline True True 3)]", result)
         self.assertIn("[(ImportedChangedIndex Refuted)]", result)
         self.assertIn("[(ImportedWithdrawn Undetermined)]", result)
 
@@ -630,7 +667,13 @@ class NativeProjectionTests(unittest.TestCase):
                                   "".join(native.dependent_use(i) for i in instances))
         self.assertEqual(len(instances), 6)
         self.assertEqual(len(set(i.name for i in instances)), 6)
-        self.assertEqual(result.count(" True True 0)]"), 6, result)
+        # The first theorem assumes nothing; at each type, the second cites
+        # the first, at that type, by name.
+        for instance in instances:
+            self.assertIn(f"[(ImportedNativeUse {instance.position} True True "
+                          f"{cited_facts(projection, instance)})]", result)
+        self.assertEqual(result.count(" True True 0)]"), 3, result)
+        self.assertEqual(result.count(" True True 1)]"), 3, result)
         for arguments in [(), (("var", 0),), (("prop",), ("prop",))]:
             with self.assertRaises((ValueError, SystemExit)):
                 projection.materialize(0, arguments)
@@ -711,7 +754,8 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertEqual(first.proposition[1], sx.Symbol("mg-base-0"))
         self.assertEqual(first.proposition[2][2][1], sx.Symbol("prop"))
         result = self.run_program(projection.render() + native.dependent_use(second))
-        self.assertIn("[(ImportedNativeUse 1 True True 0)]", result)
+        # The second cites the first by name: one declaration of its package.
+        self.assertIn("[(ImportedNativeUse 1 True True 1)]", result)
 
     def test_missing_source_dependency_and_forged_proof_rejected(self):
         items = source.document('''
@@ -778,12 +822,19 @@ class NativeProjectionTests(unittest.TestCase):
             loaded = subprocess.run([*command, "--load-library", str(library), "--run",
                 "--consumer", str(root / "tests/support/megalodon/library_consumer.metta")],
                 capture_output=True, text=True, check=True)
-            self.assertIn("[(LibraryDerivedProof True True 0)]", loaded.stdout)
+            # The later theorem cites the loaded one by name.
+            self.assertIn("[(LibraryDerivedProof True True 1)]", loaded.stdout)
             self.assertIn("[(LibraryComputedProof True True True)]", loaded.stdout)
             self.assertEqual(exported.stderr, loaded.stderr)
             emitted = subprocess.run([*command, "--load-library", str(library)],
                                       capture_output=True, text=True, check=True)
             self.assertEqual(exported.stdout, emitted.stdout)
+            stored = Path(directory) / "representation-articles"
+            compressed = subprocess.run([*command, "--load-library", str(library),
+                "--article-store", str(stored)], capture_output=True, text=True, check=True)
+            self.assertTrue(stored.is_dir())
+            self.assertEqual(compressed.stdout, emitted.stdout)
+            self.assertEqual(compressed.stderr, emitted.stderr)
             # Source and instance overrides would silently change the saved
             # request; require a newly constructed library instead.
             ambiguous = subprocess.run([*command, "--load-library", str(library),
@@ -815,13 +866,10 @@ class NativeProjectionTests(unittest.TestCase):
         with self.assertRaises((ValueError, SystemExit)):
             corrupted.replay(self.cetta)
         # Independently reject a faulty proof producer at the actual NIK gate.
-        compiler = source.compile_document
-        def forged(state, items):
-            goal, _ = compiler(state, items)
-            return goal, source.node("megalodon-theory-checks-nil", [state.environment()], [])
-        with patch.object(source, "compile_document", forged):
-            with self.assertRaisesRegex(SystemExit, "expected.*True"):
-                restored.replay(self.cetta)
+        state = source.State()
+        forged = source.node("megalodon-theory-checks-nil", [state.environment()], [])
+        with self.assertRaisesRegex(SystemExit, "expected.*True"):
+            restored.replay(self.cetta, admission_article=forged)
 
     def test_library_assumptions_and_type_instances_are_explicit(self):
         exported = '''
@@ -867,6 +915,46 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertIsNone(projection.open_hosted_article(large_node))
         self.assertFalse(projection.proof_steps_match("thm", (small, large)))
         projection.hosted_articles[digest] = saved
+
+    def test_compressed_article_store_reloads_exact_source_syntax(self):
+        with tempfile.TemporaryDirectory(prefix="megalodon-articles-") as directory:
+            store = native.CompressedArticleStore(Path(directory))
+            original = '(article\r\n"λ日本語")'
+            address = hashlib.sha256(original.encode("utf-8")).hexdigest()
+            store[address] = original
+            self.assertEqual(store.get(address), original)
+            projection = native.Projection([])
+            projection.hosted_articles = store
+            article = (sx.Symbol("article"),
+                       sx.StringLiteral('quoted "name"\nλ日本語'),
+                       sx.StringLiteral("retained-premise-" * 5000))
+            node = projection.host_article(article)
+            self.assertEqual(node[0], sx.Symbol("sha256"))
+            self.assertEqual(projection.open_hosted_article(node), article)
+            projection.hosted_articles = native.CompressedArticleStore(Path(directory))
+            self.assertEqual(projection.open_hosted_article(node), article)
+            self.assertEqual(projection.host_article(article), node)
+            self.assertLess(store.path(node[1].text).stat().st_size,
+                            len(sx.render(article).encode()))
+
+    def test_compressed_article_address_does_not_admit_missing_or_changed_body(self):
+        with tempfile.TemporaryDirectory(prefix="megalodon-articles-") as directory:
+            store = native.CompressedArticleStore(Path(directory))
+            projection = native.Projection([])
+            projection.hosted_articles = store
+            missing = (sx.Symbol("sha256"), sx.StringLiteral("0" * 64))
+            self.assertIsNone(projection.open_hosted_article(missing))
+            with self.assertRaises(native.ArticleStoreError):
+                store["../escape"] = "wrong"
+            with self.assertRaises(native.ArticleStoreError):
+                store["0" * 64] = "wrong"
+            article = sx.StringLiteral("complete-source-" * 5000)
+            node = projection.host_article(article)
+            with gzip.open(store.path(node[1].text), "wt", encoding="utf-8") as stream:
+                stream.write("changed")
+            self.assertIsNone(projection.open_hosted_article(node))
+            with self.assertRaises(native.ArticleStoreError):
+                projection.host_article(article)
 
     def test_library_schema_does_not_accept_claimed_authority(self):
         data = {"format": "MegalodonSourceLibraryV1", "source_export": "",
@@ -932,7 +1020,8 @@ def qualify_family_library(cetta, megalodon, preamble, development):
     for instance in instances:
         test.assertIn(f"[(ImportedNativeUse {instance.position} True True ", output)
         test.assertIn(f"[(ImportedNativeNormal {instance.position} True True True True ", output)
-    test.assertIn("[(FamilyIdentityProgram True True True True True 4)]", output)
+    # The specialized theorem cites the imported fibre theorem by name.
+    test.assertIn("[(FamilyIdentityProgram True True True True True 1)]", output)
     test.assertIn("[(FamilyWrongResult Refuted)]", output)
     test.assertIn("[(FamilyWithdrawnAssumption Undetermined)]", output)
     print("FamilyLibraryQualified", dict(Counter(i.kind for i in items)),

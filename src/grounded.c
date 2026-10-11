@@ -10,6 +10,7 @@
 #include "parser.h"
 #include "petta_numeric.h"
 #include "space.h"
+#include "term_graph.h"
 #if CETTA_BUILD_WITH_GMP
 #include <gmp.h>
 #endif
@@ -609,6 +610,7 @@ enum {
        nor Hyperon, which he-compat follows, has them, so there they stay
        data. */
     GROUNDED_OP_CACHE_CETTA_ONLY = 1u << 4,
+    GROUNDED_OP_CACHE_NON_PETTA = 1u << 5,
 };
 
 typedef struct {
@@ -628,6 +630,8 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
 
     const CettaLanguageId language_id = eval_current_language_id
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+    if ((capabilities & GROUNDED_OP_CACHE_NON_PETTA) != 0u)
+        return language_id != CETTA_LANGUAGE_PETTA;
     if ((capabilities & GROUNDED_OP_CACHE_CETTA_ONLY) != 0u)
         return language_id != CETTA_LANGUAGE_PETTA &&
             !(language_id == CETTA_LANGUAGE_HE &&
@@ -648,6 +652,12 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    /* These appended opcodes require an explicit extended profile. Keep
+     * the decision outside the symbol cache so a session/profile handoff
+     * cannot reuse another profile's permission. */
+    if (grounded_op_is_term_order(id))
+        return eval_current_builtin_allowed &&
+            eval_current_builtin_allowed(symbol_bytes(g_symbols, id));
 
     const uint64_t table_instance_id =
         symbol_table_instance_id(g_symbols);
@@ -668,6 +678,13 @@ bool is_grounded_op(SymbolId id) {
     uint8_t capabilities = 0u;
     if (grounded_op_is_cetta_only(id)) {
         capabilities = GROUNDED_OP_CACHE_CETTA_ONLY;
+        goto classified;
+    }
+    /* PeTTa owns trace! as a written sequencing form, rather than a
+     * function over completed arguments. Other dialects retain their
+     * grounded operation, including HE-compatible profiles. */
+    if (id == g_builtin_syms.trace_bang) {
+        capabilities = GROUNDED_OP_CACHE_NON_PETTA;
         goto classified;
     }
     /* Compiled operators are opcodes: dispatch their interned IDs before
@@ -2630,10 +2647,22 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         Atom *parsed = parser_read_source_form_n(a, args[0]->ground.sval,
                                                  args[0]->ground.slen);
         parser_set_rational_literals_enabled(old_rational_literals);
-        return parsed
-            ? parsed
-            : grounded_raise(a, head, args, nargs,
-                             atom_symbol(a, "ParseFailed"));
+        if (!parsed)
+            return grounded_raise(a, head, args, nargs,
+                                  atom_symbol(a, "ParseFailed"));
+        /* Code read from text is elaborated as the reader elaborates a
+         * form (binders, ownership, the seal), under the profile in force:
+         * the seal lives in the term, wherever the term is formed. */
+        if (!prime_semantics_elaborate_form)
+            return parsed;
+        Atom *elaborated = prime_semantics_elaborate_form(a, parsed);
+        if (elaborated)
+            return elaborated;
+        const char *why = prime_semantics_elaboration_error
+            ? prime_semantics_elaboration_error() : NULL;
+        return grounded_raise(a, head, args, nargs,
+                              why ? atom_string(a, why)
+                                  : atom_symbol(a, "ElaborationFailed"));
     }
 
     if (require_all_input &&
@@ -3481,6 +3510,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
 
+    if (grounded_op_is_term_order(head_id)) {
+        if (nargs != 2u)
+            return grounded_incorrect_arity(a, head, args, nargs);
+        CettaTermOrder order = term_graph_value_compare(args[0], args[1]);
+        if (order == CETTA_TERM_ORDER_INCOMPARABLE ||
+            order == CETTA_TERM_ORDER_INVALID ||
+            order == CETTA_TERM_ORDER_NO_MEMORY)
+            return grounded_raise(a, head, args, nargs, atom_symbol(a,
+                order == CETTA_TERM_ORDER_INCOMPARABLE ? "IncomparableTermOrder" :
+                order == CETTA_TERM_ORDER_INVALID ? "InvalidTermGraph" : "TermCapacityLimit"));
+        bool truth = head_id == g_builtin_syms.term_lt ? order < 0 :
+            head_id == g_builtin_syms.term_gt ? order > 0 :
+            head_id == g_builtin_syms.term_le ? order <= 0 : order >= 0;
+        return grounded_current_language_is_petta()
+            ? petta_semantics_boolean_value(a, truth) : atom_bool(a, truth);
+    }
+
     if (head_id == g_builtin_syms.sort_atom) {
         /* PeTTa's sort-atom sorts a list in SWI's standard order, gives ()
          * for any other atomic value, and raises SWI's list type error
@@ -3600,9 +3646,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (sequence && len > 0u) {
             Atom *part = head_id == g_builtin_syms.car_atom
                 ? elems[0]
-                : atom_is_list(argument)
-                    ? atom_sequence_like(a, argument, elems + 1u, len - 1u)
-                    : atom_expr_suffix(a, argument, 1u);
+                : atom_sequence_rest(a, argument, elems, len);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
         return grounded_raise(
@@ -3995,9 +4039,19 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Equality of values (any atom type) ────────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        return atom_value_eq(atom_prime_held_payload(args[0]),
-                             atom_prime_held_payload(args[1]))
-            ? atom_true(a) : atom_false(a);
+        Atom *left = atom_prime_held_payload(args[0]);
+        Atom *right = atom_prime_held_payload(args[1]);
+        /* In Prime `==` compares authored terms: inferred ownership is not
+         * part of them, and bound names are compared by position, never by
+         * spelling (prime_semantics_binders_eq). */
+        bool equal = eval_current_language_id &&
+                     eval_current_language_id() == CETTA_LANGUAGE_PRIME
+            ? atom_value_eq(left, right) ||
+                  atom_prime_authored_eq(left, right) ||
+                  (prime_semantics_binders_eq &&
+                   prime_semantics_binders_eq(a, left, right))
+            : atom_value_eq(left, right);
+        return equal ? atom_true(a) : atom_false(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */

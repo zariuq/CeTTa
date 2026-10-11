@@ -1,0 +1,27 @@
+; Ordinary HE case binds variables on either side, with the first successful
+; branch selected separately for each scrutinee occurrence.
+!(case $q (($o (other $o))))
+!(let $r (case $q (($o (seen $o)))) ($r $q))
+!(case (p $q) (((p $o) (other $o))))
+(= (case-inspect $input) (case $input (($local (other $local)))))
+!(case-inspect $q)
+!(let $result (case-inspect $q) (paired $result $q))
+!(case ((S K) $z) ((((S K) K) (bound $z)) ($other (other $other))))
+!(case (pair $x b) (((pair a b) (bound $x)) ($other (other $other))))
+!(case (pair $x $x) (((pair a b) wrong) ($other (other $other))))
+!(case (pair a b) (((pair $x $y) (bound $x $y)) ($other wrong)))
+!(case (superpose ((pair $x b) (pair c $x)))
+   (((pair a b) first) ((pair c d) second) ($other wrong)))
+!(case Empty ((Empty empty-case) ($other wrong)))
+!(collapse (case missing ((different wrong))))
+!(let $outside free
+   (case (pair $inside b) (((pair a b) (vars $outside $inside)))))
+!(case (Error source trouble)
+   (((Error $source $why) (fault $source $why)) ($other wrong)))
+; A refused branch must neither keep its partial bindings nor run its body.
+!(let $state (new-state 0)
+   (let $answer (case (pair $x b)
+      (((pair a c) (change-state! $state 99))
+       ((pair a b) (let $write (change-state! $state 1) (answer $x)))
+       ($other (change-state! $state 2))))
+      (paired $answer (get-state $state))))

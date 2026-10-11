@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,29 @@ SPEC.loader.exec_module(MANIFEST)
 
 
 class CorpusManifestTests(unittest.TestCase):
+    def test_comparator_variable_renaming_is_explicit_and_preserves_observations(self):
+        expected = self.root / "expected.out"
+        actual = self.root / "actual.out"
+        cases = [
+            ("($x $x)\n", "($V0 $V0)\n", False, 1),
+            ("($x $x)\n", "($V0 $V0)\n", True, 0),
+            ("($x $x)\n", "($V0 $V1)\n", True, 1),
+            ('("$x" $x)\n', '("$y" $V0)\n', True, 1),
+            ("(a $x)\n(b $y)\n", "(b $V0)\n(a $V1)\n", True, 1),
+            ("(a $x)\n(a $y)\n", "(a $V0)\n", True, 1),
+        ]
+        for left, right, alpha, status in cases:
+            with self.subTest(left=left, right=right, alpha=alpha):
+                expected.write_text(left)
+                actual.write_text(right)
+                result = subprocess.run(
+                    [sys.executable, str(REPO_ROOT / "scripts/compare_petta_observation.py"),
+                     "--contract", "exact-stream", "--expected", str(expected),
+                     "--actual", str(actual), *(["--alpha-variables"] if alpha else [])],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Arithmetic in the language: binary numbers and fractions as declared
 ; datatypes, on three faces.
 ;   pos  one | bit0 p | bit1 p      (bit0 p = 2p, bit1 p = 2p + 1)
@@ -74,9 +76,9 @@
    (= (pmul (bit1 $p) $q) (padd $q (bit0 (pmul $p $q)))))
 ; The records: padd-nat recurses on field 0 of bit0 and of bit1, padd is one
 ; equation without recursion.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self padd-nat)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self padd-nat))
    (quote ($termination $lean "Trinity.Arith.Binary.binaryProgram_admissible")))
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self padd)
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self padd))
    (quote ($termination $lean)))
 ; The same sum written with two arguments inspected at once is not read by
 ; the structural check, which names the route that reads it.
@@ -248,9 +250,9 @@
    (= (ndivmod (npos one) $d) (div-step1 (quot-rem n0 n0) $d))
    (= (ndivmod (npos (bit0 $p)) $d) (div-step0 (ndivmod (npos $p) $d) $d))
    (= (ndivmod (npos (bit1 $p)) $d) (div-step1 (ndivmod (npos $p) $d) $d)))
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self ndivmod)
-   (let (bound $type $measure $obligations) $termination
-     (let $count (size-atom $obligations) (quote ((Bound $type $measure $count) $lean)))))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self ndivmod))
+   (let (quote (bound $type $measure $obligations)) @$termination
+     (let (quote $count) (lift (size-atom $obligations)) (quote ((Bound $type $measure $count) $lean)))))
 !(set:define &self pquot (-> pos pos pos)
    (= (pquot $p $g) (pos-of-nat (divided-quot (ndivmod (npos $p) $g)))))
 
@@ -461,9 +463,9 @@
    (= (pgcd-by same (bit1 $x) (bit1 $y)) (bit1 $x))
    (= (pgcd-by less (bit1 $x) (bit1 $y)) (pgcd-by (pcmp (bit1 $x) (pdiff $y $x)) (bit1 $x) (pdiff $y $x)))
    (= (pgcd-by more (bit1 $x) (bit1 $y)) (pgcd-by (pcmp (pdiff $x $y) (bit1 $y)) (pdiff $x $y) (bit1 $y))))
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self pgcd-by)
-   (let (bound $type $measure $obligations) $termination
-     (let $count (size-atom $obligations) (quote ((Bound $type $measure $count) $lean)))))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self pgcd-by))
+   (let (quote (bound $type $measure $obligations)) @$termination
+     (let (quote $count) (lift (size-atom $obligations)) (quote ((Bound $type $measure $count) $lean)))))
 !(set:define &self pgcd (-> pos pos pos) (= (pgcd $x $y) (pgcd-by (pcmp $x $y) $x $y)))
 
 ; ---- Fractions in normal form: the numerator and the denominator divided
@@ -565,11 +567,11 @@
 ; (Trinity.Arith.Binary.padd_value, Trinity.Arith.Binary.pmul_value).
 ; 5 is five successors; 6 + 7 and 3 * 5 give the unary sum and product.
 !(pval (bit1 (bit0 one)))
-!(let $agree (== (pval (padd (bit0 (bit1 one)) (bit1 (bit1 one))))
-                 (add (pval (bit0 (bit1 one))) (pval (bit1 (bit1 one)))))
+!(let (quote $agree) (lift (== (pval (padd (bit0 (bit1 one)) (bit1 (bit1 one))))
+                 (add (pval (bit0 (bit1 one))) (pval (bit1 (bit1 one))))))
    (quote ("Trinity.Arith.Binary.padd_value" $agree)))
-!(let $agree (== (pval (pmul (bit1 one) (bit1 (bit0 one))))
-                 (mul (pval (bit1 one)) (pval (bit1 (bit0 one)))))
+!(let (quote $agree) (lift (== (pval (pmul (bit1 one) (bit1 (bit0 one))))
+                 (mul (pval (bit1 one)) (pval (bit1 (bit0 one))))))
    (quote ("Trinity.Arith.Binary.pmul_value" $agree)))
 !(type:eq &self (pval (pmul (bit1 one) (bit1 (bit0 one)))) (mul (pval (bit1 one)) (pval (bit1 (bit0 one)))))
 ; 13 = 4 * 3 + 1 in unary too.
@@ -596,22 +598,22 @@
             (qadd (qmul (whole (num2 d1 d2)) $bc) (qmul (whole (num2 d1 d5)) $ac)))))))
 ; The source's positive policy (0.9, 0.85, 0.1): 547/720.
 !(let $expected (written (num3 d5 d4 d7) (num3 d7 d2 d0))
-   (let (($value) $n) (cost:firings
-        (graphtropy (frac (num1 d9) (num2 d1 d0)) (frac (num2 d1 d7) (num2 d2 d0)) (frac (num1 d1) (num2 d1 d0))))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings
+        (graphtropy (frac (num1 d9) (num2 d1 d0)) (frac (num2 d1 d7) (num2 d2 d0)) (frac (num1 d1) (num2 d1 d0)))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.initial_graphtropy" (fraction 547 720) $agree (firings $n))))))
 ; The receiver's (0.2, 0.3, 0.1): 341/720.
 !(let $expected (written (num3 d3 d4 d1) (num3 d7 d2 d0))
-   (let (($value) $n) (cost:firings
-        (graphtropy (frac (num1 d1) (num1 d5)) (frac (num1 d3) (num2 d1 d0)) (frac (num1 d1) (num2 d1 d0))))
-     (let $agree (== $value $expected)
+   (let (quote (($value) $n)) (lift (cost:firings
+        (graphtropy (frac (num1 d1) (num1 d5)) (frac (num1 d3) (num2 d1 d0)) (frac (num1 d1) (num2 d1 d0)))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.initial_graphtropy" (fraction 341 720) $agree (firings $n))))))
 ; The first as it is computed: numerator 1000100011 (547) and denominator
 ; 1011010000 (720) in binary, last digit outermost.
 !(graphtropy (frac (num1 d9) (num2 d1 d0)) (frac (num2 d1 d7) (num2 d2 d0)) (frac (num1 d1) (num2 d1 d0)))
 ; The weight of the pair a c, 2 (5/12) (1/4) = 5/24 (Laboratory.measure_and_weights).
-!(let $agree (== (qmul (whole (num1 d2)) (qmul (frac (num1 d5) (num2 d1 d2)) (frac (num1 d1) (num1 d4))))
-                 (written (num1 d5) (num2 d2 d4)))
+!(let (quote $agree) (lift (== (qmul (whole (num1 d2)) (qmul (frac (num1 d5) (num2 d1 d2)) (frac (num1 d1) (num1 d4))))
+                 (written (num1 d5) (num2 d2 d4))))
    (quote ("Laboratory.measure_and_weights" (fraction 5 24) $agree)))
 ; After transport the receiver is (0.81, 0.765, 0.1).  Its completions at a c:
 ; the metric one, max(0.1, 0.81 + 0.765 - 1) = 23/40, and the product one,
@@ -621,62 +623,62 @@
       (qmax $ac (qmax (whole n0) (qsub (qadd $ab $bc) (whole (num1 d1)))))))
 !(set:define &self product-ac (-> rat rat rat rat)
    (= (product-ac $ab $bc $ac) (qmax $ac (qmul $ab $bc))))
-!(let $agree (== (metric-ac (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num1 d1) (num2 d1 d0)))
-                 (written (num2 d2 d3) (num2 d4 d0)))
+!(let (quote $agree) (lift (== (metric-ac (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num1 d1) (num2 d1 d0)))
+                 (written (num2 d2 d3) (num2 d4 d0))))
    (quote ("Laboratory.transport_and_completion" (fraction 23 40) $agree)))
-!(let $agree (== (product-ac (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num1 d1) (num2 d1 d0)))
-                 (written (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0)))
+!(let (quote $agree) (lift (== (product-ac (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num1 d1) (num2 d1 d0)))
+                 (written (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0))))
    (quote ("Laboratory.transport_and_completion" (fraction 12393 20000) $agree)))
 ; The balance: the metric completion of the transported receiver sits
 ; 4981/14400 above the initial receiver, and the product completion another
 ; 893/96000 above it (Laboratory.completion_balance), each a difference of
 ; two graphtropies.
 !(let $expected (written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0))
-   (let (($value) $n) (cost:firings
+   (let (quote (($value) $n)) (lift (cost:firings
         (qsub (graphtropy (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num2 d2 d3) (num2 d4 d0)))
-              (graphtropy (frac (num1 d1) (num1 d5)) (frac (num1 d3) (num2 d1 d0)) (frac (num1 d1) (num2 d1 d0)))))
-     (let $agree (== $value $expected)
+              (graphtropy (frac (num1 d1) (num1 d5)) (frac (num1 d3) (num2 d1 d0)) (frac (num1 d1) (num2 d1 d0))))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.completion_balance" (fraction 4981 14400) $agree (firings $n))))))
 !(let $expected (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0))
-   (let (($value) $n) (cost:firings
+   (let (quote (($value) $n)) (lift (cost:firings
         (qsub (graphtropy (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0)))
-              (graphtropy (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num2 d2 d3) (num2 d4 d0)))))
-     (let $agree (== $value $expected)
+              (graphtropy (frac (num2 d8 d1) (num3 d1 d0 d0)) (frac (num3 d1 d5 d3) (num3 d2 d0 d0)) (frac (num2 d2 d3) (num2 d4 d0))))))
+     (let (quote $agree) (lift (== $value $expected))
        (quote ("Laboratory.completion_balance" (fraction 893 96000) $agree (firings $n))))))
 ; The same balance as the source adds it: the transport's own gain 889/3600
 ; plus the completion's 5/24 (23/40 - 1/10) (Laboratory.transport_and_completion).
-!(let $agree (== (qadd (frac (num3 d8 d8 d9) (num4 d3 d6 d0 d0))
+!(let (quote $agree) (lift (== (qadd (frac (num3 d8 d8 d9) (num4 d3 d6 d0 d0))
                        (qmul (frac (num1 d5) (num2 d2 d4)) (qsub (frac (num2 d2 d3) (num2 d4 d0)) (frac (num1 d1) (num2 d1 d0)))))
-                 (written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0)))
+                 (written (num4 d4 d9 d8 d1) (num5 d1 d4 d4 d0 d0))))
    (quote ("Laboratory.transport_and_completion" (fraction 4981 14400) $agree)))
-!(let $agree (== (qmul (frac (num1 d5) (num2 d2 d4)) (qsub (frac (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0)) (frac (num2 d2 d3) (num2 d4 d0))))
-                 (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0)))
+!(let (quote $agree) (lift (== (qmul (frac (num1 d5) (num2 d2 d4)) (qsub (frac (num5 d1 d2 d3 d9 d3) (num5 d2 d0 d0 d0 d0)) (frac (num2 d2 d3) (num2 d4 d0))))
+                 (written (num3 d8 d9 d3) (num5 d9 d6 d0 d0 d0))))
    (quote ("Laboratory.transport_and_completion" (fraction 893 96000) $agree)))
 
 ; ---- Cost.  Unary multiplication takes a firing for each unit of the
 ; product; binary takes a number of firings that grows with the digits.
 ; 7 * 9 = 63 both ways.
-!(let ($values $n) (cost:firings (mul (suc (suc (suc (suc (suc (suc (suc zero)))))))
-                                       (suc (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))))
+!(let (quote ($values $n)) (lift (cost:firings (mul (suc (suc (suc (suc (suc (suc (suc zero)))))))
+                                       (suc (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))))))
    (quote (unary 7 9 $n)))
-!(let ($values $n) (cost:firings (pmul (bit1 (bit1 one)) (bit1 (bit0 (bit0 one)))))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 (bit1 one)) (bit1 (bit0 (bit0 one))))))
    (quote (binary 7 9 $n)))
 ; 9 * 9 = 81: unary grows with the value, binary with the digits.  (A unary
 ; product much larger than this is already too deep a term to run here.)
-!(let ($values $n) (cost:firings (mul (suc (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))
-                                      (suc (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))))
+!(let (quote ($values $n)) (lift (cost:firings (mul (suc (suc (suc (suc (suc (suc (suc (suc (suc zero)))))))))
+                                      (suc (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))))))
    (quote (unary 9 9 $n)))
-!(let ($values $n) (cost:firings (pmul (bit1 (bit0 (bit0 one))) (bit1 (bit0 (bit0 one)))))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 (bit0 (bit0 one))) (bit1 (bit0 (bit0 one))))))
    (quote (binary 9 9 $n)))
 ; (2^k - 1)^2 for k = 2, 4, 8, 16 digits.
-!(let ($values $n) (cost:firings (pmul (bit1 one) (bit1 one))) (quote (binary-digits 2 $n)))
-!(let ($values $n) (cost:firings (pmul (bit1 (bit1 (bit1 one))) (bit1 (bit1 (bit1 one)))))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 one) (bit1 one)))) (quote (binary-digits 2 $n)))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 (bit1 (bit1 one))) (bit1 (bit1 (bit1 one))))))
    (quote (binary-digits 4 $n)))
-!(let ($values $n) (cost:firings (pmul (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))
-                                       (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))
+                                       (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one))))))))))
    (quote (binary-digits 8 $n)))
-!(let ($values $n) (cost:firings (pmul (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))))))))))
-                                       (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))))))))))))
+!(let (quote ($values $n)) (lift (cost:firings (pmul (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one)))))))))))))))
+                                       (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 (bit1 one))))))))))))))))))
    (quote (binary-digits 16 $n)))
 
 ; ---- Negative controls.

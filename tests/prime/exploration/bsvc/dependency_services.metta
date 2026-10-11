@@ -45,24 +45,24 @@
 (= (in-list $x $xs)
    (if (== $xs ()) False
        (let $h (car-atom $xs)
-         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t))))))
+         (if (== $h $x) True (let $t (cdr-atom $xs) (in-list $x $t)){$t})){$h}))
 (= (append $xs $ys)
    (if (== $xs ()) $ys
-       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r))))
+       (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (append $t $ys))) (cons-atom $h $r)){$h $t $r}))
 (= (intersects $xs $ys)
    (if (== $xs ()) False
        (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)))
-         (if (in-list $h $ys) True (intersects $t $ys)))))
+         (if (in-list $h $ys) True (intersects $t $ys))){$h $t}))
 (= (first-occurrences $xs)
    (if (== $xs ()) ()
        (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)) ($r (first-occurrences $t))
-              ($r2 (filter-atom $r $y (not (== $y $h)))))
-         (cons-atom $h $r2))))
+              ($r2 (filter-atom $r $y (not (== $y $h))){$y}))
+         (cons-atom $h $r2)){$h $t $r $r2}))
 (= (flatten $xss) (foldl-atom $xss () $acc $xs (append $acc $xs)))
 (= (lookup $x $pairs)
    (if (== $pairs ()) missing
        (let* ((($k $v) (car-atom $pairs)) ($rest (cdr-atom $pairs)))
-         (if (== $k $x) $v (lookup $x $rest)))))
+         (if (== $k $x) $v (lookup $x $rest))){$k $v $rest}))
 
 ; ---- the catalogues ----------------------------------------------------------------
 
@@ -85,20 +85,20 @@
 (= (sweep $cat $seen $frontier)
    (let* (($items (items $cat))
           ($fresh (filter-atom $items $x
-                    (and (not (in-list $x $seen)) (let $ds (deps $cat $x) (intersects $frontier $ds))))))
+                    (and (not (in-list $x $seen)) (let $ds (deps $cat $x) (intersects $frontier $ds)){$ds})){$x}))
      (if (== $fresh ()) $seen
-         (let $seen2 (append $seen $fresh) (sweep $cat $seen2 $fresh)))))
+         (let $seen2 (append $seen $fresh) (sweep $cat $seen2 $fresh)){$seen2})))
 
 ; ---- rebuild waves ------------------------------------------------------------------
 
 (= (schedule $cat $target) (let $rem (first-occurrences $target) (kahn $cat () $rem)))
 (= (kahn $cat $layers $rem)
    (if (== $rem ()) (waves $layers)
-       (let $ready (filter-atom $rem $x (let $ds (deps $cat $x) (not (intersects $ds $rem))))
+       (let $ready (filter-atom $rem $x (let $ds (deps $cat $x) (not (intersects $ds $rem))){$ds}){$x}
          (if (== $ready ()) (blocked $rem)
              (let* (($layers2 (append $layers ($ready)))
-                    ($rem2 (filter-atom $rem $x (not (in-list $x $ready)))))
-               (kahn $cat $layers2 $rem2))))))
+                    ($rem2 (filter-atom $rem $x (not (in-list $x $ready))){$x}))
+               (kahn $cat $layers2 $rem2)){$layers2 $rem2})){$ready}))
 ; An order respects the dependencies: each item once, and no item depends on
 ; itself or on a later item.
 (= (respects $cat $order)
@@ -106,38 +106,38 @@
        (let* (($a (car-atom $order)) ($later (cdr-atom $order)) ($ds (deps $cat $a)))
          (and (not (in-list $a $later))
               (and (not (in-list $a $ds))
-                   (and (not (intersects $later $ds)) (respects $cat $later)))))))
+                   (and (not (intersects $later $ds)) (respects $cat $later))))){$a $later $ds}))
 
 ; ---- cycles ----------------------------------------------------------------------------
 
 (= (first-member $xs $set)
    (if (== $xs ()) none
        (let* (($h (car-atom $xs)) ($t (cdr-atom $xs)))
-         (if (in-list $h $set) $h (first-member $t $set)))))
+         (if (in-list $h $set) $h (first-member $t $set))){$h $t}))
 ; The segment of a reversed walk from its head down to y, in walk order.
 (= (cycle-at $y $path)
    (if (== $path ()) ()
        (let* (($a (car-atom $path)) ($l (cdr-atom $path)))
-         (if (== $a $y) ($a) (let $r (cycle-at $y $l) (append $r ($a)))))))
+         (if (== $a $y) ($a) (let $r (cycle-at $y $l) (append $r ($a))){$r})){$a $l}))
 (= (walk $cat $B $path)
    (let* (($x (car-atom $path)) ($ds (deps $cat $x)) ($y (first-member $ds $B)))
      (if (== $y none) ()
          (if (in-list $y $path) (cycle-at $y $path)
-             (let $p2 (cons-atom $y $path) (walk $cat $B $p2))))))
-(= (find-cycle $cat $B) (if (== $B ()) () (let $x (car-atom $B) (walk $cat $B ($x)))))
+             (let $p2 (cons-atom $y $path) (walk $cat $B $p2)){$p2}))))
+(= (find-cycle $cat $B) (if (== $B ()) () (let $x (car-atom $B) (walk $cat $B ($x))){$x}))
 (= (cycle $cat)
    (let* (($items (items $cat)) ($s (schedule $cat $items)))
-     (unify $s (blocked $B) (let $w (find-cycle $cat $B) (some $w)) none)))
+     (unify $s (blocked $B) (let $w (find-cycle $cat $B) (some $w)){$w} none)))
 ; A closed walk along dependencies.
 (= (closed-walk $cat $w)
    (let $first (car-atom $w) (steps-along $cat $w $first)))
 (= (steps-along $cat $w $first)
    (let* (($x (car-atom $w)) ($rest (cdr-atom $w)) ($ds (deps $cat $x)))
      (if (== $rest ()) (in-list $first $ds)
-         (let $y (car-atom $rest) (and (in-list $y $ds) (steps-along $cat $rest $first))))))
+         (let $y (car-atom $rest) (and (in-list $y $ds) (steps-along $cat $rest $first))){$y})))
 (= (acyclic $cat)
    (let* (($items (items $cat)) ($s (schedule $cat $items)))
-     (unify $s (waves $layers) (let $o (flatten $layers) (some $o)) none)))
+     (unify $s (waves $layers) (let $o (flatten $layers) (some $o)){$o} none)))
 
 ; ---- folds over dependencies ------------------------------------------------------------
 
@@ -149,7 +149,7 @@
        (let* (($x (car-atom $order)) ($rest (cdr-atom $order)) ($ds (deps $cat $x))
               ($vs (map-atom $ds $y (lookup $y $done)))
               ($v ($f $x $vs)) ($done2 (append $done (($x $v)))))
-         (fold-in-order $cat $f $rest $done2))))
+         (fold-in-order $cat $f $rest $done2)){$x $rest $ds $vs $v $done2}))
 (= (content base core) 11)
 (= (content base text) 23)
 (= (content base json) 37)
@@ -169,14 +169,14 @@
 (= (changed-from $old $new)
    (let* (($items (items $new)) ($olds (items $old)))
      (filter-atom $items $x
-       (or (not (in-list $x $olds)) (let* (($a (deps $old $x)) ($b (deps $new $x))) (not (== $a $b)))))))
+       (or (not (in-list $x $olds)) (let* (($a (deps $old $x)) ($b (deps $new $x))) (not (== $a $b))){$a $b}))))
 (= (rebuild-round $old $new)
    (let* (($ch (changed-from $old $new)) ($aff (affected $new $ch))) (schedule $new $aff)))
 (= (watch $prev $snapshots)
    (if (== $snapshots ()) ()
        (let* (($new (car-atom $snapshots)) ($rest (cdr-atom $snapshots))
               ($out (rebuild-round $prev $new)) ($outs (watch $new $rest)))
-         (cons-atom $out $outs))))
+         (cons-atom $out $outs)){$new $rest $out $outs}))
 
 ; ---- affected items ------------------------------------------------------------------
 
@@ -228,7 +228,7 @@
 ;     (depFold_eq_of_not_affected).
 !(let* (($k0 (dep-fold packages key-base)) ($k1 (dep-fold packages key-edited))
         ($a (affected packages (text))) ($is (items packages))
-        ($outside (filter-atom $is $x (not (in-list $x $a)))))
+        ($outside (filter-atom $is $x (not (in-list $x $a))){$x}))
    ($outside (foldl-atom $outside True $ok $x (and $ok (== (lookup $x $k1) (lookup $x $k0))))))
 ; 10. No certificate, no fold: the cyclic variant is refused.
 !(dep-fold cyclic key-base)

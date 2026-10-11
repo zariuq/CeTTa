@@ -65,6 +65,13 @@ class PrefixProjectionPolicy:
     list_labels: tuple[str, str, str, str, str] | None = None
     # Each list-context prefix form and the prefix form it mirrors.
     list_prefix_mirrors: tuple[tuple[str, str], ...] = ()
+    # The meta-arguments touching a term, T[...] and T{...}: the bracket
+    # node, the braces node and the definition of the binding mark, a word
+    # inside a touching bracket and reserved in a list after layout; None
+    # when the language has none.
+    meta_labels: tuple[str, str, str] | None = None
+    # The node of a braces form {x y}; None when the language has none.
+    braces_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +119,13 @@ class PrefixPlan:
     list_token_rules: tuple[TokenRule, ...] = ()
     list_prefix_rules: tuple[PrefixRule, ...] = ()
     list_bar_boundary: Boundary | None = None
+    # T[...]: the open and close brackets of a touching bracket, the binding
+    # mark and where the mark ends; T{...} uses the braces.  None without
+    # meta-arguments.
+    meta: tuple[int, int, tuple[int, ...], Boundary] | None = None
+    # {x y}: the open and close braces; the elements are read as an
+    # expression's.  None without braces.
+    braces: tuple[int, int] | None = None
 
 
 def common_literal_prefix(left: tuple[int, ...], right: tuple[int, ...]) -> int:
@@ -236,6 +250,10 @@ def validate_dispatch_partition(
                     "token dispatch overlaps a prefix alternative: "
                     f"{rule!r} and {prefix!r}"
                 )
+    if plan.meta is not None:
+        validate_meta_dispatch(plan, classes, structural)
+    if plan.braces is not None:
+        validate_braces_dispatch(plan, classes, structural)
     if plan.lists is None:
         return
     punctuation = set(plan.lists)
@@ -281,6 +299,101 @@ def validate_dispatch_partition(
                 "a list prefix payload may start with the list close")
 
 
+def validate_meta_dispatch(
+    plan: PrefixPlan, classes: dict[str, ScalarClass], structural: set[int]
+) -> None:
+    """A bracket touching a term opens a meta-argument, so every token ends
+    at either bracket, no token or prefix form starts with one, and the
+    binding mark is no prefix form.  A brace touching a term opens one too:
+    the braces rules hold the same for braces."""
+    assert plan.meta is not None
+    if plan.braces is None:
+        raise CompileError("meta-arguments require braces")
+    open_, close, mark, _ = plan.meta
+    brackets = (open_, close)
+    if open_ == close or set(brackets) & structural or any(
+            rule.literal[0] in brackets for rule in plan.prefix_rules):
+        raise CompileError("meta-argument brackets overlap another dispatch scalar")
+    if not mark or mark[0] in structural or mark[0] in brackets:
+        raise CompileError("binding mark overlaps a structural scalar")
+    for rule in (*plan.token_rules, *plan.list_token_rules):
+        # A word that is a prefix's literal alone is that prefix form before
+        # an open bracket, its payload, rather than a token touching it.
+        payload_before_open = bool(rule.literal) and any(
+            prefix.literal == rule.literal and prefix.payload_start and
+            classes[prefix.payload_start].contains(open_)
+            for prefix in (*plan.prefix_rules, *plan.list_prefix_rules))
+        if not boundary_contains(rule.boundary, close, classes) or (
+                not payload_before_open and
+                not boundary_contains(rule.boundary, open_, classes)):
+            raise CompileError("a token does not end at a meta-argument bracket")
+        if (rule.literal[0] in brackets if rule.literal
+                else any(classes[rule.first].contains(value)
+                         for value in brackets)):
+            raise CompileError("a token may start with a meta-argument bracket")
+
+
+def validate_braces_dispatch(
+    plan: PrefixPlan, classes: dict[str, ScalarClass], structural: set[int]
+) -> None:
+    """Braces open and close a braces node, so every token ends at either
+    brace (a word that is a prefix's literal alone may stand before an open
+    brace: it is that prefix form, the braces its payload), no token or
+    prefix form starts with one, and no prefix payload starts with the close
+    brace."""
+    assert plan.braces is not None
+    open_, close = plan.braces
+    braces = (open_, close)
+    others = set(structural)
+    if plan.lists is not None:
+        others |= set(plan.lists)
+    if plan.meta is not None:
+        others |= {plan.meta[0], plan.meta[1]}
+    prefixes = (*plan.prefix_rules, *plan.list_prefix_rules)
+    if open_ == close or set(braces) & others or any(
+            rule.literal[0] in braces for rule in prefixes):
+        raise CompileError("braces overlap another dispatch scalar")
+    for prefix in prefixes:
+        if prefix.payload_start and classes[prefix.payload_start].contains(close):
+            raise CompileError("a prefix payload may start with the close brace")
+    for rule in (*plan.token_rules, *plan.list_token_rules):
+        payload_before_open = bool(rule.literal) and any(
+            prefix.literal == rule.literal and prefix.payload_start and
+            classes[prefix.payload_start].contains(open_)
+            for prefix in prefixes)
+        if not boundary_contains(rule.boundary, close, classes) or (
+                not payload_before_open and
+                not boundary_contains(rule.boundary, open_, classes)):
+            raise CompileError("a token does not end at a brace")
+        for name in (rule.first, rule.tail):
+            if name and any(classes[name].contains(value) for value in braces):
+                raise CompileError(f"token class {name} admits a brace")
+        if rule.literal and rule.literal[0] in braces:
+            raise CompileError("a token may start with a brace")
+
+
+def derive_braces(
+    body: SExpr, skip_name: str, term_name: str,
+) -> tuple[int, int]:
+    """Read {x y}, whose elements are an expression's:
+
+    braces = node BRACES (right OPEN
+               (left (right SKIP (star (left TERM SKIP))) CLOSE))"""
+    outer = sir_form(body, "right", 2, "braces")
+    open_ = sir_character(outer[1], "braces open")
+    tail = sir_form(outer[2], "left", 2, "braces")
+    items = sir_form(tail[1], "right", 2, "braces")
+    if sir_reference(items[1], "braces skip") != skip_name:
+        raise CompileError("braces use a different skip definition")
+    star = sir_form(items[2], "star", 1, "braces")
+    item = sir_form(star[1], "left", 2, "braces item")
+    if sir_reference(item[1], "braces term") != term_name or \
+       sir_reference(item[2], "braces skip") != skip_name:
+        raise CompileError("braces elements differ from an expression's")
+    close = sir_character(tail[2], "braces close")
+    return open_, close
+
+
 def projection_policy(
     presentation: Presentation, profile_name: str
 ) -> PrefixProjectionPolicy:
@@ -292,6 +405,8 @@ def projection_policy(
     prefix_rules: dict[str, tuple[str, str]] = {}
     list_labels: tuple[str, str, str, str, str] | None = None
     list_prefix_mirrors: list[tuple[str, str]] = []
+    meta_labels: tuple[str, str, str] | None = None
+    braces_label: str | None = None
     for rule in presentation.rules:
         if rule.body or not isinstance(rule.head, tuple) or not rule.head:
             continue
@@ -359,6 +474,24 @@ def projection_policy(
                 list_prefix_mirrors.append((
                     symbol(value[2], "list prefix wrapper"),
                     symbol(value[3], "mirrored prefix wrapper")))
+        elif tag == "sexpr-meta-rule":
+            value = form(rule.head, tag, 4, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if meta_labels is not None:
+                raise CompileError(
+                    f"duplicate meta-argument projection for {profile_name}")
+            meta_labels = (symbol(value[2], "meta-list label"),
+                           symbol(value[3], "meta-braces label"),
+                           symbol(value[4], "binding mark definition"))
+        elif tag == "sexpr-braces-rule":
+            value = form(rule.head, tag, 2, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if braces_label is not None:
+                raise CompileError(
+                    f"duplicate braces projection for {profile_name}")
+            braces_label = symbol(value[2], "braces label")
     if document_label is None or expression_label is None:
         raise CompileError(f"missing projection profile {profile_name}")
 
@@ -401,6 +534,8 @@ def projection_policy(
         prefix_rules,
         list_labels,
         tuple(sorted(list_prefix_mirrors)),
+        meta_labels,
+        braces_label,
     )
 
 
@@ -516,6 +651,63 @@ def derive_token_rules(
     return token_rules
 
 
+def split_term(
+    defs: dict[str, SExpr], name: str, meta_name: str | None,
+    where: str,
+) -> str:
+    """A term is an atom followed by the meta-arguments touching it,
+    (seq ATOM (star META)), when the language has meta-arguments; the atom
+    otherwise.  A prefix form's payload is an atom, so a prefix binds tighter
+    than a touching bracket or brace."""
+    if meta_name is None:
+        return name
+    sequence = sir_form(defs[name], "seq", 2, where)
+    star = sir_form(sequence[2], "star", 1, f"{where} meta-arguments")
+    if sir_reference(star[1], f"{where} meta-argument") != meta_name:
+        raise CompileError(f"{where} takes different meta-arguments")
+    return sir_reference(sequence[1], where)
+
+
+def derive_meta(
+    defs: dict[str, SExpr], meta_name: str, list_name: str, braces_node: str,
+    braces_name: str, mark_name: str, skip_name: str, list_term_name: str,
+) -> tuple[int, int, tuple[int, ...], Boundary]:
+    """Read the meta-arguments touching a term:
+
+    meta      = (alt (ref META-LIST) (ref META-BRACES))
+    meta-list = node LIST (right OPEN
+                  (left (right SKIP (star (left LIST-TERM SKIP))) CLOSE))
+    meta-braces = node BRACES (ref BRACES)
+    mark      = (left MARK (peek BOUNDARY))
+
+    The elements of a touching bracket are list terms, among which the
+    binding mark is a word; a touching brace is a braces node."""
+    branches = [sir_reference(branch, "meta-argument alternative")
+                for branch in flatten_sir_binary(defs[meta_name], "alt")]
+    if sorted(branches) != sorted([list_name, braces_node]):
+        raise CompileError("meta-arguments are not a touching list and braces")
+    list_body = sir_form(defs[list_name], "node", 2, "meta list")[2]
+    outer = sir_form(list_body, "right", 2, "meta list")
+    open_ = sir_character(outer[1], "meta list open")
+    inner = sir_form(outer[2], "left", 2, "meta list")
+    lead = sir_form(inner[1], "right", 2, "meta list items")
+    if sir_reference(lead[1], "meta list skip") != skip_name:
+        raise CompileError("meta list uses a different skip")
+    star = sir_form(lead[2], "star", 1, "meta list items")
+    item = sir_form(star[1], "left", 2, "meta list item")
+    if sir_reference(item[1], "meta list term") != list_term_name or \
+       sir_reference(item[2], "meta list skip") != skip_name:
+        raise CompileError("meta list elements differ from a list's terms")
+    close = sir_character(inner[2], "meta list close")
+    braces_body = sir_form(defs[braces_node], "node", 2, "meta braces")[2]
+    if sir_reference(braces_body, "meta braces") != braces_name:
+        raise CompileError("meta braces are not the braces node")
+    mark_body = sir_form(defs[mark_name], "left", 2, "binding mark")
+    literal = sir_literal(mark_body[1], "binding mark")
+    boundary = peek_boundary(mark_body[2], defs, "binding mark boundary")
+    return open_, close, literal, boundary
+
+
 def derive_plan(
     syntax: Presentation,
     classes: dict[str, ScalarClass],
@@ -547,7 +739,16 @@ def derive_plan(
         raise CompileError("document uses inconsistent skip definitions")
     if not isinstance(document[2], Symbol) or document[2].text != "sir-eof":
         raise CompileError("document must end at eof")
-    atom_name = sir_reference(defs[top_name], "top atom")
+    term_name = sir_reference(defs[top_name], "top atom")
+    meta_name: str | None = None
+    if policy.meta_labels is not None:
+        if policy.list_labels is None or policy.braces_label is None:
+            raise CompileError("meta-arguments require lists and braces")
+        meta_name = sir_reference(
+            sir_form(sir_form(defs[term_name], "seq", 2, "top term")[2],
+                     "star", 1, "top term meta-arguments")[1],
+            "top term meta-argument")
+    atom_name = split_term(defs, term_name, meta_name, "top term")
 
     skip = sir_form(defs[skip_name], "star", 1, "skip")
     layout_name = sir_reference(skip[1], "skip layout")
@@ -602,7 +803,7 @@ def derive_plan(
         raise CompileError("expression uses a different skip definition")
     expression_star = sir_form(expression_items[2], "star", 1, "expression")
     expression_item = sir_form(expression_star[1], "left", 2, "expression item")
-    if sir_reference(expression_item[1], "expression atom") != atom_name or \
+    if sir_reference(expression_item[1], "expression atom") != term_name or \
        sir_reference(expression_item[2], "expression skip") != skip_name:
         raise CompileError("expression recursion disagrees with document syntax")
     expression_close = sir_character(expression_tail[2], "expression close")
@@ -623,6 +824,12 @@ def derive_plan(
     if policy.list_labels is not None:
         list_name = node_definition(ir, policy.list_labels[0])[0]
         expected_refs.add(list_name)
+    braces = None
+    braces_name = None
+    if policy.braces_label is not None:
+        braces_name, braces_body = node_definition(ir, policy.braces_label)
+        expected_refs.add(braces_name)
+        braces = derive_braces(braces_body, skip_name, term_name)
     if atom_refs != expected_refs:
         raise CompileError("atom alternatives differ from projected syntax nodes")
 
@@ -632,11 +839,21 @@ def derive_plan(
     list_bar_boundary: Boundary | None = None
     list_token_rules: tuple[TokenRule, ...] = ()
     list_prefix_rules: tuple[PrefixRule, ...] = ()
+    meta = None
     if policy.list_labels is not None:
-        lists, list_bar_boundary, list_token_rules, list_prefix_rules = \
-            derive_prefix_list(
+        lists, list_bar_boundary, list_token_rules, list_prefix_rules, \
+            list_term_name = derive_prefix_list(
                 ir, defs, policy, skip_name, token_rules,
-                {string_name, expression_name}, prefix_nodes, atom_name)
+                {string_name, expression_name} |
+                ({braces_name} if braces_name is not None else set()),
+                prefix_nodes, atom_name, meta_name)
+        if meta_name is not None:
+            assert policy.meta_labels is not None and braces_name is not None
+            meta = derive_meta(
+                defs, meta_name,
+                node_definition(ir, policy.meta_labels[0])[0],
+                node_definition(ir, policy.meta_labels[1])[0],
+                braces_name, policy.meta_labels[2], skip_name, list_term_name)
 
     string = sir_form(string_body, "right", 2, "string")
     string_open = sir_character(string[1], "string open")
@@ -678,6 +895,8 @@ def derive_plan(
             used.add(rule.payload_start)
     if list_bar_boundary is not None:
         used.update(list_bar_boundary.classes)
+    if meta is not None:
+        used.update(meta[3].classes)
     for rule in list_prefix_rules:
         if rule.payload_start:
             used.add(rule.payload_start)
@@ -720,6 +939,8 @@ def derive_plan(
         list_token_rules,
         list_prefix_rules,
         list_bar_boundary,
+        meta,
+        braces,
     )
     validate_dispatch_partition(plan, classes)
     return plan
@@ -759,8 +980,9 @@ def derive_prefix_list(
     shared_elements: set[str],
     prefix_nodes: dict[str, tuple[str, SExpr]],
     atom_name: str,
+    meta_name: str | None = None,
 ) -> tuple[tuple[int, int, int], Boundary, tuple[TokenRule, ...],
-           tuple[PrefixRule, ...]]:
+           tuple[PrefixRule, ...], str]:
     """Read [x y] and [x y | rest], and the lexicon inside a list:
 
     list    = node LIST (right OPEN (left (right SKIP (opt ITEMS)) CLOSE))
@@ -800,10 +1022,11 @@ def derive_prefix_list(
     items_name = sir_reference(sir_form(lead[2], "opt", 1, "list items")[1],
                                "list items")
     items = sir_form(defs[items_name], "seq", 2, "list items")
-    element_name = element_then_skip(items[1], "list element")
+    item_name = element_then_skip(items[1], "list element")
+    element_name = split_term(defs, item_name, meta_name, "list term")
     more = sir_form(items[2], "seq", 2, "list items")
     if element_then_skip(sir_form(more[1], "star", 1, "list elements")[1],
-                         "list element") != element_name:
+                         "list element") != item_name:
         raise CompileError("list elements differ from the first element")
     if sir_reference(sir_form(more[2], "opt", 1, "list rest")[1],
                      "list rest") != rest_name:
@@ -817,7 +1040,7 @@ def derive_prefix_list(
         "list bar boundary")
     rest_after = sir_form(rest_right[2], "right", 2, "list rest")
     if sir_reference(rest_after[1], "list rest skip") != skip_name or \
-            element_then_skip(rest_after[2], "list rest element") != element_name:
+            element_then_skip(rest_after[2], "list rest element") != item_name:
         raise CompileError("list rest element differs from the elements")
 
     mirrors = dict(policy.list_prefix_mirrors)
@@ -868,7 +1091,8 @@ def derive_prefix_list(
     ):
         raise CompileError("list tokens differ from the atom's tokens")
     return ((list_open, list_close, rest_marker), bar_boundary,
-            tuple(mirrored) + tuple(bar_words), tuple(list_prefix_rules))
+            tuple(mirrored) + tuple(bar_words), tuple(list_prefix_rules),
+            item_name)
 
 
 def composition_digest(paths: Iterable[Path], profile: str) -> str:
@@ -1086,6 +1310,30 @@ def generate(
             f"    .list_prefix_rules = {list_prefix_rules_name},\n"
         )
 
+    meta_fields = ""
+    if plan.meta is not None:
+        open_, close, mark, mark_boundary = plan.meta
+        mark_name = f"{c_prefix}_binding_mark"
+        lines.append(c_u32_array(mark_name, mark))
+        mark_boundary_init = emit_boundary(
+            lines, f"{c_prefix}_binding_mark_boundary", mark_boundary,
+            class_ids)
+        meta_fields = (
+            f"    .meta_open = UINT32_C({open_}),\n"
+            f"    .meta_close = UINT32_C({close}),\n"
+            f"    .binding_mark = {mark_name},\n"
+            f"    .binding_mark_len = UINT32_C({len(mark)}),\n"
+            f"    .binding_mark_boundary = {mark_boundary_init},\n"
+        )
+
+    braces_fields = ""
+    if plan.braces is not None:
+        braces_open, braces_close = plan.braces
+        braces_fields = (
+            f"    .braces_open = UINT32_C({braces_open}),\n"
+            f"    .braces_close = UINT32_C({braces_close}),\n"
+        )
+
     lines.append(
         f"\nconst GSLTDirectPrefixReaderV1Plan {c_prefix}_plan = {{\n"
         f'    .presentation_name = "{plan.presentation_name}",\n'
@@ -1116,6 +1364,8 @@ def generate(
         f"    .token_rules = {token_rules_name},\n"
         f"    .token_rule_len = UINT32_C({len(plan.token_rules)}),\n"
         f"{list_fields}"
+        f"{meta_fields}"
+        f"{braces_fields}"
         "    .depth_limit = UINT32_MAX,\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"

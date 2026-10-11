@@ -56,10 +56,10 @@
 !(reify
    (match &prime-need:observation-space
           (Stored (delay $origin))
-          (direct-stored-view $origin)))
+          (direct-stored-view $origin)){$origin})
 !(reify
    (match &prime-need:observation-space
           (Stored $saved)
           (unify $saved (delay $origin)
             (variable-stored-view $origin)
-            variable-stored-opaque)))
+            variable-stored-opaque)){$saved})

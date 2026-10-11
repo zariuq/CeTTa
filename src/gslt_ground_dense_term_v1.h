@@ -46,6 +46,8 @@ void cetta_gslt_ground_dense_term_program_init_v1(
     CettaGsltGroundDenseTermProgramV1 *program);
 void cetta_gslt_ground_dense_term_program_free_v1(
     CettaGsltGroundDenseTermProgramV1 *program);
+void cetta_gslt_ground_dense_term_program_storage_v1(
+    const CettaGsltGroundDenseTermProgramV1 *program, CettaStorageCensus *census);
 
 /*
  * Compile an immutable Atom pattern into bounded dense variable slots.

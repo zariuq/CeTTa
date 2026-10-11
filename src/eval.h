@@ -4,6 +4,7 @@
 #include "answer_bank.h"
 #include "atom.h"
 #include "eval_completion.h"
+#include "search_machine.h"
 #include "space.h"
 #include "term_canon.h"
 #include "variant_instance.h"
@@ -68,6 +69,70 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
+/* Copy a quiescent inline occurrence bag for an owned continuation. One
+ * enclosing Atom session preserves sharing between every visible, cached,
+ * delayed, logical, variant and Prime occurrence payload. Materialization
+ * state, order, multiplicity and set capacity are retained without evaluation.
+ * A non-NULL payload owner must map to arena in that session. An absent owner
+ * remains absent. AnswerBank references refuse until their owner is transported.
+ * destination must be initialized; refusal leaves it and source unchanged.
+ * Discard the unpublished session/arenas after refusal. External resources and
+ * identity-mapped regions retain their separate caller lifetime contracts. */
+bool outcome_set_copy_to_arena(const OutcomeSet *source, OutcomeSet *destination,
+    Arena *arena, AtomDeepCopySession *atoms);
+
+/* An owned copy of a quiescent Prime search checkpoint. NEW accepts an owning
+ * prime-search residual from the current library context and reserves its
+ * existing lease until PREPARE or FREE. A busy or unsupported input is never
+ * consumed. Source and consulted external Space/program/registry resources
+ * remain alive under the same stable, exclusive episode. The preparation is
+ * enrolled in the context's existing cleanup registry: context teardown
+ * retires its image before dependencies and invalidates the caller-owned
+ * shell. The caller must still FREE that shell. Explicit close and context
+ * teardown are detected, but must not race these calls.
+ *
+ * Add every ARENA_PAIR_AT entry (ARENA_PAIR_COUNT entries) to the enclosing
+ * injective Atom session before PREPARE, together with each separately
+ * prepared recording-group pair and every admitted borrowed external region.
+ * ARENA_PAIR returns the first, control-storage pair. PREPARE copies the
+ * complete supported frame/frontier/world/licence packet through that session;
+ * it does not run an evaluator transition. Refusal releases the reservation
+ * and leaves the original usable. Discard the unpublished session on refusal.
+ * On success, release the session before retiring its source pointer keys.
+ *
+ * PUBLISH gives the image a fresh owning residual handle. Handle-capacity
+ * refusal keeps the prepared image for retry, even after source retirement.
+ * Publication does not validate source revisions: ordinary resume performs
+ * its existing checks and retains an invalidated packet. It does not certify
+ * an executable result or replay. Captured logical IDs and paid work stay
+ * exact; future fresh IDs still come from the ambient allocator. Copy expense
+ * is separate from the copied evaluator account.
+ *
+ * This profile declines nested/registered children, worker/resource/foreign
+ * owners and compiled cache owners. Recording requires its separately
+ * prepared capability in the same session. An owned top episode additionally
+ * requires its actual storage holder, initialized private request/region
+ * arenas, inactive region stack and no external answer observer. With the Prime stack
+ * disabled, NEW returns UNSUPPORTED without consuming its input. Ordinary
+ * execution remains available. No new language form is introduced. */
+typedef struct CettaPrimeCheckpointCopy CettaPrimeCheckpointCopy;
+CettaPrimeCheckpointCopy *cetta_prime_checkpoint_copy_new(
+    CettaLibraryContext *context, Atom *residual, CettaContinuationStatus *status);
+bool cetta_prime_checkpoint_copy_arena_pair(
+    const CettaPrimeCheckpointCopy *copy, AtomDeepCopyArenaPair *pair);
+size_t cetta_prime_checkpoint_copy_arena_pair_count(const CettaPrimeCheckpointCopy *copy);
+bool cetta_prime_checkpoint_copy_arena_pair_at(const CettaPrimeCheckpointCopy *copy,
+    size_t index, AtomDeepCopyArenaPair *pair);
+CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
+    CettaPrimeCheckpointCopy *copy, AtomDeepCopySession *atoms);
+CettaContinuationStatus cetta_prime_checkpoint_copy_publish(
+    CettaPrimeCheckpointCopy *copy, Arena *arena, Atom **residual);
+const char *cetta_prime_checkpoint_copy_refusal(const CettaPrimeCheckpointCopy *copy);
+void cetta_prime_checkpoint_copy_free(CettaPrimeCheckpointCopy *copy);
+/* Stage an independent outcome vector through one graph relocation session.
+ * The caller owns both vectors until it commits or abandons the staged copy. */
+bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
+                               Arena *owner, AtomDeepCopySession *session);
 
 /* ── ResultSet: public API for top-level results (atoms only) ──────────── */
 /* This is the user-facing result type. Internally, the evaluator works
@@ -108,6 +173,8 @@ typedef struct EvalOutcome {
        answer, so the incompleteness is not also reported to the enclosing
        evaluation. */
     bool completion_consumed;
+    /* Owns an uncommitted top-level Observation; released by free. */
+    struct CettaPrimeObservationReturn *prime_observation;
 } EvalOutcome;
 
 typedef enum {
@@ -119,6 +186,58 @@ typedef enum {
 typedef void (*CettaPrimeNeedAnswerObserver)(
     Atom *answer, const PrimeNeedReceipt *receipt, void *context);
 struct PettaPlanNode;
+
+
+typedef struct CettaPrimeObservationReturn CettaPrimeObservationReturn;
+typedef struct {
+    CettaContinuationStatus status;
+    bool started, initialized, unpublished, normalized, committed;
+    CettaCount pending;
+    Atom *holder, *projected;
+    /* An owned region may retain an irrecoverable conversion/protocol
+     * refusal. CAPACITY alone does not distinguish it from an append retry.
+     * These fields describe the held top operation, not nested borrowed
+     * controllers, and grant neither execution nor lifetime authority. */
+    const char *return_refusal;
+    bool producer_complete, return_materialized;
+    size_t accepted_rows, copied_rows;
+    uint64_t remaining_allowance;
+} CettaPrimeObservationState;
+/* The state is a borrowed view. The outcome and its result arena, library,
+ * registry and source Space must remain live through retry or disposal.
+ * A pending row is retried without invoking its producer again. */
+bool eval_outcome_observation_state(const struct EvalOutcome *outcome,
+                                  CettaPrimeObservationState *state);
+CettaContinuationStatus eval_outcome_resume_observation(
+    struct EvalOutcome *outcome, uint64_t allowance);
+
+typedef enum {
+    CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1 = 1
+} CettaPrimeOwnedRegionProfile;
+/* Explicit private snapshot semantics; ordinary evaluation is unchanged.
+ * Source roots/services remain held and quiescent through capture and the
+ * synchronous original-registry enrollment/acquisition. The result arena
+ * must be detached from hashcons/older generations and stays externally
+ * owned through retry/disposal. Owned execution selects its own term
+ * universe and detached allocation, restoring caller selections on exit.
+ * After admission the
+ * caller may detach and retire its context; the original residual remains
+ * revoked after close. Unsupported admission performs no producer work or
+ * handle issuance, so the caller may choose ordinary execution instead.
+ * Inspection counts graph reads/probes and preparation-service invocations;
+ * byte_limit bounds acceptance of the complete preparation census, not RSS
+ * or an allocator ceiling. Existing fatal allocator paths remain fatal. */
+CettaContinuationStatus eval_prime_owned_region_outcome(
+    Space *source, Arena *output, Arena *persistent, Registry *registry,
+    Atom *expression, CettaPrimeOwnedRegionProfile profile,
+    size_t inspection_limit, size_t byte_limit, EvalOutcome *outcome);
+/* The complete outcome and receiving arena remain held and quiescent.
+ * Counts the actual return/operation/region graph; finish the census's
+ * queued visitors before reading completeness or bytes. The caller pays
+ * census probes in its enclosing inspection account. Borrowed observations
+ * explicitly refuse rather than implying ownership of their services. */
+void eval_prime_owned_region_storage_census(const EvalOutcome *outcome,
+    CettaStorageCensus *census);
 
 void eval_outcome_init(EvalOutcome *outcome);
 void eval_outcome_free(EvalOutcome *outcome);
@@ -142,6 +261,10 @@ void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
+/* Each entry owns its mutable query banks and compiled scratch. Reentrant
+ * entry suspends that owner; returning restores it. Newly appended structural
+ * results are published in `a` before the invocation's storage is released.
+ * Identity-bearing foreign resources retain their own lifetime contracts. */
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
@@ -154,6 +277,8 @@ void eval_top_with_registry_outcome(
     void *observer_context);
 /* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
 bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
+/* Reclaim completed top-level temporaries. During a callback into an active
+ * evaluator this defers cleanup to that caller's completion boundary. */
 void eval_release_temporary_spaces(void);
 void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);
@@ -161,10 +286,20 @@ void eval_set_default_fuel(int fuel);
  * library's).  In Prime an `Atom` position of such a declaration holds its
  * argument, as in HE; elsewhere in Prime `Atom` is the top type. */
 void eval_prime_set_he_signature_heads(const SymbolId *heads, size_t count);
+/* Heads the Prime evaluator owns for the relational plan (eval.c), and
+ * among them `lift`, which the relational machine hands to the evaluator. */
+bool cetta_prime_host_intrinsic_head(SymbolId head);
+bool cetta_prime_lift_head(SymbolId head);
+/* `scope:profile`, a scope declaration evaluated as a query, in Prime. */
+bool cetta_prime_scope_declaration_head(SymbolId head);
+/* `unquote` (`*`) and its second stage, in Prime: the evaluator opens code
+ * itself, elaborating the term it forms. */
+bool cetta_prime_open_code_head(SymbolId head);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
+bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
@@ -262,6 +397,10 @@ typedef bool (*CettaFreeVariableVisitor)(
 bool eval_visit_lexical_free_variables(
     Atom *expression, CettaFreeVariableVisitor visitor,
     void *context);
+
+/* Callability metadata for an extended-profile occurrence program. This is
+ * a name classification, not a global builtin or an arity/effect licence. */
+bool eval_native_weight_head(SymbolId head);
 
 /* Internal: evaluate an atom fully (recursive).
    type is the expected type (NULL means %Undefined%). */

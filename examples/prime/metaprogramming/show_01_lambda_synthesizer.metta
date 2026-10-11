@@ -35,9 +35,12 @@
 (= (numbers) (0 1 2 3 4 5 6 7 8 9))
 (= (truth True) ⊤)
 (= (truth False) ⊥)
+; The statement is code built from the values: a quotation is sealed, so
+; they enter it by lift.
 (= (record $p $x $value)
-   (let $tv (truth $value)
-     (add-atom &kb (: (ran $p $x) (≞ @($p $x) $tv)))))
+   (let* (($tv (truth $value))
+          ($statement (lift app (lift $p) (lift $x))))
+     (add-atom &kb (: (ran $p $x) (≞ $statement $tv)))))
 
 !(let $ns (numbers)
    (let $added

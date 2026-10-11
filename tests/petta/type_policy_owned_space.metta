@@ -1,4 +1,4 @@
-; Extended bind! publishes (), while base PeTTa publishes no answer.
+; bind! publishes no answer in both PeTTa profiles.
 ; The owner-specific call contracts below have the same observations.
 !(bind! &pcg-left (new-space))
 !(bind! &pcg-right (new-space))

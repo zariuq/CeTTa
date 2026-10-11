@@ -1,8 +1,10 @@
+(set:profile hol)
+
 ; Certified transformations for a supplied family. The family here is the
 ; predicate of zero-addition, which is not definitional in the second
 ; argument. A step must use the incoming evidence. Reflexivity of the
 ; successor does not inhabit that predicate at a neutral index.
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
 !(set:define &thy add (-> num num num)
    (= (add $n zero) $n)

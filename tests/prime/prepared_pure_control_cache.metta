@@ -17,7 +17,7 @@
              (if (== (abs-math (- $column $head)) $distance)
                  False
                  (control-cache:safe
-                   $column $tail (+ $distance 1)))))))
+                   $column $tail (+ $distance 1))))){$head $tail}))
 
 (= (control-cache:place $remaining $placed)
    (if (<= $remaining 0)
@@ -27,7 +27,7 @@
            ((True
              (control-cache:place
                (- $remaining 1)
-               (cons-atom $column $placed))))))))
+               (cons-atom $column $placed)))))){$column}))
 
 !(collapse (control-cache:place 4 ()))
 

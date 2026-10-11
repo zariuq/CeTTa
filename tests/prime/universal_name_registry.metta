@@ -10,12 +10,12 @@
 !(assertEqual
     (reify
       (match &@(doc (package alpha))
-             (entry $@(text)) $@(text)))
+             (entry $@(text)) $@(text)){$@(text)})
     (alpha-text))
 !(assertEqual
     (reify
       (match &@(doc (package beta))
-             (entry $@(text)) $@(text)))
+             (entry $@(text)) $@(text)){$@(text)})
     (beta-text))
 
 ; Repeated construction of an equal closed descriptor rendezvous on one entry.

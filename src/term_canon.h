@@ -8,7 +8,7 @@
  * Shared variable-remapping seam for canonical keys and re-materialization.
  *
  * Positive example:
- *   - TermUniverse and TableStore share one audited recursive walker while
+ *   - TermUniverse and TableStore share one iterative graph walker while
  *     keeping their distinct variable policies.
  *
  * Negative example:
@@ -60,7 +60,9 @@ Atom *cetta_import_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory,
 /* Instantiate authored terms together in a fresh frame. Sharing between the
  * terms is preserved, while different source identities remain different even
  * when their spellings or local slots agree. The returned syntax owns its
- * identity. This creates variables; it does not reify an existing closure. */
+ * identity. Roots are published together; failure leaves the original roots
+ * unchanged and releases abandoned arena storage. This creates variables;
+ * it does not reify an existing closure. */
 bool cetta_instantiate_frame_terms(Arena *dst, Atom **terms, size_t count);
 Atom *cetta_instantiate_frame_syntax(Arena *dst, Atom *source);
 /* The same instantiation into new slots of a frame identity the caller owns

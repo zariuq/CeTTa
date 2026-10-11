@@ -319,57 +319,80 @@ static const char *const PRIME_NATIVE_HYP_RUN_CHAIN_EQUATIONS_V1[] = {
 
 static const char *const
     PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1[] = {
-    "(= (hyp:primitive-declaration $bias $primitives) "
-    "(match $bias "
-    "(: $symbol ($primitives $source-sort $target-sort)) "
-    "(hyp:declaration $source-sort $target-sort $symbol)))",
+    "(= (hyp:primitive-declaration $bias $primitives) (match $bias (: $symbol "
+    "($primitives $source-sort $target-sort)) (hyp:declaration $source-sort "
+    "$target-sort $symbol)){$primitives})",
+};
+
+/* A candidate is code built from values: Prime's quotation is sealed, so
+ * the authored relations form the primitive and chain codes by `lift`. */
+static const char *const PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1[] = {
+    "(= (hyp:primitive-code $sorts $primitives $source $target $symbol) "
+    "(lift app (quote hyp:primitive) "
+    "(lift $sorts) (lift $primitives) (lift $source) (lift $target) "
+    "(lift $symbol)))",
+};
+
+static const char *const PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1[] = {
+    "(= (hyp:chain-code "
+    "$sorts $primitives $source $middle $target $earlier $later) "
+    "(lift app (quote hyp:chain) "
+    "(lift $sorts) (lift $primitives) (lift $source) (lift $middle) "
+    "(lift $target) $earlier $later))",
 };
 
 static const char *const
     PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1[] = {
-    "(= (hyp:chain-candidate-typed "
-    "$bias $sorts $primitives $source-sort $target-sort) "
-    "(let (hyp:declaration $source-sort $middle-sort $earlier-symbol) "
-    "(hyp:primitive-declaration $bias $primitives) "
-    "(let (hyp:declaration $middle-sort $target-sort $later-symbol) "
-    "(hyp:primitive-declaration $bias $primitives) "
-    "(quote (hyp:chain $sorts $primitives "
-    "$source-sort $middle-sort $target-sort "
-    "(hyp:primitive $sorts $primitives "
-    "$source-sort $middle-sort $earlier-symbol) "
-    "(hyp:primitive $sorts $primitives "
-    "$middle-sort $target-sort $later-symbol))))))",
+    "(= (hyp:chain-candidate-typed $bias $sorts $primitives $source-sort "
+    "$target-sort) (let (hyp:declaration $source-sort $middle-sort "
+    "$earlier-symbol) (hyp:primitive-declaration $bias $primitives) (let "
+    "(hyp:declaration $middle-sort $target-sort $later-symbol) "
+    "(hyp:primitive-declaration $bias $primitives) (hyp:chain-code $sorts "
+    "$primitives $source-sort $middle-sort $target-sort (hyp:primitive-code "
+    "$sorts $primitives $source-sort $middle-sort $earlier-symbol) "
+    "(hyp:primitive-code $sorts $primitives $middle-sort $target-sort "
+    "$later-symbol))){$middle-sort $target-sort}){$source-sort})",
 };
 
 static const char *const PRIME_NATIVE_HYP_PATH_PREPEND_EQUATIONS_V1[] = {
     "(= (hyp:path:prepend $sorts $primitives $source-sort "
     "$middle-sort $target-sort $symbol (quote $later-program)) "
-    "(quote (hyp:chain $sorts $primitives "
+    "(hyp:chain-code $sorts $primitives "
     "$source-sort $middle-sort $target-sort "
-    "(hyp:primitive $sorts $primitives "
-    "$source-sort $middle-sort $symbol) $later-program)))",
+    "(hyp:primitive-code $sorts $primitives "
+    "$source-sort $middle-sort $symbol) (quote $later-program)))",
 };
 
 static const char *const
     PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1[] = {
-    "(= (hyp:path-candidate-typed $bias $sorts $primitives "
-    "$source-sort $target-sort hyp:path:one) "
-    "(let (hyp:declaration $source-sort $target-sort $symbol) "
-    "(hyp:primitive-declaration $bias $primitives) "
-    "(quote (hyp:primitive $sorts $primitives "
-    "$source-sort $target-sort $symbol))))",
-    "(= (hyp:path-candidate-typed $bias $sorts $primitives "
-    "$source-sort $target-sort (hyp:path:more $shape)) "
-    "(let (hyp:declaration $source-sort $middle-sort $symbol) "
-    "(hyp:primitive-declaration $bias $primitives) "
-    "(let $later-program (hyp:path-candidate-typed "
-    "$bias $sorts $primitives $middle-sort $target-sort $shape) "
-    "(hyp:path:prepend $sorts $primitives "
-    "$source-sort $middle-sort $target-sort "
-    "$symbol $later-program))))",
+    "(= (hyp:path-candidate-typed $bias $sorts $primitives $source-sort "
+    "$target-sort hyp:path:one) (let (hyp:declaration $source-sort "
+    "$target-sort $symbol) (hyp:primitive-declaration $bias $primitives) "
+    "(hyp:primitive-code $sorts $primitives $source-sort $target-sort "
+    "$symbol)){$source-sort $target-sort})",
+    "(= (hyp:path-candidate-typed $bias $sorts $primitives $source-sort "
+    "$target-sort (hyp:path:more $shape)) (let (hyp:declaration $source-sort "
+    "$middle-sort $symbol) (hyp:primitive-declaration $bias $primitives) (let "
+    "$later-program (hyp:path-candidate-typed $bias $sorts $primitives "
+    "$middle-sort $target-sort $shape) (hyp:path:prepend $sorts $primitives "
+    "$source-sort $middle-sort $target-sort $symbol "
+    "$later-program))){$source-sort})",
 };
 
 static const char *const PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1[] = {
+    "(= (map-rel:run $relation $source-list) (if (== $source-list ()) "
+    "(map-rel:edge () (map-rel:nil-proof)) (if (== (get-metatype "
+    "$source-list) Expression) (let ($source-head $source-tail) (decons-atom "
+    "$source-list) (let (rel:edge $target-head $head-evidence) ($relation "
+    "$source-head) (let (map-rel:edge $target-tail $tail-evidence) "
+    "(map-rel:run $relation $source-tail) (map-rel:edge (cons-atom "
+    "$target-head $target-tail) (map-rel:cons-proof $source-head $target-head "
+    "$head-evidence $tail-evidence))){$target-tail "
+    "$tail-evidence}){$target-head $head-evidence}){$source-head "
+    "$source-tail} (superpose ()))))",
+};
+
+static const char *const PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1_RULE_M[] = {
     "(= (map-rel:run $relation $source-list) "
     "(if (== $source-list ()) "
     "(map-rel:edge () (map-rel:nil-proof)) "
@@ -385,12 +408,73 @@ static const char *const PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1[] = {
     "(superpose ()))))",
 };
 
+/* The unelaborated HE relational consumer retains the rule-M spelling.
+ * Prime libraries use the explicit lexical spelling above. Both are exact
+ * authored presentations; other edits still invalidate native admission. */
+static const char *const
+    PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1_RULE_M[] = {
+    "(= (hyp:primitive-declaration $bias $primitives) "
+    "(match $bias "
+    "(: $symbol ($primitives $source-sort $target-sort)) "
+    "(hyp:declaration $source-sort $target-sort $symbol)))",
+};
+
+static const char *const
+    PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1_RULE_M[] = {
+    "(= (hyp:chain-candidate-typed "
+    "$bias $sorts $primitives $source-sort $target-sort) "
+    "(let (hyp:declaration $source-sort $middle-sort $earlier-symbol) "
+    "(hyp:primitive-declaration $bias $primitives) "
+    "(let (hyp:declaration $middle-sort $target-sort $later-symbol) "
+    "(hyp:primitive-declaration $bias $primitives) "
+    "(hyp:chain-code $sorts $primitives "
+    "$source-sort $middle-sort $target-sort "
+    "(hyp:primitive-code $sorts $primitives "
+    "$source-sort $middle-sort $earlier-symbol) "
+    "(hyp:primitive-code $sorts $primitives "
+    "$middle-sort $target-sort $later-symbol)))))",
+};
+
+static const char *const
+    PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1_RULE_M[] = {
+    "(= (hyp:path-candidate-typed $bias $sorts $primitives "
+    "$source-sort $target-sort hyp:path:one) "
+    "(let (hyp:declaration $source-sort $target-sort $symbol) "
+    "(hyp:primitive-declaration $bias $primitives) "
+    "(hyp:primitive-code $sorts $primitives "
+    "$source-sort $target-sort $symbol)))",
+    "(= (hyp:path-candidate-typed $bias $sorts $primitives "
+    "$source-sort $target-sort (hyp:path:more $shape)) "
+    "(let (hyp:declaration $source-sort $middle-sort $symbol) "
+    "(hyp:primitive-declaration $bias $primitives) "
+    "(let $later-program (hyp:path-candidate-typed "
+    "$bias $sorts $primitives $middle-sort $target-sort $shape) "
+    "(hyp:path:prepend $sorts $primitives "
+    "$source-sort $middle-sort $target-sort "
+    "$symbol $later-program))))",
+};
+
+static const char *const *prime_native_rule_m_spelling(
+    const char *const *sources) {
+    if (sources == PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1)
+        return PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1_RULE_M;
+    if (sources == PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1)
+        return PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1_RULE_M;
+    if (sources == PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1)
+        return PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1_RULE_M;
+    if (sources == PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1)
+        return PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1_RULE_M;
+    return NULL;
+}
+
 static Atom *prime_native_parse_one(
     Arena *owner, const char *source) {
     size_t position = 0u;
+    bool names = parser_set_universal_name_syntax_enabled(true);
     Atom *term = owner && source
         ? parse_sexpr(owner, source, &position)
         : NULL;
+    parser_set_universal_name_syntax_enabled(names);
     return term && parser_rest_is_delimiters(source, &position)
         ? term
         : NULL;
@@ -439,6 +523,17 @@ static bool prime_native_equation_profile_exact(
         if (!expected_lhs[index]) return false;
     }
 
+    const char *const *rule_m_sources =
+        prime_native_rule_m_spelling(expected_sources);
+    Atom **rule_m = NULL;
+    if (rule_m_sources) {
+        rule_m = arena_alloc(scratch, expected_count * sizeof(*rule_m));
+        if (!rule_m) return false;
+        for (size_t index = 0u; index < expected_count; index++) {
+            rule_m[index] = prime_native_parse_one(scratch, rule_m_sources[index]);
+            if (!rule_m[index]) return false;
+        }
+    }
     size_t matched = 0u;
     for (;;) {
         SpaceEquationOccurrenceId occurrence_id;
@@ -452,7 +547,8 @@ static bool prime_native_equation_profile_exact(
             return false;
         }
         if (matched < expected_count &&
-            atom_alpha_eq(occurrence.equation, expected[matched])) {
+            (atom_alpha_eq(occurrence.equation, expected[matched]) ||
+             (rule_m && atom_alpha_eq(occurrence.equation, rule_m[matched])))) {
             matched++;
             continue;
         }
@@ -530,6 +626,16 @@ static bool prime_native_hyp_candidate_presentation_admitted(
             sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1[0])) &&
         prime_native_equation_profile_exact(
+            scratch, space, "hyp:primitive-code",
+            PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1,
+            sizeof(PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1) /
+                sizeof(PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1[0])) &&
+        prime_native_equation_profile_exact(
+            scratch, space, "hyp:chain-code",
+            PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1,
+            sizeof(PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1) /
+                sizeof(PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1[0])) &&
+        prime_native_equation_profile_exact(
             scratch, space, "hyp:chain-candidate-typed",
             PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1) /
@@ -546,8 +652,8 @@ static bool prime_native_hyp_candidate_presentation_admitted(
 
 /* Length-indexed candidate search is a second realization of the authored
  * path relation, not an extension of `hyp`.  Its admission therefore names
- * the recursive relation and the one staging helper that constructs ordinary
- * primitive/chain syntax. */
+ * the recursive relation, the staging helper that constructs ordinary
+ * primitive/chain syntax, and the two code-forming helpers it uses. */
 static bool prime_native_hyp_path_candidate_presentation_admitted(
     Arena *scratch, Space *space) {
     if (!scratch || !space) return false;
@@ -566,6 +672,16 @@ static bool prime_native_hyp_path_candidate_presentation_admitted(
             PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1[0])) &&
+        prime_native_equation_profile_exact(
+            scratch, space, "hyp:primitive-code",
+            PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1,
+            sizeof(PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1) /
+                sizeof(PRIME_NATIVE_HYP_PRIMITIVE_CODE_EQUATIONS_V1[0])) &&
+        prime_native_equation_profile_exact(
+            scratch, space, "hyp:chain-code",
+            PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1,
+            sizeof(PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1) /
+                sizeof(PRIME_NATIVE_HYP_CHAIN_CODE_EQUATIONS_V1[0])) &&
         prime_native_equation_profile_exact(
             scratch, space, "hyp:path:prepend",
             PRIME_NATIVE_HYP_PATH_PREPEND_EQUATIONS_V1,

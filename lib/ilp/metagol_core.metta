@@ -23,10 +23,10 @@
 ; ---------- Tiny finite-sequence utilities ----------
 
 ; Structural observation used by the learner.  Candidate outputs may have the
-; wrong Prime type; comparing their quoted forms makes that a normal failed
-; example rather than a typed-equality fault.
+; wrong Prime type; comparing them as written, with noreduce-eq, makes that a
+; normal failed example rather than a typed-equality fault.
 (= (mil:same-atom $left $right)
-   (== (quote $left) (quote $right)))
+   (noreduce-eq $left $right))
 
 (= (mil:list-member $needle ()) False)
 (= (mil:list-member $needle $items)

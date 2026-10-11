@@ -225,6 +225,12 @@ void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
+/* Private structural Prime snapshots have no foreign capability service.
+ * The caller must independently validate every captured root and call. A
+ * false result still leaves an initialized context requiring normal free. */
+bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx);
+void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
+    CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
     CettaLibraryContext *ctx,

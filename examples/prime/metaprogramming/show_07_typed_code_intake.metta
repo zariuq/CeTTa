@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Why it matters: generated code (from a model, a search or a user) can be
 ; admitted only after the kernel checks it against a declared interface, so
 ; unreadable, ill-typed or out-of-interface code never runs.
@@ -45,7 +47,7 @@
                  (if (meets-spec $term) (Accepted $i $term) (Rejected $i fails-examples))
                  (if (== $verdict False)
                      (Rejected $i ill-typed)
-                     (Rejected $i outside-interface)))))))))
+                     (Rejected $i outside-interface)))){$verdict}){$term}))))
 
 !(intake 1)
 !(intake 2)
@@ -58,7 +60,7 @@
 (= (first-accepted $i)
    (if (> $i 6) none
        (let $r (intake $i)
-         (unify $r (Accepted $n $term) $term (first-accepted (+ $i 1))))))
+         (unify $r (Accepted $n $term) $term (first-accepted (+ $i 1)))){$r}))
 !(let $f (first-accepted 1)
    (let $added (add-atom &self (= (twice-plus-one $n) ($f $n)))
      (Installed (repr $f))))

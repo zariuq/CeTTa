@@ -7,6 +7,7 @@
 #include "tests/test_runtime_stats_stubs.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -103,8 +104,9 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
                                 Atom **variables, Atom **values,
                                 uint32_t count, bool success,
                                 const char *message) {
-    Bindings reference, batch;
-    bool ready = bindings_clone(&reference, base) && bindings_clone(&batch, base);
+    Bindings reference, batch, owned;
+    bool ready = bindings_clone(&reference, base) && bindings_clone(&batch, base) &&
+        bindings_clone(&owned, base);
     CHECK(ready, "batch fixture clones its input");
     if (!ready)
         return;
@@ -112,9 +114,15 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
     for (uint32_t i = 0u; i < count && reference_ok; i++)
         reference_ok = bindings_add_var(&reference, variables[i], values[i]);
     bool batch_ok = bindings_add_vars(&batch, variables, values, count);
-    bool equal = reference_ok == success && batch_ok == reference_ok;
+    bool owned_ok = true;
+    for (uint32_t i = 0u; i < count && owned_ok; i++)
+        owned_ok = bindings_add_var_owned(&owned, variables[i], values[i]);
+    bool equal = reference_ok == success && batch_ok == reference_ok &&
+        owned_ok == reference_ok;
     if (batch_ok) {
         equal = equal && bindings_eq(&reference, &batch) &&
+            bindings_eq(&reference, &owned) &&
+            bindings_occurrence_token(&owned) == bindings_occurrence_token(base) &&
             bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
         for (uint32_t i = 0u; i < count && equal; i++) {
             Atom *left = bindings_apply(&reference, arena, variables[i]);
@@ -124,10 +132,15 @@ static void check_binding_batch(Arena *arena, const Bindings *base,
     } else {
         equal = equal && bindings_eq(&batch, (Bindings *)base) &&
             bindings_occurrence_token(&batch) == bindings_occurrence_token(base);
+        CHECK(!bindings_has_bound_values(&owned) && owned.eq_len == 0u &&
+                  owned.owners == NULL && owned.frame_index == NULL &&
+                  !bindings_prime_present(&owned),
+              "failed owned construction releases its unpublished image");
     }
     CHECK(equal, message);
     bindings_free(&reference);
     bindings_free(&batch);
+    bindings_free(&owned);
 }
 
 static void test_binding_batch(Arena *arena) {
@@ -175,6 +188,21 @@ static void test_binding_batch(Arena *arena) {
     Atom *constraint_vals[] = {seven};
     check_binding_batch(arena, &base, constraint_vars, constraint_vals, 1u, true,
                         "bulk writes retain sequential constraint normalization");
+    Bindings owned_constraint;
+    bool constraint_ready = bindings_clone(&owned_constraint, &base);
+    CHECK(constraint_ready &&
+              bindings_add_constraint_owned(&owned_constraint, z, seven) &&
+              atom_eq(bindings_apply(&owned_constraint, arena, z), seven),
+          "owned constraint construction preserves normal unification");
+    CHECK(constraint_ready &&
+              !bindings_add_constraint_owned(&owned_constraint, z, eight) &&
+              !bindings_has_bound_values(&owned_constraint) &&
+              owned_constraint.eq_len == 0u && owned_constraint.owners == NULL,
+          "conflicting owned constraint discards the unpublished result");
+    CHECK(base.eq_len == 1u && bindings_occurrence_token(&base) != 0u,
+          "failed private construction preserves its live sibling and occurrence");
+    if (constraint_ready)
+        bindings_free(&owned_constraint);
     CHECK(bindings_add_vars(&base, NULL, NULL, 0u), "empty publication is an identity");
     bindings_free(&base);
 }
@@ -750,6 +778,193 @@ static void test_frame_slot_is_value_authority(Arena *arena) {
               !bindings_has_bound_values(&builder.current),
           "rollback applies the inverse slot update without row reconstruction");
     bindings_builder_free(&builder);
+}
+
+static void test_shared_carrier_promotion(void) {
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *value = atom_expr2(&source, atom_symbol(&source, "payload"),
+                            atom_int(&source, 17));
+    PrimeNeedSnapshot root = {0}, allocated, running, completed;
+    uint64_t cell_id = 0u;
+    CHECK(prime_need_snapshot_begin(&root) &&
+          prime_need_snapshot_allocate_persisted(&source, &root, value, 31u,
+              &allocated, &cell_id) &&
+          prime_need_snapshot_start_evaluation(&source, &allocated, cell_id,
+              83u, &running) &&
+          prime_need_snapshot_resolve_value(&source, &running, cell_id, 83u,
+              value, &completed), "construct completed shared cell");
+    PrimeNeedSnapshot elided;
+    uint64_t dead_cell;
+    CHECK(prime_need_snapshot_allocate_persisted(&source, &completed, value, 901u,
+              &elided, &dead_cell), "reserve a key in an elided suffix");
+    completed.max_storage_key = elided.max_storage_key;
+    PrimeNeedCellView source_cell = {0};
+    CHECK(prime_need_snapshot_lookup(&completed, cell_id, &source_cell) &&
+          source_cell.origin == value && source_cell.cached == value,
+          "source Need origin and cached value have the asserted alias");
+    PrimeNeedSnapshot copied = completed;
+    CHECK(prime_need_snapshot_promote(&destination, &copied), "promote cell");
+    PrimeNeedCellView cell = {0};
+    CHECK(prime_need_snapshot_lookup(&copied, cell_id, &cell), "lookup copy");
+    CHECK(copied.max_storage_key == 901u, "promotion retains elided-key watermark");
+    CHECK(cell.origin == cell.cached, "promotion retains origin/cache alias");
+    CHECK(prime_need_snapshot_is_ancestor(&completed, &copied), "copied serial lineage");
+
+    Bindings bindings;
+    bindings_init(&bindings);
+    CHECK(bindings_add_id(&bindings, 419u, SYMBOL_ID_NONE, value), "bind same payload");
+    *bindings_need_mut(&bindings) = completed;
+    StateCell state = {0};
+    PrimeNeedBranchState branch = {0};
+    CHECK(prime_need_branch_state_begin(&source, &branch) &&
+          prime_need_branch_state_write(&source, &branch, &state, value, value,
+              bindings_branch_state_mut(&bindings)), "same payload in branch state");
+    CettaWeightLedger empty = {0}, factors, handled, selected;
+    CHECK(cetta_weight_ledger_append(&source, &empty, 701u, 801u, value, &factors) &&
+          cetta_weight_ledger_append(&source, &factors, 702u, 802u, value, &factors) &&
+          cetta_weight_ledger_handle(&source, &factors, &empty, 901u,
+              &handled, &selected), "same payload in two claimed factors");
+    *bindings_weight_mut(&bindings) = handled;
+    Atom *source_branch = NULL;
+    CHECK(prime_need_branch_state_value(bindings_branch_state_view(&bindings),
+              &state, &source_branch) && source_branch != value &&
+          handled.last->value != value &&
+          handled.last->value != handled.last->previous->value,
+          "fixture distinguishes copied equal payloads before transport");
+    CHECK(bindings_add_id(&bindings, 421u, SYMBOL_ID_NONE, source_branch) &&
+          bindings_add_id(&bindings, 422u, SYMBOL_ID_NONE, handled.last->previous->value) &&
+          bindings_add_id(&bindings, 423u, SYMBOL_ID_NONE, handled.last->value),
+          "capture actual stored branch and factor roots as shared logical values");
+    CHECK(bindings_lookup_value_id(&bindings, 419u).skeleton == source_cell.origin &&
+          bindings_lookup_value_id(&bindings, 421u).skeleton == source_branch &&
+          bindings_lookup_value_id(&bindings, 422u).skeleton == handled.last->previous->value &&
+          bindings_lookup_value_id(&bindings, 423u).skeleton == handled.last->value,
+          "source logical skeletons alias each actual stored carrier root");
+    CHECK(atom_eq(value, source_branch) && atom_eq(value, handled.last->value) &&
+          atom_eq(value, handled.last->previous->value) &&
+          source_branch != handled.last->value &&
+          source_branch != handled.last->previous->value,
+          "equal source carrier payloads retain four distinct root addresses");
+    CHECK(bindings_refresh_occurrence_token(&bindings), "name the source occurrence");
+    uint64_t occurrence = bindings_occurrence_token(&bindings);
+    BindingsBuilder original, transported;
+    CHECK(bindings_builder_init(&original, &bindings), "capture builder before promotion");
+    uint32_t mark = bindings_builder_save(&original);
+    CHECK(bindings_builder_add_id_fresh(&original, 420u, SYMBOL_ID_NONE, value) &&
+          original.prime_trail_len == 1u,
+          "capture the complete Prime world in rollback state");
+    CHECK(cetta_weight_ledger_append(&source, bindings_weight_view(&original.current),
+          703u, 803u, value, bindings_weight_mut(&original.current)),
+          "current world extends its captured coefficient prefix");
+    CHECK(bindings_builder_clone(&transported, &original), "clone the private rollback image");
+    Arena packet, wrong;
+    arena_init(&packet);
+    arena_init(&wrong);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&packet);
+    Atom *external = atom_deep_copy_session_copy(session, value);
+    Atom *external_branch = atom_deep_copy_session_copy(session, source_branch);
+    Atom *external_factor_first = atom_deep_copy_session_copy(session, handled.last->previous->value);
+    Atom *external_factor_last = atom_deep_copy_session_copy(session, handled.last->value);
+    const PrimeNeedFrame *before_top = bindings_need_view(&transported.current)->top;
+    CHECK(!bindings_builder_promote_atoms_with_session(&transported, &wrong, session) &&
+          bindings_need_view(&transported.current)->top == before_top &&
+          bindings_lookup_value_id(&transported.current, 419u).skeleton == value,
+          "wrong destination refuses before mutating the private builder");
+    PrimeNeedSnapshot wrong_snapshot = completed;
+    PrimeNeedBranchState wrong_branch = *bindings_branch_state_view(&bindings);
+    CettaWeightLedger wrong_weights = handled;
+    CHECK(!prime_need_snapshot_promote_with_session(&wrong, session, &wrong_snapshot) &&
+          wrong_snapshot.top == completed.top &&
+          !prime_need_branch_state_promote_with_session(&wrong, session, &wrong_branch) &&
+          wrong_branch.top == bindings_branch_state_view(&bindings)->top &&
+          !cetta_weight_ledger_promote_with_session(&wrong, session, &wrong_weights) &&
+          wrong_weights.last == handled.last,
+          "each carrier checks the shared session destination");
+    CHECK(!prime_need_snapshot_promote_suffix_with_session(&wrong, &source, session,
+              &wrong_snapshot) &&
+          !prime_need_branch_state_promote_suffix_with_session(&wrong, &source, session,
+              &wrong_branch), "suffix promotion checks the same destination authority");
+    CHECK(bindings_builder_promote_atoms_with_session(&transported, &packet, session),
+          "promote current and every rollback carrier through the enclosing copy");
+    CHECK(external != external_branch && external != external_factor_first &&
+          external != external_factor_last && external_branch != external_factor_first &&
+          external_branch != external_factor_last &&
+          external_factor_first != external_factor_last &&
+          atom_eq(external, external_branch) && atom_eq(external, external_factor_first) &&
+          atom_eq(external, external_factor_last),
+          "shared transport does not coalesce equal source-distinct carrier roots");
+    CHECK(bindings_lookup_value_id(&transported.current, 419u).skeleton == external &&
+          bindings_weight_view(&transported.current)->last->previous->value == external_factor_last &&
+          transported.prime_trail[0].weights.last->value == external_factor_last &&
+          transported.prime_trail[0].weights.last->previous->value == external_factor_first &&
+          transported.prime_trail[0].prime_need.max_storage_key == 901u,
+          "external, current and rollback roots share one payload image and watermark");
+    CHECK(prime_need_snapshot_lookup(&transported.prime_trail[0].prime_need, cell_id,
+              &cell) && cell.origin == external && cell.cached == external &&
+          prime_need_snapshot_is_ancestor(&completed,
+              &transported.prime_trail[0].prime_need),
+          "rollback Need image retains payload aliases and exact serial ancestry");
+    CHECK(bindings_lookup_value_id(&original.current, 419u).skeleton == value &&
+          original.prime_trail[0].prime_need.top == completed.top,
+          "preparing a copy leaves the original builder and its trail unchanged");
+    atom_deep_copy_session_free(session);
+    bindings_builder_free(&original);
+    CHECK(bindings_promote_atoms_to_arena(&bindings, &destination), "promote complete bindings");
+    Atom *logical = bindings_lookup_value_id(&bindings, 419u).skeleton;
+    Atom *state_value = NULL;
+    CHECK(prime_need_snapshot_lookup(bindings_need_view(&bindings), cell_id, &cell) &&
+          prime_need_branch_state_value(bindings_branch_state_view(&bindings),
+              &state, &state_value), "read copied carriers");
+    CHECK(logical == cell.origin && logical == cell.cached,
+          "bindings/Need promotion shares one Atom image");
+    CHECK(bindings_lookup_value_id(&bindings, 421u).skeleton == state_value,
+          "bindings/branch promotion shares one Atom image");
+    const CettaWeightLedger *weights = bindings_weight_view(&bindings);
+    CHECK(bindings_lookup_value_id(&bindings, 423u).skeleton == weights->last->value &&
+          bindings_lookup_value_id(&bindings, 422u).skeleton == weights->last->previous->value,
+          "bindings/factor promotion shares one Atom image");
+    CHECK(logical != state_value && logical != weights->last->value &&
+          logical != weights->last->previous->value &&
+          state_value != weights->last->value &&
+          state_value != weights->last->previous->value &&
+          weights->last->value != weights->last->previous->value &&
+          atom_eq(logical, state_value) && atom_eq(logical, weights->last->value) &&
+          atom_eq(logical, weights->last->previous->value),
+          "complete binding promotion preserves equal-but-distinct carrier roots");
+    CHECK(weights->claims->occurrence == handled.claims->occurrence &&
+          weights->claims->previous->occurrence == handled.claims->previous->occurrence,
+          "promotion retains claim-chain order");
+    arena_free(&source);
+    CHECK(logical->kind == ATOM_EXPR && logical->expr.elems[1]->ground.ival == 17 &&
+          cetta_weight_ledger_handler(weights, 701u) == 901u &&
+          cetta_weight_ledger_handler(weights, 702u) == 901u,
+          "payload and claims survive original arena retirement");
+    CHECK(bindings_occurrence_token(&bindings) == occurrence &&
+          bindings_need_view(&bindings)->max_storage_key == 901u,
+          "ordinary full promotion preserves the occurrence and allocation watermark");
+    bindings_builder_rollback(&transported, mark);
+    Atom *restored_state = NULL;
+    CHECK(!bindings_lookup_value_id(&transported.current, 420u).skeleton &&
+          bindings_lookup_value_id(&transported.current, 419u).skeleton == external &&
+          bindings_occurrence_token(&transported.current) == occurrence &&
+          bindings_weight_view(&transported.current)->length == 2u &&
+          cetta_weight_ledger_handler(bindings_weight_view(&transported.current), 701u) == 901u &&
+          prime_need_snapshot_lookup(bindings_need_view(&transported.current), cell_id,
+              &cell) && cell.origin == external && cell.cached == external &&
+          prime_need_branch_state_value(bindings_branch_state_view(&transported.current),
+              &state, &restored_state) && restored_state == external_branch &&
+          bindings_weight_view(&transported.current)->last->value == external_factor_last,
+          "rollback after source retirement restores the complete shared world");
+    CHECK(external->kind == ATOM_EXPR && external->expr.elems[1]->ground.ival == 17 &&
+          bindings_need_view(&transported.current)->max_storage_key == 901u,
+          "retired-source rollback keeps an owned payload and its key reservation");
+    bindings_builder_free(&transported);
+    arena_free(&packet);
+    arena_free(&wrong);
+    bindings_free(&bindings);
+    arena_free(&destination);
 }
 
 static void test_frame_slot_promotion_lifetime(void) {
@@ -2087,7 +2302,7 @@ static void test_arena_symbol_cache_is_bounded(void) {
     SymbolId first_id = symbol_intern_cstr(
         g_symbols, "arena-symbol-cache-first");
     Atom *first = atom_symbol_id(&arena, first_id);
-    size_t cache_bytes = arena.symbol_cache_bytes;
+    size_t cache_bytes = arena.persistent_bytes;
     Atom *first_again = atom_symbol_id(&arena, first_id);
     CHECK(first && first_again == first && cache_bytes > 0u,
           "arena symbol cache reuses an immediate exact symbol lookup");
@@ -2110,7 +2325,7 @@ static void test_arena_symbol_cache_is_bounded(void) {
     CHECK(exact_after_churn && first_after_churn &&
               first_after_churn->kind == ATOM_SYMBOL &&
               first_after_churn->sym_id == first_id &&
-              arena.symbol_cache_bytes == cache_bytes,
+              arena.persistent_bytes == cache_bytes,
           "arena symbol cache remains bounded and collisions are exact misses");
 
     arena_free(&arena);
@@ -2489,6 +2704,18 @@ static void test_dense_term_instantiation(Arena *arena) {
     Atom *x = atom_var_with_id(arena, "same", var_epoch_id(71u, first));
     Atom *y = atom_var_with_id(arena, "same", var_epoch_id(71u, second));
     Atom *z = atom_var_with_id(arena, "last", UINT64_C(900003));
+    Atom *shared = atom_expr2(arena, x, y);
+    Atom *aliases[2] = {atom_expr2(arena, shared, z), atom_expr2(arena, z, shared)};
+    CHECK(cetta_instantiate_frame_terms(arena, aliases, 2u) &&
+          aliases[0]->expr.elems[0] == aliases[1]->expr.elems[1],
+          "one freshening session preserves shared subgraphs across roots");
+    Atom *original = atom_expr2(arena, x, z);
+    Atom *incomplete[2] = {original, NULL};
+    ArenaMark failure_origin = arena_mark(arena);
+    CHECK(!cetta_instantiate_frame_terms(arena, incomplete, 2u) &&
+          incomplete[0] == original && incomplete[1] == NULL &&
+          arena_at_mark(arena, failure_origin),
+          "failed multi-root freshening neither publishes a partial root nor retains its storage");
     Atom *terms[2] = {atom_expr3(arena, x, y, z), atom_expr2(arena, z, x)};
     CHECK(cetta_instantiate_frame_terms(arena, terms, 2u),
           "instantiate related terms in one owned frame");
@@ -2630,6 +2857,85 @@ static void test_saved_binding_value_lifetime(void) {
     bindings_free(&recaptured_version);
 }
 
+typedef struct {
+    const Atom *saved;
+    const Bindings *base;
+    VarId saved_id;
+    Bindings survivor;
+    bool ok;
+} CapturedBindingsWorker;
+
+static void *captured_bindings_worker(void *raw) {
+    CapturedBindingsWorker *worker = raw;
+    Arena copies;
+    arena_init_detached(&copies);
+    Atom *copy = atom_deep_copy(&copies, (Atom *)worker->saved);
+    worker->ok = copy != NULL;
+    for (unsigned i = 0u; worker->ok && i < 1200u; i++) {
+        Bindings restored, sibling;
+        bindings_init(&restored);
+        bindings_init(&sibling);
+        worker->ok = bindings_restore_captured_value(copy, &restored) &&
+            bindings_clone(&sibling, worker->base) &&
+            binding_is_int(&restored, worker->saved_id, 17) &&
+            binding_is_int(&sibling, worker->saved_id, 17);
+        bindings_free(&restored);
+        bindings_free(&sibling);
+    }
+    worker->ok = worker->ok &&
+        bindings_restore_captured_value(copy, &worker->survivor);
+    arena_free(&copies);
+    return NULL;
+}
+
+static void test_saved_binding_value_concurrent_lifetime(void) {
+    Arena source, capsules;
+    arena_init_detached(&source);
+    arena_init_detached(&capsules);
+    Bindings env, base;
+    bindings_init(&env);
+    bindings_init(&base);
+    VarId saved_id = test_id(9240u);
+    bool ready = bindings_add_id(&env, saved_id, SYMBOL_ID_NONE,
+                                 atom_int(&source, 17));
+    Atom *saved = ready ? bindings_capture_value(&capsules, &env) : NULL;
+    ready = saved && bindings_restore_captured_value(saved, &base);
+    CHECK(ready, "concurrent saved bindings capture an owned source version");
+    bindings_free(&env);
+    arena_free(&source);
+
+    enum { WORKERS = 4 };
+    pthread_t threads[WORKERS];
+    CapturedBindingsWorker workers[WORKERS] = {0};
+    unsigned started = 0u;
+    while (ready && started < WORKERS) {
+        workers[started].saved = saved;
+        workers[started].base = &base;
+        workers[started].saved_id = saved_id;
+        bindings_init(&workers[started].survivor);
+        if (pthread_create(&threads[started], NULL,
+                           captured_bindings_worker, &workers[started]) != 0)
+            break;
+        started++;
+    }
+    bool joined = started == WORKERS;
+    for (unsigned i = 0u; i < started; i++)
+        joined = (pthread_join(threads[i], NULL) == 0) && joined;
+    CHECK(joined, "concurrent saved binding readers all finish");
+    bool intact = ready && binding_is_int(&base, saved_id, 17);
+    for (unsigned i = 0u; i < started; i++)
+        intact = workers[i].ok && intact;
+    CHECK(intact, "parallel capsule and version retains preserve one immutable binding image");
+    bindings_free(&base);
+    arena_free(&capsules);
+    bool survived = started == WORKERS;
+    for (unsigned i = 0u; i < started; i++) {
+        survived = binding_is_int(&workers[i].survivor, saved_id, 17) && survived;
+        bindings_free(&workers[i].survivor);
+    }
+    CHECK(survived, "worker-restored versions outlive every source and capsule owner");
+}
+
 int main(void) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     SymbolTable symbols;
@@ -2647,6 +2953,7 @@ int main(void) {
     test_dense_term_instantiation(&arena);
     test_arena_retained_owners();
     test_saved_binding_value_lifetime();
+    test_saved_binding_value_concurrent_lifetime();
     test_sparse_frame_write_context_growth(&arena);
 
     test_borrowed_root_identity(&arena);
@@ -2655,6 +2962,7 @@ int main(void) {
     test_generation_checked_frame_handles(&arena);
     test_persistent_frame_index_partition(&arena);
     test_frame_slot_is_value_authority(&arena);
+    test_shared_carrier_promotion();
     test_frame_slot_promotion_lifetime();
     test_manufactured_slot_lifecycle();
     test_frame_index_cycle_bridge(&arena);
@@ -3088,7 +3396,7 @@ int main(void) {
         prime_need_branch_state_begin(&arena, &sparse_branch_state);
     bindings_prime_set(
         &sparse_effect_branch.current, &sparse_need, &sparse_branch_state, 0u,
-        NULL);
+        NULL, NULL);
     sparse_effect_fixture =
         sparse_effect_fixture &&
         bindings_builder_add_id_fresh(
@@ -3098,7 +3406,7 @@ int main(void) {
         sparse_effect_branch.prime_trail_len == 1u &&
         sparse_effect_branch.trail[1].prime_state_present;
     bindings_prime_set(
-        &sparse_effect_branch.current, NULL, NULL, 0u, NULL);
+        &sparse_effect_branch.current, NULL, NULL, 0u, NULL, NULL);
     uint32_t sparse_absent_mark =
         bindings_builder_save(&sparse_effect_branch);
     sparse_effect_fixture =
@@ -3200,7 +3508,7 @@ int main(void) {
     bool sparse_compact_fixture =
         prime_need_snapshot_begin(&compact_need);
     bindings_prime_set(
-        &sparse_compact_branch.current, &compact_need, NULL, 0u, NULL);
+        &sparse_compact_branch.current, &compact_need, NULL, 0u, NULL, NULL);
     Atom *sparse_compact_live = atom_var_with_id(
         &arena, "sparse-compact-live", test_id(6510u));
     sparse_compact_fixture =
@@ -3209,7 +3517,7 @@ int main(void) {
             &sparse_compact_branch, sparse_compact_live,
             atom_int(&arena, 6510));
     bindings_prime_set(
-        &sparse_compact_branch.current, NULL, NULL, 0u, NULL);
+        &sparse_compact_branch.current, NULL, NULL, 0u, NULL, NULL);
     uint32_t sparse_compact_mark_a =
         bindings_builder_save(&sparse_compact_branch);
     sparse_compact_fixture =
@@ -3224,7 +3532,7 @@ int main(void) {
         prime_need_snapshot_begin(&compact_need_later);
     bindings_prime_set(
         &sparse_compact_branch.current, &compact_need_later, NULL, 0u,
-        NULL);
+        NULL, NULL);
     uint32_t sparse_compact_mark_b =
         bindings_builder_save(&sparse_compact_branch);
     sparse_compact_fixture =
@@ -3270,7 +3578,7 @@ int main(void) {
     bool sparse_commit_fixture =
         prime_need_snapshot_begin(&committed_need);
     bindings_prime_set(
-        &sparse_commit_branch.current, &committed_need, NULL, 0u, NULL);
+        &sparse_commit_branch.current, &committed_need, NULL, 0u, NULL, NULL);
     sparse_commit_fixture =
         sparse_commit_fixture &&
         bindings_builder_add_id_fresh(

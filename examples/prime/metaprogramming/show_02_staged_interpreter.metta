@@ -19,13 +19,15 @@
    (if (== $n 0) 1 (* (interp $a $x) (interp (Pow $a (- $n 1)) $x))))
 
 ; ---- the partial evaluator: (Static number) or (Dynamic code)
-(= (code-of (Static $n)) @$n)
+; A static number becomes code by lift; a quotation is sealed, so @$n would
+; be the variable itself.
+(= (code-of (Static $n)) (lift $n))
 (= (code-of (Dynamic $c)) $c)
 
 (= (add-bt $l $r)
    (unify $l (Static $m)
      (unify $r (Static $n)
-       (let $s (+ $m $n) (Static $s))
+       (let $s (+ $m $n) (Static $s)){$s}
        (if (== $m 0) $r (dyn-add $l $r)))
      (unify $r (Static $n)
        (if (== $n 0) $l (dyn-add $l $r))
@@ -37,7 +39,7 @@
 (= (mul-bt $l $r)
    (unify $l (Static $m)
      (unify $r (Static $n)
-       (let $p (* $m $n) (Static $p))
+       (let $p (* $m $n) (Static $p)){$p}
        (if (== $m 0) (Static 0) (if (== $m 1) $r (dyn-mul $l $r))))
      (unify $r (Static $n)
        (if (== $n 0) (Static 0) (if (== $n 1) $l (dyn-mul $l $r)))

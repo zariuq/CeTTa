@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Propositional unfolding: an unfolding equation that is a theorem and not a
 ; definitional equality.  rec stands for well-founded recursion with no
 ; computation rule; its unfolding is an axiom whose premises are the
@@ -6,7 +8,7 @@
 ; and used by transport, while conversion never performs it.
 
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(pf:theory &thy ((: A (u 0)) (: Res (u 0))
                   (: rec (-> (-> A A prop) (-> A (-> A Res) Res) A Res))
                   (: acc (-> (-> A A prop) A prop))

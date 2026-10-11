@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
 
 #include "atom.h"
 #include "prime_need.h"
@@ -15,6 +18,1381 @@ static unsigned failures = 0u;
             failures++;                                                       \
         }                                                                      \
     } while (0)
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static bool recording_root_count(const PrimeNeedReceipt *root, void *raw) {
+    if (!root->top) return false;
+    (*(size_t *)raw)++;
+    return true;
+}
+
+static void check_recording_copy(void) {
+    Arena input, holder, image_holder, unheld, image_unheld, later, refused;
+    Arena *arenas[] = {&input, &holder, &image_holder, &unheld, &image_unheld, &later, &refused};
+    for (size_t i = 0u; i < 7u; i++) arena_init_detached(arenas[i]);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){16u, 524288u, 4u, 2u});
+    PrimeNeedRecording *image_group = NULL;
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    PrimeNeedReceipt root = {0}, empty = {0}, equal = {0}, left = {0}, right = {0}, legacy = {0};
+    Atom *value = atom_expr2(&input, atom_symbol(&input, "Value"), atom_int(&input, 7));
+    bool seeded = group && prime_need_recording_reserve(group, NULL, 4u, 131072u, &root);
+    empty = root;
+    seeded = seeded && prime_need_receipt_observe_cell(&input, &root, 31u, 1u, value, &root) &&
+        prime_need_receipt_observe_cell(&input, &empty, 31u, 1u, value, &equal) &&
+        prime_need_recording_reserve(group, &root, 4u, 131072u, &left) &&
+        prime_need_recording_reserve(group, &root, 4u, 131072u, &right);
+    PrimeNeedReceipt left_seed = left;
+    seeded = seeded &&
+        prime_need_receipt_observe_cell(&input, &left, 31u, 2u, value, &left) &&
+        prime_need_receipt_observe_cell(&input, &right, 31u, 3u, value, &right);
+    PrimeNeedReceipt joined = left;
+    seeded = seeded && prime_need_receipt_merge(&joined, &right) &&
+        prime_need_recording_promote(&holder, &joined) &&
+        prime_need_receipt_begin(&unheld, &legacy) &&
+        prime_need_receipt_observe_cell(&unheld, &legacy, 31u, 9u, value, &legacy);
+    PrimeNeedReceipt unrecorded = {.session_id = root.session_id, .owner = root.owner};
+    seeded = seeded && prime_need_receipt_observe_cell(
+        root.owner, &unrecorded, 31u, 10u, value, &unrecorded);
+    CHECK(seeded, "recording copy source has a shared forest and an actual holder");
+    if (!seeded) goto done;
+    PrimeNeedReceiptEvent root_event = {0}, equal_event = {0};
+    CHECK(prime_need_receipt_event_at(&root, 0u, &root_event) &&
+        prime_need_receipt_event_at(&equal, 0u, &equal_event) &&
+        root.top != equal.top && root_event.after != equal_event.after &&
+        atom_eq(root_event.after, equal_event.after),
+        "recording source premises distinguish equal payload and frame identities");
+    size_t roots = 0u;
+    CHECK(!empty.top && prime_need_recording_roots(&empty, recording_root_count, &roots) && roots == 2u,
+        "an empty wrapper retains both actual roots of its slice inventory");
+    PrimeNeedRecordingScope scope = {0};
+    prime_need_recording_enter(&scope, &empty);
+    CHECK(prime_need_recording_copy_new(group) == NULL,
+        "copying an actively entered recording owner refuses");
+    prime_need_recording_leave(&scope);
+    copy = prime_need_recording_copy_new(group);
+    CHECK(copy && prime_need_recording_copy_pair_count(copy) == 3u &&
+        prime_need_recording_copy_take(copy) == NULL,
+        "recording copy stages three private slices without publishing an image");
+    if (!copy) goto done;
+    AtomDeepCopyArenaPair pairs[5] = {{&holder, &image_holder}, {&unheld, &image_unheld}};
+    bool pairs_ok = true;
+    for (size_t i = 0u; i < 3u; i++) pairs_ok &= prime_need_recording_copy_pair(copy, i, &pairs[i + 2u]);
+    AtomDeepCopyArenaPair unchanged = pairs[0];
+    CHECK(pairs_ok && !prime_need_recording_copy_pair(copy, 3u, &unchanged) &&
+        unchanged.source == pairs[0].source && unchanged.destination == pairs[0].destination,
+        "recording pair enumeration preserves output on an invalid index");
+    session = atom_deep_copy_session_new(&image_holder);
+    CHECK(session && atom_deep_copy_session_set_arena_map(session, pairs, 5u),
+        "recording and outside holders share one injective region map");
+    if (!session) goto done;
+    Atom *outside = atom_deep_copy_session_copy(session, root_event.after);
+    bool prepared = prime_need_recording_copy_prepare(copy, session);
+    CHECK(prepared && prime_need_recording_copy_prepare(copy, session),
+        "the full recording forest prepares once and repeats idempotently");
+    if (!prepared) goto done;
+    PrimeNeedReceipt copied_root = {0}, copied_equal = {0}, copied_empty = {0}, copied_join = {0};
+    CHECK(prime_need_recording_copy_receipt(copy, &root, &copied_root) &&
+        prime_need_recording_copy_receipt(copy, &equal, &copied_equal) &&
+        prime_need_recording_copy_receipt(copy, &empty, &copied_empty) &&
+        prime_need_recording_copy_receipt(copy, &joined, &copied_join),
+        "all recorded carriers map into the same prepared image");
+    PrimeNeedReceipt repeat = {0};
+    CHECK(prime_need_recording_copy_receipt(copy, &root, &repeat) &&
+        repeat.top == copied_root.top && copied_root.top != copied_equal.top && copied_root.top != root.top,
+        "recording copy preserves shared and equal-distinct physical frame identities");
+    PrimeNeedReceipt copied_seed = {0};
+    CHECK(left_seed.top == root.top && left_seed.owner != root.owner &&
+        prime_need_recording_copy_receipt(copy, &left_seed, &copied_seed) &&
+        copied_seed.top == copied_root.top && copied_seed.owner != copied_root.owner,
+        "a valid seed retains a different writable slice and the same group-owned prefix");
+    PrimeNeedReceipt wrong_slice = root, unchanged_root = copied_root;
+    wrong_slice.recording = left.recording;
+    CHECK(!prime_need_recording_copy_receipt(copy, &wrong_slice, &unchanged_root) &&
+        unchanged_root.top == copied_root.top && unchanged_root.owner == copied_root.owner,
+        "a correct owner paired with the wrong slice tag refuses without publication");
+    wrong_slice = root;
+    wrong_slice.owner = left.owner;
+    CHECK(!prime_need_recording_copy_receipt(copy, &wrong_slice, &unchanged_root) &&
+        unchanged_root.top == copied_root.top && unchanged_root.recording == copied_root.recording,
+        "a correct slice paired with the wrong allocation owner refuses without publication");
+    PrimeNeedReceipt legacy_image = legacy;
+    CHECK(prime_need_branch_state_copy_with_session(&image_holder, session, &legacy_image) &&
+        legacy_image.top != legacy.top && legacy_image.session_id != root.session_id,
+        "the same enclosing session can also transport an independent semantic receipt");
+    PrimeNeedReceipt mispaired = root, preserved = copied_root;
+    mispaired.top = legacy.top;
+    CHECK(!prime_need_recording_copy_receipt(copy, &mispaired, &preserved) &&
+        preserved.top == copied_root.top && preserved.recording == copied_root.recording,
+        "a memoized foreign frame cannot be relabelled as this recording group's root");
+    PrimeNeedReceipt unrecorded_image = unrecorded;
+    CHECK(prime_need_branch_state_copy_with_session(&image_holder, session, &unrecorded_image) &&
+        unrecorded_image.top != unrecorded.top && unrecorded_image.session_id == copied_root.session_id &&
+        unrecorded_image.owner == copied_root.owner && !unrecorded_image.recording,
+        "an ordinary frame can share the true slice owner and logical ID without joining its recording inventory");
+    mispaired = root; mispaired.top = unrecorded.top;
+    preserved = copied_root;
+    CHECK(!prime_need_recording_copy_receipt(copy, &mispaired, &preserved) &&
+        preserved.top == copied_root.top && preserved.recording == copied_root.recording,
+        "a correct mapped owner and ID cannot replace explicit recording-inventory membership");
+    PrimeNeedReceiptEvent mapped_event = {0}, mapped_equal = {0};
+    CHECK(prime_need_receipt_event_at(&copied_root, 0u, &mapped_event) &&
+        prime_need_receipt_event_at(&copied_equal, 0u, &mapped_equal) &&
+        mapped_event.after == outside && mapped_event.after != mapped_equal.after &&
+        mapped_event.after != root_event.after,
+        "recording payloads reuse the enclosing memo without coalescing equal source nodes");
+    roots = 0u;
+    CHECK(!copied_empty.top && prime_need_recording_roots(&copied_empty, recording_root_count, &roots) &&
+        roots == 2u, "empty-wrapper transport preserves the whole allocation forest");
+    PrimeNeedReceiptGraph before = {0}, after = {0};
+    bool graphs = prime_need_receipt_graph_collect(&joined, &before) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        prime_need_receipt_graph_collect(&copied_join, &after) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        before.length == after.length && before.session_id == after.session_id &&
+        before.root_id == after.root_id;
+    for (size_t i = 0u; graphs && i < before.length; i++) {
+        const PrimeNeedReceiptGraphNode *a = &before.nodes[i], *b = &after.nodes[i];
+        graphs = a->identity_id == b->identity_id && a->left_id == b->left_id &&
+            a->right_id == b->right_id && a->has_event == b->has_event &&
+            a->event.event_id == b->event.event_id && a->event.kind == b->event.kind &&
+            a->event.thunk_id == b->event.thunk_id &&
+            (a->event.after == b->event.after ||
+             (a->event.after && b->event.after && atom_eq(a->event.after, b->event.after)));
+    }
+    CHECK(graphs && before.length == 4u, "recording graph identities and shared causal edges survive exactly");
+    prime_need_receipt_graph_free(&before); prime_need_receipt_graph_free(&after);
+    CHECK(!prime_need_recording_copy_restore_holder(copy, &unheld, &image_unheld),
+        "a mapped carrier without an actual source hold cannot manufacture quota credit");
+    CHECK(prime_need_recording_copy_restore_holder(copy, &holder, &image_holder) &&
+        prime_need_recording_copy_restore_holder(copy, &holder, &image_holder),
+        "an actual holder restores once without spending the logical link twice");
+    image_group = prime_need_recording_copy_take(copy);
+    CHECK(image_group && image_group != group && !prime_need_recording_copy_take(copy) &&
+        !arena_retains_owner(&image_unheld, image_group, prime_need_recording_release),
+        "prepared recording ownership transfers exactly once");
+    if (!image_group) goto done;
+    PrimeNeedRecordingStatus a = prime_need_recording_status(group), b = prime_need_recording_status(image_group);
+    CHECK(a.nodes == b.nodes && a.payload_charge == b.payload_charge &&
+        a.reserved_nodes == b.reserved_nodes && a.reserved_payload_bytes == b.reserved_payload_bytes &&
+        a.owner_links == b.owner_links && b.owner_links == 1u && !b.incomplete,
+        "recording preparation retains the paid prefix and remaining logical quotas");
+    CettaStorageCensus source_bytes = {0}, image_bytes = {0}, together = {0};
+    prime_need_recording_storage(group, &source_bytes); cetta_storage_finish(&source_bytes);
+    prime_need_recording_storage(image_group, &image_bytes); cetta_storage_finish(&image_bytes);
+    arena_storage_census(&holder, &together); arena_storage_census(&image_holder, &together);
+    cetta_storage_finish(&together);
+    CHECK(!together.incomplete && together.retained == source_bytes.retained + image_bytes.retained +
+        2u * arena_retained_owner_allocation_bytes() && image_bytes.retained <= b.retained_bound,
+        "both live copies and both physical owner links are counted separately");
+    cetta_storage_census_free(&source_bytes); cetta_storage_census_free(&image_bytes);
+    cetta_storage_census_free(&together);
+    CHECK(prime_need_recording_promote(&image_holder, &copied_join) &&
+        prime_need_recording_status(image_group).owner_links == 1u,
+        "future promotion recognizes the restored holder instead of charging it twice");
+    PrimeNeedReceipt image_zero = {0}, source_zero = {0};
+    CHECK(prime_need_recording_reserve(image_group, NULL, 0u, 0u, &image_zero) &&
+        prime_need_recording_reserve(group, NULL, 0u, 0u, &source_zero) &&
+        image_zero.session_id == source_zero.session_id,
+        "source and image retain independent equal remaining slice reservations");
+    CHECK(prime_need_receipt_observe_cell(&input, &image_zero, 31u, 9u, value, &image_zero) &&
+        prime_need_recording_status(image_group).omitted == 1u &&
+        prime_need_recording_status(group).omitted == 0u,
+        "image exhaustion cannot mutate the source recording budget");
+    PrimeNeedRecording *fresh = prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 1u, 0u});
+    PrimeNeedReceipt fresh_receipt = {0};
+    CHECK(fresh && prime_need_recording_reserve(fresh, NULL, 0u, 0u, &fresh_receipt) &&
+        fresh_receipt.session_id == legacy.session_id + 1u,
+        "copy preparation does not allocate a replacement recording-session identity");
+    prime_need_recording_release(fresh);
+    atom_deep_copy_session_free(session); session = NULL;
+    prime_need_recording_copy_free(copy); copy = NULL;
+    arena_free(&holder); prime_need_recording_release(group); group = NULL;
+    arena_free(&input);
+    CHECK(prime_need_receipt_graph_collect(&copied_join, &after) == PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE &&
+        after.incomplete && after.length == 4u &&
+        atom_is_symbol(after.nodes[0].event.after->expr.elems[0], "Value"),
+        "source retirement preserves the whole copied graph and its subsequent omission status");
+    prime_need_receipt_graph_free(&after);
+    PrimeNeedReceipt held = copied_join, declined = copied_join;
+    CHECK(prime_need_recording_promote(&later, &held) && held.top == copied_join.top &&
+        prime_need_recording_status(image_group).owner_links == 2u,
+        "a genuinely new holder spends the one remaining logical owner slot");
+    CHECK(prime_need_recording_promote(&refused, &declined) && !declined.recording &&
+        prime_need_recording_status(image_group).owner_links == 2u &&
+        prime_need_recording_status(image_group).incomplete,
+        "exhausted copied owner quota omits evidence without consuming semantic data");
+done:
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group); prime_need_recording_release(image_group);
+    for (size_t i = 0u; i < 7u; i++) arena_free(arenas[i]);
+}
+
+static void check_recording_copy_owner_domain(void) {
+    Arena input, first_destination, second_destination;
+    Arena *arenas[] = {&input, &first_destination, &second_destination};
+    for (size_t i = 0u; i < 3u; i++) arena_init_detached(arenas[i]);
+    PrimeNeedRecording *original = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 65536u, 1u, 0u});
+    PrimeNeedRecording *independent = NULL;
+    PrimeNeedRecordingCopy *first = NULL, *left_copy = NULL, *right_copy = NULL;
+    AtomDeepCopySession *first_session = NULL, *both_session = NULL;
+    PrimeNeedReceipt left = {0}, right = {0}, left_image = {0}, right_image = {0};
+    Atom *value = atom_int(&input, 7);
+    bool seeded = original && prime_need_recording_reserve(original, NULL, 4u, 65536u, &left) &&
+        prime_need_receipt_observe_cell(&input, &left, 51u, 1u, value, &left);
+    CHECK(seeded, "owner-domain control begins with an actual recorded production");
+    if (!seeded) goto done;
+    first = prime_need_recording_copy_new(original);
+    first_session = atom_deep_copy_session_new(&first_destination);
+    AtomDeepCopyArenaPair first_pairs[2] = {{&input, &first_destination}, {0}};
+    bool copied = first && first_session && prime_need_recording_copy_pair(first, 0u, &first_pairs[1]) &&
+        atom_deep_copy_session_set_arena_map(first_session, first_pairs, 2u) &&
+        prime_need_recording_copy_prepare(first, first_session) &&
+        prime_need_recording_copy_receipt(first, &left, &right);
+    if (copied) independent = prime_need_recording_copy_take(first);
+    CHECK(copied && independent && independent != original && left.top != right.top &&
+        left.owner != right.owner && left.recording != right.recording &&
+        left.session_id == right.session_id,
+        "a real copy produces distinct owners retaining the exact captured logical identities");
+    if (!copied || !independent) goto done;
+    atom_deep_copy_session_free(first_session); first_session = NULL;
+    prime_need_recording_copy_free(first); first = NULL;
+    left_copy = prime_need_recording_copy_new(original);
+    right_copy = prime_need_recording_copy_new(independent);
+    both_session = atom_deep_copy_session_new(&second_destination);
+    AtomDeepCopyArenaPair both_pairs[3] = {{&input, &second_destination}, {0}, {0}};
+    bool prepared = left_copy && right_copy && both_session &&
+        prime_need_recording_copy_pair(left_copy, 0u, &both_pairs[1]) &&
+        prime_need_recording_copy_pair(right_copy, 0u, &both_pairs[2]) &&
+        atom_deep_copy_session_set_arena_map(both_session, both_pairs, 3u) &&
+        prime_need_recording_copy_prepare(left_copy, both_session) &&
+        prime_need_recording_copy_prepare(right_copy, both_session);
+    CHECK(prepared, "two independent recording inventories prepare through one enclosing copy session");
+    if (!prepared) goto done;
+    CHECK(prime_need_recording_copy_receipt(left_copy, &left, &left_image) &&
+        prime_need_recording_copy_receipt(right_copy, &right, &right_image) &&
+        left_image.top != right_image.top && left_image.owner != right_image.owner &&
+        left_image.session_id == right_image.session_id,
+        "the common memo preserves both physical ownership domains without renaming logical IDs");
+    PrimeNeedReceipt crossed = left, preserved = left_image;
+    crossed.top = right.top;
+    CHECK(!prime_need_recording_copy_receipt(left_copy, &crossed, &preserved) &&
+        preserved.top == left_image.top && preserved.owner == left_image.owner,
+        "a tagged root from another equal-ID inventory cannot acquire the left owner's authority");
+    crossed = right; preserved = right_image; crossed.top = left.top;
+    CHECK(!prime_need_recording_copy_receipt(right_copy, &crossed, &preserved) &&
+        preserved.top == right_image.top && preserved.owner == right_image.owner,
+        "the right owner likewise refuses a root tagged by another recording copy");
+    PrimeNeedReceiptGraph a = {0}, b = {0}, c = {0}, d = {0};
+    bool intact = prime_need_receipt_graph_collect(&left, &a) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        prime_need_receipt_graph_collect(&right, &b) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        prime_need_receipt_graph_collect(&left_image, &c) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        prime_need_receipt_graph_collect(&right_image, &d) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        a.event_count == 1u && b.event_count == 1u && c.event_count == 1u && d.event_count == 1u &&
+        a.root_id == b.root_id && b.root_id == c.root_id && c.root_id == d.root_id;
+    CHECK(intact, "ownership refusals retain all four complete graphs and captured occurrence identities");
+    prime_need_receipt_graph_free(&a); prime_need_receipt_graph_free(&b);
+    prime_need_receipt_graph_free(&c); prime_need_receipt_graph_free(&d);
+    CHECK(prime_need_receipt_observe_cell(&input, &left, 51u, 2u, value, &left) &&
+        prime_need_recording_status(original).nodes == 2u &&
+        prime_need_recording_status(independent).nodes == 1u,
+        "the original remains independently runnable after a crossed-owner refusal");
+done:
+    atom_deep_copy_session_free(first_session); atom_deep_copy_session_free(both_session);
+    prime_need_recording_copy_free(first); prime_need_recording_copy_free(left_copy);
+    prime_need_recording_copy_free(right_copy);
+    prime_need_recording_release(original); prime_need_recording_release(independent);
+    for (size_t i = 0u; i < 3u; i++) arena_free(arenas[i]);
+}
+
+static void check_recording_copy_mode(void) {
+    Arena input, destination, holder, image_holder, other, other_image, external;
+    Arena *arenas[] = {&input, &destination, &holder, &image_holder,
+                      &other, &other_image, &external};
+    for (size_t i = 0u; i < 7u; i++) arena_init_detached(arenas[i]);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){8u, 131072u, 2u, 3u});
+    PrimeNeedRecording *foreign = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 65536u, 1u, 1u});
+    PrimeNeedRecording *image_group = NULL;
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *ordinary = NULL, *session = NULL;
+    PrimeNeedReceipt root = {0}, foreign_root = {0}, semantic = {0}, mapped = {0};
+    Atom *value = atom_expr2(&input, atom_symbol(&input, "Kept"), atom_int(&input, 7));
+    bool seeded = group && foreign &&
+        prime_need_recording_reserve(group, NULL, 4u, 65536u, &root) &&
+        prime_need_receipt_observe_cell(&input, &root, 71u, 1u, value, &root) &&
+        prime_need_recording_reserve(foreign, NULL, 4u, 65536u, &foreign_root) &&
+        prime_need_receipt_observe_cell(&input, &foreign_root, 72u, 1u, value, &foreign_root) &&
+        prime_need_receipt_begin(&input, &semantic) &&
+        prime_need_receipt_observe_cell(&input, &semantic, 73u, 1u, value, &semantic);
+    CHECK(seeded, "copy-mode control has recorded and ordinary semantic receipts");
+    if (!seeded) goto done;
+    ordinary = atom_deep_copy_session_new(&holder);
+    PrimeNeedReceipt retained = root;
+    CHECK(ordinary && prime_need_receipt_copy_with_session(&holder, ordinary, &retained) &&
+        retained.top == root.top && retained.recording == root.recording &&
+        arena_retains_owner(&holder, group, prime_need_recording_release) &&
+        prime_need_recording_status(group).owner_links == 1u,
+        "ordinary receipt copying retains its actual recording owner and pays one link");
+    copy = prime_need_recording_copy_new(group);
+    session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[5] = {{&input, &destination}, {&holder, &image_holder},
+        {&other, &other_image}, {&external, &external}, {0}};
+    bool ready = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[4]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 5u) &&
+        prime_need_recording_copy_enable(session) && prime_need_recording_copy_enable(session);
+    CHECK(ready, "explicit recording-copy mode is idempotent on the captured common session");
+    if (!ready) goto done;
+    PrimeNeedReceipt refused = root;
+    CHECK(!prime_need_receipt_copy_with_session(&destination, session, &refused) &&
+        refused.top == root.top && refused.recording == root.recording &&
+        !arena_retains_owner(&destination, group, prime_need_recording_release) &&
+        prime_need_recording_status(group).owner_links == 1u,
+        "enabled copy mode refuses an unprepared group without retaining its source");
+    ready = prime_need_recording_copy_prepare(copy, session);
+    CHECK(ready, "recorded payload preparation precedes carrier publication");
+    if (!ready) goto done;
+    CHECK(!prime_need_receipt_copy_with_session(&destination, session, &refused) &&
+        refused.top == root.top,
+        "a complete payload map alone supplies no destination enclosing lifetime");
+    CHECK(!prime_need_recording_copy_enclosing_owner(copy, &input, &other_image) &&
+        !prime_need_recording_copy_enclosing_owner(copy, &external, &external),
+        "wrong and borrowed identity pairs cannot grant enclosing ownership");
+    CHECK(prime_need_recording_copy_enclosing_owner(copy, &input, &destination) &&
+        prime_need_recording_copy_enclosing_owner(copy, &input, &destination) &&
+        !arena_retains_owner(&input, group, prime_need_recording_release),
+        "a direct enclosing group owner registers its private pair without a paid arena link");
+    static const char other_kind;
+    CHECK(atom_deep_copy_session_object_original(session, copy, &destination, sizeof(Arena)) == &input &&
+        !atom_deep_copy_session_object_original(session, copy, &destination, 1u) &&
+        !atom_deep_copy_session_object_original(session, &other_kind, &destination, sizeof(Arena)) &&
+        !atom_deep_copy_session_object_original(session, copy, &other_image, sizeof(Arena)),
+        "the common inverse table distinguishes physical owner, kind and extent");
+    mapped = root;
+    CHECK(prime_need_receipt_copy_with_session(&destination, session, &mapped) &&
+        mapped.top != root.top && mapped.recording != root.recording &&
+        mapped.owner == pairs[4].destination && mapped.session_id == root.session_id,
+        "an explicitly owned carrier receives the exact prepared recording image");
+    PrimeNeedReceipt semantic_image = semantic;
+    CHECK(prime_need_receipt_copy_with_session(&destination, session, &semantic_image) &&
+        !semantic_image.recording && semantic_image.top != semantic.top &&
+        semantic_image.session_id == semantic.session_id,
+        "the same mode keeps ordinary semantic receipt graph copying intact");
+    refused = foreign_root;
+    CHECK(!prime_need_receipt_copy_with_session(&destination, session, &refused) &&
+        refused.top == foreign_root.top && refused.recording == foreign_root.recording &&
+        prime_need_recording_status(foreign).owner_links == 0u,
+        "another unregistered recording owner refuses instead of using ordinary retention");
+    AtomDeepCopyDestinationScope scope = {0};
+    bool entered = atom_deep_copy_destination_enter(session, &other_image, &scope);
+    refused = root;
+    CHECK(entered && !prime_need_receipt_copy_with_session(&other_image, session, &refused) &&
+        refused.top == root.top && atom_deep_copy_destination_leave(&scope),
+        "a different valid destination still needs its own enclosing or retained ownership");
+    (void)atom_deep_copy_destination_leave(&scope);
+    entered = atom_deep_copy_destination_enter(session, &image_holder, &scope);
+    refused = root;
+    CHECK(entered && !prime_need_receipt_copy_with_session(&image_holder, session, &refused) &&
+        prime_need_recording_copy_restore_holder(copy, &holder, &image_holder) &&
+        prime_need_receipt_copy_with_session(&image_holder, session, &refused) &&
+        refused.top == mapped.top && atom_deep_copy_destination_leave(&scope),
+        "an actual paid holder restores its distinct physical link before carrier copying");
+    (void)atom_deep_copy_destination_leave(&scope);
+    image_group = prime_need_recording_copy_take(copy);
+    CHECK(image_group && !arena_retains_owner(&destination, image_group, prime_need_recording_release) &&
+        arena_retains_owner(&image_holder, image_group, prime_need_recording_release) &&
+        prime_need_recording_status(image_group).owner_links == 1u,
+        "TAKE supplies the direct owner while restored links retain their original logical charge");
+    refused = root;
+    CHECK(!prime_need_receipt_copy_with_session(&destination, session, &refused) &&
+        refused.top == root.top,
+        "carrier copies finish before the prepared image leaves its copy capability");
+    retained = root;
+    CHECK(prime_need_receipt_promote_with_session(&destination, session, &retained) &&
+        retained.top == root.top && retained.recording == root.recording &&
+        arena_retains_owner(&destination, group, prime_need_recording_release) &&
+        !arena_retains_owner(&destination, image_group, prime_need_recording_release) &&
+        prime_need_recording_status(group).owner_links == 2u &&
+        prime_need_recording_status(image_group).owner_links == 1u,
+        "ordinary promotion in a copy-enabled session still retains the original owner");
+    retained = root;
+    CHECK(prime_need_receipt_copy_with_session(&holder, ordinary, &retained) &&
+        retained.top == root.top && retained.recording == root.recording &&
+        prime_need_recording_status(group).owner_links == 2u,
+        "a separate ordinary session keeps its existing recording ownership");
+    atom_deep_copy_session_free(ordinary); ordinary = NULL;
+    atom_deep_copy_session_free(session); session = NULL;
+    prime_need_recording_copy_free(copy); copy = NULL;
+    arena_free(&holder); arena_free(&destination);
+    prime_need_recording_release(group); group = NULL;
+    arena_free(&input);
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_graph_collect(&mapped, &graph) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.event_count == 1u && atom_is_symbol(graph.nodes[0].event.after->expr.elems[0], "Kept"),
+        "the taken enclosing owner keeps copied payload alive after all original holders retire");
+    prime_need_receipt_graph_free(&graph);
+done:
+    atom_deep_copy_session_free(ordinary); atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group); prime_need_recording_release(image_group);
+    prime_need_recording_release(foreign);
+    for (size_t i = 0u; i < 7u; i++) arena_free(arenas[i]);
+}
+
+static void check_recording_copy_mode_invalidation(bool reset_destination) {
+    Arena input, destination;
+    arena_init_detached(&input); arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 65536u, 1u, 1u});
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    PrimeNeedReceipt source = {0};
+    Atom *value = atom_int(&input, 7);
+    bool ready = group && prime_need_recording_reserve(group, NULL, 4u, 65536u, &source) &&
+        prime_need_receipt_observe_cell(&input, &source, 74u, 1u, value, &source);
+    copy = ready ? prime_need_recording_copy_new(group) : NULL;
+    session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[2] = {{&input, &destination}, {0}};
+    ready = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 2u) &&
+        prime_need_recording_copy_prepare(copy, session) &&
+        prime_need_recording_copy_enclosing_owner(copy, &input, &destination) &&
+        prime_need_recording_copy_enable(session);
+    CHECK(ready, "invalidation control starts with a fully prepared owned copy mode");
+    if (!ready) goto done;
+    PrimeNeedReceipt image = source;
+    CHECK(prime_need_receipt_copy_with_session(&destination, session, &image) &&
+        image.top != source.top,
+        "the unchanged captured group and owner admit carrier transport");
+    PrimeNeedReceipt captured = source;
+    if (reset_destination) arena_reset(&destination, arena_mark(&destination));
+    else ready = prime_need_receipt_observe_cell(&input, &source, 74u, 2u, value, &source);
+    PrimeNeedRecordingStatus before = prime_need_recording_status(group);
+    PrimeNeedReceipt refused = captured;
+    CHECK(ready && !prime_need_receipt_copy_with_session(&destination, session, &refused) &&
+        refused.top == captured.top && refused.recording == captured.recording &&
+        !prime_need_recording_copy_enclosing_owner(copy, &input, &destination),
+        "changed capture or reset destination refuses without publishing another receipt");
+    PrimeNeedRecordingStatus after = prime_need_recording_status(group);
+    CHECK(before.nodes == after.nodes && before.payload_charge == after.payload_charge &&
+        before.owner_links == after.owner_links && before.omitted == after.omitted &&
+        !arena_retains_owner(&destination, group, prime_need_recording_release),
+        "invalidated copy mode never falls back to spending or retaining the original owner");
+    if (reset_destination)
+        CHECK(!atom_deep_copy_session_object_original(session, copy, &destination, sizeof(Arena)),
+            "inverse metadata lookup rejects reset allocation authority");
+    else
+        CHECK(atom_deep_copy_session_object_original(session, copy, &destination, sizeof(Arena)) == &input,
+            "a valid physical map cannot hide changed recording progress");
+    atom_deep_copy_session_free(session); session = NULL;
+    prime_need_recording_copy_free(copy); copy = NULL;
+    CHECK(prime_need_receipt_observe_cell(&input, &source, 74u, 3u, value, &source) &&
+        prime_need_recording_status(group).nodes == before.nodes + 1u,
+        "the original remains runnable after invalidated preparation is discarded");
+done:
+    atom_deep_copy_session_free(session); prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group); arena_free(&input); arena_free(&destination);
+}
+
+static void check_recording_copy_refusal(unsigned mode) {
+    Arena input, destination;
+    arena_init_detached(&input); arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 65536u, 1u, 0u});
+    PrimeNeedReceipt source = {0}, output = {0};
+    Atom *value = atom_int(&input, 7);
+    bool seeded = group && prime_need_recording_reserve(group, NULL, 4u, 65536u, &source) &&
+        prime_need_receipt_observe_cell(&input, &source, 41u, 1u, value, &source);
+    PrimeNeedRecordingCopy *copy = seeded ? prime_need_recording_copy_new(group) : NULL;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[2] = {{&input, &destination}, {0}};
+    bool mapped = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]);
+    Arena *staged_destination = pairs[1].destination;
+    if (mode == 1u) pairs[1].destination = (Arena *)pairs[1].source;
+    mapped = mapped && atom_deep_copy_session_set_arena_map(session, pairs, mode == 0u ? 1u : 2u);
+    CHECK(mapped, "recording refusal has an actual source and the declared candidate region map");
+    if (!mapped) goto done;
+    if (mode == 2u) arena_reset(staged_destination, arena_mark(staged_destination));
+    bool changed = mode != 3u || prime_need_receipt_observe_cell(
+        &input, &source, 41u, 2u, value, &source);
+    PrimeNeedRecordingStatus before = prime_need_recording_status(group);
+    output = source;
+    CHECK(changed && !prime_need_recording_copy_prepare(copy, session) &&
+        !prime_need_recording_copy_take(copy),
+        "missing, borrowed, reset and changed recording authorities refuse preparation");
+    PrimeNeedRecordingStatus after = prime_need_recording_status(group);
+    CHECK(!prime_need_recording_copy_receipt(copy, &source, &output) &&
+        output.top == source.top && output.owner == source.owner && output.recording == source.recording &&
+        before.nodes == after.nodes && before.payload_charge == after.payload_charge &&
+        before.omitted == after.omitted && before.owner_links == after.owner_links,
+        "refusal preserves the original receipt, spent quota and output slot");
+    CHECK(prime_need_receipt_observe_cell(&input, &source, 41u, 3u, value, &source) &&
+        prime_need_recording_status(group).nodes == before.nodes + 1u,
+        "an original recording remains runnable after copy refusal");
+    atom_deep_copy_session_free(session); session = NULL;
+    prime_need_recording_copy_free(copy); copy = NULL;
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_graph_collect(&source, &graph) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.event_count == (mode == 3u ? 3u : 2u),
+        "discarding failed preparation leaves the full source history valid");
+    prime_need_receipt_graph_free(&graph);
+done:
+    atom_deep_copy_session_free(session); prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group);
+    arena_free(&input); arena_free(&destination);
+}
+
+static void check_recording_copy_zero(void) {
+    Arena source_arena, destination;
+    arena_init_detached(&source_arena); arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 1u, 0u});
+    PrimeNeedReceipt source = {0}, output = {0};
+    bool seeded = group && prime_need_recording_reserve(group, NULL, 0u, 0u, &source) &&
+        prime_need_receipt_observe_cell(&source_arena, &source, 41u, 1u,
+            atom_int(&source_arena, 7), &source);
+    PrimeNeedRecordingCopy *copy = seeded ? prime_need_recording_copy_new(group) : NULL;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[2] = {{&source_arena, &destination}, {0}};
+    bool prepared = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 2u) &&
+        prime_need_recording_copy_prepare(copy, session);
+    CHECK(prepared && prime_need_recording_copy_receipt(copy, &source, &output) &&
+        !output.top && output.recording != source.recording && output.session_id == source.session_id,
+        "enabled capacity zero copies a real retained slice with the same identity");
+    PrimeNeedRecording *image = prime_need_recording_copy_take(copy);
+    PrimeNeedRecordingStatus status = prime_need_recording_status(image);
+    CHECK(image && status.nodes == 0u && status.payload_charge == 0u &&
+        status.incomplete && status.omitted == 1u,
+        "empty recorded payload preserves its omitted prefix instead of becoming complete");
+    atom_deep_copy_session_free(session); prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group); group = NULL;
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(image && prime_need_receipt_graph_collect(&output, &graph) == PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE &&
+        graph.length == 0u && graph.incomplete,
+        "the empty incomplete image remains independently owned after source retirement");
+    prime_need_receipt_graph_free(&graph); prime_need_recording_release(image);
+    arena_free(&source_arena); arena_free(&destination);
+}
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    bool start;
+} RecordingStart;
+
+typedef struct {
+    RecordingStart *start;
+    PrimeNeedReceipt receipt;
+    PrimeNeedReceipt captured;
+    Atom *value;
+    Arena destination;
+    bool ok;
+} RecordingWorker;
+
+static void *recording_worker(void *raw) {
+    RecordingWorker *worker = raw;
+    pthread_mutex_lock(&worker->start->mutex);
+    while (!worker->start->start)
+        pthread_cond_wait(&worker->start->changed, &worker->start->mutex);
+    pthread_mutex_unlock(&worker->start->mutex);
+    PrimeNeedReceipt allocation = worker->receipt;
+    PrimeNeedRecordingScope scope;
+    prime_need_recording_enter(&scope, &allocation);
+    worker->receipt = worker->captured;
+    worker->ok = true;
+    for (uint64_t i = 0u; i < 2u; i++)
+        worker->ok &= prime_need_receipt_observe_cell(&worker->destination,
+            &worker->receipt, 31u, 100u + i, worker->value, &worker->receipt);
+    worker->ok &= prime_need_receipt_promote(
+        &worker->destination, &worker->receipt);
+    prime_need_recording_leave(&scope);
+    return NULL;
+}
+
+static void check_recording_private_slices(void) {
+    Arena source;
+    arena_init_detached(&source);
+    Atom *value = atom_int(&source, 7);
+    for (unsigned i = 0u; i < 8u; i++) {
+        Atom *children[] = {value, atom_int(&source, (int64_t)i)};
+        value = atom_expr(&source, children, 2u);
+    }
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){8u, 196608u, 3u, 2u});
+    PrimeNeedReceipt parent = {0};
+    RecordingStart start = {PTHREAD_MUTEX_INITIALIZER,
+                            PTHREAD_COND_INITIALIZER, false};
+    RecordingWorker workers[2] = {{.start = &start, .value = value},
+                                  {.start = &start, .value = value}};
+    for (unsigned i = 0u; i < 2u; i++)
+        arena_init_detached(&workers[i].destination);
+    bool reserved = group &&
+        prime_need_recording_reserve(group, NULL, 4u, 65536u, &parent) &&
+        prime_need_receipt_observe_cell(&source, &parent, 31u, 1u,
+                                       atom_int(&source, 9), &parent) &&
+        prime_need_recording_reserve(group, &parent, 2u, 65536u,
+                                    &workers[0].receipt) &&
+        prime_need_recording_reserve(group, &parent, 2u, 65536u,
+                                    &workers[1].receipt);
+    CHECK(reserved, "coordinator reserves bounded private worker slices before dispatch");
+    if (!reserved) goto done;
+    workers[0].captured = parent;
+    workers[1].captured = parent;
+    pthread_t threads[2];
+    unsigned started = 0u;
+    while (started < 2u &&
+           pthread_create(&threads[started], NULL, recording_worker,
+                          &workers[started]) == 0)
+        started++;
+    pthread_mutex_lock(&start.mutex);
+    start.start = true;
+    pthread_cond_broadcast(&start.changed);
+    pthread_mutex_unlock(&start.mutex);
+    for (unsigned i = 0u; i < started; i++)
+        pthread_join(threads[i], NULL);
+    CHECK(started == 2u && workers[0].ok && workers[1].ok,
+          "private slices copy immutable shared inputs and publish owned roots concurrently");
+    if (started != 2u) goto done;
+    PrimeNeedReceiptGraph left = {0}, right = {0};
+    CHECK(prime_need_receipt_graph_collect(&workers[0].receipt, &left) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              prime_need_receipt_graph_collect(&workers[1].receipt, &right) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              left.event_count == 3u && right.event_count == 3u &&
+              left.nodes[0].identity_id == right.nodes[0].identity_id &&
+              left.nodes[1].identity_id != right.nodes[1].identity_id,
+          "worker histories share one prefix and keep equal deliveries as distinct occurrences");
+    prime_need_receipt_graph_free(&left);
+    prime_need_receipt_graph_free(&right);
+    CHECK(prime_need_receipt_merge(&parent, &workers[0].receipt) &&
+              prime_need_receipt_merge(&parent, &workers[1].receipt) &&
+              prime_need_receipt_graph_collect(&parent, &left) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              left.length == 7u && left.event_count == 5u,
+          "coordinator joins worker packets after their private writes stop");
+    prime_need_receipt_graph_free(&left);
+    CettaStorageCensus storage = {0};
+    arena_storage_census(&workers[0].destination, &storage);
+    arena_storage_census(&workers[1].destination, &storage);
+    cetta_storage_finish(&storage);
+    PrimeNeedRecordingStatus status = prime_need_recording_status(group);
+    CHECK(!storage.incomplete && !status.incomplete && status.nodes == 7u &&
+              storage.retained <= status.retained_bound &&
+              status.payload_charge <= status.reserved_payload_bytes &&
+              status.owner_links == 2u,
+          "concurrent recording obeys the combined transitive payload and owner-link bounds");
+    cetta_storage_census_free(&storage);
+    arena_free(&source);
+    prime_need_recording_release(group);
+    group = NULL;
+    arena_free(&workers[0].destination);
+    CHECK(prime_need_receipt_graph_collect(&parent, &left) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE && left.event_count == 5u &&
+              left.nodes[0].event.after->ground.ival == 9 &&
+              left.nodes[1].event.after->kind == ATOM_EXPR,
+          "last worker destination retains the full joined graph after source and sibling retirement");
+    prime_need_receipt_graph_free(&left);
+done:
+    prime_need_recording_release(group);
+    for (unsigned i = 0u; i < 2u; i++)
+        arena_free(&workers[i].destination);
+    arena_free(&source);
+    pthread_cond_destroy(&start.changed);
+    pthread_mutex_destroy(&start.mutex);
+}
+
+typedef struct {
+    PrimeNeedReceipt roots[4];
+    size_t count;
+} RecordingRoots;
+
+static bool recording_root(const PrimeNeedReceipt *root, void *raw) {
+    RecordingRoots *roots = raw;
+    if (roots->count == 4u) return false;
+    roots->roots[roots->count++] = *root;
+    return true;
+}
+
+static void check_recording_scopes(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 16384u, 2u, 0u});
+    PrimeNeedReceipt parent = {0}, slice = {0}, left = {0}, right = {0};
+    CHECK(group && prime_need_recording_reserve(group, NULL, 1u, 4096u, &parent) &&
+        prime_need_receipt_observe_cell(&arena, &parent, 41u, 1u,
+            atom_int(&arena, 2), &parent) &&
+        prime_need_recording_reserve(group, &parent, 3u, 12288u, &slice),
+        "recording scopes reserve private authority independently of captured roots");
+    if (!group || !slice.recording) goto done;
+    PrimeNeedRecordingScope outer, inner;
+    prime_need_recording_enter(&outer, &slice);
+    CHECK(prime_need_receipt_observe_cell(&arena, &parent, 41u, 2u,
+            atom_int(&arena, 3), &left) && left.recording == slice.recording &&
+            left.owner == slice.owner && parent.recording != left.recording,
+        "a captured parent root cannot redirect append into its old writer slice");
+    CHECK(prime_need_receipt_observe_cell(&arena, &parent, 41u, 2u,
+            atom_int(&arena, 3), &right) && left.top != right.top,
+        "equal branch results have distinct recorded terminal roots");
+    RecordingRoots roots = {0};
+    CHECK(prime_need_recording_roots(&slice, recording_root, &roots) &&
+            roots.count == 2u && roots.roots[0].top == left.top &&
+            roots.roots[1].top == right.top,
+        "slice forest preserves branch roots in allocation order without joining worlds");
+    PrimeNeedReceipt missing = {0}, omitted = left;
+    prime_need_recording_enter(&inner, &missing);
+    CHECK(prime_need_receipt_observe_cell(&arena, &left, 41u, 3u,
+            atom_int(&arena, 4), &omitted) && !omitted.top && !omitted.recording &&
+            prime_need_recording_status(group).nodes == 3u,
+        "failed nested recording reservation cannot fall back to unbounded copying");
+    prime_need_recording_leave(&inner);
+    CHECK(g_prime_need_recording_scope == &slice &&
+            prime_need_receipt_observe_cell(&arena, &left, 41u, 4u,
+                atom_int(&arena, 5), &left),
+        "nested recording scope restores the prior private authority");
+    roots = (RecordingRoots){0};
+    CHECK(prime_need_recording_roots(&slice, recording_root, &roots) &&
+            roots.count == 2u && roots.roots[0].top == right.top &&
+            roots.roots[1].top == left.top,
+        "terminal root inventory removes only a root extended within its private slice");
+    prime_need_recording_leave(&outer);
+    prime_need_recording_leave(&outer);
+    CHECK(!g_prime_need_recording_scope,
+        "recording scope restoration is idempotent after normal or early exit");
+done:
+    prime_need_recording_release(group);
+    arena_free(&arena);
+}
+
+static void check_recording_refusal_boundaries(void) {
+    Arena source, destination;
+    arena_init_detached(&source);
+    arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){3u, 12288u, 3u, 2u});
+    PrimeNeedRecording *other = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){1u, 4096u, 1u, 0u});
+    PrimeNeedReceipt first = {0}, foreign = {0}, output = {0}, legacy = {0};
+    CHECK(group && other &&
+              prime_need_recording_reserve(group, NULL, 1u, 4096u, &first) &&
+              prime_need_recording_reserve(other, NULL, 1u, 4096u, &foreign),
+          "independent recording owners start with distinct authority");
+    if (!group || !other) goto done;
+    output = first;
+    CHECK(!prime_need_recording_reserve(group, &foreign, 1u, 4096u, &output) &&
+              output.recording == first.recording && output.top == first.top &&
+              output.session_id == first.session_id && output.owner == first.owner,
+          "foreign seed refusal leaves the exact output and reservation available");
+    CHECK(prime_need_receipt_begin(&source, &legacy) &&
+              !prime_need_recording_reserve(group, &legacy, 1u, 4096u, &output) &&
+              output.recording == first.recording,
+          "an earlier legacy recording needs an explicit capture boundary");
+    CHECK(!prime_need_recording_reserve(group, &first, 3u, 4096u, &output) &&
+              !prime_need_recording_reserve(group, &first, 1u, 12288u, &output) &&
+              prime_need_recording_status(group).reserved_nodes == 1u &&
+              prime_need_recording_status(group).reserved_payload_bytes == 4096u,
+          "refused grants do not consume node or byte reservations");
+    CHECK(prime_need_receipt_observe_cell(&source, &first, 31u, 1u,
+              atom_int(&source, 5), &first),
+          "the admitted final recording slot retains its event");
+    const PrimeNeedReceiptFrame *saved = first.top;
+    size_t charged = prime_need_recording_status(group).payload_charge;
+    CHECK(prime_need_receipt_observe_cell(&source, &first, 31u, 2u,
+              atom_int(&source, 6), &first) &&
+              prime_need_receipt_observe_cell(&source, &first, 31u, 3u,
+              atom_int(&source, 7), &first) && first.top == saved &&
+              prime_need_recording_status(group).nodes == 1u &&
+              prime_need_recording_status(group).payload_charge == charged &&
+              prime_need_recording_status(group).omitted == 2u,
+          "capacity exhaustion is sticky and repeated omissions allocate no payload");
+    PrimeNeedReceipt cyclic = {0};
+    Atom cycle = {.kind = ATOM_EXPR, .expr.len = 1u};
+    Atom *edge = &cycle;
+    cycle.expr.elems = &edge;
+    CHECK(prime_need_recording_reserve(group, NULL, 1u, 4096u, &cyclic) &&
+              prime_need_receipt_observe_cell(&source, &cyclic, 31u, 4u,
+                  &cycle, &cyclic) && !cyclic.top &&
+              prime_need_recording_status(group).payload_charge == charged,
+          "cyclic payload admission stops at its byte bound before canonical copying");
+    PrimeNeedReceipt opaque = {0};
+    Atom resource = {.kind = ATOM_GROUNDED, .ground.gkind = GV_SPACE};
+    CHECK(prime_need_recording_reserve(group, NULL, 1u, 4096u, &opaque) &&
+              prime_need_receipt_observe_cell(&source, &opaque, 31u, 5u,
+                  &resource, &opaque) && !opaque.top &&
+              prime_need_recording_status(group).payload_charge == charged,
+          "an opaque resource is omitted without pinning a semantic owner");
+    CHECK(prime_need_receipt_merge(&first, &foreign) && first.top == saved &&
+              !foreign.top && prime_need_recording_status(group).omitted == 5u,
+          "a foreign recording merge preserves both roots and remains incomplete");
+    ArenaMark mark = arena_mark(&destination);
+    PrimeNeedReceipt held = first;
+    CHECK(prime_need_receipt_promote(&destination, &held) &&
+              prime_need_receipt_promote(&destination, &held) &&
+              prime_need_recording_status(group).owner_links == 1u,
+          "nested reuse of one arena owns exactly one recording link");
+    arena_reset(&destination, mark);
+    CHECK(prime_need_receipt_promote(&destination, &held) &&
+              prime_need_recording_status(group).owner_links == 2u,
+          "rollback retires a link and readmission uses its separate reserved metadata");
+    CHECK(prime_need_recording_new((PrimeNeedRecordingLimits){0u, SIZE_MAX, 1u, 0u}) == NULL &&
+              prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, SIZE_MAX, 0u}) == NULL &&
+              prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 1u, SIZE_MAX}) == NULL,
+          "recording metadata and payload bound overflow is refused before allocation");
+    Arena empty_owner;
+    arena_init_detached(&empty_owner);
+    PrimeNeedRecording *empty_group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){0u, 0u, 1u, 1u});
+    PrimeNeedReceipt empty = {0};
+    bool empty_owned = empty_group &&
+        prime_need_recording_reserve(empty_group, NULL, 0u, 0u, &empty) &&
+        prime_need_receipt_promote(&empty_owner, &empty);
+    CHECK(empty_owned, "an enabled empty graph still owns its recording metadata");
+    CettaStorageCensus empty_storage = {0};
+    arena_storage_census(&empty_owner, &empty_storage);
+    cetta_storage_finish(&empty_storage);
+    PrimeNeedRecordingStatus empty_status = prime_need_recording_status(empty_group);
+    CHECK(empty_owned && !empty_storage.incomplete && !empty_status.incomplete &&
+              empty_status.payload_charge == 0u &&
+              empty_storage.retained == empty_status.metadata_bound &&
+              empty_storage.retained == empty_status.retained_bound,
+          "zero-payload bound includes exact group and destination-link metadata");
+    cetta_storage_census_free(&empty_storage);
+    prime_need_recording_release(empty_group);
+    arena_free(&empty_owner);
+done:
+    prime_need_recording_release(group);
+    prime_need_recording_release(other);
+    arena_free(&destination);
+    arena_free(&source);
+}
+
+static void check_bounded_recording(void) {
+    Arena source, first, second, refused;
+    arena_init_detached(&source);
+    arena_init_detached(&first);
+    arena_init_detached(&second);
+    arena_init_detached(&refused);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){8u, 65536u, 4u, 2u});
+    CHECK(group != NULL, "bounded recording has an independently owned allocation group");
+    if (!group) goto done;
+    PrimeNeedReceipt root = {0}, left = {0}, right = {0}, zero = {0};
+    CHECK(prime_need_recording_reserve(group, NULL, 3u, 24000u, &root),
+          "coordinator reserves the root recording slice");
+    CHECK(prime_need_receipt_observe_cell(&source, &root, 31u, 1u,
+              atom_int(&source, 7), &root) &&
+              prime_need_recording_reserve(group, &root, 2u, 16000u, &left) &&
+              prime_need_recording_reserve(group, &root, 2u, 16000u, &right),
+          "private slices share the immutable prefix without copying it");
+    CHECK(prime_need_receipt_observe_cell(&source, &left, 31u, 2u,
+              atom_int(&source, 3), &left) &&
+              prime_need_receipt_observe_cell(&source, &right, 31u, 3u,
+              atom_int(&source, 6), &right),
+          "each private slice records its own delivery");
+    PrimeNeedReceipt joined = left;
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_merge(&joined, &right) &&
+              prime_need_receipt_graph_collect(&joined, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              graph.length == 4u && graph.event_count == 3u,
+          "bounded recording uses the existing shared-prefix join DAG");
+    prime_need_receipt_graph_free(&graph);
+    PrimeNeedReceipt a = joined, b = joined;
+    CHECK(prime_need_receipt_promote(&first, &a) &&
+              prime_need_receipt_promote(&second, &b) &&
+              a.top == joined.top && b.top == joined.top,
+          "recording promotion retains the same frame addresses");
+    CHECK(prime_need_receipt_promote(&first, &a) &&
+              prime_need_recording_status(group).owner_links == 2u,
+          "repeated promotion to one destination creates no new owner link");
+    CettaStorageCensus payload = {0}, owners = {0};
+    prime_need_recording_storage(group, &payload);
+    cetta_storage_finish(&payload);
+    arena_storage_census(&first, &owners);
+    arena_storage_census(&second, &owners);
+    cetta_storage_finish(&owners);
+    PrimeNeedRecordingStatus status = prime_need_recording_status(group);
+    CHECK(!payload.incomplete && !owners.incomplete &&
+              owners.retained == payload.retained +
+                  2u * arena_retained_owner_allocation_bytes() &&
+              owners.retained <= status.retained_bound,
+          "census counts one shared graph and two separate destination links");
+    cetta_storage_census_free(&payload);
+    cetta_storage_census_free(&owners);
+    CHECK(prime_need_recording_reserve(group, &left, 0u, 0u, &zero),
+          "enabled zero-capacity recording is a retained slice");
+    const PrimeNeedReceiptFrame *left_root = zero.top, *right_root = right.top;
+    CHECK(prime_need_receipt_merge(&zero, &right) && zero.top == left_root &&
+              right.top == right_root &&
+              prime_need_recording_status(group).omitted == 1u,
+          "merge refusal preserves both roots and records no semantic refusal");
+    CHECK(prime_need_receipt_graph_collect(&zero, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE && graph.event_count == 2u &&
+              prime_need_receipt_graph_validate(&graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE,
+          "a valid retained prefix cannot claim complete recording");
+    prime_need_receipt_graph_free(&graph);
+    PrimeNeedReceipt c = joined;
+    CHECK(prime_need_receipt_promote(&refused, &c) &&
+              !prime_need_receipt_present(&c) && joined.top == a.top &&
+              prime_need_recording_status(group).omitted == 2u,
+          "owner-link refusal drops only the optional destination evidence");
+    arena_free(&source);
+    prime_need_recording_release(group);
+    group = NULL;
+    arena_free(&first);
+    CHECK(prime_need_receipt_graph_collect(&b, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE && graph.event_count == 3u &&
+              graph.nodes[0].event.after->ground.ival == 7,
+          "a retained destination keeps bounded payload after source and first owner retire");
+    prime_need_receipt_graph_free(&graph);
+done:
+    prime_need_recording_release(group);
+    arena_free(&source);
+    arena_free(&first);
+    arena_free(&second);
+    arena_free(&refused);
+
+    Arena semantic;
+    arena_init_detached(&semantic);
+    PrimeNeedSnapshot origin = {0}, cell = {0}, running = {0}, x = {0}, y = {0};
+    uint64_t id = 0u;
+    CHECK(prime_need_snapshot_begin(&origin) &&
+              prime_need_snapshot_allocate(&semantic, &origin,
+                  atom_symbol(&semantic, "recorded-choice"), &cell, &id) &&
+              prime_need_snapshot_start_evaluation(&semantic, &cell, id, 11u, &running) &&
+              prime_need_snapshot_resolve_value(&semantic, &running, id, 11u,
+                  atom_int(&semantic, 3), &x) &&
+              prime_need_snapshot_resolve_value(&semantic, &running, id, 11u,
+                  atom_int(&semantic, 6), &y),
+          "semantic alternatives own incompatible completed caches");
+    PrimeNeedSnapshot tried = x;
+    CHECK(!prime_need_snapshot_merge(&tried, &y),
+          "semantic cache conflict is decided without recording");
+    group = prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 2u, 0u});
+    PrimeNeedReceipt rx = {0}, ry = {0};
+    CHECK(group && prime_need_recording_reserve(group, NULL, 0u, 0u, &rx) &&
+              prime_need_recording_reserve(group, NULL, 0u, 0u, &ry) &&
+              prime_need_receipt_observe_cached_cell(&semantic, &rx, &x, id,
+                  true, false, atom_int(&semantic, 3), &rx) &&
+              prime_need_receipt_observe_cached_cell(&semantic, &ry, &y, id,
+                  true, false, atom_int(&semantic, 6), &ry),
+          "zero-capacity histories retain omissions for both cached outcomes");
+    tried = x;
+    CHECK(prime_need_receipt_compatible(&rx, &ry) &&
+              !prime_need_snapshot_merge(&tried, &y) &&
+              prime_need_recording_status(group).nodes == 0u,
+          "omitted observations neither authorize nor reject incompatible semantic worlds");
+    prime_need_recording_release(group);
+
+    group = prime_need_recording_new((PrimeNeedRecordingLimits){2u, 4096u, 1u, 0u});
+    PrimeNeedReceipt large = {0};
+    char bytes[8192];
+    memset(bytes, 'x', sizeof(bytes));
+    CHECK(group && prime_need_recording_reserve(group, NULL, 2u, 4096u, &large) &&
+              prime_need_receipt_observe_cell(&semantic, &large, 31u, 9u,
+                  atom_string_n(&semantic, bytes, sizeof(bytes)), &large) &&
+              prime_need_recording_status(group).nodes == 0u &&
+              prime_need_recording_status(group).payload_charge == 0u &&
+              prime_need_recording_status(group).incomplete,
+          "oversized payload is refused before copying or retaining its source");
+    prime_need_recording_release(group);
+    arena_free(&semantic);
+}
+
+static void check_cache_production_identity(Arena *arena, Arena *promoted_arena) {
+    PrimeNeedSnapshot root = {0}, cell = {0}, running = {0};
+    PrimeNeedSnapshot left = {0}, right = {0}, faulted = {0};
+    uint64_t thunk_id = 0u, left_id = 0u, right_id = 0u, fault_id = 0u;
+    Atom *origin = atom_symbol(arena, "production-origin");
+    Atom *value = atom_int(arena, 3);
+    CHECK(prime_need_snapshot_begin(&root) &&
+              prime_need_snapshot_allocate(arena, &root, origin, &cell, &thunk_id),
+          "production identity starts from an actual allocated cell");
+    uint64_t unchanged = UINT64_MAX;
+    CHECK(!prime_need_snapshot_cached_update_id(&cell, thunk_id, &unchanged) &&
+              unchanged == UINT64_MAX,
+          "empty cell does not invent a production or change the refused destination");
+    CHECK(prime_need_snapshot_start_evaluation(arena, &cell, thunk_id, 51u, &running) &&
+              !prime_need_snapshot_cached_update_id(&running, thunk_id, &unchanged) &&
+              unchanged == UINT64_MAX,
+          "in-flight producer is not a completed update");
+    CHECK(prime_need_snapshot_resolve_value(arena, &running, thunk_id, 51u, value, &left) &&
+              prime_need_snapshot_resolve_value(arena, &running, thunk_id, 51u, value, &right) &&
+              prime_need_snapshot_resolve_stable_fault(
+                  arena, &running, thunk_id, 51u, origin, &faulted) &&
+              prime_need_snapshot_cached_update_id(&left, thunk_id, &left_id) &&
+              prime_need_snapshot_cached_update_id(&right, thunk_id, &right_id) &&
+              prime_need_snapshot_cached_update_id(&faulted, thunk_id, &fault_id),
+          "value and stable-fault returns have actual completed update identities");
+    PrimeNeedCellView left_cell, right_cell;
+    CHECK(left_id != 0u && left_id != right_id && left_id != fault_id &&
+              prime_need_snapshot_lookup(&left, thunk_id, &left_cell) &&
+              prime_need_snapshot_lookup(&right, thunk_id, &right_cell) &&
+              left_cell.storage_key == right_cell.storage_key &&
+              atom_eq(left_cell.cached, right_cell.cached),
+          "equal alternative values at the same cell are different productions");
+    PrimeNeedSnapshot promoted = left;
+    uint64_t promoted_id = 0u;
+    CHECK(prime_need_snapshot_promote(promoted_arena, &promoted) &&
+              prime_need_snapshot_cached_update_id(&promoted, thunk_id, &promoted_id) &&
+              promoted_id == left_id,
+          "whole snapshot promotion preserves the cache update identity");
+    Arena young;
+    arena_init(&young);
+    PrimeNeedSnapshot young_return = {0};
+    uint64_t young_id = 0u;
+    bool suffix_ok = prime_need_snapshot_resolve_value(
+        &young, &running, thunk_id, 51u, value, &young_return) &&
+        prime_need_snapshot_cached_update_id(&young_return, thunk_id, &young_id) &&
+        prime_need_snapshot_promote_suffix(promoted_arena, &young, &young_return);
+    arena_free(&young);
+    CHECK(suffix_ok &&
+              prime_need_snapshot_cached_update_id(&young_return, thunk_id, &promoted_id) &&
+              young_id == promoted_id && young_id != left_id,
+          "suffix promotion retains production identity after source arena retirement");
+    PrimeNeedSnapshot retried = {0}, rerunning = {0}, returned = {0};
+    uint64_t returned_id = 0u;
+    CHECK(prime_need_snapshot_retry_evaluation(arena, &running, thunk_id, 51u, &retried) &&
+              !prime_need_snapshot_cached_update_id(&retried, thunk_id, &unchanged) &&
+              unchanged == UINT64_MAX &&
+              prime_need_snapshot_start_evaluation(arena, &retried, thunk_id, 52u, &rerunning) &&
+              prime_need_snapshot_resolve_value(arena, &rerunning, thunk_id, 52u, value, &returned) &&
+              prime_need_snapshot_cached_update_id(&returned, thunk_id, &returned_id) &&
+              returned_id != left_id,
+          "retry has no completed producer and its later completion is fresh");
+    PrimeNeedSnapshot rejected = running;
+    CHECK(!prime_need_snapshot_resolve_value(arena, &running, thunk_id, 999u, value, &rejected) &&
+              rejected.top == running.top &&
+              !prime_need_snapshot_cached_update_id(&rejected, thunk_id, &unchanged),
+          "wrong evaluating owner cannot manufacture a producer identity");
+
+    PrimeNeedReceipt receipt = {0};
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_begin(arena, &receipt) &&
+              prime_need_receipt_observe_cached_cell(
+                  arena, &receipt, &left, thunk_id, true, false, value, &receipt) &&
+              prime_need_receipt_observe_cached_cell(
+                  arena, &receipt, &left, thunk_id, false, false, value, &receipt) &&
+              prime_need_receipt_graph_collect(&receipt, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 2u,
+          "one production and two deliveries use the existing receipt path");
+    CHECK(graph.length == 2u && graph.nodes[0].event.producer_completed &&
+              !graph.nodes[1].event.producer_completed &&
+              graph.nodes[0].event.producer_update_id == left_id &&
+              graph.nodes[1].event.producer_update_id == left_id &&
+              graph.nodes[0].identity_id != graph.nodes[1].identity_id,
+          "cache delivery names its actual producer without repeating production");
+    PrimeNeedReceipt saved_receipt = receipt;
+    CHECK(!prime_need_receipt_observe_cached_cell(
+              arena, &receipt, &running, thunk_id, true, false, value, &receipt) &&
+              receipt.top == saved_receipt.top,
+          "in-flight state refuses a claimed completed delivery transactionally");
+    PrimeNeedReceipt late = {0};
+    CHECK(prime_need_receipt_begin(arena, &late) &&
+              prime_need_receipt_observe_cached_cell(
+                  arena, &late, &left, thunk_id, false, false, value, &late) &&
+              prime_need_receipt_graph_collect(&late, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 1u &&
+              !graph.nodes[0].event.producer_completed &&
+              graph.nodes[0].event.producer_update_id == left_id,
+          "late recording retains an external producer reference without inventing a firing");
+    graph.nodes[0].event.producer_update_id = 0u;
+    graph.nodes[0].event.producer_completed = true;
+    CHECK(prime_need_receipt_graph_validate(&graph) == PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "a completion without a named cache update is structurally invalid");
+    CHECK(prime_need_receipt_promote(promoted_arena, &receipt) &&
+              prime_need_receipt_graph_collect(&receipt, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 2u &&
+              graph.nodes[0].event.producer_update_id == left_id &&
+              graph.nodes[0].event.producer_completed &&
+              !graph.nodes[1].event.producer_completed,
+          "receipt promotion preserves production versus delivery evidence");
+    prime_need_receipt_graph_free(&graph);
+}
+
+static void check_recording_admission(void) {
+    Arena source, retained;
+    arena_init_detached(&source);
+    arena_init_detached(&retained);
+    Atom *coefficient = atom_int(&source, 2);
+    Atom *verdicts[] = {atom_symbol(&source, "True"),
+        atom_symbol(&source, "False"), atom_symbol(&source, "Maybe")};
+    PrimeNeedReceiptEventKind kinds[] = {PRIME_NEED_RECEIPT_ADMISSION_TRUE,
+        PRIME_NEED_RECEIPT_ADMISSION_FALSE, PRIME_NEED_RECEIPT_ADMISSION_PENDING};
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){3u, 65536u, 1u, 1u});
+    PrimeNeedReceipt receipt = {0};
+    CHECK(group && prime_need_recording_reserve(group, NULL, 3u, 65536u, &receipt),
+          "admission recording reserves its own bounded payload owner");
+    for (size_t i = 0u; i < 3u; i++)
+        CHECK(prime_need_receipt_admission(&source, &receipt, kinds[i], 71u,
+                  coefficient, verdicts[i], &receipt),
+              "each actual admission role retains a separate verdict occurrence");
+    PrimeNeedReceipt unchanged = receipt;
+    CHECK(!prime_need_receipt_admission(&source, &receipt,
+              PRIME_NEED_RECEIPT_RESAMPLE, 71u, coefficient, verdicts[0], &receipt) &&
+              receipt.top == unchanged.top,
+          "a non-admission role refuses without replacing the retained graph");
+    CHECK(prime_need_receipt_promote(&retained, &receipt),
+          "admission payloads transfer an owner link before source retirement");
+    prime_need_recording_release(group);
+    arena_free(&source);
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_graph_collect(&receipt, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.event_count == 3u,
+          "all examined verdicts survive source and initial recorder retirement");
+    if (graph.length == 3u) {
+        for (size_t i = 0u; i < 3u; i++)
+            CHECK(graph.nodes[i].event.kind == kinds[i] &&
+                      graph.nodes[i].event.source_occurrence_id == 71u &&
+                      atom_eq(graph.nodes[i].event.before, atom_int(&retained, 2)) &&
+                      atom_eq(graph.nodes[i].event.after, atom_symbol(&retained,
+                          i == 0u ? "True" : i == 1u ? "False" : "Maybe")) &&
+                      !graph.nodes[i].event.producer_completed &&
+                      !graph.nodes[i].event.producer_update_id,
+                  "guard observations preserve coefficient and origin without inventing a production");
+    } else CHECK(false, "admission graph keeps three chronological nodes");
+    prime_need_receipt_graph_free(&graph);
+    arena_free(&retained);
+
+    arena_init_detached(&source);
+    coefficient = atom_int(&source, 2);
+    Atom *no = atom_symbol(&source, "False");
+    group = prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 1u, 0u});
+    CHECK(group && prime_need_recording_reserve(group, NULL, 0u, 0u, &receipt) &&
+              prime_need_receipt_admission(&source, &receipt,
+                  PRIME_NEED_RECEIPT_ADMISSION_FALSE, 71u, coefficient, no, &receipt) &&
+              !receipt.top && prime_need_recording_status(group).incomplete &&
+              prime_need_recording_status(group).omitted == 1u,
+          "missing guard evidence remains incomplete instead of certifying no examined verdict");
+    prime_need_recording_release(group);
+    arena_free(&source);
+}
+
+static void check_receipt_graph(Arena *arena, Arena *promoted_arena,
+                                Atom *value) {
+    PrimeNeedReceipt receipt = {0};
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_graph_collect(&receipt, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_ABSENT && graph.length == 0u &&
+              graph.session_id == 0u,
+          "graph absence is an explicit observation status");
+    CHECK(prime_need_receipt_begin(arena, &receipt) &&
+              prime_need_receipt_graph_collect(&receipt, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              graph.session_id == receipt.session_id &&
+              graph.length == 0u && graph.root_id == 0u,
+          "captured empty graph is complete and distinct from absence");
+    CHECK(prime_need_receipt_observe_cell(
+              arena, &receipt, 91u, 3u, value, &receipt),
+          "graph producer support is constructed by the receipt service");
+    PrimeNeedReceipt left;
+    PrimeNeedReceipt right;
+    CHECK(prime_need_receipt_use_equation_ids(
+              arena, &receipt, 17u, 2u, &left) &&
+              prime_need_receipt_use_equation_ids(
+                  arena, &receipt, 17u, 2u, &right),
+          "equal rule uses are distinct receipt occurrences");
+    PrimeNeedReceipt joined = left;
+    CHECK(prime_need_receipt_merge(&joined, &right) &&
+              prime_need_receipt_graph_collect(&joined, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              graph.length == 4u && graph.event_count == 3u,
+          "graph exposes common support once, both uses and the join");
+    if (graph.length != 4u) {
+        prime_need_receipt_graph_free(&graph);
+        return;
+    }
+    CHECK(graph.nodes[0].left_id == 0u && graph.nodes[0].right_id == 0u &&
+              graph.nodes[0].has_event &&
+              graph.nodes[1].left_id == graph.nodes[0].identity_id &&
+              graph.nodes[2].left_id == graph.nodes[0].identity_id &&
+              graph.nodes[1].identity_id != graph.nodes[2].identity_id &&
+              graph.nodes[1].event.rule_occurrence_id == 2u &&
+              graph.nodes[2].event.rule_occurrence_id == 2u,
+          "shared predecessor and equal firing multiplicity survive projection");
+    CHECK(!graph.nodes[3].has_event &&
+              graph.nodes[3].left_id == graph.nodes[1].identity_id &&
+              graph.nodes[3].right_id == graph.nodes[2].identity_id &&
+              graph.root_id == graph.nodes[3].identity_id,
+          "join identity and both exact predecessor edges remain visible");
+
+    PrimeNeedReceiptGraphNode nodes[4];
+    memcpy(nodes, graph.nodes, sizeof(nodes));
+    PrimeNeedReceiptGraph changed = graph;
+    changed.nodes = nodes;
+    nodes[2].identity_id = nodes[1].identity_id;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "duplicate node identity cannot certify a complete graph");
+    memcpy(nodes, graph.nodes, sizeof(nodes));
+    nodes[1].left_id = UINT64_MAX;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "missing predecessor refuses graph completion");
+    nodes[1].left_id = graph.root_id;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "backward chronological edge refuses a causal cycle");
+    memcpy(nodes, graph.nodes, sizeof(nodes));
+    nodes[2].event.event_id = nodes[1].event.event_id;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "event identity cannot be substituted independently of its node");
+    memcpy(nodes, graph.nodes, sizeof(nodes));
+    changed.event_count = 2u;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "incorrect event total cannot certify completion");
+    changed.event_count = graph.event_count;
+    changed.root_id = nodes[1].identity_id;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "a partial root cannot claim all retained nodes");
+    changed.root_id = graph.root_id;
+    nodes[1].left_id = 0u;
+    nodes[2].left_id = 0u;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID,
+          "orphaned retained support cannot masquerade as a rooted graph");
+    nodes[2].left_id = graph.nodes[0].identity_id;
+    CHECK(prime_need_receipt_graph_validate(&changed) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              nodes[1].left_id != graph.nodes[1].left_id,
+          "structural validity alone does not authenticate a removed sharing edge");
+    PrimeNeedReceiptGraphNode *retained_nodes = graph.nodes;
+    uint64_t retained_root = graph.root_id;
+    PrimeNeedReceipt wrong_session = joined;
+    wrong_session.session_id++;
+    CHECK(prime_need_receipt_graph_collect(&wrong_session, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_INVALID &&
+              graph.nodes == retained_nodes && graph.length == 4u &&
+              graph.root_id == retained_root,
+          "invalid capture preserves the entire prior graph view");
+
+    PrimeNeedReceipt promoted = joined;
+    PrimeNeedReceiptGraph promoted_graph = {0};
+    CHECK(prime_need_receipt_promote(promoted_arena, &promoted) &&
+              prime_need_receipt_graph_collect(&promoted, &promoted_graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              promoted_graph.length == graph.length &&
+              promoted_graph.root_id == graph.root_id &&
+              promoted_graph.session_id == graph.session_id,
+          "promotion retains the graph session and root occurrence");
+    bool same_edges = promoted_graph.length == graph.length;
+    for (size_t i = 0u; same_edges && i < graph.length; i++) {
+        const PrimeNeedReceiptGraphNode *a = &graph.nodes[i];
+        const PrimeNeedReceiptGraphNode *b = &promoted_graph.nodes[i];
+        same_edges = a->identity_id == b->identity_id &&
+                     a->left_id == b->left_id && a->right_id == b->right_id &&
+                     a->has_event == b->has_event;
+    }
+    CHECK(same_edges && atom_eq(promoted_graph.nodes[0].event.after, value),
+          "promoted graph preserves every edge and borrowed value meaning");
+    prime_need_receipt_graph_free(&promoted_graph);
+
+    PrimeNeedReceipt copied_base = receipt;
+    PrimeNeedReceipt copied_right;
+    PrimeNeedReceipt copied_join = left;
+    CHECK(prime_need_receipt_promote(promoted_arena, &copied_base) &&
+              prime_need_receipt_use_equation_ids(
+                  promoted_arena, &copied_base, 17u, 2u, &copied_right) &&
+              prime_need_receipt_merge(&copied_join, &copied_right) &&
+              prime_need_receipt_graph_collect(&copied_join, &graph) ==
+                  PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+              graph.length == 4u && graph.event_count == 3u,
+          "two storage copies of inherited support remain one graph occurrence");
+    prime_need_receipt_graph_free(&graph);
+    CHECK(graph.nodes == NULL && graph.length == 0u && graph.session_id == 0u,
+          "graph release clears its owned view without releasing receipt payloads");
+    prime_need_receipt_graph_free(&graph);
+    CHECK(prime_need_receipt_graph_collect(&copied_join, &graph) ==
+              PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 4u,
+          "view release and repeated collection preserve the original receipt");
+    prime_need_receipt_graph_free(&graph);
+}
+#endif
+
+static void check_branch_shared_prefix_compatibility(void) {
+    const unsigned lengths[] = {0u, 1u, 2u, 17u};
+    for (size_t n = 0u; n < sizeof(lengths) / sizeof(*lengths); n++) {
+        for (unsigned kind = 0u; kind < 5u; kind++) {
+            for (unsigned mode = 0u; mode < 3u; mode++) {
+                Arena source, destination;
+                arena_init_detached(&source);
+                arena_init_detached(&destination);
+                StateCell state = {0}, a = {0}, b = {0};
+                PrimeNeedBranchState common = {0}, left = {0}, right = {0};
+                bool made = prime_need_branch_state_begin(&source, &common);
+                unsigned writes = lengths[n];
+                for (unsigned i = 0u; made && i < writes; i++)
+                    made = prime_need_branch_state_write(&source, &common,
+                        &state, atom_int(&source, i), atom_int(&source, i + 1u), &common);
+                Atom *value = atom_int(&source, writes);
+                Atom *next = atom_int(&source, writes + 1u);
+                if (kind == 0u || kind == 1u) {
+                    made = made && prime_need_branch_state_read(&source, &common,
+                        kind ? &state : &a, value, &left) &&
+                        prime_need_branch_state_read(&source, &common,
+                            kind ? &state : &b, value, &right);
+                } else {
+                    made = made && prime_need_branch_state_write(&source, &common,
+                        kind == 4u ? &a : &state, value, next, &left);
+                    made = made && (kind == 3u
+                        ? prime_need_branch_state_read(&source, &common, &state, value, &right)
+                        : prime_need_branch_state_write(&source, &common,
+                            kind == 4u ? &b : &state, value, next, &right));
+                }
+                CHECK(made && left.top != right.top &&
+                          prime_need_branch_state_is_ancestor(&common, &left) &&
+                          prime_need_branch_state_is_ancestor(&common, &right),
+                      "distinct branch extensions inherit the same actual write prefix");
+                if (mode == 1u)
+                    CHECK(prime_need_branch_state_promote(&destination, &right),
+                          "a separately promoted branch retains its logical occurrences");
+                if (mode == 2u) {
+                    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+                    AtomDeepCopyArenaPair pair = {&source, &destination};
+                    CHECK(session && atom_deep_copy_session_set_arena_map(session, &pair, 1u) &&
+                              prime_need_branch_state_copy_with_session(&destination, session, &left) &&
+                              prime_need_branch_state_copy_with_session(&destination, session, &right),
+                          "owned branch copies share the complete retained prefix graph");
+                    atom_deep_copy_session_free(session);
+                    arena_free(&source);
+                }
+                PrimeNeedBranchState old_left = left, old_right = right, joined = left;
+                bool expected = kind == 0u || kind == 1u || kind == 4u;
+                bool merged = prime_need_branch_state_merge(&joined, &right);
+                CHECK(prime_need_branch_state_compatible(&left, &right) == expected &&
+                          prime_need_branch_state_compatible(&right, &left) == expected &&
+                          merged == expected,
+                      "only branch-specific hazards conflict, including equal-payload independent writes");
+                CHECK(left.top == old_left.top && left.owner == old_left.owner &&
+                          left.session_id == old_left.session_id &&
+                          right.top == old_right.top && right.owner == old_right.owner &&
+                          right.session_id == old_right.session_id,
+                      "compatibility and merge preserve both original branch carriers");
+                CHECK(merged
+                          ? prime_need_branch_state_is_ancestor(&left, &joined) &&
+                            prime_need_branch_state_is_ancestor(&right, &joined)
+                          : joined.top == left.top && joined.owner == left.owner &&
+                            joined.session_id == left.session_id,
+                      "accepted joins retain both parents and refused joins retain the original root");
+                if (expected && (writes || kind == 1u)) {
+                    Atom *actual = NULL;
+                    CHECK(prime_need_branch_state_value(&joined, &state, &actual) &&
+                              atom_eq(actual, atom_int(&destination, writes)),
+                          "joining extensions retains the final common-prefix state value");
+                }
+                if (mode != 2u) arena_free(&source);
+                arena_free(&destination);
+            }
+        }
+    }
+}
 
 int main(void) {
     SymbolTable symbols;
@@ -33,6 +1411,8 @@ int main(void) {
     arena_init(&empty_suffix_arena);
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
+
+    check_branch_shared_prefix_compatibility();
 
     PrimeNeedBranchState identity_carrier;
     prime_need_branch_state_init(&identity_carrier);
@@ -489,6 +1869,20 @@ int main(void) {
 #endif
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    check_cache_production_identity(&arena, &promoted_arena);
+    check_bounded_recording();
+    check_recording_refusal_boundaries();
+    check_recording_private_slices();
+    check_recording_scopes();
+    check_recording_admission();
+    check_recording_copy();
+    check_recording_copy_owner_domain();
+    check_recording_copy_mode();
+    check_recording_copy_mode_invalidation(false);
+    check_recording_copy_mode_invalidation(true);
+    for (unsigned mode = 0u; mode < 4u; mode++) check_recording_copy_refusal(mode);
+    check_recording_copy_zero();
+    check_receipt_graph(&arena, &promoted_arena, left_value);
     PrimeNeedReceipt receipt_root;
     prime_need_receipt_init(&receipt_root);
     CHECK(!prime_need_receipt_present(&receipt_root),

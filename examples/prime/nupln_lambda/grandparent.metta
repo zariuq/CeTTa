@@ -61,7 +61,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; parent's meaning is its evidence; the domain lists its individuals.
-(= (parent $a $b) (nu:holds &kb @(parent $a $b)))
+(= (parent $a $b) (nu:holds &kb (lift app @parent (lift $a) (lift $b))))
 (= (nu:individuals Person) (ann bob cat dan eve fay gus))
 
 ; All 49 pairs through the activated program, including pairs that were
@@ -73,13 +73,13 @@
          (collapse
            (let* (($a (superpose $people))
                   ($b (superpose $people)))
-             (if ($grandparent $a $b) ($a $b) (empty))))))))
+             (if ($grandparent $a $b) ($a $b) (empty))){$a $b})))))
 
 ; The same pairs read directly off the parent facts, for comparison.
 !(Expected
    (collapse
      (match &kb (: $p1 (≞ (quote (parent $a $y)) ⊤))
-       (match &kb (: $p2 (≞ (quote (parent $y $b)) ⊤)) ($a $b)))))
+       (match &kb (: $p2 (≞ (quote (parent $y $b)) ⊤)) ($a $b)){$p2 $y $b}){$p1 $a $y}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Part 2: the meta-interpretive examples' data               ;;

@@ -175,6 +175,8 @@ int main(int argc, char **argv) {
         PL_discard_foreign_frame(f0);
     }
 
+    require(PL_cleanup(PL_CLEANUP_NO_CANCEL) == PL_CLEANUP_SUCCESS,
+            "reclaim final engine after query release");
     printf("PASS: petta/libpl query-release lifecycle (9 scenarios)\n");
     return 0;
 }

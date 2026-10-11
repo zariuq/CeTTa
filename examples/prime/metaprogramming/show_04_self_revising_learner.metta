@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Why it matters: a learner that generalizes must be able to change its mind,
 ; and every conclusion drawn from a rule it has since revised must stop
 ; counting until it is derived again, while nothing unrelated is disturbed.
@@ -11,7 +13,7 @@
 ; unrelated fact.  The learner renews the alias and derives again: robin still
 ; flies, pingu's old conclusion is withdrawn, and its negation is published.
 
-!(bind! &kb (new-space))
+!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &kb kind (u 0) (: songbird kind) (: penguin kind))
 !(set:inductive &kb animal (u 0) (: tweety animal) (: pingu animal) (: robin animal))
 !(set:define &kb falsum prop (= falsum (all prop (lam p p))))
@@ -23,7 +25,7 @@
 (= (member-grounded $kind $grounded)
    (if (== $grounded ()) False
        (let ($a $rest) (decons-atom $grounded)
-         (if (set:eq &kb (kind-of $a) $kind) True (member-grounded $kind $rest)))))
+         (if (set:eq &kb (kind-of $a) $kind) True (member-grounded $kind $rest))){$a $rest}))
 (= (kind-value $kind $grounded) (if (member-grounded $kind $grounded) falsum verum))
 (= (publish-rule $grounded)
    (let $s (kind-value songbird $grounded)
@@ -45,11 +47,11 @@
      (if (set:proves &kb (pf:imp-intro (pf:hyp 0)) (can-fly $x))
          (let $n (flies-name $x)
            (let $r (set:theorem &kb $n (can-fly $x) (pf:imp-intro (pf:hyp 0)))
-             (let $b (add-atom &self (believed $n (can-fly $x))) (Concluded $n))))
+             (let $b (add-atom &self (believed $n (can-fly $x))) (Concluded $n)){$b}){$r}){$n}
          (let $n (grounded-name $x)
            (let $r (set:theorem &kb $n (imp (can-fly $x) falsum) (pf:imp-intro (pf:hyp 0)))
              (let $b (add-atom &self (believed $n (imp (can-fly $x) falsum)))
-               (Concluded $n)))))))
+               (Concluded $n)){$b}){$r}){$n})))
 
 ; ---- the kernel's view of a published fact
 (= (status $name $prop)
@@ -59,10 +61,10 @@
 ; ---- revision: retract a published definition or fact, then republish
 (= (retract $name)
    (let $a (collapse (match &kb (set:known $name $p $o $proof $deps $r $s)
-                        (remove-atom &kb (set:known $name $p $o $proof $deps $r $s))))
+                        (remove-atom &kb (set:known $name $p $o $proof $deps $r $s))){$name})
      (let $b (collapse (match &kb (type:rule $name $n $pats $rhs)
-                          (remove-atom &kb (type:rule $name $n $pats $rhs))))
-       (let $c (collapse (match &kb (: $name $ty) (remove-atom &kb (: $name $ty))))
+                          (remove-atom &kb (type:rule $name $n $pats $rhs))){$name})
+       (let $c (collapse (match &kb (: $name $ty) (remove-atom &kb (: $name $ty))){$name})
          (Retracted $name)))))
 (= (derive-again)
    (let $old (collapse (match &self (believed $n $p)

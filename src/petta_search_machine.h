@@ -35,6 +35,9 @@ typedef enum {
      * consulted before the machine's direct-form dispatch.
      */
     PETTA_MACHINE_HOST_READY_OVERRIDE,
+    /* Open a language-owned scope without collecting its answers. The
+     * resulting control term runs under the same search continuation. */
+    PETTA_MACHINE_HOST_SCOPE_ACTIVATION,
     PETTA_MACHINE_HOST_STRICT_RELATIONAL_EXTENSION,
     /*
      * The shared host owns the intrinsic cases, while explicit PeTTa
@@ -191,6 +194,47 @@ bool petta_machine_table_maintain(
 typedef bool (*PettaMachineBorrowedItemConsumer)(
     void *context, Atom *item);
 
+/* A host may move an owned machine between executors at this boundary.
+ * LOCAL advances only retained control/bindings; CALL presents the written
+ * next call root (its activation fields may still be contextual); HOST
+ * requires the host's own execution authority. These are readiness classes,
+ * not a second language interpretation. */
+typedef enum {
+    PETTA_MACHINE_OPERATION_LOCAL,
+    PETTA_MACHINE_OPERATION_CALL,
+    PETTA_MACHINE_OPERATION_HOST,
+} PettaMachineOperation;
+
+/* Borrowed for one permission callback. The written operand stays in its
+ * original goal; this view names the branch image and, for authored syntax,
+ * its activation namespace. Reading it does not force or substitute a term.
+ * A NULL view denotes a choice/control operation without an operand. */
+typedef struct {
+    Atom *expression;
+    const Bindings *environment;
+    uint32_t activation_epoch;
+    uint32_t activation_first_entry;
+} PettaMachineOperationView;
+
+/* Follow only existing root aliases. Open contextual results, cycles and
+ * unavailable activation bindings defer; they grant no execution authority.
+ * The returned Atom is borrowed and must not escape the permission callback. */
+CettaGsltTermViewStatusV1 petta_machine_operation_view_root(
+    const PettaMachineOperationView *view, Atom **root_out);
+
+/* An external identity is either pinned by an actual retained owner, or
+ * borrowed from a host scope which outlives every machine/image using it.
+ * Scope shutdown must destroy those images before releasing its resources.
+ * This is lifetime authority only: mutable query revisions remain separate.
+ * Callbacks with an owner are all required and use the Arena owner protocol. */
+typedef struct {
+    const void *scope;
+    void *owner;
+    void (*retain)(void *);
+    void (*release)(void *);
+    CettaStorageVisitor storage;
+} PettaMachineResourceLease;
+
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
@@ -204,15 +248,41 @@ typedef struct {
      * it grants neither storage nor batching authority.  NULL keeps nested
      * observation boundaries inline. */
     const CettaControlPlan *control_plan;
-    /* Request suspension only at an exactly externalizable relational
-     * choice.  Deterministic stretches remain inside the machine; this avoids
+    /* Request suspension only at an exactly externalizable equation or
+     * correlated type-contract choice. Deterministic stretches remain inside
+     * the machine; this avoids
      * polling the continuation hub after every transition. */
     bool externalize_equation_choices;
     /* The host contributes one component to the shared branch-capture
      * capacity.  The relational backend combines it with its internal state
-     * profile and accepts an owned continuation only at multi-shot capacity. */
+     * profile and accepts an owned continuation only at multi-shot capacity.
+     *
+     * This is a semantically passive observation inside an owned episode:
+     * the host keeps its program, process symbol table, thread-local library
+     * context and resource owners stable across these observations. The observer
+     * must not change either endpoint's meaning or authority. Bookkeeping or
+     * cache synchronization is allowed only if it preserves that meaning and
+     * authority; reassociating symbol-keyed library state is not passive.
+     *
+     * Tokens are observed sequentially. The machine cannot inspect arbitrary
+     * state behind context, authenticate an untruthful observer, or construct
+     * an atomic snapshot across concurrent authority changes. Such providers
+     * need an additional synchronization/authority contract before admission. */
     CettaBranchAdmission (*admit_branch_capture)(
         void *context, Space *space);
+    /* Admit a change of exclusive machine owner. Both endpoints must retain
+     * the same source/program authority and language meaning, with separate
+     * mutable execution services. The machine separately compares callbacks,
+     * fixed policy fields, observation contracts and current capture tokens.
+     * The transfer-policy callback is called once per admitted attempt;
+     * current endpoint authority is checked again after private copying,
+     * using capture observers subject to the passive-episode contract above.
+     * NULL refuses transfer; ordinary same-machine restore is unchanged. */
+    bool (*admit_branch_transfer)(
+        void *destination_context, const void *source_context, Space *space);
+    const void *resource_scope;
+    bool (*capture_resource)(void *context, const Atom *resource,
+                             PettaMachineResourceLease *lease);
     /* Candidate programs are meaningful only within this exact semantic
      * world.  Storage revision is tracked independently by SpaceReadToken. */
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
@@ -221,9 +291,28 @@ typedef struct {
     /* Quotation is presentation-owned.  PeTTa evaluates `(quote x)` to `x`,
      * while Prime keeps the quoted expression as inert first-class data. */
     bool quote_is_inert_data;
+    bool graded_equations; /* dialect-owned authored execution view */
+    /* HE's Empty is additive zero at a demanded expression. PeTTa's Empty
+     * is ordinary data; its separate internal no-result value remains zero. */
+    bool empty_symbol_is_no_result;
     /* PeTTa's translation places exposed result structure before ordered
      * equation effects. Other dialects require their own phase law. */
     bool source_output_constraints;
+    /* Structural equation matching and literal binding patterns are separate
+     * from evaluating a computation. An eager structural adapter must not
+     * execute a relation embedded in a pattern. */
+    bool structural_equation_heads;
+    bool exact_equation_arity;
+    bool literal_binding_patterns;
+    /* A completed call with no applicable equation may remain syntax. A
+     * matched equation with no returns still completes with no returns. */
+    bool unmatched_call_is_value;
+    bool empty_result_is_failure;
+    bool retain_query_variable_identity;
+    /* An eager tuple completes an argument before starting the next one.
+     * A fault occurrence returns from this application, rather than becoming
+     * a field in its constructed value. */
+    bool eager_argument_faults;
     /* PeTTa's collections are findall: an error raised while collecting
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
@@ -238,6 +327,9 @@ typedef struct {
      * reached at run time is a value, applied to evaluated arguments
      * (petta_semantics_runtime_head). */
     bool forms_are_written_syntax;
+    /* Optional query union uses the ordinary ordered choice trail.  A pipe
+     * in a base-profile pattern remains literal row syntax. */
+    bool additive_match_queries;
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
@@ -259,6 +351,11 @@ typedef struct {
      * resume when its caller restores a budget or clears cancellation.
      */
     bool (*permit_transition)(void *context);
+    /* Checked before transition budgeting and before consuming the goal or
+     * alternative. False retains that exact operation for a later executor.
+     * The borrowed operand view is descriptive, not a forced value. */
+    bool (*permit_operation)(void *context, Space *space,
+        PettaMachineOperation operation, const PettaMachineOperationView *view);
     /* True only when compiled, bounded pure instructions do not consume a
      * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */
@@ -270,6 +367,12 @@ typedef struct {
      * shared opcode; absence preserves the standalone machine's unrestricted
      * embedding contract. */
     bool (*builtin_allowed)(void *context, SymbolId head);
+    /* Optional language-owned application of an already completed primitive.
+     * Numeric register instructions retain their common direct path; other
+     * calls use the host's domain and result contracts. */
+    bool (*grounded_call)(void *context, Space *space, Arena *arena,
+        Atom *head, Atom **arguments, uint32_t argument_count,
+        CettaCallOutcome *outcome);
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */
@@ -295,6 +398,10 @@ typedef struct {
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
+    /* An actual query read, distinct from resolving a resource handle or
+     * choosing a mutation destination. The host may retain this authority
+     * after the local match cursor returns. */
+    void (*observe_space_read)(void *context, SpaceReadToken read);
     /* Resolve a language-owned value reference only after its authored
      * occurrence reaches a SOLVE boundary.  A successful lookup returns a
      * machine-owned value in `resolved`; an unbound reference succeeds with
@@ -309,6 +416,8 @@ typedef struct {
      * an authored occurrence as data.  The host owns that language policy;
      * the search machine still resolves only at a SOLVE boundary. */
     bool resolve_value_references_in_value_role;
+    Atom *(*activate_scope)(void *context, Space *space, Arena *arena,
+                            Atom *expression);
     /* Evaluate a goal the machine hands to the host, adding its answers to
      * `outcomes`; `end` says how the evaluation ended (call_outcome.h):
      * FAILURE once its answers are given, RAISED with an error the host
@@ -338,6 +447,29 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* HE interpretation owns source demand and first-applicable overload
+     * selection. Terminal judgments return values; an admitted application
+     * returns fresh signatures with each correlated result contract. Arrays
+     * are caller-owned, atoms belong to arena. No source body runs here. */
+    bool (*prepare_he_type)(
+        void *context, Space *space, Arena *arena, Atom *source, Atom *type,
+        bool *handled, bool *untyped, PettaTypeCall **calls, uint32_t *count,
+        OutcomeSet *values);
+    /* One host-owned intrinsic reduction after the HE argument contracts
+     * have run. Atom operands are still held syntax. Interpreted results
+     * return through the same retained HE_INTERPRET goal as an equation RHS;
+     * an unreduced result is already the final observation of this call. */
+    bool (*reduce_he_call)(
+        void *context, Space *space, Arena *arena, Atom *call,
+        const Bindings *environment, bool *handled, bool *interpret,
+        OutcomeSet *values, CettaCallOutcome *end);
+    /* The surrounding owned agenda supplies preferred HE argument streams.
+     * A pending source retains its type and real machine return point. */
+    bool external_he_sources;
+    /* An enclosing native handler owns this held call. Its source, expected
+     * type and caller destination stay in the machine until an owned return
+     * supplies a value and the completed branch environment. */
+    bool (*owns_call)(void *context, const Atom *expression);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -377,6 +509,14 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* Sequence a closed numeric producer directly into a lexical fold.
+     * A completed value is ready for unification. An expression result is
+     * the already-materialized undelivered suffix and its prior accumulator;
+     * the machine resumes its existing fold continuation over those values. */
+    bool (*foldl_producer)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *initial, Atom *accumulator_binder, Atom *item_binder,
+        Atom *body, const Bindings *environment, CettaCallOutcome *result);
     /* A generated determinate-map program may own a lexical map without
      * allocating one result variable and one relational goal per item.
      * NOT_APPLICABLE preserves the complete relational product. */
@@ -513,6 +653,11 @@ typedef struct {
         void *context, Arena *owner, uint64_t call_occurrence,
         const PettaEquationCandidate *candidate, Atom *result,
         const Bindings *environment, Bindings *evidence_delta);
+    /* Notification after the recorded evidence joins the branch's live
+     * environment. A consumer may retain the resulting occurrence identity;
+     * the notification cannot change the merge or authorize another step. */
+    void (*equation_use_merged)(
+        void *context, const Bindings *evidence_delta, const Bindings *environment);
     /* True only when record_equation_use observes the structural result payload.
      * A host that supplies record_equation_use but omits this callback is treated
      * conservatively as payload-observing.  When false, the machine may fuse
@@ -629,6 +774,58 @@ typedef struct {
 CettaContinuationMachine petta_machine_continuation_machine(
     PettaMachine *machine);
 
+/* Move a captured residual into a pristine, independently initialized host.
+ * Refusal leaves the image and both machines' execution states intact.
+ * Success consumes IMAGE, copies its mutable state, atoms and positional
+ * plans into destination ownership, and keeps physical source leases. The
+ * source may then be destroyed; its program/Space lifetime is still part of
+ * the explicitly admitted host contract. This is not ordinary restore. */
+CettaContinuationStatus petta_machine_transfer_continuation(
+    PettaMachine *destination, const PettaMachine *source,
+    CettaOwnedContinuation *image);
+
+/* Staged copy of captured images sharing one real provider term pool. Prepare
+ * the group before installing the enclosing injective arena map; add its pair
+ * once, then copy every carrier through that same session. The group pins the
+ * source pool and owns a fresh destination pool. The caller keeps source
+ * images quiescent and alive, and frees the session before freeing the group.
+ * Program/Space owners remain separately retained and revision-pinned.
+ *
+ * RESOURCE_SCOPE is the destination's admitted resource domain. Every source
+ * lease must match it. Payload admission is independent of memo hits and also
+ * checks rollback/Need/state/coefficient roots. Unsupported opaque producers
+ * refuse without consuming the original. Failed preparation requires disposal
+ * of the unpublished session/destination graph; it never proves exhaustion.
+ *
+ * READY publishes a fresh owned handle with zero occurrence/store/lease fields.
+ * It preserves the source endpoint/read authority and does not license a new
+ * machine endpoint, source-current execution or replay. The parent separately
+ * installs its checked hub/return authority. Destination scopes are restored
+ * on every exit. This quiescent preparation executes no evaluator transition;
+ * allocation, validation and copying are separate physical expenditure. */
+typedef struct PettaContinuationCopyGroup PettaContinuationCopyGroup;
+CettaContinuationStatus petta_continuation_copy_group_new(
+    const CettaOwnedContinuation *source, const void *resource_scope,
+    PettaContinuationCopyGroup **out);
+bool petta_continuation_copy_group_arena_pair(
+    const PettaContinuationCopyGroup *group, AtomDeepCopyArenaPair *out);
+CettaContinuationStatus petta_continuation_copy_group_prepare(
+    PettaContinuationCopyGroup *group, const CettaOwnedContinuation *source,
+    AtomDeepCopySession *session, CettaOwnedContinuation *out);
+void petta_continuation_copy_group_free(PettaContinuationCopyGroup *group);
+
+/* Checked transfer using the enclosing parent's staged group and common memo.
+ * It applies the ordinary transfer's host/context/source checks before and
+ * after preparation, then installs through ordinary restore. Success consumes
+ * IMAGE; refusal retains it and both machines' execution states. An unpublished
+ * failed copy requires disposal of the enclosing graph, as above. No new
+ * parent occurrence, return lease or source-replay authority is issued here. */
+CettaContinuationStatus petta_machine_transfer_continuation_with_session(
+    PettaMachine *destination, const PettaMachine *source,
+    CettaOwnedContinuation *image, PettaContinuationCopyGroup *group,
+    AtomDeepCopySession *session);
+
+
 /* True exactly when the active machine is at a provider-supported owned
  * relational choice that may be split into independent continuations. */
 bool petta_machine_external_branch_ready(const PettaMachine *machine);
@@ -648,6 +845,25 @@ bool petta_machine_init_with_plan(
     Atom *query, const PettaPlanNode *plan,
     const Bindings *base_environment,
     const PettaMachineHost *host);
+
+/* Borrow the selected continuation's current bindings while its machine is
+ * paused. The view expires at the next step, restore, or destruction. */
+const Bindings *petta_machine_pending_environment(const PettaMachine *machine);
+/* Initialize a HE argument interpretation with its captured type contract,
+ * using the same machine and source/world ownership as ordinary roots. */
+bool petta_machine_init_he_interpret(
+    PettaMachine *machine, Space *space, Arena *answer_arena,
+    Atom *query, Atom *type, const Bindings *base_environment,
+    const PettaMachineHost *host);
+
+/* Borrow the unconsumed HE source and type request. Supply resolves that
+ * exact return point in a restored owned branch; it executes no source. */
+Atom *petta_machine_pending_he_source(const PettaMachine *machine, Atom **type);
+bool petta_machine_supply_he_source(PettaMachine *machine,
+    Atom *value, const Bindings *environment);
+Atom *petta_machine_pending_owned_call(const PettaMachine *machine, Atom **type);
+bool petta_machine_supply_owned_call(PettaMachine *machine,
+    Atom *value, const Bindings *environment);
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);

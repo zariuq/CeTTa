@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Forgetting provenance double-counts evidence.  A derivation records the
 ; answer it supports and the source it rests on.  In the world shared, one
 ; source (7) supports the answer through two derivations, as when one report
@@ -16,14 +18,14 @@
 (= (derivations $world) (collapse (derivation-of $world)))
 
 ; Forgetting provenance keeps the bag of answers.
-(= (answers $ds) (map-atom $ds $d (unify $d (derivation $a $s) $a no-answer)))
+(= (answers $ds) (map-atom $ds $d (new ($a $s) (unify $d (derivation $a $s) $a no-answer))))
 
 ; Evidence for a target, counted two ways: the derivations in the bag of
 ; answers, or the distinct sources of the derivations.
 (= (derivation-count $answers $target)
    (foldl-atom $answers 0 $n $a (if (== $a $target) (+ $n 1) $n)))
 (= (sources-for $ds $target)
-   (unique (let $d (superpose $ds) (unify $d (derivation $target $s) $s (empty)))))
+   (unique (let $d (superpose $ds) (unify $d (derivation $target $s) $s (empty))){$d}))
 (= (source-count $ds $target)
    (let $sources (collapse (sources-for $ds $target)) (size-atom $sources)))
 
@@ -55,7 +57,7 @@
 ; argument.  Each fact is proved by reflexivity: the checker computes both
 ; sides and compares them.
 !(import! &self pf)
-!(bind! &thy (new-space))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
 !(set:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
 !(set:inductive &thy deriv (u 0) (: mk-deriv (-> bool nat deriv)))

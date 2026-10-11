@@ -495,12 +495,31 @@ bool      bindings_factor_prefix(Bindings *full, const Bindings *base,
                                  bool *factored,
                                  uint64_t *logical_items_elided);
 bool      bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst);
+/* Compose complete carrier promotion with other roots of an unpublished
+ * parent image. The caller owns rollback and discards this private binding
+ * image and session on refusal; source bindings remain independently owned. */
+bool      bindings_promote_atoms_with_session(
+    Bindings *bindings, Arena *dst, AtomDeepCopySession *session);
+/* For an unpublished cloned carrier: copy its roots through the shared
+ * checkpoint graph, retaining physical Need frame/index/capture identities.
+ * Failure discards this carrier and the enclosing destination/session. */
+bool      bindings_copy_owned_atoms_with_session(
+    Bindings *bindings, Arena *dst, AtomDeepCopySession *session);
 bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);
 bool      bindings_promote_logical_atoms_with_session(
               Bindings *bindings, AtomDeepCopySession *session);
 bool      bindings_logical_atoms_closed_for_arena(
               const Bindings *bindings, const Arena *arena);
+/* Inspect every logical Atom root, including contextual frame slots and
+ * constraints. The callback does not change substitution authority. */
+bool      bindings_logical_atoms_satisfy(
+              const Bindings *bindings, AtomTreePredicate predicate, void *context);
+/* Complete current payload inspection, including Need, state and coefficient
+ * carriers. Callbacks validate their own Atom graphs/external identities;
+ * success does not grant substitution, lifetime or source-read authority. */
+bool      bindings_payloads_satisfy(const Bindings *bindings,
+              AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context);
 /* Conservative support query over the logical substitution carrier only.
  * Prime occurrence state is intentionally excluded: callers use this to
  * decide whether a visible continuation can retain a registry capability. */
@@ -523,6 +542,8 @@ bool      bindings_invalidate_after_key_rewrite(Bindings *bindings);
  * PrimeOccurrence on first use (Prime-only; HE evaluation never calls them). */
 const PrimeNeedSnapshot *bindings_need_view(const Bindings *b);
 const PrimeNeedBranchState *bindings_branch_state_view(const Bindings *b);
+const CettaWeightLedger   *bindings_weight_view(const Bindings *b);
+CettaWeightLedger        *bindings_weight_mut(Bindings *b);
 PrimeNeedSnapshot        *bindings_need_mut(Bindings *b);
 PrimeNeedBranchState      *bindings_branch_state_mut(Bindings *b);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -540,7 +561,8 @@ void      bindings_prime_assign(Bindings *dst, const Bindings *src);
 void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
                              const PrimeNeedBranchState *branch_state,
                              uint64_t occurrence_token,
-                             const PrimeNeedReceipt *receipt);
+                             const PrimeNeedReceipt *receipt,
+                             const CettaWeightLedger *weights);
 /* Borrow the value without discarding its lexical interpretation. */
 BindingValue bindings_lookup_value_id(Bindings *b, VarId var_id);
 /* Register the complete slot domain of a newly created contextual frame
@@ -660,6 +682,12 @@ bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);
 bool      bindings_add_var(Bindings *b, Atom *var, Atom *val);
 bool      bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val);
+/* Update an exclusively held, unpublished binding image. Other versions may
+ * share its COW storage; they remain unchanged. On failure the whole image is
+ * released and reset to empty, rather than preserving its previous contents.
+ * Atom payload lifetimes are unchanged: owning the image does not own syntax. */
+bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val);
+bool bindings_add_constraint_owned(Bindings *b, Atom *lhs, Atom *rhs);
 /* Construct one private binding image, preserving the ordered checked writes
  * of bindings_add_var. Failure leaves the input image unchanged. */
 bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
@@ -687,6 +715,55 @@ bool      bindings_current_binding_count(const Bindings *bindings,
 static inline bool bindings_logically_empty(const Bindings *b) {
     return !b || (!bindings_has_bound_values(b) && b->eq_len == 0u);
 }
+/* A language's binding structure in substitution, one path for every route:
+ * the application of bindings (every bindings_apply variant) calls these,
+ * when they are set, while it rebuilds a term.  Prime sets them for its
+ * sessions (eval_swap_library_context); HE and PeTTa never do.
+ *   formed_node  an expression whose head was a variable that the
+ *                substitution filled with a symbol: the construct it names
+ *                is formed now (a binder sealed, a lambda given its binder
+ *                identities).  `in_code` when the expression stands inside a
+ *                quotation.  NULL fails the application.
+ *   code_reading the image of a variable that stands inside a quotation: the
+ *                syntax the value reads as there (contextual code reads as
+ *                its code, under the binders around it).
+ *   own_list     the image of a list of the names a scope owns (atom.h,
+ *                atom_sequence_is_own_list) that the substitution changed:
+ *                a name a match has bound is no longer the scope's, since
+ *                its value stands in its place.  NULL fails the
+ *                application. */
+typedef struct {
+    Atom *(*formed_node)(Arena *a, Atom *node, bool in_code);
+    Atom *(*code_reading)(Atom *image);
+    Atom *(*own_list)(Arena *a, Atom *list);
+    /* The match of a pattern that takes code apart: the equation query and
+     * the space query call these after selecting a candidate.
+     *   code_pattern  whether matching `pattern` takes code apart (it holds
+     *                 a quotation);
+     *   code_match    `value` matched against `pattern` into `bindings`,
+     *                 binder by binder: *matched is false when they do not
+     *                 match, and `bindings` is then unchanged.  False on
+     *                 failure. */
+    bool (*code_pattern)(const Atom *pattern);
+    bool (*code_match)(Arena *a, Atom *pattern, Atom *value,
+                       Bindings *bindings, bool *matched);
+    /*   code_selection  `term` as an index reads it to select candidates:
+     *                   code that holds binders, whose spellings decide
+     *                   nothing, a fresh variable.  `term` itself when it
+     *                   holds none; NULL on failure. */
+    Atom *(*code_selection)(Arena *a, Atom *term);
+} BindingsStructureHooks;
+void bindings_structure_hooks_set(const BindingsStructureHooks *hooks);
+const BindingsStructureHooks *bindings_structure_hooks(void);
+/* Whether the children of `atom` stand one quotation deeper: a quotation
+ * `(quote X)`, and the forms with its head that carry a list last. */
+static inline bool bindings_structure_quotes_children(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           (atom->expr.len == 2u || atom->expr.len == 3u) &&
+           atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.quote;
+}
+
 Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
 static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
     if (!b || !bindings_has_bound_values(b) ||
@@ -779,12 +856,26 @@ bool      bindings_builder_clone(BindingsBuilder *dst,
  * used by a materialized branch image after `bindings_builder_clone`. */
 bool      bindings_builder_promote_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
+bool      bindings_builder_promote_atoms_with_session(
+              BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session);
+/* For an unpublished cloned builder: preserve shared Need, branch/receipt and
+ * factor/claim nodes in current and rollback states through the same graph used
+ * by its enclosing carriers. On refusal discard this builder and copy session;
+ * the original builder and source owners remain unchanged and usable. */
+bool      bindings_builder_copy_owned_atoms_with_session(
+              BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session);
+/* Also inspect the rollback payloads retained by this builder. No copy memo
+ * can skip this independent authority check. */
+bool      bindings_builder_payloads_satisfy(const BindingsBuilder *bb,
+              AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context);
 /* Promote only Prime need/effect/receipt state in the current binding image
  * and its rollback checkpoints.  Logical binding atoms are deliberately
  * excluded so an enclosing branch-image copy can preserve their sharing with
  * continuation roots through its own AtomDeepCopySession. */
 bool      bindings_builder_promote_prime_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
+bool      bindings_builder_promote_prime_atoms_with_session(
+              BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session);
 void      bindings_builder_free(BindingsBuilder *bb);
 void      bindings_builder_set_history(BindingsBuilder *bb,
                                        BindingsBuilderHistory history);
@@ -975,6 +1066,63 @@ bool match_atoms_builder_with_attempt_frame(
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
+/* A refutation is an actual rigid mismatch. Resource exhaustion, invalid
+ * frame state and undecided cyclic/list meetings remain incomplete. Checked
+ * callers use this when absence, rather than one positive match, is evidence. */
+typedef enum {
+    CETTA_MATCH_INCOMPLETE,
+    CETTA_MATCH_REFUTED,
+    CETTA_MATCH_MATCHED,
+} CettaMatchCompletion;
+CettaMatchCompletion match_atoms_epoch_builder_checked(
+    Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
+    uint32_t epoch, uint64_t pair_budget);
+
+typedef struct CettaMatchCursor CettaMatchCursor;
+typedef enum {
+    CETTA_MATCH_CURSOR_PROGRESS,
+    CETTA_MATCH_CURSOR_MATCHED,
+    CETTA_MATCH_CURSOR_REFUTED,
+    CETTA_MATCH_CURSOR_INCOMPLETE,
+    CETTA_MATCH_CURSOR_CAPACITY,
+} CettaMatchCursorStep;
+/* The cursor retains the canonical epoch matcher, including its binding
+ * trail, path set and copy transport. Syntax and result arena are borrowed.
+ * A zero grant performs no matching. A grant counts worklist nodes, not the
+ * bytes/CPU needed by equality, occurs checking or a binding primitive.
+ * INCOMPLETE retains an undecided primitive; it is not a rigid refutation.
+ * CAPACITY retains a refused identity reservation. */
+CettaMatchCursor *match_atoms_cursor_new(Atom *left, Atom *right,
+    const Bindings *seed, Arena *arena);
+/* Independently copy the quiescent cursor's full matching state, including
+ * deferred work, rollback trails, activation identity and transport. No
+ * matching is performed. Syntax and the result arena remain borrowed under
+ * the same lifetime contract as new(); retiring the source cursor is safe,
+ * retiring its arena or an enclosing source owner is not implied. Refusal
+ * leaves the source cursor unchanged. */
+CettaMatchCursor *match_atoms_cursor_clone(const CettaMatchCursor *source);
+/* Copy the same paused matcher while relocating its finite Atom graph and
+ * rollback roots through one enclosing allocation-domain copy session. Its
+ * registered map must include the result arena and every reachable Atom
+ * owner; syntax and result domains cannot be collapsed into one arena.
+ * No matcher transition is replayed. Saved pointer-key tables are rehashed;
+ * inconsistent shared-buffer images or borrowed activation accelerators
+ * refuse the copy. Refusal preserves the source; the caller discards the
+ * unpublished destinations/session. All mapped destination arenas and separately
+ * owned grounded resources must outlive the returned cursor. */
+CettaMatchCursor *match_atoms_cursor_copy_to_arena(
+    const CettaMatchCursor *source, Arena *destination,
+    AtomDeepCopySession *session);
+CettaMatchCursorStep match_atoms_cursor_step(CettaMatchCursor *cursor,
+    uint64_t node_budget);
+/* Zero before the first admitted step. The activation identity stays fixed
+ * across grants; it does not identify a different validation activation. */
+uint32_t match_atoms_cursor_epoch(const CettaMatchCursor *cursor);
+bool match_atoms_cursor_take(CettaMatchCursor *cursor, Bindings *out);
+void match_atoms_cursor_free(CettaMatchCursor *cursor);
+void match_atoms_cursor_storage_census(const CettaMatchCursor *cursor,
+    CettaStorageCensus *census);
+
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                uint32_t epoch);
@@ -1113,6 +1261,12 @@ bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_univers
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */
 bool atom_alpha_eq(Atom *left, Atom *right);
+/* Only variables in the listed activation frames may be renamed. Every
+ * other variable, including a captured frame variable, remains rigid.
+ * One call compares one whole observation with one bijection. */
+bool atom_alpha_eq_scoped(Atom *left, Atom *right,
+    const uint32_t *left_epochs, size_t left_count,
+    const uint32_t *right_epochs, size_t right_count);
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
@@ -1140,4 +1294,15 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
  * space class; negative-decision paths must not refute across it. */
 bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected);
 
+
+void bindings_storage_census(const Bindings *bindings, CettaStorageCensus *census);
+void bindings_builder_storage_census(const BindingsBuilder *builder,
+    CettaStorageCensus *census);
+void bindings_owners_storage_census(const BindingsOwners *owners, CettaStorageCensus *census);
+void bindings_frame_schema_storage_census(const BindingsFrameSchema *schema, CettaStorageCensus *census);
+
+
+#include "checkpoint_compare.h"
+bool bindings_frame_schema_compare(const BindingsFrameSchema *, const BindingsFrameSchema *, const CettaCheckpointCompare *);
+bool bindings_checkpoint_compare(const Bindings *, const Bindings *, const CettaCheckpointCompare *);
 #endif /* CETTA_MATCH_H */

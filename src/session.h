@@ -41,7 +41,8 @@ typedef enum {
     CETTA_PROFILE_PRIME_IDENTITY_UIP = 17,
     CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE = 18,
     CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME = 19,
-    CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE = 20
+    CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE = 20,
+    CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN = 21
 } CettaProfileId;
 
 /* What the short spelling `&self` denotes inside code evaluated in another
@@ -105,6 +106,11 @@ typedef struct {
     bool rust_he_compat_semantics;
     CettaIdentityPolicy identity_policy;
     CettaContextSelf context_self;
+    /* Prime seals quotations against every binder's substitution.  This
+     * opt-in keeps the source-capturing reading instead: binders other than
+     * lam substitute into quotations, and a quoted parameter captures its
+     * argument as written. */
+    bool quote_as_written;
 } CettaProfile;
 
 typedef enum {

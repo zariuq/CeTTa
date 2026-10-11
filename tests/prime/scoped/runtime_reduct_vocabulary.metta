@@ -1,3 +1,5 @@
+(set:profile hol)
+
 ; Evaluation reduces a call by an admitted definition only to a term of the
 ; evaluated space's own vocabulary.  A definition whose body quantifies, or
 ; states an equation, is stored with the source's polymorphic head, the

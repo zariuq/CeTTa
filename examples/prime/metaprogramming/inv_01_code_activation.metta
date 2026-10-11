@@ -20,10 +20,11 @@
 !(let $c @(+ 1 2) (pair $c *$c))
 !((lam c (pair c *c)) @(+ 1 2))
 
-; 5-6. Activating a call to a user equation, and open code: a free matcher
-;      variable in code stays a query variable when the code runs.
+; 5-6. Activating a call to a user equation, and open code.  A free matcher
+;      variable written only in the code is the code's own: each activation
+;      runs the code with a fresh copy of it, and it stays a variable.
 !(observe *@(foo (+ 1 2)))
-!(observe *@(foo $free))
+!(let $r *@(foo $free) (unify $r (computed $v) (get-metatype $v) none))
 
 ; 7. Activation of a non-code value is the residual (unquote v).
 !(let $n 3 *$n)

@@ -100,6 +100,7 @@ static size_t term_universe_atom_id_storage_width_bytes(
     const TermUniverse *universe);
 static size_t term_universe_slot_storage_width_bytes(
     const TermUniverse *universe);
+static inline size_t term_universe_intern_pair_width(size_t id_width);
 static AtomId term_universe_load_stored_atom_id(const TermUniverse *universe,
                                                 const uint8_t *src);
 static uint64_t term_universe_load_slot_value(const TermUniverse *universe,
@@ -827,6 +828,7 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -869,6 +871,7 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -903,6 +906,45 @@ void term_universe_free(TermUniverse *universe) {
     universe->observer_len = 0;
     universe->observer_cap = 0;
     universe->persistent_arena = NULL;
+}
+
+void term_universe_storage_census(const TermUniverse *u, CettaStorageCensus *c) {
+    if (!u || !cetta_storage_object(c, u, 0u, CETTA_STORAGE_VISITED)) return;
+    cetta_storage_array(c, u->blob_pool, u->blob_cap, 1u, 0u);
+    cetta_storage_array(c, u->entries, u->cap, sizeof(*u->entries), 0u);
+    cetta_storage_array(c, u->observers, u->observer_cap, sizeof(*u->observers), 0u);
+    size_t width = term_universe_slot_storage_width_bytes(u);
+    if (u->intern_slots && u->intern_mask == SIZE_MAX) cetta_storage_refuse(c, "InternCapacity");
+    else cetta_storage_array(c, u->intern_slots, u->intern_mask + 1u, term_universe_intern_pair_width(width), 0u);
+    if (u->ptr_slots && u->ptr_mask == SIZE_MAX) cetta_storage_refuse(c, "PointerIndexCapacity");
+    else cetta_storage_array(c, u->ptr_slots, u->ptr_mask + 1u, width, 0u);
+    if (u->frame_identities.identities != u->frame_identities.inline_identities)
+        cetta_storage_array(c, u->frame_identities.identities, u->frame_identities.cap,
+            sizeof(*u->frame_identities.identities), 0u);
+    if (u->integer_slots) {
+        if (u->integer_mask == SIZE_MAX) { cetta_storage_refuse(c, "IntegerIndexCapacity"); return; }
+        cetta_storage_array(c, u->integer_slots, u->integer_mask + 1u, sizeof(*u->integer_slots), 0u);
+        for (size_t i = 0u; i <= u->integer_mask; i++) {
+            const CettaIntegerInternPage *page = u->integer_slots[i].page;
+            if (!page || !cetta_storage_object(c, page, sizeof(*page), CETTA_STORAGE_BLOCK)) continue;
+            if (page->dense) cetta_storage_array(c, page->data.positions,
+                TERM_UNIVERSE_INTEGER_PAGE_SIZE, sizeof(*page->data.positions), 0u);
+            else cetta_storage_array(c, page->data.sparse, page->cap, sizeof(*page->data.sparse), 0u);
+        }
+    }
+    cetta_storage_array(c, u->variable_support_blocks, u->variable_support_block_cap,
+        sizeof(*u->variable_support_blocks), 0u);
+    for (size_t i = 0u; u->variable_support_blocks && i < u->variable_support_block_cap; i++) {
+        const CettaTermVariableSupportBlock *block = atomic_load_explicit(
+            &u->variable_support_blocks[i], memory_order_acquire);
+        if (!block || !cetta_storage_object(c, block, sizeof(*block), CETTA_STORAGE_BLOCK)) continue;
+        for (size_t j = 0u; j < CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE; j++) {
+            const CettaTermVariableSupport *support = atomic_load_explicit(&block->slots[j], memory_order_acquire);
+            if (!support) continue;
+            size_t n = support->representation == CETTA_TERM_VARIABLE_SUPPORT_DENSE64 ? 0u : support->count;
+            cetta_storage_array(c, support, n, sizeof(*support->sparse_base_ids), sizeof(*support));
+        }
+    }
 }
 
 void term_universe_set_persistent_arena(TermUniverse *universe,
@@ -2694,6 +2736,23 @@ double tu_float(const TermUniverse *universe, AtomId id) {
                : 0.0;
 }
 
+CettaExprLen tu_authored_arity(const TermUniverse *universe, AtomId id) {
+    CettaExprLen arity = tu_arity(universe, id);
+    if (arity < 3u || tu_kind(universe, id) != ATOM_EXPR)
+        return arity;
+    AtomId head = tu_child(universe, id, 0u);
+    SymbolId sym = tu_kind(universe, head) == ATOM_SYMBOL
+        ? tu_sym(universe, head) : SYMBOL_ID_NONE;
+    if (!atom_prime_scope_metadata_shape(arity, sym))
+        return arity;
+    AtomId last = tu_child(universe, id, arity - 1u);
+    if (tu_kind(universe, last) != ATOM_EXPR || tu_arity(universe, last) < 2u ||
+        tu_internal_tag(universe, tu_child(universe, last, 0u)) !=
+            (int64_t)CETTA_INTERNAL_TAG_PRIME_OWN)
+        return arity;
+    return arity - 1u;
+}
+
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr)
@@ -3315,6 +3374,23 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
     result = children[0] == CETTA_ATOM_ID_NONE
         ? CETTA_ATOM_ID_NONE
         : tu_expr_from_ids(universe, children, len);
+    free(children);
+    return result;
+}
+
+AtomId tu_braces_from_ids(TermUniverse *universe, const AtomId *elems,
+                          CettaExprLen elem_len) {
+    if (!universe || (elem_len > 0u && !elems) ||
+        !cetta_expr_len_mul_fits_size(elem_len + 1u, sizeof(AtomId)))
+        return CETTA_ATOM_ID_NONE;
+    AtomId *children = cetta_malloc(((size_t)elem_len + 1u) * sizeof(*children));
+    children[0] = tu_intern_stable_tag(universe,
+                                       CETTA_INTERNAL_TAG_PRIME_BRACES);
+    for (CettaExprIndex i = 0u; i < elem_len; i++)
+        children[1u + i] = elems[i];
+    AtomId result = children[0] == CETTA_ATOM_ID_NONE
+        ? CETTA_ATOM_ID_NONE
+        : tu_expr_from_ids(universe, children, elem_len + 1u);
     free(children);
     return result;
 }
@@ -4085,6 +4161,24 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
     case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
         int64_t list_tag = 0;
+        /* T[...] and T{...}, touching, as the atom printer writes them. */
+        if (len == 3u &&
+            tu_kind(universe, tu_child(universe, id, 0)) == ATOM_SYMBOL &&
+            tu_sym(universe, tu_child(universe, id, 0)) ==
+                g_builtin_syms.prime_meta &&
+            tu_kind(universe, tu_child(universe, id, 2)) == ATOM_EXPR &&
+            tu_arity(universe, tu_child(universe, id, 2)) > 0u) {
+            int64_t argument_tag = tu_internal_tag(
+                universe, tu_child(universe, tu_child(universe, id, 2), 0));
+            if (argument_tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
+                argument_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 1));
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 2));
+                return;
+            }
+        }
         if (len > 0u) {
             const CettaTermHdr *head = tu_hdr(universe, tu_child(universe, id, 0));
             if (head && (AtomKind)head->tag == ATOM_GROUNDED &&
@@ -4103,6 +4197,17 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
                 term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
             }
             term_universe_sb_append_char(sb, ']');
+            return;
+        }
+        if (list_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+            /* {x1 x2}, as the atom printer writes it */
+            term_universe_sb_append_char(sb, '{');
+            for (CettaExprIndex i = 1; i < len; i++) {
+                if (i != 1)
+                    term_universe_sb_append_char(sb, ' ');
+                term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
+            }
+            term_universe_sb_append_char(sb, '}');
             return;
         }
         term_universe_sb_append_char(sb, '(');
@@ -4837,6 +4942,14 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
                                                false, &stable);
     if (!stable)
         return CETTA_ATOM_ID_NONE;
+    if (stable_id == CETTA_ATOM_ID_NONE && universe->snapshot_entries) {
+        for (size_t i = 0u; i < universe->len; i++) {
+            const TermEntry *entry = &universe->entries[i];
+            if (!term_universe_entry_has_blob(entry) && entry->decoded_cache &&
+                atom_eq(entry->decoded_cache, src))
+                return term_universe_physical_index_to_atom_id(universe, i);
+        }
+    }
     return stable_id;
 }
 
@@ -5037,6 +5150,42 @@ static void term_universe_track_ptr_id(TermUniverse *universe, AtomId id) {
             return;
     }
     (void)term_universe_insert_ptr_id(universe, id);
+}
+
+AtomId term_universe_store_snapshot_image(TermUniverse *universe,
+        const AtomDeepCopySession *snapshot, const Atom *source) {
+    if (!universe || !universe->persistent_arena) return CETTA_ATOM_ID_NONE;
+    Atom *image = atom_deep_copy_session_snapshot_image(
+        snapshot, universe->persistent_arena, source);
+    if (!image) return CETTA_ATOM_ID_NONE;
+    AtomId existing = term_universe_lookup_ptr_id(universe, image);
+    if (existing != CETTA_ATOM_ID_NONE) return existing;
+    term_universe_clear_error(universe);
+    if (!term_universe_atom_id_capacity_available(universe) ||
+        universe->len == SIZE_MAX ||
+        !term_universe_reserve_entries(universe, universe->len + 1u))
+        return CETTA_ATOM_ID_NONE;
+    size_t capacity = universe->ptr_slots ? universe->ptr_mask + 1u : 0u;
+    if (!capacity || universe->ptr_used >= capacity / 2u) {
+        size_t requested = 0u;
+        if (!term_universe_double_request(universe, capacity, 1024u, &requested) ||
+            !term_universe_ptr_reserve(universe, requested)) return CETTA_ATOM_ID_NONE;
+    }
+    size_t index = universe->len;
+    AtomId id = term_universe_physical_index_to_atom_id(universe, index);
+    if (id == CETTA_ATOM_ID_NONE) return CETTA_ATOM_ID_NONE;
+    universe->entries[index] = (TermEntry){
+        .byte_off = CETTA_TERM_ENTRY_BLOB_NONE, .decoded_cache = image};
+    universe->len++;
+    if (!term_universe_insert_ptr_id(universe, id)) {
+        universe->len--;
+        universe->entries[index] = (TermEntry){.byte_off=CETTA_TERM_ENTRY_BLOB_NONE};
+        return CETTA_ATOM_ID_NONE;
+    }
+    universe->snapshot_entries = true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT);
+    return id;
 }
 
 static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,

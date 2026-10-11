@@ -408,3 +408,137 @@ uint32_t cetta_code_tree_residual_coordinates(uint32_t coordinate_count,
             out[count++] = d;
     return count;
 }
+
+
+void cetta_code_tree_storage_census(const CettaCodeTree *tree, CettaStorageCensus *census) {
+    if (!tree || !cetta_storage_object(census, tree, sizeof(*tree), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, tree->nodes, tree->node_cap, sizeof(*tree->nodes), 0u);
+    for (uint32_t i = 0; i < tree->node_len; i++) {
+        const Node *node = &tree->nodes[i];
+        cetta_storage_array(census, node->branches, node->branch_cap, sizeof(*node->branches), 0u);
+        cetta_storage_array(census, node->ids, node->id_cap, sizeof(*node->ids), 0u);
+    }
+}
+
+void cetta_code_tree_cursor_storage_census(const CettaCodeTreeCursor *cursor, CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census, cursor, sizeof(*cursor), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, cursor->marks, cursor->mark_capacity, sizeof(*cursor->marks), 0u);
+    cetta_storage_array(census, cursor->output, cursor->output_capacity, sizeof(*cursor->output), 0u);
+    cetta_storage_array(census, cursor->stack, cursor->stack_capacity, sizeof(*cursor->stack), 0u);
+}
+
+/* A completed selection exposes no persistent traversal stack. Copy the
+ * immutable routing tree and allocate private scratch at the retained sizes. */
+static bool code_tree_copy_array(void **out, const void *source,
+    size_t length, size_t capacity, size_t width) {
+    *out = NULL;
+    if (length > capacity || (capacity && !source) ||
+        !width || capacity > SIZE_MAX / width)
+        return false;
+    if (!capacity) return source == NULL;
+    void *copy = calloc(capacity, width);
+    if (!copy) return false;
+    if (length) memcpy(copy, source, length * width);
+    *out = copy;
+    return true;
+}
+
+CettaCodeTree *cetta_code_tree_copy(const CettaCodeTree *source) {
+    if (!source || source->node_len > source->node_cap ||
+        source->root >= source->node_len)
+        return NULL;
+    CettaCodeTree *image = calloc(1u, sizeof(*image));
+    if (!image) return NULL;
+    image->coordinate_count = source->coordinate_count;
+    image->occurrence_capacity = source->occurrence_capacity;
+    image->root = source->root;
+    image->node_cap = source->node_cap;
+    if (!code_tree_copy_array((void **)&image->nodes, source->nodes,
+            0u, source->node_cap, sizeof(*source->nodes)))
+        goto fail;
+    image->node_len = source->node_len;
+    for (uint32_t i = 0u; i < source->node_len; i++) {
+        const Node *s = &source->nodes[i];
+        Node *d = &image->nodes[i];
+        d->depth = s->depth; d->free_child = s->free_child;
+        d->branch_len = s->branch_len; d->branch_cap = s->branch_cap;
+        d->id_len = s->id_len; d->id_cap = s->id_cap;
+        if (!code_tree_copy_array((void **)&d->branches, s->branches,
+                s->branch_len, s->branch_cap, sizeof(*s->branches)) ||
+            !code_tree_copy_array((void **)&d->ids, s->ids,
+                s->id_len, s->id_cap, sizeof(*s->ids)))
+            goto fail;
+    }
+    return image;
+fail:
+    cetta_code_tree_free(image);
+    return NULL;
+}
+
+CettaCodeTreeCursor *cetta_code_tree_cursor_copy_quiescent(
+    const CettaCodeTreeCursor *source) {
+    if (!source) return NULL;
+    CettaCodeTreeCursor *image = calloc(1u, sizeof(*image));
+    if (!image) return NULL;
+    image->mark_capacity = source->mark_capacity;
+    image->output_capacity = source->output_capacity;
+    image->stack_capacity = source->stack_capacity;
+    if (!code_tree_copy_array((void **)&image->marks, source->marks,
+            0u, source->mark_capacity, sizeof(*source->marks)) ||
+        !code_tree_copy_array((void **)&image->output, source->output,
+            0u, source->output_capacity, sizeof(*source->output)) ||
+        !code_tree_copy_array((void **)&image->stack, source->stack,
+            0u, source->stack_capacity, sizeof(*source->stack))) {
+        cetta_code_tree_cursor_free(image);
+        return NULL;
+    }
+    return image;
+}
+
+/* Selection has returned and no caller retains its borrowed result array.
+ * The next selection initializes marks and stack entries before reading them. */
+bool cetta_code_tree_checkpoint_compare(const CettaCodeTree *a,
+    const CettaCodeTreeCursor *ac,const CettaCodeTree *b,
+    const CettaCodeTreeCursor *bc,const CettaCheckpointCompare *read) {
+    if(!cetta_checkpoint_compare_valid(read))return false;
+#define CT_S(n,x,y) do { if(!read->scalar(read->context,n,(uint64_t)(x),(uint64_t)(y)))return false; } while(0)
+#define CT_F(n,x,y) do { if(!read->physical(read->context,n,(uint64_t)(x),(uint64_t)(y)))return false; } while(0)
+#define CT_P(n,x,y) do { if(!read->address(read->context,n,x,y))return false; } while(0)
+    CT_P("code_tree",a,b);CT_P("code_tree.cursor",ac,bc);
+    if(!a||!b)return !a&&!b&&!ac&&!bc;
+    if(!cetta_checkpoint_extent(a->nodes,a->node_len,a->node_cap,b->nodes,b->node_len,b->node_cap))return false;
+    CT_S("code_tree.coordinates",a->coordinate_count,b->coordinate_count);
+    CT_S("code_tree.occurrences",a->occurrence_capacity,b->occurrence_capacity);
+    CT_S("code_tree.root",a->root,b->root);CT_S("code_tree.nodes",a->node_len,b->node_len);
+    CT_F("code_tree.capacity",a->node_cap,b->node_cap);
+    for(uint32_t i=0u;i<a->node_len;i++) {
+        const Node *x=&a->nodes[i],*y=&b->nodes[i];
+        if(!cetta_checkpoint_extent(x->branches,x->branch_len,x->branch_cap,
+            y->branches,y->branch_len,y->branch_cap)||
+            !cetta_checkpoint_extent(x->ids,x->id_len,x->id_cap,y->ids,y->id_len,y->id_cap))return false;
+        CT_S("code_tree.node_index",i,i);CT_S("code_tree.depth",x->depth,y->depth);
+        CT_S("code_tree.free",x->free_child,y->free_child);
+        CT_S("code_tree.branches",x->branch_len,y->branch_len);CT_F("code_tree.branch_capacity",x->branch_cap,y->branch_cap);
+        CT_P("code_tree.branch_storage",x->branches,y->branches);
+        for(uint32_t j=0u;j<x->branch_len;j++) {
+            CT_S("code_tree.branch_index",j,j);CT_S("code_tree.tag",x->branches[j].tag,y->branches[j].tag);
+            CT_S("code_tree.child",x->branches[j].child,y->branches[j].child);
+        }
+        CT_S("code_tree.ids",x->id_len,y->id_len);CT_F("code_tree.id_capacity",x->id_cap,y->id_cap);
+        CT_P("code_tree.id_storage",x->ids,y->ids);
+        for(uint32_t j=0u;j<x->id_len;j++)CT_S("code_tree.id",x->ids[j],y->ids[j]);
+    }
+    if(!ac||!bc)return !ac&&!bc;
+    CT_F("code_tree.mark_capacity",ac->mark_capacity,bc->mark_capacity);
+    CT_F("code_tree.output_capacity",ac->output_capacity,bc->output_capacity);
+    CT_F("code_tree.stack_capacity",ac->stack_capacity,bc->stack_capacity);
+    CT_F("code_tree.marks_storage",(uintptr_t)ac->marks,(uintptr_t)bc->marks);
+    CT_F("code_tree.output_storage",(uintptr_t)ac->output,(uintptr_t)bc->output);
+    CT_F("code_tree.stack_storage",(uintptr_t)ac->stack,(uintptr_t)bc->stack);
+    return (!ac->mark_capacity||ac->marks)&&(!bc->mark_capacity||bc->marks)&&
+        (!ac->output_capacity||ac->output)&&(!bc->output_capacity||bc->output)&&
+        (!ac->stack_capacity||ac->stack)&&(!bc->stack_capacity||bc->stack);
+#undef CT_S
+#undef CT_F
+#undef CT_P
+}

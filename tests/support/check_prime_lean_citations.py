@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Every Lean name the C sources and the trinity fixtures cite resolves in
-the Lean project.
+"""Every Lean name the C sources and the Prime fixtures cite resolves in the
+Lean project.
 
-A verdict, a record or a trace may name the Lean theorem it rests on, and a
+A verdict, a record or a trace may name the Lean theorem it rests on, a
 fixture of tests/prime/trinity may label an answer with the theorem it
-matches.  Those names are written in the C sources as string literals, and in
-the fixtures' expected outputs as quoted strings, relative to a root below
-which the cited packages live:
+matches, a curriculum of tests/prime/scoped may cite the theorem that states
+the set face of one of its theorems, a record of tests/prime/demand or
+tests/prime/symbols may name the theorem that licenses a decision, and a
+program of tests/prime/causal may cite, in its comments, the theorems its
+answers are instances of.  Those names are written in the C sources as string
+literals, in the trinity and scoped fixtures' expected outputs as quoted
+strings, in the demand and symbols fixtures' expected outputs as symbols of the
+records, and in the causal fixtures' text, relative to a root below which the
+cited packages live:
 
   Presentation.*, TowerInterpretation.*
       below Mettapedia.TypeTheory.Calculi.ParameterizedPiSigmaId;
@@ -16,17 +22,22 @@ which the cited packages live:
       below Mettapedia.Cybernetics.DistinctionCalculus;
   DistinctionCalculus.*
       below Mettapedia.Cybernetics;
+  GSLT.*
+      below Mettapedia;
   Mettapedia.*  (also written Lean:Mettapedia.*)
       in full.
 
 The script collects every such name from the string literals of src/*.c and
-src/*.h (comments are skipped) and from the quoted strings of
-tests/prime/trinity/*.expected, finds the modules that declare its last
-component, and writes one Lean file that imports them and runs `#check` on
-the full name of each.  A name that Lean does not know, whose declaring
-module is not found, or whose module is not built from its current source
-fails the check.  A name whose first component has no root here fails too,
-so that a new root is added on purpose.
+src/*.h (comments are skipped), from the quoted strings of
+tests/prime/trinity/*.expected and tests/prime/scoped/*.expected, from the
+whole text of tests/prime/demand/*.expected and tests/prime/symbols/*.expected,
+and from the whole text of the programs and expected outputs of
+tests/prime/causal, finds the modules that declare its last component, and writes one Lean file
+that imports them and runs `#check` on the full name of each.  A name that
+Lean does not know, whose declaring module is not found, or whose module is
+not built from its current source fails the check.  A name whose first
+component has no root here fails too, so that a new root is added on
+purpose.
 
   check_prime_lean_citations.py --lean-root DIR --file-check COMMAND --out DIR
 
@@ -51,6 +62,7 @@ ROOTS = {
     "Laboratory": "Mettapedia.Cybernetics.DistinctionCalculus",
     "EvidenceExamples": "Mettapedia.Cybernetics.DistinctionCalculus",
     "DistinctionCalculus": "Mettapedia.Cybernetics",
+    "GSLT": "Mettapedia",
     "Mettapedia": "",
 }
 
@@ -95,9 +107,20 @@ def cited_names():
         for literal in string_literals(path.read_text(errors="replace")):
             for match in NAME.finditer(literal):
                 names.setdefault(match.group(1), path.name)
-    for path in sorted((ROOT / "tests/prime/trinity").glob("*.expected")):
-        for literal in re.findall(r'"([^"\n]*)"', path.read_text(errors="replace")):
-            for match in NAME.finditer(literal):
+    for fixtures in ("tests/prime/trinity", "tests/prime/scoped", "tests/prime/profiles/megalodon_hotg"):
+        for path in sorted((ROOT / fixtures).rglob("*.expected")):
+            for literal in re.findall(r'"([^"\n]*)"', path.read_text(errors="replace")):
+                for match in NAME.finditer(literal):
+                    names.setdefault(match.group(1), path.name)
+    # A demand or symbol record names its licence as a symbol, not a string.
+    for fixtures in ("tests/prime/demand", "tests/prime/symbols"):
+        for path in sorted((ROOT / fixtures).rglob("*.expected")):
+            for match in NAME.finditer(path.read_text(errors="replace")):
+                names.setdefault(match.group(1), path.name)
+    # A causal program cites, in its comments, the theorems its answers instance.
+    for pattern in ("*.metta", "*.expected"):
+        for path in sorted((ROOT / "tests/prime/causal").rglob(pattern)):
+            for match in NAME.finditer(path.read_text(errors="replace")):
                 names.setdefault(match.group(1), path.name)
     return names
 
@@ -192,7 +215,7 @@ def main():
     if failures:
         print(f"Lean citations: {len(failures)} of {len(names)} names fail")
         return 1
-    print(f"PASS: the {len(checks)} Lean names the C sources and the trinity fixtures cite resolve "
+    print(f"PASS: the {len(checks)} Lean names the C sources and the Prime fixtures cite resolve "
           f"({len(imports)} modules imported)")
     return 0
 

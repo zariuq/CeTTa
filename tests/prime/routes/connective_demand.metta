@@ -8,7 +8,7 @@
 ; The second operand is not evaluated: it neither loops nor runs effects.
 !(and False (loop))
 !(or True (loop))
-!(and False (let $x (println! never) True))
+!(and False (let $x (println! never) True){$x})
 (= (guarded) (and False (loop)))
 !(guarded)
 
@@ -19,7 +19,7 @@
 
 ; When the first operand leaves the value open, the second is demanded, and
 ; operands that are not truth values are refused as before.
-!(and True (let $x (println! demanded) True))
+!(and True (let $x (println! demanded) True){$x})
 !(and True False)
 !(or False True)
 !(and 1 True)
