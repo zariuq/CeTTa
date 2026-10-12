@@ -135,7 +135,7 @@ static Atom *validate(Arena *arena, SyntaxViewV1 *view,
     }
     if (!admit || !admit(view->language, view->profile, error, sizeof(error)))
         return message(arena, "grammar-admission", error[0] ? error : "LanguageDef/profile admission failed");
-    /* The compiler has already bounded and admitted every declaration body.
+    /* Structural admission has bounded and checked every declaration body.
      * Origin annotations must correspond one for one to those occurrences. */
     for (unsigned group = 0u; group < 4u; ++group) {
         Atom *rows = group_list(view, group);
@@ -301,6 +301,15 @@ Atom *cetta_syntax_gslt_admit_v1(
 }
 
 Atom *cetta_syntax_gslt_inspect_v1(
+    Arena *arena, Atom *value) {
+    SyntaxViewV1 view = {0};
+    if (!unpack(value, &view))
+        return message(arena, "unadmitted-value", "expected an admitted syntax GSLT envelope");
+    Atom *arguments[] = {view.language, view.profile, view.policy, view.origins};
+    return atom_deep_copy(arena, form(arena, "SyntaxGSLTInspectionV1", arguments, 4u));
+}
+
+Atom *cetta_syntax_gslt_inspect_checked_v1(
     Arena *arena, Atom *value, CettaSyntaxGsltAdmissionV1 admit) {
     SyntaxViewV1 view = {0};
     if (!unpack(value, &view))
@@ -308,8 +317,7 @@ Atom *cetta_syntax_gslt_inspect_v1(
     Atom *checked = cetta_syntax_gslt_admit_v1(arena, view.language, view.profile,
                                               view.policy, view.origins, admit);
     if (!head_is(checked, "SyntaxGSLTAdmittedV1", 1u)) return checked;
-    Atom *arguments[] = {view.language, view.profile, view.policy, view.origins};
-    return atom_deep_copy(arena, form(arena, "SyntaxGSLTInspectionV1", arguments, 4u));
+    return cetta_syntax_gslt_inspect_v1(arena, value);
 }
 
 Atom *cetta_syntax_gslt_join_v1(
@@ -422,10 +430,14 @@ bool cetta_syntax_gslt_data_arg_v1(const char *operation, uint32_t index) {
     if (!strcmp(operation, "lbnf_document_v1")) return index < 2u;
     if (!strcmp(operation, "lbnf_lower_v1")) return index < 4u;
     if (!strcmp(operation, "authored_parser_load_values")) return index < 2u;
+    if (!strcmp(operation, "authored_parser_load_syntax")) return index == 0u;
+    if (!strcmp(operation, "parser_compile")) return index <= 1u;
+    if (!strcmp(operation, "parser_select_strategy")) return index == 1u;
     if (strncmp(operation, syntax, sizeof syntax - 1u)) return false;
     operation += sizeof syntax - 1u;
     if (!strcmp(operation, "admit_v1")) return index < 4u;
-    if (!strcmp(operation, "inspect_v1")) return index == 0u;
+    if (!strcmp(operation, "inspect_v1") || !strcmp(operation, "inspect_checked_v1"))
+        return index == 0u;
     if (!strcmp(operation, "join_v1") || !strcmp(operation, "join_coherent_v1"))
         return index < 4u;
     return false;

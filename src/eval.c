@@ -23286,6 +23286,23 @@ static void prime_need_normalize_observation_atom(
     Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
     OutcomeSet *out, EvalGcRootFrame *lexical_root);
 
+typedef enum {
+    PRIME_NEED_OBSERVATION_FULL = 0,
+    PRIME_NEED_OBSERVATION_PENDING_CELLS,
+    PRIME_NEED_OBSERVATION_NATIVE_OPERANDS,
+} PrimeNeedObservationPolicy;
+
+static void prime_need_normalize_observation_in(
+    Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
+    OutcomeSet *out, EvalGcRootFrame *lexical_root,
+    PrimeNeedObservationPolicy policy);
+
+static bool prime_need_library_native_head(Atom *head) {
+    const char *name = head && head->kind == ATOM_SYMBOL
+        ? atom_name_cstr(head) : NULL;
+    return name && strncmp(name, "__cetta_lib_", 12u) == 0;
+}
+
 /* A field declared as `Atom` carries syntax, not a computation.  Respect the
  * same non-strict boundary during full observation that typed application
  * uses during ordinary evaluation.  With overloads, opacity is licensed only
@@ -23347,7 +23364,7 @@ static Atom *prime_need_observation_data_argument(
 static void prime_need_normalize_observation_children(
     Space *s, Arena *a, Atom *source, CettaExprIndex index, Atom **children,
     int fuel, const Bindings *env, OutcomeSet *out,
-    EvalGcRootFrame *lexical_root) {
+    EvalGcRootFrame *lexical_root, PrimeNeedObservationPolicy policy) {
     Bindings linear_env;
     bool linear_env_owned = false;
     const Bindings *active_env = env;
@@ -23359,8 +23376,14 @@ static void prime_need_normalize_observation_children(
             break;
         }
 
-        if (prime_need_observation_argument_is_data(
-                s, a, source, index, active_env)) {
+        bool held = policy == PRIME_NEED_OBSERVATION_FULL
+            ? prime_need_observation_argument_is_data(
+                  s, a, source, index, active_env)
+            : policy == PRIME_NEED_OBSERVATION_NATIVE_OPERANDS &&
+                  index > 0u && index - 1u <= UINT32_MAX &&
+                  grounded_dispatch_accepts_data_arg(
+                      source->expr.elems[0], (uint32_t)(index - 1u));
+        if (held) {
             Atom *child = prime_need_observation_data_argument(
                 a, source->expr.elems[index], active_env);
             if (!child)
@@ -23381,9 +23404,11 @@ static void prime_need_normalize_observation_children(
             &rooted_source, &rooted_value,
             children, (size_t)source->expr.len,
             (Bindings *)active_env, &child_outcomes, out);
-        prime_need_normalize_observation_atom(
+        prime_need_normalize_observation_in(
             s, a, rooted_source->expr.elems[index], fuel, active_env,
-            &child_outcomes, lexical_root);
+            &child_outcomes, lexical_root,
+            policy == PRIME_NEED_OBSERVATION_NATIVE_OPERANDS
+                ? PRIME_NEED_OBSERVATION_PENDING_CELLS : policy);
 
         /* A determinate child is the overwhelmingly common case for a
          * constructor value.  Carry its environment into the next iteration
@@ -23431,7 +23456,7 @@ static void prime_need_normalize_observation_children(
             children[index] = rooted_value;
             prime_need_normalize_observation_children(
                 s, a, rooted_source, index + 1u, children, fuel,
-                &child_outcomes.items[i].env, out, lexical_root);
+                &child_outcomes.items[i].env, out, lexical_root, policy);
         }
         eval_gc_observation_normalization_suspension_end(&suspension);
         outcome_set_free(&child_outcomes);
@@ -23444,7 +23469,8 @@ static void prime_need_normalize_observation_children(
 
 static void prime_need_normalize_observation_inert(
     Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
-    OutcomeSet *out, EvalGcRootFrame *lexical_root) {
+    OutcomeSet *out, EvalGcRootFrame *lexical_root,
+    PrimeNeedObservationPolicy policy) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u) {
         outcome_set_add(out, atom, env);
         return;
@@ -23454,12 +23480,13 @@ static void prime_need_normalize_observation_inert(
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
         children[i] = atom->expr.elems[i];
     prime_need_normalize_observation_children(
-        s, a, atom, 0u, children, fuel, env, out, lexical_root);
+        s, a, atom, 0u, children, fuel, env, out, lexical_root, policy);
 }
 
-static void prime_need_normalize_observation_atom(
+static void prime_need_normalize_observation_in(
     Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
-    OutcomeSet *out, EvalGcRootFrame *lexical_root) {
+    OutcomeSet *out, EvalGcRootFrame *lexical_root,
+    PrimeNeedObservationPolicy policy) {
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
     __attribute__((cleanup(prime_need_active_leave)))
@@ -23517,19 +23544,27 @@ static void prime_need_normalize_observation_atom(
             rooted_value = outcome_atom_materialize(
                 a, &forced.items[i]);
             if (rooted_value)
-                prime_need_normalize_observation_atom(
+                prime_need_normalize_observation_in(
                     s, a, rooted_value, fuel,
-                    &forced.items[i].env, out, lexical_root);
+                    &forced.items[i].env, out, lexical_root, policy);
         }
         eval_gc_observation_normalization_suspension_end(&suspension);
         outcome_set_free(&forced);
         return;
     }
 
-    if (atom_eval_is_immediate_value(applied, fuel) ||
+    /* Native value readers discharge only evaluator-created cells. Written
+     * guest constructors and callable-looking fields are not host requests. */
+    if (policy != PRIME_NEED_OBSERVATION_FULL &&
+        !atom_has_registry_refs(applied)) {
+        outcome_set_add(out, applied, env);
+        return;
+    }
+    if (policy != PRIME_NEED_OBSERVATION_FULL ||
+        atom_eval_is_immediate_value(applied, fuel) ||
         atom_has_constructor_head(s, a, applied)) {
         prime_need_normalize_observation_inert(
-            s, a, applied, fuel, env, out, lexical_root);
+            s, a, applied, fuel, env, out, lexical_root, policy);
         return;
     }
 
@@ -23556,14 +23591,75 @@ static void prime_need_normalize_observation_atom(
             continue;
         if (atom_eq(rooted_source, rooted_applied))
             prime_need_normalize_observation_inert(
-                s, a, rooted_source, fuel, &branch, out, lexical_root);
+                s, a, rooted_source, fuel, &branch, out, lexical_root, policy);
         else
-            prime_need_normalize_observation_atom(
-                s, a, rooted_source, fuel, &branch, out, lexical_root);
+            prime_need_normalize_observation_in(
+                s, a, rooted_source, fuel, &branch, out, lexical_root, policy);
         bindings_free(&branch);
     }
     eval_gc_observation_normalization_suspension_end(&suspension);
     outcome_set_free(&evaluated);
+}
+
+static void prime_need_normalize_observation_atom(
+    Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
+    OutcomeSet *out, EvalGcRootFrame *lexical_root) {
+    prime_need_normalize_observation_in(
+        s, a, atom, fuel, env, out, lexical_root,
+        PRIME_NEED_OBSERVATION_FULL);
+}
+
+static void prime_need_prepare_native_calls(
+    Space *s, Arena *a, int fuel, OutcomeSet *calls,
+    EvalGcRootFrame *lexical_root) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+        return;
+    bool pending = false;
+    for (CettaCount i = 0u; i < calls->len; i++) {
+        __attribute__((cleanup(prime_need_active_leave)))
+        PrimeNeedActiveGuard active =
+            prime_need_active_enter(&calls->items[i].env);
+        Atom *call = outcome_atom_materialize(a, &calls->items[i]);
+        if (call && call->kind == ATOM_EXPR && call->expr.len > 0u &&
+            prime_need_library_native_head(call->expr.elems[0]) &&
+            prime_need_atom_has_observable_ref(call)) {
+            pending = true;
+            break;
+        }
+    }
+    if (!pending)
+        return;
+    OutcomeSet prepared;
+    outcome_set_init_with_owner(&prepared, outcome_set_payload_arena(calls, a));
+    __attribute__((cleanup(eval_gc_root_frame_leave)))
+    EvalGcRootFrame roots = {0};
+    eval_gc_root_frame_enter_outcome_continuation(
+        &roots, NULL, 0u, calls, &prepared);
+    for (CettaCount i = 0u; i < calls->len; i++) {
+        Outcome *item = &calls->items[i];
+        Atom *call = outcome_atom_materialize(a, item);
+        __attribute__((cleanup(prime_need_active_leave)))
+        PrimeNeedActiveGuard active = prime_need_active_enter(&item->env);
+        if (call && call->kind == ATOM_EXPR && call->expr.len > 0u &&
+            prime_need_library_native_head(call->expr.elems[0]) &&
+            prime_need_atom_has_observable_ref(call)) {
+            prime_need_normalize_observation_in(
+                s, a, call, fuel, &item->env, &prepared, lexical_root,
+                PRIME_NEED_OBSERVATION_NATIVE_OPERANDS);
+        } else {
+            outcome_set_add_existing_move(&prepared, item);
+        }
+    }
+    outcome_set_free(calls);
+    calls->payload_owner = prepared.payload_owner;
+    calls->len = prepared.len;
+    if (prepared.items == prepared.inline_items) {
+        if (prepared.len > 0u)
+            outcome_move(&calls->inline_items[0], &prepared.inline_items[0]);
+    } else {
+        calls->items = prepared.items;
+        calls->cap = prepared.cap;
+    }
 }
 
 static bool prime_need_argument_requires_normal_form(Atom *op,
@@ -26854,6 +26950,9 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
              petta_bound_value ||
              bound_arg->kind == ATOM_VAR)) {
             if (!control_continuation &&
+                !(eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+                  prime_need_library_native_head(*op_io) &&
+                  !explicit_data_argument) &&
                 atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom) &&
                 prime_need_atom_has_observable_ref(bound_arg)) {
                 bound_arg = prime_need_reify_suspended(
@@ -33060,9 +33159,15 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                         head_env = correlate_he_contracts
                             ? &applicable_env : &heads.items[hi].env;
 
+                        prime_need_prepare_native_calls(
+                            s, a, fuel, &call_terms, caller_gc_root);
+
                         for (CettaCount ci = 0; ci < call_terms.len; ci++) {
                             Atom *call_atom = outcome_atom_materialize(a, &call_terms.items[ci]);
                             Bindings *combo_ctx = &call_terms.items[ci].env;
+                            __attribute__((cleanup(prime_need_active_leave)))
+                            PrimeNeedActiveGuard native_branch =
+                                prime_need_active_enter(combo_ctx);
                             Atom *inst_ret_type =
                                 eval_dependent_telescope_enabled()
                                     ? bindings_apply_if_vars(combo_ctx, a, ret_type)
@@ -33344,6 +33449,9 @@ query_done:
         atom = dispatch_continuation_atoms[0];
         etype = dispatch_continuation_atoms[1];
 
+        prime_need_prepare_native_calls(
+            s, a, fuel, &tuples, caller_gc_root);
+
         if (profile_disabled_whole_call_syntax &&
             eval_current_language_id() != CETTA_LANGUAGE_HE) {
             for (CettaCount ti = 0; ti < tuples.len; ti++) {
@@ -33360,6 +33468,9 @@ query_done:
                 return true;
             }
             Bindings *tuple_bindings = &tuples.items[0].env;
+            __attribute__((cleanup(prime_need_active_leave)))
+            PrimeNeedActiveGuard native_branch =
+                prime_need_active_enter(tuple_bindings);
             Atom *call_atom =
                 outcome_atom_materialize_traced(
                     a, &tuples.items[0],
@@ -33513,6 +33624,9 @@ query_done:
                     a, &tuples.items[ti],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
             Bindings *tuple_bindings = &tuples.items[ti].env;
+            __attribute__((cleanup(prime_need_active_leave)))
+            PrimeNeedActiveGuard native_branch =
+                prime_need_active_enter(tuple_bindings);
 
             if (atom_is_legacy_empty_sentinel(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);

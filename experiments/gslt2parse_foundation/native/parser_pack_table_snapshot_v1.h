@@ -2,6 +2,7 @@
 #define CETTA_GSLT2PARSE_PARSER_PACK_TABLE_SNAPSHOT_V1_H
 
 #include "lib_parse_native_grammar.h"
+#include "parser_pack_native_v1.h"
 #include "regular_span_dfa_v1.h"
 
 #include <stdbool.h>
@@ -14,11 +15,13 @@
 
 #define PP_TABLE_SNAPSHOT_V1_MAGIC "TPP1"
 #define PP_TABLE_SNAPSHOT_V1_VERSION 4u
+#define PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION 5u
 #define PP_TABLE_SNAPSHOT_V1_PROFILE_CAP 32u
 
 typedef enum {
     PP_TABLE_SNAPSHOT_V1_KERNEL_SLR = 0,
-    PP_TABLE_SNAPSHOT_V1_KERNEL_GLR = 1
+    PP_TABLE_SNAPSHOT_V1_KERNEL_GLR = 1,
+    PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL = 2
 } PPTableSnapshotV1Kernel;
 
 /* The lowering origin of one helper nonterminal: what made it and the
@@ -52,6 +55,13 @@ typedef struct {
     uint8_t *tag_carries_lexeme;
     char **tag_fixed_texts;
     SymbolId *tag_symbol_ids;
+    /* Version 5 adds immutable dense GLL preparation and the enclosing
+     * general parser's symbolic grammar, policy and projection metadata.
+     * Version 4 remains byte-compatible for existing TPTP snapshots. */
+    CettaLpNativeGllProgram gll;
+    PPNativeV1TerminalPlan scalar_terminals;
+    uint8_t *general_metadata;
+    uint32_t general_metadata_len;
 } PPTableSnapshotV1;
 
 void pp_table_snapshot_v1_init(PPTableSnapshotV1 *snap);

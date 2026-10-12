@@ -18,6 +18,8 @@ import subprocess
 import tempfile
 
 import gslt2parse_schema_v1 as sexpr
+import parser_predictive_v1 as predictive
+import parser_artifact_publication_v1 as publication
 
 
 class CompileError(ValueError):
@@ -169,42 +171,18 @@ class NFA:
         path.write_text("\n".join(output) + "\n")
 
 
-def first_follow(rules):
-    cats = {row["category"] for row in rules.values()}
-    nullable = set(); first = {cat: set() for cat in cats}; follow = {cat: set() for cat in cats}
-    follow["JsonText"].add("$EOF")
-    def starts(rhs):
-        result = set()
-        for kind, value in rhs:
-            result |= {value} if kind == "t" else first[value]
-            if kind == "t" or value not in nullable: return result, False
-        return result, True
-    while True:
-        before = set(nullable), {k: set(v) for k,v in first.items()}
-        for row in rules.values():
-            values, empty = starts(row["rhs"]); first[row["category"]] |= values
-            if empty: nullable.add(row["category"])
-        if (nullable, first) == before: break
-    while True:
-        before = {k: set(v) for k,v in follow.items()}
-        for row in rules.values():
-            for index, (kind, value) in enumerate(row["rhs"]):
-                if kind != "n": continue
-                values, empty = starts(row["rhs"][index+1:]); follow[value] |= values
-                if empty: follow[value] |= follow[row["category"]]
-        if follow == before: break
-    selected = {}
-    for label, row in rules.items():
-        predicted, empty = starts(row["rhs"])
-        if empty: predicted |= follow[row["category"]]
-        for token in predicted:
-            key = row["category"], token
-            if key in selected: raise CompileError(f"FIRST/FOLLOW conflict: {key}: {selected[key]} versus {label}")
-            selected[key] = label
-    return first, follow, selected
+def first_follow(rules, predictive_compiler=predictive.DEFAULT_COMPILER):
+    labels = list(rules)
+    try:
+        first, follow, decisions = predictive.analyze(list(rules.values()), "JsonText", predictive_compiler)
+    except predictive.PredictiveConflict as error:
+        raise CompileError(str(error)) from error
+    # Occurrence decisions remain generic; only this adapter assigns JSON's
+    # already-checked elaboration operations to those occurrences.
+    return first, follow, {key: labels[index] for key, index in decisions.items()}
 
 
-def compile_sources(syntax, lexical, target, elaboration):
+def compile_sources(syntax, lexical, target, elaboration, predictive_compiler=predictive.DEFAULT_COMPILER):
     rules = grammar(syntax); classes = profile(lexical); targets = grammar(target)
     specs = re.findall(r'\{"([^"]+)", "([^"]+)", (\d+)u, \{([^}]*)\}, (CETTA_JSON_ELAB_\w+)\}', elaboration.read_text())
     if len(specs) != len(rules) or {row[0] for row in specs} != set(rules):
@@ -286,7 +264,7 @@ def compile_sources(syntax, lexical, target, elaboration):
                 rhs.append(("t", "@" + value))
             else: rhs.append((kind, value))
         folded[label] = dict(row, rhs=rhs)
-    first, follow, selected = first_follow(folded)
+    first, follow, selected = first_follow(folded, predictive_compiler)
     punctuation = {"JD_OBJECT_OPEN": rules["json:object"]["rhs"][0][1],
         "JD_OBJECT_CLOSE": rules["json:object"]["rhs"][-1][1],
         "JD_ARRAY_OPEN": rules["json:array"]["rhs"][0][1], "JD_ARRAY_CLOSE": rules["json:array"]["rhs"][-1][1],
@@ -343,13 +321,17 @@ def artifact_identity(prefix, digest):
                    for i in range(8))
 
 
-def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output):
-    code, report, nfa, start = compile_sources(syntax, lexical, target, elaboration)
+def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output,
+                   predictive_compiler=predictive.DEFAULT_COMPILER):
+    code, report, nfa, start = compile_sources(syntax, lexical, target, elaboration, predictive_compiler)
     report["format"] = "JsonPredictiveArtifactV1"
     report["compiler_sha256"] = {
         "lowering": sha256(Path(__file__).read_bytes()).hexdigest(),
         "schema": sha256(Path(sexpr.__file__).read_bytes()).hexdigest(),
         "dfa": sha256(dfa_compiler.read_bytes()).hexdigest(),
+        "predictive": sha256(Path(predictive_compiler).read_bytes()).hexdigest(),
+        "predictive_adapter": sha256(Path(predictive.__file__).read_bytes()).hexdigest(),
+        "publication": sha256(Path(publication.__file__).read_bytes()).hexdigest(),
     }
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="predictive-", dir=output) as temporary:
@@ -370,12 +352,9 @@ def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output):
             ARTIFACT_FILES[2]: (artifact_identity("IMPLEMENTATION", digest) + checks + code).encode(),
             ARTIFACT_FILES[3]: (json.dumps(report, indent=2, sort_keys=True) + "\n").encode(),
         }
-        # Finish every file before publication. Each replacement is atomic;
-        # an interrupted mixed generation is rejected by the C assertions.
-        for name, content in prepared.items():
-            (work/name).write_bytes(content)
-        for name in ARTIFACT_FILES:
-            (work/name).replace(output/name)
+        # The compatibility filenames are individually atomic. The identity
+        # assertions above reject an interrupted mixed generation.
+        publication.publish_files(output, prepared)
     return report
 
 
@@ -386,10 +365,11 @@ def main():
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--elaboration", type=Path, required=True)
     parser.add_argument("--dfa-compiler", type=Path, required=True)
+    parser.add_argument("--predictive-compiler", type=Path, default=predictive.DEFAULT_COMPILER)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = build_artifact(args.syntax, args.profile, args.target, args.elaboration,
-                            args.dfa_compiler, args.output)
+                            args.dfa_compiler, args.output, args.predictive_compiler)
     print(f"JSON: {report['structural_nonterminals']} predictive nonterminals, one lexical DFA with 3 tags, no structural conflicts")
 
 
