@@ -62,6 +62,19 @@ bool ppgll_v1_prepared_parse(
     char *error_buf,
     size_t error_buf_size);
 
+/* Values-only execution of an immutable, owned preparation. The borrowed
+ * pack must remain unchanged and live for the entire parse. */
+bool ppgll_v1_prepared_parse_values(
+    const PPNativeV1Prepared *prepared,
+    const uint8_t *input_bytes, size_t input_byte_len,
+    uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
+    PPNativeV1Result *out, char *error_buf, size_t error_buf_size);
+bool ppgll_v1_prepared_parse_scalar_view_values(
+    const PPNativeV1Prepared *prepared,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
+    PPNativeV1Result *out, char *error_buf, size_t error_buf_size);
+
 bool ppgll_v1_prepared_parse_scalar_view(
     const PPNativeV1Prepared *prepared,
     const CettaLpNativeUtf8ScalarView *view,

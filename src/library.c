@@ -430,6 +430,9 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->nik_runtime_mutex_ready =
         pthread_mutex_init(&ctx->nik_runtime_mutex, NULL) == 0;
     ctx->nik_runtime = NULL;
+    ctx->parser_cache_mutex_ready =
+        pthread_mutex_init(&ctx->parser_cache_mutex, NULL) == 0;
+    ctx->parser_cache = NULL;
     term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
@@ -645,6 +648,13 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     memset(&ctx->petta_library_paths, 0, sizeof(ctx->petta_library_paths));
     term_universe_free(&ctx->term_universe);
     cetta_native_handle_cleanup_all(ctx);
+    /* The cache holds no reference of its own. Closing the last native
+     * holder removes its entry before destroying the compilation. */
+    ctx->parser_cache = NULL;
+    if (ctx->parser_cache_mutex_ready) {
+        pthread_mutex_destroy(&ctx->parser_cache_mutex);
+        ctx->parser_cache_mutex_ready = false;
+    }
     free(ctx->petta_translator_rules);
     ctx->petta_translator_rules = NULL;
     ctx->petta_translator_rule_len = 0u;

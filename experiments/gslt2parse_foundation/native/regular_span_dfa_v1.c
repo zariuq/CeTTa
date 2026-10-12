@@ -610,6 +610,41 @@ bool rsdfa_v1_program_validate(
     return true;
 }
 
+bool rsdfa_v1_program_copy(RSDFAV1Program *out, const RSDFAV1Program *source,
+    char *error, size_t error_size) {
+    RSDFAV1Program result = {0};
+    if (!out || !source || !source->state_len || !source->states ||
+        (source->transition_len && !source->transitions) ||
+        (source->accept_tag_len && !source->accept_tags) ||
+        (source->eof_accept_tag_len && !source->eof_accept_tags)) {
+        rsdfa_v1_set_error(error, error_size, "missing immutable DFA storage");
+        return false;
+    }
+    result = *source;
+    result.states = NULL;
+    result.transitions = NULL;
+    result.accept_tags = NULL;
+    result.eof_accept_tags = NULL;
+#define COPY_PROGRAM_FIELD(field, len) do { \
+    if ((size_t)source->len > SIZE_MAX / sizeof(*source->field)) goto failed; \
+    result.field = malloc(((size_t)source->len + (source->len == 0u)) * sizeof(*source->field)); \
+    if (!result.field) goto failed; \
+    if (source->len) memcpy(result.field, source->field, (size_t)source->len * sizeof(*source->field)); \
+} while (0)
+    COPY_PROGRAM_FIELD(states, state_len);
+    COPY_PROGRAM_FIELD(transitions, transition_len);
+    COPY_PROGRAM_FIELD(accept_tags, accept_tag_len);
+    COPY_PROGRAM_FIELD(eof_accept_tags, eof_accept_tag_len);
+#undef COPY_PROGRAM_FIELD
+    rsdfa_v1_program_free(out);
+    *out = result;
+    return true;
+failed:
+    rsdfa_v1_program_free(&result);
+    rsdfa_v1_set_error(error, error_size, "immutable DFA copy allocation failed");
+    return false;
+}
+
 void rsdfa_v1_ascii_transition_index_init(
     RSDFAV1AsciiTransitionIndex *index) {
     if (index)

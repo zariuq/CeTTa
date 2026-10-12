@@ -119,13 +119,23 @@ class PredictiveArtifactTest(unittest.TestCase):
     def files(self):
         return {name: (self.output/name).read_bytes() for name in compiler.ARTIFACT_FILES}
 
+    def check_compilation_identities(self):
+        source = '#include <stdint.h>\n'
+        source += (self.output/compiler.ARTIFACT_FILES[0]).read_text()
+        source += (self.output/compiler.ARTIFACT_FILES[1]).read_text()
+        source += (self.output/compiler.ARTIFACT_FILES[2]).read_text().split("static JsonStartV1", 1)[0]
+        return subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
+                              ["-std=c11", "-x", "c", "-fsyntax-only", "-"],
+                              input=source, capture_output=True, text=True)
+
     def test_artifact_is_reproducible_and_identified(self):
         first = self.files()
         compiler.build_artifact(SYNTAX, PROFILE, TARGET, PLAN, self.emitter, self.output)
         self.assertEqual(first, self.files())
         report = json.loads(first[compiler.ARTIFACT_FILES[3]])
         self.assertEqual(len(report["artifact_sha256"]), 64)
-        self.assertEqual(set(report["compiler_sha256"]), {"lowering", "schema", "dfa"})
+        self.assertEqual(set(report["compiler_sha256"]),
+                         {"lowering", "schema", "dfa", "predictive", "predictive_adapter", "publication"})
 
     def test_failed_dfa_build_does_not_publish(self):
         first = self.files()
@@ -142,22 +152,40 @@ class PredictiveArtifactTest(unittest.TestCase):
         self.assertEqual(first, self.files())
 
     def test_c_compiler_refuses_mixed_artifacts(self):
-        def check():
-            source = '#include <stdint.h>\n'
-            source += (self.output/compiler.ARTIFACT_FILES[0]).read_text()
-            source += (self.output/compiler.ARTIFACT_FILES[1]).read_text()
-            source += (self.output/compiler.ARTIFACT_FILES[2]).read_text().split("static JsonStartV1", 1)[0]
-            return subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
-                                  ["-std=c11", "-x", "c", "-fsyntax-only", "-"],
-                                  input=source, capture_output=True, text=True)
-        clean = check()
+        clean = self.check_compilation_identities()
         self.assertEqual(clean.returncode, 0, clean.stderr)
         path = self.output/compiler.ARTIFACT_FILES[0]
         path.write_text(path.read_text().replace("#define JD_LEXICAL_ARTIFACT_0 ",
                                                 "#define JD_LEXICAL_ARTIFACT_0 ~", 1))
-        mixed = check()
+        mixed = self.check_compilation_identities()
         self.assertNotEqual(mixed.returncode, 0)
         self.assertIn("JSON generated artifacts differ", mixed.stderr)
+
+    def test_interrupted_compatibility_publication_fails_closed_and_recovers(self):
+        first = self.files()
+        code, report, nfa, start = compiler.compile_sources(SYNTAX, PROFILE, TARGET, PLAN)
+        replacement = (code + "\n", report, nfa, start)
+        replace = compiler.publication.os.replace
+        commits = 0
+
+        def interrupt_after_first(source, destination):
+            nonlocal commits
+            if commits:
+                raise OSError("interrupted artifact publication")
+            commits += 1
+            return replace(source, destination)
+
+        with mock.patch.object(compiler, "compile_sources", return_value=replacement):
+            with mock.patch.object(compiler.publication.os, "replace", side_effect=interrupt_after_first):
+                with self.assertRaises(OSError):
+                    compiler.build_artifact(SYNTAX, PROFILE, TARGET, PLAN, self.emitter, self.output)
+        self.assertEqual(commits, 1)
+        mixed = self.check_compilation_identities()
+        self.assertNotEqual(mixed.returncode, 0)
+        self.assertIn("JSON generated artifacts differ", mixed.stderr)
+        compiler.build_artifact(SYNTAX, PROFILE, TARGET, PLAN, self.emitter, self.output)
+        self.assertEqual(self.files(), first)
+        self.assertEqual(self.check_compilation_identities().returncode, 0)
 
 
 if __name__ == "__main__": unittest.main()
