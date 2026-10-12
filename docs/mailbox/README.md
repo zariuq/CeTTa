@@ -96,10 +96,17 @@ constructor; workers cannot supply executable code.
 Ready records provide recoverable observation, not exactly-once external
 effects. Consumers need action identities and durable action receipts before
 settlement. Other stores' cognitive state, tools, timers, and outboxes do not
-participate in this native mailbox commit. Lost mutation replies are reported
-as uncertain; recovery inspects application identities against the same
-durable owner. It never creates replacement storage for a dropped space or a
-changed service identity.
+participate in this native mailbox commit. The RPC layer reports lost mutation
+replies as uncertain. Identity-keyed mailbox operations reopen the same durable
+owner and inspect current application state once before deciding again. They
+never resend the previous batch or replay an external action. A second transport
+failure remains a refusal. Recovery never creates replacement storage for a
+dropped space or a changed service identity. Idle connections that have already
+reached EOF are replaced before another packet is sent.
+
+The disposable value evaluator is replaced after death or a transport deadline.
+Only its pure plan is recomputed, from freshly validated storage observations;
+an unfinished reply cannot contaminate another operation.
 
 `watch` atomically compares a captured revision and registers a deferred reply.
 A write in the read/subscription gap wakes immediately. Each watch occupies a
@@ -129,7 +136,9 @@ publication. A running watcher also handles ordinary copies on close;
 startup and overflow rescans cannot determine whether a file is still open.
 
 The bridge durably admits a message before moving its source into `received/`.
-Malformed files remain inspectable and do not block other arrivals. Lost
+Malformed files and refused symlinks move into `rejected/`, retaining their
+contents without scheduling endless retries. Each file failure is contained,
+including an excessively nested JSON envelope. Lost
 acknowledgements reconcile by exact message identity. Startup, overflow, and
 replaced directories trigger rescans. Transient owner outages retry held
 arrivals without another file event. Directories are trusted capabilities:

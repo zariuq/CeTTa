@@ -10,10 +10,10 @@ import uuid
 
 if __package__:
     from .space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
-    from .value_worker_client import Worker
+    from .value_worker_client import Worker, WorkerUnavailable
 else:
     from space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
-    from value_worker_client import Worker
+    from value_worker_client import Worker, WorkerUnavailable
 
 
 class MailboxError(RuntimeError):
@@ -116,10 +116,18 @@ class Mailbox:
         return value[1].name
 
     def _operation(self, function):
+        recovered = False
         for _ in range(self.attempts):
             try:
                 self.space.describe()
                 return function(self.space.revision)
+            except (Uncertain, OSError, WorkerUnavailable):
+                if recovered:
+                    raise
+                recovered = True
+                # Reconcile the identity-keyed operation against current
+                # durable state. Do not resend its previous mutation plan.
+                self.reconnect()
             except Changed:
                 pass
             except ServiceError as error:

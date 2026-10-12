@@ -85,8 +85,44 @@ class BridgeTests(unittest.TestCase):
         wrong=deliver(self.inbox,"wrong","request","impostor","wrong")
         good=deliver(self.inbox,"good","request","codex","good")
         self.pump(bridge,lambda:not good.exists())
-        self.assertTrue(malformed.exists()); self.assertTrue(wrong.exists())
+        self.assertFalse(malformed.exists()); self.assertFalse(wrong.exists())
+        self.assertEqual(len(list((self.inbox/"rejected").glob("*.json"))),2)
         self.assertEqual(self.box.resolve("wait")[6][-1],"good")
+
+    def test_deep_json_is_quarantined_and_cannot_crash_loop_on_rescan(self):
+        self.inbox.mkdir()
+        malformed=self.inbox/"deep.json"
+        malformed.write_text("["*10000+"0"+"]"*10000)
+        bridge=self.folder(); self.register()
+        self.assertFalse(malformed.exists())
+        self.assertEqual(len(list((self.inbox/"rejected").glob("*.json"))),1)
+        self.assertFalse(bridge.retry)
+        good=deliver(self.inbox,"good","request","codex","good")
+        self.pump(bridge,lambda:not good.exists())
+        bridge.rescan()
+        self.assertEqual(self.box.resolve("wait")[6][-1],"good")
+
+    def test_symlink_refusal_is_permanent_and_keeps_target_untouched(self):
+        bridge=self.folder(); self.register()
+        target=self.fixture.path/"outside"
+        target.write_text("private")
+        staged=self.inbox/".link"; staged.symlink_to(target)
+        source=self.inbox/"link.json"; staged.rename(source)
+        self.pump(bridge,lambda:bridge.held>0)
+        self.assertFalse(source.is_symlink())
+        self.assertFalse(bridge.retry)
+        links=list((self.inbox/"rejected").glob("*.json"))
+        self.assertEqual(len(links),1); self.assertTrue(links[0].is_symlink())
+        self.assertEqual(target.read_text(),"private")
+
+    def test_killed_bridge_worker_is_replaced_without_another_file_event(self):
+        bridge=self.folder(); self.register()
+        old=self.box.worker.process
+        old.kill(); old.wait(timeout=5)
+        source=deliver(self.inbox,"after-kill","request","codex","recovered")
+        self.pump(bridge,lambda:not source.exists())
+        self.assertNotEqual(self.box.worker.process.pid,old.pid)
+        self.assertEqual(self.box.resolve("wait")[6][-1],"recovered")
 
     def test_uncertain_arrival_is_not_acknowledged_and_rescan_deduplicates(self):
         bridge=self.folder(); self.register()

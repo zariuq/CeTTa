@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import socket
+import select
 import struct
 import time
 import uuid
@@ -280,6 +281,15 @@ class Client:
         started = False
         self.deadline = time.monotonic() + self.timeout
         try:
+            # An idle owner can close a previously successful connection.
+            # Detect EOF before sending; never retry a packet already sent.
+            if self.connection is not None:
+                try:
+                    readable = select.select([self.connection], [], [], 0)[0]
+                    if readable and not self.connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+                        self.close()
+                except (OSError, ValueError):
+                    self.close()
             if self.connection is None:
                 connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 connection.settimeout(self.timeout)
@@ -289,11 +299,11 @@ class Client:
                     connection.close()
                     raise
                 self.connection = connection
-            started = True
             remaining = self.deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("request deadline")
             self.connection.settimeout(remaining)
+            started = True
             self.connection.sendall(packet)
             header = self._read(8)
             if header[:4] != b"CSP1":

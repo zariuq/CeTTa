@@ -303,11 +303,14 @@ class NativeMailboxTests(unittest.TestCase):
         box=self.mailbox(); self.register(box)
         box.send("m1","codex-review","request","codex","answer")
         batch=box.space.batch
+        committed=[]
         def lose_reply(*ops,**kwargs):
             batch(*ops,**kwargs)
+            committed.append(ops)
             raise Uncertain(E("fixture-lost-reply"))
         box.space.batch=lose_reply
-        with self.assertRaises(Uncertain): box.resolve("wait")
+        self.assertEqual(box.resolve("wait")[6][-1],"answer")
+        self.assertEqual(len(committed),1)
         self.fixture.restart()
         resumed=self.mailbox()
         self.assertEqual(resumed.resolve("wait")[6][-1],"answer")

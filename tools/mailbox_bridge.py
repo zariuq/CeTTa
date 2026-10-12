@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import ctypes
+import errno
 import json
 import os
 from pathlib import Path
@@ -15,9 +16,11 @@ import uuid
 if __package__:
     from .native_mailbox import Mailbox, MailboxError, text
     from .space_service_client import S, ServiceError, Uncertain
+    from .value_worker_client import WorkerUnavailable
 else:
     from native_mailbox import Mailbox, MailboxError, text
     from space_service_client import S, ServiceError, Uncertain
+    from value_worker_client import WorkerUnavailable
 
 
 def deliver(directory, identity, correlation, sender, body):
@@ -164,18 +167,35 @@ class DirectoryBridge:
             self.diagnostics.pop(key,None); self.retry.pop(key,None)
         except FileNotFoundError:
             self.retry.pop(key,None)
-        except (ValueError,MailboxError,ServiceError,Uncertain,OSError) as error:
+        except Exception as error:
             # A malformed occurrence remains inspectable and cannot stop
             # other channels. Transport uncertainty is retried by its exact
             # durable message identity, never by replaying a mutation plan.
             self.held+=1; self.diagnostics[key]=type(error).__name__
-            transient=(isinstance(error,(OSError,Uncertain)) or
+            transient=(isinstance(error,(Uncertain,WorkerUnavailable)) or
+                       isinstance(error,OSError) and error.errno!=errno.ELOOP or
                        isinstance(error,ServiceError) and error.reason in (S("space-limit"),S("stale-revision"),S("snapshot-limit")) or
                        isinstance(error,MailboxError) and str(error).startswith("mailbox contention"))
             if transient:
                 self.retry[key]=(binding,path)
                 if self.retry_due is None:
                     self.retry_due=time.monotonic()+self.retry_delay
+            else:
+                self.retry.pop(key,None)
+                # Retain rejected bytes (or the refused symlink itself)
+                # outside the watched input set so restart cannot retry it.
+                try:
+                    rejected=binding["directory"]/"rejected"
+                    rejected.mkdir(exist_ok=True)
+                    os.rename(path,rejected/(uuid.uuid4().hex+path.suffix))
+                    for directory in (rejected,binding["directory"]):
+                        parent=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
+                        try: os.fsync(parent)
+                        finally: os.close(parent)
+                except FileNotFoundError:
+                    pass
+                except OSError as refusal:
+                    self.diagnostics[key]+="; quarantine: "+type(refusal).__name__
 
     def rescan(self):
         """Recovery after overflow/reconnect: atomic publications are authority."""

@@ -13,34 +13,57 @@ else:
     from space_service_client import E, S, encode, decode, MAX_BYTES
 
 
+class WorkerUnavailable(RuntimeError):
+    """A disposable evaluator failed; its outstanding reply was discarded."""
+
+
 class Worker:
     def __init__(self, binary, module, entry, timeout=30, profile=False):
         self.timeout = timeout
         self.profile = profile
         self.last_metrics = None
         self.lock = threading.Lock()
-        self.process = subprocess.Popen([str(binary), str(module), entry],
+        self.command = [str(binary), str(module), entry]
+        self.closed = False
+        self.process = None
+        self._start()
+
+    def _start(self):
+        if self.closed:
+            raise WorkerUnavailable("CeTTa worker is closed")
+        self.process = subprocess.Popen(self.command,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         os.set_blocking(self.process.stdin.fileno(), False)
         os.set_blocking(self.process.stdout.fileno(), False)
 
-    def close(self):
-        self.process.stdin.close()
-        if self.process.poll() is None:
+    def _discard(self):
+        process, self.process = self.process, None
+        if process is None:
+            return None
+        process.stdin.close()
+        if process.poll() is None:
             try:
-                self.process.wait(timeout=2)
+                process.wait(timeout=.2)
             except subprocess.TimeoutExpired:
-                self.process.terminate()
-                try:self.process.wait(timeout=2)
+                process.terminate()
+                try: process.wait(timeout=.2)
                 except subprocess.TimeoutExpired:
-                    self.process.kill(); self.process.wait()
-        self.process.stdout.close()
-        if self.process.returncode > 0:
-            raise RuntimeError("CeTTa worker exited with status " + str(self.process.returncode))
-        return self.process.returncode
+                    process.kill(); process.wait()
+        process.stdout.close()
+        return process.returncode
+
+    def close(self):
+        with self.lock:
+            self.closed = True
+            return self._discard()
 
     def call(self, value):
         with self.lock:
+            if self.closed:
+                raise WorkerUnavailable("CeTTa worker is closed")
+            if self.process is None or self.process.poll() is not None:
+                self._discard()
+                self._start()
             started = time.perf_counter_ns() if self.profile else 0
             request_id = uuid.uuid4().hex
             data = encode(E("work-profile" if self.profile else "work", request_id, value))
@@ -95,7 +118,10 @@ class Worker:
                 if response[2] != S("ok"):
                     raise RuntimeError("worker refused: " + repr(response[3]))
                 return response[3]
-            except BaseException:
+            except (OSError, EOFError, ValueError) as error:
                 # A timed-out request must never contaminate a later call.
-                self.close()
+                self._discard()
+                raise WorkerUnavailable("CeTTa worker transport failed: " + type(error).__name__) from error
+            except BaseException:
+                self._discard()
                 raise
