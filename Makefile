@@ -43578,7 +43578,7 @@ test-telegram-scheduler:
 endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
-.PHONY: space-service test-space-service
+.PHONY: space-service test-space-service test-native-mailbox
 .PHONY: value-worker test-memory-collection test-memory-index-mutations install-memory-service
 MEMORY_SERVICE_INSTALL_ARGS ?=
 VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
@@ -43603,6 +43603,9 @@ space-service: $(SPACE_SERVICE_BIN)
 	@echo "Built $(SPACE_SERVICE_BIN)"
 test-space-service: $(SPACE_SERVICE_BIN) $(BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN)
+test-native-mailbox: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
+	CETTA_SPACE_SERVICE=$(SPACE_SERVICE_BIN) CETTA_VALUE_WORKER=$(VALUE_WORKER_BIN) python3 tests/test_native_mailbox.py
+	CETTA_SPACE_SERVICE=$(SPACE_SERVICE_BIN) CETTA_VALUE_WORKER=$(VALUE_WORKER_BIN) python3 tests/test_mailbox_bridges.py
 test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
 test-memory-index-mutations: $(VALUE_WORKER_BIN)

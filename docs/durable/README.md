@@ -1,5 +1,10 @@
 # Durable named spaces
 
+The [native mailbox guide](../mailbox/README.md) describes single-channel
+receives on the SQLite-free named-space service. Its mailbox commits are
+atomic within one native physical space; it does not replace this library's
+existing cross-space transaction domain.
+
 The optional `durable` library supplies one local commit domain across named
 record spaces. It is the storage boundary for a durable process host, not a
 transport dispatcher. Applications work with MeTTa data and do not issue SQL.

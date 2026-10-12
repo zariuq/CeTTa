@@ -25,6 +25,9 @@ Client, S, E, Var = csp.Client, csp.S, csp.E, csp.Var
 SERVICE = str(Path(sys.argv[1]).resolve())
 CETTA = str(Path(sys.argv[2]).resolve()) if len(sys.argv) > 2 else None
 TRACE = []
+BACKENDS = tuple(os.environ.get("CETTA_SPACE_TEST_BACKENDS", "native,pathmap,mork").split(","))
+if not BACKENDS or any(x not in ("native", "pathmap", "mork") for x in BACKENDS):
+    raise ValueError("invalid test backend selection")
 
 
 class Fixture:
@@ -111,7 +114,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason, S(reason))
 
     def test_backend_bag_or_set_and_remove_one(self):
-        for backend in ("native", "pathmap", "mork"):
+        for backend in BACKENDS:
             with self.subTest(backend=backend):
                 space = self.space(backend)
                 space.batch(E("add", E("p", 7)), E("add", E("p", 7)))
@@ -140,7 +143,7 @@ class ServiceTests(unittest.TestCase):
                       "stale": True, "correlated": True})
 
     def test_backend_key_projection_verification(self):
-        for backend in ("native","pathmap","mork"):
+        for backend in BACKENDS:
             space=self.space(backend)
             values=[E("duplicate",7),E("duplicate",7),E("binary",b"\xff\x00"*10000),
                     E("open",Var(70),Var(70)),E("wide",*range(100))]
@@ -206,7 +209,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(space.match_count(E("p", Var(0))), 2)
 
     def test_variable_coreference_and_open_facts(self):
-        for backend in ("native", "pathmap", "mork"):
+        for backend in BACKENDS:
             with self.subTest(backend=backend):
                 space = self.space(backend)
                 space.batch(E("add", E("same", 1, 1)), E("add", E("same", 1, 2)),
@@ -222,7 +225,7 @@ class ServiceTests(unittest.TestCase):
     def test_typed_values_round_trip(self):
         values = [S("7"), 7, True, "7", "a\x00b", b"\xff\x00", csp.FloatBits.of(-0.0),
                   csp.FloatBits(0x7ff8000000000042), csp.BigInt(str(2**90)), csp.Rational("123/7")]
-        for backend in ("native", "pathmap", "mork"):
+        for backend in BACKENDS:
             with self.subTest(backend=backend):
                 space = self.space(backend)
                 space.batch(*(E("add", E("payload", i, value)) for i, value in enumerate(values)))
@@ -239,13 +242,13 @@ class ServiceTests(unittest.TestCase):
 
     def test_large_values_survive_compaction_and_recovery(self):
         value = E("persisted", "雪\x00"*16384, E("wide", *range(100)), Var(91), Var(91))
-        for backend in ("native","pathmap","mork"):
+        for backend in BACKENDS:
             space = self.space(backend)
             space.add(value)
             self.client.call("compact",space.uuid)
         self.client.close()
         self.fixture.restart(crash=True)
-        for backend in ("native","pathmap","mork"):
+        for backend in BACKENDS:
             space = self.space(backend)
             self.assertEqual(space.match(Var(0),Var(0)),[E("persisted", "雪\x00"*16384,
                              E("wide",*range(100)),Var(0),Var(0))])
@@ -291,7 +294,7 @@ class ServiceTests(unittest.TestCase):
     def test_large_binary_values_and_wide_syntax(self):
         values = ["雪\x00"*32768, b"\xff\x00"*32768, csp.Symbol(b"n\x00s"),
                   E("wide", *range(100)), E("variables", *(Var(i) for i in range(70)))]
-        for backend in ("native", "pathmap", "mork"):
+        for backend in BACKENDS:
             with self.subTest(backend=backend):
                 space = self.space(backend)
                 for i, value in enumerate(values):
@@ -330,7 +333,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_acknowledged_writes_and_receipts_survive_kill(self):
         descriptors = []
-        for backend in ("native", "pathmap", "mork"):
+        for backend in BACKENDS:
             space = self.space(backend)
             space.add(E("saved", backend), request_id="save-"+backend)
             descriptors.append(space.describe())
@@ -365,7 +368,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_exact_request_bytes_survive_journal_and_checkpoint(self):
         saved=[]
-        for backend in ("native","pathmap","mork"):
+        for backend in BACKENDS:
             space=self.space(backend)
             value=E("spelling",csp.BigInt("00042"),csp.Rational("0006/0004"),Var(9),Var(9))
             args=(space.uuid,space.id,space.revision,E("ops",E("add",value)))
@@ -382,7 +385,7 @@ class ServiceTests(unittest.TestCase):
                 changed=args[:3]+(E("ops",E("add",E("spelling",csp.BigInt("42"),
                                  csp.Rational("3/2"),Var(9),Var(9)))),)
                 self.denied("reused-id",self.client.call,"batch",*changed,request_id=request_id)
-            for backend in ("native","pathmap","mork"):
+            for backend in BACKENDS:
                 self.assertEqual(self.space(backend).match_count(Var(0)),1)
 
     def test_retired_receipt_cannot_make_old_write_apply_twice(self):

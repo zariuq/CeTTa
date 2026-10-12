@@ -1,0 +1,245 @@
+"""Directory notifications and Codex completions against real native storage."""
+import json
+import os
+from pathlib import Path
+import queue
+import socket
+import sys
+import struct
+import time
+import unittest
+from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+
+from test_native_mailbox import ROOT, SERVER, WORKER, Fixture
+sys.path.insert(0,str(ROOT/"tools"))
+from native_mailbox import Mailbox
+from mailbox_bridge import DirectoryBridge, deliver
+from mailbox_codex import CodexBridge, TranscriptPending, transport
+from space_service_client import E, S, Var, Uncertain
+
+
+class AppServerFixture:
+    def __init__(self,turns):
+        self.turns=turns; self.calls=[]; self.pending_notifications=[]
+        self.connection=self; self.socket=socket.socket(); self.events=queue.Queue()
+
+    def request(self,method,params):
+        self.calls.append((method,params))
+        if method=="thread/resume": return {"thread":{"id":params["threadId"]}}
+        if method=="thread/read": return {"thread":{"id":params["threadId"],"turns":self.turns}}
+        raise AssertionError("watcher attempted to start or steer model work")
+
+    def receive_json(self): return self.events.get(timeout=3)
+    def close(self): self.socket.close()
+
+
+@unittest.skipUnless(SERVER and WORKER,"set CETTA_SPACE_SERVICE and CETTA_VALUE_WORKER")
+class BridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=Fixture(); self.addCleanup(self.fixture.close)
+        self.box=Mailbox(self.fixture.socket,"mailbox",WORKER); self.addCleanup(self.box.close)
+        self.inbox=self.fixture.path/"inbox"
+
+    def register(self,correlation="request",identity="wait",generation=1,channel="review"):
+        self.box.register(identity,channel,correlation,"codex","agent",generation,E("MailboxResume",1,"review",identity))
+
+    def folder(self):
+        bridge=DirectoryBridge(self.box,[{"name":"review","sender":"codex","directory":str(self.inbox)}])
+        self.addCleanup(bridge.close); return bridge
+
+    def pump(self,bridge,predicate):
+        deadline=time.monotonic()+2
+        while time.monotonic()<deadline:
+            if predicate(): return
+            bridge.poll(.05)
+        self.assertTrue(predicate())
+
+    def test_atomic_arrival_commits_before_ack_and_duplicate_survives_restart(self):
+        bridge=self.folder(); self.register()
+        source=deliver(self.inbox,"source-1","request","codex","answer")
+        self.pump(bridge,lambda:not source.exists())
+        result=self.box.resolve("wait"); self.assertEqual(result[6][-1],"answer")
+        bridge.close(); self.fixture.restart(); self.box.reconnect()
+        duplicate=deliver(self.inbox,"source-1","request","codex","answer")
+        resumed=self.folder()
+        self.assertFalse(duplicate.exists()); self.assertEqual(resumed.ingested,1)
+        self.assertEqual(self.box.resolve("wait"),result)
+        self.assertEqual(self.box.space.match_count(E("MailboxPending",1,Var(0),Var(1),Var(2),Var(3))),0)
+
+    def test_create_does_not_ack_a_still_open_copy(self):
+        bridge=self.folder(); self.register()
+        path=self.inbox/"copy.json"
+        with path.open("w") as writer:
+            json.dump({"id":"copy","correlation":"request","sender":"codex","body":"answer"},writer)
+            writer.flush()
+            bridge.poll(.05)
+            self.assertTrue(path.exists()); self.assertEqual(bridge.ingested,0)
+        self.pump(bridge,lambda:not path.exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"answer")
+
+    def test_bad_occurrence_is_held_while_another_channel_progresses(self):
+        bridge=self.folder(); self.register()
+        malformed=self.inbox/"broken.json"; malformed.write_text("{")
+        wrong=deliver(self.inbox,"wrong","request","impostor","wrong")
+        good=deliver(self.inbox,"good","request","codex","good")
+        self.pump(bridge,lambda:not good.exists())
+        self.assertTrue(malformed.exists()); self.assertTrue(wrong.exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"good")
+
+    def test_uncertain_arrival_is_not_acknowledged_and_rescan_deduplicates(self):
+        bridge=self.folder(); self.register()
+        original=self.box.send
+        def lost_reply(*args):
+            original(*args); raise Uncertain(E("lost-ack"))
+        self.box.send=lost_reply
+        source=deliver(self.inbox,"id","request","codex","answer")
+        self.pump(bridge,lambda:bridge.held>0)
+        self.assertTrue(source.exists())
+        self.box.send=original; self.fixture.restart(); self.box.reconnect(); bridge.rescan()
+        self.assertFalse(source.exists()); self.assertEqual(self.box.resolve("wait")[6][-1],"answer")
+        self.assertEqual(self.box.space.match_count(E("MailboxMessage",1,Var(0),Var(1),Var(2),Var(3),Var(4))),1)
+
+    def test_folder_replacement_rearms_and_reconciles_complete_files(self):
+        bridge=self.folder(); self.register()
+        self.inbox.rename(self.fixture.path/"old")
+        source=deliver(self.inbox,"fresh","request","codex","replacement")
+        self.pump(bridge,lambda:not source.exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"replacement")
+
+    def test_transient_owner_outage_recovers_without_another_file_event(self):
+        bridge=self.folder(); self.register(); self.fixture.stop(crash=True)
+        source=deliver(self.inbox,"outage","request","codex","retained")
+        self.pump(bridge,lambda:bridge.held>0)
+        self.assertTrue(source.exists())
+        self.fixture.start()
+        self.pump(bridge,lambda:not source.exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"retained")
+
+    def test_overflow_event_rescans_published_files(self):
+        bridge=self.folder(); self.register()
+        source=deliver(self.inbox,"overflow","request","codex","rescanned")
+        packet=struct.pack("iIII",-1,bridge.OVERFLOW,0,0)
+        original_read=os.read; original_select=__import__("select").select; packets=[packet]
+        def read(fd,size):
+            if fd!=bridge.fd: return original_read(fd,size)
+            if packets: return packets.pop()
+            raise BlockingIOError()
+        def ready(readers,writers,errors,timeout=None):
+            if readers==[bridge.fd] and not writers: return (readers,[],[])
+            return original_select(readers,writers,errors,timeout)
+        with patch("mailbox_bridge.select.select",side_effect=ready), \
+             patch("mailbox_bridge.os.read",side_effect=read):
+            bridge.poll()
+        self.assertFalse(source.exists()); self.assertEqual(bridge.overflows,1)
+        self.assertEqual(self.box.resolve("wait")[6][-1],"rescanned")
+
+    def test_replacing_folders_retires_old_watches(self):
+        bridge=self.folder()
+        for number in range(4):
+            self.inbox.rename(self.fixture.path/("old-"+str(number)))
+            self.inbox.mkdir(); bridge.rescan()
+            self.assertEqual(set(bridge.watches.values()),{self.inbox,self.inbox.parent})
+            self.assertEqual(len(bridge.watches),2)
+
+    def test_same_source_identity_on_two_bindings_stays_distinct(self):
+        other=self.fixture.path/"other"
+        bridge=DirectoryBridge(self.box,[{"name":"review","sender":"codex","directory":str(self.inbox)},
+                                       {"name":"other","sender":"codex","directory":str(other)}])
+        self.addCleanup(bridge.close)
+        deliver(self.inbox,"same","request","codex","one")
+        deliver(other,"same","request","codex","two")
+        self.pump(bridge,lambda:bridge.ingested==2)
+        self.assertEqual(self.box.space.match_count(E("MailboxMessage",1,Var(0),Var(1),Var(2),Var(3),Var(4))),2)
+
+    def codex(self,turns):
+        client=AppServerFixture(turns); self.addCleanup(client.close)
+        bridge=CodexBridge(self.box,[{"thread":"thread","turn":"turn","channel":"review","sender":"codex"}])
+        bridge.connect(client); return bridge,client
+
+    def completed(self,status="completed"):
+        return {"id":"turn","status":status,"items":[{"id":"progress","type":"agentMessage","phase":"commentary","text":"working"},
+                 {"id":"final","type":"agentMessage","phase":"final_answer","text":"done"}]}
+
+    def test_codex_notification_path_has_no_idle_transcript_poll(self):
+        self.register("turn"); bridge,client=self.codex([{"id":"turn","status":"inProgress"}])
+        self.assertEqual([x[0] for x in client.calls],["thread/resume","thread/read"])
+        before=dict(self.box.metrics)
+        time.sleep(.03); self.assertEqual(self.box.metrics,before)
+        client.turns=[self.completed()]
+        client.events.put({"method":"turn/completed","params":{"threadId":"thread","turn":self.completed()}})
+        self.assertTrue(bridge.next_event())
+        body=json.loads(self.box.resolve("wait")[6][-1])
+        self.assertEqual(body["status"],"completed"); self.assertEqual(len(body["messages"]),1)
+        self.assertEqual(body["messages"][0]["text"],"done")
+        self.assertNotIn("turn/start",[x[0] for x in client.calls])
+
+    def test_codex_reconnect_reconciles_missed_completion_without_reopening_consumed_message(self):
+        self.register("turn"); bridge,client=self.codex([self.completed()])
+        result=self.box.resolve("wait"); self.box.settle("wait","agent",1)
+        self.fixture.restart(); self.box.reconnect(); bridge.connect(client)
+        self.assertEqual(self.box.resolve("wait")[0],S("MailboxSettled"))
+        self.assertEqual(self.box.space.match_count(E("MailboxPending",1,Var(0),Var(1),Var(2),Var(3))),0)
+        self.assertEqual(result[6][-1],json.dumps(json.loads(result[6][-1]),ensure_ascii=False,sort_keys=True,separators=(",",":")))
+
+    def test_codex_wrong_turn_and_wrong_thread_cannot_wake(self):
+        self.register("turn"); bridge,client=self.codex([])
+        for thread,turn in [("wrong",self.completed()),("thread",{"id":"wrong","status":"completed"})]:
+            self.assertFalse(bridge.accept({"method":"turn/completed","params":{"threadId":thread,"turn":turn}}))
+        self.assertEqual(self.box.resolve("wait")[0],S("MailboxWaiting"))
+
+    def test_codex_failure_is_explicit_data_and_not_a_success_reply(self):
+        self.register("turn"); turn=self.completed("failed"); turn["error"]={"message":"provider unavailable"}
+        self.codex([turn]); result=json.loads(self.box.resolve("wait")[6][-1])
+        self.assertEqual(result["status"],"failed"); self.assertEqual(result["error"]["message"],"provider unavailable")
+
+    def test_codex_known_completion_survives_a_lagging_transcript(self):
+        self.register("turn"); bridge,client=self.codex([{"id":"turn","status":"inProgress"}])
+        notification={"method":"turn/completed","params":{"threadId":"thread","turn":self.completed()}}
+        with self.assertRaises(TranscriptPending): bridge.accept(notification)
+        with self.assertRaises(TranscriptPending): bridge.connect(client)
+        self.assertEqual(self.box.resolve("wait")[0],S("MailboxWaiting"))
+        client.turns=[self.completed()]; bridge.connect(client)
+        self.assertEqual(bridge.pending,set())
+        self.assertEqual(json.loads(self.box.resolve("wait")[6][-1])["messages"][0]["text"],"done")
+
+    def test_codex_summary_cannot_be_acknowledged_as_full_result(self):
+        self.register("turn"); bridge,client=self.codex([])
+        summary=self.completed(); summary["itemsView"]="summary"; client.turns=[summary]
+        with self.assertRaises(TranscriptPending): bridge.reconcile("thread")
+        self.assertEqual(self.box.resolve("wait")[0],S("MailboxWaiting"))
+        client.turns=[self.completed()]; bridge.connect(client)
+        self.assertEqual(bridge.pending,set())
+        self.assertEqual(self.box.resolve("wait")[0],S("MailboxResult"))
+
+    @unittest.skipUnless(os.environ.get("CETTA_CODEX_TRANSPORT"),"set installed AppServer helper for wire fixture")
+    def test_installed_codex_transport_delivers_completion_while_other_work_runs(self):
+        from support.codex_app_server_fixture import WireAppServer
+        self.register("turn")
+        fixture=WireAppServer(self.fixture.path/"codex.sock")
+        self.addCleanup(fixture.close)
+        client=transport(os.environ["CETTA_CODEX_TRANSPORT"])(str(fixture.path))
+        self.addCleanup(client.close)
+        bridge=CodexBridge(self.box,[{"thread":"thread","turn":"turn","channel":"review","sender":"codex"}])
+        bridge.connect(client)
+        previous=list(fixture.calls)
+        other=self.box.client.open("other-activities")
+        with ThreadPoolExecutor() as executor:
+            pending=executor.submit(bridge.next_event)
+            for number in range(4):
+                other.add(E("PeriodicDuty",number)); time.sleep(.02)
+                self.assertFalse(pending.done())
+            self.assertEqual(fixture.calls,previous)
+            started=time.monotonic(); fixture.complete(self.completed())
+            self.assertTrue(pending.result(timeout=3))
+            result=self.box.resolve("wait")
+            elapsed=(time.monotonic()-started)*1000
+        self.assertEqual(json.loads(result[6][-1])["messages"][0]["text"],"done")
+        self.assertEqual(other.match_count(E("PeriodicDuty",Var(0))),4)
+        self.assertTrue(all(method in ("initialize","initialized","thread/resume","thread/read")
+                            for method,params in fixture.calls))
+        print("CODEX_MAILBOX_WIRE "+json.dumps({"arrival_to_ready_ms":round(elapsed,3),
+                    "periodic_duties":4,"idle_rpc_polls":0,"model_calls":0}))
+
+
+if __name__=="__main__": unittest.main(verbosity=2)
