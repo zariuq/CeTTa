@@ -1,7 +1,7 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Native dependent evidence packing, without a special chainer policy.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
@@ -14,7 +14,7 @@
 !(type:check (lam A (lam B (lam x (lam witness (pair witness x)))))
    (-> (A : (u 0)) (B : (-> (z : A) (u 0)))
        (x : A) (witness : (B x)) (sigma (z : A) (B z))))
-!(set:define &thy packWitness
+!(hol:define &thy packWitness
    (-> (A : (u 0)) (B : (-> (z : A) (u 0)))
        (x : A) (witness : (B x)) (sigma (z : A) (B z)))
    (= (packWitness $A $B $x $witness) (pair $x $witness)))
@@ -30,7 +30,7 @@
       (packWitness A B a unknownWitness) (sigma (z : A) (B z))))
    (car-atom $outcome))
 ; Packing native identity evidence exercises a genuinely dependent endpoint.
-!(set:define &thy recordAt (-> (A : (u 0)) (x : A)
+!(hol:define &thy recordAt (-> (A : (u 0)) (x : A)
       (sigma (z : A) (id A x z)))
    (= (recordAt $A $x) (pair $x (refl $x))))
 !(type:check &thy (recordAt A a) (sigma (z : A) (id A a z)))

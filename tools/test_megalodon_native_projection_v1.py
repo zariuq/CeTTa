@@ -32,7 +32,7 @@ def cited_facts(projection, instance) -> int:
         return found
     for command in projection.commands:
         if (isinstance(command, tuple) and len(command) == 4
-                and command[0] == sx.Symbol("set:theorem")
+                and command[0] == sx.Symbol("hol:theorem")
                 and command[1] == sx.Symbol(instance.name)):
             return len(walk(command[3], set()))
     raise AssertionError(f"no theorem command for {instance.name}")
@@ -45,11 +45,11 @@ def normalized_use(instance):
     Written quotations seal their variables and cannot capture these values;
     noreduce-eq inspects the retained evidence without running its calls.
     """
-    return f'''!(let $package (set:native-proof {instance.name})
- (unify $package (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+    return f'''!(let $package (hol:native-proof {instance.name})
+ (unify $package (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
   (let $consumer (Lam $type (Refl (idx 0)))
-   (let (SetNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
-     (set:native-normalize $package $consumer)
+   (let (HolNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
+     (hol:native-normalize $package $consumer)
     (let (Refl $value) $normal
      (let (Id $carrier $left $right) $normal-type
       (ImportedNativeNormal {instance.position}
@@ -146,8 +146,8 @@ class NativeProjectionTests(unittest.TestCase):
             if f"[(ImportedNativeUse {proof.position} True True {cited})]" not in result:
                 diagnostics = projection.render()
                 diagnostics += "\n".join("!(try " + sx.render(c) + ")"
-                    for c in projection.commands if c[0] == sx.Symbol("set:theorem"))
-                diagnostics += f"\n!(try (set:native-proof {proof.name}))\n"
+                    for c in projection.commands if c[0] == sx.Symbol("hol:theorem"))
+                diagnostics += f"\n!(try (hol:native-proof {proof.name}))\n"
                 result += self.run_program(diagnostics)
             self.assertIn(f"[(ImportedNativeUse {proof.position} True True {cited})]", result,
                           msg=f"source theorem {proof.declaration.label}:\n{result}")
@@ -166,31 +166,31 @@ class NativeProjectionTests(unittest.TestCase):
             i for i, item in enumerate(items)
             if item.kind == "DEF" and item.label == "False"))
         applied = self.run_program(projection.render() + f'''
-!(let $package (set:native-proof {identity.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {identity.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) $formula) $type
-   (let (SetNativeUseV1 $checked $consumer $result $result-type)
-    (set:native-use $package (Lam $type (App (idx 0) (DeclConst Falsum))))
-    (let (SetNativeUseV1 $source-checked $source-consumer $source-result $source-type)
-     (set:native-use $package (Lam $type (App (idx 0) (DeclConst {falsity.name}))))
+   (let (HolNativeUseV1 $checked $consumer $result $result-type)
+    (hol:native-use $package (Lam $type (App (idx 0) (DeclConst Falsum))))
+    (let (HolNativeUseV1 $source-checked $source-consumer $source-result $source-type)
+     (hol:native-use $package (Lam $type (App (idx 0) (DeclConst {falsity.name}))))
      (ImportedApplication
       (== $result-type (Pi (Pi (DeclConst prop) (App (DeclConst $family) (idx 0)))
                            (Pi (DeclConst prop) (App (DeclConst $family) (idx 0)))))
       (== $source-type $result-type)
-      (set:eq {falsity.name} Falsum)))))))
+      (hol:eq {falsity.name} Falsum)))))))
 ''')
         self.assertIn("[(ImportedApplication True True True)]", applied)
 
     def test_annotation_checks_formation_and_proof(self):
         result = self.run_program('''
-(set:profile hol)
-!(set:theorem annotated (all prop (lam p (imp p p)))
+(hol:profile core)
+!(hol:theorem annotated (all prop (lam p (imp p p)))
  (pf:typed (all prop (lam p (imp p p)))
    (pf:all-intro (pf:imp-intro (pf:hyp 0)))))
-!(let $r (try (set:theorem false-annotation (all prop (lam p p))
+!(let $r (try (hol:theorem false-annotation (all prop (lam p p))
  (pf:typed (all prop (lam p p))
    (pf:all-intro (pf:imp-intro (pf:hyp 0)))))) (car-atom $r))
-!(let $r (try (set:proves (pf:typed prop (pf:hyp 0))
+!(let $r (try (hol:proves (pf:typed prop (pf:hyp 0))
  (all prop (lam p p)))) (car-atom $r))
 ''')
         self.assertEqual(result.count("[Refuted]"), 2, result)
@@ -253,44 +253,44 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertEqual(prefix_length, 4)
         theorem = instances[0]
         program = projection.render() + f'''
-!(let $result (try (set:define ImportedJSecond
+!(let $result (try (hol:define ImportedJSecond
    (-> (A : (u 0)) (x : A)
        (P : (-> (y : A) (q : (id A x y)) (u 0)))
        (d : (P x (refl x))) (y : A) (q : (id A x y)) (P y q))
    (= ImportedJSecond ImportedJFirst)))
    (ForwardDefinition (car-atom $result)
      (== (collapse (match &self (: ImportedJSecond $type) $type)) ())))
-!(set:define ImportedJFirst
+!(hol:define ImportedJFirst
    (-> (A : (u 0)) (x : A)
        (P : (-> (y : A) (q : (id A x y)) (u 0)))
        (d : (P x (refl x))) (y : A) (q : (id A x y)) (P y q))
    (= ImportedJFirst id:eliminate))
-!(set:define ImportedJSecond
+!(hol:define ImportedJSecond
    (-> (A : (u 0)) (x : A)
        (P : (-> (y : A) (q : (id A x y)) (u 0)))
        (d : (P x (refl x))) (y : A) (q : (id A x y)) (P y q))
    (= ImportedJSecond ImportedJFirst))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $consumer
    (Lam $type
      (App (App (App (App (App (App (DeclConst ImportedJSecond) $type) (idx 0))
        (Lam $type (Lam (Id $type (idx 1) (idx 0)) (Id $type (idx 2) (idx 1)))))
        (Refl (idx 0))) (idx 0)) (Refl (idx 0))))
-   (let (SetNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
-     (set:native-normalize $package $consumer)
+   (let (HolNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
+     (hol:native-normalize $package $consumer)
     (let (Refl $value) $normal
      (let (Id $carrier $left $right) $normal-type
       (ImportedAliasedJ (== $checked $package) (== $application (App $consumer $term))
         (== $left $value) (== $right $value) (size-atom $assumptions))))))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $bad-consumer
    (Lam $type
      (App (App (App (App (App (App (DeclConst ImportedJSecond) $type) (idx 0))
        (Lam $type (Lam (Id $type (idx 1) (idx 0)) (Id $type (idx 2) (idx 1)))))
        (idx 0)) (idx 0)) (Refl (idx 0))))
-   (let $result (try (set:native-normalize $package $bad-consumer))
+   (let $result (try (hol:native-normalize $package $bad-consumer))
      (ImportedWrongJMethod (car-atom $result))))))
 '''
         result = self.run_program(program)
@@ -315,7 +315,7 @@ class NativeProjectionTests(unittest.TestCase):
                 definitions[item.label] = projection.materialize(position).name
         self.assertEqual(len(definitions), 4)
         commands = [command for command in projection.commands
-                    if command[0] == sx.Symbol("set:define")]
+                    if command[0] == sx.Symbol("hol:define")]
         self.assertEqual(len(commands), 4)
         for command in commands:
             # A definition names the source value itself, not a saturated
@@ -328,13 +328,13 @@ class NativeProjectionTests(unittest.TestCase):
         program = projection.render() + f'''
 !(add-atom &self (: sourceLeft mg-base-0))
 !(add-atom &self (: sourceRight mg-base-0))
-!(set:define sourceIdentity (-> mg-base-0 mg-base-0) (= sourceIdentity (lam x x)))
-!(set:define sourcePartial (-> mg-base-0 mg-base-0) (= sourcePartial ({keep} sourceLeft)))
-!(set:define sourceConstant (-> mg-base-0 mg-base-0) (= sourceConstant (lam y sourceLeft)))
-!(set:define sourceOpenClosure (-> mg-base-0 mg-base-0 mg-base-0)
+!(hol:define sourceIdentity (-> mg-base-0 mg-base-0) (= sourceIdentity (lam x x)))
+!(hol:define sourcePartial (-> mg-base-0 mg-base-0) (= sourcePartial ({keep} sourceLeft)))
+!(hol:define sourceConstant (-> mg-base-0 mg-base-0) (= sourceConstant (lam y sourceLeft)))
+!(hol:define sourceOpenClosure (-> mg-base-0 mg-base-0 mg-base-0)
    (= sourceOpenClosure (lam x ({keep} x))))
-!(set:define sourceKeep (-> mg-base-0 mg-base-0 mg-base-0) (= sourceKeep (lam x (lam y x))))
-!(set:define sourceCaptured (-> mg-base-0 mg-base-0 mg-base-0) (= sourceCaptured (lam x (lam y y))))
+!(hol:define sourceKeep (-> mg-base-0 mg-base-0 mg-base-0) (= sourceKeep (lam x (lam y x))))
+!(hol:define sourceCaptured (-> mg-base-0 mg-base-0 mg-base-0) (= sourceCaptured (lam x (lam y y))))
 !(SourceFunctions (type:eq &self {identity} sourceIdentity)
     (type:eq &self {keep} {alias}) (type:eq &self sourcePartial sourceConstant)
     (type:eq &self ({apply} {identity} sourceLeft) sourceLeft)
@@ -358,7 +358,7 @@ class NativeProjectionTests(unittest.TestCase):
         # it is read here over the source's own carrier, whose type is a type
         # of the least universe: the pair holds two of its values.
         pair_program = (root.parent.parent / "prime/profiles/megalodon_hotg/scoped/native_higher_order_pair.metta").read_text()
-        pair_program = pair_program.replace("(set:profile megalodon-hotg)", "(set:profile hol)")
+        pair_program = pair_program.replace("(hol:profile megalodon-hotg)", "(hol:profile core)")
         for prime_spelling, source_spelling in [
                 ("(Sort (LevelAbove 1))", "(Sort (LevelConst 0))"),
                 ("(Sort (LevelAbove 0))", "(DeclConst mg-base-0)"),
@@ -413,7 +413,7 @@ class NativeProjectionTests(unittest.TestCase):
             name = projection.materialize(position).name
             names[item.label] = name
             command = next(c for c in projection.commands
-                           if c[0] == sx.Symbol("set:define") and c[1] == sx.Symbol(name))
+                           if c[0] == sx.Symbol("hol:define") and c[1] == sx.Symbol(name))
             # Compare complete terms, including variable identity and application
             # order, not just types or binder counts. These expectations are
             # independently transcribed from the source fixture above.
@@ -421,7 +421,7 @@ class NativeProjectionTests(unittest.TestCase):
         program = projection.render() + f'''
 !(add-atom &self (: sourceLeft mg-base-0))
 !(add-atom &self (: sourceRight mg-base-0))
-!(set:define sourceEtaIdentity (-> (-> mg-base-0 mg-base-0) (-> mg-base-0 mg-base-0))
+!(hol:define sourceEtaIdentity (-> (-> mg-base-0 mg-base-0) (-> mg-base-0 mg-base-0))
    (= sourceEtaIdentity (lam f f)))
 !(PreservedSource
    (type:eq &self {names['eta_outer']} sourceEtaIdentity)
@@ -480,8 +480,8 @@ class NativeProjectionTests(unittest.TestCase):
         self.assertEqual(native.open_prefix(items[0].type, "all", first, native.poly.substitute_type)[0],
                          ("arr", first[0], ("arr", first[1], first[0])))
         program = projection.render() + f'''
-!(set:define expectedKeep (-> mg-base-0 prop mg-base-0) (= expectedKeep (lam x (lam y x))))
-!(set:define expectedCompose
+!(hol:define expectedKeep (-> mg-base-0 prop mg-base-0) (= expectedKeep (lam x (lam y x))))
+!(hol:define expectedCompose
    (-> (-> prop (-> mg-base-0 prop)) (-> mg-base-0 prop) mg-base-0 (-> mg-base-0 prop))
    (= expectedCompose (lam f (lam g (lam x (f (g x)))))))
 !(MultipleParameters (type:eq &self {keep.name} expectedKeep)
@@ -563,16 +563,16 @@ class NativeProjectionTests(unittest.TestCase):
          (App (DeclConst $family) (App (App (DeclConst {membership}) (idx 0)) $universe)))
        $continuation)
        (Pair $first (idx 0)))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
    (let $consumer (imported-universe-consumer $type $value (idx 0))
-    (let (SetNativeNormalFormV1 $checked $body $application
+    (let (HolNativeNormalFormV1 $checked $body $application
        (Pair $first $second) $original-type $result-type)
-       (set:native-normalize $package $consumer)
-     (let (SetNativeNormalFormV1 $proof-checked $proof-body $proof-application
+       (hol:native-normalize $package $consumer)
+     (let (HolNativeNormalFormV1 $proof-checked $proof-body $proof-application
             $proof-normal $proof-before $proof-after)
-          (set:native-normalize $package (Lam $type (idx 0)))
+          (hol:native-normalize $package (Lam $type (idx 0)))
       (ImportedUniversePair (== $checked $package)
         (== $prop (({membership} ({power} ({union} ({power} {empty})))) ({univ} {empty})))
         (== $first $value)
@@ -580,12 +580,12 @@ class NativeProjectionTests(unittest.TestCase):
         (== $result-type (Sigma (DeclConst mg-base-0)
           (App (DeclConst $family) (App (App (DeclConst {membership}) (idx 0)) $universe))))
         (size-atom $assumptions))))))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
    (let $consumer (imported-universe-consumer $type $value (Fst (idx 0)))
-    (let (SetNativeNormalFormV1 $checked $body $application $normal $before $after)
-       (set:native-normalize $package $consumer)
+    (let (HolNativeNormalFormV1 $checked $body $application $normal $before $after)
+       (hol:native-normalize $package $consumer)
       (ImportedUniverseValue (== $normal $value) (== $after (DeclConst mg-base-0))))))))
 !(add-atom &self (imported-operation {power} {power_law}))
 !(add-atom &self (imported-operation {union} {union_law}))
@@ -595,36 +595,36 @@ class NativeProjectionTests(unittest.TestCase):
      (let $next-proof
        (pf:imp-elim
          (pf:all-elim (pf:all-elim (pf:known $law) {empty}) $value) $proof)
-       (case (set:proves $next-proof (({membership} ($operation $value)) ({univ} {empty})))
+       (case (hol:proves $next-proof (({membership} ($operation $value)) ({univ} {empty})))
          ((True (imported-pipeline $rest ($operation $value) $next-proof)))))))
 !(let (ProvedSet $value $proof)
    (imported-pipeline (Cons {power} (Cons {union} (Cons {power} (Cons {power} Nil)))) {empty}
      (pf:all-elim (pf:known {seed_law}) {empty}))
-   (set:theorem imported-runtime-membership (({membership} $value) ({univ} {empty})) $proof))
-!(let $package (set:native-proof imported-runtime-membership)
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+   (hol:theorem imported-runtime-membership (({membership} $value) ({univ} {empty})) $proof))
+!(let $package (hol:native-proof imported-runtime-membership)
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
    (let $consumer (imported-universe-consumer $type $value (Fst (idx 0)))
-    (let (SetNativeNormalFormV1 $checked $body $application $normal $before $after)
-       (set:native-normalize $package $consumer)
+    (let (HolNativeNormalFormV1 $checked $body $application $normal $before $after)
+       (hol:native-normalize $package $consumer)
       (ImportedRuntimePipeline
         (== $normal (App (DeclConst {power}) (App (DeclConst {power})
           (App (DeclConst {union}) (App (DeclConst {power}) (DeclConst {empty}))))))
         (== $after (DeclConst mg-base-0)) (size-atom $assumptions)))))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
    (let $consumer (imported-universe-consumer $type (App (DeclConst {power}) $value) (idx 0))
-    (let $verdict (try (set:native-normalize $package $consumer))
+    (let $verdict (try (hol:native-normalize $package $consumer))
       (ImportedChangedIndex (car-atom $verdict)))))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let (App (DeclConst $family) (App (App (DeclConst {membership}) $value) $universe)) $type
    (let $consumer (imported-universe-consumer $type $value (Fst (idx 0)))
     (let $removed (match &self
-      (set:known {support} $p $origin $tree $depends $revision $signature)
-      (remove-atom &self (set:known {support} $p $origin $tree $depends $revision $signature)))
-     (let $verdict (try (set:native-normalize $package $consumer))
+      (hol:known {support} $p $origin $tree $depends $revision $signature)
+      (remove-atom &self (hol:known {support} $p $origin $tree $depends $revision $signature)))
+     (let $verdict (try (hol:native-normalize $package $consumer))
       (ImportedWithdrawn (car-atom $verdict))))))))
 '''
         result = self.run_program(program)
@@ -690,12 +690,12 @@ class NativeProjectionTests(unittest.TestCase):
         theorem = projection.materialize(2)
         assumption = projection.instances[(1, ())]
         result = self.run_program(projection.render() + native.dependent_use(theorem) + f'''
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $removed (match &self
-    (set:known {assumption.name} $p $origin $tree $depends $revision $signature)
-    (remove-atom &self (set:known {assumption.name} $p $origin $tree $depends $revision $signature)))
-   (let $out (try (set:native-use $package (Lam $type (Refl (idx 0)))))
+    (hol:known {assumption.name} $p $origin $tree $depends $revision $signature)
+    (remove-atom &self (hol:known {assumption.name} $p $origin $tree $depends $revision $signature)))
+   (let $out (try (hol:native-use $package (Lam $type (Refl (idx 0)))))
      (car-atom $out)))))
 ''')
         self.assertIn("[(ImportedNativeUse 2 True True 1)]", result)
@@ -712,20 +712,20 @@ class NativeProjectionTests(unittest.TestCase):
         projection, instances, _ = library.replay(self.cetta)
         theorem = instances[0]
         result = self.run_program(projection.render() + f'''
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
-  (let $definition (set:define unrelated-identity (-> prop prop)
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+  (let $definition (hol:define unrelated-identity (-> prop prop)
                      (= (unrelated-identity $p) $p))
-   (let (SetNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
-      (set:native-normalize $package (Lam $type (Refl (idx 0))))
+   (let (HolNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
+      (hol:native-normalize $package (Lam $type (Refl (idx 0))))
     (UnrelatedDefinitionKeepsProof (== $checked $package)
       (== $normal (Refl $term)) (size-atom $assumptions))))))
-!(let $package (set:native-proof {theorem.name})
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
-  (let $definition (set:define later-dependent-id (-> (A : (u 0)) (x : A) A)
+!(let $package (hol:native-proof {theorem.name})
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+  (let $definition (hol:define later-dependent-id (-> (A : (u 0)) (x : A) A)
                      (= (later-dependent-id $A $x) $x))
-   (let (SetNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
-      (set:native-normalize $package
+   (let (HolNativeNormalFormV1 $checked $body $application $normal $source-type $normal-type)
+      (hol:native-normalize $package
         (Lam $type (Refl (App (App (DeclConst later-dependent-id) $type) (idx 0)))))
     (ImportedLaterDeclaredConsumer (== $checked $package)
       (== $normal (Refl $term)) (size-atom $assumptions))))))

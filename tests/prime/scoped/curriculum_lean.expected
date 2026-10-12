@@ -42,6 +42,6 @@
 [funext]
 [False]
 [False]
-[(set:define &thy partial (-> bool nat) (= (partial true) zero))]
+[(hol:define &thy partial (-> bool nat) (= (partial true) zero))]
 [Refuted]
 [False]

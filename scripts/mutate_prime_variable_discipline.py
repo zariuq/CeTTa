@@ -27,18 +27,23 @@ def main() -> int:
             "        if (true || prime_var_is_bound(context, type->var_id)) {",
         )
         fragments = Path(sys.argv[3]).read_text()
-        # Bind and discard: an open expected type is accepted as if solved.
+        # Bind and discard: an open expected type is accepted as if solved,
+        # without asking the checker.
         fragments = replace_once(
             fragments,
-            "            : prime_he_static_type(expected, &ok) && atom_eq(r.type, expected);",
-            "            : atom_has_vars(expected) ||\n"
-            "              (prime_he_static_type(expected, &ok) && atom_eq(r.type, expected));",
+            "    } else if (!static_expected) {",
+            "    } else if (atom_has_vars(expected)) {\n"
+            "        answer = prime_he_judged(\n"
+            "            PRIME_HE_JUDGED_ESTABLISHED,\n"
+            "            prime_he_checked_evidence(\n"
+            "                a, prime_he_fragment_name(a, &e.result), expected));\n"
+            "    } else if (!static_expected) {",
         )
         # Implicit generalization: rigid declaration variables become solvable.
         fragments = replace_once(
             fragments,
-            "    if (atom_has_vars(type) && !prime_he_scheme_admitted(space, term)) {",
-            "    if (false && atom_has_vars(type) && !prime_he_scheme_admitted(space, term)) {",
+            "    if (atom_has_vars(type) && !all_schemes &&",
+            "    if (false && atom_has_vars(type) && !all_schemes &&",
         )
     except ValueError as error:
         print(error, file=sys.stderr)

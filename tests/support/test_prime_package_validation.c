@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
             "(type:check 7 Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(type:check 7 String)", "Undetermined") ||
+            "(type:check 7 String)", "Refuted") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
             "(type:analyze 7 %Undefined%)", "Established") ||

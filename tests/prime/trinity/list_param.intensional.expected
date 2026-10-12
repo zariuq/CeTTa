@@ -42,5 +42,5 @@
 [True]
 [True]
 [True]
-[(Refuted (set:declaration-check (Lam (Sort (LevelConst 0)) (Lam (idx 0) (Lam (App List (idx 1)) (App (App wrong-step (idx 2)) (idx 0))))) (type-mismatch)))]
+[(Refuted (hol:declaration-check (Lam (Sort (LevelConst 0)) (Lam (idx 0) (Lam (App List (idx 1)) (App (App wrong-step (idx 2)) (idx 0))))) (type-mismatch)))]
 [False]

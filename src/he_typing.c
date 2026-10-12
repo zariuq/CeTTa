@@ -900,6 +900,7 @@ static HeTypeValidity check_type_refinements(Arena *a, Space *space,
 
 CettaHeRefinementStatus he_typing_check_refinement_status(
     Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     Atom *detail = NULL;
     HeTypeValidity status = check_type_refinements(a, space, type, &fuel,
                                                    &detail, 0, NULL);
@@ -917,6 +918,7 @@ CettaHeRefinementStatus he_typing_check_refinement_status(
 CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
     Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) return CETTA_HE_REFINEMENT_INCOMPLETE;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     g_active_typing_budget = budget;
@@ -1243,6 +1245,7 @@ CettaNikOutcomeV1 he_typing_check_term_outcome(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t fuel,
     bool require_exact_or_structural, CettaHeTypingEdge *edge_out,
     Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     HeEdge edge = HE_NONE;
     uint64_t remaining = fuel;
     CettaNikOutcomeV1 status = classify_type_mode(
@@ -1256,6 +1259,7 @@ CettaNikOutcomeV1 he_typing_check_term_outcome_budgeted(
     Arena *a, Space *space, Atom *term, Atom *expected,
     CettaHeTypingBudget *budget, bool require_exact_or_structural,
     CettaHeTypingEdge *edge_out, Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) return CETTA_NIK_OUTCOME_INCOMPLETE;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     g_active_typing_budget = budget;

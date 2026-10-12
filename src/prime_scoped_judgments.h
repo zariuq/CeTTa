@@ -32,6 +32,13 @@
 
 bool prime_scoped_judgment_is_head_id(SymbolId head);
 
+/* The engine's spelling of one of its `set:` words, or `Set` package
+ * names, in the `hol:` namespace when `hol` holds. */
+const char *prime_scoped_word(const char *word, bool hol);
+
+/* Whether the theory a space selects is a profile of the native logic. */
+bool prime_scoped_space_is_hol(Space *space);
+
 /* Returns NULL for an unowned head or an unselected set: interpretation. */
 Atom *prime_scoped_judgment_judge(
     Arena *arena, Space *space, Atom *judgment,

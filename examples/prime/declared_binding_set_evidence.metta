@@ -2,12 +2,12 @@
 ; and an explicit identity interpretation makes that proof usable by a
 ; dependent computation. The original language instance and source proof
 ; remain available beside the computed value.
-(set:profile hol)
+(hol:profile core)
 !(import! &self pf)
 !(import! &self "../../langdef/prime/declared_binding_package_v1.metta")
 !(import! &self "../../langdef/prime/declared_binding_dependent_package_v1.metta")
 
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 ; These are explicit source equality assumptions. The identity link below
 ; realizes the used reflexivity assumption as native identity evidence.
 !(pf:equality &self num refl@num subst@num)
@@ -19,12 +19,12 @@
 ; as the mathematical definition used by the remaining judgments.
 !(let $instance (langdef:lowering-source &successor-source)
    (let (quote $f) (binding:dependent-code () $instance)
-     (set:define &self generatedSuccessor (-> num num)
+     (hol:define &self generatedSuccessor (-> num num)
        (= generatedSuccessor $f))))
 !(let $f (binding:function &successor-source)
    (FromDeclaredLanguage ($f (suc zero))))
 !(type:check &self generatedSuccessor (-> num num))
-!(set:check &self generatedSuccessor (-> num num))
+!(hol:check &self generatedSuccessor (-> num num))
 !(lang:native-type prime (generatedSuccessor zero) num)
 
 !(pf:theorem &self generated-successor-law
@@ -33,14 +33,14 @@
 
 ; The returned number is the index of the returned identity evidence.
 ; Changing the number without transporting that evidence is invalid.
-!(set:define &self retainAt
+!(hol:define &self retainAt
    (-> (x : num) (e : (id num (generatedSuccessor x) (suc x)))
        (sigma (y : num) (id num y (suc x))))
    (= (retainAt $x $e) (pair (generatedSuccessor $x) $e)))
 
 ; This consumer returns the proof itself, with identity evidence at that
 ; exact proof. A value or an acceptance Boolean cannot replace its input.
-!(set:define &self retainExact
+!(hol:define &self retainExact
    (-> (x : num) (e : (id num (generatedSuccessor x) (suc x)))
        (sigma (w : (id num (generatedSuccessor x) (suc x)))
          (id (id num (generatedSuccessor x) (suc x)) w e)))
@@ -66,15 +66,15 @@
 (= (stack:open-number-code (quote (lam _ (suc (idx $position)))))
    (Lam (DeclConst num) (App (DeclConst suc) (idx $position))))
 
-!(let $package (set:native-proof generated-successor-law)
-   (let $linked (set:native-link identity $package)
-     (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules
+!(let $package (hol:native-proof generated-successor-law)
+   (let $linked (hol:native-link identity $package)
+     (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules
            ((Realized $origin $key $realization))) $linked
        (let $one (stack:one)
          (let $consumer (stack:consumer $type $one $one)
-           (let (SetNativeNormalFormV1 $used $consumer-code $application
+           (let (HolNativeNormalFormV1 $used $consumer-code $application
                  (Pair $number (Refl $witness)) $before $after)
-                (set:native-normalize $linked $consumer)
+                (hol:native-normalize $linked $consumer)
              (let $value (stack:number $number)
                (DependentResult $value
                  (EvidenceAtSameValue (== $number $witness))
@@ -83,16 +83,16 @@
 ; Keep the complete source instance, assumptions, realizations and result.
 ; The following observation is only a display of that retained computation.
 !(bind! &exact-evidence-run
-   (let $package (set:native-proof generated-successor-law)
-   (let $linked (set:native-link identity $package)
-     (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
+   (let $package (hol:native-proof generated-successor-law)
+   (let $linked (hol:native-link identity $package)
+     (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
        (let $one (stack:one)
          (let $consumer (stack:exact-consumer $type $one $one)
            (LangDef:DependentEvidenceRun
              (langdef:lowering-source &successor-source) $linked
-             (set:native-normalize $linked $consumer))))))))
+             (hol:native-normalize $linked $consumer))))))))
 !(let (LangDef:DependentEvidenceRun $source $linked
-        (SetNativeNormalFormV1 $used $body $application
+        (HolNativeNormalFormV1 $used $body $application
           (Pair (Refl $number) (Refl (Refl $same))) $before $after)) &exact-evidence-run
    (ExactEvidence (stack:number $number) (ProofIndexPreserved (== $number $same))))
 
@@ -112,7 +112,7 @@
      (OpenDependencyPreserved (== $open-code (lam _ (suc (idx 1)))))))
 !(let $closed (binding:abstracted-source &contextual-source)
    (let (quote $code) (binding:dependent-code () $closed)
-     (set:define &self generatedAt (-> num num num) (= generatedAt $code))))
+     (hol:define &self generatedAt (-> num num num) (= generatedAt $code))))
 !(generatedAt (suc zero) zero)
 !(let $closed (binding:abstracted-source &contextual-source)
    (binding:dependent-check () $closed @(-> num num num)))
@@ -120,7 +120,7 @@
    (all num (lam b (all num (lam x
      (eq num (generatedAt b x) (suc b))))))
    (pf:fix b (pf:fix x (pf:refl num (suc b)))))
-!(set:define &self retainExactAt
+!(hol:define &self retainExactAt
    (-> (b : num) (x : num) (e : (id num (generatedAt b x) (suc b)))
        (sigma (w : (id num (generatedAt b x) (suc b)))
          (id (id num (generatedAt b x) (suc b)) w e)))
@@ -130,15 +130,15 @@
      (App (App (App (DeclConst retainExactAt) $base) $input)
        (App (App (idx 0) $proof-base) $input))))
 !(bind! &contextual-evidence-run
-   (let $package (set:native-proof contextual-successor-law)
-   (let $linked (set:native-link identity $package)
-     (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
+   (let $package (hol:native-proof contextual-successor-law)
+   (let $linked (hol:native-link identity $package)
+     (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
        (let $one (stack:one)
          (let $consumer (stack:context-consumer $type $one (DeclConst zero) $one)
            (LangDef:DependentEvidenceRun &contextual-source $linked
-             (set:native-normalize $linked $consumer))))))))
+             (hol:native-normalize $linked $consumer))))))))
 !(let (LangDef:DependentEvidenceRun $source $linked
-        (SetNativeNormalFormV1 $used $body $application
+        (HolNativeNormalFormV1 $used $body $application
           (Pair (Refl $number) (Refl (Refl $same))) $before $after)) &contextual-evidence-run
    (ContextualEvidence (stack:number $number) (ProofIndexPreserved (== $number $same))))
 
@@ -182,39 +182,39 @@
 !(let (LangDef:ContextAbstraction $base $open $closed) &contextual-source
    (let $code (binding:dependent-code ($base) $open)
      (let $native (stack:open-number-code $code)
-       (let $package (set:native-proof generated-successor-law)
-         (let $linked (set:native-link identity $package)
-           (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
+       (let $package (hol:native-proof generated-successor-law)
+         (let $linked (hol:native-link identity $package)
+           (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
              (UnboundDependency
-               (car-atom (try (set:native-use $linked (Lam $type $native)))))))))))
+               (car-atom (try (hol:native-use $linked (Lam $type $native)))))))))))
 ; Erasing the required proof and putting a number in its place is refused.
-!(let $package (set:native-proof generated-successor-law)
-   (let $linked (set:native-link identity $package)
-     (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
+!(let $package (hol:native-proof generated-successor-law)
+   (let $linked (hol:native-link identity $package)
+     (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
        (let $one (stack:one)
          (let $consumer (Lam $type
                (App (App (DeclConst retainExact) $one) (DeclConst zero)))
-           (RequiredEvidenceErasure (car-atom (try (set:native-use $linked $consumer)))))))))
+           (RequiredEvidenceErasure (car-atom (try (hol:native-use $linked $consumer)))))))))
 
 ; A well-typed function cannot be assigned an unrelated result family.
 !(type:check &self generatedSuccessor (-> num (id num zero zero)))
 ; The valid theorem does not prove that every successor is zero.
-!(car-atom (try (set:proves &self
+!(car-atom (try (hol:proves &self
    (pf:known generated-successor-law)
    (all num (lam x (eq num (generatedSuccessor x) zero))))))
 ; Evidence at zero cannot be supplied at one.
-!(let $package (set:native-proof generated-successor-law)
-   (let $linked (set:native-link identity $package)
-     (let (SetNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
+!(let $package (hol:native-proof generated-successor-law)
+   (let $linked (hol:native-link identity $package)
+     (let (HolNativeLinkedV1 $reading $checked $term $type $context $rules $rows) $linked
        (let $one (stack:one)
          (let $consumer (stack:consumer $type $one (DeclConst zero))
-           (let $outcome (try (set:native-use $linked $consumer))
+           (let $outcome (try (hol:native-use $linked $consumer))
              (WrongIndex (car-atom $outcome))))))))
 ; The source equation and native identity have a declared interpretation.
 ; Without it, the same dependent consumer is refused.
-!(let $package (set:native-proof generated-successor-law)
-   (let (SetNativeProofV1 $name $proposition $source-proof $term $type
+!(let $package (hol:native-proof generated-successor-law)
+   (let (HolNativeProofV1 $name $proposition $source-proof $term $type
          $context $rules $assumptions $digest) $package
      (let $consumer (stack:consumer $type (DeclConst zero) (DeclConst zero))
-       (let $outcome (try (set:native-use $package $consumer))
+       (let $outcome (try (hol:native-use $package $consumer))
          (Unlinked (car-atom $outcome))))))

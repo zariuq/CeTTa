@@ -23,3 +23,19 @@
           (force $promise)
           impossible)){$work}){$promise}
   (A B))
+
+; Select a function before the strict work, then reuse that same function
+; afterwards. The first application forces the shared head; collection must
+; retain its selected world rather than choosing again at the second use.
+(= (prime-need:gc-head) (lam x (+ x 1)))
+(= (prime-need:gc-head) (lam x (+ x 2)))
+(= (prime-need:gc-use $function)
+   (let $first ($function 1)
+     (if (< $first 10)
+         (let $work (prime-need:gc-work (force (delay 1600)))
+           (if (== $work 1600)
+               (Pair $first ($function 2))
+               impossible)){$work}
+         impossible)){$first})
+
+!(prime-need:gc-use (prime-need:gc-head))

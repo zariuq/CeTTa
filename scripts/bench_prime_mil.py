@@ -42,7 +42,7 @@ CHECKING_ROUTE_COUNTERS = (
     "prime-checking-route-ambient-formation",
     "prime-he-fragment-checking",
 )
-PRIME_HE_APPLICABILITY_COUNTER = "prime-legacy-he-typed-applicability"
+PRIME_HE_APPLICABILITY_COUNTER = "prime-he-declaration-applicability"
 PRIME_DECLARATION_COUNTERS = (
     "prime-level-normalization-step",
     "prime-declaration-polymorphic-lookup",
@@ -218,7 +218,7 @@ def parse_checking_routes(stderr_lines: list[str]) -> dict[str, Any]:
     )
     ambient = routes["prime-checking-route-ambient-formation"]
     fragments = routes["prime-he-fragment-checking"]
-    legacy_applicability = counters[PRIME_HE_APPLICABILITY_COUNTER]
+    declaration_applicability = counters[PRIME_HE_APPLICABILITY_COUNTER]
     declaration_work = {
         name: counters[name] for name in PRIME_DECLARATION_COUNTERS
     }
@@ -229,16 +229,16 @@ def parse_checking_routes(stderr_lines: list[str]) -> dict[str, Any]:
         name: counters[name] for name in PRIME_NATIVE_CALCULUS_COUNTERS
     }
     if (native == 0 and ambient == 0 and fragments == 0 and
-            legacy_applicability == 0):
+            declaration_applicability == 0):
         raise RuntimeError("workload produced no observable type-check route")
     if (native > 0 and ambient == 0 and fragments == 0 and
-            legacy_applicability == 0):
+            declaration_applicability == 0):
         qualification = "prime-native-regular"
     elif (native == 0 and ambient > 0 and fragments == 0 and
-          legacy_applicability == 0):
+          declaration_applicability == 0):
         qualification = "ambient-formation-only"
     elif (native == 0 and ambient == 0 and fragments > 0 and
-          legacy_applicability == 0):
+          declaration_applicability == 0):
         qualification = "he-declaration-fragments-only"
     else:
         qualification = "mixed-prime-and-he"
@@ -247,7 +247,7 @@ def parse_checking_routes(stderr_lines: list[str]) -> dict[str, Any]:
         "native_checks": native,
         "ambient_formation_checks": ambient,
         "he_fragment_checks": fragments,
-        "legacy_he_applicability_checks": legacy_applicability,
+        "he_declaration_applicability_checks": declaration_applicability,
         "declaration_work": declaration_work,
         "interior_checks": interior_checks,
         "native_calculus": native_calculus,
@@ -377,7 +377,7 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--require-zero-legacy-he-applicability",
+        "--require-zero-he-declaration-applicability",
         action="store_true",
         help="fail if Prime typed applicability consults the HE classifier",
     )
@@ -457,17 +457,17 @@ def main() -> int:
                     f"formation decisions, "
                     f"{first_routes['he_fragment_checks']} HE-declaration "
                     f"fragment checks, "
-                    f"{first_routes['legacy_he_applicability_checks']} "
-                    f"legacy HE applicability checks)",
+                    f"{first_routes['he_declaration_applicability_checks']} "
+                    f"HE-declaration applicability checks)",
                     file=sys.stderr,
                 )
                 return 1
-            if (args.require_zero_legacy_he_applicability and
-                    first_routes["legacy_he_applicability_checks"] != 0):
+            if (args.require_zero_he_declaration_applicability and
+                    first_routes["he_declaration_applicability_checks"] != 0):
                 print(
-                    f"FAIL: {lane}/{name}: requested zero legacy HE "
+                    f"FAIL: {lane}/{name}: requested zero HE-declaration "
                     f"applicability, observed "
-                    f"{first_routes['legacy_he_applicability_checks']}",
+                    f"{first_routes['he_declaration_applicability_checks']}",
                     file=sys.stderr,
                 )
                 return 1

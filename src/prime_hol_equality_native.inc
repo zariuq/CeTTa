@@ -20,7 +20,7 @@ static Atom *sj_native_reflexivity(SjNativeCompiler *compiler, Atom *carrier,
     if (!noted) {
         if (!sj_grow_pair(a, &compiler->reflexive, NULL,
                           compiler->reflexive_count, &compiler->reflexive_cap)) {
-            sj_fail(compiler->proof, false, sj_expr1(a, "set:native-equality-storage"));
+            sj_fail(compiler->proof, false, sj_expr1(a, SJ_S("set:native-equality-storage")));
             return NULL;
         }
         compiler->reflexive[compiler->reflexive_count++] = instance;

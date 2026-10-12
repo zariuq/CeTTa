@@ -58,7 +58,9 @@ typedef struct {
     uint64_t session_id;
     uint64_t max_storage_key;
     /* Arena containing `top`; `closure_owner` is non-NULL exactly when the
-     * complete reachable frame path and its owned payloads share one arena.
+     * complete reachable frame path and its Atom payloads share one arena.
+     * Native-handle leaves may retain independently managed control cells;
+     * their arena owns the holders, not a shallow-copy licence for resources.
      * A NULL closure owner denotes an intentionally mixed-lifetime path: a
      * reclaimable suffix may reference a longer-lived immutable prefix. */
     Arena *owner;

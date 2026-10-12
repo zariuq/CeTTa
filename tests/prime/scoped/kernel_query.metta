@@ -1,8 +1,8 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The represented query a judgment poses to the kernel, without an answer.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self twice (-> nat nat)
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self twice (-> nat nat)
    (= (twice zero) zero)
    (= (twice (succ $n)) (succ (succ (twice $n)))))
 ; Declared constants: their declarations form the context.

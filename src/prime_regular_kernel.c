@@ -1537,6 +1537,8 @@ static Atom *g_regular_rules;
  * rules.  Set with the list. */
 static bool g_regular_rules_guarded = false;
 static bool g_regular_rules_observed = false;
+/* Whether the rules set for this call declare any family irrelevant. */
+static bool g_regular_rules_irrelevant = false;
 
 /* Rule firings, counted for the runtime's account of a call. */
 static uint64_t g_regular_rule_firings = 0u;
@@ -2532,9 +2534,12 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules) {
     g_regular_rules = rules;
     g_regular_rules_guarded = false;
     g_regular_rules_observed = false;
+    g_regular_rules_irrelevant = false;
     for (Atom *r = rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
         Atom *rule = r->expr.elems[1];
         if (!regular_expr(rule, "PrimeRule", 5u)) continue;
+        if (regular_symbol(rule->expr.elems[2], "Irrelevant"))
+            g_regular_rules_irrelevant = true;
         bool observed = false;
         if (regular_rule_arity(rule->expr.elems[2], NULL, &observed) && observed)
             g_regular_rules_guarded = g_regular_rules_observed = true;
@@ -2548,6 +2553,29 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules) {
 
 Atom *cetta_prime_regular_kernel_rules_get(void) {
     return g_regular_rules;
+}
+
+/* Whether the space whose rules are set declares the family at the head of
+ * `type` definitionally proof-irrelevant: a rule `(PrimeRule (Irrelevant F)
+ * Irrelevant () J)`, which the admission of `set:irrelevant` publishes only
+ * once J proves, propositionally, that any two inhabitants of every instance
+ * of F are identical.  The rule has no constant at its head and no numeric
+ * arity, so it never rewrites; typed conversion alone reads it. */
+static bool regular_type_irrelevant(Atom *type) {
+    if (!g_regular_rules || !g_regular_rules_irrelevant) return false;
+    Atom *head = type;
+    while (regular_expr(head, "App", 3u)) head = head->expr.elems[1];
+    Atom *name = NULL;
+    if (!regular_decl_const_shape(head, &name, NULL)) return false;
+    for (Atom *r = g_regular_rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        if (regular_expr(rule, "PrimeRule", 5u) &&
+            regular_expr(rule->expr.elems[1], "Irrelevant", 2u) &&
+            atom_eq(rule->expr.elems[1]->expr.elems[1], name) &&
+            regular_symbol(rule->expr.elems[2], "Irrelevant"))
+            return true;
+    }
+    return false;
 }
 
 /* The computation rules of the language-owned identity package, in the same
@@ -4124,6 +4152,12 @@ static CettaPrimeRegularKernelStatus regular_conv_at(
         return type_normal.status;
     }
     Atom *normal_type = type_normal.term;
+    /* In a space that carves out proof irrelevance for this family, any two
+     * of its inhabitants are one; elsewhere they are compared as below. */
+    if (regular_type_irrelevant(normal_type)) {
+        *equal_out = true;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
     if (regular_expr(normal_type, "Pi", 3u)) {
         bool ok = true;
         Atom *shifted_left = regular_shift(arena, left, 1, 0u, &ok, budget);

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A call whose head Prime interprets itself is answered without the
 ; program's equations, so an equation or a type declaration the program
@@ -26,26 +26,26 @@
 !(my-size (a b c))
 !(carrier-size (a b c))
 
-; A definition by `set:define` or `set:inductive` of such a name that the
+; A definition by `hol:define` or `hol:inductive` of such a name that the
 ; space already declares through Prime's library cannot be admitted beside
 ; that declaration, and is refused the same way.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(try (set:define &self repr (-> nat nat) (= (repr $n) (succ $n))))
-!(try (set:inductive &self box (u 0) (: size box)))
-!(set:define &self plus1 (-> nat nat) (= (plus1 $n) (succ $n)))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(try (hol:define &self repr (-> nat nat) (= (repr $n) (succ $n))))
+!(try (hol:inductive &self box (u 0) (: size box)))
+!(hol:define &self plus1 (-> nat nat) (= (plus1 $n) (succ $n)))
 !(plus1 zero)
 ; A name the library does not declare may name a constant: the definition
 ; takes effect, when run and in judgments.
-!(set:define &self and (-> nat nat nat) (= (and $m $n) $m))
+!(hol:define &self and (-> nat nat nat) (= (and $m $n) $m))
 !(and (succ zero) zero)
 !(type:eq (and (succ zero) zero) (succ zero))
 ; A theory in a space of its own may name its constants after them, and
 ; declarations added there are its own.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy bool (u 0) (: true bool) (: false bool))
-!(set:define &thy and (-> bool bool bool) (= (and true $b) $b) (= (and false $b) false))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
+!(hol:define &thy and (-> bool bool bool) (= (and true $b) $b) (= (and false $b) false))
 !(type:eq &thy (and true false) false)
-!(set:define &thy repr (-> bool bool) (= (repr $b) $b))
+!(hol:define &thy repr (-> bool bool) (= (repr $b) $b))
 !(type:eq &thy (repr true) true)
 !(add-atom &thy (: size bool))
 !(match &thy (: size $type) $type)
@@ -54,7 +54,7 @@
 ; and its definition takes effect when run and in judgments.
 (= (pair $a $b) (my-pair $a $b))
 !(pair 1 2)
-!(bind! &tok (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &tok token (u 0) (: a token) (: b token) (: pair (-> token token token)))
-!(set:define &tok first (-> token token) (= (first a) a) (= (first b) b) (= (first (pair $x $y)) $x))
+!(bind! &tok (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &tok token (u 0) (: a token) (: b token) (: pair (-> token token token)))
+!(hol:define &tok first (-> token token) (= (first a) a) (= (first b) b) (= (first (pair $x $y)) $x))
 !(type:eq &tok (first (pair b a)) b)

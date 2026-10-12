@@ -1260,6 +1260,26 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
         *detail = prime_expr2(a, "DeclaredTypeFormation", type);
         return PRIME_FORM_ESTABLISHED;
     }
+    /* A compound non-arrow type is the product of its components, as the
+     * HOL contract reads HE's tuple types (`(T)` is `T` paired with the unit
+     * type): it is formed when every component is.  A component that is not
+     * formed leaves the product to the rules below; nothing is refuted here. */
+    if (type->kind == ATOM_EXPR && type->expr.len >= 1u &&
+        !prime_he_arrow_shaped(type)) {
+        bool components_formed = true;
+        for (CettaExprIndex i = 0u; components_formed && i < type->expr.len;
+             i++) {
+            Atom *component_detail = NULL;
+            components_formed =
+                prime_form_type(space, a, type->expr.elems[i], ledger,
+                                &component_detail, context) ==
+                PRIME_FORM_ESTABLISHED;
+        }
+        if (components_formed) {
+            *detail = prime_expr2(a, "ProductTypeFormation", type);
+            return PRIME_FORM_ESTABLISHED;
+        }
+    }
     if (dynamic_only || type->kind == ATOM_SYMBOL) {
         *detail = prime_expr2(a, "undeclared-type-form", type);
         return PRIME_FORM_UNDETERMINED;
@@ -1500,10 +1520,13 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
         return prime_undetermined(
             a, judgment, prime_expr2(a, "universe-schema-not-formed",
                                      schema_head));
-    /* HE-style declarations: the grounded fragments, never HE's engine. */
+    /* HE-style declarations: the grounded fragments decided by the hosted
+     * HOL Light checker, never HE's engine. */
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_SYNTHESIS);
-    return prime_he_fragment_synth_verdict(space, a, judgment, term, ledger);
+    PrimeHeJudgment judged =
+        prime_he_synthesize(space, a, term, false, ledger);
+    return prime_he_verdict(a, judgment, &judged);
 }
 
 static PrimeFormStatus prime_form_scoped_regular_type(
@@ -4132,21 +4155,15 @@ static Atom *prime_check_or_analyze(
         *route_out = CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING);
-    /* HE-style declarations: `type:check` establishes the static-fragment
-     * type exactly (hol_iff_exact, reference_iff_tupleHOLTyped) and the
-     * static instances of a first-order principal scheme
-     * (schematic_hol_iff_exact); `type:analyze` establishes AGT consistency
-     * of variable-free types (corePlusR2Consistent_iff_top) and meta-type
-     * entailment (metaAccepts_iff_entailed).  Anything else is
-     * Undetermined. */
-    Atom *reason = NULL;
-    Atom *evidence = prime_he_fragment_check(
-        space, a, term, expected, require_exact_or_structural, ledger,
-        &reason);
-    if (evidence) return prime_established(a, judgment, evidence);
-    return prime_undetermined(
-        a, judgment,
-        reason ? reason : prime_expr1(a, "typing-boundary-undetermined"));
+    /* HE-style declarations, decided inside the grounded fragments by the
+     * hosted HOL Light checker: `type:check` at static types, and
+     * `type:analyze` at meta-types, static types and, through consistency
+     * of concretizations, gradual types.  A refusal by the checker inside a
+     * fragment refutes; anything outside is Undetermined. */
+    PrimeHeJudgment judged = require_exact_or_structural
+        ? prime_he_check_exact(space, a, term, expected, ledger)
+        : prime_he_analyze(space, a, term, expected, ledger);
+    return prime_he_verdict(a, judgment, &judged);
 }
 
 static Atom *prime_form_judgment(
@@ -5220,8 +5237,11 @@ static bool prepare_answer_bag(Space *space, Arena *a, Atom *source,
      * answer; it is not also an incompleteness of the enclosing query. */
     outcome.completion_consumed = true;
     int budget = evaluation_limited ? (int)evaluation_budget : -1;
+    /* Computing the answers is evaluation, not part of the judgment. */
+    uint32_t judgment_mark = eval_prime_judgment_suspend();
     metta_eval_outcome(space, a, NULL, source->expr.elems[1], budget,
                        &outcome);
+    eval_prime_judgment_resume(judgment_mark);
     uint64_t spent = outcome.steps_spent;
     if (ledger->typing.steps_limited) {
         if (spent >= ledger->typing.steps_remaining)
@@ -13676,7 +13696,8 @@ static Atom *prime_scrutinee_first_passing_rule(
     if (!form || form->kind != ATOM_SYMBOL || atom_eq(form, head))
         return NULL;
     Atom *items[8] = {
-        atom_symbol(arena, "set:known"), head, atom_var(arena, "p"),
+        atom_symbol(arena, prime_scoped_word("set:known", prime_scoped_space_is_hol(space))),
+        head, atom_var(arena, "p"),
         atom_symbol(arena, "definition"), atom_var(arena, "f"),
         atom_var(arena, "d"), atom_var(arena, "r"), atom_var(arena, "s")};
     Atom *pattern = atom_expr(arena, items, 8u);
@@ -14137,7 +14158,26 @@ static Atom *prime_implicit_verdict(Arena *a, Atom *judgment,
                     evidence ? evidence : prime_sym(a, "no-verdict")));
 }
 
+static Atom *prime_judge_accounted_body(
+    Arena *a, Space *space, Atom *judgment, bool steps_limited,
+    uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
+    Atom **canonical_term_out);
+
+/* Every Prime judgment is marked while it runs, so that an entry to HE's
+ * type engine made inside one is counted. */
 static Atom *prime_judge_accounted(
+    Arena *a, Space *space, Atom *judgment, bool steps_limited,
+    uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
+    Atom **canonical_term_out) {
+    eval_prime_judgment_enter();
+    Atom *verdict = prime_judge_accounted_body(
+        a, space, judgment, steps_limited, steps, resources_out,
+        canonical_term_out);
+    eval_prime_judgment_leave();
+    return verdict;
+}
+
+static Atom *prime_judge_accounted_body(
     Arena *a, Space *space, Atom *judgment, bool steps_limited,
     uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
     Atom **canonical_term_out) {

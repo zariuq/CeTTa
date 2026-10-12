@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Why it matters: a search procedure (hand-written, learned or generated) may
 ; propose proofs, but only the small checker decides what is proved, so a
@@ -6,8 +6,8 @@
 ;
 ; `tac:search` is ordinary MeTTa: backward proof search for implicational
 ; goals, and goals quantified over propositions, that builds a pf: proof term.
-; Its output is submitted to set:proves, published with set:theorem and
-; compiled by set:native-proof into a kernel term.  A sloppy tactic's
+; Its output is submitted to hol:proves, published with hol:theorem and
+; compiled by hol:native-proof into a kernel term.  A sloppy tactic's
 ; candidate is refuted with the checker's reason.
 
 (: A prop)
@@ -51,7 +51,7 @@
 (= (tac:check $goal)
    (let $p (tac:prove $goal 1 6)
      (unify $p (NoProof $g) $p
-       (let $ok (set:proves $p $goal) (Proved $goal $p $ok)){$ok})))
+       (let $ok (hol:proves $p $goal) (Proved $goal $p $ok)){$ok})))
 
 ; Tautologies: identity, K, composition, S, and a quantified identity.
 !(tac:check (imp A A))
@@ -69,22 +69,22 @@
 ; published name is then usable as a known fact.
 !(let $goal (imp (imp A B) (imp (imp B C) (imp A C)))
    (let $p (tac:prove $goal 1 6)
-     (set:theorem composition $goal $p)))
+     (hol:theorem composition $goal $p)))
 ; Assumptions about the uninterpreted A, B and C, which the tactic composes.
-!(set:axiom a-to-b (imp A B))
-!(set:axiom b-to-c (imp B C))
-!(set:proves (pf:imp-elim (pf:imp-elim (pf:known composition) (pf:known a-to-b))
+!(hol:axiom a-to-b (imp A B))
+!(hol:axiom b-to-c (imp B C))
+!(hol:proves (pf:imp-elim (pf:imp-elim (pf:known composition) (pf:known a-to-b))
                           (pf:known b-to-c))
              (imp A C))
 ; The published proof compiles to a kernel lambda term.
-!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
-      (set:native-proof composition)
+!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+      (hol:native-proof composition)
       (Compiled $name $term))
 
 ; A sloppy tactic that always answers with the newest hypothesis.
 (= (tac:sloppy (imp $a $b)) (pf:imp-intro (tac:sloppy $b)))
 (= (tac:sloppy $atom) (if (== (get-metatype $atom) Symbol) (pf:hyp 0) (empty)))
 !(let $p (tac:sloppy (imp A (imp B A))) (Candidate $p))
-!(let $p (tac:sloppy (imp A (imp B A))) (try (set:proves $p (imp A (imp B A)))))
-!(let $p (tac:sloppy (imp A (imp B A))) (try (set:theorem sloppy-k (imp A (imp B A)) $p)))
-!(try (set:proves (pf:known sloppy-k) (imp A (imp B A))))
+!(let $p (tac:sloppy (imp A (imp B A))) (try (hol:proves $p (imp A (imp B A)))))
+!(let $p (tac:sloppy (imp A (imp B A))) (try (hol:theorem sloppy-k (imp A (imp B A)) $p)))
+!(try (hol:proves (pf:known sloppy-k) (imp A (imp B A))))

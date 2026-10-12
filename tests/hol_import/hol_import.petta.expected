@@ -1,0 +1,13 @@
+true
+true
+self-imp
+true
+(all prop (lam p (imp p p)))
+false
+(Undetermined (hol:unknown-name missing))
+true
+set
+true
+(Undetermined (hol:unknown-name universeIn))
+(Undetermined (hol:unknown-name self-imp))
+hol:proves

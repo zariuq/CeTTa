@@ -240,6 +240,12 @@ static bool rsnfa_v1_collect_term_shape(
         (*edge_len)++;
         return true;
     }
+    if (rsnfa_v1_expr_head(edge, "nfa-range", 4u)) {
+        if (!rsnfa_v1_canonical_push(states, edge->expr.elems[1]) ||
+            !rsnfa_v1_canonical_push(states, edge->expr.elems[4])) goto allocation_error;
+        (*edge_len)++;
+        return true;
+    }
     rsnfa_v1_set_error(error_buf, error_buf_size,
                        "unknown compile-span-nfa edge");
     return false;
@@ -380,6 +386,21 @@ static bool rsnfa_v1_fill_term(
             return false;
         }
         ranges[0] = (CettaLpNativeUnicodeRange){codepoint, codepoint};
+        plan->edges[*edge_index].kind = RSDFA_V1_NFA_RANGES;
+        plan->edges[*edge_index].ranges = ranges;
+        plan->edges[*edge_index].range_len = 1u;
+        plan->owned_ranges[*edge_index] = ranges;
+    } else if (rsnfa_v1_expr_head(edge, "nfa-range", 4u)) {
+        uint32_t low, high;
+        if (!rsnfa_v1_codepoint(edge->expr.elems[2], &low) ||
+            !rsnfa_v1_codepoint(edge->expr.elems[3], &high) || low > high ||
+            (low < 0xd800u && high >= 0xd800u)) {
+            rsnfa_v1_set_error(error_buf, error_buf_size, "NFA range is not a scalar interval");
+            return false;
+        }
+        CettaLpNativeUnicodeRange *ranges = malloc(sizeof(*ranges));
+        if (!ranges) goto allocation_error;
+        ranges[0] = (CettaLpNativeUnicodeRange){low, high};
         plan->edges[*edge_index].kind = RSDFA_V1_NFA_RANGES;
         plan->edges[*edge_index].ranges = ranges;
         plan->edges[*edge_index].range_len = 1u;

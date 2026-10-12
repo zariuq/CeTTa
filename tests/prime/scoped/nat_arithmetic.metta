@@ -1,14 +1,14 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The Natural Number Game, as in the Lean ladder: addition recurses on its
 ; second argument, so n + 0 = n holds by computation; 0 + n and (n+1) + m
 ; need induction; commutativity and associativity follow.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy nat refl@nat subst@nat)
-!(set:known-proposition &thy nat-ind)
-!(set:define &thy add (-> nat nat nat)
+!(hol:known-proposition &thy nat-ind)
+!(hol:define &thy add (-> nat nat nat)
    (= (add $n zero) $n)
    (= (add $n (succ $m)) (succ (add $n $m))))
 
@@ -44,8 +44,8 @@
 !(pf:proves &thy (pf:refl nat (succ (succ zero))) (eq nat (add (succ (succ zero)) (succ zero)) (succ (succ zero))))
 ; commutativity used at symbolic numbers, instantiated by matching
 !(pf:theory &thy ((: a nat) (: b nat)))
-!(set:proves &thy (pf:by add-comm) (eq nat (add a b) (add b a)))
+!(hol:proves &thy (pf:by add-comm) (eq nat (add a b) (add b a)))
 ; a + b = a + b is not an instance matching finds; the numbers sit only under
 ; the recursive add, where an instance could still compute to the goal, so
 ; the judgment is left undetermined rather than refuted
-!(set:proves &thy (pf:by add-comm) (eq nat (add a b) (add a b)))
+!(hol:proves &thy (pf:by add-comm) (eq nat (add a b) (add a b)))

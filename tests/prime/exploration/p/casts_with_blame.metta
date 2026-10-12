@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Proof plans with casts: a cast closes only with its obligation, and a cast
 ; that cannot close is blamed by position.
@@ -154,7 +154,7 @@
 ; ---- the ITP half: a plan is a proof of an implication ----------------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: CastAB prop) (: CastCG prop) (: G prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal
@@ -162,7 +162,7 @@
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about uninterpreted propositions.
 !(map-atom (axA1 ab bc castCG castAB axCastAB) $r
-   (let $s (rule-statement $r) (set:axiom &thy $r $s)))
+   (let $s (rule-statement $r) (hol:axiom &thy $r $s)))
 (= (hyp-name 0) h0)
 (= (hyp-name 1) h1)
 (= (to-proof $t)

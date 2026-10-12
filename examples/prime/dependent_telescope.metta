@@ -1,7 +1,7 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A dependent result type remembers the exact input witness.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: Fact (u 0)))
 !(add-atom &thy (: fact Fact))
 !(add-atom &thy (: other Fact))

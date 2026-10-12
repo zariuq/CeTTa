@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Views glued around a cycle.  Three places a, b and c each hold a view.
 ; Crossing an edge translates the view.  In the twisted cycle the views are
@@ -80,14 +80,14 @@
 ; ---- Part 2: the same facts as checked theorems ----------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy bool (u 0) (: true bool) (: false bool))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(pf:equality &thy bool refl@bool subst@bool)
-!(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
-!(set:define &thy falsum prop (= falsum (all prop (lam p p))))
-!(set:define &thy negb (-> bool bool) (= (negb true) false) (= (negb false) true))
+!(hol:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
+!(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
+!(hol:define &thy negb (-> bool bool) (= (negb true) false) (= (negb false) true))
 ; constructors are distinct: a prop-valued definition separates them
-!(set:define &thy is-true (-> bool prop) (= (is-true true) truth) (= (is-true false) falsum))
+!(hol:define &thy is-true (-> bool prop) (= (is-true true) truth) (= (is-true false) falsum))
 
 ; 5. Negation has no fixed point (Bool.not_ne_self), which is why the loop
 ;    moves every value (Triangle.no_invariant).

@@ -530,6 +530,7 @@ static inline SymbolSpelling symbol_spelling(
     X(set_colon_signature_digest, "set:signature-digest") \
     X(set_colon_numerals, "set:numerals") \
     X(set_colon_oracle, "set:oracle") \
+    X(set_colon_irrelevant, "set:irrelevant") \
     X(lang_colon_languages, "lang:languages") \
     X(lang_colon_parse, "lang:parse") \
     X(lang_colon_print, "lang:print") \
@@ -547,6 +548,29 @@ static inline SymbolSpelling symbol_spelling(
     X(set_colon_native_normalize, "set:native-normalize") \
     X(set_colon_native_link, "set:native-link") \
     X(set_colon_interpret, "set:interpret") \
+    X(hol_colon_signature, "hol:signature") \
+    X(hol_colon_formed, "hol:formed") \
+    X(hol_colon_of, "hol:of") \
+    X(hol_colon_check, "hol:check") \
+    X(hol_colon_eq, "hol:eq") \
+    X(hol_colon_proves, "hol:proves") \
+    X(hol_colon_axiom, "hol:axiom") \
+    X(hol_colon_define, "hol:define") \
+    X(hol_colon_inductive, "hol:inductive") \
+    X(hol_colon_family, "hol:family") \
+    X(hol_colon_theorem, "hol:theorem") \
+    X(hol_colon_recheck, "hol:recheck") \
+    X(hol_colon_known_proof, "hol:known-proof") \
+    X(hol_colon_known_proposition, "hol:known-proposition") \
+    X(hol_colon_signature_digest, "hol:signature-digest") \
+    X(hol_colon_numerals, "hol:numerals") \
+    X(hol_colon_oracle, "hol:oracle") \
+    X(hol_colon_irrelevant, "hol:irrelevant") \
+    X(hol_colon_native_proof, "hol:native-proof") \
+    X(hol_colon_native_use, "hol:native-use") \
+    X(hol_colon_native_normalize, "hol:native-normalize") \
+    X(hol_colon_native_link, "hol:native-link") \
+    X(hol_colon_interpret, "hol:interpret") \
     X(petta_decons, "decons") \
     X(prime_data, "Data") \
     X(prime_lam, "lam") \

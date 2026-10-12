@@ -1,4 +1,4 @@
-[((set:profile hol) (set:profile megalodon-hotg) (set:profile prime-common) (set:profile foundation-common) (set:profile classical-common) (set:profile classical-foundation-common))]
+[((hol:profile core) (hol:profile megalodon-hotg) (set:profile prime-common) (set:profile foundation-common) (set:profile classical-common) (set:profile classical-foundation-common))]
 [(CommonManifest prime-common native-scoped-hol-v1 () () 0 0)]
 [all]
 [all]

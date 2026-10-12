@@ -121,8 +121,11 @@ typedef struct {
     bool (*normalize)(void *context, Atom *type, Atom **normalized);
     /* Optional representation projection, never an evaluation request. */
     Atom *(*source_argument)(void *context, Atom *argument);
-    /* A refutation service may only reject established impossible pairs. */
-    bool (*refuted)(void *context, Atom *actual, Atom *expected);
+    /* A refutation service may only reject established impossible pairs.
+     * It receives the argument as well as one of its actual types, so a
+     * client may decide the argument's typing itself. */
+    bool (*refuted)(void *context, Atom *argument, Atom *actual,
+                    Atom *expected);
     /* NULL uses HE interpreter refinement. Non-HE clients of the shared
      * applicability mechanism supply their own relation explicitly. */
     bool (*refine)(Atom *actual, Atom *expected, BindingsBuilder *, Arena *);

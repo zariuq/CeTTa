@@ -528,7 +528,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-checking-route-declared-regular",
     "prime-checking-route-closed-regular",
     "prime-checking-route-ambient-formation",
-    "prime-legacy-he-typed-applicability",
+    "prime-he-declaration-applicability",
     "prime-declared-regular-conversion-execution",
     "prime-level-normalization-step",
     "prime-declaration-polymorphic-lookup",
@@ -999,6 +999,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "match-position-index-append-row",
     "match-position-index-alloc-bytes",
     "match-position-index-free-bytes",
+    "prime-judgment-he-engine-entry",
+    "prime-hol-guest-request",
+    "prime-hol-guest-accepted",
+    "prime-hol-guest-refused",
+    "prime-hol-guest-unavailable",
+    "prime-he-fragment-get-type",
 };
 
 static int64_t clamp_counter(uint64_t value) {

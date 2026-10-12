@@ -585,8 +585,9 @@ static bool he_repeated_import_contract(void) {
             module_match_answers(&top, &scratch, "(reimport-fact $x)", "");
     }
     for (uint32_t attempt = 0u; ok && attempt < 12u; attempt++) {
-        /* Compatibility retries every failed initializer, including two
-           attempts within one host request. Both retired handles stay live. */
+        /* Each failed compatibility import retries its initializer, including
+           two attempts inside one host request. Both abandoned spaces stay
+           retired until the context ends, so exposed identities remain valid. */
         CettaHEModuleRunScope request = {0};
         cetta_library_he_run_begin(ctx, &request);
         uint32_t retired = ctx->retired_module_len;

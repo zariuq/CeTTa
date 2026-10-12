@@ -85,6 +85,37 @@ typedef struct {
     uint32_t witness_len;
 } PPNativeV1ForestExtension;
 
+typedef struct {
+    const Atom *state;
+    const Atom *tag;
+    /* Optional, already declared base state consumed before the token.
+     * Its value is omitted from the token's semantic projection. */
+    const Atom *prefix_state;
+} PPNativeV1TokenBindingInput;
+
+/* An owned grammar binding for externally recognized whole tokens. It uses
+ * the ordinary forest-extension wire and supplies no scalar placeholder.
+ * Witness values are input-specific and remain outside this immutable plan. */
+typedef struct {
+    Arena arena;
+    PPNativeV1StateExtension *states;
+    PPNativeV1TerminalExtension *terminals;
+    PPNativeV1ProductionExtension *productions;
+    PPABIV1Item *items;
+    PPNativeV1ForestExtension extension;
+} PPNativeV1TokenBindingPlan;
+
+void ppnative_v1_token_binding_plan_init(PPNativeV1TokenBindingPlan *plan);
+void ppnative_v1_token_binding_plan_free(PPNativeV1TokenBindingPlan *plan);
+
+/* Failure leaves out unchanged. A state already defined by a base grammar
+ * production is not an external token state. Unreferenced declared tokens
+ * receive real extension states, so they are retained rather than erased. */
+bool ppnative_v1_token_binding_plan_build(
+    const PPABIV1Pack *pack, const Atom *start,
+    const PPNativeV1TokenBindingInput *inputs, uint32_t input_len,
+    PPNativeV1TokenBindingPlan *out, char *error_buf, size_t error_buf_size);
+
 /*
  * One replay scope validates a shared forest extension before replaying a
  * batch. The pack, extension, their arrays, and all referenced atoms are
@@ -241,6 +272,15 @@ bool ppnative_v1_materialize_canonical_forest(
     PPNativeV1Result *result,
     const PPABIV1Pack *pack,
     const Atom *start_state,
+    uint32_t item_limit,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppnative_v1_materialize_canonical_forest_extended(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const PPNativeV1ForestExtension *extension,
     uint32_t item_limit,
     char *error_buf,
     size_t error_buf_size);

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Two reversals of a list, typed.  The lists, append and the two reversals
 ; are declared in &self; the kernel checks each declaration before it admits
@@ -6,21 +6,21 @@
 ; computation, and proves "rev l = rev-onto nil l" as a term of an identity
 ; type: equal by computation at every closed list, but not at an unknown
 ; list, where the two are different terms and the equality needs the proof.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
-!(set:define &self rev (-> list list)
+!(hol:define &self rev (-> list list)
    (= (rev nil) nil)
    (= (rev (cons $a $as)) (append (rev $as) (cons $a nil))))
-!(set:define &self rev-onto (-> list list list)
+!(hol:define &self rev-onto (-> list list list)
    (= (rev-onto $acc nil) $acc)
    (= (rev-onto $acc (cons $x $xs)) (rev-onto (cons $x $acc) $xs)))
 
 ; ---- Why running ends.
 ; rev recurses on its argument: field 1 of cons, the tail.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev))
    (quote $termination))
 ; rev-onto recurses on its second argument, the list, and its recursive
 ; call changes the first, the accumulator.  The check admits it as written,
@@ -30,20 +30,20 @@
 ;   rev-onto acc l = rev-onto~scrutinee-first l acc.
 ; The record of rev-onto names that definition and argument 1; the record of
 ; the definition with the list first recurses on its argument 0.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev-onto))
    (quote $termination))
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto~scrutinee-first))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev-onto~scrutinee-first))
    (quote $termination))
 ; Each record names the Lean theorem it rests on.  rev is structural
 ; recursion on its one argument, the shape Lean states.  rev-onto is one
 ; equation passing its arguments on, an explicit definition.  The definition
 ; with the list first is structural recursion of two arguments; Lean states
 ; recursion for a function of one, and the record says so.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev))
    (quote $lean))
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev-onto))
    (quote $lean))
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self rev-onto~scrutinee-first))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self rev-onto~scrutinee-first))
    (quote $lean))
 
 ; ---- What each is.
@@ -88,29 +88,29 @@
 ; ---- The theorem as a typed proof.
 ; Congruence under "a number before", symmetry and transitivity of identity
 ; proofs, each by the identity eliminator.
-!(set:define &self cong-cons
+!(hol:define &self cong-cons
    (-> (a : num) (x : list) (y : list) (p : (id list x y))
        (id list (cons a x) (cons a y)))
    (= (cong-cons $a $x $y $p)
       (id:eliminate list $x
          (lam y2 (lam e (id list (cons $a $x) (cons $a y2))))
          (refl (cons $a $x)) $y $p)))
-!(set:define &self id-sym
+!(hol:define &self id-sym
    (-> (x : list) (y : list) (p : (id list x y)) (id list y x))
    (= (id-sym $x $y $p)
       (id:eliminate list $x (lam y2 (lam e (id list y2 $x))) (refl $x) $y $p)))
-!(set:define &self id-trans
+!(hol:define &self id-trans
    (-> (x : list) (y : list) (z : list) (p : (id list x y)) (q : (id list y z))
        (id list x z))
    (= (id-trans $x $y $z $p $q)
       (id:eliminate list $y (lam z2 (lam e (id list $x z2))) $p $z $q)))
 ; append l nil = l, and associativity, by recursion on the first list.
-!(set:define &self append-nil
+!(hol:define &self append-nil
    (-> (l : list) (id list (append l nil) l))
    (= (append-nil nil) (refl nil))
    (= (append-nil (cons $a $as))
       (cong-cons $a (append $as nil) $as (append-nil $as))))
-!(set:define &self append-assoc
+!(hol:define &self append-assoc
    (-> (xs : list) (ys : list) (zs : list)
        (id list (append (append xs ys) zs) (append xs (append ys zs))))
    (= (append-assoc nil $ys $zs) (refl (append $ys $zs)))
@@ -121,7 +121,7 @@
 ; empty list both sides compute to acc; at cons x xs the left side computes
 ; to rev-onto (cons x acc) xs, the hypothesis at the longer accumulator
 ; cons x acc, and associativity moves [x] into it.
-!(set:define &self rev-onto-append
+!(hol:define &self rev-onto-append
    (-> (l : list) (acc : list) (id list (rev-onto acc l) (append (rev l) acc)))
    (= (rev-onto-append nil $acc) (refl $acc))
    (= (rev-onto-append (cons $x $xs) $acc)
@@ -132,7 +132,7 @@
             (append (rev $xs) (cons $x $acc))
             (append-assoc (rev $xs) (cons $x nil) $acc)))))
 ; The theorem: the lemma at the empty accumulator, then append-nil.
-!(set:define &self rev-is-rev-onto
+!(hol:define &self rev-is-rev-onto
    (-> (l : list) (id list (rev l) (rev-onto nil l)))
    (= (rev-is-rev-onto $l)
       (id-sym (rev-onto nil $l) (rev $l)
@@ -147,7 +147,7 @@
    (refl (cons (suc zero) (cons zero nil))))
 ; Wrong proofs are refused: the lemma whose step returns the hypothesis at
 ; the same accumulator proves the statement for the tail, not for the list,
-!(try (set:define &self wrong-lemma
+!(try (hol:define &self wrong-lemma
    (-> (l : list) (acc : list) (id list (rev-onto acc l) (append (rev l) acc)))
    (= (wrong-lemma nil $acc) (refl $acc))
    (= (wrong-lemma (cons $x $xs) $acc) (wrong-lemma $xs $acc))))

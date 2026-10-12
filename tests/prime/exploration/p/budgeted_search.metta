@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Budgeted plan search: exhaustion is Incomplete, never Refuted.
 ;
@@ -175,14 +175,14 @@
 ; ---- the ITP half: an established verdict carries a checked proof -------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: X prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal
        (let* (($h (car-atom $ctx)) ($t (cdr-atom $ctx)) ($r (imps $t $goal))) (imp $h $r)){$h $t $r}))
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about the uninterpreted A, B, C, X.
-!(let $lib (kernel-library) (map-atom $lib $r (let $s (rule-statement $r) (set:axiom &thy $r $s))))
+!(let $lib (kernel-library) (map-atom $lib $r (let $s (rule-statement $r) (hol:axiom &thy $r $s))))
 (= (to-proof $t)
    (let* (($r (head-of $t)) ($ks (kids-of $t))) (apply-proofs (pf:known $r) $ks)))
 (= (apply-proofs $f $ks)

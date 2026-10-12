@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A proof by induction about a declared datatype: every list of numbers
 ; appended to the empty list is identical to the list.  The same proof is a
@@ -6,20 +6,20 @@
 ; package with the lists of numbers); each comment names the Lean theorem
 ; that licenses the verdict.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 ; The type of the constructor of longer lists is written with nested arrows:
 ; (-> num (-> list list)) is the type (-> num list list), and the declaration
 ; is admitted with the same induction principle and recursor.
-!(set:inductive &s list (u 0) (: nil list) (: cons (-> num (-> list list))))
+!(hol:inductive &s list (u 0) (: nil list) (: cons (-> num (-> list list))))
 !(type:of &s list-rec)
-!(bind! &flat (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &flat num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &flat list (u 0) (: nil list) (: cons (-> num list list)))
+!(bind! &flat (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &flat num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &flat list (u 0) (: nil list) (: cons (-> num list list)))
 !(== (type:of &s list-rec) (type:of &flat list-rec))
 
 ; A program by the recursor: a list appended to the empty list.
-!(set:define &s append-nil (-> list list)
+!(hol:define &s append-nil (-> list list)
    (= (append-nil $l)
       (list-rec (lam t list) nil (lam a (lam as (lam r (cons a r)))) $l)))
 ; Its two computation rules at closed lists (appendNil_nil, appendNil_cons),
@@ -31,7 +31,7 @@
 
 ; Congruence of identity proofs under "the number before", by the identity
 ; eliminator (cong_typed).  Nothing is added to the kernel: it is a term.
-!(set:define &s cong-cons
+!(hol:define &s cong-cons
    (-> (a : num) (x : list) (y : list) (p : (id list x y))
        (id list (cons a x) (cons a y)))
    (= (cong-cons $a $x $y $p)
@@ -45,7 +45,7 @@
 ; identity types, reflexivity at the empty list, and at a longer list the
 ; congruence of the induction hypothesis.  The kernel checks the definition
 ; against its declared type before it admits it.
-!(set:define &s append-nil-id
+!(hol:define &s append-nil-id
    (-> (l : list) (id list (append-nil l) l))
    (= (append-nil-id $l)
       (list-rec (lam l2 (id list (append-nil l2) l2))
@@ -65,7 +65,7 @@
 ; Wrong proofs are not admitted.  A step that returns the induction
 ; hypothesis unchanged proves the statement for the rest, not for the longer
 ; list; a base at another list; a statement that is false.
-!(let $r (try (set:define &s wrong-step
+!(let $r (try (hol:define &s wrong-step
    (-> (l : list) (id list (append-nil l) l))
    (= (wrong-step $l)
       (list-rec (lam l2 (id list (append-nil l2) l2))
@@ -73,7 +73,7 @@
                 (lam a (lam as (lam ih ih)))
                 $l))))
    (car-atom $r))
-!(let $r (try (set:define &s wrong-base
+!(let $r (try (hol:define &s wrong-base
    (-> (l : list) (id list (append-nil l) l))
    (= (wrong-base $l)
       (list-rec (lam l2 (id list (append-nil l2) l2))
@@ -81,7 +81,7 @@
                 (lam a (lam as (lam ih (cong-cons a (append-nil as) as ih))))
                 $l))))
    (car-atom $r))
-!(let $r (try (set:define &s wrong-statement
+!(let $r (try (hol:define &s wrong-statement
    (-> (l : list) (id list (cons zero l) l))
    (= (wrong-statement $l)
       (list-rec (lam l2 (id list (cons zero l2) l2))

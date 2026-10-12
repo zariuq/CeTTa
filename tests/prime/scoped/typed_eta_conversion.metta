@@ -1,17 +1,17 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Conversion compares terms at their types. At a function type both sides are
 ; applied to a fresh variable, at a pair type their projections are compared,
 ; so eta holds for functions and pairs while equations still fire only at
 ; their authored arity. The identity eliminator computes on reflexivity by
 ; its declared rule; there is no definitional uniqueness of identity proofs.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:define &self add (-> num num num)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:define &self eqAt (-> num (u 0))
+!(hol:define &self eqAt (-> num (u 0))
    (= (eqAt $n) (id num (add zero $n) $n)))
-!(set:define &self keepCert
+!(hol:define &self keepCert
    (-> (A : (u 0)) (P : (-> A (u 0))) (x : A) (e : (P x))
        (sigma (y : A) (P y)))
    (= (keepCert $A $P $x $e) (pair $x $e)))
@@ -41,7 +41,7 @@
 
 ; Eliminating reflexivity along an eta expansion computes to the method,
 ; and the unfolded eliminator is typed at the call's type.
-!(set:define &self alongEta
+!(hol:define &self alongEta
    (-> (h : (-> (e : (eqAt zero)) (sigma (y : num) (eqAt y)))) num)
    (= (alongEta $h)
       (id:eliminate (-> (e : (eqAt zero)) (sigma (y : num) (eqAt y))) $h
@@ -59,7 +59,7 @@
 ; An ill-typed elimination is not typed, so it is never computed.
 !(let $r (try (type:check &self (id:eliminate num zero (lam y (lam p num)) (suc zero) (suc zero) (refl zero)) num)) $r)
 ; The eliminator is language-owned and cannot be redefined.
-!(let $r (try (set:define &self id:eliminate (-> num num) (= (id:eliminate $n) $n))) $r)
+!(let $r (try (hol:define &self id:eliminate (-> num num) (= (id:eliminate $n) $n))) $r)
 
 ; Ordinary evaluation of a raw call keeps comparing the endpoints: an
 ; ill-typed elimination stays as it is, a well-typed one computes.

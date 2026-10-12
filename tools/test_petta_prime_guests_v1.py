@@ -566,7 +566,7 @@ def main() -> None:
             if block is None:
                 raise AssertionError("MMU source harness expectation table is missing")
             source_observations = block.group(1).splitlines()
-            expected_count = 53
+            expected_count = 57
         if len(source_observations) != expected_count:
             raise AssertionError(f"{label}: original observation inventory changed")
         body = frontend_unit(sources, selected_fixtures)

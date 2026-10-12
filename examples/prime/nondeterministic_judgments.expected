@@ -1,4 +1,4 @@
 [True]
-[(type:must (choose) Nat)]
+[False]
 [True]
 [False]

@@ -2897,6 +2897,12 @@ bool atom_graph_is_closed_for_arena(const Arena *arena,
             atom->arena_id == arena->identity);
 }
 
+bool atom_graph_is_owner_closed_for_arena(const Arena *arena,
+                                          const Atom *atom) {
+    return arena && atom_graph_has_owner_closure(atom) &&
+           (atom->arena_id == 0u || atom->arena_id == arena->identity);
+}
+
 /* The settled test for a copy's inner loop, where both are present and the
  * arena is initialized, so its identity is not zero. */
 static inline bool atom_settled_in(const Arena *arena, const Atom *atom) {
@@ -2937,7 +2943,7 @@ bool atom_graph_arena_id_bounds(const Atom *atom,
             if (node->arena_id > *max_id)
                 *max_id = node->arena_id;
         }
-        if ((node->flags & ATOM_FLAG_ARENA_CLOSED) != 0u)
+        if (atom_graph_has_owner_closure(node))
             continue;
         size_t additions = 0u;
         if (node->kind == ATOM_EXPR) {
@@ -3066,6 +3072,7 @@ typedef struct {
     uint32_t arena_id;
     uint32_t older_id;
     bool closed;
+    bool owner_closed;
     bool generation_closed;
     bool missing;
 } AtomChildrenSummary;
@@ -3086,6 +3093,7 @@ static inline __attribute__((always_inline)) void atom_summary_begin_ids(
         .arena_id = arena_id,
         .older_id = older_id,
         .closed = true,
+        .owner_closed = true,
         /* The generation bit folds like the arena bit, over the arena and
          * its older generation. */
         .generation_closed = generational,
@@ -3107,6 +3115,9 @@ static inline __attribute__((always_inline)) void atom_summary_add_ids(
     if ((child_flags & ATOM_FLAG_ARENA_CLOSED) == 0u ||
         (child->arena_id != 0u && child->arena_id != summary->arena_id)) {
         summary->closed = false;
+        if (!atom_graph_has_owner_closure(child) ||
+            (child->arena_id != 0u && child->arena_id != summary->arena_id))
+            summary->owner_closed = false;
         /* A child closed in this arena is admitted by the generation bit
          * too, so only a child that fails the arena bit is asked. */
         if (generational && summary->generation_closed &&
@@ -3134,6 +3145,7 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
         ? ATOM_STRUCTURAL_FACTS_VALID |
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                      ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK))
         : 0u;
     bool generation_closed = summary->generation_closed;
@@ -3148,6 +3160,9 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
         (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
         (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
         structural_facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
+    if (!summary->missing && !summary->closed && summary->owner_closed &&
+        (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
+        structural_facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
     if (structural_facts_out)
         *structural_facts_out = structural_facts;
     return flags;
@@ -3410,7 +3425,8 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
                      ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE,
             .arena_id = a->identity,
             .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
-                                ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID,
+                                ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+                                ATOM_STRUCTURAL_OWNER_CLOSED,
             .ground = {.gkind = GV_INT, .ival = id},
         },
         .owner = owner,
@@ -4577,6 +4593,11 @@ static inline __attribute__((always_inline)) Atom *atom_expr_headed_small(
         .all_facts = head->structural_facts,
         .arena_id = a->identity,
         .closed = !open,
+        .owner_closed = !open ||
+            ((head->arena_id == 0u || head->arena_id == a->identity) &&
+             (head->structural_facts & (ATOM_STRUCTURAL_FACTS_VALID |
+                                       ATOM_STRUCTURAL_OWNER_CLOSED)) ==
+                 (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_OWNER_CLOSED)),
     };
     for (CettaExprIndex i = 1u; i < len; i++)
         atom_summary_add_ids(&summary, false, elems[i]);
@@ -4706,6 +4727,17 @@ static bool atom_summary_closed_child(const Atom *child, uint32_t arena_id) {
         (child->arena_id == 0u || child->arena_id == arena_id);
 }
 
+/* Whether an expression's element vector is storage of the expression's own
+ * arena: global storage, a vector allocated with its header, or a buffer
+ * with front slack, which only its arena's constructors allocate.  A suffix
+ * view shares its list's vector wherever that lives, so a view's header
+ * arena says nothing about its vector. */
+static bool atom_expr_vector_in_own_arena(const Atom *expression) {
+    return expression->arena_id == 0u ||
+           expression->expr.elems == (Atom **)(expression + 1) ||
+           (expression->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK) != 0u;
+}
+
 Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     if (!a || !expression || expression->kind != ATOM_EXPR ||
         offset > expression->expr.len)
@@ -4745,7 +4777,10 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     uint32_t departed_lacks = 0u;
     uint32_t departed_facts = 0u;
     bool departed_known = true;
-    bool closure_inherits = true;
+    /* A list in the older generation is closed for that arena, not this
+     * one, so the view's closure is folded afresh for this arena. */
+    bool closure_inherits =
+        expression->arena_id == a->identity || expression->arena_id == 0u;
     bool generation_inherits = true;
     for (CettaExprIndex index = 0u; index < offset; index++) {
         Atom *departed = expression->expr.elems[index];
@@ -4763,13 +4798,17 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     }
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                 ATOM_STRUCTURAL_OWNER_CLOSED |
                                  ATOM_STRUCTURAL_FRONT_SLACK);
+    const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
+                                    ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
         !atom_summary_head_adjusts(expression->expr.elems[0]) &&
         (expression->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
         uint32_t flags = expression->flags & ~ATOM_FLAG_HASH_VALID;
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                           ATOM_STRUCTURAL_OWNER_CLOSED |
                            ATOM_STRUCTURAL_FRONT_SLACK);
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
@@ -4824,6 +4863,28 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
             if (generation)
                 facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
         }
+        /* The view shares its list's element vector, which may belong to
+         * the older generation even when the list's header is here: a view
+         * of a view keeps borrowing it, and dropping children never moves
+         * it.  So the evidence is inherited from a list in this arena and
+         * recomputed from the remaining children only when the list's
+         * vector is its own arena's storage. */
+        if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            (expression->arena_id == 0u || expression->arena_id == a->identity)) {
+            bool owner_closed =
+                (expression->structural_facts & owner_evidence) == owner_evidence;
+            if (!owner_closed && atom_expr_vector_in_own_arena(expression)) {
+                owner_closed = true;
+                for (CettaExprIndex index = 0u; index < len; index++) {
+                    if (!atom_graph_is_owner_closed_for_arena(a, elems[index])) {
+                        owner_closed = false;
+                        break;
+                    }
+                }
+            }
+            if (owner_closed)
+                facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
+        }
         suffix->flags = flags;
         suffix->structural_facts = facts;
         /* The suffix's variables are among the list's: the list's single
@@ -4862,6 +4923,14 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         suffix->flags = atom_flags_from_children(
             a->identity, a->older_identity, elems, len,
             &suffix->structural_facts);
+        /* The fold sees the children, not the vector they sit in: the
+         * evidence stands only where the list vouches for that vector, as
+         * in the inherited summary above. */
+        if ((expression->arena_id != 0u &&
+             expression->arena_id != a->identity) ||
+            ((expression->structural_facts & owner_evidence) != owner_evidence &&
+             !atom_expr_vector_in_own_arena(expression)))
+            suffix->structural_facts &= ~ATOM_STRUCTURAL_OWNER_CLOSED;
         suffix->var_id = atom_single_variable_id_of(
             suffix->flags, elems, len);
     }
@@ -4885,7 +4954,8 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         .arena_id = a->identity,
         .hash_cache = view->hash_cache,
         .structural_facts = view->structural_facts &
-            ~(ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_FRONT_SLACK),
+            ~(ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_OWNER_CLOSED |
+              ATOM_STRUCTURAL_FRONT_SLACK),
         .expr = {
             .elems = elems,
             .len = view->expr.len,
@@ -4986,10 +5056,16 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         flags = atom_summary_head_adjust(head, flags);
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_OWNER_CLOSED |
                                         ATOM_STRUCTURAL_FRONT_SLACK)) |
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_OWNER_CLOSED |
                                         ATOM_STRUCTURAL_FRONT_SLACK));
+        if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            atom_graph_is_owner_closed_for_arena(a, list) &&
+            atom_graph_is_owner_closed_for_arena(a, head))
+            facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
         /* Every child is admitted by the generations when the list's are,
          * which its closure or its own generation bit says, and the head is
          * too. */

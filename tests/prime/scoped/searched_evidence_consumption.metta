@@ -1,8 +1,8 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Search discovers the proof term; native replay earns its dependent use.
 ; This closed-premise arrow fragment is supported by both current engines.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
@@ -11,7 +11,7 @@
 !(add-atom &thy (: h (P a)))
 !(add-atom &thy (: next (-> (P a) (P (f a)))))
 !(add-atom &thy (chaining-rule next))
-!(set:define &thy retainIndexed
+!(hol:define &thy retainIndexed
    (-> (A : (u 0)) (x : A) (P : (-> (z : A) (u 0))) (w : (P x)) (P x))
    (= (retainIndexed $A $x $P $w) $w))
 !(search-first-inhabitant &thy (P (f a)) 2)
@@ -30,7 +30,7 @@
 !(search-first-inhabitant &thy (P (f a)) 0)
 !(type:check &thy (retainIndexed A (f a) P unknownEvidence) (P (f a)))
 ; A checked search proof feeds a continuation producing different evidence.
-!(set:define &thy feedEvidence
+!(hol:define &thy feedEvidence
    (-> (A : (u 0)) (x : A) (P : (-> (z : A) (u 0))) (w : (P x))
        (Q : (u 0)) (k : (-> (p : (P x)) Q)) Q)
    (= (feedEvidence $A $x $P $w $Q $k) ($k $w)))

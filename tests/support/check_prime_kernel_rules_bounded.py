@@ -33,10 +33,10 @@ SLACK_KB = 4 * 1024
 TIMEOUT_SECONDS = 300
 
 PREAMBLE = (
-    "(set:profile hol)\n"
-    "!(set:inductive &self pos (u 0) (: one pos) (: bit0 (-> pos pos)) "
+    "(hol:profile core)\n"
+    "!(hol:inductive &self pos (u 0) (: one pos) (: bit0 (-> pos pos)) "
     "(: bit1 (-> pos pos)))\n"
-    "!(set:define &self psucc (-> pos pos)\n"
+    "!(hol:define &self psucc (-> pos pos)\n"
     "   (= (psucc one) (bit0 one))\n"
     "   (= (psucc (bit0 $p)) (bit1 $p))\n"
     "   (= (psucc (bit1 $p)) (bit0 (psucc $p))))\n")
@@ -44,7 +44,7 @@ PREAMBLE = (
 
 def definitions():
     return "".join(
-        f"!(set:define &self keep{i} (-> pos pos)\n"
+        f"!(hol:define &self keep{i} (-> pos pos)\n"
         f"   (= (keep{i} one) one)\n"
         f"   (= (keep{i} (bit0 $p)) (bit0 $p))\n"
         f"   (= (keep{i} (bit1 $p)) (bit1 $p)))\n"
@@ -119,7 +119,7 @@ PROBE = PREAMBLE + """\
 !(add-atom &self (type:rule psucc 1 ((App (DeclConst bit1) (PVar 0)))
                             (App (DeclConst bit0) (App (DeclConst psucc) (PVar 0)))))
 !(psucc (bit1 one))
-!(set:define &self pdouble (-> pos pos) (= (pdouble $p) (bit0 $p)))
+!(hol:define &self pdouble (-> pos pos) (= (pdouble $p) (bit0 $p)))
 !(pdouble (bit1 one))
 """
 PROBE_EXPECTED = [

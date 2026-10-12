@@ -17,7 +17,7 @@
 [is-cons]
 [tail-cons]
 [append-self-refuted]
-[(Undetermined (set:law-instance (List-ind num num)))]
+[(Undetermined (hol:law-instance (List-ind num num)))]
 [v1]
 [(refl@lv subst@lv)]
 [append-nil-v1]

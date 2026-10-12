@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The accessibility predicate as a proposition code, defined impredicatively
 ; over a carrier A:
@@ -9,19 +9,19 @@
 ; then used through its unfolding, with the accessibility premise proved.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: A (u 0)) (: Res (u 0))
                   (: rec (-> (-> A A prop) (-> A (-> A Res) Res) A Res))
                   (: a A) (: c Res) (: Q (-> Res prop))))
 !(pf:equality &thy Res refl@Res subst@Res)
-!(set:define &thy falsum prop (= falsum (all prop (lam p p))))
-!(set:define &thy top prop (= top (imp falsum falsum)))
-!(set:define &thy none (-> A A prop) (= (none $y $x) falsum))
-!(set:define &thy every (-> A A prop) (= (every $y $x) top))
+!(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
+!(hol:define &thy top prop (= top (imp falsum falsum)))
+!(hol:define &thy none (-> A A prop) (= (none $y $x) falsum))
+!(hol:define &thy every (-> A A prop) (= (every $y $x) top))
 
 ; 1. The code (CodeNames.acc; read in the consistency model it is AccCode,
 ;    which is Acc by accCode_iff_acc).
-!(set:define &thy acc (-> (-> A A prop) A prop)
+!(hol:define &thy acc (-> (-> A A prop) A prop)
    (= (acc $R $a) (all (-> A prop) (lam X (imp (all A (lam x (imp (all A (lam y (imp ($R y x) (X y)))) (X x)))) (X $a))))))
 
 ; 2. Introduction (CodeNames.Laws.intro_typed, AccCode.intro): a point whose
@@ -62,16 +62,16 @@
 ;    the accessibility premise and the step's respect for the relation, as in
 ;    the propositional unfolding rule (unfoldEqual; the candidate's
 ;    Signature.unfoldType, whose guard is the accessibility proof itself).
-!(set:define &thy resp (-> (-> A A prop) (-> A (-> A Res) Res) prop)
+!(hol:define &thy resp (-> (-> A A prop) (-> A (-> A Res) Res) prop)
    (= (resp $R $F) (all A (lam x (all (-> A Res) (lam g (all (-> A Res) (lam h
       (imp (all A (lam y (imp ($R y x) (eq Res (g y) (h y))))) (eq Res ($F x g) ($F x h)))))))))))
-!(set:axiom &thy unfold-eq
+!(hol:axiom &thy unfold-eq
    (all (-> A A prop) (lam R (all (-> A (-> A Res) Res) (lam F (all A (lam x
      (imp (acc R x) (imp (resp R F) (eq Res (rec R F x) (F x (lam b (rec R F b)))))))))))))
 
 ; 6. The premises proved, for the constant step over the empty relation: the
 ;    unfolding holds with no assumption beyond the axiom.
-!(set:define &thy const-c (-> A (-> A Res) Res) (= (const-c $x $g) c))
+!(hol:define &thy const-c (-> A (-> A Res) Res) (= (const-c $x $g) c))
 !(pf:theorem &thy resp-const (all (-> A A prop) (lam R (resp R const-c)))
    (pf:fix R (pf:fix x (pf:fix g (pf:fix h (pf:assume e (pf:refl Res c)))))))
 !(pf:theorem &thy unfold-const
@@ -83,7 +83,7 @@
 
 ; 7. Transport along the unfolding proves a statement about the unfolded call
 ;    (Signature.transport_goal, positive_carved) ...
-!(set:axiom &thy h-q (Q (rec none const-c a)))
+!(hol:axiom &thy h-q (Q (rec none const-c a)))
 !(pf:theorem &thy goal (Q c)
    (pf:subst-with Res (lam z (Q z)) (rec none const-c a) (const-c a (lam (b : A) (rec none const-c b)))
      (pf:known unfold-const) (pf:known h-q)))
@@ -91,8 +91,8 @@
 ;    unfolding (PropInstance.separation_constant_step, positive_carved_not_conv;
 ;    const-c computes to c as lam x g. c does), although conversion is
 ;    reflexive on it ...
-!(set:eq &thy (rec none const-c a) (const-c a (lam (b : A) (rec none const-c b))))
-!(set:eq &thy (rec none const-c a) (rec none const-c a))
+!(hol:eq &thy (rec none const-c a) (const-c a (lam (b : A) (rec none const-c b))))
+!(hol:eq &thy (rec none const-c a) (rec none const-c a))
 ; ... so the goal does not follow from the hypothesis by conversion
 ;    (PropInstance.hypothesis_not_conv_goal_constant_step,
 ;    positive_needs_witness).

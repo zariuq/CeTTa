@@ -1,4 +1,4 @@
 [True]
-[(type:check Truth Nat)]
+[False]
 [True]
 [(type:check unknown Nat)]

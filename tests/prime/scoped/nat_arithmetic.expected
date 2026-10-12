@@ -13,4 +13,4 @@
 [False]
 [()]
 [True]
-[(set:proves &thy (pf:by add-comm) (eq nat (add a b) (add a b)))]
+[(hol:proves &thy (pf:by add-comm) (eq nat (add a b) (add a b)))]

@@ -260,6 +260,11 @@ uint32_t eval_get_atom_types_profiled_transient(
    and its dialect gives it no intrinsic type.  An inference budget can only
    truncate that answer to no types. */
 bool eval_symbol_type_undefined(Space *s, Atom *atom);
+/* The space an operand denotes, through the registry; NULL otherwise. */
+Space *prime_public_space_argument(Arena *arena, Atom *atom);
+/* Add a record a scoped judgment published to its theory space, and
+ * admit it there. */
+bool eval_admit_scoped_record(Space *space, Arena *arena, Atom *record);
 /* In Prime, why `name` is a name Prime interprets itself (a grounded
    operation, a builtin of its profile, a judgment, or a form of the
    evaluator), so that a program may not define or declare it; NULL for any
@@ -284,6 +289,23 @@ uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
+
+/* A Prime typing judgment, or Prime's `get-type`, is in progress.  An entry
+ * to HE's type engine made inside one is counted for the census.  Evaluation
+ * that a judgment asks for is not part of it: suspend clears the mark and
+ * returns it, resume restores it. */
+void eval_prime_judgment_enter(void);
+void eval_prime_judgment_leave(void);
+uint32_t eval_prime_judgment_suspend(void);
+void eval_prime_judgment_resume(uint32_t depth);
+void eval_prime_judgment_note_he_engine(void);
+
+/* Evaluate one closed request of the hosted HOL Light checker's own
+ * operations in its private space.  False, with a reason, when the checker
+ * cannot be loaded, is already running, or gives no single answer. */
+bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
+                                   Atom **answer_out, Atom **reason_out);
+bool eval_prime_hol_guest_running(void);
 
 /* Rhometta deferred payload mode: each payload evaluates against a
  * sibling-isolated transactional snapshot.  The flag marks that context; the

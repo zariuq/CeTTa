@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Lists over a type and their append, typed.  The lists are declared at the
 ; lowest universe with a parameter in it, so that a list of any type of
@@ -7,11 +7,11 @@
 ; fields lie in the universe, with the parameter standing for any type of
 ; it.  append, and the theorem "append l nil = l" as a typed proof, are
 ; written once, for every A.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self (List (: A (u 0))) (u 0)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self (List (: A (u 0))) (u 0)
    (: nil (List A))
    (: cons (-> A (List A) (List A))))
-!(set:define &self append (-> (A : (u 0)) (l m : (List A)) (List A))
+!(hol:define &self append (-> (A : (u 0)) (l m : (List A)) (List A))
    (= (append $A (nil $A) $m) $m)
    (= (append $A (cons $A $a $l) $m) (cons $A $a (append $A $l $m))))
 
@@ -48,7 +48,7 @@
 
 ; ---- Conversion.
 ; Two applications of List to convertible arguments are convertible.
-!(set:define &self Nat (u 0) (= Nat num))
+!(hol:define &self Nat (u 0) (= Nat num))
 !(type:eq &self (List Nat) (List num))
 !(type:eq &self (List (List Nat)) (List (List num)))
 !(type:check &self (cons Nat zero (nil num)) (List num))
@@ -83,7 +83,7 @@
 ; ---- The theorem "append l nil = l" as a typed proof, for every A.
 ; Congruence of identity proofs under "a before", by the identity
 ; eliminator.
-!(set:define &self cong-cons
+!(hol:define &self cong-cons
    (-> (A : (u 0)) (a : A) (x : (List A)) (y : (List A)) (p : (id (List A) x y))
        (id (List A) (cons A a x) (cons A a y)))
    (= (cong-cons $A $a $x $y $p)
@@ -93,7 +93,7 @@
 ; The proof by recursion on the list: reflexivity at nil, the congruence of
 ; the hypothesis at cons.  The kernel checks both right sides against the
 ; statement before it admits the definition.
-!(set:define &self append-nil
+!(hol:define &self append-nil
    (-> (A : (u 0)) (l : (List A)) (id (List A) (append A l (nil A)) l))
    (= (append-nil $A (nil $A)) (refl (nil $A)))
    (= (append-nil $A (cons $A $a $as))
@@ -117,7 +117,7 @@
    (-> (A : (u 0)) (l : (List A)) (id (List A) (append A l (nil A)) l)))
 ; A step that returns the induction hypothesis unchanged proves the
 ; statement for the rest of the list, not for the longer list: refused.
-!(try (set:define &self wrong-step
+!(try (hol:define &self wrong-step
    (-> (A : (u 0)) (l : (List A)) (id (List A) (append A l (nil A)) l))
    (= (wrong-step $A (nil $A)) (refl (nil $A)))
    (= (wrong-step $A (cons $A $a $as)) (wrong-step $A $as))))

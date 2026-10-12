@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Why it matters: generated code (from a model, a search or a user) can be
 ; admitted only after the kernel checks it against a declared interface, so
@@ -10,8 +10,8 @@
 ; meets them is installed as an ordinary function, and its text is printed
 ; back with `repr`.
 
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self plus (-> nat nat nat)
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self plus (-> nat nat nat)
    (= (plus zero $n) $n)
    (= (plus (succ $m) $n) (succ (plus $m $n))))
 

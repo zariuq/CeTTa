@@ -1,8 +1,8 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Function domains are retained by native checking and conversion.
 ; These are native declarations, not assertions about set-code equality.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: E (u 0)))
 !(add-atom &thy (: Truth (u 0)))
 !(type:formed &thy (-> E E))
@@ -12,7 +12,7 @@
 !(type:check &thy (lam x x) (-> Truth (-> E E)))
 !(type:check &thy (lam p (lam x x)) (-> Truth (-> E E)))
 ; The checked beta computation preserves the original function domain.
-!(set:define &thy applyIdentity (-> (-> E E) E E)
+!(hol:define &thy applyIdentity (-> (-> E E) E E)
    (= (applyIdentity $f $x) ($f $x)))
 !(add-atom &thy (: e E))
 !(add-atom &thy (: other E))

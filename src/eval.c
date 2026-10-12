@@ -16,6 +16,7 @@
 #include "he_type_policy.h"
 #include "prime_native_calculus.h"
 #include "prime_semantics.h"
+#include "parser.h"
 #include "library.h"
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
@@ -41,6 +42,7 @@
 #include "term_canon.h"
 #include "variant_shape.h"
 #include "langdef_pack.h"
+#include "native/syntax_gslt_v1.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <inttypes.h>
 #include <limits.h>
@@ -76,6 +78,10 @@ static Space *g_context_home_stack[64];
 static size_t g_context_home_depth = 0u;
 static Space *g_context_here_stack[64];
 static size_t g_context_here_depth = 0u;
+
+/* Small evaluator-only clients need not link the langdef library. */
+extern bool cetta_syntax_gslt_data_arg_v1(const char *, uint32_t)
+    __attribute__((weak));
 
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static __thread Registry *g_registry = NULL;
@@ -543,9 +549,14 @@ static __thread CettaObservationDemand g_eval_observation_demand;
  * nested relation's outcomes are consumed by the expression around it,
  * which may need more of them than the bound. */
 static __thread Atom *g_eval_observation_root = NULL;
-/* The Prime call whose first outcome an observation is about to demand; the
- * evaluation stack that evaluates exactly this call stops at that outcome. */
-static __thread Atom *g_prime_first_answer_root = NULL;
+/* The Prime expression of which an observation is about to demand only the
+ * first `limit` outcomes; the evaluation stack that evaluates exactly this
+ * expression stops once its root holds that many. */
+typedef struct {
+    Atom *root;
+    uint64_t limit;
+} PrimePrefixDemand;
+static __thread PrimePrefixDemand g_prime_prefix_demand = {0};
 
 typedef struct {
     bool entered;
@@ -4024,6 +4035,9 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
         return true;
     const char *name =
         head_id == SYMBOL_ID_NONE ? NULL : symbol_bytes(g_symbols, head_id);
+    if (name && name[0] == '_' && cetta_syntax_gslt_data_arg_v1 &&
+        cetta_syntax_gslt_data_arg_v1(name, arg_index))
+        return true;
     /* A canonical grammar term is printed as read: its constructors are
      * grammar rules, not host operations.  Every argument of a printer is a
      * value (grammar, reader, rule, term), so the whole contract is data and
@@ -14424,14 +14438,24 @@ static CettaCount metta_eval_bind_visit_demand(
     }
     OutcomeSet inner;
     outcome_set_init(&inner);
-    Atom *enclosing_first_answer_root = g_prime_first_answer_root;
-    g_prime_first_answer_root =
-        demand.completion == CETTA_OBSERVATION_FIRST &&
-        order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
-        eval_current_language_id() == CETTA_LANGUAGE_PRIME
-            ? atom : NULL;
+    /* A Prime observation of a first answer or of a finite prefix evaluates
+     * the expression on a stack that stops once it holds that many outcomes,
+     * so the alternatives after them, and their effects, are never computed.
+     * The bound is the observation's: no other limit is placed on the run. */
+    PrimePrefixDemand enclosing_prefix = g_prime_prefix_demand;
+    g_prime_prefix_demand = (PrimePrefixDemand){0};
+    if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        if (demand.completion == CETTA_OBSERVATION_FIRST)
+            g_prime_prefix_demand = (PrimePrefixDemand){
+                .root = atom, .limit = 1u};
+        else if (demand.completion == CETTA_OBSERVATION_FINITE_PREFIX &&
+                 demand.prefix_limit > 0u)
+            g_prime_prefix_demand = (PrimePrefixDemand){
+                .root = atom, .limit = demand.prefix_limit};
+    }
     metta_eval_bind(s, a, atom, fuel, &inner);
-    g_prime_first_answer_root = enclosing_first_answer_root;
+    g_prime_prefix_demand = enclosing_prefix;
     CettaCount visited = outcome_set_visit_ordered(a, &inner, order, visitor, ctx);
     outcome_set_free(&inner);
     return visited;
@@ -16549,12 +16573,33 @@ static bool stream_visit_emit_first(Arena *a, Atom *atom, const Bindings *env, v
     return false;
 }
 
+/* The consumer of a selection's answers and how many it still asks for. */
+typedef struct {
+    OrderedOutcomeVisitor visitor;
+    void *context;
+    uint64_t remaining;
+    bool satisfied;
+} PrimePrefixSink;
+
+static bool prime_prefix_sink_visit(Arena *a, Atom *atom,
+                                    const Bindings *env, void *ctx) {
+    PrimePrefixSink *sink = ctx;
+    if (sink->remaining > 0u)
+        sink->remaining--;
+    if (!sink->visitor(a, atom, env, sink->context) ||
+        sink->remaining == 0u)
+        sink->satisfied = true;
+    return !sink->satisfied;
+}
+
 /* Prime's bounded native selection is source-order demand, not eager
  * collection.  For a syntactic choice frontier, evaluate one branch at a
- * time and stop at the first visible result.  Later branches may diverge or
- * perform effects; neither is demanded once the bound has been satisfied. */
-static bool prime_need_stream_emit_first_static_choice(
-    Space *s, Arena *a, Atom *stream_expr, int fuel, OutcomeSet *os,
+ * time, asking each only for the answers the bound still needs, and stop
+ * once the bound is met.  Later branches may diverge or perform effects;
+ * neither is demanded once the bound has been satisfied.  Returns whether
+ * it was; *recognized says whether the frontier was such a choice. */
+static bool prime_need_stream_emit_static_choice(
+    Space *s, Arena *a, Atom *stream_expr, int fuel, PrimePrefixSink *sink,
     bool *recognized) {
     if (recognized)
         *recognized = false;
@@ -16575,20 +16620,25 @@ static bool prime_need_stream_emit_first_static_choice(
         *recognized = true;
     for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
         bool nested_recognized = false;
-        if (prime_need_stream_emit_first_static_choice(
-                s, a, branches->expr.elems[i], fuel, os,
+        if (prime_need_stream_emit_static_choice(
+                s, a, branches->expr.elems[i], fuel, sink,
                 &nested_recognized))
             return true;
         if (nested_recognized)
             continue;
-        StreamFirstResultCtx first = {.os = os};
-        if (metta_eval_bind_visit_demand(
-                s, a, branches->expr.elems[i], fuel,
-                CETTA_SEARCH_POLICY_ORDER_NATIVE,
-                (CettaObservationDemand){
-                    .completion = CETTA_OBSERVATION_FIRST,
-                },
-                stream_visit_emit_first, &first) > 0u)
+        (void)metta_eval_bind_visit_demand(
+            s, a, branches->expr.elems[i], fuel,
+            CETTA_SEARCH_POLICY_ORDER_NATIVE,
+            sink->remaining == 1u
+                ? (CettaObservationDemand){
+                      .completion = CETTA_OBSERVATION_FIRST,
+                  }
+                : (CettaObservationDemand){
+                      .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+                      .prefix_limit = sink->remaining,
+                  },
+            prime_prefix_sink_visit, sink);
+        if (sink->satisfied)
             return true;
     }
     return false;
@@ -16977,8 +17027,13 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     if (bounded && limit == 1 &&
         order == CETTA_SEARCH_POLICY_ORDER_NATIVE) {
         bool recognized = false;
-        bool emitted = prime_need_stream_emit_first_static_choice(
-            s, a, stream_expr, fuel, os, &recognized);
+        StreamFirstResultCtx first = {.os = os};
+        PrimePrefixSink sink = {
+            .visitor = stream_visit_emit_first, .context = &first,
+            .remaining = 1u,
+        };
+        bool emitted = prime_need_stream_emit_static_choice(
+            s, a, stream_expr, fuel, &sink, &recognized);
         if (recognized) {
             if (!emitted &&
                 eval_current_language_id() != CETTA_LANGUAGE_PRIME)
@@ -17026,13 +17081,21 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     collect.fresh = eval_current_language_id() == CETTA_LANGUAGE_PETTA;
     (void)preserve_bindings;
     if (bounded && order == CETTA_SEARCH_POLICY_ORDER_NATIVE) {
-        metta_eval_bind_visit_demand(
-            s, a, stream_expr, fuel, order,
-            (CettaObservationDemand){
-                .completion = CETTA_OBSERVATION_FINITE_PREFIX,
-                .prefix_limit = (uint64_t)limit,
-            },
-            stream_visit_collect, &collect);
+        bool recognized = false;
+        PrimePrefixSink sink = {
+            .visitor = stream_visit_collect, .context = &collect,
+            .remaining = (uint64_t)limit,
+        };
+        (void)prime_need_stream_emit_static_choice(
+            s, a, stream_expr, fuel, &sink, &recognized);
+        if (!recognized)
+            metta_eval_bind_visit_demand(
+                s, a, stream_expr, fuel, order,
+                (CettaObservationDemand){
+                    .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+                    .prefix_limit = (uint64_t)limit,
+                },
+                stream_visit_collect, &collect);
     } else {
         metta_eval_bind_visit(
             s, a, stream_expr, fuel, order,
@@ -22922,6 +22985,7 @@ static uint32_t eval_get_atom_types_profiled_uncached(Space *s, Arena *a,
 
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                       Atom ***out_types) {
+    eval_prime_judgment_note_he_engine();
     /* Nested type-level evaluation deliberately leaves normalization to the
      * enclosing request. Its residual type is not the completed observation
      * represented by a profiled cache entry. */
@@ -22953,8 +23017,9 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
  * (type:of, type:check, type:analyze, type:refine, type:formed) or its
  * `get-type`.  The depth below marks such a judgment, and every entry to
  * HE's engine made inside one is counted, so a census can show that none
- * happens.  The hosted checker consulted by a judgment runs ordinary
- * evaluation, which is not a judgment: the mark is cleared while it runs. */
+ * happens.  Evaluation is not a judgment: the hosted checker consulted by
+ * a judgment, and the evaluation of the answers that `type:may` and
+ * `type:must` judge, run with the mark cleared. */
 static __thread uint32_t g_prime_judgment_depth = 0u;
 
 void eval_prime_judgment_enter(void) {
@@ -22965,6 +23030,16 @@ void eval_prime_judgment_enter(void) {
 void eval_prime_judgment_leave(void) {
     if (g_prime_judgment_depth > 0u)
         g_prime_judgment_depth--;
+}
+
+uint32_t eval_prime_judgment_suspend(void) {
+    uint32_t depth = g_prime_judgment_depth;
+    g_prime_judgment_depth = 0u;
+    return depth;
+}
+
+void eval_prime_judgment_resume(uint32_t depth) {
+    g_prime_judgment_depth = depth;
 }
 
 void eval_prime_judgment_note_he_engine(void) {
@@ -22981,9 +23056,19 @@ void eval_prime_judgment_note_he_engine(void) {
  * there: nothing of the checker enters the program's spaces.  A request runs
  * below the program's top level, so its answers are never observed as
  * program answers, and it runs without the program's fuel. */
+/* The checker owns its storage: its library's atoms live in its own
+ * persistent arena and term universe, so they outlive every evaluation
+ * arena that consults them. */
+/* The checker also has its own Prime library context, so its imports never
+ * enter the program's import records, and it runs as Prime whatever the
+ * embedder installed.  An embedder without a library context keeps one
+ * checker per thread. */
 typedef struct {
+    Arena arena;
+    TermUniverse universe;
     Space space;
-    bool space_ready;
+    CettaLibraryContext context;
+    bool context_ready;
     bool failed;
 } PrimeHolGuest;
 
@@ -22991,36 +23076,69 @@ static const char *const PRIME_HOL_GUEST_MODULES[] = {
     "data", "syntax", "kernel", "definitions", NULL};
 
 static __thread bool g_prime_hol_guest_running = false;
+static __thread PrimeHolGuest *g_prime_hol_detached_guest = NULL;
 
 static void prime_hol_guest_release(void *opaque) {
     PrimeHolGuest *guest = opaque;
     if (!guest)
         return;
-    if (guest->space_ready)
-        space_free(&guest->space);
+    if (guest->context_ready)
+        cetta_library_context_free(&guest->context);
+    space_free(&guest->space);
+    term_universe_free(&guest->universe);
+    arena_free(&guest->arena);
     free(guest);
+}
+
+static void prime_hol_detached_guest_release(void) {
+    prime_hol_guest_release(g_prime_hol_detached_guest);
+    g_prime_hol_detached_guest = NULL;
 }
 
 bool eval_prime_hol_guest_running(void) {
     return g_prime_hol_guest_running;
 }
 
-static Space *prime_hol_guest_space(Arena *a, Atom **reason_out) {
-    CettaLibraryContext *ctx = g_library_context;
-    if (!ctx) {
-        *reason_out = atom_symbol(a, "no-library-context");
-        return NULL;
+/* The library root holding `lib/prime/hol_light`: the one found beside the
+ * executable, or, for an embedder that named no executable, the working
+ * directory. */
+static bool prime_hol_guest_root(const CettaLibraryContext *ctx, char *out,
+                                 size_t out_size) {
+    char probe[PATH_MAX];
+    const char *roots[2] = {ctx && ctx->root_dir[0] ? ctx->root_dir : NULL, "."};
+    for (size_t i = 0u; i < 2u; i++) {
+        if (!roots[i])
+            continue;
+        int written = snprintf(probe, sizeof(probe),
+                               "%s/lib/prime/hol_light/kernel.metta", roots[i]);
+        char resolved[PATH_MAX];
+        if (written > 0 && (size_t)written < sizeof(probe) &&
+            access(probe, R_OK) == 0 && realpath(roots[i], resolved)) {
+            int root = snprintf(out, out_size, "%s", resolved);
+            return root > 0 && (size_t)root < out_size;
+        }
     }
-    PrimeHolGuest *guest = ctx->prime_hol_guest;
+    return false;
+}
+
+static PrimeHolGuest *prime_hol_guest(Arena *a, Atom **reason_out) {
+    CettaLibraryContext *host = g_library_context;
+    PrimeHolGuest *guest = host ? host->prime_hol_guest
+                                : g_prime_hol_detached_guest;
     if (guest) {
         if (guest->failed) {
             *reason_out = atom_symbol(a, "checker-library-unavailable");
             return NULL;
         }
-        return &guest->space;
+        return guest;
     }
-    TermUniverse *universe = eval_current_term_universe();
-    if (!ctx->root_dir[0] || !universe) {
+    char root[PATH_MAX];
+    if (!prime_hol_guest_root(host, root, sizeof(root))) {
+        *reason_out = atom_symbol(a, "checker-library-root-unknown");
+        return NULL;
+    }
+    int root_len = (int)strlen(root);
+    if ((size_t)root_len >= sizeof(guest->context.root_dir)) {
         *reason_out = atom_symbol(a, "checker-library-root-unknown");
         return NULL;
     }
@@ -23029,30 +23147,53 @@ static Space *prime_hol_guest_space(Arena *a, Atom **reason_out) {
         *reason_out = atom_symbol(a, "checker-allocation-failed");
         return NULL;
     }
-    ctx->prime_hol_guest = guest;
-    ctx->prime_hol_guest_free = prime_hol_guest_release;
-    space_init_with_universe(&guest->space, universe);
-    guest->space_ready = true;
-    for (size_t i = 0u; PRIME_HOL_GUEST_MODULES[i]; i++) {
+    arena_init(&guest->arena);
+    arena_set_runtime_kind(&guest->arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&guest->universe);
+    term_universe_set_persistent_arena(&guest->universe, &guest->arena);
+    space_init_with_universe(&guest->space, &guest->universe);
+    cetta_library_context_init_for_language_profile(
+        &guest->context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    guest->context_ready = true;
+    term_universe_set_persistent_arena(&guest->context.term_universe,
+                                       &guest->arena);
+    memcpy(guest->context.root_dir, root, (size_t)root_len + 1u);
+    if (host) {
+        host->prime_hol_guest = guest;
+        host->prime_hol_guest_free = prime_hol_guest_release;
+    } else {
+        static bool release_registered = false;
+        g_prime_hol_detached_guest = guest;
+        if (!release_registered && atexit(prime_hol_detached_guest_release) == 0)
+            release_registered = true;
+    }
+    /* The library is Prime source: read its scope braces as Prime's reader
+     * does, whatever reader the embedding installed. */
+    bool universal_names = parser_set_universal_name_syntax_enabled(true);
+    bool namespace_sugar = parser_set_namespace_sugar_enabled(true);
+    CettaLibraryContext *previous = eval_swap_library_context(&guest->context);
+    for (size_t i = 0u; !guest->failed && PRIME_HOL_GUEST_MODULES[i]; i++) {
         char path[PATH_MAX];
         int written = snprintf(path, sizeof(path),
                                "%s/lib/prime/hol_light/%s.metta",
-                               ctx->root_dir, PRIME_HOL_GUEST_MODULES[i]);
+                               root, PRIME_HOL_GUEST_MODULES[i]);
         Atom *error = NULL;
         Space *module_space = NULL;
         if (written <= 0 || (size_t)written >= sizeof(path) ||
             access(path, R_OK) != 0 ||
             !cetta_library_import_module(
-                ctx, path, &guest->space, false, a, eval_storage_arena(a),
+                &guest->context, path, &guest->space, false, a, &guest->arena,
                 g_registry, -1, &module_space, &error)) {
             guest->failed = true;
             *reason_out = atom_expr2(
                 a, atom_symbol(a, "checker-library-unavailable"),
                 atom_string(a, PRIME_HOL_GUEST_MODULES[i]));
-            return NULL;
         }
     }
-    return &guest->space;
+    eval_swap_library_context(previous);
+    parser_set_namespace_sugar_enabled(namespace_sugar);
+    parser_set_universal_name_syntax_enabled(universal_names);
+    return guest->failed ? NULL : guest;
 }
 
 /* Evaluate one request in the hosted checker.  The request is a closed call
@@ -23074,31 +23215,167 @@ bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
     g_prime_hol_guest_running = true;
     uint32_t saved_judgment_depth = g_prime_judgment_depth;
     g_prime_judgment_depth = 0u;
-    Space *space = prime_hol_guest_space(a, reason_out);
+    PrimeHolGuest *guest = prime_hol_guest(a, reason_out);
     bool ok = false;
-    if (space) {
+    if (guest) {
         ResultSet answers;
         result_set_init(&answers);
         EvalGcExternalOwnerGuard owner = {0};
         eval_gc_external_owner_guard_enter(&owner);
+        CettaLibraryContext *previous =
+            eval_swap_library_context(&guest->context);
         g_metta_eval_depth++;
-        metta_eval(space, a, NULL, request, -1, &answers);
+        metta_eval(&guest->space, a, NULL, request, -1, &answers);
         g_metta_eval_depth--;
+        eval_swap_library_context(previous);
         eval_gc_external_owner_guard_leave(&owner);
         if (answers.len == 1u && answers.items[0] &&
             !atom_is_error(answers.items[0])) {
             *answer_out = answers.items[0];
             ok = true;
         } else {
-            *reason_out = atom_expr2(
+            *reason_out = atom_expr3(
                 a, atom_symbol(a, "checker-answers"),
-                atom_int(a, (int64_t)answers.len));
+                atom_int(a, (int64_t)answers.len),
+                answers.len > 0u && answers.items[0] ? answers.items[0]
+                                                     : atom_unit(a));
         }
         result_set_free(&answers);
     }
     g_prime_judgment_depth = saved_judgment_depth;
     g_prime_hol_guest_running = false;
     return ok;
+}
+
+/* A type that calls a function with equations computes: Prime's evaluator
+ * reduces it, and its single value is the type.  This is evaluation, the
+ * operational face of a declared return type; no type engine is used. */
+static bool prime_type_calls_equations(Space *s, Atom *type) {
+    Atom **stack = NULL;
+    size_t len = 0u, cap = 0u;
+    bool calls = false, ok = true;
+    if (type->kind == ATOM_EXPR) {
+        stack = cetta_malloc(sizeof(*stack) * 16u);
+        cap = 16u;
+        stack[len++] = type;
+    }
+    while (ok && !calls && len > 0u) {
+        Atom *node = stack[--len];
+        if (node->kind != ATOM_EXPR || node->expr.len == 0u)
+            continue;
+        Atom *head = node->expr.elems[0];
+        if (head->kind == ATOM_SYMBOL && eval_space_has_equations(s, head->sym_id)) {
+            calls = true;
+            break;
+        }
+        for (CettaExprIndex i = 0u; i < node->expr.len; i++) {
+            if (len == cap) {
+                Atom **next = realloc(stack, sizeof(*stack) * cap * 2u);
+                if (!next) {
+                    ok = false;
+                    break;
+                }
+                stack = next;
+                cap *= 2u;
+            }
+            stack[len++] = node->expr.elems[i];
+        }
+    }
+    free(stack);
+    return calls;
+}
+
+static Atom *prime_get_type_normalize(Space *s, Arena *a, Atom *type,
+                                      int fuel) {
+    if (!type || !prime_type_calls_equations(s, type))
+        return type;
+    ResultSet values;
+    result_set_init(&values);
+    metta_eval(s, a, NULL, type, fuel, &values);
+    Atom *normal = values.len == 1u && values.items[0] &&
+                   !atom_is_error(values.items[0])
+        ? values.items[0] : type;
+    result_set_free(&values);
+    return normal;
+}
+
+/* Prime's `get-type` of one atom, without evaluating it.  A grounded value
+ * has its intrinsic type.  Otherwise the hosted HOL Light checker decides
+ * HE-style declarations inside the grounded fragments: the type it accepts,
+ * or no type when it refuses; an application outside them has its gradual
+ * type when its arguments are consistent with its head's parameters; a
+ * symbol outside them has the types declared for it.  *unknown_out marks an
+ * atom that no declaration types at all. */
+static uint32_t prime_get_type_declared(Space *s, Arena *a, Atom *target,
+                                        int fuel, Atom ***types_out,
+                                        bool *unknown_out) {
+    *types_out = NULL;
+    *unknown_out = false;
+    Atom *type = NULL;
+    if (target->kind == ATOM_GROUNDED) {
+        type = get_grounded_type(a, target);
+        if (!type || atom_is_symbol_id(type, g_builtin_syms.undefined_type)) {
+            *unknown_out = true;
+            type = NULL;
+        }
+    } else if (target->kind == ATOM_VAR) {
+        *unknown_out = true;
+    } else {
+        eval_prime_judgment_enter();
+        CettaPrimeHeTypeAnswer answer =
+            cetta_prime_he_declaration_type(s, a, target, &type);
+        eval_prime_judgment_leave();
+        if (answer == CETTA_PRIME_HE_TYPE_NONE)
+            return 0u;
+        if (answer == CETTA_PRIME_HE_TYPE_UNKNOWN)
+            *unknown_out = true;
+        if (answer == CETTA_PRIME_HE_TYPE_CHECKED ||
+            answer == CETTA_PRIME_HE_TYPE_GRADUAL) {
+            type = prime_get_type_normalize(s, a, type, fuel);
+        } else if (target->kind == ATOM_SYMBOL) {
+            type = NULL;
+            uint32_t count = space_get_declared_types(s, a, target, types_out);
+            if (count > 0u)
+                return count;
+            free(*types_out);
+            *types_out = NULL;
+        } else {
+            type = NULL;
+        }
+    }
+    Atom **types = cetta_malloc(sizeof(*types));
+    types[0] = type ? type : atom_undefined_type(a);
+    *types_out = types;
+    return 1u;
+}
+
+/* Prime's `get-type`.  An expression that no declaration types is evaluated
+ * once and its first value typed the same way, as the legacy evaluator
+ * does.  HE's type engine is not consulted. */
+static bool prime_get_type_intrinsic_answers(
+    Space *s, Arena *a, Atom *target, bool source_projected, int fuel,
+    Atom ***out_types, uint32_t *count_out,
+    CettaEvalCompletion *completion_out) {
+    bool unknown = false;
+    Atom **types = NULL;
+    uint32_t count = prime_get_type_declared(s, a, target, fuel, &types,
+                                             &unknown);
+    if (unknown && !source_projected && target->kind == ATOM_EXPR) {
+        ResultSet evaluated;
+        result_set_init(&evaluated);
+        metta_eval(s, a, NULL, target, fuel, &evaluated);
+        if (evaluated.len > 0u) {
+            free(types);
+            count = prime_get_type_declared(s, a, evaluated.items[0], fuel,
+                                            &types, &unknown);
+        }
+        result_set_free(&evaluated);
+    }
+    *out_types = types;
+    *count_out = count;
+    if (completion_out)
+        *completion_out = CETTA_EVAL_COMPLETE;
+    return true;
 }
 
 /* Intrinsic answer half of the public `get-type` relation.  Keeping this
@@ -23129,6 +23406,10 @@ static bool eval_get_type_intrinsic_answers(
         input, &source_projected);
     Atom *registered = registry_lookup_atom(target);
     if (registered) target = registered;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+        return prime_get_type_intrinsic_answers(
+            s, a, target, source_projected, fuel, out_types, count_out,
+            completion_out);
     Atom **types = NULL;
     uint32_t count = eval_get_atom_types_profiled(
         s, a, target, &types);
@@ -23183,6 +23464,7 @@ static const char *eval_get_type_failure_name(
 
 uint32_t eval_get_atom_types_profiled_transient(
     Space *s, Arena *a, Atom *atom, Atom ***out_types) {
+    eval_prime_judgment_note_he_engine();
     return eval_get_atom_types_profiled_uncached(s, a, atom, out_types);
 }
 
@@ -23209,6 +23491,7 @@ bool eval_symbol_type_undefined(Space *s, Atom *atom) {
 uint32_t eval_get_atom_types_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) {
         *out_types = NULL;
         return 0;
@@ -23224,6 +23507,7 @@ uint32_t eval_get_atom_types_profiled_budgeted(
 uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
                                                  Atom *atom,
                                                  Atom ***out_types) {
+    eval_prime_judgment_note_he_engine();
     /* Structural audits bypass the normal result cache because their only
        semantic difference is omitting the subject's own declaration. */
     return eval_get_atom_types_profiled_uncached_mode(s, a, atom, out_types,
@@ -23233,6 +23517,7 @@ uint32_t eval_get_atom_types_structural_profiled(Space *s, Arena *a,
 uint32_t eval_get_atom_types_structural_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) {
         *out_types = NULL;
         return 0;
@@ -23496,12 +23781,6 @@ static bool typed_applicability_candidate_has_checked_refutation(
      * if either authority evolves independently. */
     if (type_match_uses_space_class_bridge(actual, expected))
         return false;
-    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
-        if (!prime_he_typed_applicability_assistance_enabled())
-            return false;
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_TYPED_APPLICABILITY);
-    }
     CettaHeTypingEdge edge =
         cetta_he_typing_core_direct_service_v1.classify_consistency(
             actual, expected, 4096u);
@@ -23818,8 +24097,37 @@ static Atom *he_type_eval_source_argument(void *context, Atom *argument) {
     return prime_need_typecheck_argument(argument);
 }
 
-static bool he_type_eval_refuted(void *context, Atom *actual, Atom *expected) {
-    (void)context;
+/* Prime drops a typed alternative only on a refutation inside the grounded
+ * fragments: the hosted HOL Light checker refuses that the argument has the
+ * parameter's static type.  Outside them nothing is pruned. */
+static bool prime_typed_applicability_refuted(Space *space, Arena *arena,
+                                              Atom *argument, Atom *expected) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NIK_TYPED_APPLICABILITY_CANDIDATE_TESTED);
+    if (!cetta_nik_typed_applicability_pruning_enabled() ||
+        !prime_he_typed_applicability_assistance_enabled() ||
+        !space || !argument || !expected || atom_has_vars(expected) ||
+        atom_has_registry_refs(expected))
+        return false;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_HE_DECLARATION_APPLICABILITY);
+    eval_prime_judgment_enter();
+    bool refuted =
+        cetta_prime_he_argument_refuted(space, arena, argument, expected);
+    eval_prime_judgment_leave();
+    if (!refuted)
+        return false;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NIK_TYPED_APPLICABILITY_CANDIDATE_REFUTED);
+    return true;
+}
+
+static bool he_type_eval_refuted(void *context, Atom *argument, Atom *actual,
+                                 Atom *expected) {
+    HeTypeEvalApplication *application = context;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+        return prime_typed_applicability_refuted(
+            application->space, application->arena, argument, expected);
     return typed_applicability_candidate_has_checked_refutation(actual, expected);
 }
 
@@ -24074,6 +24382,7 @@ static bool prime_eval_stack_schedule_tuple(
     bool preserve_bindings, OutcomeSet *target);
 static bool prime_eval_stack_bind_force_admitted(void);
 static bool prime_eval_stack_bind_task_managed(void);
+static void prime_eval_stack_bind_defer_retry(void);
 static uint64_t prime_eval_stack_continuation_generation(void);
 static void prime_eval_stack_bind_enter(PrimeEvalStackBindGuard *guard);
 static void prime_eval_stack_bind_leave(PrimeEvalStackBindGuard *guard);
@@ -24129,7 +24438,6 @@ static bool prime_need_record_cell_observation(
  * value.  Evaluator-control failures are different: a blackhole, concurrent
  * demand, exhausted native stack, or failed internal transition did not
  * complete the suspended computation and must remain retryable. */
-#ifndef CETTA_PRIME_NEED_MUTATION_CBN
 static bool prime_need_fault_is_completed(Atom *fault) {
     if (!atom_is_error(fault) || fault->expr.len < 3u)
         return false;
@@ -24144,7 +24452,6 @@ static bool prime_need_fault_is_completed(Atom *fault) {
            !atom_is_symbol_id(reason, ids->need_reification_cycle) &&
            !atom_is_symbol_id(reason, ids->no_return);
 }
-#endif
 
 
 static int prime_need_trace_enabled(void) {
@@ -24628,7 +24935,11 @@ static bool prime_need_collect_capture_vars(
 
     while (len > 0u) {
         Atom *atom = items[--len];
-        if (!atom)
+        /* Constructor summaries exclude every source of lexical support in
+         * an ordinary closed subtree. Private references, saved bindings
+         * and first-class contexts retain the exact transitive traversal. */
+        if (!atom || (!atom_has_vars(atom) && !atom_has_registry_refs(atom) &&
+                      !atom_has_identity_grounded(atom)))
             continue;
         bool already_seen = false;
         for (size_t i = 0u; i < seen.len; i++) {
@@ -24845,6 +25156,20 @@ static bool prime_need_reify_push(PrimeNeedReifyFrame **frames,
    evaluation.  The iterative active-path checks make the operation total on
    admitted acyclic syntax and reject either pointer cycles or cycles through
    thunk payloads. */
+
+/* Whether an expression child can lie on a pointer cycle, so that the active
+ * path must be searched for it.  A constructor summarizes finished children
+ * only, so every atom on a pointer cycle was summarized while one of them was
+ * unfinished and has no valid facts.  An expression with valid facts is
+ * therefore never its own descendant, and skipping the search keeps a deep
+ * chain linear rather than quadratic in its depth. */
+static bool prime_need_reify_child_may_cycle(const Atom *child) {
+    if (child->kind == ATOM_GROUNDED)
+        return child->ground.gkind == GV_PRIME_CONTEXT;
+    return child->kind == ATOM_EXPR &&
+           ((child->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+            (child->structural_facts & ATOM_STRUCTURAL_HAS_RATIONAL) != 0u);
+}
 /* Path-compression memo for prime_need_reify_suspended_mode.
  *
  * Reify reconstructs a suspended term by following each cell's stable `origin`
@@ -25108,10 +25433,7 @@ static Atom *prime_need_reify_suspended_mode(
                 Atom *child = (child_index & 1u) == 0u
                     ? frame->context_frames[context_index]->key
                     : frame->context_frames[context_index]->value;
-                if (child &&
-                    (child->kind == ATOM_EXPR ||
-                     (child->kind == ATOM_GROUNDED &&
-                      child->ground.gkind == GV_PRIME_CONTEXT))) {
+                if (child && prime_need_reify_child_may_cycle(child)) {
                     for (size_t i = 0u; i < len; i++)
                         if (frames[i].source == child)
                             goto fail;
@@ -25143,10 +25465,7 @@ static Atom *prime_need_reify_suspended_mode(
         if (frame->next_child < frame->source->expr.len) {
             CettaExprIndex child_index = frame->next_child++;
             Atom *child = frame->source->expr.elems[child_index];
-            if (child &&
-                (child->kind == ATOM_EXPR ||
-                 (child->kind == ATOM_GROUNDED &&
-                  child->ground.gkind == GV_PRIME_CONTEXT))) {
+            if (child && prime_need_reify_child_may_cycle(child)) {
                 for (size_t i = 0u; i < len; i++)
                     if (frames[i].source == child)
                         goto fail;
@@ -28407,8 +28726,16 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
                preserve_call_bindings, os);
 #if CETTA_PRIME_EVAL_STACK
     if (prime_eval_stack_continuation_generation() !=
-        continuation_before)
+        continuation_before) {
+        /* The call goes on in the evaluation stack, which only Prime runs.
+         * When it is a bind task's own call, the task's finish frame makes
+         * the retry decision below once the frontier is complete; no other
+         * frame retries. */
+        if (!source_has_vars && !projected_closed_call &&
+            prime_eval_stack_bind_task_managed())
+            prime_eval_stack_bind_defer_retry();
         return;
+    }
 #endif
     /* HE and PeTTa invocations have completed even when the frontier is empty.
      * Repeating it to erase bindings would repeat any effects as well. */
@@ -36524,9 +36851,13 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
 
 #if CETTA_PRIME_EVAL_STACK
     /* The head's selected outcome retains its earned binding and Need world
-     * through the existing owned strict-return frame. */
+     * through the existing owned strict-return frame.  A head whose outer
+     * constructor is data is not computed: no value of it is callable, so
+     * the expression is a data tuple, whose elements the tuple rule below
+     * evaluates in one step. */
     if (!head_ready &&
-        (op->kind == ATOM_EXPR || prime_need_ref_parse(op, NULL, NULL, NULL)) &&
+        ((op->kind == ATOM_EXPR && !atom_has_constructor_head(s, a, op)) ||
+         prime_need_ref_parse(op, NULL, NULL, NULL)) &&
         eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
         prime_eval_stack_schedule_strict(s, a, atom, etype, fuel,
             preserve_bindings, current_env, current_env,
@@ -37092,10 +37423,23 @@ query_done:
         if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
             atom = eval_env_apply(current_env, a, atom);
         Atom *dispatch_continuation_atoms[2] = {atom, etype};
+        /* A computed head that is not callable heads a data tuple.  It is
+         * the head's value, so evaluating it again repeats nothing of the
+         * computation that produced it; it is completed as every element
+         * is, so the fields it still has pending are computed once here,
+         * inside the tuple's value, instead of staying as written for every
+         * observer of the tuple to compute again. */
+#ifdef CETTA_PRIME_DEMAND_MUTATION_HEAD_ELEMENT_AS_WRITTEN
+        /* Fault injection: the computed head stays as written. */
         if (head_ready)
             prefix[0] = op;
+#endif
         interpret_tuple(s, a, atom->expr.elems, atom->expr.len,
+#ifdef CETTA_PRIME_DEMAND_MUTATION_HEAD_ELEMENT_AS_WRITTEN
                         head_ready ? 1u : 0u, prefix,
+#else
+                        0u, prefix,
+#endif
                         head_ready ? (Bindings *)current_env : &empty_ctx,
                         NULL, fuel, &tuples,
                         dispatch_continuation_atoms,
@@ -37417,6 +37761,9 @@ typedef enum {
     PRIME_EVAL_STACK_TASK_BIND = 0,
     PRIME_EVAL_STACK_TASK_CALL,
     PRIME_EVAL_STACK_TASK_NORMALIZE,
+    /* One branch of a choice, evaluated as the synchronous choice evaluates
+     * each of its branches. */
+    PRIME_EVAL_STACK_TASK_BRANCH,
 } PrimeEvalStackTaskKind;
 
 typedef enum {
@@ -37433,6 +37780,7 @@ typedef enum {
     PRIME_EVAL_STACK_FRAME_CONTROL_GOAL,
     PRIME_EVAL_STACK_FRAME_CONTROL_COST,
     PRIME_EVAL_STACK_FRAME_CONTROL_NESTED,
+    PRIME_EVAL_STACK_FRAME_CHOICE,
 } PrimeEvalStackFrameKind;
 
 typedef enum {
@@ -37516,8 +37864,11 @@ typedef struct PrimeEvalStackFrame {
     uint64_t previous_evaluator_id;
     uint64_t evaluator_id;
     bool source_argument_universal_demand;
+    /* BIND_FINISH: its bind's call suspended, and an empty frontier is to
+     * be retried without its bindings, as metta_eval_bind would. */
+    bool bind_retry_deferred;
 
-    /* First-answer mode: how many values of `child` a relaying frame has
+    /* In a streaming run: how many values of `child` a relaying frame has
      * already passed to its target, and, for a STREAM_RESUME frame, the
      * frame whose remaining values it goes on consuming. */
     CettaCount stream_forwarded;
@@ -37561,17 +37912,24 @@ typedef struct {
     bool heap_phase;
     bool collection_admitted;
     bool failed;
-    /* The run observes only the first outcome of its root call.  It ends
-     * once the root target holds one, and a value a frame publishes is
-     * consumed by the frame waiting for it before the producer computes its
-     * next alternative, so only the work that leads to the first outcome is
-     * done and each effect on the way runs once. */
-    bool first_answer;
-    /* Started for a first-answer observation inside another run, whose
-     * frames are not this run's roots: this run never collects. */
+    /* The run streams: a value a frame publishes is consumed by the frame
+     * waiting for it before the producer computes its next alternative, so
+     * only the work that leads to the outcomes taken is done and each effect
+     * on the way runs once. */
+    bool streaming;
+    /* A streaming run that observes only a prefix of its root call's
+     * outcomes ends once the root target holds this many; zero when the run
+     * is not ended by its root's outcomes (an ordinary run, or one whose
+     * controller decides). */
+    uint64_t answer_limit;
+    /* Started for a bounded observation inside another run, whose frames
+     * are not this run's roots: this run never collects. */
     bool nested;
     /* The target a frame just published into, consumed at the next step. */
     OutcomeSet *stream_pending;
+    /* The running bind task's call suspended, and an empty frontier is to
+     * be retried without its bindings (metta_eval_bind's decision). */
+    bool bind_retry_deferred;
     /* The root call itself is running, before any task: its tail loop may
      * collect as a task's does. */
     bool root_call_running;
@@ -37689,6 +38047,11 @@ static bool prime_eval_stack_bind_task_managed(void) {
            g_prime_eval_stack_driver->bind_depth == 1u;
 }
 
+static void prime_eval_stack_bind_defer_retry(void) {
+    if (g_prime_eval_stack_driver)
+        g_prime_eval_stack_driver->bind_retry_deferred = true;
+}
+
 #endif /* CETTA_PRIME_EVAL_STACK */
 
 typedef enum {
@@ -37781,6 +38144,17 @@ Space *prime_public_space_argument(Arena *arena, Atom *atom) {
     if (!atom) return NULL;
     Atom *resolved = resolve_registry_refs(arena, atom);
     return resolve_registry_space_payload(g_registry, resolved);
+}
+
+/* Add a record that a scoped judgment published to its theory space and
+ * admit it there, as the Prime readout does, for a dialect that reaches
+ * the judgments through a module. */
+bool eval_admit_scoped_record(Space *space, Arena *arena, Atom *record) {
+    if (!space || !record ||
+        !eval_admit_atom(space, arena, eval_storage_arena(arena), record))
+        return false;
+    prime_scoped_judgment_admit(arena, space, record);
+    return true;
 }
 
 static Atom *prime_public_make_judgment(
@@ -38295,7 +38669,8 @@ static void prime_public_eval_scoped_judgment(
         }
         if (evidence && evidence->kind == ATOM_EXPR &&
             evidence->expr.len >= 2u &&
-            prime_public_symbol_named(evidence->expr.elems[0], "SetPublish")) {
+            (prime_public_symbol_named(evidence->expr.elems[0], "SetPublish") ||
+             prime_public_symbol_named(evidence->expr.elems[0], "HolPublish"))) {
             Atom *record = evidence->expr.elems[1];
             if (!record || record->kind != ATOM_EXPR || record->expr.len < 2u ||
                 !eval_admit_atom(
@@ -39406,7 +39781,7 @@ static bool prime_eval_stack_schedule_let(
     Atom *source, OutcomeSet *target);
 static void prime_eval_stack_run_root_call(
     Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
-    bool preserve_bindings, OutcomeSet *target, bool first_answer);
+    bool preserve_bindings, OutcomeSet *target, uint64_t answer_limit);
 
 static void prime_need_equation_outcome_set_clear(OutcomeSet *outcomes) {
     if (!outcomes)
@@ -39724,6 +40099,7 @@ static void prime_eval_stack_push(PrimeEvalStackFrame *frame) {
     case PRIME_EVAL_STACK_FRAME_CONTROL_GOAL:
     case PRIME_EVAL_STACK_FRAME_CONTROL_COST:
     case PRIME_EVAL_STACK_FRAME_CONTROL_NESTED:
+    case PRIME_EVAL_STACK_FRAME_CHOICE:
         break;
     }
 }
@@ -39762,15 +40138,15 @@ static bool prime_eval_stack_schedule_equation_search(
     return false;
 #endif
     /* A bounded call stays on the canonical path, which the fuel route
-     * exists to exercise.  A first-answer run is the exception: only the
-     * stack stops at its first answer, so under fuel too its alternatives
-     * after that answer, and their effects, are never computed.  The
+     * exists to exercise.  A streaming run is the exception: only the stack
+     * stops once it holds the outcomes it observes, so under fuel too the
+     * alternatives after them, and their effects, are never computed.  The
      * search then spends fuel as the canonical evaluator does: one unit per
      * tail step into an equation body (see the tail publication below), the
      * same fuel for each of several bodies. */
     if ((fuel >= 0 &&
          !(g_prime_eval_stack_driver &&
-           g_prime_eval_stack_driver->first_answer)) ||
+           g_prime_eval_stack_driver->streaming)) ||
         !prime_eval_stack_equation_can_suspend(arena, target) ||
         !space || !original_call || !plans || plan_count == 0u ||
         !call_elems || !shared_env || !result_contracts ||
@@ -40490,9 +40866,72 @@ static void prime_eval_stack_defer_collection(
     driver->gc_survivor_floor_bytes = live >= anchor ? live - anchor : 0u;
 }
 
+/* Completed child outcomes may have been published into the driver's arena.
+ * Their Need worlds still matter to a receiving frame or a later alternative.
+ * Raise that state to the episode lifetime before auditing evacuation; the
+ * original owner audit remains responsible for every remaining reference. */
+static bool prime_eval_stack_preserve_outcome_worlds(
+    PrimeEvalStackDriver *driver, OutcomeSet *outcomes) {
+    if (!outcomes)
+        return true;
+    for (CettaCount i = 0u; i < outcomes->len; i++) {
+        Bindings *env = &outcomes->items[i].env;
+        if (!bindings_prime_present(env))
+            continue;
+        const PrimeNeedSnapshot *need = bindings_need_view(env);
+        const PrimeNeedBranchState *state = bindings_branch_state_view(env);
+        bool transient_need = need->top &&
+            (need->owner == driver->arena || need->owner == &g_eval_gc.survivor);
+        bool transient_state = prime_need_branch_state_has_events(state) &&
+            (state->owner == driver->arena || state->owner == &g_eval_gc.survivor);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        const PrimeNeedReceipt *receipt = bindings_receipt_view(env);
+        bool transient_receipt = prime_need_branch_state_has_events(receipt) &&
+            (receipt->owner == driver->arena || receipt->owner == &g_eval_gc.survivor);
+#else
+        bool transient_receipt = false;
+#endif
+        if ((transient_need || transient_state || transient_receipt) &&
+            !bindings_promote_atoms_to_arena(env, g_prime_need_episode_owner))
+            return false;
+    }
+    return true;
+}
+
+static bool prime_eval_stack_preserve_completed_worlds(
+    PrimeEvalStackDriver *driver) {
+    if (!driver || !g_prime_need_episode_owner ||
+        g_prime_need_episode_owner == driver->arena ||
+        g_prime_need_episode_owner == &g_eval_gc.survivor)
+        return false;
+    if (!prime_eval_stack_preserve_outcome_worlds(driver, driver->root_target))
+        return false;
+    PrimeEvalStackTask *task = driver->task_ready ? &driver->task : driver->active_task;
+    if (task && !prime_eval_stack_preserve_outcome_worlds(driver, task->target))
+        return false;
+    for (PrimeEvalStackFrame *frame = driver->top; frame;
+         frame = (PrimeEvalStackFrame *)frame->continuation.next) {
+        if (!prime_eval_stack_preserve_outcome_worlds(driver, frame->target) ||
+            (frame->child_initialized &&
+             !prime_eval_stack_preserve_outcome_worlds(driver, &frame->child)))
+            return false;
+        PrimeNeedEquationContinuation *equation = frame->equation_search;
+        if (equation &&
+            (!prime_eval_stack_preserve_outcome_worlds(driver, &equation->work) ||
+             !prime_eval_stack_preserve_outcome_worlds(driver, &equation->current) ||
+             !prime_eval_stack_preserve_outcome_worlds(driver, &equation->raw_results) ||
+             !prime_eval_stack_preserve_outcome_worlds(driver, &equation->residuals) ||
+             !prime_eval_stack_preserve_outcome_worlds(driver, &equation->publication) ||
+             !prime_eval_stack_preserve_outcome_worlds(driver, &equation->forced_worlds)))
+            return false;
+    }
+    return true;
+}
+
 static bool prime_eval_stack_collect(
     PrimeEvalStackDriver *driver) {
-    if (!prime_eval_stack_audit_driver(driver))
+    if (!prime_eval_stack_preserve_completed_worlds(driver) ||
+        !prime_eval_stack_audit_driver(driver))
         return false;
 
     Arena evacuated;
@@ -40799,7 +41238,7 @@ static bool prime_eval_stack_schedule_let(
     return false;
 }
 
-/* In a first-answer run, a constructor application whose elements still
+/* In a streaming run, a constructor application whose elements still
  * compute is evaluated as a tuple on the stack: its elements' values are
  * combined one at a time, so a later combination is formed only once the
  * earlier ones have been used. */
@@ -40807,7 +41246,7 @@ static bool prime_eval_stack_schedule_tuple(
     Space *s, Arena *a, Atom *atom, int fuel, const Bindings *env,
     bool preserve_bindings, OutcomeSet *target) {
     PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
-    if (!driver || !driver->first_answer || driver->poison_depth != 0u ||
+    if (!driver || !driver->streaming || driver->poison_depth != 0u ||
         driver->raw_call_depth != 1u || a != driver->arena ||
         eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
         !prime_eval_stack_target_is_owned(target) ||
@@ -40821,6 +41260,85 @@ static bool prime_eval_stack_schedule_tuple(
         return false;
     prime_eval_stack_push(frame);
     return true;
+}
+
+/* Whether a branch of a choice does any work when it is evaluated. */
+static bool prime_eval_stack_branch_computes(
+    Space *s, Arena *a, Atom *branch, int fuel) {
+    return !(atom_eval_is_immediate_value(branch, fuel) ||
+             (!prime_need_atom_has_observable_ref(branch) &&
+              atom_is_constructor_normal_form(s, a, branch, fuel)));
+}
+
+/* In a streaming run, the branches of a choice (superpose, and hyperpose on
+ * one thread) are taken one at a time: a branch is evaluated as the
+ * synchronous choice evaluates it, its outcomes are published, and the next
+ * branch runs only when the run resumes the choice after those outcomes have
+ * been used.  So a branch after the observed answers never runs.  Branches
+ * that are all values after the first leave nothing to defer, and the
+ * synchronous choice keeps them. */
+static bool prime_eval_stack_schedule_choice(
+    Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
+    bool preserve_bindings, const Bindings *env, OutcomeSet *target) {
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    if (!driver || !driver->streaming || driver->control ||
+        driver->poison_depth != 0u || driver->raw_call_depth != 1u ||
+        a != driver->arena ||
+        eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
+        !atom || atom->kind != ATOM_EXPR || atom->expr.len != 2u ||
+        !prime_eval_stack_target_is_owned(target))
+        return false;
+    Atom *list = expr_arg(atom, 0u);
+    if (!list || list->kind != ATOM_EXPR || atom_is_list_rest(list))
+        return false;
+    CettaExprIndex first = atom_is_list(list) ? 1u : 0u;
+    bool later_work = false;
+    for (CettaExprIndex i = first + 1u; !later_work && i < list->expr.len; i++)
+        later_work = prime_eval_stack_branch_computes(
+            s, a, list->expr.elems[i], fuel);
+    if (!later_work)
+        return false;
+    PrimeEvalStackFrame *frame =
+        prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_CHOICE);
+    frame->space = s;
+    frame->arena = a;
+    frame->target = target;
+    frame->atom = atom;
+    frame->etype = etype;
+    frame->fuel = fuel;
+    frame->preserve_bindings = preserve_bindings;
+    frame->index = first;
+    frame->evaluator_id = g_prime_need_evaluator_id;
+    /* Every branch runs in the world the choice was reached in: the Need
+     * state active now, not the one active when the run resumes the choice
+     * after the previous branch's outcomes have been used. */
+    if (!prime_eval_stack_capture_dynamic_env(&frame->env, env)) {
+        prime_eval_stack_frame_free(frame);
+        return false;
+    }
+    frame->env_initialized = true;
+    prime_eval_stack_push(frame);
+    return true;
+}
+
+/* The next branch of a choice, or its end. */
+static void prime_eval_stack_resume_choice(PrimeEvalStackFrame *frame) {
+    /* A collection may move the branch list while a branch runs; the call
+     * atom is the authoritative root, so the view is derived again. */
+    Atom *list = expr_arg(frame->atom, 0u);
+    if (!list || list->kind != ATOM_EXPR ||
+        frame->index >= list->expr.len) {
+        prime_eval_stack_pop();
+        return;
+    }
+    Atom *branch = list->expr.elems[frame->index++];
+    if (prime_eval_stack_set_task(
+            PRIME_EVAL_STACK_TASK_BRANCH, frame->space, frame->arena,
+            branch, frame->etype, frame->fuel, frame->preserve_bindings, -1,
+            frame->target, &frame->env, &frame->env, frame->evaluator_id))
+        return;
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    prime_eval_stack_pop();
 }
 
 static bool prime_eval_stack_schedule_force(
@@ -41041,7 +41559,7 @@ static bool prime_eval_stack_merge_env(
     return bindings_clone_merge(out, outer, inner);
 }
 
-/* In first-answer mode, a frame that published into `target` has the value
+/* In a streaming run, a frame that published into `target` has the value
  * consumed at the driver's next step, before any further alternative. */
 static void prime_eval_stack_stream_note(OutcomeSet *target) {
     PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
@@ -41051,7 +41569,7 @@ static void prime_eval_stack_stream_note(OutcomeSet *target) {
             prime_native_control_target_owner(driver->control, target));
         return;
     }
-    if (driver && driver->first_answer)
+    if (driver && driver->streaming)
         driver->stream_pending = target;
 }
 
@@ -41977,8 +42495,13 @@ static bool prime_eval_stack_schedule_seeded_call(
 
 static void prime_eval_stack_resume_bind_finish(
     PrimeEvalStackFrame *frame) {
-    if (frame->state == PRIME_EVAL_STACK_FRAME_DEMAND &&
-        frame->child.len == 0u && !atom_contains_vars(frame->atom)) {
+#ifdef CETTA_PRIME_DEMAND_MUTATION_BIND_RETRY_ALWAYS
+    /* Fault injection: every empty closed bind is retried. */
+    bool retry = frame->child.len == 0u && !atom_contains_vars(frame->atom);
+#else
+    bool retry = frame->bind_retry_deferred && frame->child.len == 0u;
+#endif
+    if (frame->state == PRIME_EVAL_STACK_FRAME_DEMAND && retry) {
         frame->state = PRIME_EVAL_STACK_FRAME_WAIT_CALL;
         if (prime_eval_stack_schedule_call(
                 frame->space, frame->arena, frame->atom, NULL,
@@ -42057,7 +42580,7 @@ static void prime_eval_stack_resume_strict(
             continue;
         if (atom_is_error(value) && !frame->strict_error_is_data) {
             prime_eval_stack_add_prefixed(frame, value, &item->env);
-            if (g_prime_eval_stack_driver->first_answer) {
+            if (g_prime_eval_stack_driver->streaming) {
                 prime_eval_stack_stream_note(frame->target);
                 return;
             }
@@ -42480,7 +43003,7 @@ static void prime_eval_stack_resume_let(
         if (take == PRIME_EVAL_STACK_TAKE_SKIPPED)
             continue;
         if (take == PRIME_EVAL_STACK_TAKE_EMITTED) {
-            if (g_prime_eval_stack_driver->first_answer) {
+            if (g_prime_eval_stack_driver->streaming) {
                 prime_let_prepared_free(&prepared);
                 prime_eval_stack_stream_note(frame->target);
                 return;
@@ -42877,7 +43400,7 @@ static void prime_eval_stack_resume_normalize_children(
             prime_eval_stack_pop();
             return;
         }
-        if (emitted && g_prime_eval_stack_driver->first_answer) {
+        if (emitted && g_prime_eval_stack_driver->streaming) {
             /* The outcome is used before the next value is taken. */
             prime_eval_stack_stream_note(frame->target);
             return;
@@ -42931,8 +43454,24 @@ static void prime_eval_stack_resume_top(void) {
     case PRIME_EVAL_STACK_FRAME_CONTROL_NESTED:
         prime_native_control_resume_nested(frame);
         return;
+    case PRIME_EVAL_STACK_FRAME_CHOICE:
+        prime_eval_stack_resume_choice(frame);
+        return;
     }
     assert(false);
+}
+
+/* One branch of a choice, evaluated as the synchronous choice evaluates each
+ * branch.  It publishes straight into the choice's target, which the driver
+ * retains; no outcome waits in a local carrier. */
+static __attribute__((noinline)) void prime_eval_stack_run_branch(
+    PrimeEvalStackTask *task) {
+    Bindings no_prefix;
+    bindings_init(&no_prefix);
+    eval_petta_relational_host_branch(
+        task->space, task->arena, task->etype, task->atom, task->fuel,
+        &no_prefix, task->seed_env_initialized ? &task->seed_env : &no_prefix,
+        task->preserve_bindings, task->target);
 }
 
 static void prime_eval_stack_run_task(void) {
@@ -42953,7 +43492,7 @@ static void prime_eval_stack_run_task(void) {
     uint64_t previous_evaluator_id = g_prime_need_evaluator_id;
     g_prime_need_evaluator_id = task.evaluator_id;
     switch (task.kind) {
-    case PRIME_EVAL_STACK_TASK_BIND:
+    case PRIME_EVAL_STACK_TASK_BIND: {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_TASK_BIND);
         driver->running_bind_task = true;
@@ -42961,7 +43500,16 @@ static void prime_eval_stack_run_task(void) {
             task.space, task.arena, task.atom,
             task.fuel, task.target);
         driver->running_bind_task = false;
+        if (driver->bind_retry_deferred) {
+            PrimeEvalStackFrame *finish =
+                prime_eval_stack_target_owner(task.target);
+            if (finish &&
+                finish->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)
+                finish->bind_retry_deferred = true;
+            driver->bind_retry_deferred = false;
+        }
         break;
+    }
     case PRIME_EVAL_STACK_TASK_CALL:
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_TASK_CALL);
@@ -42987,6 +43535,9 @@ static void prime_eval_stack_run_task(void) {
                     CETTA_EVAL_INCOMPLETE_CAPACITY);
         }
         break;
+    case PRIME_EVAL_STACK_TASK_BRANCH:
+        prime_eval_stack_run_branch(&task);
+        break;
     }
     g_prime_need_evaluator_id = previous_evaluator_id;
     driver->active_task = NULL;
@@ -42996,7 +43547,7 @@ static void prime_eval_stack_run_task(void) {
     driver->running_task = false;
 }
 
-/* The first outcome exists: the rest of the run is not demanded. */
+/* The observed outcomes exist: the rest of the run is not demanded. */
 static void prime_eval_stack_abandon(PrimeEvalStackDriver *driver) {
     driver->stream_pending = NULL;
     if (driver->task_ready) {
@@ -43010,16 +43561,17 @@ static void prime_eval_stack_abandon(PrimeEvalStackDriver *driver) {
 
 static void prime_eval_stack_run_root_call(
     Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
-    bool preserve_bindings, OutcomeSet *target, bool first_answer) {
+    bool preserve_bindings, OutcomeSet *target, uint64_t answer_limit) {
     PrimeEvalStackDriver driver;
     memset(&driver, 0, sizeof(driver));
     PrimeEvalStackDriver *parent_driver = g_prime_eval_stack_driver;
-    Atom *enclosing_first_answer_root = g_prime_first_answer_root;
-    g_prime_first_answer_root = NULL;
+    PrimePrefixDemand enclosing_prefix = g_prime_prefix_demand;
+    g_prime_prefix_demand = (PrimePrefixDemand){0};
     driver.arena = a;
     driver.gc_anchor = arena_mark(a);
     driver.root_target = target;
-    driver.first_answer = first_answer;
+    driver.streaming = answer_limit != 0u;
+    driver.answer_limit = answer_limit;
     driver.nested = parent_driver != NULL;
     driver.prepared_pure_cache.root_space = s;
     /* A synchronous child owns its new continuation, but not the parent's
@@ -43038,7 +43590,14 @@ static void prime_eval_stack_run_root_call(
     driver.root_call_running = false;
     driver.heap_phase = true;
     while (driver.task_ready || driver.top) {
-        if (driver.first_answer && driver.root_target->len > 0u) {
+#ifdef CETTA_PRIME_DEMAND_MUTATION_PREFIX_NO_STOP
+        /* Fault injection: a prefix of more than one answer is taken only
+         * after the whole run. */
+        if (driver.answer_limit == 1u && driver.root_target->len > 0u) {
+#else
+        if (driver.answer_limit != 0u &&
+            (uint64_t)driver.root_target->len >= driver.answer_limit) {
+#endif
             prime_eval_stack_abandon(&driver);
             break;
         }
@@ -43066,7 +43625,7 @@ static void prime_eval_stack_run_root_call(
     prepared_pure_program_cache_free(
         &driver.prepared_pure_cache);
     g_prime_eval_stack_driver = parent_driver;
-    g_prime_first_answer_root = enclosing_first_answer_root;
+    g_prime_prefix_demand = enclosing_prefix;
     eval_gc_external_owner_leave();
 }
 /* Ready native work is an owned hub occurrence.  Return frames retain the
@@ -43574,8 +44133,20 @@ static size_t prime_native_control_priority_index(PrimeNativeControl *control) {
     return best;
 }
 
-static bool prime_native_expression_safe(Space *space, Arena *arena,
-    Atom *expression, const PrimeNeedSnapshot *snapshot) {
+/* The operations with world effects that an explicitly controlled search may
+ * perform: writes to a space and printing.  A space write moves the world the
+ * search reads; the search keeps its own position in that world (see
+ * prime_native_control_run).  Branch-local state cells are not among them:
+ * an agenda that interleaves alternatives does not keep their branches. */
+static bool prime_native_world_effect_head(SymbolId head) {
+    return head == g_builtin_syms.add_atom ||
+           head == g_builtin_syms.remove_atom ||
+           head == g_builtin_syms.println_bang;
+}
+
+static bool prime_native_expression_safe_in(Space *space, Arena *arena,
+    Atom *expression, const PrimeNeedSnapshot *snapshot,
+    bool world_effects) {
     if (!g_library_context || !g_library_context->petta_program || !expression)
         return false;
     PrimeEvalStackSupportBuffer scan;
@@ -43609,6 +44180,7 @@ static bool prime_native_expression_safe(Space *space, Arena *arena,
             GroundedKind kind = atom->ground.gkind;
             safe = kind == GV_INT || kind == GV_FLOAT || kind == GV_BIGINT ||
                 kind == GV_RATIONAL || kind == GV_BOOL || kind == GV_STRING ||
+                (world_effects && kind == GV_SPACE) ||
                 (kind == GV_PRIME_NEED_CAPABILITY && snapshot &&
                  prime_need_ref_belongs_to(atom, snapshot, NULL));
             continue;
@@ -43632,7 +44204,9 @@ static bool prime_native_expression_safe(Space *space, Arena *arena,
         if (!atom_has_constructor_head(space, arena, atom) && !data_head && !structural_observer) {
             PettaResolvedCallClass cls = petta_program_classify_resolved_call(
                 g_library_context->petta_program, space, atom);
-            if (cls != PETTA_RESOLVED_CALL_MACHINE_LOCAL) {
+            if (cls != PETTA_RESOLVED_CALL_MACHINE_LOCAL &&
+                !(world_effects &&
+                  prime_native_world_effect_head(atom_head_symbol_id(atom)))) {
                 SymbolId head = atom_head_symbol_id(atom);
                 if (head == SYMBOL_ID_NONE || symbol_id_is_builtin(head) ||
                     registry_lookup_atom(atom->expr.elems[0]) ||
@@ -43681,6 +44255,13 @@ static bool prime_native_expression_safe(Space *space, Arena *arena,
     prime_eval_stack_support_buffer_free(&scan);
     outcome_preview_seen_free(&seen);
     return safe;
+}
+
+/* Scores and goals are pure: they are recomputed when keys change. */
+static bool prime_native_expression_safe(Space *space, Arena *arena,
+    Atom *expression, const PrimeNeedSnapshot *snapshot) {
+    return prime_native_expression_safe_in(space, arena, expression,
+                                           snapshot, false);
 }
 
 static bool prime_native_control_grade_candidate(
@@ -44309,17 +44890,21 @@ static void prime_native_control_free(PrimeNativeControl *control) {
     }
 }
 
-static bool prime_native_control_admits(Space *space, Arena *arena, Atom *expression) {
+/* An implicit bounded selection admits only producers without effects: its
+ * observation stops in source order, which the agenda's interleaving would
+ * not.  A selection that names its control admits world effects too. */
+static bool prime_native_control_admits(Space *space, Arena *arena,
+                                        Atom *expression, bool world_effects) {
     return space && expression &&
         g_library_context && g_library_context->petta_program &&
         expression->kind == ATOM_EXPR && expression->expr.len > 0u &&
-        prime_native_expression_safe(space, arena, expression,
-                                     &g_prime_need_active);
+        prime_native_expression_safe_in(space, arena, expression,
+                                         &g_prime_need_active, world_effects);
 }
 
 typedef struct {
     PrimeEvalStackDriver *driver;
-    Atom *first;
+    PrimePrefixDemand prefix;
     Arena *need_owner;
     Arena *episode_owner;
     Arena *branch_owner;
@@ -44330,7 +44915,7 @@ typedef struct {
 static PrimeNativeRunGuard prime_native_run_enter(PrimeNativeControl *control) {
     PrimeNativeRunGuard guard = {
         .driver = g_prime_eval_stack_driver,
-        .first = g_prime_first_answer_root,
+        .prefix = g_prime_prefix_demand,
         .need_owner = g_prime_need_owner,
         .episode_owner = g_prime_need_episode_owner,
         .branch_owner = g_prime_need_region_branch_owner,
@@ -44339,7 +44924,7 @@ static PrimeNativeRunGuard prime_native_run_enter(PrimeNativeControl *control) {
     guard.active = prime_need_active_enter(control->base_environment_initialized
         ? &control->base_environment : NULL);
     g_prime_eval_stack_driver = &control->driver;
-    g_prime_first_answer_root = NULL;
+    g_prime_prefix_demand = (PrimePrefixDemand){0};
     if (control->owned_arena) {
         g_prime_need_owner = &control->storage;
         g_prime_need_episode_owner = &control->storage;
@@ -44352,7 +44937,7 @@ static PrimeNativeRunGuard prime_native_run_enter(PrimeNativeControl *control) {
 
 static void prime_native_run_leave(PrimeNativeRunGuard *guard) {
     g_prime_eval_stack_driver = guard->driver;
-    g_prime_first_answer_root = guard->first;
+    g_prime_prefix_demand = guard->prefix;
     g_prime_need_owner = guard->need_owner;
     g_prime_need_episode_owner = guard->episode_owner;
     g_prime_need_region_branch_owner = guard->branch_owner;
@@ -44420,7 +45005,7 @@ static bool prime_native_control_init(
     control->driver.arena = arena;
     control->driver.root_target = &control->output;
     control->driver.gc_anchor = arena_mark(arena);
-    control->driver.first_answer = true;
+    control->driver.streaming = true;
     control->driver.nested = true;
     control->driver.heap_phase = true;
     control->driver.prepared_pure_cache.root_space = space;
@@ -44526,6 +45111,10 @@ static void prime_native_control_run(
                 break;
             prime_native_control_step(control);
         }
+        /* What this step wrote is the search's own: the world it continues
+         * in is the world after it.  A write by anyone else, between a pause
+         * and the resumption, still finds this position stale. */
+        control->source_read = space_read_token(control->space);
         control->steps++;
         budget--;
     }
@@ -44578,7 +45167,7 @@ static bool prime_native_control_visit(
     CettaObservationDemand demand, OrderedOutcomeVisitor visitor,
     void *context, CettaCount *visited) {
     if (!arena || !visitor || !visited ||
-        !prime_native_control_admits(space, arena, expression))
+        !prime_native_control_admits(space, arena, expression, false))
         return false;
     PrimeNativeControl *control = cetta_malloc(sizeof(*control));
     if (!prime_native_control_init(control, space, arena, expression, fuel,
@@ -44729,7 +45318,8 @@ static bool prime_native_control_select(
         control = cetta_native_handle_get(g_library_context, "prime-search", handle_id);
         if (!control || control->leased)
             return false;
-    } else if (!prime_native_control_admits(space, arena, expression)) {
+    } else if (!prime_native_control_admits(space, arena, expression,
+                                            policy->policy_atom != NULL)) {
         return false;
     }
     CettaObservationDemand demand = {
@@ -55806,6 +56396,12 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
+#if CETTA_PRIME_EVAL_STACK
+        if (prime_eval_stack_schedule_choice(
+                s, a, atom, etype, fuel, preserve_bindings, CURRENT_ENV,
+                os))
+            return;
+#endif
         Atom *list = expr_arg(atom, 0);
         /* A list's alternatives are its elements; a list pattern's are not
          * known. */
@@ -55857,6 +56453,13 @@ petta_lowered_to_shared_form:
                 preserve_bindings, os)) {
             return;
         }
+#if CETTA_PRIME_EVAL_STACK
+        if (language_id == CETTA_LANGUAGE_PRIME &&
+            prime_eval_stack_schedule_choice(
+                s, a, atom, etype, fuel, preserve_bindings, CURRENT_ENV,
+                os))
+            return;
+#endif
         /* The cooperative realization is one worker episode, even on the
          * caller's OS thread. State survives its jobs but not this call. */
         __attribute__((cleanup(petta_worker_state_scope_leave)))
@@ -58270,7 +58873,9 @@ petta_lowered_to_shared_form:
                         bindings_free(&continuation);
                     }
                 } else if (r) {
-                    Atom *error = atom_error(
+                    /* NoReturn diagnoses successful fall-through, not an
+                     * already completed fault. Keep its witness and heap. */
+                    Atom *error = atom_is_error(r) ? r : atom_error(
                         a,
                         atom_expr2(a, atom_symbol(a, "function"), body),
                         atom_symbol(a, "NoReturn"));
@@ -60890,10 +61495,16 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         stack_head && stack_head->kind == ATOM_SYMBOL &&
         !is_grounded_op(stack_head->sym_id) &&
         eval_space_has_equations(s, stack_head->sym_id);
-    /* A call whose first outcome is all that is observed runs on a stack of
-     * its own, even inside another run, so that it can stop there. */
-    bool first_answer = stack_root_admitted && atom &&
-        atom == g_prime_first_answer_root;
+    /* An expression of which only the first outcomes are observed runs on a
+     * stack of its own, even inside another run, so that it stops once it
+     * holds them.  Whatever its head, the stack takes the alternatives under
+     * it (equations, let sources, strict arguments, choices) one at a
+     * time. */
+    uint64_t prefix_limit =
+        atom && atom == g_prime_prefix_demand.root &&
+        atom->kind == ATOM_EXPR &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME
+            ? g_prime_prefix_demand.limit : 0u;
     /* A native control form can synchronously call an authored function into
      * its own result set.  That target must not outlive the native caller.
      * Run a child driver to completion, then restore the enclosing driver;
@@ -60901,11 +61512,12 @@ static void metta_call(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
      * result pointer.  Finite-fuel calls retain their existing accounting. */
     bool child_borrow = g_prime_eval_stack_driver && fuel < 0 &&
         !prime_eval_stack_target_is_owned(os);
-    if (stack_root_admitted &&
-        (!g_prime_eval_stack_driver || first_answer || child_borrow)) {
+    if (prefix_limit != 0u ||
+        (stack_root_admitted &&
+         (!g_prime_eval_stack_driver || child_borrow))) {
         prime_eval_stack_run_root_call(
             s, a, atom, etype, fuel, preserve_bindings, os,
-            first_answer);
+            prefix_limit);
         return;
     }
     metta_call_impl(s, a, atom, etype, fuel, preserve_bindings,

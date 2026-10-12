@@ -1,15 +1,15 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Bare evaluation of the certified transformations. No type:eq or type:check
 ; wraps these results. A covered call must return the computed value and
 ; the evidence indexed by that value.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:define &self add (-> num num num)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:define &self eqAt (-> num (u 0))
+!(hol:define &self eqAt (-> num (u 0))
    (= (eqAt $n) (id num (add zero $n) $n)))
-!(set:define &self sucMove
+!(hol:define &self sucMove
    (-> (n : num) (e : (eqAt n)) (eqAt (suc n)))
    (= (sucMove $n $e)
       (id:eliminate num (add zero $n)
@@ -17,7 +17,7 @@
          (refl (suc (add zero $n)))
          $n $e)))
 !(import! &self ./certified_transform_lib.metta)
-!(set:define &self sucStep
+!(hol:define &self sucStep
    (-> (x : num) (e : (eqAt x)) (sigma (y : num) (eqAt y)))
    (= (sucStep $x $e) (transportCert num eqAt suc sucMove $x $e)))
 
@@ -33,17 +33,17 @@
 !(snd (iterCert (suc zero) num (lam k (eqAt (add k zero))) sucStep zero (refl zero)))
 !(import! &self pf)
 !(pf:equality &self num refl@num subst@num)
-!(set:known-proposition &self num-ind)
+!(hol:known-proposition &self num-ind)
 !(pf:theorem &self zero-add (all num (lam k (eq num (add zero k) k)))
    (pf:induction num-ind (lam k (eq num (add zero k) k))
      (pf:refl num zero)
      (pf:fix k (pf:assume ih (pf:cong num num (lam r (suc r)) (add zero k) k ih)))))
-!(let $package (set:native-proof zero-add)
- (let $linked (set:native-link identity $package)
-  (let (SetNativeLinkedV1 $interpretation $checked $term $type $context $rules $rows) $linked
+!(let $package (hol:native-proof zero-add)
+ (let $linked (hol:native-link identity $package)
+  (let (HolNativeLinkedV1 $interpretation $checked $term $type $context $rules $rows) $linked
    (let ((Realized $ind $c1 $r1) (Realized $refl $c2 $r2) (Realized $subst $c3 $r3)) $rows
-    (let (SetNativeUseV1 $used $consumer $application $result-type)
-         (set:native-use $linked
+    (let (HolNativeUseV1 $used $consumer $application $result-type)
+         (hol:native-use $linked
            (Lam $type (Lam (DeclConst num)
              (App (App (App (App (App $r3
                     (Lam (DeclConst num)

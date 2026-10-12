@@ -1,7 +1,7 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Both premise evidence and the reconstructed result earn native checking.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
@@ -30,10 +30,10 @@
    (-> (P : (-> (x : A) (u 0))) (x : A) (older newer : (P x)) (P x)))
 ; Equal types must not hide an incorrect selected variable.
 !(add-atom &thy (: h2 (P a)))
-!(set:define &thy selectOlder
+!(hol:define &thy selectOlder
    (-> (P : (-> (x : A) (u 0))) (x : A) (older newer : (P x)) (P x))
    (= (selectOlder $P $x $older $newer) $older))
-!(set:define &thy selectNewer
+!(hol:define &thy selectNewer
    (-> (P : (-> (x : A) (u 0))) (x : A) (older newer : (P x)) (P x))
    (= (selectNewer $P $x $older $newer) $newer))
 !(type:eq &thy (selectOlder P a h h2) h)
@@ -50,10 +50,10 @@
 !(type:check &thy (lam proof (lam x x))
    (-> (proof : (P a)) (x : A) (P a)))
 ; Compilation preserves both the proof occurrence and the application order.
-!(set:define &thy objectThenProof
+!(hol:define &thy objectThenProof
    (-> (x : A) (proof : (P a)) (P a))
    (= (objectThenProof $x $proof) $proof))
-!(set:define &thy proofThenObject
+!(hol:define &thy proofThenObject
    (-> (proof : (P a)) (x : A) (P a))
    (= (proofThenObject $proof $x) $proof))
 !(type:eq &thy (objectThenProof a h) h)

@@ -341,12 +341,20 @@ static bool prime_need_arena_range_excludes(
             forbidden->identity > max_id);
 }
 
+/* The arena summaries read atom closure facts, which describe an atom's
+ * children, not the element vector a suffix view shares.  In an arena with
+ * an older generation a view may share that generation's vector, so such an
+ * arena owns no Need storage; no evaluator arena that does has one. */
+static bool prime_need_owner_admissible(const Arena *owner) {
+    return owner && owner->older_identity == 0u;
+}
+
 static bool prime_need_atom_extend_arena_bloom(
     const Atom *atom, uint64_t *bloom,
     uint32_t *min_id, uint32_t *max_id) {
     if (!atom)
         return true;
-    if (!bloom || (atom->flags & ATOM_FLAG_ARENA_CLOSED) == 0u)
+    if (!bloom || !atom_graph_has_owner_closure(atom))
         return false;
     *bloom |= prime_need_arena_id_bloom_mask(atom->arena_id);
     prime_need_arena_range_extend(atom->arena_id, min_id, max_id);
@@ -431,9 +439,9 @@ static void prime_need_receipt_refresh_arena_summary(
         (!right || right->arena_range_complete);
     const bool payload_owner_closed =
         !frame->has_event ||
-        ((!frame->event.before || atom_graph_is_closed_for_arena(
+        ((!frame->event.before || atom_graph_is_owner_closed_for_arena(
              frame->owner, frame->event.before)) &&
-         (!frame->event.after || atom_graph_is_closed_for_arena(
+         (!frame->event.after || atom_graph_is_owner_closed_for_arena(
              frame->owner, frame->event.after)) &&
          !frame->event.state_cell);
     frame->closure_owner =
@@ -1095,7 +1103,8 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      size_t capture_var_count,
 #endif
                                      PrimeNeedSnapshot *out) {
-    if (!owner || !base || !out || !prime_need_snapshot_present(base) ||
+    if (!prime_need_owner_admissible(owner) || !base || !out ||
+        !prime_need_snapshot_present(base) ||
         thunk_id == 0u || authority_id == 0u || !origin)
         return false;
     /* A promoted frame keeps its serial; a new frame draws one before it is
@@ -1138,8 +1147,8 @@ static bool prime_need_snapshot_push(Arena *owner,
             cached, &payload_range_min_id,
             &payload_range_max_id);
     const bool payload_owner_closed =
-        atom_graph_is_closed_for_arena(owner, origin) &&
-        (!cached || atom_graph_is_closed_for_arena(owner, cached));
+        atom_graph_is_owner_closed_for_arena(owner, origin) &&
+        (!cached || atom_graph_is_owner_closed_for_arena(owner, cached));
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     const bool capture_closed =
         !capture_var_ids || arena_owns_ptr(owner, capture_var_ids);
@@ -2213,7 +2222,7 @@ void prime_need_branch_state_init(PrimeNeedBranchState *receipt) {
 
 static bool prime_need_carrier_begin(
     Arena *owner, PrimeNeedBranchState *receipt) {
-    if (!owner || !receipt)
+    if (!prime_need_owner_admissible(owner) || !receipt)
         return false;
     if (prime_need_branch_state_present(receipt))
         return receipt->owner == owner;
@@ -2339,8 +2348,8 @@ bool prime_need_branch_state_compatible(
 }
 
 static PrimeNeedReceiptFrame *prime_need_receipt_alloc_frame(Arena *owner) {
-    PrimeNeedReceiptFrame *frame =
-        owner ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
+    PrimeNeedReceiptFrame *frame = prime_need_owner_admissible(owner)
+        ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
     if (frame) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_FRAME_ALLOC);

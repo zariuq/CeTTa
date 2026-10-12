@@ -1,0 +1,8 @@
+[(Pair (pick) (pick))]
+[(Pair A A), (Pair A B), (Pair B A), (Pair B B)]
+[A]
+[(Pair A A), (Pair A B), (Pair B A), (Pair B B)]
+[(S A), (S B)]
+[(S A), (S B)]
+[(Pair A A), (Pair B B)]
+[(Pair A A), (Pair B B)]

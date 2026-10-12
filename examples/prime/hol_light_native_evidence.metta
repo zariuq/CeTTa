@@ -10,7 +10,7 @@
 !(import! &self ../../lib/prime/hol_light/derived.metta)
 !(import! &self ../../lib/prime/hol_light/profile.metta)
 !(import! &self ../../lib/prime/hol_light/native.metta)
-(set:profile hol)
+(hol:profile core)
 
 (= (native-example:identity)
   (function (return
@@ -46,10 +46,10 @@
   (case $packet
     (((HOL:NativeReflexivityV1 PredicateEquality $space $state $source $received
         $carrier $code $proposition
-        (SetNativeProofV1 $name $phi $proof $term $type $context $rules $assumptions $digest))
+        (HolNativeProofV1 $name $phi $proof $term $type $context $rules $assumptions $digest))
        (case (hol-light:native-normalize $packet (Lam $type (Refl (idx 0))))
          (((HOL:NativeNormalFormV1 $receipt
-             (SetNativeNormalFormV1 $checked $consumer $application
+             (HolNativeNormalFormV1 $checked $consumer $application
                (Refl $normal-proof) $before (Id $actual-type $left $right)))
             (if (== $assumptions ())
               (if (== $left $normal-proof) (== $right $normal-proof) False) False))
@@ -69,11 +69,11 @@
   (case $packet
     (((HOL:NativeReflexivityV1 PredicateEquality $space $state $source $received
         $carrier $code $proposition
-        (SetNativeProofV1 $name $phi $proof $term $type $context $rules $assumptions $digest))
+        (HolNativeProofV1 $name $phi $proof $term $type $context $rules $assumptions $digest))
        (case (hol-light:native-use
                (HOL:NativeReflexivityV1 PredicateEquality $space $state $source $received
                  $carrier $code $proposition
-                 (SetNativeProofV1 $name $phi $proof (idx 9) $type
+                 (HolNativeProofV1 $name $phi $proof (idx 9) $type
                    $context $rules $assumptions $digest))
                (Lam $type (Refl (idx 0))))
          (((HOL:NativeUseV1 $receipt False) True)

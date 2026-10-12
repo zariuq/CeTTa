@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Map fusion the way it is written in Agda:
 ;   map-compose []       = refl
@@ -8,16 +8,16 @@
 ; of the theory, and its equations and list induction are assumed.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: list (u 0))
                   (: nil list) (: cons (-> elem list list))
                   (: mapf (-> (-> elem elem) list list))
                   (: f (-> elem elem)) (: g (-> elem elem))))
 !(pf:equality &thy list refl@list subst@list)
-!(set:axiom &thy map-nil (all (-> elem elem) (lam h (eq list (mapf h nil) nil))))
-!(set:axiom &thy map-cons (all (-> elem elem) (lam h (all elem (lam x (all list (lam xs
+!(hol:axiom &thy map-nil (all (-> elem elem) (lam h (eq list (mapf h nil) nil))))
+!(hol:axiom &thy map-cons (all (-> elem elem) (lam h (all elem (lam x (all list (lam xs
    (eq list (mapf h (cons x xs)) (cons (h x) (mapf h xs))))))))))
-!(set:axiom &thy list-ind (all (-> list prop) (lam P
+!(hol:axiom &thy list-ind (all (-> list prop) (lam P
    (imp (P nil)
         (imp (all elem (lam x (all list (lam xs (imp (P xs) (P (cons x xs)))))))
              (all list (lam xs (P xs))))))))
@@ -37,10 +37,10 @@
          (= (mapf (lam y (f (g y))) (cons x xs))           (sym (by map-cons)))))))))
 
 ; The record, a use, and the reversed composition refuted at the same list.
-!(match &thy (set:known map-fusion $p $origin $proof $depends $rev $sig)
+!(match &thy (hol:known map-fusion $p $origin $proof $depends $rev $sig)
    (let $first (car-atom $depends) (Depends (size-atom $depends) first (car-atom $first))))
 !(pf:theory &thy ((: ys list)))
-!(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (f (g y))) ys)))
+!(hol:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (f (g y))) ys)))
 ; Who decided the conversions of that use: the kernel, or the structural fallback.
-!(let $r (try (set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (f (g y))) ys)))) (let $e (index-atom $r 1) (index-atom $e 2)))
-!(set:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (g (f y))) ys)))
+!(let $r (try (hol:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (f (g y))) ys)))) (let $e (index-atom $r 1) (index-atom $e 2)))
+!(hol:proves &thy (pf:by map-fusion) (eq list (mapf f (mapf g ys)) (mapf (lam y (g (f y))) ys)))

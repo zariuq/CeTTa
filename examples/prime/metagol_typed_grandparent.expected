@@ -20,7 +20,7 @@
 [(MIL:MetaRule chain ((so P) (so Q) (so R) (fo A) (fo B) (fo C)) (MIL:Atom (so P) (fo A) (fo B)) ((MIL:Atom (so Q) (fo A) (fo C)) (MIL:Atom (so R) (fo C) (fo B))))]
 [True]
 [True]
-[(type:check &gp-kb (MIL:Chain r-mother r-father) (MIL:Rel Number Number))]
+[False]
 [(r-mother r-father)]
 [((MIL:Chain (MIL:Choice r-mother r-mother) (MIL:Choice r-mother r-mother)) (MIL:Chain (MIL:Choice r-mother r-father) (MIL:Choice r-mother r-father)) (MIL:Chain (MIL:Choice r-father r-mother) (MIL:Choice r-father r-mother)) (MIL:Chain (MIL:Choice r-father r-father) (MIL:Choice r-father r-father)))]
 [((MIL:Chain (MIL:Choice r-mother r-mother) (MIL:Choice r-mother r-mother)) (MIL:Chain (MIL:Choice r-mother r-father) (MIL:Choice r-mother r-father)) (MIL:Chain (MIL:Choice r-father r-mother) (MIL:Choice r-father r-mother)) (MIL:Chain (MIL:Choice r-father r-father) (MIL:Choice r-father r-father)))]

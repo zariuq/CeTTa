@@ -1864,11 +1864,11 @@ static CettaHeAdvance he_canonical_advance(HeCanonicalDriver *driver) {
          * addresses current when a collection moves the observed terms,
          * as well as the older roots already owned by saved guards. */
         EvalGcRootFrame observation_root = {0};
-        EvalGcRootFrame first_answer_root = {0};
+        EvalGcRootFrame prefix_root = {0};
         eval_gc_root_frame_enter_evaluation_retry(
             &observation_root, &g_eval_observation_root);
         eval_gc_root_frame_enter_evaluation_retry(
-            &first_answer_root, &g_prime_first_answer_root);
+            &prefix_root, &g_prime_prefix_demand.root);
         eval_gc_collect(a, driver->gc_anchor, NULL, NULL, NULL,
             g_prime_need_episode_owner, &g_prime_need_active,
             &g_prime_need_branch_state_active
@@ -1876,7 +1876,7 @@ static CettaHeAdvance he_canonical_advance(HeCanonicalDriver *driver) {
             , &g_prime_need_receipt_active
 #endif
             );
-        eval_gc_root_frame_leave(&first_answer_root);
+        eval_gc_root_frame_leave(&prefix_root);
         eval_gc_root_frame_leave(&observation_root);
         if (g_eval_gc.collections != before)
             driver->gc_survivor_floor_bytes =
@@ -1906,7 +1906,7 @@ typedef struct {
     bool observation_present;
     CettaObservationDemand observation;
     Atom *observation_root;
-    Atom *first_answer_root;
+    PrimePrefixDemand prefix_demand;
     Atom *pending_raise;
     _Atomic bool *cancel_requested;
     bool cancel_observed;
@@ -1953,7 +1953,7 @@ static void he_canonical_ambient_capture(HeCanonicalAmbient *state) {
         .observation_present = g_eval_observation_demand_present,
         .observation = g_eval_observation_demand,
         .observation_root = g_eval_observation_root,
-        .first_answer_root = g_prime_first_answer_root,
+        .prefix_demand = g_prime_prefix_demand,
         .pending_raise = g_petta_pending_raise,
         .cancel_requested = g_eval_cancel_requested,
         .cancel_observed = g_eval_cancel_observed,
@@ -2003,7 +2003,7 @@ static void he_canonical_ambient_install(const HeCanonicalAmbient *state) {
     g_eval_observation_demand_present = state->observation_present;
     g_eval_observation_demand = state->observation;
     g_eval_observation_root = state->observation_root;
-    g_prime_first_answer_root = state->first_answer_root;
+    g_prime_prefix_demand = state->prefix_demand;
     g_petta_pending_raise = state->pending_raise;
     g_eval_cancel_requested = state->cancel_requested;
     g_eval_cancel_observed = state->cancel_observed;
@@ -2167,7 +2167,7 @@ CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
         (!bindings || bindings_copy(&owner->input_environment, bindings)) &&
         bindings_promote_logical_atoms_with_session(&owner->input_environment, copy);
     Atom **dynamic_atoms[] = {&owner->ambient.observation_root,
-        &owner->ambient.first_answer_root, &owner->ambient.pending_raise};
+        &owner->ambient.prefix_demand.root, &owner->ambient.pending_raise};
     for (size_t i = 0u; copied && i < 3u; i++)
         if (*dynamic_atoms[i])
             copied = (*dynamic_atoms[i] =
@@ -2192,7 +2192,7 @@ CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
      * Collection must update the slots read by callbacks, rather than a copy
      * of their addresses' contents. No inactive owner is collected. */
     Atom **active_slots[] = {&g_eval_observation_root,
-        &g_prime_first_answer_root, &g_petta_pending_raise};
+        &g_prime_prefix_demand.root, &g_petta_pending_raise};
     for (size_t i = 0u; i < 3u; i++)
         eval_gc_root_frame_enter_evaluation_retry(&owner->ambient_roots[i],
             active_slots[i]);

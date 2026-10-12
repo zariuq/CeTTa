@@ -39,5 +39,5 @@
 [True]
 [True]
 [True]
-[(Refuted (set:declaration-check (Lam num (Lam list (Lam list (App (App wrong-lemma (idx 1)) (idx 0))))) (type-mismatch)))]
+[(Refuted (hol:declaration-check (Lam num (Lam list (Lam list (App (App wrong-lemma (idx 1)) (idx 0))))) (type-mismatch)))]
 [False]

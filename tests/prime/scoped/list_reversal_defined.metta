@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The reversal theorem again, with append and rev DEFINED by their equations
 ; instead of assumed.  A definition is admitted only as a total structural
@@ -7,24 +7,24 @@
 ;   app-nil []       = refl              app-nil (x ∷ xs) = cong (x ∷_) (app-nil xs)
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
-!(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
+!(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(pf:equality &thy list refl@list subst@list)
 ; the induction principle is derived from the declaration
-!(set:known-proposition &thy list-ind)
-!(set:define &thy append (-> list list list)
+!(hol:known-proposition &thy list-ind)
+!(hol:define &thy append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $x $xs) $ys) (cons $x (append $xs $ys))))
-!(set:define &thy rev (-> list list)
+!(hol:define &thy rev (-> list list)
    (= (rev nil) nil)
    (= (rev (cons $x $xs)) (append (rev $xs) (cons $x nil))))
 ; What a definition records, and two definitions the structural check does
 ; not admit: a missing case, and a call that repeats its own left side.
 ; Neither is refuted, since some set satisfies each, so both stay as written.
-!(set:known-proposition &thy rev)
-!(set:define &thy half (-> list list) (= (half nil) nil))
-!(set:define &thy spin (-> list list)
+!(hol:known-proposition &thy rev)
+!(hol:define &thy half (-> list list) (= (half nil) nil))
+!(hol:define &thy spin (-> list list)
    (= (spin nil) nil)
    (= (spin (cons $x $xs)) (spin (cons $x $xs))))
 
@@ -68,11 +68,11 @@
          (= (cons x xs)                                 (cong list (lam r (cons x r)) (rev (rev xs)) xs (pf:by ih)))))))))
 
 ; The record: its dependencies now include the two definitions.
-!(match &thy (set:known rev-rev $p $origin $proof $depends $rev $sig)
+!(match &thy (hol:known rev-rev $p $origin $proof $depends $rev $sig)
    (let $first (car-atom $depends) (Depends (size-atom $depends) first (car-atom $first))))
 !(pf:theory &thy ((: ys list)))
-!(set:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
-!(set:proves &thy (pf:by rev-rev) (eq list (rev ys) ys))
+!(hol:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
+!(hol:proves &thy (pf:by rev-rev) (eq list (rev ys) ys))
 ; A computation by conversion alone, with no lemma: two reversals of a
 ; concrete list are decided by unfolding.
 !(pf:theory &thy ((: a elem) (: b elem)))
@@ -80,6 +80,6 @@
 !(pf:proves &thy (pf:refl list (cons b (cons a nil))) (eq list (rev (cons a (cons b nil))) (cons b (cons a nil))))
 !(pf:proves &thy (pf:refl list (cons a (cons b nil))) (eq list (rev (cons a (cons b nil))) (cons a (cons b nil))))
 ; Withdrawing a definition makes every fact that mentions it abstain on reuse.
-!(match &thy (set:known rev $p $o $f $d $r $s) (remove-atom &thy (set:known rev $p $o $f $d $r $s)))
-!(set:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
-!(let $r (try (set:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))) (let $e (index-atom $r 1) (car-atom $e)))
+!(match &thy (hol:known rev $p $o $f $d $r $s) (remove-atom &thy (hol:known rev $p $o $f $d $r $s)))
+!(hol:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
+!(let $r (try (hol:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))) (let $e (index-atom $r 1) (car-atom $e)))

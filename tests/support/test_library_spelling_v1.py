@@ -1,16 +1,59 @@
 #!/usr/bin/env python3
-"""Controls for dialect spelling of an explicitly activated held body."""
+"""Controls for dialect spelling of an explicitly activated held body and of
+the declarations of native handoffs."""
 
 from pathlib import Path
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from library_spelling import read_forms, show, transform
+from library_spelling import read_forms, show, spelling, transform
 
 
 def spell(source, dialect="petta"):
     return show(transform(read_forms(source)[0], dialect))
+
+
+HANDOFF = "(= (F $x $y) (function (chain (eval (N $x $y)) $r (return $r))))"
+
+
+def declarations(source, dialect="petta"):
+    return [line for line in spelling(source, dialect).splitlines()
+            if line.startswith("(:")]
+
+
+class HandoffDeclarations(unittest.TestCase):
+    def test_datum_parameters_survive_with_a_running_body(self):
+        for dialect in ("petta", "prime"):
+            for declared, spelled in (
+                ("(: F (-> Atom Atom Atom))", "(: F (-> Atom Atom %Undefined%))"),
+                ("(: F (-> Number Atom Atom))",
+                 "(: F (-> Number Atom %Undefined%))"),
+            ):
+                with self.subTest(dialect=dialect, declared=declared):
+                    self.assertEqual(
+                        declarations(declared + "\n" + HANDOFF, dialect),
+                        [spelled])
+
+    def test_value_handoff_declarations_are_dropped(self):
+        for declared in ("(: F (-> Number Number Atom))",
+                         "(: F (-> %Undefined% %Undefined% Atom))",
+                         '(: F (-> "Atom" Number Atom))'):
+            with self.subTest(declared=declared):
+                self.assertEqual(declarations(declared + "\n" + HANDOFF), [])
+
+    def test_native_declarations_are_dropped(self):
+        self.assertEqual(
+            declarations("(: N (-> Atom Atom Atom))\n" + HANDOFF), [])
+
+    def test_other_declarations_are_kept_as_written(self):
+        for source in (
+            "(: G (-> Atom Atom))\n(= (G $x) $x)",
+            "(: F (-> Atom Atom Atom))\n" + HANDOFF + "\n(= (F $x $y) $x)",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(declarations(source),
+                                 [source.splitlines()[0]])
 
 
 class HeldBodySpelling(unittest.TestCase):

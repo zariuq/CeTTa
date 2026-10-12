@@ -703,7 +703,9 @@ HeTypeApplicability he_type_call_applicable(
             SearchContext trial;
             search_context_init_owned(&trial, &paths.items[p], NULL);
             for (uint32_t t = 0u; t < count; t++) {
-                if (services->refuted && services->refuted(services->context, actual[t], expected)) continue;
+                if (services->refuted &&
+                    services->refuted(services->context, argument, actual[t],
+                                      expected)) continue;
                 ChoicePoint point = search_context_save(&trial);
                 bool matched = apply_refine(services, actual[t], expected, search_context_builder(&trial), arena);
                 if (!matched && services->equivalent) {

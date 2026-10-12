@@ -74,9 +74,9 @@
                 (if (== $annotation (hol-light:eq-type $source-type))
                     (let $proposition (hol-light:native-reflexive-proposition $carrier $code)
                       (let $proof (hol-light:native-reflexive-proof)
-                        (let $published (set:theorem $space $name $proposition $proof)
+                        (let $published (hol:theorem $space $name $proposition $proof)
                           (if (== $published $name)
-                            (let $package (set:native-proof $space $name)
+                            (let $package (hol:native-proof $space $name)
                               (function (return
                                 (HOL:NativeReflexivityV1 PredicateEquality $space $state $source
                                   $received $carrier $code $proposition $package))))
@@ -94,7 +94,7 @@
   (case $packet
     (((HOL:NativeReflexivityV1 PredicateEquality $space $state $source
         $received $carrier $code $proposition
-        (SetNativeProofV1 $name $native-proposition $proof $term $type $context $rules $assumptions $digest))
+        (HolNativeProofV1 $name $native-proposition $proof $term $type $context $rules $assumptions $digest))
        (let $actual (hol-light:infer $state (REFL $source))
          (if (== $received $actual)
            (case $actual
@@ -110,9 +110,9 @@
                              (if (== $proposition (hol-light:native-reflexive-proposition $carrier $code))
                                (if (== $proof (hol-light:native-reflexive-proof))
                                  (if (== $assumptions ())
-                                   (if (set:proves $space (pf:known $name) $proposition)
+                                   (if (hol:proves $space (pf:known $name) $proposition)
                                      (function (return (Some (HOL:NativeReady $space
-                                       (SetNativeProofV1 $name $native-proposition $proof $term $type
+                                       (HolNativeProofV1 $name $native-proposition $proof $term $type
                                          $context $rules $assumptions $digest)))))
                                      None) None) None) None) None) None) None))
                      ($unsupported None))) None))
@@ -122,13 +122,13 @@
 (= (hol-light:native-use $packet $consumer)
   (case (hol-light:native-validate $packet)
     (((Some (HOL:NativeReady $space $package))
-       (let $used (set:native-use $space $package $consumer)
+       (let $used (hol:native-use $space $package $consumer)
          (function (return (HOL:NativeUseV1 $packet $used)))))
      ($refused (function (return (HOL:NativeUseRefused $packet)))))))
 
 (= (hol-light:native-normalize $packet $consumer)
   (case (hol-light:native-validate $packet)
     (((Some (HOL:NativeReady $space $package))
-       (let $used (set:native-normalize $space $package $consumer)
+       (let $used (hol:native-normalize $space $package $consumer)
          (function (return (HOL:NativeNormalFormV1 $packet $used)))))
      ($refused (function (return (HOL:NativeUseRefused $packet)))))))

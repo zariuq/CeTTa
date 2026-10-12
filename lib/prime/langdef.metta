@@ -5,6 +5,62 @@
 ; A manifest selects only generated artifacts and their digest lock.  All
 ; language-specific syntax and transformations remain data below langdef/.
 
+; Syntax values keep the existing LanguageDef and parser-profile carriers.
+; ScalarScannerlessAllV1 names the current policy: preserve all scalar parses,
+; not maximal munch. SyntaxOriginsV1 carries one LCons/LNil list for categories,
+; grammar productions, lexical classes and lexical productions, respectively.
+; Each SyntaxOriginV1 has a source namespace and a declaration-site identity.
+; These are caller-declared identities, not inferred source attestations.
+; Compute operands with let/case before handing them to these data operations.
+(: __cetta_lib_syntax_gslt_admit_v1 (-> Atom Atom Atom Atom Atom))
+(: __cetta_lib_syntax_gslt_inspect_v1 (-> Atom Atom))
+(: __cetta_lib_syntax_gslt_join_v1 (-> Atom Atom Atom Atom Atom))
+(: __cetta_lib_syntax_gslt_join_coherent_v1 (-> Atom Atom Atom Atom Atom))
+(: langdef:syntax-gslt (-> Atom Atom Atom Atom Atom))
+(: langdef:inspect-syntax-gslt (-> Atom Atom))
+(: langdef:join-syntax-gslts (-> Atom Atom Atom Atom Atom))
+(: langdef:join-coherent-syntax-gslts (-> Atom Atom Atom Atom Atom))
+(: langdef:load-syntax-gslt-parser (-> Atom %Undefined%))
+
+(= (langdef:syntax-gslt $language $profile $policy $origins)
+   (function
+     (chain (eval (__cetta_lib_syntax_gslt_admit_v1 $language $profile $policy $origins))
+       $value (return $value)){$value}))
+
+(= (langdef:inspect-syntax-gslt $value)
+   (function
+     (chain (eval (__cetta_lib_syntax_gslt_inspect_v1 $value))
+       $parts (return $parts)){$parts}))
+
+; Origin-view join refines the existing Lean module algebra: identical full
+; origin/label/body entries share their first position; renamed views at one
+; origin remain distinct; unequal entries at one exposed label conflict.
+; Category, production and lexical-class names have separate namespaces;
+; grammar and lexical production labels share the production namespace.
+; The name and start category of the result are chosen explicitly. Declaration
+; order is stable within each existing carrier field. No selected-parse
+; conservativity certificate follows from a successful structural join.
+(= (langdef:join-syntax-gslts $name $start $first $second)
+   (function
+     (chain (eval (__cetta_lib_syntax_gslt_join_v1 $name $start $first $second))
+       $value (return $value)){$value}))
+
+; Origin-coherent composition adds agreement of every representative at a
+; shared origin; it is deliberately not an alias for origin-view composition.
+(= (langdef:join-coherent-syntax-gslts $name $start $first $second)
+   (function
+     (chain (eval (__cetta_lib_syntax_gslt_join_coherent_v1 $name $start $first $second))
+       $value (return $value)){$value}))
+
+; A value is re-admitted at each public boundary. Ordinary MeTTa data cannot
+; forge admission by copying a constructor. Compilation still uses the
+; existing authored-value entry and its owned parser handle protocol.
+(= (langdef:load-syntax-gslt-parser $value)
+   (case (langdef:inspect-syntax-gslt $value)
+     (((SyntaxGSLTInspectionV1 $language $profile $_policy $_origins)
+        (langdef:load-authored-parser-values $language $profile))
+      ($failure $failure))))
+
 ; Compile an authored concrete-syntax LanguageDef and its independently
 ; authored lexical profile directly into a reusable native parser.  This is
 ; the source-facing construction boundary: no generated manifest or
@@ -19,6 +75,8 @@
 ; Compile an already constructed LanguageDef and parser-profile value through
 ; the same canonical ingress, typed decoders, ParserPack compiler, and native
 ; GLL/GLR execution boundary as the file-based operation.
+(: __cetta_lib_authored_parser_load_values (-> Atom Atom %Undefined%))
+(: langdef:load-authored-parser-values (-> Atom Atom %Undefined%))
 (= (langdef:load-authored-parser-values $language $profile)
    (function
      (case (__cetta_lib_authored_parser_load_values $language $profile)

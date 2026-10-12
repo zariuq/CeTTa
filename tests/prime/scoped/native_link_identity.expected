@@ -16,7 +16,7 @@
 [(Unlinked Refuted)]
 [(ReflexivityAtOpenIndex Refuted)]
 [(WrongIndex Refuted)]
-[(UnknownInterpretation (Undetermined (set:native-link-interpretation classical)))]
+[(UnknownInterpretation (Undetermined (hol:native-link-interpretation classical)))]
 [(ForgedLink Refuted)]
 [funext-num]
 [(PartiallyLinked funext-num True (Pi (Pi (DeclConst num) (DeclConst num)) (Pi (Pi (DeclConst num) (DeclConst num)) (Pi (Pi (DeclConst num) (Id (DeclConst num) (App (idx 2) (idx 0)) (App (idx 1) (idx 0)))) (Id (Pi (DeclConst num) (DeclConst num)) (idx 2) (idx 1))))))]

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The base-two logarithm, a recursion that is not structural, on three faces:
 ;   log2 0 = 0,  log2 1 = 0,  log2 (n + 2) = 1 + log2 (half (n + 2)),
@@ -12,14 +12,14 @@
 ; calls from x is at most B x long.  The equations are admitted as written
 ; and run as written.
 !(import! &self pf)
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:known-proposition &self num-ind)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:known-proposition &self num-ind)
 !(pf:equality &self num refl@num subst@num)
 
 ; ---- What the structural check says.
 ; Without a clause it does not read the nested patterns (three equations for
 ; two constructors), and the verdict names the route that does.
-!(try (set:define &self log2-plain (-> num num)
+!(try (hol:define &self log2-plain (-> num num)
    (= (log2-plain zero) zero)
    (= (log2-plain (suc zero)) zero)
    (= (log2-plain (suc (suc $n))) (suc (log2-plain (half-plain (suc (suc $n))))))))
@@ -27,7 +27,7 @@
 ; ---- The bound: "below" is the least relation in which n is below n + 1
 ; and what is below n is below n + 1; the obligations of a bound are written
 ; with it.
-!(set:define &self below (-> num num prop)
+!(hol:define &self below (-> num num prop)
    (= (below $m $n)
       (all (-> num num prop) (lam R
         (imp (all num (lam x (R x (suc x))))
@@ -37,7 +37,7 @@
    (pf:fix n (pf:fix R (pf:assume base (pf:assume step
      (pf:imp-elim (pf:all-elim (pf:all-elim step n) (suc n)) (pf:all-elim base n)))))))
 ; half is admitted with the bound n: its call at n is below n + 2.
-!(set:define &self half (-> num num) (by bound num (lam n n) (pf:known below-two))
+!(hol:define &self half (-> num num) (by bound num (lam n n) (pf:known below-two))
    (= (half zero) zero)
    (= (half (suc zero)) zero)
    (= (half (suc (suc $n))) (suc (half $n))))
@@ -52,7 +52,7 @@
      (pf:imp-elim (pf:imp-elim (pf:all-elim h (lam x (lam y (R (suc x) (suc y)))))
                     (pf:fix x (pf:all-elim base (suc x))))
        (pf:fix l (pf:fix x (pf:all-elim (pf:all-elim step (suc l)) (suc x))))))))))))
-!(set:define &self both (-> prop prop prop)
+!(hol:define &self both (-> prop prop prop)
    (= (both $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
 !(pf:theorem &self half-below-both
    (all num (lam n (both (below (half n) (suc n)) (below (half (suc n)) (suc (suc n))))))
@@ -77,20 +77,20 @@
        (pf:imp-elim (pf:all-elim (pf:all-elim (pf:known half-below-both) n) (below (half n) (suc n)))
          (pf:assume first (pf:assume second first))))))
 ; log2 is admitted with the bound n.
-!(set:define &self log2 (-> num num) (by bound num (lam n n) (pf:known log2-calls-go-down))
+!(hol:define &self log2 (-> num num) (by bound num (lam n n) (pf:known log2-calls-go-down))
    (= (log2 zero) zero)
    (= (log2 (suc zero)) zero)
    (= (log2 (suc (suc $n))) (suc (log2 (half (suc (suc $n)))))))
 ; The record keeps the bound as the termination evidence, beside the
 ; equations: the type of the bound, the bound, and its obligation.
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self log2)
+!(let (definition-evidence $rules $termination $lean) (hol:known-proof &self log2)
    (let (bound $type $measure $obligations) $termination
      (Bound $type $measure (size-atom $obligations))))
 ; It also names the Lean theorem the admission rests on, a set model for a
 ; definition whose calls go down a bound, and the lemmas that give its
 ; hypotheses from the checks: the structural order of num is well-founded,
 ; and linear constructor patterns that do not overlap are apart.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self log2))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self log2))
    (quote $lean))
 
 ; ---- Operational: log2 8 runs to 3, by the equations as written.
@@ -124,8 +124,8 @@
    (eq num (log2 (suc (suc (suc zero)))) (suc (log2 (half (suc (suc (suc zero))))))))
 
 ; ---- Extensional: the value is the set the equations name.
-!(set:eq &self (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) (suc (suc (suc zero))))
-!(set:eq &self (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) (suc (suc zero)))
+!(hol:eq &self (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) (suc (suc (suc zero))))
+!(hol:eq &self (log2 (suc (suc (suc (suc (suc (suc (suc (suc zero))))))))) (suc (suc zero)))
 
 ; ---- log2 admitted a second way, on evidence that its equations have a
 ; solution in sets: log2 above is one, and the equations hold of it by
@@ -139,7 +139,7 @@
 ; stops at open terms; Lean does not state that, and the checker's search is
 ; bounded by its budget.  The Established in a `try` result is `try`'s
 ; success constructor around the conversion verdict, not a stored proof.
-!(set:define &self log2-solved (-> num num)
+!(hol:define &self log2-solved (-> num num)
    (by set-solution
      (pf:fix r (pf:assume k
        (pf:imp-elim (pf:all-elim k log2)
@@ -159,24 +159,24 @@
                      (lam (n : num) (suc (log2-solved (half (suc (suc n))))))))
 !(try (type:eq &self (lam (n : num) (log2 (suc (suc n))))
                      (lam (n : num) (suc (log2 (half (suc (suc n))))))))
-!(let (definition-evidence $rules $termination $lean) (set:known-proof &self log2-solved)
+!(let (definition-evidence $rules $termination $lean) (hol:known-proof &self log2-solved)
    (car-atom $termination))
 ; Its record names the Lean theorem for admission on evidence of a solution.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self log2-solved))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self log2-solved))
    (quote $lean))
 
 ; ---- Negative controls.
 ; A bound that is too small: the constant zero.  Its obligation says that
 ; zero is below zero, and the proof given is of another statement: the
 ; definition is Undetermined, with the obligation as the reason.
-!(let $r (try (set:define &self log2-short (-> num num) (by bound num (lam n zero) (pf:known log2-calls-go-down))
+!(let $r (try (hol:define &self log2-short (-> num num) (by bound num (lam n zero) (pf:known log2-calls-go-down))
    (= (log2-short zero) zero)
    (= (log2-short (suc zero)) zero)
    (= (log2-short (suc (suc $n))) (suc (log2-short (half (suc (suc $n))))))))
    (let $reason (index-atom $r 1) ((car-atom $r) (car-atom $reason))))
 ; A bound without its proofs: its obligation is stated in the verdict, the
 ; call of log2 at half (n + 2) below n + 2, with below written out.
-!(let $r (try (set:define &self log2-unproved (-> num num) (by bound num (lam n n))
+!(let $r (try (hol:define &self log2-unproved (-> num num) (by bound num (lam n n))
    (= (log2-unproved zero) zero)
    (= (log2-unproved (suc zero)) zero)
    (= (log2-unproved (suc (suc $n))) (suc (log2-unproved (half (suc (suc $n))))))))
@@ -187,23 +187,23 @@
 ; occurrence: a call inside a call's argument, the constant passed
 ; unapplied, and a call under a binder, whose variable the obligations cannot
 ; see.
-!(set:define &self twice (-> (-> num num) num num) (= (twice $g $x) ($g ($g $x))))
-!(let $r (try (set:define &self nest (-> num num) (by bound num (lam n n) (pf:known below-two))
+!(hol:define &self twice (-> (-> num num) num num) (= (twice $g $x) ($g ($g $x))))
+!(let $r (try (hol:define &self nest (-> num num) (by bound num (lam n n) (pf:known below-two))
    (= (nest zero) zero) (= (nest (suc $n)) (nest (nest $n)))))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
-!(let $r (try (set:define &self pass (-> num num) (by bound num (lam n n) (pf:known below-two))
+!(let $r (try (hol:define &self pass (-> num num) (by bound num (lam n n) (pf:known below-two))
    (= (pass zero) zero) (= (pass (suc $n)) (twice pass $n))))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
-!(let $r (try (set:define &self under (-> num num) (by bound num (lam n n) (pf:known below-two))
+!(let $r (try (hol:define &self under (-> num num) (by bound num (lam n n) (pf:known below-two))
    (= (under zero) zero) (= (under (suc $n)) (suc ((lam k (under k)) (suc $n))))))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
-!(let $r (try (set:define &self under-let (-> num num) (by bound num (lam n n) (pf:known below-two))
+!(let $r (try (hol:define &self under-let (-> num num) (by bound num (lam n n) (pf:known below-two))
    (= (under-let zero) zero) (= (under-let (suc $n)) (let $m $n (under-let $m)){$m})))
    (let $reason (index-atom $r 1) ((car-atom $r) (index-atom $reason 1))))
 ; The third equation without its successor.  Its call is the same, so the
 ; same bound admits it, on its own merits: it is the function zero, and at 2
 ; it gives 0 where log2 gives 1.
-!(set:define &self log2-altered (-> num num) (by bound num (lam n n) (pf:known log2-calls-go-down))
+!(hol:define &self log2-altered (-> num num) (by bound num (lam n n) (pf:known log2-calls-go-down))
    (= (log2-altered zero) zero)
    (= (log2-altered (suc zero)) zero)
    (= (log2-altered (suc (suc $n))) (log2-altered (half (suc (suc $n))))))

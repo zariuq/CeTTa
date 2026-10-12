@@ -214,6 +214,14 @@ typedef struct {
     uint32_t input_byte_len;
     uint32_t decoded_byte_len;
     uint32_t source_pass_count;
+    /* Optional layout-transparent lookahead.  When set, the lattice is a
+     * chain of edges, `layout_terminal_id` marks layout edges, and every
+     * layout occurrence in the grammar is nullable.  A completion or a
+     * reduction is then decided by the next non-layout terminal, which the
+     * follow sets already contain.  Recognizers drop only derivations that
+     * cannot continue, so accepted forests are unchanged. */
+    bool layout_lookahead;
+    uint32_t layout_terminal_id;
 } CettaLpNativeUtf8Lattice;
 
 /* Validate the complete public lattice contract without running a parser. */

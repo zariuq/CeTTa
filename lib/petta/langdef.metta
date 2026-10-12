@@ -2,7 +2,19 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
+(: langdef:syntax-gslt (-> Atom Atom Atom Atom %Undefined%))
+(: langdef:inspect-syntax-gslt (-> Atom %Undefined%))
+(: langdef:join-syntax-gslts (-> Atom Atom Atom Atom %Undefined%))
+(: langdef:join-coherent-syntax-gslts (-> Atom Atom Atom Atom %Undefined%))
+(: langdef:load-syntax-gslt-parser (-> Atom %Undefined%))
+(= (langdef:syntax-gslt $language $profile $policy $origins) (__cetta_lib_syntax_gslt_admit_v1 $language $profile $policy $origins))
+(= (langdef:inspect-syntax-gslt $value) (__cetta_lib_syntax_gslt_inspect_v1 $value))
+(= (langdef:join-syntax-gslts $name $start $first $second) (__cetta_lib_syntax_gslt_join_v1 $name $start $first $second))
+(= (langdef:join-coherent-syntax-gslts $name $start $first $second) (__cetta_lib_syntax_gslt_join_coherent_v1 $name $start $first $second))
+(= (langdef:load-syntax-gslt-parser $value) (case (langdef:inspect-syntax-gslt $value) (((SyntaxGSLTInspectionV1 $language $profile $_policy $_origins) (langdef:load-authored-parser-values $language $profile)) ($failure $failure))))
 (= (langdef:load-authored-parser $language-path $profile-path) (case (__cetta_lib_authored_parser_load $language-path $profile-path) (((return $handle) $handle) ($result $result))))
+(: __cetta_lib_authored_parser_load_values (-> Atom Atom %Undefined%))
+(: langdef:load-authored-parser-values (-> Atom Atom %Undefined%))
 (= (langdef:load-authored-parser-values $language $profile) (case (__cetta_lib_authored_parser_load_values $language $profile) (((return $handle) $handle) ($result $result))))
 (= (langdef:close-authored-parser $handle) (case (__cetta_lib_authored_parser_close $handle) (((return $result) $result) ($result $result))))
 (= (langdef:authored-parser-info $handle) (case (__cetta_lib_authored_parser_info $handle) (((return $result) $result) ($result $result))))

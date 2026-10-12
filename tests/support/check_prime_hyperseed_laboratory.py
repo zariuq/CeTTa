@@ -67,7 +67,7 @@ def lines(path):
 def arithmetic():
     source = lines(ARITH)
     marker = next(i for i, line in enumerate(source)
-                  if line.startswith("!(set:define &self written"))
+                  if line.startswith("!(hol:define &self written"))
     return source[:marker + 1]
 
 

@@ -1,6 +1,6 @@
 [()]
 [Undetermined]
-[(set:define &thy missingId (-> MissingType MissingType) (= (missingId $x) $x))]
+[(hol:define &thy missingId (-> MissingType MissingType) (= (missingId $x) $x))]
 [True]
 [True]
 [True]

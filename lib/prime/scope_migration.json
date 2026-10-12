@@ -100,9 +100,9 @@
     {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "92295bfaa8857a7fe26741dffaa155acd2ae1f614bb8d492cf05320eb8b1e183",
-      "output_sha256": "333746274d2171e2144d8e4435be4f575a17111b96252b930932804e33b217dc",
-      "edits": 44,
+      "source_sha256": "82713c41d37f98c98025678fe98f9cbb27b39a705969259a8856fb49a04d7933",
+      "output_sha256": "6fb53a7972ad7a1eddbe770dce2bda35105c2013a0d658d46e887d92e70a1265",
+      "edits": 48,
       "code_diagnostics": 0
     },
     {
@@ -119,6 +119,14 @@
       "source_sha256": "a2878d6bcc5c518e3bc6b9deb9a097ce924d76cddc74031377cb09bf0c7f99b2",
       "output_sha256": "88ae74255c43322f7401a1b245eca536ffa33543d00ed81513b6ba7f5200e5d8",
       "edits": 11,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_lbnf.metta",
+      "output": "lib_lbnf.metta",
+      "source_sha256": "284a19813e09aecf8df318fb003fca0b06b4b1c99ef7a57bd072877b307979df",
+      "output_sha256": "298ead07e89fbbed5a56d5fbe2a60cfe38f9fbb1e34225ef1f28c8b306cd41f1",
+      "edits": 5,
       "code_diagnostics": 0
     },
     {
@@ -260,9 +268,9 @@
     {
       "source": "pf.metta",
       "output": "pf.metta",
-      "source_sha256": "8a7822aa99951ae54687d98054080e213447dcc62a61a24f5572f2cfabd9c1a1",
-      "output_sha256": "25f8e4dd045f7a4b691f949581b92169786f6b2c17ca1ccac2fc88a1fdae7886",
-      "edits": 49,
+      "source_sha256": "8cfe05fd7caa80e3be1dc89210e78b6e5a4aed5832e45a86a5e3f6fc4c2be548",
+      "output_sha256": "7ae7ac7b19cdb3e299d68200eda9ba6d9c9fc353a88b6ecf19a556109f975377",
+      "edits": 52,
       "code_diagnostics": 0
     },
     {

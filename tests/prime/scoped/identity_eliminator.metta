@@ -1,11 +1,11 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The identity eliminator is declared by the language with the fixed
 ; Paulin-Mohring type and computes by one iota rule: elimination at
 ; reflexivity yields the method.  Nothing here decides uniqueness of
 ; identity proofs; a non-reflexivity path stays neutral.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &s (: Nat (u 0)))
 !(add-atom &s (: z Nat))
 !(add-atom &s (: s (-> Nat Nat)))
@@ -34,12 +34,12 @@
 
 ; A length-changing operation must return the vector at its new index.
 ; The existential package keeps that index available to later consumers.
-!(set:define &s moveVector
+!(hol:define &s moveVector
    (-> (n : Nat) (w : (Vec n)) (m : Nat) (p : (id Nat n m))
        (sigma (k : Nat) (Vec k)))
    (= (moveVector $n $w $m $p)
       (pair $m (id:eliminate Nat $n (lam k (lam e (Vec k))) $w $m $p))))
-!(set:define &s readVector
+!(hol:define &s readVector
    (-> (package : (sigma (k : Nat) (Vec k))) (Vec (fst package)))
    (= (readVector $package) (snd $package)))
 !(type:check &s (moveVector z v z (refl z)) (sigma (k : Nat) (Vec k)))
@@ -49,7 +49,7 @@
 !(type:eq &s (fst (moveVector z v (s z) q)) (s z))
 !(type:eq &s (readVector (moveVector z v (s z) q)) v)
 ; The returned function retains its input vector across another binder.
-!(set:define &s keepTransported
+!(hol:define &s keepTransported
    (-> (n : Nat) (w : (Vec n)) (-> Nat (Vec n)))
    (= (keepTransported $n $w)
       (lam ignored (readVector (moveVector $n $w $n (refl $n))))))
@@ -66,12 +66,12 @@
    (-> (y : Nat) (e : (id Nat z y)) (u 1)))
 !(type:check &s (lam y (lam e (u 0)))
    (-> (y : Nat) (e : (id Nat z y)) (u 0)))
-!(set:define &s transportedType
+!(hol:define &s transportedType
    (-> (A : (u 0)) (n : Nat) (m : Nat) (p : (id Nat n m)) (u 0))
    (= (transportedType $A $n $m $p)
       (id:eliminate Nat $n (lam y (lam e (u 0))) $A $m $p)))
 ; The result type itself computes by J before this body can be accepted.
-!(set:define &s valueAtTransportedType
+!(hol:define &s valueAtTransportedType
    (-> (A : (u 0)) (value : A) (transportedType A z z (refl z)))
    (= (valueAtTransportedType $A $value) $value))
 !(type:check &s (transportedType Nat z z (refl z)) (u 0))

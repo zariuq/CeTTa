@@ -89,6 +89,7 @@ tests/prime/demand/bubbles.metta	prime	metta		any	native	test-prime	golden	Prime
 tests/prime/error_continues.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_answer_demand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/function_faults.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_patterns.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

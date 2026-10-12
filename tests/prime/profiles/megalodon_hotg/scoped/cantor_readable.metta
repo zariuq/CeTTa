@@ -1,4 +1,4 @@
-(set:profile megalodon-hotg)
+(hol:profile megalodon-hotg)
 
 ; Cantor's theorem, its core, read sentence by sentence.  The Naproche-ZF
 ; curriculum proves cantor-core in the rules of the logic alone, which spell
@@ -12,22 +12,22 @@
 ; eliminations the checker found for it, and both are written as Megalodon
 ; articles.  The definitions and lemmas below are the curriculum's.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
 
 ; ---- logic: the connectives as definitions (Naproche-ZF reads its
 ; statements in higher-order logic; existence here ranges over sets)
-!(set:define &thy not (-> prop prop) (= (not $A) (imp $A Falsum)))
-!(set:define &thy and (-> prop prop prop)
+!(hol:define &thy not (-> prop prop) (= (not $A) (imp $A Falsum)))
+!(hol:define &thy and (-> prop prop prop)
    (= (and $A $B) (all prop (lam p (imp (imp $A (imp $B p)) p)))))
-!(set:define &thy or (-> prop prop prop)
+!(hol:define &thy or (-> prop prop prop)
    (= (or $A $B) (all prop (lam p (imp (imp $A p) (imp (imp $B p) p))))))
-!(set:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
-!(set:define &thy ex (-> (-> set prop) prop)
+!(hol:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
+!(hol:define &thy ex (-> (-> set prop) prop)
    (= (ex $P) (all prop (lam p (imp (all set (lam x (imp ($P x) p))) p)))))
 ; ---- sets (Naproche-ZF library: sets): inclusion, the laws taken apart
 ; into introduction and elimination, extensionality, and identity
-!(set:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
-!(set:define &thy same (-> set set prop)
+!(hol:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(hol:define &thy same (-> set set prop)
    (= (same $x $y) (all (-> set prop) (lam Q (imp (Q $x) (Q $y))))))
 ; sets: a set is a member of the power set of each set that includes it
 !(pf:theorem &thy power-intro (all set (lam a (all set (lam b (imp (Subq b a) (In b (Power a)))))))
@@ -77,28 +77,28 @@
    (pf:fix a (pf:fix P (pf:fix x (pf:assume h
      (pf:imp-elim (pf:all-elim (pf:all-elim (pf:all-elim (pf:known sep-elim-in) a) P) x) h))))))
 ; pick a b X is a when Empty is a member of X, and b when it is not
-!(set:define &thy pick (-> set set set set)
+!(hol:define &thy pick (-> set set set set)
    (= (pick $a $b $X)
      (Eps_set (lam w (and (imp (In Empty $X) (same w $a)) (imp (not (In Empty $X)) (same w $b)))))))
 ; both a b has a and b among its members: replacement over {Empty, {Empty}}
-!(set:define &thy both (-> set set set)
+!(hol:define &thy both (-> set set set)
    (= (both $a $b) (Repl (Power (Power Empty)) (lam X (pick $a $b X)))))
 ; the unordered pair: the members of both a b that are a or b
-!(set:define &thy UPair (-> set set set)
+!(hol:define &thy UPair (-> set set set)
    (= (UPair $a $b) (Sep (both $a $b) (lam w (or (same w $a) (same w $b))))))
 ; the singleton, and Kuratowski's ordered pair
-!(set:define &thy Sing (-> set set) (= (Sing $a) (Sep (Power $a) (lam w (same w $a)))))
-!(set:define &thy kpair (-> set set set) (= (kpair $a $b) (UPair (Sing $a) (UPair $a $b))))
+!(hol:define &thy Sing (-> set set) (= (Sing $a) (Sep (Power $a) (lam w (same w $a)))))
+!(hol:define &thy kpair (-> set set set) (= (kpair $a $b) (UPair (Sing $a) (UPair $a $b))))
 ; ---- functions (Naproche-ZF library: functions): a function from A to B is a
 ; functional and total relation inside the product; a surjection reaches every
 ; member of B
-!(set:define &thy functional (-> set prop)
+!(hol:define &thy functional (-> set prop)
    (= (functional $f)
      (all set
        (lam x
          (all set
            (lam y (all set (lam z (imp (In (kpair x y) $f) (imp (In (kpair x z) $f) (same y z)))))))))))
-!(set:define &thy onto (-> set set set prop)
+!(hol:define &thy onto (-> set set set prop)
    (= (onto $f $A $B)
      (all set (lam y (imp (In y $B) (ex (lam x (and (In x $A) (In (kpair x y) $f)))))))))
 ; functions (Cantor): no functional relation maps A onto its power set
@@ -268,7 +268,7 @@
 
 ; ---- the same, sentence by sentence
 ; Let B be the diagonal set of f on A: the members x of A in no value of f at x.
-!(set:define &thy diagonal (-> set set set)
+!(hol:define &thy diagonal (-> set set set)
    (= (diagonal $A $f) (Sep $A (lam x (all set (lam Y (imp (In (kpair x Y) $f) (not (In x Y)))))))))
 !(pf:theorem &thy cantor-core-readable
    (all set (lam A (all set (lam f (imp (functional f) (imp (onto f A (Power A)) Falsum))))))
@@ -302,12 +302,12 @@
 
 ; The two proofs prove one statement, cite the same lemmas by name and rest on
 ; the same laws.
-!(== (set:known-proposition &thy cantor-core) (set:known-proposition &thy cantor-core-readable))
-!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (set:native-proof &thy cantor-core)
+!(== (hol:known-proposition &thy cantor-core) (hol:known-proposition &thy cantor-core-readable))
+!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (hol:native-proof &thy cantor-core)
    (Cites $name (map-atom $rows $r (car-atom $r)) (rests-on (pf:rests-on &thy cantor-core))))
-!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (set:native-proof &thy cantor-core-readable)
+!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (hol:native-proof &thy cantor-core-readable)
    (Cites $name (map-atom $rows $r (car-atom $r)) (rests-on (pf:rests-on &thy cantor-core-readable))))
 ; The readable proof's package carries the proof as it was compiled: each
 ; pf:by step is the eliminations it stands for, and the local lemmas stay.
@@ -321,8 +321,8 @@
        (let $h (car-atom $t)
          (let $rest (cdr-atom $t)
            (if (mentions $h $s) True (mentions-any $rest $s))){$rest}){$h}))
-!(let (quote (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest))
-      (lift (set:native-proof &thy cantor-core-readable))
-   (let $authored (set:known-proof &thy cantor-core-readable)
+!(let (quote (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest))
+      (lift (hol:native-proof &thy cantor-core-readable))
+   (let $authored (hol:known-proof &thy cantor-core-readable)
      (Written (mentions $authored pf:by) (mentions $proof pf:by) (mentions $proof pf:have)
-              (set:proves &thy (quote $proof) (quote $prop)))))
+              (hol:proves &thy (quote $proof) (quote $prop)))))

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Lists of numbers and their append, typed.  The two datatypes and append are
 ; declared in &self.  The kernel checks each declaration before it admits it:
@@ -7,9 +7,9 @@
 ; checked: the type of each constant and application (type:of, type:check),
 ; which terms are equal by computation (type:eq), and the theorem
 ; "append l nil = l" as a typed proof, a term of an identity type.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
 
@@ -63,7 +63,7 @@
 ; ---- The theorem "append l nil = l" as a typed proof.
 ; Congruence of identity proofs under "a number before", by the identity
 ; eliminator.  It is a term; nothing is added to the kernel for it.
-!(set:define &self cong-cons
+!(hol:define &self cong-cons
    (-> (a : num) (x : list) (y : list) (p : (id list x y))
        (id list (cons a x) (cons a y)))
    (= (cong-cons $a $x $y $p)
@@ -86,7 +86,7 @@
 ; The same proof written as two equations: a definition by recursion on the
 ; list, whose recursive call stands where the induction hypothesis goes.  The
 ; kernel checks both right sides against the statement before it admits it.
-!(set:define &self append-nil
+!(hol:define &self append-nil
    (-> (l : list) (id list (append l nil) l))
    (= (append-nil nil) (refl nil))
    (= (append-nil (cons $a $as))
@@ -114,19 +114,19 @@
 !(type:check &self (refl some-list) (id list (append some-list nil) some-list))
 ; A step that returns the induction hypothesis unchanged proves the statement
 ; for the rest, not for the longer list: the second right side is refused.
-!(try (set:define &self wrong-step
+!(try (hol:define &self wrong-step
    (-> (l : list) (id list (append l nil) l))
    (= (wrong-step nil) (refl nil))
    (= (wrong-step (cons $a $as)) (wrong-step $as))))
 ; A base at another list.
-!(let $r (try (set:define &self wrong-base
+!(let $r (try (hol:define &self wrong-base
    (-> (l : list) (id list (append l nil) l))
    (= (wrong-base nil) (refl (cons zero nil)))
    (= (wrong-base (cons $a $as))
       (cong-cons $a (append $as nil) $as (wrong-base $as)))))
    (car-atom $r))
 ; A false statement: no list is the list with zero before it.
-!(let $r (try (set:define &self wrong-statement
+!(let $r (try (hol:define &self wrong-statement
    (-> (l : list) (id list (cons zero l) l))
    (= (wrong-statement nil) (refl nil))
    (= (wrong-statement (cons $a $as))

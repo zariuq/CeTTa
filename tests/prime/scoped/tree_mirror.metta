@@ -1,14 +1,14 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Binary trees with two recursive positions: the derived induction principle
 ; carries two hypotheses in the node case, and mirroring is an involution.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
-!(set:inductive &thy tree (u 0) (: leaf tree) (: node (-> tree elem tree tree)))
+!(hol:inductive &thy tree (u 0) (: leaf tree) (: node (-> tree elem tree tree)))
 !(pf:equality &thy tree refl@tree subst@tree)
-!(set:known-proposition &thy tree-ind)
-!(set:define &thy mirror (-> tree tree)
+!(hol:known-proposition &thy tree-ind)
+!(hol:define &thy mirror (-> tree tree)
    (= (mirror leaf) leaf)
    (= (mirror (node $l $x $r)) (node (mirror $r) $x (mirror $l))))
 ; mirror (mirror t) = t: the node case rewrites both subtrees by their
@@ -24,10 +24,10 @@
 ; the mirrored subtree, which is not a constructor argument.  It terminates,
 ; since mirroring keeps the size, but no size argument is checked yet, so the
 ; verdict is undetermined rather than a refusal.
-!(set:define &thy spin (-> tree tree)
+!(hol:define &thy spin (-> tree tree)
    (= (spin leaf) leaf)
    (= (spin (node $l $x $r)) (spin (mirror $l))))
 !(pf:theory &thy ((: a elem) (: b elem)))
 !(pf:proves &thy (pf:refl tree (node leaf a (node leaf b leaf)))
    (eq tree (mirror (node (node leaf b leaf) a leaf)) (node leaf a (node leaf b leaf))))
-!(set:proves &thy (pf:by mirror-mirror) (eq tree (mirror (mirror (node leaf a leaf))) (node leaf a leaf)))
+!(hol:proves &thy (pf:by mirror-mirror) (eq tree (mirror (mirror (node leaf a leaf))) (node leaf a leaf)))

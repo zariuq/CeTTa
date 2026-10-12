@@ -1,28 +1,28 @@
-(set:profile hol)
+(hol:profile core)
 
-; The Coq ladder (ICL01-ICL09), ported where the set: language can state it:
+; The Coq ladder (ICL01-ICL09), ported where the hol: language can state it:
 ; Booleans, naturals, pairs, the connectives, discrimination and injectivity
 ; of constructors through prop-valued definitions, inductive predicates as
 ; their impredicative encodings, lists with length/map/fold, and first-order
 ; terms with substitution.  Excluded middle is an axiom, as in the ladder.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy bool (u 0) (: true bool) (: false bool))
-!(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
+!(hol:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
 !(pf:equality &thy bool refl@bool subst@bool)
 !(pf:equality &thy nat refl@nat subst@nat)
-!(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
-!(set:define &thy falsum prop (= falsum (all prop (lam p p))))
-!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))
-!(set:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
-!(set:define &thy or (-> prop prop prop) (= (or $p $q) (all prop (lam r (imp (imp $p r) (imp (imp $q r) r))))))
-!(set:define &thy iff (-> prop prop prop) (= (iff $p $q) (and (imp $p $q) (imp $q $p))))
+!(hol:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
+!(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
+!(hol:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))
+!(hol:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
+!(hol:define &thy or (-> prop prop prop) (= (or $p $q) (all prop (lam r (imp (imp $p r) (imp (imp $q r) r))))))
+!(hol:define &thy iff (-> prop prop prop) (= (iff $p $q) (and (imp $p $q) (imp $q $p))))
 
 ; ---- ICL01 types and functions
-!(set:define &thy negb (-> bool bool) (= (negb true) false) (= (negb false) true))
-!(set:define &thy andb (-> bool bool bool) (= (andb true $y) $y) (= (andb false $y) false))
-!(set:define &thy orb (-> bool bool bool) (= (orb true $y) true) (= (orb false $y) $y))
+!(hol:define &thy negb (-> bool bool) (= (negb true) false) (= (negb false) true))
+!(hol:define &thy andb (-> bool bool bool) (= (andb true $y) $y) (= (andb false $y) false))
+!(hol:define &thy orb (-> bool bool bool) (= (orb true $y) true) (= (orb false $y) $y))
 !(pf:theorem &thy negb-negb (all bool (lam x (eq bool (negb (negb x)) x)))
    (pf:induction bool-ind (lam x (eq bool (negb (negb x)) x)) (pf:refl bool true) (pf:refl bool false)))
 !(pf:theorem &thy andb-com (all bool (lam x (all bool (lam y (eq bool (andb x y) (andb y x))))))
@@ -34,7 +34,7 @@
      (pf:induction bool-ind (lam y (eq bool (orb true y) (orb y true))) (pf:refl bool true) (pf:refl bool true))
      (pf:induction bool-ind (lam y (eq bool (orb false y) (orb y false))) (pf:refl bool true) (pf:refl bool false))))
 ; plus recurses on its first argument, as in the ladder
-!(set:define &thy plus (-> nat nat nat) (= (plus O $y) $y) (= (plus (S $x) $y) (S (plus $x $y))))
+!(hol:define &thy plus (-> nat nat nat) (= (plus O $y) $y) (= (plus (S $x) $y) (S (plus $x $y))))
 !(pf:theorem &thy plus-O-l (all nat (lam y (eq nat (plus O y) y))) (pf:fix y (pf:refl nat y)))
 !(pf:theorem &thy plus-S-l (all nat (lam x (all nat (lam y (eq nat (plus (S x) y) (S (plus x y)))))))
    (pf:fix x (pf:fix y (pf:refl nat (S (plus x y))))))
@@ -48,9 +48,9 @@
      (pf:fix k (pf:assume ih (pf:fix y (pf:fix z
        (pf:cong nat nat (lam r (S r)) (plus (plus k y) z) (plus k (plus y z)) (pf:by ih))))))))
 ; pairs: one constructor, projections by definition
-!(set:inductive &thy pair (u 0) (: mkpair (-> nat bool pair)))
-!(set:define &thy proj1 (-> pair nat) (= (proj1 (mkpair $a $b)) $a))
-!(set:define &thy proj2 (-> pair bool) (= (proj2 (mkpair $a $b)) $b))
+!(hol:inductive &thy pair (u 0) (: mkpair (-> nat bool pair)))
+!(hol:define &thy proj1 (-> pair nat) (= (proj1 (mkpair $a $b)) $a))
+!(hol:define &thy proj2 (-> pair bool) (= (proj2 (mkpair $a $b)) $b))
 !(pf:equality &thy pair refl@pair subst@pair)
 !(pf:theorem &thy pair-eta (all pair (lam p (eq pair (mkpair (proj1 p) (proj2 p)) p)))
    (pf:induction pair-ind (lam p (eq pair (mkpair (proj1 p) (proj2 p)) p))
@@ -66,35 +66,35 @@
 !(pf:theorem &thy leibniz (all nat (lam x (all nat (lam y (imp (eq nat x y) (all (-> nat prop) (lam Q (imp (Q x) (Q y)))))))))
    (pf:fix x (pf:fix y (pf:assume h (pf:fix Q (pf:assume qx (pf:subst-with nat Q x y h qx)))))))
 ; the inductive predicate even, as the least predicate closed under its rules
-!(set:define &thy even (-> nat prop)
+!(hol:define &thy even (-> nat prop)
    (= (even $n) (all (-> nat prop) (lam P (imp (P O) (imp (all nat (lam m (imp (P m) (P (S (S m)))))) (P $n)))))))
 !(pf:theorem &thy even-4 (even (S (S (S (S O)))))
    (pf:fix P (pf:assume base (pf:assume step
      (pf:imp-elim (pf:all-elim step (S (S O))) (pf:imp-elim (pf:all-elim step O) base))))))
-!(set:axiom &thy xm (all prop (lam p (or p (neg p)))))
+!(hol:axiom &thy xm (all prop (lam p (or p (neg p)))))
 
 ; ---- ICL03 definitional versus propositional equality
 !(pf:theorem &thy conv-compute (eq nat (plus (S (S O)) (S (S O))) (S (S (S (S O))))) (pf:refl nat (S (S (S (S O))))))
 ; an authored beta-redex is not read at the top of a term; through an applicator it reduces
-!(set:define &thy apply (-> (-> nat nat) nat nat) (= (apply $f $x) ($f $x)))
+!(hol:define &thy apply (-> (-> nat nat) nat nat) (= (apply $f $x) ($f $x)))
 !(pf:theorem &thy conv-beta (eq nat (apply (lam x x) (S O)) (S O)) (pf:refl nat (S O)))
 ; constructors are distinct: a prop-valued definition separates them
-!(set:define &thy is-true (-> bool prop) (= (is-true true) truth) (= (is-true false) falsum))
+!(hol:define &thy is-true (-> bool prop) (= (is-true true) truth) (= (is-true false) falsum))
 !(pf:theorem &thy true-neq-false (neg (eq bool true false))
    (pf:assume h (pf:subst-with bool (lam b (is-true b)) true false h (pf:fix p (pf:assume hp hp)))))
-!(set:define &thy is-O (-> nat prop) (= (is-O O) truth) (= (is-O (S $n)) falsum))
+!(hol:define &thy is-O (-> nat prop) (= (is-O O) truth) (= (is-O (S $n)) falsum))
 !(pf:theorem &thy O-neq-S (all nat (lam n (neg (eq nat O (S n)))))
    (pf:fix n (pf:assume h (pf:subst-with nat (lam k (is-O k)) O (S n) h (pf:fix p (pf:assume hp hp))))))
 ; constructors are injective: the predecessor is a definition
-!(set:define &thy pred (-> nat nat) (= (pred O) O) (= (pred (S $n)) $n))
+!(hol:define &thy pred (-> nat nat) (= (pred O) O) (= (pred (S $n)) $n))
 !(pf:theorem &thy S-inj (all nat (lam m (all nat (lam n (imp (eq nat (S m) (S n)) (eq nat m n))))))
    (pf:fix m (pf:fix n (pf:assume h (pf:cong nat nat (lam k (pred k)) (S m) (S n) h)))))
-!(set:define &thy eqb (-> bool bool bool) (= (eqb true $y) $y) (= (eqb false $y) (negb $y)))
+!(hol:define &thy eqb (-> bool bool bool) (= (eqb true $y) $y) (= (eqb false $y) (negb $y)))
 !(pf:theorem &thy eqb-refl (all bool (lam x (eq bool (eqb x x) true)))
    (pf:induction bool-ind (lam x (eq bool (eqb x x) true)) (pf:refl bool true) (pf:refl bool true)))
 
 ; ---- ICL04 induction and recursion: double n = n + n
-!(set:define &thy double (-> nat nat) (= (double O) O) (= (double (S $n)) (S (S (double $n)))))
+!(hol:define &thy double (-> nat nat) (= (double O) O) (= (double (S $n)) (S (S (double $n)))))
 !(pf:theorem &thy double-compute (eq nat (double (S (S (S O)))) (S (S (S (S (S (S O))))))) (pf:refl nat (S (S (S (S (S (S O))))))))
 !(pf:theorem &thy plus-S-r (all nat (lam n (all nat (lam m (eq nat (plus n (S m)) (S (plus n m)))))))
    (pf:induction nat-ind (lam n (all nat (lam m (eq nat (plus n (S m)) (S (plus n m))))))
@@ -114,7 +114,7 @@
      (pf:fix P (pf:assume base (pf:assume step base)))
      (pf:fix k (pf:assume ih (pf:fix P (pf:assume base (pf:assume step
        (pf:imp-elim (pf:all-elim step (double k)) (pf:by ih base step)))))))))
-!(set:define &thy le (-> nat nat prop)
+!(hol:define &thy le (-> nat nat prop)
    (= (le $n $m) (all (-> nat nat prop) (lam R (imp (all nat (lam k (R k k))) (imp (all nat (lam a (all nat (lam b (imp (R a b) (R a (S b))))))) (R $n $m)))))))
 !(pf:theorem &thy le-refl (all nat (lam n (le n n)))
    (pf:fix n (pf:fix R (pf:assume rf (pf:assume st (pf:all-elim rf n))))))
@@ -125,12 +125,12 @@
         (pf:fix a (pf:fix b (pf:assume rab (pf:imp-elim (pf:all-elim (pf:all-elim st (S a)) (S b)) rab))))))))))))
 
 ; ---- ICL08 lists
-!(set:inductive &thy list (u 0) (: nil list) (: cons (-> nat list list)))
+!(hol:inductive &thy list (u 0) (: nil list) (: cons (-> nat list list)))
 !(pf:equality &thy list refl@list subst@list)
-!(set:define &thy append (-> list list list) (= (append nil $k) $k) (= (append (cons $x $l) $k) (cons $x (append $l $k))))
-!(set:define &thy length (-> list nat) (= (length nil) O) (= (length (cons $x $l)) (S (length $l))))
-!(set:define &thy map (-> (-> nat nat) list list) (= (map $f nil) nil) (= (map $f (cons $x $l)) (cons ($f $x) (map $f $l))))
-!(set:define &thy fold-right (-> (-> nat nat nat) nat list nat) (= (fold-right $f $z nil) $z) (= (fold-right $f $z (cons $x $l)) ($f $x (fold-right $f $z $l))))
+!(hol:define &thy append (-> list list list) (= (append nil $k) $k) (= (append (cons $x $l) $k) (cons $x (append $l $k))))
+!(hol:define &thy length (-> list nat) (= (length nil) O) (= (length (cons $x $l)) (S (length $l))))
+!(hol:define &thy map (-> (-> nat nat) list list) (= (map $f nil) nil) (= (map $f (cons $x $l)) (cons ($f $x) (map $f $l))))
+!(hol:define &thy fold-right (-> (-> nat nat nat) nat list nat) (= (fold-right $f $z nil) $z) (= (fold-right $f $z (cons $x $l)) ($f $x (fold-right $f $z $l))))
 !(pf:theorem &thy append-nil-r (all list (lam l (eq list (append l nil) l)))
    (pf:induction list-ind (lam l (eq list (append l nil) l))
      (pf:refl list nil)
@@ -158,9 +158,9 @@
    (pf:refl nat (S (S (S (S (S (S O))))))))
 
 ; ---- ICL09 unification: terms, substitutions as functions, application and composition
-!(set:inductive &thy term (u 0) (: Var (-> nat term)) (: Const (-> nat term)) (: Node (-> term term term)))
+!(hol:inductive &thy term (u 0) (: Var (-> nat term)) (: Const (-> nat term)) (: Node (-> term term term)))
 !(pf:equality &thy term refl@term subst@term)
-!(set:define &thy ap (-> (-> nat term) term term)
+!(hol:define &thy ap (-> (-> nat term) term term)
    (= (ap $s (Var $n)) ($s $n))
    (= (ap $s (Const $n)) (Const $n))
    (= (ap $s (Node $t $u)) (Node (ap $s $t) (ap $s $u))))
@@ -181,9 +181,9 @@
        (pf:calc term (ap (lam n (ap s2 (s1 n))) (Node t u))
          (= (Node (ap s2 (ap s1 t)) (ap (lam n (ap s2 (s1 n))) u))  (cong term (lam r (Node r (ap (lam n (ap s2 (s1 n))) u))) (ap (lam n (ap s2 (s1 n))) t) (ap s2 (ap s1 t)) iht))
          (= (Node (ap s2 (ap s1 t)) (ap s2 (ap s1 u)))              (cong term (lam r (Node (ap s2 (ap s1 t)) r)) (ap (lam n (ap s2 (s1 n))) u) (ap s2 (ap s1 u)) ihu)))))))))
-!(set:define &thy unifies (-> (-> nat term) term term prop) (= (unifies $s $t $u) (eq term (ap $s $t) (ap $s $u))))
+!(hol:define &thy unifies (-> (-> nat term) term term prop) (= (unifies $s $t $u) (eq term (ap $s $t) (ap $s $u))))
 ; the substitution 0 := Const 1 unifies Node (Var 0) (Const 1) with Node (Const 1) (Var 0), by computation
-!(set:define &thy is-O-b (-> nat bool) (= (is-O-b O) true) (= (is-O-b (S $n)) false))
-!(set:define &thy pick (-> bool term term term) (= (pick true $a $b) $a) (= (pick false $a $b) $b))
+!(hol:define &thy is-O-b (-> nat bool) (= (is-O-b O) true) (= (is-O-b (S $n)) false))
+!(hol:define &thy pick (-> bool term term term) (= (pick true $a $b) $a) (= (pick false $a $b) $b))
 !(pf:theorem &thy unify-example (unifies (lam n (pick (is-O-b n) (Const (S O)) (Var n))) (Node (Var O) (Const (S O))) (Node (Const (S O)) (Var O)))
    (pf:refl term (Node (Const (S O)) (Const (S O)))))

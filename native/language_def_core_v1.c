@@ -397,6 +397,59 @@ static bool ld_text_decode(CettaLdTextV1 *out,
 
     if (!out || !ld_take_work(context, depth))
         return false;
+    if (ld_application(term, "bnf-v1:text-cons", 2u) ||
+        ld_application(term, "bnf-v1:text-nil", 0u)) {
+        const CettaOpLangV1SExpr *cursor = term;
+        size_t len = 0u, capacity = 0u;
+        while (ld_application(cursor, "bnf-v1:text-cons", 2u)) {
+            if (!ld_take_work(context, depth)) { free(copy); return false; }
+            const CettaOpLangV1SExpr *point = ld_argument(cursor, 0u);
+            if (!point || point->kind != CETTA_OP_LANG_V1_SEXPR_NATURAL ||
+                !point->as.natural || !point->as.natural[0]) {
+                free(copy); return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
+                    "expected a Unicode scalar in LanguageDef scalar text");
+            }
+            char *end = NULL;
+            for (const char *digit = point->as.natural; *digit; ++digit) {
+                if (*digit < '0' || *digit > '9') {
+                    free(copy); return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
+                        "malformed scalar natural in LanguageDef scalar text");
+                }
+            }
+            unsigned long cp = strtoul(point->as.natural, &end, 10);
+            if (!end || *end || cp > 0x10ffffu || (cp >= 0xd800u && cp <= 0xdfffu) ||
+                len > UINT32_MAX - 4u) {
+                free(copy); return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
+                    "invalid Unicode scalar in LanguageDef scalar text");
+            }
+            if (len + 4u > capacity) {
+                size_t next = capacity && capacity <= SIZE_MAX / 2u ? capacity * 2u : len + 4u;
+                if (next < 32u) next = 32u;
+                uint8_t *bytes = realloc(copy, next);
+                if (!bytes) {
+                    free(copy); return ld_fail(context, CETTA_LD_CORE_V1_ALLOCATION_FAILURE,
+                        "cannot allocate LanguageDef scalar text");
+                }
+                copy = bytes; capacity = next;
+            }
+            if (cp < 128u) copy[len++] = (uint8_t)cp;
+            else if (cp < 2048u) {
+                copy[len++] = 0xc0u | (cp >> 6u); copy[len++] = 0x80u | (cp & 63u);
+            } else if (cp < 65536u) {
+                copy[len++] = 0xe0u | (cp >> 12u); copy[len++] = 0x80u | ((cp >> 6u) & 63u);
+                copy[len++] = 0x80u | (cp & 63u);
+            } else {
+                copy[len++] = 0xf0u | (cp >> 18u); copy[len++] = 0x80u | ((cp >> 12u) & 63u);
+                copy[len++] = 0x80u | ((cp >> 6u) & 63u); copy[len++] = 0x80u | (cp & 63u);
+            }
+            cursor = ld_argument(cursor, 1u);
+        }
+        if (!ld_application(cursor, "bnf-v1:text-nil", 0u)) {
+            free(copy); return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
+                "LanguageDef scalar text has a malformed tail");
+        }
+        out->bytes = copy; out->len = (uint32_t)len; return true;
+    }
     if (!term || term->kind != CETTA_OP_LANG_V1_SEXPR_STRING)
         return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
                        "expected a quoted string in LanguageDef wire");

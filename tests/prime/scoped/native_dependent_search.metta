@@ -1,7 +1,7 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Search proposes arguments; the native dependent checker accepts the proof.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
@@ -25,9 +25,9 @@
 !(search-first-inhabitant &thy (P (f a)) 2 1)
 !(search-first-inhabitant &thy (P (f a)) 0)
 ; An ordinary function is a higher-order argument, not an implicitly firing rule.
-!(set:define &thy k (-> (p : (P (f a))) (id A b b))
+!(hol:define &thy k (-> (p : (P (f a))) (id A b b))
    (= (k $p) (refl b)))
-!(set:define &thy consumeEvidence
+!(hol:define &thy consumeEvidence
    (-> (e : (P (f a))) (k : (-> (p : (P (f a))) (id A b b))) (id A b b))
    (= (consumeEvidence $e $k) ($k $e)))
 !(add-atom &thy (chaining-rule consumeEvidence))
@@ -68,8 +68,8 @@
       (search-first-inhabitant &thy (id A b b) 3)
       (type:check &thy $proof (id A a a)))
 ; Parallel binders and a later equality premise share one actual assignment.
-!(set:define &thy same (id A a a) (= same (refl a)))
-!(set:define &thy sameVia
+!(hol:define &thy same (id A a a) (= same (refl a)))
+!(hol:define &thy sameVia
    (-> (x y : A) (w : (id A x y)) (id A (f x) (f x)))
    (= (sameVia $x $y $w) (refl (f $x))))
 !(add-atom &thy (chaining-rule sameVia))

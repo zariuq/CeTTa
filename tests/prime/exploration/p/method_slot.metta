@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Proof plans as partial programs: generalizing two plans leaves a method slot.
 ;
@@ -216,7 +216,7 @@
 ; ---- the ITP half: a plan is a proof of an implication ----------------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: D prop) (: X prop)))
 ; Each rule becomes an axiom: premises -> conclusion.
 (= (imps $ctx $goal)
@@ -225,7 +225,7 @@
 (= (rule-statement $r) (let ($ps $c) (rule-shape $r) (imps $ps $c)))
 ; The kernel's rules, assumed: statements about uninterpreted propositions.
 !(map-atom (axA1 axA2 ab axB bc xc pair) $r
-   (let $s (rule-statement $r) (set:axiom &thy $r $s)))
+   (let $s (rule-statement $r) (hol:axiom &thy $r $s)))
 
 (= (hyp-name 0) h0)
 (= (hyp-name 1) h1)

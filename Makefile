@@ -688,6 +688,10 @@ COMPILED_READER_RUNTIME_SRC = \
 JSON_SOURCE_EMBED_TOOL_V1 = runtime/bootstrap/embed_c_sources_v1
 JSON_SOURCE_EMBED_TOOL_V1_SRC = tools/embed_c_sources_v1.c
 LDPP_COMPILER_SOURCE_V1 = langdef/bnf/language_def_parser_compiler_v1.metta
+LDPT_COMPILER_SOURCE_V1 = langdef/bnf/token_parser_compiler_v1.metta
+REGULAR_TOKEN_COMPILER_SOURCE_V1 = langdef/bnf/regular_token_value_compiler_v1.metta
+LBNF_BOOTSTRAP_SOURCE_V1 = langdef/bnf/lbnf_source_v1.metta
+BNFC_LEXICAL_POLICY_SOURCE_V1 = langdef/bnf/bnfc_lexical_policy_v1.metta
 LDPP_COMPILER_EMBEDDED_C_V1 = runtime/generated/bnf/language_def_parser_compiler_v1.source.c
 JSON_GSLT_GENERATED_DIR_V1 = runtime/generated/json
 JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.generated.c
@@ -715,7 +719,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/library_hol.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
@@ -810,11 +814,17 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/language_def_core_v1.c \
 	native/language_def_ground_term_v1.c \
 	native/language_def_parser_pack_v1.c \
+	native/parser_token_profile_v1.c \
+	native/parser_token_runtime_v1.c \
+	native/parser_token_ast_v1.c \
+	native/lbnf_document_v1.c \
+	native/regular_token_compiler_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	native/language_def_contextual_runner_v1.c \
 	native/language_def_pattern_atom_v1.c \
 	native/structural_tree_relabel_v1.c \
 	native/gslt_composition_v1.c \
+	native/syntax_gslt_v1.c \
 	native/deterministic_equation_plan_v1.c \
 	native/deterministic_equation_descent_v1.c \
 	native/ebnf_derivation_projection_native_v1.c \
@@ -918,6 +928,9 @@ HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
 HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 HE_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ)
+PARSER_WORD_GROUNDING_TEST_SRC = tests/support/test_parser_word_grounding_v1.c
+PARSER_WORD_GROUNDING_TEST_OBJ = runtime/bootstrap/test_parser_word_grounding_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PARSER_WORD_GROUNDING_TEST_BIN = runtime/test_parser_word_grounding_v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 HE_TYPING_DIRECT_TEST_SRC = tests/support/test_he_typing_direct_authority.c
 HE_TYPING_DIRECT_TEST_OBJ = runtime/bootstrap/test_he_typing_direct_authority.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_TYPING_DIRECT_TEST_BIN = runtime/test_he_typing_direct_authority-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3202,6 +3215,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_application.metta \
 	tests/prime/need_explicit_control.metta \
 	tests/prime/need_explicit_control_negative.metta \
+	tests/prime/function_faults.metta \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
@@ -3268,6 +3282,8 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/regular_binders.metta \
 	tests/prime/conformance/written_domains.metta \
 	tests/prime/conformance/regular_declarations.metta \
+	tests/prime/conformance/he_declarations_hol_checked.metta \
+	tests/prime/conformance/he_tuple_projections.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/open_lambda_pi.metta \
 	tests/prime/conformance/scoped_regular_authority_routing.metta \
@@ -3387,6 +3403,7 @@ PRIME_CONFORMANCE_TESTS = \
 PRIME_EXAMPLE_TESTS = \
 	examples/prime/exact_gradual.metta \
 	examples/prime/dependent_telescope.metta \
+	examples/prime/hotg_relativization.metta \
 	examples/prime/dependent_proof_composition.metta \
 	examples/prime/nil_curried_chainer_native.metta \
 	examples/prime/chaining_prime_readiness.metta \
@@ -4462,6 +4479,15 @@ runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_
 .PHONY: test-native-handle-ownership
 test-native-handle-ownership: runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG))
+
+runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG): tests/test_prime_need_native_handles.c src/prime_need.c src/prime_need.h src/atom.c src/atom.h src/symbol.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need_native_handles.c src/prime_need.c src/atom.c src/symbol.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-prime-need-native-handles
+test: test-prime-need-native-handles
+test-prime-need-native-handles: runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG))
 
 runtime/test_native_handle_scope_observer-$(BUILD_OBJ_TAG): tests/support/test_plain_bnf_typed_lifetime_v1.c $(OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -6361,6 +6387,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
 	$(REGISTRY_RESOLVER_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_TEST_OBJ:.o=.d) \
+	$(PARSER_WORD_GROUNDING_TEST_OBJ:.o=.d) \
 	$(PETTA_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(PETTA_SEARCH_MACHINE_TEST_OBJ:.o=.d) \
 	$(PETTA_SPECIALIZER_PREPARE_TEST_OBJ:.o=.d) \
@@ -6621,6 +6648,14 @@ $(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_REA
 $(HE_COMPILED_READER_TEST_OBJ): $(HE_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(PARSER_WORD_GROUNDING_TEST_BIN): $(PARSER_WORD_GROUNDING_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(PARSER_WORD_GROUNDING_TEST_OBJ): $(PARSER_WORD_GROUNDING_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 $(HE_TYPING_DIRECT_TEST_BIN): $(HE_TYPING_DIRECT_TEST_OBJ) $(HE_TYPING_DIRECT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -22280,6 +22315,31 @@ test-prime-variable-mutation: $(BIN)
 	fi; \
 	echo "PASS: bind-and-discard/implicit-formation mutation is killed; canonical scope independently blocks escape"
 
+# HE-style declarations are decided by the hosted HOL Light checker.  The
+# mutant accepts every translated judgment without asking it; the controls
+# fixture's refusals then turn into acceptances.
+test-prime-hol-checker-mutation: $(BIN)
+	@mutation_dir=runtime/prime-hol-checker-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_hol_checker.py \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c" \
+		src/prime_he_fragments.inc "$$mutation_dir/prime_he_fragments.inc" || exit 1; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/prime_semantics.c" -o "$$mutation_dir/prime_semantics.o" || exit 1; \
+	$(CC) $(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$mutation_dir/prime_semantics.o" \
+		-o "$$mutation_dir/cetta-unchecked" $(LDFLAGS) || exit 1; \
+	fixture=tests/prime/conformance/he_declarations_hol_checked.metta; \
+	baseline=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$fixture" 2>&1); \
+	if [ "$$baseline" != "$$(cat $${fixture%.metta}.expected)" ]; then \
+		echo "FAIL: hosted-checker mutation baseline is not green"; exit 1; \
+	fi; \
+	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-unchecked" --lang prime "$$fixture" 2>&1); \
+	if [ "$$mutant" = "$$baseline" ] || \
+	   ! printf '%s\n' "$$mutant" | grep -Fqx '[(Arrows B True True (type:check (f Z) B) A)]'; then \
+		echo "FAIL: accepting HE-style judgments without the hosted checker survived"; exit 1; \
+	fi; \
+	echo "PASS: HE-style judgments without the hosted checker are killed"
+
 test-prime-canonical-binder-mutation: $(BIN) $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
 	@mutation_dir=runtime/prime-canonical-binder-mutation; \
 	mkdir -p "$$mutation_dir"; \
@@ -22759,7 +22819,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		"$$optimized_out"; \
 	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
 		"$$optimized_err"; \
-	grep -Fqx 'runtime-counter prime-legacy-he-typed-applicability 0' \
+	grep -Fqx 'runtime-counter prime-he-declaration-applicability 0' \
 		"$$optimized_err"; \
 	CETTA_PRIME_HE_TYPED_APPLICABILITY=1 \
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
@@ -22768,9 +22828,23 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	cmp -s "$$optimized_out" "$$reference_out"; \
 	grep -Eq '^runtime-counter nik-typed-applicability-candidate-refuted [1-9][0-9]*$$' \
 		"$$reference_err"; \
-	grep -Eq '^runtime-counter prime-legacy-he-typed-applicability [1-9][0-9]*$$' \
+	grep -Eq '^runtime-counter prime-he-declaration-applicability [1-9][0-9]*$$' \
 		"$$reference_err"; \
-	echo 'PASS: Prime defaults to zero-HE applicability; the HE-assisted comparison is explicit'
+	grep -Fqx 'runtime-counter prime-judgment-he-engine-entry 0' \
+		"$$reference_err"; \
+	outside_out=runtime/prime-nik-typed-applicability-outside.out; \
+	outside_err=runtime/prime-nik-typed-applicability-outside.err; \
+	CETTA_PRIME_HE_TYPED_APPLICABILITY=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/nik_typed_applicability_outside.metta \
+		>"$$outside_out" 2>"$$outside_err"; \
+	cmp -s tests/prime/nik_typed_applicability_outside.expected \
+		"$$outside_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$outside_err"; \
+	grep -Eq '^runtime-counter prime-he-declaration-applicability [1-9][0-9]*$$' \
+		"$$outside_err"; \
+	echo 'PASS: Prime prunes a typed alternative only on a checker refusal inside the grounded fragments; outside them nothing is pruned'
 else
 	@echo 'INFO: Prime typed-applicability control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
@@ -23534,7 +23608,7 @@ test-prime-mil-native-workloads: prime-runtime-stats-binary
 		--workload native-path-canary \
 		--workload hopper-encryption-native \
 		--require-prime-native \
-		--require-zero-legacy-he-applicability \
+		--require-zero-he-declaration-applicability \
 		--quiet
 else
 test-prime-mil-native-workloads:
@@ -24116,6 +24190,7 @@ test-curriculum-lf-normalization: $(BIN)
 .PHONY: test-curriculum-port-repairs test-curriculum-lf-normalization
 
 test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra test-curriculum-port-repairs \
+	test-prime-need-native-handles \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \
 	test-prime-need-gc-lifetime \
@@ -24141,6 +24216,7 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra te
 	test-prime-completion-mutation \
 	test-prime-delayed-ambiguity-mutation \
 	test-prime-variable-mutation \
+	test-prime-hol-checker-mutation \
 	test-prime-canonical-binder-mutation \
 	test-prime-abt-chain-mutation \
 	test-prime-abt-let-mutation \
@@ -24682,10 +24758,9 @@ test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collection
 		fi; \
 		result=$$($(CETTA_BIN_INVOKE) --profile he-compat --lang he \
 			-e '!(bind! &profile-hyperpose-inert (new-space))' \
-			-e '!(collapse (hyperpose ((add-atom &profile-hyperpose-inert touched) ok)))' \
+			-e '!(assertEqualToResult (collapse (hyperpose ((add-atom &profile-hyperpose-inert touched) ok))) (((hyperpose ((add-atom &profile-hyperpose-inert touched) ok)))))' \
 			-e '!(assertEqual (collapse (match &profile-hyperpose-inert $$x $$x)) ())' 2>&1); \
-		result=$$(printf '%s\n' "$$result" | sed -E 's/<space 0x[0-9a-fA-F]+>/<space>/g'); \
-		expected=$$'[()]\n[((hyperpose ((add-atom <space> touched) ok)))]\n[()]'; \
+		expected=$$'[()]\n[()]\n[()]'; \
 		if [ "$$result" = "$$expected" ]; then \
 			echo "PASS: he-compat inactive hyperpose arguments stay unevaluated"; pass=$$((pass + 1)); \
 		else \
@@ -25134,6 +25209,12 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 		fi; \
 	done; \
 	echo "PASS: all four HE profiles select the compiled LanguageDef reader"
+
+.PHONY: test-parser-word-grounding-v1
+test-parser-word-grounding-v1: $(PARSER_WORD_GROUNDING_TEST_BIN)
+	./$(PARSER_WORD_GROUNDING_TEST_BIN)
+
+test: test-parser-word-grounding-v1
 
 .PHONY: test-petta-compiled-reader-v1
 test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(PETTA_COMPILED_READER_TEST_BIN) $(BIN)
@@ -35260,8 +35341,13 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 
 test-gslt2parse-schema-v1: \
 		test-gslt2parse-schema-v1-native \
-		test-langdef-semantic-gslt-nullary-v1
+		test-langdef-semantic-gslt-nullary-v1 \
+		test-gslt2parse-sexpr-v1
 	@python3 tools/test_gslt2parse_schema_v1.py
+
+.PHONY: test-gslt2parse-sexpr-v1
+test-gslt2parse-sexpr-v1:
+	@python3 tools/test_gslt2parse_sexpr_v1.py
 
 .PHONY: test-langdef-semantic-gslt-nullary-v1
 test-langdef-semantic-gslt-nullary-v1: \
@@ -40559,13 +40645,17 @@ $(JSON_GSLT_EMBEDDED_C_V1): \
 	mv "$$tmp_out" $@
 
 # Embed the authored compiler source; this does not generate compiler code.
-$(LDPP_COMPILER_EMBEDDED_C_V1): $(JSON_SOURCE_EMBED_TOOL_V1) $(LDPP_COMPILER_SOURCE_V1)
+$(LDPP_COMPILER_EMBEDDED_C_V1): $(JSON_SOURCE_EMBED_TOOL_V1) $(LDPP_COMPILER_SOURCE_V1) $(LDPT_COMPILER_SOURCE_V1) $(REGULAR_TOKEN_COMPILER_SOURCE_V1) $(LBNF_BOOTSTRAP_SOURCE_V1) $(BNFC_LEXICAL_POLICY_SOURCE_V1)
 	@mkdir -p $(dir $@) $(BOOTSTRAP_TMPDIR)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/ldpp-compiler-source-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(JSON_SOURCE_EMBED_TOOL_V1) "$$tmp_out" \
-		cetta_ldpp_compiler_v1_source $(LDPP_COMPILER_SOURCE_V1); \
+		cetta_ldpp_compiler_v1_source $(LDPP_COMPILER_SOURCE_V1) \
+		cetta_ldpt_compiler_v1_source $(LDPT_COMPILER_SOURCE_V1) \
+		cetta_regular_token_compiler_v1_source $(REGULAR_TOKEN_COMPILER_SOURCE_V1) \
+		cetta_lbnf_bootstrap_v1_source $(LBNF_BOOTSTRAP_SOURCE_V1) \
+		cetta_bnfc_lexical_policy_v1_source $(BNFC_LEXICAL_POLICY_SOURCE_V1); \
 	mv "$$tmp_out" $@
 
 # Source-driven first-order syntax compilation into the shared native
@@ -40589,6 +40679,13 @@ JSON_NIK_V1_TEST_BIN = runtime/test_json_nik_v1-c-only$(if $(filter 1,$(ENABLE_S
 PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN = runtime/test_parser_pack_forest_encoding_v1-$(BUILD_OBJ_TAG)
 LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
+	native/parser_token_profile_v1.c \
+	native/parser_token_runtime_v1.c \
+	native/parser_token_ast_v1.c \
+	native/lbnf_document_v1.c \
+	native/regular_token_compiler_v1.c \
+	experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c \
+	experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	native/deterministic_equation_plan_v1.c \
 	native/deterministic_equation_descent_v1.c \
@@ -40620,6 +40717,10 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
+REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN = runtime/test_regular_token_value_compiler_v1-$(BUILD_OBJ_TAG)
+REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_C_SOURCES = \
+	tests/support/test_regular_token_value_compiler_v1.c \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
 LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
@@ -40631,6 +40732,11 @@ JSON_NIK_V1_TEST_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
 LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_HEADER) \
+	native/parser_token_profile_v1.h \
+	native/parser_token_runtime_v1.h \
+	native/parser_token_ast_v1.h \
+	native/lbnf_document_v1.h \
+	native/regular_token_compiler_v1.h \
 	native/deterministic_equation_plan_v1.h \
 	native/deterministic_equation_descent_v1.h \
 	native/gslt_composition_v1.h \
@@ -40774,6 +40880,51 @@ $(JSON_NIK_V1_TEST_BIN): \
 test-language-def-parser-pack-v1-body: $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 	@$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 
+$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN): \
+		$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		experiments/gslt2parse_foundation/native/regular_span_nfa_v1.h \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h \
+		langdef/bnf/regular_token_value_compiler_v1.metta \
+		langdef/bnf/token_parser_compiler_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o $@ $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_C_SOURCES) \
+		-Wl,--gc-sections $(LDFLAGS)
+
+.PHONY: test-regular-token-value-compiler-v1
+test-regular-token-value-compiler-v1: $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN) \
+		langdef/bnf/bnfc_lexical_policy_v1.metta
+	@$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN)
+
+test: test-regular-token-value-compiler-v1
+
+.PHONY: test-lbnf-token-values-v1
+test-lbnf-token-values-v1: $(BIN) tests/langdef/bnf/token_parser_values_v1.metta \
+		tools/test_lbnf_token_values_v1.py lib/langdef.metta lib/petta/langdef.metta
+	python3 tools/test_lbnf_token_values_v1.py --cetta $(BIN)
+
+test: test-lbnf-token-values-v1
+
+.PHONY: test-lbnf-values-v1
+test-lbnf-values-v1: $(BIN) tools/test_lbnf_values_v1.py \
+		lib/lib_lbnf.metta lib/petta/lib_lbnf.metta
+	python3 tools/test_lbnf_values_v1.py --cetta $(BIN) \
+		--scratch runtime/lbnf-values-v1-$(BUILD_OBJ_TAG)
+
+test: test-lbnf-values-v1
+
+.PHONY: test-lbnf-reference-tools-v1
+test-lbnf-reference-tools-v1: tools/test_lbnf_reference_ast_v1.py \
+		tools/test_lbnf_glr_completion_v1.py tools/lbnf_reference_ast_v1.py \
+		tools/lbnf_glr_completion_v1.py tests/support/test_lbnf_reference_v1.py
+	python3 -m unittest discover -s tools -p test_lbnf_reference_ast_v1.py
+	python3 -m unittest discover -s tools -p test_lbnf_glr_completion_v1.py
+	python3 -m unittest discover -s tests/support -p test_lbnf_reference_v1.py
+
+test: test-lbnf-reference-tools-v1
+
 .PHONY: test-language-def-parser-pack-v1
 test-language-def-parser-pack-v1:
 	@$(MAKE) --no-print-directory \
@@ -40797,6 +40948,7 @@ PLAIN_BNF_META_PARSER_V1_TEST_BIN = \
 PLAIN_BNF_META_PARSER_V1_C_SOURCES = \
 	$(PLAIN_BNF_META_PARSER_V1_TEST_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
+	native/parser_token_profile_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	native/language_def_ground_term_v1.c \
@@ -40919,6 +41071,33 @@ $(STRUCTURED_PARSER_VALUE_V1_TEST_BIN): $(STRUCTURED_PARSER_VALUE_V1_TEST_OBJ) \
 .PHONY: test-structured-parser-value-v1
 test-structured-parser-value-v1: $(STRUCTURED_PARSER_VALUE_V1_TEST_BIN)
 	@$(STRUCTURED_PARSER_VALUE_V1_TEST_BIN)
+
+GSLT_ORIGIN_JOIN_V1_TEST_OBJ = runtime/bootstrap/test_gslt_origin_join_v1.$(BUILD_OBJ_TAG).o
+GSLT_ORIGIN_JOIN_V1_TEST_BIN = runtime/test_gslt_origin_join_v1-$(BUILD_OBJ_TAG)
+GSLT_ORIGIN_JOIN_V1_LINK_OBJ = $(filter-out native/gslt_composition_v1.%,$(OBJ))
+
+$(GSLT_ORIGIN_JOIN_V1_TEST_OBJ): tests/support/test_gslt_origin_join_v1.c \
+		native/gslt_composition_v1.c native/gslt_composition_v1.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+-include $(GSLT_ORIGIN_JOIN_V1_TEST_OBJ:.o=.d)
+
+$(GSLT_ORIGIN_JOIN_V1_TEST_BIN): $(GSLT_ORIGIN_JOIN_V1_TEST_OBJ) \
+		$(GSLT_ORIGIN_JOIN_V1_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--wrap=main -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-origin-join-v1
+test-gslt-origin-join-v1: $(GSLT_ORIGIN_JOIN_V1_TEST_BIN)
+	@$(GSLT_ORIGIN_JOIN_V1_TEST_BIN)
+
+.PHONY: test-composable-syntax-v1
+test-composable-syntax-v1: $(BIN) lib/langdef.metta lib/petta/langdef.metta \
+		tools/test_composable_syntax_v1.py examples/langdef/composable_syntax_v1.metta
+	python3 tools/test_composable_syntax_v1.py --cetta $(BIN)
+
+test: test-gslt-origin-join-v1 test-composable-syntax-v1
 
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_OBJ = runtime/bootstrap/test_petta_open_cons_summary_v1.$(BUILD_OBJ_TAG).o
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_BIN = runtime/test_petta_open_cons_summary_v1-$(BUILD_OBJ_TAG)
@@ -41667,6 +41846,7 @@ TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN = \
 TPTP_EXTENDED_BNF_META_PARSER_V1_C_SOURCES = \
 	$(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
+	native/parser_token_profile_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	native/language_def_ground_term_v1.c \
@@ -42394,7 +42574,7 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
-LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
+LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
@@ -43843,9 +44023,9 @@ endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-hol-checker-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-hol-checker-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats
@@ -43938,6 +44118,45 @@ test-prime-exploration: $(BIN)
 	done; \
 	echo "Prime exploration examples: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+# Each effect once, and no work past what is observed.  Three mutations must
+# be caught: a selection that takes its k answers only after running every
+# alternative (PREFIX_NO_STOP); a computed head kept as written in the data
+# tuple it heads, so that every observer computes its pending fields again
+# (HEAD_ELEMENT_AS_WRITTEN); and an empty bind retried on the stack where the
+# synchronous bind would not retry it (BIND_RETRY_ALWAYS).
+PRIME_DEMAND_MUTATION_DIR ?= runtime/prime-demand-mutations
+.PHONY: test-prime-demand-mutations
+test-prime: test-prime-demand-mutations
+test-prime-demand-mutations: $(BIN)
+	@set -eu; \
+	mkdir -p "$(PRIME_DEMAND_MUTATION_DIR)"; \
+	for mutation in PREFIX_NO_STOP HEAD_ELEMENT_AS_WRITTEN BIND_RETRY_ALWAYS; do \
+		case "$$mutation" in \
+			PREFIX_NO_STOP) source=tests/prime/routes/bounded_selection_stop.metta ;; \
+			HEAD_ELEMENT_AS_WRITTEN) source=tests/prime/routes/strict_operand_sharing.metta ;; \
+			BIND_RETRY_ALWAYS) source=tests/prime/routes/empty_source_once.metta ;; \
+		esac; \
+		expected="$${source%.metta}.expected"; \
+		actual=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$source" 2>&1); \
+		if [ "$$actual" != "$$(cat "$$expected")" ]; then \
+			echo "FAIL: $$source does not pass on the unmutated binary"; exit 1; \
+		fi; \
+		object="$(PRIME_DEMAND_MUTATION_DIR)/eval-$$mutation.o"; \
+		binary="$(PRIME_DEMAND_MUTATION_DIR)/cetta-$$mutation"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_PRIME_DEMAND_MUTATION_$$mutation=1 \
+			-c src/eval.c -o "$$object"; \
+		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+			"$$object" -o "$$binary" $(LDFLAGS); \
+		set +e; \
+		mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$binary" --lang prime "$$source" 2>&1); \
+		status=$$?; set -e; \
+		if [ $$status -eq 0 ] && [ "$$mutant" = "$$(cat "$$expected")" ]; then \
+			echo "FAIL: Prime demand $$mutation mutation survived"; exit 1; \
+		fi; \
+		echo "PASS: Prime demand $$mutation mutation killed"; \
+	done
 
 .PHONY: test-prime-native-control test-prime-native-control-mutations
 test-prime: test-prime-native-control test-prime-native-control-mutations
@@ -44215,6 +44434,23 @@ test-prime-hol-native-evidence: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_hol_light_native_evidence_v1.py \
 		--binary "$(abspath $(BIN))" \
 		--workdir "$(PRIME_GUEST_QUALIFICATION_WORK)/native-evidence"
+
+# Checked HOL Light derivations replayed step by step into Prime's own
+# logic and into the HOTG theory over it, each step checked there.
+.PHONY: test-prime-hol-light-transport
+test-prime-translated-guests: test-prime-hol-light-transport
+test-prime-hol-light-transport: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_hol_light_transport_v1.py \
+		--binary "$(abspath $(BIN))" \
+		--workdir "$(PRIME_GUEST_QUALIFICATION_WORK)/transport"
+
+# The native logic imported in Prime, and in the HE and PeTTa extended
+# profiles over explicit theory spaces.
+.PHONY: test-hol-import
+test-prime: test-hol-import
+test-hol-import: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_hol_import_v1.py \
+		--binary "$(abspath $(BIN))"
 
 .PHONY: test-answer-storage
 test: test-answer-storage
