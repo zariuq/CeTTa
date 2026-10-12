@@ -19,6 +19,19 @@
 ; with chain/let/let*/case/switch-context progression, and emits quoted
 ; successors so the one-step interface remains stable as data instead of being eagerly
 ; evaluated again.
+; Ordinary applications step demanded arguments before matching equations.
+; The first applicable HE function type determines which arguments remain raw;
+; in particular Atom and Expression domains retain their source syntax.
+;
+; Native dispatch during inspection requires the existing pure-operation
+; capability. Other native operations, and state/space allocation, state access,
+; binding and import services, yield frozen data:
+;   (lts:he:request (quote <operation>) (quote <enclosing-expression>))
+; The enclosing expression retains the pending control context. A request is
+; inert under further reflected stepping: inspecting it performs no operation,
+; supplies no response and commits no effect. Quiescence means that this syntax
+; interface has no automatic successor, not that a pending service completed.
+; Executing or resuming services requires an execution interface.
 
 (: lts:he:transitions (-> Atom %Undefined%))
 (: lts:he:step-state (-> Atom %Undefined%))

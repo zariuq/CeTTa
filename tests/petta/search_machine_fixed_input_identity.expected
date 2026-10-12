@@ -1,0 +1,17 @@
+true
+true
+((Pair left left) (Pair left right) (Pair right left) (Pair right right))
+((Pair left left) (Pair right right))
+true
+true
+(7 7)
+(7 7)
+true
+(7)
+(7)
+true
+(0 1 2 3 4 5 6 7 8 9 10 11)
+(0 1 2 3 4 5 6 7 8 9 10 11)
+true
+(0 1 2 3 4 5 6 7 8 9 10 11)
+(0 1 2 3 4 5 6 7 8 9 10 11)

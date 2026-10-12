@@ -4,3 +4,9 @@
 leak:assessAddKey
 leak:initVM
 leak:initPrologThreads
+# Geometric SWI tables store pointers before their allocated blocks.  LSan
+# cannot follow those biased roots; cleanup leaves these engine-owned blocks
+# alive until process exit.  Match their allocators, not the library or FLI.
+leak:allocateFunctorBlock
+leak:putSourceFileArray
+leak:allocNewStringBuffer

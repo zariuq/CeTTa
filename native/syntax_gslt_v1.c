@@ -10,6 +10,8 @@ typedef struct {
     Atom *profile;
     Atom *policy;
     Atom *origins;
+    Atom *tokens;
+    bool tokenized;
     CettaGsltOriginEntryV1 *entries;
     size_t len;
 } SyntaxViewV1;
@@ -58,26 +60,41 @@ static bool origin_valid(Atom *origin) {
 }
 
 static const char *group_name(unsigned group) {
-    static const char *const names[] = {"category", "production", "lexical-class", "production"};
+    static const char *const names[] = {
+        "category", "production", "lexical-class", "production",
+        "lexical-token", "lexical-comment"};
     return names[group];
 }
 
 static Atom *declaration_label(Atom *body, unsigned group) {
     if (group == 0u && head_is(body, "TypeDecl", 2u)) return body->expr.elems[1];
     if (group == 1u && head_is(body, "GrammarRule", 5u)) return body->expr.elems[1];
+    if (group == 1u && head_is(body, "SyntaxProductionEntryV1", 2u))
+        return body->expr.elems[1]->expr.elems[1];
     if (group == 2u &&
         (head_is(body, "LexicalClassPoints", 2u) ||
          head_is(body, "LexicalClassExcept", 2u))) return body->expr.elems[1];
     if (group == 3u && head_is(body, "LexicalState", 3u)) return body->expr.elems[3];
+    if (group == 4u && (head_is(body, "RegularTokenDeclV1", 5u) ||
+                       head_is(body, "RegularTriviaDeclV1", 3u)))
+        return body->expr.elems[1];
+    if (group == 5u && (head_is(body, "ParserLineCommentV1", 2u) ||
+                       head_is(body, "ParserBlockCommentV1", 3u)))
+        return body->expr.elems[1];
     return NULL;
 }
 
 static int declaration_group(Atom *body) {
     if (head_is(body, "TypeDecl", 2u)) return 0;
     if (head_is(body, "GrammarRule", 5u)) return 1;
+    if (head_is(body, "SyntaxProductionEntryV1", 2u)) return 1;
     if (head_is(body, "LexicalClassPoints", 2u) ||
         head_is(body, "LexicalClassExcept", 2u)) return 2;
     if (head_is(body, "LexicalState", 3u)) return 3;
+    if (head_is(body, "RegularTokenDeclV1", 5u) ||
+        head_is(body, "RegularTriviaDeclV1", 3u)) return 4;
+    if (head_is(body, "ParserLineCommentV1", 2u) ||
+        head_is(body, "ParserBlockCommentV1", 3u)) return 5;
     return -1;
 }
 
@@ -101,13 +118,21 @@ static Atom *validate(Arena *arena, SyntaxViewV1 *view,
                        CettaSyntaxGsltAdmissionV1 admit) {
     char error[512] = {0};
     size_t count = 0u;
+    view->tokenized = head_is(view->profile, "GSLTParserProfileLayerV2", 5u);
     if (!head_is(view->language, "GSLTLanguageDefWireV1", 5u) ||
-        !head_is(view->profile, "GSLTParserProfileLayerV1", 4u) ||
+        (!head_is(view->profile, "GSLTParserProfileLayerV1", 4u) && !view->tokenized) ||
         !head_is(view->origins, "SyntaxOriginsV1", 4u))
         return message(arena, "malformed-envelope", "expected LanguageDef, parser profile and four origin lists");
-    if (!head_is(view->policy, "SyntaxLexicalPolicyV1", 1u) ||
-        !symbol_is(view->policy->expr.elems[1], "ScalarScannerlessAllV1"))
-        return message(arena, "unsupported-policy", "the admitted fragment retains all scannerless scalar parses");
+    if (!head_is(view->policy, "SyntaxLexicalPolicyV1", 1u))
+        return message(arena, "unsupported-policy", "expected an explicit named lexical policy");
+    if (view->tokenized) {
+        view->tokens = view->profile->expr.elems[5];
+        if (!head_is(view->tokens, "ParserTokenLayerV1", 5u) ||
+            !atom_eq(view->tokens->expr.elems[1], view->policy))
+            return message(arena, "policy-mismatch", "the syntax envelope and token profile must name the same policy");
+    } else if (!symbol_is(view->policy->expr.elems[1], "ScalarScannerlessAllV1")) {
+        return message(arena, "unsupported-policy", "the scalar profile retains all scannerless scalar parses");
+    }
     if (!admit || !admit(view->language, view->profile, error, sizeof(error)))
         return message(arena, "grammar-admission", error[0] ? error : "LanguageDef/profile admission failed");
     /* The compiler has already bounded and admitted every declaration body.
@@ -128,6 +153,18 @@ static Atom *validate(Arena *arena, SyntaxViewV1 *view,
         if (!symbol_is(rows, "LNil") || !symbol_is(origins, "LNil"))
             return message(arena, "origin-occurrence-mismatch", "each declaration needs exactly one origin, in its field order");
     }
+    if (view->tokenized) {
+        for (unsigned group = 4u; group < 6u; ++group) {
+            Atom *rows = view->tokens->expr.elems[group - 2u];
+            while (head_is(rows, "LCons", 2u)) {
+                if (count++ >= SYNTAX_GSLT_DECLARATION_LIMIT_V1)
+                    return message(arena, "resource-limit", "too many annotated lexical declarations");
+                rows = rows->expr.elems[2];
+            }
+            if (!symbol_is(rows, "LNil"))
+                return message(arena, "malformed-declaration", "expected finite lexical declaration lists");
+        }
+    }
     if (count > SIZE_MAX / sizeof(*view->entries))
         return message(arena, "resource-limit", "declaration index is too large");
     view->entries = count ? malloc(count * sizeof(*view->entries)) : NULL;
@@ -136,13 +173,43 @@ static Atom *validate(Arena *arena, SyntaxViewV1 *view,
     for (unsigned group = 0u; group < 4u; ++group) {
         Atom *rows = group_list(view, group);
         Atom *origins = view->origins->expr.elems[group + 1u];
+        Atom *metadata = view->tokenized ? view->tokens->expr.elems[4] : NULL;
         while (head_is(rows, "LCons", 2u)) {
             Atom *body = rows->expr.elems[1];
-            Atom *name[] = {atom_symbol(arena, group_name(group)), declaration_label(body, group)};
+            if (group == 1u && view->tokenized) {
+                Atom *arguments[] = {metadata->expr.elems[1], body};
+                body = form(arena, "SyntaxProductionEntryV1", arguments, 2u);
+                metadata = metadata->expr.elems[2];
+            }
+            Atom *name[] = {
+                atom_symbol(arena, group == 1u && view->tokenized
+                    ? "production-occurrence" : group_name(group)),
+                declaration_label(body, group)};
             view->entries[view->len++] = (CettaGsltOriginEntryV1){
                 origins->expr.elems[1], form(arena, "SyntaxNameV1", name, 2u), body};
             rows = rows->expr.elems[2];
             origins = origins->expr.elems[2];
+        }
+    }
+    if (view->tokenized) {
+        for (unsigned group = 4u; group < 6u; ++group) {
+            for (Atom *rows = view->tokens->expr.elems[group - 2u];
+                 head_is(rows, "LCons", 2u); rows = rows->expr.elems[2]) {
+                Atom *body = rows->expr.elems[1];
+                uint32_t origin_index = body->expr.len - 1u;
+                const char *space = head_is(body, "RegularTriviaDeclV1", 3u)
+                    ? "lexical-trivia" : group_name(group);
+                Atom *label = declaration_label(body, group);
+                if (group == 5u) {
+                    Atom *key[] = {body->expr.elems[0], label,
+                        head_is(body, "ParserBlockCommentV1", 3u)
+                            ? body->expr.elems[2] : atom_symbol(arena, "NoCommentSuffixV1")};
+                    label = form(arena, "SyntaxCommentNameV1", key, 3u);
+                }
+                Atom *name[] = {atom_symbol(arena, space), label};
+                view->entries[view->len++] = (CettaGsltOriginEntryV1){
+                    body->expr.elems[origin_index], form(arena, "SyntaxNameV1", name, 2u), body};
+            }
         }
     }
     return NULL;
@@ -153,6 +220,36 @@ static Atom *entry_witness(Arena *arena, const CettaGsltOriginEntryV1 *entry,
     Atom *arguments[] = {atom_int(arena, (int64_t)position), entry->origin,
                          entry->label, entry->body};
     return form(arena, "SyntaxDeclarationOccurrenceV1", arguments, 4u);
+}
+
+static Atom *constructor_projection(const CettaGsltOriginEntryV1 *entry) {
+    if (!head_is(entry->body, "SyntaxProductionEntryV1", 2u)) return NULL;
+    Atom *metadata = entry->body->expr.elems[1];
+    if (!head_is(metadata, "ParserProductionMetadataV1", 3u)) return NULL;
+    Atom *projection = metadata->expr.elems[3];
+    return head_is(projection, "BnfcConstructorV1", 3u) ? projection : NULL;
+}
+
+static Atom *constructor_conflict(Arena *arena, SyntaxViewV1 *first,
+                                   SyntaxViewV1 *second) {
+    if (!first->tokenized || !second->tokenized) return NULL;
+    /* Each operand has already admitted its constructor skeletons. Check
+     * the cross-operand pairs before union so a refusal retains both
+     * declaration occurrences instead of only a compiler diagnostic. */
+    for (size_t i = 0u; i < first->len; ++i) {
+        Atom *a = constructor_projection(&first->entries[i]);
+        if (!a) continue;
+        for (size_t j = 0u; j < second->len; ++j) {
+            Atom *b = constructor_projection(&second->entries[j]);
+            if (b && atom_eq(a->expr.elems[1], b->expr.elems[1]) && !atom_eq(a, b)) {
+                Atom *arguments[] = {entry_witness(arena, &first->entries[i], i),
+                    entry_witness(arena, &second->entries[j], first->len + j)};
+                return refused(arena, "constructor-signature-conflict",
+                    form(arena, "SyntaxConflictWitnessV1", arguments, 2u));
+            }
+        }
+    }
+    return NULL;
 }
 
 static Atom *join_failure(Arena *arena, SyntaxViewV1 *first, SyntaxViewV1 *second,
@@ -187,7 +284,8 @@ static Atom *admitted(Arena *arena, SyntaxViewV1 *view) {
 Atom *cetta_syntax_gslt_admit_v1(
     Arena *arena, Atom *language, Atom *profile, Atom *policy, Atom *origins,
     CettaSyntaxGsltAdmissionV1 admit) {
-    SyntaxViewV1 view = {language, profile, policy, origins, NULL, 0u};
+    SyntaxViewV1 view = {.language = language, .profile = profile,
+                        .policy = policy, .origins = origins};
     SyntaxViewV1 empty = {0};
     Atom *failure = validate(arena, &view, admit);
     CettaGsltOriginEntryV1 *checked = NULL;
@@ -235,6 +333,8 @@ Atom *cetta_syntax_gslt_join_v1(
     if (result) goto done;
     result = validate(arena, &second, admit);
     if (result) goto done;
+    result = constructor_conflict(arena, &first, &second);
+    if (result) goto done;
     if (!cetta_gslt_origin_join_v1(first.entries, first.len, second.entries, second.len,
             origin_policy, &joined, &joined_len, &witness)) {
         result = join_failure(arena, &first, &second, witness);
@@ -243,20 +343,62 @@ Atom *cetta_syntax_gslt_join_v1(
     /* LanguageDef/profile have separate ordered fields, not a global source
      * chronology. Each field retains its stable-first union subsequence. The
      * full declaration set is exactly the checked module-algebra union. */
-    Atom *rows[4], *origins[4];
-    for (unsigned group = 0u; group < 4u; ++group)
-        rows[group] = origins[group] = atom_symbol(arena, "LNil");
+    Atom *rows[6], *origins[4];
+    Atom *metadata = atom_symbol(arena, "LNil");
+    for (unsigned group = 0u; group < 6u; ++group) {
+        rows[group] = atom_symbol(arena, "LNil");
+        if (group < 4u) origins[group] = atom_symbol(arena, "LNil");
+    }
     for (size_t i = joined_len; i > 0u; --i) {
         CettaGsltOriginEntryV1 entry = joined[i - 1u];
         int group = declaration_group(entry.body);
+        if (group < 0) {
+            result = message(arena, "malformed-declaration", "checked union contains an unknown declaration");
+            goto done;
+        }
+        if (group == 1 && first.tokenized) {
+            metadata = atom_expr3(arena, atom_symbol(arena, "LCons"),
+                entry.body->expr.elems[1], metadata);
+            entry.body = entry.body->expr.elems[2];
+        }
         rows[group] = atom_expr3(arena, atom_symbol(arena, "LCons"), entry.body, rows[group]);
-        origins[group] = atom_expr3(arena, atom_symbol(arena, "LCons"), entry.origin, origins[group]);
+        if (group < 4)
+            origins[group] = atom_expr3(arena, atom_symbol(arena, "LCons"), entry.origin, origins[group]);
     }
     Atom *language_args[] = {name, rows[0], rows[1], atom_symbol(arena, "LNil"), atom_symbol(arena, "LNil")};
-    Atom *profile_args[] = {name, start, rows[2], rows[3]};
+    Atom *profile_args[] = {name, start, rows[2], rows[3], NULL};
+    if (first.tokenized) {
+        size_t capacity = 0u;
+        for (unsigned operand = 0u; operand < 2u; ++operand) {
+            Atom *list = (operand ? second.tokens : first.tokens)->expr.elems[5];
+            for (; head_is(list, "LCons", 2u); list = list->expr.elems[2]) {
+                if (capacity++ >= SYNTAX_GSLT_DECLARATION_LIMIT_V1) {
+                    result = message(arena, "resource-limit", "too many joined entrypoints");
+                    goto done;
+                }
+            }
+        }
+        Atom **entries = arena_alloc(arena, (capacity + 1u) * sizeof(*entries));
+        size_t entry_len = 0u;
+        for (unsigned operand = 0u; operand < 2u; ++operand) {
+            Atom *list = (operand ? second.tokens : first.tokens)->expr.elems[5];
+            for (; head_is(list, "LCons", 2u); list = list->expr.elems[2]) {
+                bool present = false;
+                for (size_t i = 0u; i < entry_len; ++i)
+                    if (atom_eq(entries[i], list->expr.elems[1])) { present = true; break; }
+                if (!present) entries[entry_len++] = list->expr.elems[1];
+            }
+        }
+        Atom *entrypoints = atom_symbol(arena, "LNil");
+        for (size_t i = entry_len; i > 0u; --i)
+            entrypoints = atom_expr3(arena, atom_symbol(arena, "LCons"), entries[i - 1u], entrypoints);
+        Atom *token_args[] = {first.policy, rows[4], rows[5], metadata, entrypoints};
+        profile_args[4] = form(arena, "ParserTokenLayerV1", token_args, 5u);
+    }
     SyntaxViewV1 merged = {
         .language = form(arena, "GSLTLanguageDefWireV1", language_args, 5u),
-        .profile = form(arena, "GSLTParserProfileLayerV1", profile_args, 4u),
+        .profile = form(arena, first.tokenized ? "GSLTParserProfileLayerV2" : "GSLTParserProfileLayerV1",
+                        profile_args, first.tokenized ? 5u : 4u),
         .policy = first.policy,
         .origins = form(arena, "SyntaxOriginsV1", origins, 4u),
     };
@@ -275,6 +417,10 @@ bool cetta_syntax_gslt_data_arg_v1(const char *operation, uint32_t index) {
     static const char library[] = "__cetta_lib_", syntax[] = "syntax_gslt_";
     if (!operation || strncmp(operation, library, sizeof library - 1u)) return false;
     operation += sizeof library - 1u;
+    if (!strcmp(operation, "lbnf_bootstrap_v1")) return index == 0u;
+    if (!strcmp(operation, "lbnf_finish_v1")) return index == 0u;
+    if (!strcmp(operation, "lbnf_document_v1")) return index < 2u;
+    if (!strcmp(operation, "lbnf_lower_v1")) return index < 4u;
     if (!strcmp(operation, "authored_parser_load_values")) return index < 2u;
     if (strncmp(operation, syntax, sizeof syntax - 1u)) return false;
     operation += sizeof syntax - 1u;

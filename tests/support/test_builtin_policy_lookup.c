@@ -27,7 +27,7 @@ int main(void) {
         /* Prefixes, extensions and one-byte changes exercise both sides of
          * each boundary, including neighbors that are also policy names. */
         for (size_t position = 0; position <= length; position++) {
-            for (unsigned byte = 0; byte < 128u; byte++) {
+            for (unsigned byte = 0; byte < 256u; byte++) {
                 neighbor[position] = (char)byte;
                 neighbor[length + 1u] = '\0';
                 if (cetta_builtin_policy_lookup(neighbor) != linear_policy(neighbor))

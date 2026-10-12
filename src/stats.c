@@ -977,6 +977,21 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "term-order-product-edge",
     "term-match-subject-view",
     "term-match-pair-visit",
+    "match-path-count-admission",
+    "petta-conjunction-count-fold",
+    "match-relational-count-admission",
+    "match-relational-prepare-rows",
+    "match-relational-key-seeks",
+    "match-relational-prefixes",
+    "match-position-index-build",
+    "match-position-index-build-row",
+    "match-position-index-lookup",
+    "match-position-index-key-probe",
+    "match-position-index-candidate",
+    "match-position-index-broad-decline",
+    "match-position-index-append-row",
+    "match-position-index-alloc-bytes",
+    "match-position-index-free-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

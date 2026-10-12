@@ -181,6 +181,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * same unfolding, whatever part of it is open. */
 #define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000100)
 #define ATOM_STRUCTURAL_HAS_PETTA_NONLIST UINT32_C(0x00000200)
+/* Every reachable Atom allocation is global or in this atom's arena, and
+ * every external leaf is a native-handle holder retained by that arena.
+ * This is a conjunction over children, not an inherited occurrence bit.
+ * It certifies carrier lifetime only: it grants neither a shallow-copy or
+ * hash-cons licence nor permission to use a closed registry resource. */
+#define ATOM_STRUCTURAL_OWNER_CLOSED UINT32_C(0x00000400)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -189,14 +195,16 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_GENERATION_CLOSED +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
-                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST ==
+                       ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
+                       ATOM_STRUCTURAL_OWNER_CLOSED ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
                     ATOM_STRUCTURAL_GENERATION_CLOSED |
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
                     ATOM_STRUCTURAL_HAS_RATIONAL |
-                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST),
+                    ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
+                    ATOM_STRUCTURAL_OWNER_CLOSED),
                "structural fact bits overlap");
 
 /*
@@ -677,13 +685,23 @@ bool  arena_owns_atom(const Arena *a, const Atom *atom);
  * permitted.  Identity-bearing external resources deliberately fail. */
 bool  atom_graph_is_closed_for_arena(const Arena *arena,
                                      const Atom *atom);
+/* A retained-resource carrier has a lifetime certificate distinct from the
+ * stronger arena-closed certificate consumed by shallow-copy fast paths. */
+static inline bool atom_graph_has_owner_closure(const Atom *atom) {
+    const uint32_t owned = ATOM_STRUCTURAL_FACTS_VALID |
+                           ATOM_STRUCTURAL_OWNER_CLOSED;
+    return atom && ((atom->flags & ATOM_FLAG_ARENA_CLOSED) != 0u ||
+                   (atom->structural_facts & owned) == owned);
+}
+bool  atom_graph_is_owner_closed_for_arena(const Arena *arena,
+                                           const Atom *atom);
 /* Whether a copy into `arena` may share `atom` as it is: the atom is closed
  * in `arena`, or in `arena`'s older generation, across the generations it
  * reaches.  Globally owned atoms are not shared this way. */
 bool  atom_settled_for_arena(const Arena *arena, const Atom *atom);
-/* Exact bounds of every arena identity reachable through ordinary atom-owned
- * storage.  Identity-bearing external resources are intentionally
- * unsupported. */
+/* Exact bounds of arena identities in the Atom carrier. Arena-retained native
+ * handle control cells have independent lifetime; other external references
+ * make these bounds incomplete. This is not a resource-payload census. */
 bool  atom_graph_arena_id_bounds(const Atom *atom,
                                  uint32_t *min_id,
                                  uint32_t *max_id);
@@ -1109,6 +1127,8 @@ Atom *atom_variable_type(Arena *a);    /* Symbol "Variable" */
 Atom *atom_expression_type(Arena *a);  /* Symbol "Expression" */
 Atom *atom_grounded_type(Arena *a);    /* Symbol "Grounded" */
 Atom *atom_list_type(Arena *a);        /* Symbol "List": metatype and type of a list */
+/* Metatype identity in the current symbol context, without constructing an atom. */
+SymbolId atom_meta_type_id(const Atom *atom);
 Atom *get_meta_type(Arena *a, Atom *atom);  /* Meta-type of atom */
 bool atom_is_meta_type(Atom *type);
 bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
@@ -1223,6 +1243,11 @@ char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
 Atom *atom_deep_copy(Arena *dst, Atom *src);
+/* A single publication root, with the same ownership policy as a default
+ * copy session: reuse a destination-closed graph, otherwise copy it while
+ * preserving its internal sharing. Related exported roots still require a
+ * shared session. */
+Atom *atom_deep_copy_single(Arena *dst, Atom *src);
 typedef Atom *(*AtomDeepCopyResolver)(void *context, Atom *src);
 typedef Atom *(*AtomDeepCopyLeafMap)(Arena *dst, Atom *src, void *context);
 /* A fixed observation policy may expose another expression's children, or

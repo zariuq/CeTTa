@@ -155,31 +155,22 @@ def parse_sexprs(text: str, *, source: str = "<text>") -> list[SExpr]:
         else:
             tokens.append(Symbol(spelling))
 
-    index = 0
-
-    def parse_one() -> SExpr:
-        nonlocal index
-        if index >= len(tokens):
-            raise SchemaError(f"{source}: unexpected end of input")
-        token = tokens[index]
-        index += 1
-        if token == "(":
-            values: list[SExpr] = []
-            while True:
-                if index >= len(tokens):
-                    raise SchemaError(f"{source}: unclosed '('")
-                if tokens[index] == ")":
-                    index += 1
-                    return tuple(values)
-                values.append(parse_one())
-        if token == ")":
-            raise SchemaError(f"{source}: unexpected ')'")
-        assert not isinstance(token, str)
-        return token
-
     forms: list[SExpr] = []
-    while index < len(tokens):
-        forms.append(parse_one())
+    stack: list[list[SExpr]] = []
+    for token in tokens:
+        if token == "(":
+            stack.append([])
+            continue
+        if token == ")":
+            if not stack:
+                raise SchemaError(f"{source}: unexpected ')'")
+            value: SExpr = tuple(stack.pop())
+        else:
+            assert not isinstance(token, str)
+            value = token
+        (stack[-1] if stack else forms).append(value)
+    if stack:
+        raise SchemaError(f"{source}: unclosed '('")
     return forms
 
 

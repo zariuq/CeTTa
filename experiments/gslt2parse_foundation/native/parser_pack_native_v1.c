@@ -2997,6 +2997,153 @@ done:
     return ok;
 }
 
+void ppnative_v1_token_binding_plan_init(PPNativeV1TokenBindingPlan *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+    arena_init(&plan->arena);
+}
+
+void ppnative_v1_token_binding_plan_free(PPNativeV1TokenBindingPlan *plan) {
+    if (!plan) return;
+    free(plan->states);
+    free(plan->terminals);
+    free(plan->productions);
+    free(plan->items);
+    arena_free(&plan->arena);
+    memset(plan, 0, sizeof(*plan));
+}
+
+bool ppnative_v1_token_binding_plan_build(
+    const PPABIV1Pack *pack, const Atom *start,
+    const PPNativeV1TokenBindingInput *inputs, uint32_t input_len,
+    PPNativeV1TokenBindingPlan *out, char *error_buf, size_t error_buf_size) {
+    PPNativeV1TokenBindingPlan candidate;
+    bool ok = false;
+    ppnative_v1_token_binding_plan_init(&candidate);
+    if (error_buf && error_buf_size) error_buf[0] = '\0';
+    if (!pack || !start || !out || (input_len && !inputs) ||
+        pack->state_len > INT32_MAX || input_len > INT32_MAX - pack->state_len ||
+        input_len > UINT32_MAX - pack->terminal_len ||
+        input_len > UINT32_MAX - pack->production_len) {
+        ppnative_v1_set_error(error_buf, error_buf_size, "bad token-binding plan arguments");
+        goto done;
+    }
+    if (input_len) {
+        candidate.states = calloc(input_len, sizeof(*candidate.states));
+        candidate.terminals = calloc(input_len, sizeof(*candidate.terminals));
+        candidate.productions = calloc(input_len, sizeof(*candidate.productions));
+        candidate.items = calloc(input_len, 2u * sizeof(*candidate.items));
+        if (!candidate.states || !candidate.terminals ||
+            !candidate.productions || !candidate.items) {
+            ppnative_v1_set_error(error_buf, error_buf_size, "token-binding plan allocation failed");
+            goto done;
+        }
+    }
+    candidate.extension.states = candidate.states;
+    candidate.extension.terminals = candidate.terminals;
+    candidate.extension.productions = candidate.productions;
+    candidate.extension.terminal_len = input_len;
+    candidate.extension.production_len = input_len;
+    for (uint32_t i = 0u; i < input_len; ++i) {
+        Atom *state, *tag, *terminal_identity, *rhs, *action;
+        Atom **fields;
+        int32_t found;
+        int32_t prefix_id = -1;
+        uint32_t state_id;
+        uint8_t *bytes = NULL;
+        size_t byte_len;
+        if (!inputs[i].state || !inputs[i].tag ||
+            !fh_ground_term_v1_render((Atom *)inputs[i].state, &bytes, &byte_len,
+                error_buf, error_buf_size)) goto done;
+        free(bytes);
+        if (inputs[i].prefix_state) {
+            prefix_id = ppnative_v1_state_find(pack, inputs[i].prefix_state);
+            if (prefix_id < 0) {
+                ppnative_v1_set_error(error_buf, error_buf_size,
+                    "token-binding prefix is not a declared base state");
+                goto done;
+            }
+        }
+        bytes = NULL;
+        if (!fh_ground_term_v1_render((Atom *)inputs[i].tag, &bytes, &byte_len,
+                error_buf, error_buf_size)) goto done;
+        free(bytes);
+        for (uint32_t j = 0u; j < i; ++j) {
+            if (atom_eq((Atom *)inputs[i].state, (Atom *)inputs[j].state) ||
+                atom_eq((Atom *)inputs[i].tag, (Atom *)inputs[j].tag)) {
+                ppnative_v1_set_error(error_buf, error_buf_size, "duplicate token-binding state or tag");
+                goto done;
+            }
+        }
+        found = ppnative_v1_state_find(pack, inputs[i].state);
+        if (found >= 0) {
+            state_id = (uint32_t)found;
+            for (uint32_t j = 0u; j < pack->production_len; ++j) {
+                if (pack->productions[j].lhs_state_id == state_id) {
+                    ppnative_v1_set_error(error_buf, error_buf_size,
+                        "token-binding state already has a base grammar production");
+                    goto done;
+                }
+            }
+        } else {
+            state_id = pack->state_len + candidate.extension.state_len;
+        }
+        state = atom_deep_copy(&candidate.arena, (Atom *)inputs[i].state);
+        tag = atom_deep_copy(&candidate.arena, (Atom *)inputs[i].tag);
+        if (!state || !tag) goto done;
+        if (found < 0) {
+            candidate.states[candidate.extension.state_len++] =
+                (PPNativeV1StateExtension){state_id, state};
+        }
+        terminal_identity = atom_expr2(&candidate.arena,
+            atom_symbol(&candidate.arena, "pp-span-terminal"), tag);
+        candidate.terminals[i] = (PPNativeV1TerminalExtension){
+            pack->terminal_len + i, terminal_identity};
+        candidate.items[2u * i + (prefix_id >= 0 ? 1u : 0u)] = (PPABIV1Item){
+            PPABI_V1_ITEM_TERMINAL, candidate.terminals[i].terminal_id};
+        rhs = atom_expr3(&candidate.arena, atom_symbol(&candidate.arena, "pp-items-cons"),
+            atom_expr2(&candidate.arena, atom_symbol(&candidate.arena, "pp-terminal"),
+                terminal_identity), atom_symbol(&candidate.arena, "pp-items-nil"));
+        action = atom_expr2(&candidate.arena, atom_symbol(&candidate.arena, "pa-slot"),
+            prefix_id >= 0
+                ? atom_expr2(&candidate.arena, atom_symbol(&candidate.arena, "q-succ"),
+                    atom_symbol(&candidate.arena, "q-zero"))
+                : atom_symbol(&candidate.arena, "q-zero"));
+        if (prefix_id >= 0) {
+            Atom *prefix = atom_deep_copy(&candidate.arena, (Atom *)inputs[i].prefix_state);
+            candidate.items[2u * i] = (PPABIV1Item){
+                PPABI_V1_ITEM_NONTERMINAL, (uint32_t)prefix_id};
+            rhs = atom_expr3(&candidate.arena, atom_symbol(&candidate.arena, "pp-items-cons"),
+                atom_expr2(&candidate.arena, atom_symbol(&candidate.arena, "pp-nonterminal"),
+                    prefix), rhs);
+        }
+        fields = arena_alloc(&candidate.arena, 5u * sizeof(*fields));
+        if (!fields || !rhs || !action) goto done;
+        fields[0] = atom_symbol(&candidate.arena, "pp-production");
+        fields[1] = atom_expr2(&candidate.arena, atom_symbol(&candidate.arena, "pp-token-binding"), tag);
+        fields[2] = state;
+        fields[3] = rhs;
+        fields[4] = action;
+        candidate.productions[i] = (PPNativeV1ProductionExtension){
+            .production_id = pack->production_len + i,
+            .identity = atom_expr(&candidate.arena, fields, 5u),
+            .lhs_state_id = state_id, .items = &candidate.items[2u * i],
+            .item_len = prefix_id >= 0 ? 2u : 1u, .action = action,
+        };
+    }
+    if (!ppnative_v1_start_is_closed_extended(pack, start, &candidate.extension,
+            error_buf, error_buf_size)) goto done;
+    ppnative_v1_token_binding_plan_free(out);
+    *out = candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    ok = true;
+done:
+    ppnative_v1_token_binding_plan_free(&candidate);
+    if (!ok && error_buf && error_buf_size && !error_buf[0])
+        ppnative_v1_set_error(error_buf, error_buf_size, "token-binding plan construction failed");
+    return ok;
+}
+
 bool ppnative_v1_grammar_extend(
     const PPABIV1Pack *pack,
     const PPNativeV1ForestExtension *extension,
@@ -3253,16 +3400,18 @@ bool ppnative_v1_finish(PPNativeV1Result *result,
         error_buf, error_buf_size);
 }
 
-bool ppnative_v1_materialize_canonical_forest(
+bool ppnative_v1_materialize_canonical_forest_extended(
     PPNativeV1Result *result,
     const PPABIV1Pack *pack,
     const Atom *start_state,
+    const PPNativeV1ForestExtension *extension,
     uint32_t item_limit,
     char *error_buf,
     size_t error_buf_size) {
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!result || !pack || !start_state || item_limit == 0u) {
+    if (!result || !pack || !start_state || item_limit == 0u ||
+        (extension && !ppnative_v1_extension_valid(pack, extension, error_buf, error_buf_size))) {
         ppnative_v1_set_error(
             error_buf, error_buf_size,
             "bad canonical forest materialization arguments");
@@ -3279,8 +3428,19 @@ bool ppnative_v1_materialize_canonical_forest(
     if (result->canonical_forest_materialized)
         return result->canonical_forest != NULL;
     return ppnative_v1_forest_canonicalize(
-               result, pack, start_state, NULL, item_limit,
+               result, pack, start_state, extension, item_limit,
                error_buf, error_buf_size) &&
         result->canonical_forest_materialized &&
         result->canonical_forest != NULL;
+}
+
+bool ppnative_v1_materialize_canonical_forest(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    uint32_t item_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppnative_v1_materialize_canonical_forest_extended(
+        result, pack, start_state, NULL, item_limit, error_buf, error_buf_size);
 }

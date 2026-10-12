@@ -1,6 +1,7 @@
 #include "term_canon.h"
 #include <time.h>
 #include "space.h"
+#include "space_path_index.h"
 #include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
@@ -271,6 +272,8 @@ typedef struct {
         CettaIndex *many;
     } payload;
     CettaIndex count;
+    /* Zero means never populated; one is the inline slot, even after its
+     * occurrence is removed.  Larger capacities own an array. */
     CettaIndex capacity;
 } DiscLeafStore;
 
@@ -314,10 +317,20 @@ _Static_assert(sizeof(DiscBlock) % 16u == 0u,
                "trie blocks keep 16-byte alignment");
 
 typedef struct {
+    DiscNode **nodes;
+    size_t len;
+    size_t capacity;
+} DiscNodeVector;
+
+typedef struct {
     DiscChunk *chunks;
     DiscBlock **blocks;
     size_t block_len;
     size_t block_cap;
+    /* Materialized only by coordinate transport.  Each populated node is
+     * registered once, and stays registered when its leaf becomes empty. */
+    DiscNodeVector coordinate_leaves;
+    bool coordinate_leaves_ready;
     bool approximate;
 } DiscPool;
 
@@ -442,6 +455,7 @@ void disc_node_free(DiscNode *n) {
     for (size_t i = 0u; i < pool->block_len; i++)
         free(pool->blocks[i]);
     free(pool->blocks);
+    free(pool->coordinate_leaves.nodes);
     DiscChunk *chunk = pool->chunks;
     while (chunk) {
         DiscChunk *next = chunk->next;
@@ -452,88 +466,88 @@ void disc_node_free(DiscNode *n) {
 }
 
 static CettaIndex disc_leaf_at(const DiscNode *node, CettaIndex index) {
-    return node->leaves.capacity > 0u
+    return node->leaves.capacity > 1u
         ? node->leaves.payload.many[index]
         : node->leaves.payload.one;
 }
 
 static void disc_leaf_set(
         DiscNode *node, CettaIndex index, CettaIndex value) {
-    if (node->leaves.capacity > 0u)
+    if (node->leaves.capacity > 1u)
         node->leaves.payload.many[index] = value;
     else
         node->leaves.payload.one = value;
 }
 
-static CettaCount disc_node_transport_stable_coordinates(
-        DiscNode *node, const CettaIndex *source_to_target,
-        CettaCount source_len) {
+static void disc_node_vector_push(DiscNodeVector *vector, DiscNode *node) {
     if (!node)
-        return 0u;
-
-    CettaIndex write = 0u;
-    CettaCount removed = 0u;
-    for (CettaIndex read = 0u; read < node->leaves.count; read++) {
-        CettaIndex source = disc_leaf_at(node, read);
-        if (source >= source_len) {
-            fputs("CeTTa: clean discrimination index contains an invalid "
-                  "occurrence coordinate\n", stderr);
+        return;
+    if (vector->len == vector->capacity) {
+        size_t limit = SIZE_MAX / sizeof(*vector->nodes);
+        if (vector->capacity == limit) {
+            fputs("CeTTa: discrimination leaf registry capacity exhausted\n",
+                  stderr);
             abort();
         }
-        CettaIndex target = source_to_target[source];
-        if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED) {
-            removed++;
+        size_t capacity = vector->capacity ?
+            (vector->capacity > limit / 2u ? limit : vector->capacity * 2u) : 16u;
+        vector->nodes = cetta_realloc(vector->nodes,
+                                     capacity * sizeof(*vector->nodes));
+        vector->capacity = capacity;
+    }
+    vector->nodes[vector->len++] = node;
+}
+
+/* Build once with an explicit worklist.  Later transports touch only leaf
+ * stores; neither term depth nor unused hash slots enter their visit count.
+ * New leaves join this registry in disc_add_leaf.  The owning pool releases
+ * it together with the trie, including detached snapshot tries. */
+static void disc_prepare_coordinate_leaves(DiscPool *pool, DiscNode *root) {
+    DiscNodeVector pending = {0};
+    disc_node_vector_push(&pending, root);
+    while (pending.len) {
+        DiscNode *node = pending.nodes[--pending.len];
+        if (node->leaves.capacity != 0u)
+            disc_node_vector_push(&pool->coordinate_leaves, node);
+        if (node->edges.kind != DISC_EDGE_MANY) {
+            if (node->edges.kind != DISC_EDGE_EMPTY)
+                disc_node_vector_push(&pending, node->edges.payload.one.child);
             continue;
         }
-        disc_leaf_set(node, write++, target);
-    }
-    node->leaves.count = write;
-
-    if (node->edges.kind == DISC_EDGE_MANY) {
         DiscBranchSet *branches = node->edges.payload.many;
         if (branches->sym_hashed) {
             uint32_t cap = branches->sym_ht.mask + 1u;
             for (uint32_t i = 0u; i < cap; i++) {
                 if (branches->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
-                    removed += disc_node_transport_stable_coordinates(
-                        branches->sym_ht.entries[i].child,
-                        source_to_target, source_len);
+                    disc_node_vector_push(&pending,
+                        branches->sym_ht.entries[i].child);
                 }
             }
         } else {
             for (uint32_t i = 0u; i < branches->nsym; i++) {
-                removed += disc_node_transport_stable_coordinates(
-                    branches->sym[i].child, source_to_target,
-                    source_len);
+                disc_node_vector_push(&pending, branches->sym[i].child);
             }
         }
-        removed += disc_node_transport_stable_coordinates(
-            branches->var_child, source_to_target, source_len);
+        disc_node_vector_push(&pending, branches->var_child);
         for (uint32_t i = 0u; i < branches->nexpr; i++) {
-            removed += disc_node_transport_stable_coordinates(
-                branches->expr[i].child, source_to_target, source_len);
+            disc_node_vector_push(&pending, branches->expr[i].child);
         }
         if (branches->ints_hashed) {
             uint32_t cap = branches->int_ht.mask + 1u;
             for (uint32_t i = 0u; i < cap; i++) {
                 if (branches->int_ht.entries[i].child) {
-                    removed += disc_node_transport_stable_coordinates(
-                        branches->int_ht.entries[i].child,
-                        source_to_target, source_len);
+                    disc_node_vector_push(&pending,
+                        branches->int_ht.entries[i].child);
                 }
             }
         } else {
             for (uint32_t i = 0u; i < branches->nints; i++) {
-                removed += disc_node_transport_stable_coordinates(
-                    branches->ints[i].child, source_to_target,
-                    source_len);
+                disc_node_vector_push(&pending, branches->ints[i].child);
             }
         }
-    } else if (node->edges.kind != DISC_EDGE_EMPTY) {
-        removed += disc_node_transport_stable_coordinates(
-            node->edges.payload.one.child, source_to_target, source_len);
     }
-    return removed;
+    free(pending.nodes);
+    pool->coordinate_leaves_ready = true;
 }
 
 CettaCount disc_transport_stable_coordinates(
@@ -541,17 +555,44 @@ CettaCount disc_transport_stable_coordinates(
         CettaCount source_len) {
     if (!root || (!source_to_target && source_len != 0u))
         return 0u;
-    return disc_node_transport_stable_coordinates(
-        root, source_to_target, source_len);
+    DiscPool *pool = disc_root_pool(root);
+    if (!pool->coordinate_leaves_ready)
+        disc_prepare_coordinate_leaves(pool, root);
+    CettaCount removed = 0u;
+    for (size_t i = 0u; i < pool->coordinate_leaves.len; i++) {
+        DiscNode *node = pool->coordinate_leaves.nodes[i];
+        CettaIndex write = 0u;
+        for (CettaIndex read = 0u; read < node->leaves.count; read++) {
+            CettaIndex source = disc_leaf_at(node, read);
+            if (source >= source_len) {
+                fputs("CeTTa: clean discrimination index contains an invalid "
+                      "occurrence coordinate\n", stderr);
+                abort();
+            }
+            CettaIndex target = source_to_target[source];
+            if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED) {
+                removed++;
+                continue;
+            }
+            disc_leaf_set(node, write++, target);
+        }
+        node->leaves.count = write;
+    }
+    return removed;
 }
 
 static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
-    if (n->leaves.count == 0u && n->leaves.capacity == 0u) {
+    if (n->leaves.capacity == 0u) {
+        if (pool->coordinate_leaves_ready)
+            disc_node_vector_push(&pool->coordinate_leaves, n);
+        n->leaves.capacity = 1u;
+    }
+    if (n->leaves.count == 0u && n->leaves.capacity == 1u) {
         n->leaves.payload.one = idx;
         n->leaves.count = 1u;
         return;
     }
-    if (n->leaves.capacity == 0u) {
+    if (n->leaves.capacity == 1u) {
         CettaIndex first = n->leaves.payload.one;
         n->leaves.capacity = 4u;
         n->leaves.payload.many = disc_pool_alloc(
@@ -1075,12 +1116,15 @@ typedef struct {
 static void dns_init(DiscNodeSet *s) { s->nodes = NULL; s->n = 0; s->c = 0; }
 static void dns_free(DiscNodeSet *s) { free(s->nodes); s->nodes = NULL; s->n = 0; s->c = 0; }
 
-static void dns_push(DiscNodeSet *s, DiscNode *node) {
+static __attribute__((noinline)) void dns_grow(DiscNodeSet *s) {
+    s->c = s->c ? s->c * 2 : 8;
+    s->nodes = cetta_realloc(s->nodes, sizeof(DiscNode *) * s->c);
+}
+
+static inline __attribute__((always_inline)) void dns_push(DiscNodeSet *s, DiscNode *node) {
     if (!node) return;
-    if (s->n >= s->c) {
-        s->c = s->c ? s->c * 2 : 8;
-        s->nodes = cetta_realloc(s->nodes, sizeof(DiscNode *) * s->c);
-    }
+    if (s->n >= s->c)
+        dns_grow(s);
     s->nodes[s->n++] = node;
 }
 
@@ -1416,148 +1460,137 @@ void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
         memset(cursor, 0, sizeof(*cursor));
 }
 
-typedef struct {
-    uint32_t node;
-    CettaIndex leaf;
-} SpaceOccurrenceCursorHead;
-
-static bool space_occurrence_cursor_head_before(
-        SpaceOccurrenceCursorHead left, SpaceOccurrenceCursorHead right) {
-    return left.leaf < right.leaf;
+static CettaIndex space_occurrence_cursor_head(
+        const SpaceOccurrenceCursor *cursor, uint32_t node, CettaIndex leaf) {
+    return (leaf << cursor->heap_node_bits) | node;
 }
 
 static void space_occurrence_cursor_heap_push(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len,
-        SpaceOccurrenceCursorHead item) {
-    uint32_t index = (*len)++;
+        SpaceOccurrenceCursor *cursor, CettaIndex head) {
+    uint32_t index = cursor->heap_len++;
     while (index > 0u) {
         uint32_t parent = (index - 1u) / 2u;
-        if (!space_occurrence_cursor_head_before(item, heap[parent]))
+        if (head >= cursor->heap[parent])
             break;
-        heap[index] = heap[parent];
+        cursor->heap[index] = cursor->heap[parent];
         index = parent;
     }
-    heap[index] = item;
+    cursor->heap[index] = head;
 }
 
-static SpaceOccurrenceCursorHead space_occurrence_cursor_heap_pop(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len) {
-    SpaceOccurrenceCursorHead top = heap[0];
-    uint32_t count = --(*len);
-    if (count == 0u)
-        return top;
-    SpaceOccurrenceCursorHead last = heap[count];
-    uint32_t index = 0u;
-    for (;;) {
+static void space_occurrence_cursor_heap_sift(
+        SpaceOccurrenceCursor *cursor, uint32_t index, CettaIndex head) {
+    while (index < cursor->heap_len / 2u) {
         uint32_t left = index * 2u + 1u;
-        uint32_t right;
-        uint32_t child;
-        if (left >= count)
-            break;
-        right = left + 1u;
-        child = (right < count &&
-                 space_occurrence_cursor_head_before(heap[right], heap[left]))
+        uint32_t right = left + 1u;
+        uint32_t child = (right < cursor->heap_len &&
+                          cursor->heap[right] < cursor->heap[left])
             ? right : left;
-        if (!space_occurrence_cursor_head_before(heap[child], last))
+        if (cursor->heap[child] >= head)
             break;
-        heap[index] = heap[child];
+        cursor->heap[index] = cursor->heap[child];
         index = child;
     }
-    heap[index] = last;
+    cursor->heap[index] = head;
+}
+
+static CettaIndex space_occurrence_cursor_heap_pop(SpaceOccurrenceCursor *cursor) {
+    CettaIndex top = cursor->heap[0];
+    if (--cursor->heap_len > 0u)
+        space_occurrence_cursor_heap_sift(
+            cursor, 0u, cursor->heap[cursor->heap_len]);
     return top;
 }
 
-/* One declaration-order pass over a frontier that would otherwise be
- * re-scanned at every answer. A single node is already a constant step.
- * Allocation failure leaves the node scan in place. */
-static void space_occurrence_cursor_flatten(SpaceOccurrenceCursor *cursor) {
-    CettaCount total = 0u;
-    CettaCount view_len;
-    CettaIndex *flat = NULL;
-    SpaceOccurrenceCursorHead *heap = NULL;
-    SpaceOccurrenceCursorHead *deferred = NULL;
-    uint32_t heap_len = 0u;
-    CettaIndex written = 0u;
-    if (!cursor || cursor->full_scan || cursor->node_len <= 1u ||
-        !cursor->nodes || !cursor->leaf_pos || !cursor->occurrences)
+/* Build a frontier from current positions in linear time. Pulling reads only
+ * the least heads; a cancelled prefix never visits the remaining leaf bag.
+ * Allocation failure retains the same declaration-order node scan. */
+static void space_occurrence_cursor_prepare_heap(SpaceOccurrenceCursor *cursor) {
+    size_t bytes;
+    if (cursor->full_scan || cursor->flat_mode || cursor->node_len <= 1u ||
+        __builtin_mul_overflow((size_t)cursor->node_len,
+                              sizeof(*cursor->heap), &bytes))
         return;
+    uint32_t bits = 0u;
+    for (uint32_t top = cursor->node_len - 1u; top > 0u; top >>= 1u)
+        bits++;
+    /* Integer comparison orders occurrences first and branch ordinals second.
+     * Wider coordinate ranges retain the position-preserving node scan. */
+    if (cursor->ceiling > 0u &&
+        cursor->ceiling - 1u > (UINT64_MAX >> bits))
+        return;
+    cursor->heap = cetta_malloc(bytes);
+    if (!cursor->heap)
+        return;
+    cursor->heap_node_bits = bits;
     for (uint32_t index = 0u; index < cursor->node_len; index++) {
         DiscNode *node = cursor->nodes[index];
-        if (!node)
+        CettaIndex position = cursor->leaf_pos[index];
+        if (!node || position >= node->leaves.count)
             continue;
-        if (node->leaves.count > UINT64_MAX - total)
-            return;
-        total += node->leaves.count;
-    }
-    if (total == 0u) {
-        cursor->flat_mode = true;
-        return;
-    }
-    if (total > SIZE_MAX / sizeof(*flat))
-        return;
-    flat = cetta_malloc(sizeof(*flat) * (size_t)total);
-    heap = cetta_malloc(sizeof(*heap) * cursor->node_len);
-    deferred = cetta_malloc(sizeof(*deferred) * cursor->node_len);
-    if (!flat || !heap || !deferred) {
-        free(flat);
-        free(heap);
-        free(deferred);
-        return;
-    }
-    view_len = space_pinned_occurrences_len(cursor->occurrences);
-    for (uint32_t index = 0u; index < cursor->node_len; index++) {
-        DiscNode *node = cursor->nodes[index];
-        CettaIndex leaf;
-        if (!node || node->leaves.count == 0u)
-            continue;
-        leaf = disc_leaf_at(node, 0u);
-        if (leaf >= cursor->ceiling) {
+        if (disc_leaf_at(node, position) >= cursor->ceiling) {
             cursor->leaf_pos[index] = node->leaves.count;
             continue;
         }
-        space_occurrence_cursor_heap_push(
-            heap, &heap_len,
-            (SpaceOccurrenceCursorHead){.node = index, .leaf = leaf});
+        cursor->heap[cursor->heap_len++] = space_occurrence_cursor_head(
+            cursor, index, disc_leaf_at(node, position));
     }
-    while (heap_len > 0u) {
-        CettaIndex best = heap[0].leaf;
+    for (uint32_t index = cursor->heap_len / 2u; index > 0u; index--)
+        space_occurrence_cursor_heap_sift(cursor, index - 1u,
+                                         cursor->heap[index - 1u]);
+}
+
+static bool space_occurrence_cursor_heap_next(
+        SpaceOccurrenceCursor *cursor, CettaCount view_len, CettaIndex *out) {
+    CettaIndex mask = (UINT64_C(1) << cursor->heap_node_bits) - 1u;
+    while (cursor->heap_len > 0u) {
+        CettaIndex best = cursor->heap[0] >> cursor->heap_node_bits;
         uint32_t deferred_len = 0u;
-        while (heap_len > 0u && heap[0].leaf == best) {
-            SpaceOccurrenceCursorHead head =
-                space_occurrence_cursor_heap_pop(heap, &heap_len);
-            DiscNode *node = cursor->nodes[head.node];
-            CettaIndex position = ++cursor->leaf_pos[head.node];
-            CettaIndex next;
-            if (!node || position >= node->leaves.count)
+        while (cursor->heap_len > 0u &&
+                (cursor->heap[0] >> cursor->heap_node_bits) == best) {
+            uint32_t head = (uint32_t)(space_occurrence_cursor_heap_pop(cursor) & mask);
+            DiscNode *node = cursor->nodes[head];
+            CettaIndex position = ++cursor->leaf_pos[head];
+            if (position >= node->leaves.count)
                 continue;
-            next = disc_leaf_at(node, position);
-            if (next >= cursor->ceiling) {
-                cursor->leaf_pos[head.node] = node->leaves.count;
+            if (disc_leaf_at(node, position) >= cursor->ceiling) {
+                cursor->leaf_pos[head] = node->leaves.count;
                 continue;
             }
-            deferred[deferred_len++] = (SpaceOccurrenceCursorHead){
-                .node = head.node,
-                .leaf = next,
-            };
+            /* Popping frees at least one slot. Queue successor heads at the
+             * high end, then insert from low to high so no unread head moves. */
+            cursor->heap[cursor->node_len - ++deferred_len] =
+                space_occurrence_cursor_head(
+                    cursor, head, disc_leaf_at(node, position));
         }
-        for (uint32_t index = 0u; index < deferred_len; index++)
-            space_occurrence_cursor_heap_push(
-                heap, &heap_len, deferred[index]);
-        if (best < view_len)
-            flat[written++] = best;
+        for (uint32_t index = cursor->node_len - deferred_len;
+             index < cursor->node_len; index++)
+            space_occurrence_cursor_heap_push(cursor, cursor->heap[index]);
+        if (best < view_len) {
+            *out = best;
+            return true;
+        }
     }
-    free(heap);
-    free(deferred);
-    memset(cursor->leaf_pos, 0,
-           sizeof(*cursor->leaf_pos) * cursor->node_len);
-    if (written == 0u) {
-        free(flat);
-        flat = NULL;
+    return false;
+}
+
+/* A clean native index stores each source occurrence in exactly one leaf.
+ * After deduplicating selected leaf nodes, their lengths therefore certify
+ * full coverage without reading or copying the occurrence bag. Stale leaf
+ * coordinates do not carry that certificate. */
+static bool space_occurrence_cursor_frontier_is_full(
+        const Space *space, const DiscNodeSet *frontier, uint32_t length) {
+    const SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->match_trie_dirty || state->match_trie_stale_occurrences != 0u)
+        return false;
+    CettaCount selected = 0u;
+    for (uint32_t index = 0u; index < length; index++) {
+        CettaCount count = frontier->nodes[index]->leaves.count;
+        if (count > space->native.len - selected)
+            return false;
+        selected += count;
     }
-    cursor->flat = flat;
-    cursor->flat_len = written;
-    cursor->flat_next = 0u;
-    cursor->flat_mode = true;
+    return selected == space->native.len;
 }
 
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
@@ -1581,7 +1614,9 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         return space_read_token_prefix_intact(cursor->read);
     }
     if (space_match_native_try_cold_candidates(
-            s, pattern, &cursor->flat, &cursor->flat_len)) {
+            s, pattern, &cursor->flat, &cursor->flat_len) ||
+        (space_path_index_may_select(pattern) &&
+         space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len))) {
         cursor->flat_mode = true;
         cursor->pinned = true;
         cursor->occurrences = space_pinned_occurrences_acquire(s);
@@ -1605,6 +1640,13 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
             continue;
         final.nodes[unique++] = final.nodes[i];
     }
+    if (space_occurrence_cursor_frontier_is_full(s, &final, unique)) {
+        dns_free(&final);
+        cursor->full_scan = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return true;
+    }
     cursor->node_len = unique;
     if (unique > 0u) {
         cursor->nodes = cetta_malloc(sizeof(*cursor->nodes) * unique);
@@ -1622,126 +1664,93 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     dns_free(&final);
     cursor->pinned = true;
     cursor->occurrences = space_pinned_occurrences_acquire(s);
-    space_occurrence_cursor_flatten(cursor);
+    space_occurrence_cursor_prepare_heap(cursor);
     return true;
+}
+
+/* Both clone modes own their traversal arrays and share only the pinned rows.
+ * Rewinding is permitted only while that view is still the whole live prefix. */
+static bool space_occurrence_cursor_copy(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst,
+        bool rewind) {
+    if (!dst || src == dst)
+        return false;
+    space_occurrence_cursor_init_empty(dst);
+    if (!src || !src->pinned || !src->space || !src->occurrences)
+        return false;
+    Space *live = src->occurrences->space;
+    if ((live &&
+         (src->read.instance_id != space_instance_id(live) ||
+          src->prefix_epoch != live->prefix_epoch)) ||
+        (rewind && (!live || src->ceiling != live->native.len)) ||
+        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
+        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
+        (src->flat_mode && src->flat_len > 0u && !src->flat) ||
+        src->heap_len > src->node_len) {
+        return false;
+    }
+
+    *dst = *src;
+    dst->nodes = NULL;
+    dst->leaf_pos = NULL;
+    dst->flat = NULL;
+    dst->heap = NULL;
+    dst->heap_len = 0u;
+    dst->occurrences = NULL;
+    dst->pinned = false;
+    if (rewind) {
+        dst->full_next = 0u;
+        dst->flat_next = 0u;
+    }
+    if (src->flat_mode && src->flat_len > 0u) {
+        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
+        if (!dst->flat)
+            goto failed;
+        memcpy(dst->flat, src->flat,
+               sizeof(*dst->flat) * (size_t)src->flat_len);
+    }
+    if (src->node_len > 0u) {
+        dst->nodes = cetta_malloc(sizeof(*dst->nodes) * src->node_len);
+        dst->leaf_pos = cetta_malloc(sizeof(*dst->leaf_pos) * src->node_len);
+        if (!dst->nodes || !dst->leaf_pos)
+            goto failed;
+        memcpy(dst->nodes, src->nodes, sizeof(*dst->nodes) * src->node_len);
+        if (rewind)
+            memset(dst->leaf_pos, 0, sizeof(*dst->leaf_pos) * src->node_len);
+        else
+            memcpy(dst->leaf_pos, src->leaf_pos,
+                   sizeof(*dst->leaf_pos) * src->node_len);
+    }
+    if (rewind) {
+        space_occurrence_cursor_prepare_heap(dst);
+    } else if (src->heap) {
+        dst->heap = cetta_malloc(sizeof(*dst->heap) * (size_t)src->node_len);
+        if (dst->heap) {
+            dst->heap_len = src->heap_len;
+            memcpy(dst->heap, src->heap, sizeof(*dst->heap) * src->heap_len);
+        }
+        /* Without the optional heap, the position-preserving scan has the
+         * same next occurrence and terminal result. */
+    }
+    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
+    dst->pinned = true;
+    return true;
+
+failed:
+    space_occurrence_cursor_release(dst);
+    return false;
 }
 
 bool space_occurrence_cursor_clone_unstarted(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
-    space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || !src->pinned || !src->space || !src->occurrences ||
-        !src->occurrences->space)
-        return false;
-    Space *s = src->space;
-    if (src->read.instance_id != space_instance_id(s) ||
-        src->prefix_epoch != s->prefix_epoch ||
-        src->ceiling != s->native.len) {
-        return false;
-    }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = 0u;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = 0u;
-    if (src->flat_mode && src->flat_len > 0u) {
-        if (!src->flat)
-            return false;
-        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->flat, src->flat,
-               sizeof(*dst->flat) * (size_t)src->flat_len);
-    }
-    if (src->node_len > 0u) {
-        if (!src->nodes) {
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memset(dst->leaf_pos, 0,
-               sizeof(*dst->leaf_pos) * src->node_len);
-    }
-    dst->pinned = true;
-    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
-    return true;
+    return space_occurrence_cursor_copy(src, dst, true);
 }
 
 bool space_occurrence_cursor_clone(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
-    space_occurrence_cursor_init_empty(dst);
-    if (!src || !dst || src == dst || !src->pinned || !src->space ||
-        !src->occurrences)
-        return false;
-    Space *s = src->space;
-    if ((src->occurrences->space &&
-         (src->read.instance_id != space_instance_id(s) ||
-          src->prefix_epoch != s->prefix_epoch)) ||
-        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
-        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
-        (src->flat_mode && src->flat_len > 0u && !src->flat)) {
-        return false;
-    }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = src->full_next;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = src->flat_next;
-    if (src->flat_mode && src->flat_len > 0u) {
-        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->flat, src->flat,
-               sizeof(*dst->flat) * (size_t)src->flat_len);
-    }
-    if (src->node_len > 0u) {
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memcpy(dst->leaf_pos, src->leaf_pos,
-               sizeof(*dst->leaf_pos) * src->node_len);
-    }
-    dst->pinned = true;
-    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
-    return true;
+    return space_occurrence_cursor_copy(src, dst, false);
 }
 
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
@@ -1776,6 +1785,14 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
             return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
         return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    if (cursor->heap) {
+        CettaIndex index;
+        if (!space_occurrence_cursor_heap_next(cursor, len, &index))
+            return SPACE_OCCURRENCE_CURSOR_END;
+        if (logical_index_out)
+            *logical_index_out = index;
+        return SPACE_OCCURRENCE_CURSOR_ITEM;
     }
     for (;;) {
         CettaIndex best = UINT64_MAX;
@@ -1844,6 +1861,7 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     free(cursor->nodes);
     free(cursor->leaf_pos);
     free(cursor->flat);
+    free(cursor->heap);
     space_occurrence_cursor_init_empty(cursor);
 }
 
@@ -1949,66 +1967,114 @@ bool disc_count_rigid_exact_expression_coordinates(
     return true;
 }
 
+typedef struct {
+    const DiscNode *node;
+    CettaExprLen steps;
+    uint64_t sym_index, int_index;
+    bool variable_done;
+} DiscWildcardFoldFrame;
+
+static const DiscNode *disc_wildcard_fold_next(
+        DiscWildcardFoldFrame *frame, const DiscBranchSet *branches) {
+    uint64_t sym_cap = branches->sym_hashed
+        ? (uint64_t)branches->sym_ht.mask + 1u : branches->nsym;
+    while (frame->sym_index < sym_cap) {
+        uint64_t index = frame->sym_index++;
+        if (branches->sym_hashed) {
+            if (branches->sym_ht.entries[index].key != SYMBOL_ID_NONE)
+                return branches->sym_ht.entries[index].child;
+        } else {
+            return branches->sym[index].child;
+        }
+    }
+    if (!frame->variable_done) {
+        frame->variable_done = true;
+        if (branches->var_child)
+            return branches->var_child;
+    }
+    uint64_t int_cap = branches->ints_hashed
+        ? (uint64_t)branches->int_ht.mask + 1u : branches->nints;
+    while (frame->int_index < int_cap) {
+        uint64_t index = frame->int_index++;
+        const DiscNode *child = branches->ints_hashed
+            ? branches->int_ht.entries[index].child
+            : branches->ints[index].child;
+        if (child)
+            return child;
+    }
+    return NULL;
+}
+
+/* The count observer needs multiplicities, not candidate coordinates. Keep
+ * only the unfinished branch walks; a singleton path advances in place. */
 static bool disc_sum_wildcard_leaves(
-    const DiscNode *node, unsigned steps, uint64_t *sum) {
+        const DiscNode *node, CettaExprLen steps, uint64_t *sum) {
     if (!node || !sum)
         return false;
-    if (steps == 0u) {
-        if (*sum > UINT64_MAX - (uint64_t)node->leaves.count)
-            return false;
-        *sum += (uint64_t)node->leaves.count;
-        return true;
-    }
-    if (node->edges.kind == DISC_EDGE_EMPTY)
-        return true;
-    if (node->edges.kind == DISC_EDGE_EXPRESSION)
-        return false;
-    if (node->edges.kind != DISC_EDGE_MANY) {
-        return disc_sum_wildcard_leaves(
-            node->edges.payload.one.child, steps - 1u, sum);
-    }
-    const DiscBranchSet *branches = node->edges.payload.many;
-    if (!branches || branches->nexpr != 0u)
-        return false;
-    if (branches->sym_hashed) {
-        uint32_t cap = branches->sym_ht.mask + 1u;
-        for (uint32_t index = 0u; index < cap; index++) {
-            if (branches->sym_ht.entries[index].key == SYMBOL_ID_NONE)
-                continue;
-            if (!disc_sum_wildcard_leaves(
-                    branches->sym_ht.entries[index].child,
-                    steps - 1u, sum))
-                return false;
+    DiscWildcardFoldFrame inline_frames[8];
+    DiscWildcardFoldFrame *frames = inline_frames;
+    size_t len = 1u, capacity = 8u;
+    frames[0] = (DiscWildcardFoldFrame){.node = node, .steps = steps};
+    bool supported = true;
+    while (len) {
+        DiscWildcardFoldFrame *frame = &frames[len - 1u];
+        node = frame->node;
+        if (!node) {
+            supported = false;
+            break;
         }
-    } else {
-        for (uint32_t index = 0u; index < branches->nsym; index++) {
-            if (!disc_sum_wildcard_leaves(
-                    branches->sym[index].child, steps - 1u, sum))
-                return false;
+        if (!frame->steps) {
+            if (*sum > UINT64_MAX - node->leaves.count) {
+                supported = false;
+                break;
+            }
+            *sum += node->leaves.count;
+            len--;
+            continue;
         }
+        if (node->edges.kind == DISC_EDGE_EMPTY) {
+            len--;
+            continue;
+        }
+        if (node->edges.kind == DISC_EDGE_EXPRESSION) {
+            supported = false;
+            break;
+        }
+        if (node->edges.kind != DISC_EDGE_MANY) {
+            frame->node = node->edges.payload.one.child;
+            frame->steps--;
+            continue;
+        }
+        const DiscBranchSet *branches = node->edges.payload.many;
+        if (!branches || branches->nexpr) {
+            supported = false;
+            break;
+        }
+        const DiscNode *child = disc_wildcard_fold_next(frame, branches);
+        if (!child) {
+            len--;
+            continue;
+        }
+        CettaExprLen child_steps = frame->steps - 1u;
+        if (len == capacity) {
+            if (capacity > SIZE_MAX / sizeof(*frames) / 2u) {
+                supported = false;
+                break;
+            }
+            capacity *= 2u;
+            if (frames == inline_frames) {
+                frames = cetta_malloc(capacity * sizeof(*frames));
+                memcpy(frames, inline_frames, len * sizeof(*frames));
+            } else {
+                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+            }
+        }
+        frames[len++] = (DiscWildcardFoldFrame){
+            .node = child, .steps = child_steps};
     }
-    if (branches->var_child &&
-        !disc_sum_wildcard_leaves(
-            branches->var_child, steps - 1u, sum))
-        return false;
-    if (branches->ints_hashed) {
-        uint32_t cap = branches->int_ht.mask + 1u;
-        for (uint32_t index = 0u; index < cap; index++) {
-            if (!branches->int_ht.entries[index].child)
-                continue;
-            if (!disc_sum_wildcard_leaves(
-                    branches->int_ht.entries[index].child,
-                    steps - 1u, sum))
-                return false;
-        }
-    } else {
-        for (uint32_t index = 0u; index < branches->nints; index++) {
-            if (!disc_sum_wildcard_leaves(
-                    branches->ints[index].child, steps - 1u, sum))
-                return false;
-        }
-    }
-    return true;
+    if (frames != inline_frames)
+        free(frames);
+    return supported;
 }
 
 /* A free tail is a run of distinct variables.  A repeated variable is an
@@ -2210,7 +2276,8 @@ bool disc_count_flat_bound_vars(
         *out_count = 0u;
     if (!root || !pattern || !out_count ||
         pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
-        (bind_len > 0u && (!bind_ids || !bind_values)))
+        (bind_len > 0u && (!bind_ids || !bind_values)) ||
+        disc_find_variable_branch(root))
         return false;
     const DiscNode *node = disc_find_expression_branch(
         root, pattern->expr.len);
@@ -2237,7 +2304,7 @@ bool disc_count_flat_bound_vars(
             uint64_t sum = 0u;
             if (!disc_sum_wildcard_leaves(
                     node,
-                    (unsigned)(pattern->expr.len - index), &sum))
+                    pattern->expr.len - index, &sum))
                 return false;
             *out_count = (CettaIndex)sum;
             return true;
@@ -2260,16 +2327,28 @@ bool disc_count_flat_bound_vars(
 
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count) {
+    if (!pattern || pattern->kind != ATOM_EXPR) {
+        if (out_count)
+            *out_count = 0u;
+        return false;
+    }
+    return disc_count_flat_expression_coordinates(
+        root, pattern->expr.elems, pattern->expr.len, out_count);
+}
+
+bool disc_count_flat_expression_coordinates(
+        const DiscNode *root, Atom *const *coordinates,
+        CettaExprLen coordinate_count, CettaIndex *out_count) {
     if (root && disc_root_pool((DiscNode *)root)->approximate)
         return false;
     if (out_count)
         *out_count = 0u;
-    if (!root || !pattern || !out_count ||
-        pattern->kind != ATOM_EXPR || pattern->expr.len == 0u)
+    if (!root || !coordinates || !out_count || coordinate_count == 0u ||
+        disc_find_variable_branch(root))
         return false;
-    CettaExprIndex first_var = pattern->expr.len;
-    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
-        const Atom *item = pattern->expr.elems[index];
+    CettaExprIndex first_var = coordinate_count;
+    for (CettaExprIndex index = 0u; index < coordinate_count; index++) {
+        const Atom *item = coordinates[index];
         if (!item)
             return false;
         if (item->kind == ATOM_VAR) {
@@ -2284,19 +2363,22 @@ bool disc_count_flat_trailing_wildcards(
         return false;
     }
     for (CettaExprIndex index = first_var;
-         index < pattern->expr.len; index++) {
-        if (!pattern->expr.elems[index] ||
-            pattern->expr.elems[index]->kind != ATOM_VAR)
+         index < coordinate_count; index++) {
+        if (!coordinates[index] || coordinates[index]->kind != ATOM_VAR)
             return false;
+        for (CettaExprIndex earlier = first_var; earlier < index; earlier++) {
+            if (coordinates[earlier]->var_id == coordinates[index]->var_id)
+                return false;
+        }
     }
     const DiscNode *node = disc_find_expression_branch(
-        root, pattern->expr.len);
+        root, coordinate_count);
     if (!node)
         return true;
     for (CettaExprIndex index = 0u; index < first_var; index++) {
         if (disc_find_variable_branch(node))
             return false;
-        const Atom *item = pattern->expr.elems[index];
+        const Atom *item = coordinates[index];
         if (item->kind == ATOM_SYMBOL)
             node = disc_find_symbol_branch(node, item->sym_id);
         else
@@ -2305,7 +2387,7 @@ bool disc_count_flat_trailing_wildcards(
             return true;
     }
     uint64_t sum = 0u;
-    unsigned wildcards = (unsigned)(pattern->expr.len - first_var);
+    CettaExprLen wildcards = coordinate_count - first_var;
     if (!disc_sum_wildcard_leaves(node, wildcards, &sum))
         return false;
     *out_count = (CettaIndex)sum;
@@ -2797,11 +2879,14 @@ static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
     if (idx->has_open_rows)
         return;
     const TermUniverse *universe = s->native.universe;
-    if (tu_hdr(universe, row_id)) {
-        AtomKind kind = tu_kind(universe, row_id);
+    const CettaTermHdr *header = tu_hdr(universe, row_id);
+    if (header) {
+        /* These structural tests share the already validated record header. */
+        AtomKind kind = (AtomKind)header->tag;
         if (kind == ATOM_VAR ||
-            (kind == ATOM_EXPR && tu_arity(universe, row_id) != 0u &&
-             (tu_head_sym(universe, row_id) == SYMBOL_ID_NONE ||
+            (kind == ATOM_EXPR &&
+             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
+             (header->sym_or_head == SYMBOL_ID_NONE ||
               tu_petta_value_representation(universe, row_id) !=
                   PETTA_VALUE_ORDINARY)))
             idx->has_open_rows = true;
@@ -3695,6 +3780,80 @@ space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx) {
                 NULL));
     }
     return result;
+}
+
+typedef struct {
+    bool equations;
+    bool declarations;
+} SpaceDispatchRetention;
+
+static bool space_transport_dispatch_bucket(
+        CettaIndex *positions, CettaCount count,
+        CettaCount source_len, CettaCount target_len,
+        const CettaIndex *source_to_target, CettaIndex erased) {
+    for (CettaIndex i = 0u; i < count; i++) {
+        CettaIndex source = positions[i];
+        if (source >= source_len || (!source_to_target && source == erased))
+            return false;
+        CettaIndex target = source_to_target ? source_to_target[source]
+            : source - (source > erased);
+        if (target >= target_len)
+            return false;
+        positions[i] = target;
+    }
+    return true;
+}
+
+/* Each index is retained only when its own row projection is unchanged. For a
+ * single unordered erasure the classification includes the relocated tail.
+ * Type exclusion also needs the absence of open rows; deletion preserves that
+ * negative certificate, but a positive flag requires a rebuild to update it.
+ * Only logical coordinates move. Bucket-local trie positions, ordered
+ * payloads and declaration-subject metadata remain unchanged. */
+static SpaceDispatchRetention space_transport_dispatch_coordinates(
+        Space *s, SpaceMutationEquationProjection projection,
+        const SpaceStableOccurrenceTransport *transport, CettaIndex erased) {
+    SpaceDispatchRetention retained = {0};
+    if (space_has_dependencies(s) || space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return retained;
+    retained.equations = !s->native.eq_idx_dirty &&
+        !(projection & (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+                        SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE));
+    retained.declarations = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        !(projection & (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                        SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE));
+    if ((!retained.equations && !retained.declarations) ||
+        (!transport && !space_is_ordered(s)))
+        return retained;
+    CettaCount source_len = transport ? transport->source_len : s->native.len;
+    CettaCount target_len = transport ? transport->target_len : source_len - 1u;
+    const CettaIndex *coordinates = transport ? transport->source_to_target : NULL;
+    if (retained.equations) {
+        for (uint32_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
+            EqBucket *bucket = i == EQ_INDEX_BUCKETS
+                ? &s->native.eq_idx.wildcard : &s->native.eq_idx.buckets[i];
+            if (!space_transport_dispatch_bucket(
+                    bucket->atom_indices, bucket->len, source_len, target_len,
+                    coordinates, erased)) {
+                retained.equations = false;
+                break;
+            }
+        }
+    }
+    if (retained.declarations) {
+        for (uint32_t i = 0u; i < EQ_INDEX_BUCKETS; i++) {
+            TypeAnnBucket *bucket = &s->native.ty_idx.buckets[i];
+            if (!space_transport_dispatch_bucket(
+                    bucket->atom_indices, bucket->len, source_len, target_len,
+                    coordinates, erased)) {
+                retained.declarations = false;
+                break;
+            }
+        }
+    }
+    return retained;
 }
 
 static SpaceMutationEquationProjection
@@ -6963,6 +7122,8 @@ bool space_remove(Space *s, Atom *atom) {
 
     SpaceMutationEquationProjection equation_projection =
         space_local_removal_equation_projection(s, remove_idx);
+    SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+        s, equation_projection, NULL, remove_idx);
     space_pinned_occurrences_detach(s);
 
     if (space_is_ordered(s)) {
@@ -6981,6 +7142,8 @@ bool space_remove(Space *s, Atom *atom) {
             tail_id); /* swap with last */
     }
     space_mark_indexes_dirty(s);
+    s->native.eq_idx_dirty = !retained.equations;
+    s->native.ty_idx_dirty = !retained.declarations;
     space_match_backend_note_remove(s);
     space_publish_mutation(
         s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7042,6 +7205,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
             continue;
         SpaceMutationEquationProjection equation_projection =
             space_local_removal_equation_projection(s, i);
+        SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+            s, equation_projection, NULL, i);
         space_pinned_occurrences_detach(s);
         if (space_is_ordered(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
@@ -7059,6 +7224,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
                 tail_id);
         }
         space_mark_indexes_dirty(s);
+        s->native.eq_idx_dirty = !retained.equations;
+        s->native.ty_idx_dirty = !retained.declarations;
         space_match_backend_note_remove(s);
         space_publish_mutation(
             s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7234,6 +7401,8 @@ bool space_remove_occurrence_mask_stable(
             return false;
         }
         if (transport_result == SPACE_BACKEND_BATCH_APPLIED) {
+            SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+                s, equation_projection, &transport, SPACE_OCCURRENCE_COORDINATE_REMOVED);
             CettaCount moved = 0u;
             for (CettaIndex source_index = 0u;
                  source_index < logical_len; source_index++) {
@@ -7257,6 +7426,8 @@ bool space_remove_occurrence_mask_stable(
             s->native.len = target;
             s->native.start = 0u;
             space_mark_derived_state_dirty(s);
+            s->native.eq_idx_dirty = !retained.equations;
+            s->native.ty_idx_dirty = !retained.declarations;
             space_publish_mutation(
                 s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             cetta_runtime_stats_add(
@@ -8177,6 +8348,8 @@ space_member_annotated_types(
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     uint32_t h = atom_hash_for_index(atom);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
+    if (bucket->len == 0u)
+        return true;
     CettaIndex imported = bucket->atom_indices ? s->imported_len : 0u;
     int passes = own_only || imported == 0u ? 1 : 2;
     /* The space's own declarations precede imported ones. */

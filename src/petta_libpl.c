@@ -1676,13 +1676,20 @@ static size_t petta_libpl_standard_function_arities(
     }
     if (!g_symbols || symbol == SYMBOL_ID_NONE)
         return 0u;
-    const char *name = symbol_bytes(g_symbols, symbol);
-    if (name && strcmp(name, "exists_file") == 0) {
+    SymbolSpelling spelling = symbol_spelling(g_symbols, symbol);
+    uint32_t length = spelling.len;
+    if (length < sizeof("library") - 1u)
+        return 0u;
+    const char *name = spelling.bytes;
+    /* Include the terminator in each bounded comparison, retaining the
+     * adapter's C-string interpretation even for an embedded zero byte. */
+    if (length >= sizeof("exists_file") - 1u &&
+        memcmp(name, "exists_file", sizeof("exists_file")) == 0) {
         if (arities)
             arities[0] = 0u;
         return 1u;
     }
-    if (name && strcmp(name, "library") == 0) {
+    if (memcmp(name, "library", sizeof("library")) == 0) {
         if (arities) {
             arities[0] = 1u;
             arities[1] = 2u;
