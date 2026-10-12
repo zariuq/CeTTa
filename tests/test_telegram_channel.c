@@ -230,13 +230,16 @@ int main(int argc,char **argv) {
     space_add(&program,parse("(= (test:buttons $r) (case $r (((tg:some (tg-cmd:reply $a $b (telegram:keyboard $rows))) (test:count $rows)) ($other none))))"));
     /* Commands: a declared name, optionally addressed to this bot, with its
      * arguments. Anything else is ordinary input. */
-    pure(parse("(tg-cmd:parse \"/engine cetta\")"),"(tg-cmd:call \"/engine\" delegated \"cetta\")");
-    pure(parse("(tg-cmd:parse \"  /help  \")"),"(tg-cmd:call \"/help\" help \"\")");
-    pure(parse("(tg-cmd:parse \"/engine@AdaTestBot  a   b\")"),"(tg-cmd:call \"/engine\" delegated \"a b\")");
-    pure(parse("(tg-cmd:parse \"/engine@OtherBot cetta\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"/unknown\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"please /help\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"\")"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/engine cetta\" True)"),"(tg-cmd:call \"/engine\" delegated \"cetta\")");
+    pure(parse("(tg-cmd:parse \"  /help  \" True)"),"(tg-cmd:call \"/help\" help \"\")");
+    /* In a group every bot reads the message: only an addressed command counts. */
+    pure(parse("(tg-cmd:parse \"/help\" False)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/help@AdaTestBot\" False)"),"(tg-cmd:call \"/help\" help \"\")");
+    pure(parse("(tg-cmd:parse \"/engine@AdaTestBot  a   b\" True)"),"(tg-cmd:call \"/engine\" delegated \"a b\")");
+    pure(parse("(tg-cmd:parse \"/engine@OtherBot cetta\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/unknown\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"please /help\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"\" True)"),"tg:none");
     pure(parse("(tg-cmd:answer-text \"[\\\"answer\\\",\\\"engine: cetta\\\"]\")"),"(tg:some \"engine: cetta\")");
     pure(parse("(tg-cmd:answer-text \"[\\\"answer\\\",\\\"\\\"]\")"),"(tg:some \"(empty answer)\")");
     pure(parse("(tg-cmd:answer-text \"[]\")"),"tg:none");
@@ -280,7 +283,6 @@ int main(int argc,char **argv) {
     pure(parse("(tg-cmd:identity \"{\\\"ok\\\":true,\\\"result\\\":{\\\"id\\\":123456789}}\" \"123456789\")"),"tg:none");
     pure(parse("(tg-cmd:identity \"not json\" \"123456789\")"),"tg:none");
     pure(parse("(tg-cmd:observation \"11\" \"/engine\" \"cetta\" \"42.0\")"),"\"[\\\"command\\\",\\\"11\\\",\\\"/engine\\\",\\\"cetta\\\",\\\"42.0\\\"]\"");
-    pure(parse("(tg-cmd:stopped-text)"),"\"Stopped. Nothing Ada submits is sent until /start.\"");
     pure(parse("(tg-channel:result-json (tg-agent:delivered 9))"),"\"[\\\"delivered\\\",9]\"");
     pure(parse("(tg-channel:result-json (tg-agent:failed 400))"),"\"[\\\"failed\\\",400]\"");
     pure(parse("(tg-channel:result-json (tg-agent:not-sent))"),"\"[\\\"not-sent\\\"]\"");
@@ -423,23 +425,31 @@ int main(int argc,char **argv) {
     command_is("13","tg-cmd:edited");
     snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
     intent_is(reply_key,"(telegram:edit-text 1 42 9 \"late\" \"plain\")","(tg-channel:command-sent 1 \"bot\" \"13\" edit)");
-    /* /stop: answered at once, the agent is told, a chat's pending action
-     * waits and a new submission is rejected. /start lets the action go. */
+    /* /stop holds the agent's sends at once and asks the agent to stop: a
+     * chat's pending action waits and a new submission is rejected. The
+     * agent's answer is the reply, so the reply says what the agent did.
+     * /start lets the action go and is answered by the agent the same way. */
     incoming_text(14,42,"operator","/stop",cmd); accept_batch(decide(cmd,1),2,commit);
-    command_is("14","tg-cmd:served");
+    command_is("14","tg-cmd:waiting");
     assert(atom_eq(record("telegram.lifecycle","latch"),parse("(tg-cmd:latch stopped)")));
-    snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
-    intent_is(reply_key,"(telegram:send-text 1 42 0 114 \"Stopped. Nothing Ada submits is sent until /start.\" \"plain\")",
-        "(tg-channel:command-sent 1 \"bot\" \"14\" reply)");
-    admission(reply_key,TELEGRAM_SEND); admission(lane_action,TELEGRAM_WAIT);
-    snprintf(request,sizeof(request),"%s/1",commit); published(request,"[\"command\",\"14\",\"/stop\",\"\",\"42.0\"]",task);
+    admission(lane_action,TELEGRAM_WAIT);
+    snprintf(request,sizeof(request),"%s/0",commit); published(request,"[\"command\",\"14\",\"/stop\",\"\",\"42.0\"]",task);
     submitted("84.1.00000000000000000001","[[\"send\",\"x\",\"plain\"]]",sub); accept_batch(decide(sub,1),1,commit);
     decided("84.1.00000000000000000001","(tg-channel:decision 1 rejected stopped)");
-    /* The agent's reply to a /stop only acknowledges it. */
-    result(task,"[\"answer\",\"stopping\"]",worker_input); accept_batch(decide(worker_input,1),0,commit);
+    result(task,"[\"answer\",\"Stopped. Cognition is paused.\"]",worker_input); accept_batch(decide(worker_input,1),1,commit);
+    command_is("14","tg-cmd:answered");
+    snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
+    intent_is(reply_key,"(telegram:send-text 1 42 0 114 \"Stopped. Cognition is paused.\" \"plain\")",
+        "(tg-channel:command-sent 1 \"bot\" \"14\" reply)");
+    admission(reply_key,TELEGRAM_SEND);
+    deadline("14",timer_input); accept_batch(decide(timer_input,1),0,commit); command_is("14","tg-cmd:answered");
     incoming_text(15,42,"operator","/start",cmd); accept_batch(decide(cmd,1),2,commit);
+    command_is("15","tg-cmd:waiting");
     assert(atom_eq(record("telegram.lifecycle","latch"),parse("(tg-cmd:latch running)")));
     admission(lane_action,TELEGRAM_SEND);
+    snprintf(request,sizeof(request),"%s/0",commit); published(request,"[\"command\",\"15\",\"/start\",\"\",\"42.0\"]",task);
+    result(task,"[\"answer\",\"Started.\"]",worker_input); accept_batch(decide(worker_input,1),1,commit);
+    command_is("15","tg-cmd:answered");
     /* The same text from someone who is not an operator is ordinary input. */
     incoming_text(16,42,"ordinary","/help",cmd); accept_batch(decide(cmd,1),1,commit);
     assert(!record("telegram.commands","16"));

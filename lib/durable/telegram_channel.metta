@@ -95,12 +95,12 @@
                ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:help-text) reply))))
             (stop
              (host:transition (tg-channel:intake)
-               ((host:put 1 $key (tg-cmd:served $now)) (host:put 2 "latch" (tg-cmd:latch stopped)))
-               ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:stopped-text) reply) $ask)))
+               ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)) (host:put 2 "latch" (tg-cmd:latch stopped)))
+               ($ask (durable:timer:after 2 $now $deadline $key (tg-channel:deadline 1 $source $key)))))
             (start
              (host:transition (tg-channel:intake)
-               ((host:put 1 $key (tg-cmd:served $now)) (host:put 2 "latch" (tg-cmd:latch running)))
-               ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:started-text) reply) $ask)))
+               ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)) (host:put 2 "latch" (tg-cmd:latch running)))
+               ($ask (durable:timer:after 2 $now $deadline $key (tg-channel:deadline 1 $source $key)))))
             (delegated
              (host:transition (tg-channel:intake)
                ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)))

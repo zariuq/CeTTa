@@ -42,6 +42,8 @@ COMMANDS = '''
 (tg-cmd:agent "Ada")
 '''
 FALLBACK = 'No answer from Ada yet. This message will be updated when it arrives.'
+ANSWERS = {'/stop': 'Stopped. Cognition is paused and nothing is sent until /start.',
+           '/start': 'Started. Cognition is enabled.'}
 TAP_FALLBACK = 'No answer from Ada yet.'
 MENU_MESSAGE = 900
 MENU = ['menu', 'mode: iter', 'modes', [[['● iter', 'mode:iter'], ['agent', 'mode:agent']]]]
@@ -54,11 +56,11 @@ class BotAPI(Peer):
         self.updates, self.calls, self.message = [], [], 1000
         super().__init__(*args)
 
-    def command(self, update, chat, text, sender=OPERATOR):
+    def command(self, update, chat, text, sender=OPERATOR, chat_type='private'):
         with self.lock:
             assert not self.updates or update > self.updates[-1]['update_id'], update
             self.updates.append({'update_id': update, 'message': {'message_id': 500 + update,
-                'chat': {'id': chat, 'type': 'private'}, 'from': {'id': sender}, 'text': text}})
+                'chat': {'id': chat, 'type': chat_type}, 'from': {'id': sender}, 'text': text}})
         return time.monotonic()
 
     def tap(self, update, chat, data, sender=OPERATOR):
@@ -305,7 +307,7 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
                     for task, value in tasks(path):
                         if value[0] == 'callback':
                             tapped.append(value[1])
-                        body = (json.dumps(['answer', 'engine: cetta']) if value[0] == 'command' else
+                        body = (json.dumps(['answer', ANSWERS.get(value[2], 'engine: cetta')]) if value[0] == 'command' else
                                 json.dumps(MENU) if value[0] == 'callback' else '[]')
                         rpc(path, RESULT, task, body)
                     time.sleep(.01)
@@ -347,14 +349,16 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
             assert rpc(path, SUBMIT, batch, json.dumps([['send', 'slow', 'plain'], ['send', 'after slow', 'plain']]))[0] == STORED
             wait(proc, lambda: 'slow' in texts(), 'slow send started')
             sent = api.command(12, CHAT, '/stop')
-            call, latencies['stop'] = replied(proc, api, 12, sent, SERVICE_BOUND, 'stop')
-            assert call[2]['text'] == 'Stopped. Nothing Ada submits is sent until /start.'
+            call, latencies['stop'] = replied(proc, api, 12, sent, FALLBACK_BOUND, 'stop')
+            # The reply is the agent's own answer: it says what the agent did.
+            assert call[2]['text'] == ANSWERS['/stop'], call
             refused = '%d.1.%020d' % (OTHER, 1)
             assert rpc(path, SUBMIT, refused, json.dumps([['send', 'while stopped', 'plain']]))[0] == STORED
             time.sleep(1.8)
             assert 'after slow' not in texts() and 'while stopped' not in texts(), texts()[-5:]
             sent = api.command(13, CHAT, '/start')
-            replied(proc, api, 13, sent, SERVICE_BOUND, 'start')
+            call, _ = replied(proc, api, 13, sent, FALLBACK_BOUND, 'start')
+            assert call[2]['text'] == ANSWERS['/start'], call
             wait(proc, lambda: 'after slow' in texts(), 'accepted action after start')
             assert rpc(path, SUBMIT, '%d.1.%020d' % (OTHER, 2), json.dumps([['send', 'after start', 'plain']]))[0] == STORED
             wait(proc, lambda: 'after start' in texts(), 'send after start')
@@ -374,6 +378,14 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
             api.command(17, CHAT, '/help', sender=5)
             time.sleep(.5)
             assert not api.replies_to(17)
+            # In a group every bot reads the message: a bare command is ordinary
+            # input there, and only one addressed to this bot is a command.
+            api.command(18, CHAT, '/stop', chat_type='supergroup')
+            time.sleep(.5)
+            assert not api.replies_to(18)
+            sent = api.command(19, CHAT, '/help@AdaTestBot', chat_type='supergroup')
+            call, latencies['help addressed in a group'] = replied(proc, api, 19, sent, SERVICE_BOUND, 'group help')
+            assert call[2]['text'].startswith('/help — list these commands'), call
 
             responder_stop.set(); responder.join(timeout=10)
         finally:
@@ -384,5 +396,5 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
     print('commands: ' + ', '.join('%s %.0f ms' % (k, v * 1000) for k, v in latencies.items()))
     print('operator commands: answered by the service within the deadline with the agent absent, behind a held '
           'lane and during a flood; late answers edit the notice; taps are answered in time and redraw their menus; '
-          'a full task queue of an absent agent stops nothing; stop and start at dispatch; commands addressed to this bot by '
-          'the username it looked up passed')
+          'a full task queue of an absent agent stops nothing; stop and start at dispatch, answered by the agent; commands '
+          'addressed to this bot by the username it looked up; bare commands in a group ignored passed')
