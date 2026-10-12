@@ -104,12 +104,41 @@ static void path_grow_keys(CettaSpacePathIndex *index) {
 
 typedef enum { PATH_MISS, PATH_KEY, PATH_UNCERTAIN } PathProjection;
 
+/* A service may admit a portable value whose data symbols have no packed
+ * term header. Such a row is still an owned, inspectable Atom. Use the same
+ * conservative projection on that representation; absence of a packed
+ * header alone must not turn every ordinary row into an uncertain posting. */
+static PathProjection path_project_unrecorded(const CettaSpacePathIndex *index,
+                                             AtomId id, size_t depth,
+                                             uint64_t *key) {
+    /* Retain the existing uncertain-row treatment for symbol and numeric
+     * keys. Unregistered symbol identities and numeric promotion need their
+     * own contracts; the new projection is only for exact string leaves. */
+    if (index->kind!=CETTA_SPACE_PATH_STRING_HASH_KEY) return PATH_UNCERTAIN;
+    Atom *term=term_universe_get_atom(index->universe,id);
+    for (; depth<index->path_len; ++depth) {
+        if (!term || term->kind==ATOM_VAR) return PATH_UNCERTAIN;
+        if (term->kind!=ATOM_EXPR) return PATH_MISS;
+        if (term->expr.len && term->expr.elems[0] &&
+            term->expr.elems[0]->kind==ATOM_GROUNDED &&
+            term->expr.elems[0]->ground.gkind==GV_INTERNAL_TAG) return PATH_UNCERTAIN;
+        if (index->path[depth]>=term->expr.len) return PATH_MISS;
+        term=term->expr.elems[index->path[depth]];
+    }
+    if (!term || term->kind==ATOM_VAR) return PATH_UNCERTAIN;
+    if (term->kind!=ATOM_GROUNDED || term->ground.gkind!=GV_STRING) return PATH_MISS;
+    *key=atom_hash(term);
+    return PATH_KEY;
+}
+
 static PathProjection path_project(const CettaSpacePathIndex *index,
                                    AtomId id, uint64_t *key) {
     const TermUniverse *universe = index->universe;
     for (size_t depth = 0u; depth < index->path_len; depth++) {
         const CettaTermHdr *header = tu_hdr(universe, id);
-        if (!header || header->tag == ATOM_VAR)
+        if (!header)
+            return path_project_unrecorded(index,id,depth,key);
+        if (header->tag == ATOM_VAR)
             return PATH_UNCERTAIN;
         if (header->tag != ATOM_EXPR)
             return PATH_MISS;
@@ -123,7 +152,9 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
         id = tu_child(universe, id, index->path[depth]);
     }
     const CettaTermHdr *header = tu_hdr(universe, id);
-    if (!header || header->tag == ATOM_VAR)
+    if (!header)
+        return path_project_unrecorded(index,id,index->path_len,key);
+    if (header->tag == ATOM_VAR)
         return PATH_UNCERTAIN;
     if (index->kind == CETTA_SPACE_PATH_SYMBOL_KEY) {
         if (header->tag != ATOM_SYMBOL)
@@ -133,6 +164,12 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
     }
     if (header->tag != ATOM_GROUNDED)
         return PATH_MISS;
+    if (index->kind == CETTA_SPACE_PATH_STRING_HASH_KEY) {
+        if (tu_ground_kind(universe, id) != GV_STRING)
+            return PATH_MISS;
+        *key = tu_hash32(universe, id);
+        return PATH_KEY;
+    }
     if (tu_ground_kind(universe, id) != GV_INT)
         return PATH_UNCERTAIN;
     *key = (uint64_t)tu_int(universe, id);
@@ -172,14 +209,19 @@ static bool path_query_key(const Atom *atom, CettaSpacePathKeyKind *kind,
         *key = (uint64_t)atom->ground.ival;
         return true;
     }
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        *kind = CETTA_SPACE_PATH_STRING_HASH_KEY;
+        *key = atom_hash((Atom *)atom);
+        return true;
+    }
     return false;
 }
 
 typedef struct { Atom *term; CettaExprIndex child; } PathQueryFrame;
 
-/* Choose a rigid coordinate after a variable in the trie's structural order.
- * Prefix-selective patterns keep their existing access path. Explicit frames
- * make the coordinate search independent of the C call stack. */
+/* Choose a rigid coordinate after a variable, or a rigid string which the
+ * primary trie cannot distinguish. Other prefix-selective patterns keep
+ * their existing access path. Explicit frames avoid C recursion. */
 static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                                       uint64_t *key) {
     if (!pattern || pattern->kind != ATOM_EXPR || !atom_has_vars(pattern) ||
@@ -208,7 +250,8 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         Atom *child = frame->term->expr.elems[frame->child];
         if (child && child->kind == ATOM_VAR)
             unbound = true;
-        if (unbound && path_query_key(child, &kind, key)) {
+        if (path_query_key(child, &kind, key) &&
+            (unbound || kind == CETTA_SPACE_PATH_STRING_HASH_KEY)) {
             if (frame->child != 0u) {
                 found = true;
                 break;
