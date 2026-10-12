@@ -28,6 +28,9 @@ def deliver(directory, identity, correlation, sender, body):
         raise ValueError("text mailbox body required")
     fd,path=tempfile.mkstemp(prefix=".delivery-",dir=directory)
     try:
+        # A setgid mailbox directory gives each writer the receiver's group.
+        # Let that receiver read the newly published envelope across accounts.
+        os.fchmod(fd,0o640)
         with os.fdopen(fd,"w") as file:
             json.dump(value,file,ensure_ascii=False); file.write("\n"); file.flush(); os.fsync(file.fileno())
         target=directory/(uuid.uuid4().hex+".json")

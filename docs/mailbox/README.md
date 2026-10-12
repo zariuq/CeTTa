@@ -135,6 +135,9 @@ replaced directories trigger rescans. Transient owner outages retry held
 arrivals without another file event. Directories are trusted capabilities:
 sender labels do not authenticate someone who can write that directory.
 
+Published envelopes grant read access to their inherited group. For writers
+under other accounts, use a setgid directory whose group includes the bridge.
+
 ## Codex bindings
 
 Run `python3 tools/mailbox_codex.py --config codex-bindings.json`. Configuration
@@ -143,6 +146,10 @@ Server helper path), `app_server_socket`, and bindings with `thread`, `turn`,
 `channel`, and `sender`. Thread and turn IDs are explicit operator
 configuration. The bridge starts no turns and supplies no model, workspace,
 or policy overrides.
+
+The configured App Server must own the room being followed. Another server's
+active writer can refuse `thread/resume`; reading that thread's history does
+not establish a live subscription to it.
 
 It uses `thread/resume` to subscribe, reconciles `thread/read`, then waits for
 `turn/completed` notifications, following the
