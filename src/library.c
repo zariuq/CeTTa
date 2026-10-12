@@ -11567,7 +11567,10 @@ static Atom *cetta_library_dispatch_native_value(
     if (ctx->active_mask & CETTA_LIBRARY_JSON) {
         Atom *result = cetta_json_library_dispatch_v1(
             ctx->json_runtime, a, head, args, nargs);
-        if (result) return result;
+        if (result) {
+            *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
     }
 #endif
     if (ctx->active_mask & CETTA_LIBRARY_STR) {

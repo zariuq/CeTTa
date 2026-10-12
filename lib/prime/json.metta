@@ -4,7 +4,11 @@
 
 (= (json:capabilities) (function (case (__cetta_lib_json_capabilities_v1 ()) (($result (return $result))))))
 (= (json:parse $text) (function (case (__cetta_lib_json_parse_v1 $text) (($result (return $result))))))
+(= (json:parse-reference $text) (function (case (__cetta_lib_json_parse_v1 $text JsonReferenceV1) (($result (return $result))))))
+(= (json:parse-legacy-reference $text) (function (case (__cetta_lib_json_parse $text JsonReferenceV1) (($result (return $result))))))
+(= (json:stringify-reference $value) (function (case (__cetta_lib_json_stringify_v1 $value JsonReferenceV1) (($result (return $result))))))
 (= (json:stringify $value) (function (case (__cetta_lib_json_stringify_v1 $value) (($result (return $result))))))
+(= (json:to-legacy $value) (function (case (__cetta_lib_json_to_legacy_v1 $value) (($result (return $result))))))
 (= (json:members $object) (function (case (__cetta_lib_json_members_v1 $object) (($result (return $result))))))
 (= (json:get-all $object $key) (function (case (__cetta_lib_json_get_all_v1 $object $key) (($result (return $result))))))
 (= (json:get-first $object $key) (function (case (__cetta_lib_json_get_first_v1 $object $key) (($result (return $result))))))
