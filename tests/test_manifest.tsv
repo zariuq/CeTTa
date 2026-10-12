@@ -96,11 +96,14 @@ tests/prime/lambda_names.metta	prime	metta		any	native	test-prime	golden	Prime n
 tests/prime/let_bound_learner.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lift_brackets.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_activation_operand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_judgment_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_native_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_sequential_unification_refinement.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/nik_plural_checking.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

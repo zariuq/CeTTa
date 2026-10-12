@@ -102,7 +102,8 @@ static const char *checking_route_name(
         return "closed-regular";
     case CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION:
         return "ambient-formation";
-    case CETTA_PRIME_TYPING_ROUTE_LEGACY_HE: return "legacy-he";
+    case CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS:
+        return "he-declaration-fragments";
     }
     return "invalid";
 }
@@ -3765,13 +3766,13 @@ int main(int argc, char **argv) {
     Atom *loose_synth_verdict = prime_semantics_judge_typing_direct(
         &arena, &space, loose_synth_judgment, false, 0u);
     CHECK(verdict_status(loose_synth_verdict, "Undetermined"),
-          "loose Synth fails open to the unchanged legacy route");
+          "loose Synth fails open to the HE-declaration fragment route");
 
     Atom *ordinary_synth_judgment = parse_one(&arena, "(type:of 7)");
     Atom *ordinary_synth_verdict = prime_semantics_judge_typing_direct(
         &arena, &space, ordinary_synth_judgment, false, 0u);
     CHECK(verdict_status(ordinary_synth_verdict, "Established"),
-          "non-lambda-pi Synth retains its legacy result");
+          "non-lambda-pi Synth is answered by the HE-declaration fragments");
 
     Atom *limited_synth_judgment = parse_one(
         &arena, "(type:of (Pi U0 U0))");
@@ -3828,14 +3829,14 @@ int main(int argc, char **argv) {
     Atom *loose_check_verdict = prime_semantics_judge_typing_direct(
         &arena, &space, loose_check_judgment, false, 0u);
     CHECK(verdict_status(loose_check_verdict, "Undetermined"),
-          "loose Check fails open to the unchanged legacy route");
+          "loose Check fails open to the HE-declaration fragment route");
 
     Atom *ordinary_check_judgment = parse_one(
         &arena, "(type:check 7 Number)");
     Atom *ordinary_check_verdict = prime_semantics_judge_typing_direct(
         &arena, &space, ordinary_check_judgment, false, 0u);
     CHECK(verdict_status(ordinary_check_verdict, "Established"),
-          "non-lambda-pi Check retains its legacy result");
+          "non-lambda-pi Check is answered by the HE-declaration fragments");
 
     Atom *closed_beta_judgment = parse_one(
         &arena,
@@ -3965,7 +3966,7 @@ int main(int argc, char **argv) {
               conversion_stats.counters[
               CETTA_RUNTIME_COUNTER_PRIME_REGULAR_KERNEL_SYNTHESIS_CACHE_MISS] == 3u &&
               conversion_stats.counters[
-              CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_SYNTHESIS] == 1u,
+              CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_SYNTHESIS] == 1u,
           "Synth cache executes without interior checks and preserves fallback counts");
     CHECK(conversion_stats.counters[
               CETTA_RUNTIME_COUNTER_PRIME_REGULAR_KERNEL_CHECKING_ADMISSION_ATTEMPT] ==
@@ -3994,7 +3995,7 @@ int main(int argc, char **argv) {
               conversion_stats.counters[
               CETTA_RUNTIME_COUNTER_PRIME_REGULAR_KERNEL_CHECKING_CACHE_MISS] == 4u &&
               conversion_stats.counters[
-              CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING] == 1u,
+              CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING] == 1u,
           "Check/Analyze/May/Must share cached authority without interior checks");
 #endif
 
@@ -4422,9 +4423,9 @@ int main(int argc, char **argv) {
     cetta_runtime_stats_snapshot(&declared_constructed_stats);
     cetta_runtime_stats_disable();
     CHECK(declared_constructed_stats.counters[
-              CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_SYNTHESIS] == 0u &&
+              CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_SYNTHESIS] == 0u &&
               declared_constructed_stats.counters[
-              CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING] == 0u &&
+              CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING] == 0u &&
               declared_constructed_stats.counters[
               CETTA_RUNTIME_COUNTER_PRIME_LEGACY_FORMATION] == 0u &&
               declared_constructed_stats.counters[
@@ -4692,18 +4693,18 @@ int main(int argc, char **argv) {
               CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_DECLARED_REGULAR] == 5u,
           "May and Must select scoped and declared native routes once per value occurrence");
     CHECK(aggregate_stats.counters[
-              CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING] == 0u,
-          "producer-bound native values never consult HE checking");
+              CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING] == 0u,
+          "producer-bound native values never consult the HE-declaration fragments");
     if (aggregate_stats.counters[
             CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_SCOPED_REGULAR] != 3u ||
         aggregate_stats.counters[
             CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_DECLARED_REGULAR] != 5u ||
         aggregate_stats.counters[
-            CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING] != 0u) {
+            CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING] != 0u) {
         fprintf(
             stderr,
             "producer-bound routes: scoped=%llu authored=%llu declared=%llu "
-            "closed=%llu formation=%llu legacy=%llu\n",
+            "closed=%llu formation=%llu fragments=%llu\n",
             (unsigned long long)aggregate_stats.counters[
                 CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_SCOPED_REGULAR],
             (unsigned long long)aggregate_stats.counters[
@@ -4715,13 +4716,13 @@ int main(int argc, char **argv) {
             (unsigned long long)aggregate_stats.counters[
                 CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_AMBIENT_FORMATION],
             (unsigned long long)aggregate_stats.counters[
-                CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING]);
+                CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING]);
     }
 #endif
 
     Atom *semantic_mismatch_type = parse_one(&arena, "U0");
-    Atom *semantic_legacy_term = parse_one(&arena, "7");
-    Atom *semantic_legacy_type = parse_one(&arena, "Number");
+    Atom *semantic_fragment_term = parse_one(&arena, "7");
+    Atom *semantic_fragment_type = parse_one(&arena, "Number");
     Atom *semantic_outside_type = parse_one(
         &arena, "(PCollection CSet LNil RNone)");
     CettaPrimeTypingCheckingCandidateV1 semantic_candidates[] = {
@@ -4730,8 +4731,8 @@ int main(int argc, char **argv) {
         {closed_beta_right, semantic_mismatch_type, false, 0u},
         {checking_candidate_loose, semantic_mismatch_type, false, 0u},
         {checking_candidate_large, checking_candidate_large_type, true, 1u},
-        {semantic_legacy_term, semantic_legacy_type, false, 0u},
-        {semantic_legacy_term, semantic_outside_type, false, 0u},
+        {semantic_fragment_term, semantic_fragment_type, false, 0u},
+        {semantic_fragment_term, semantic_outside_type, false, 0u},
     };
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     cetta_runtime_stats_reset();
@@ -4788,7 +4789,7 @@ int main(int argc, char **argv) {
                   fault_observation.authority.result),
           "engine failure remains outside the semantic status readout");
     CettaPrimeTypingCheckingCandidateV1 unsupported_candidate = {
-        semantic_legacy_term, semantic_outside_type, false, 0u,
+        semantic_fragment_term, semantic_outside_type, false, 0u,
     };
     CettaPrimeTypingCheckingObservationV1 unsupported_observation;
     CHECK(cetta_prime_typing_observe_checking_v1(
@@ -4807,7 +4808,7 @@ int main(int argc, char **argv) {
             CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION &&
         checking_route_is_regular(semantic_bag.occurrences[4].authority.route) &&
         semantic_bag.occurrences[5].authority.route ==
-            CETTA_PRIME_TYPING_ROUTE_LEGACY_HE &&
+            CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS &&
         semantic_bag.occurrences[6].authority.route ==
             CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION;
     CHECK(semantic_routes_match,
@@ -4850,7 +4851,7 @@ int main(int argc, char **argv) {
 
     CettaPrimeTypingFormationCandidateV1 formation_candidates[] = {
         {closed_identity_type, false, 0u},
-        {semantic_legacy_term, false, 0u},
+        {semantic_fragment_term, false, 0u},
         {semantic_outside_type, false, 0u},
         {checking_candidate_large_type, true, 1u},
     };
@@ -5046,14 +5047,14 @@ int main(int argc, char **argv) {
         semantic_stats.counters[
             CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_AMBIENT_FORMATION] +
         semantic_stats.counters[
-            CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING];
+            CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING];
     size_t semantic_observation_count =
         sizeof semantic_candidates / sizeof semantic_candidates[0] + 1u;
     if (semantic_route_count != semantic_observation_count) {
         fprintf(
             stderr,
             "semantic routes: scoped=%llu authored=%llu declared=%llu "
-            "closed=%llu formation=%llu legacy=%llu total=%llu\n",
+            "closed=%llu formation=%llu fragments=%llu total=%llu\n",
             (unsigned long long)semantic_stats.counters[
                 CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_SCOPED_REGULAR],
             (unsigned long long)semantic_stats.counters[
@@ -5065,7 +5066,7 @@ int main(int argc, char **argv) {
             (unsigned long long)semantic_stats.counters[
                 CETTA_RUNTIME_COUNTER_PRIME_CHECKING_ROUTE_AMBIENT_FORMATION],
             (unsigned long long)semantic_stats.counters[
-                CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING],
+                CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING],
             (unsigned long long)semantic_route_count);
     }
     CHECK(semantic_route_count == semantic_observation_count,

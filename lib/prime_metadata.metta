@@ -105,10 +105,11 @@
 (= (prime-meta:add-record $space $record)
    (case (prime-meta:check-record $space $record)
      (((Admissible $key)
-       ; Reconstruct the checked outer record so neither storage nor the
-       ; admission result exposes the suspended constructor call supplied by
-       ; the caller.
-       (case $record
+       ; Publish values observed in the selected branch. Reification completes
+       ; evaluator-created cells while retaining held syntax as data. The bag
+       ; is demanded before superposition, preserving order and multiplicity.
+       (let $records (reify $record)
+         (case (superpose $records)
          (((MetaRecordV1 $stored-key $stored-values)
            ; Prime `let` is call-by-need: an unused receipt cannot sequence an
            ; effect.  The unit eliminator demands the effect before the
@@ -118,7 +119,7 @@
                $space (MetaRecordV1 $stored-key $stored-values))
              (Admitted
                (MetaRecordV1 $stored-key $stored-values))))
-          ($other (Rejected MalformedMetaRecordV1 $other)))))
+          ($other (Rejected MalformedMetaRecordV1 $other))))))
       ((Rejected $reason $detail) (Rejected $reason $detail)))))
 
 (= (prime-meta:source-recognized $space $source)

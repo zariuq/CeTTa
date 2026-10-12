@@ -500,6 +500,8 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_match_decisions_free = NULL;
     ctx->petta_static_imports = NULL;
     ctx->petta_static_imports_free = NULL;
+    ctx->prime_hol_guest = NULL;
+    ctx->prime_hol_guest_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -588,6 +590,10 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->petta_static_imports_free(ctx->petta_static_imports);
     ctx->petta_static_imports = NULL;
     ctx->petta_static_imports_free = NULL;
+    if (ctx->prime_hol_guest_free)
+        ctx->prime_hol_guest_free(ctx->prime_hol_guest);
+    ctx->prime_hol_guest = NULL;
+    ctx->prime_hol_guest_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {

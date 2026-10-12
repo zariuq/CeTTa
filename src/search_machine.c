@@ -549,7 +549,7 @@ static bool cetta_continuation_provider_valid(
     return provider && provider->representation_name &&
         provider->representation_name[0] != '\0' &&
         provider->ownership.capture && provider->ownership.restore &&
-        provider->ownership.destroy && provider->ownership.storage;
+        provider->ownership.destroy;
 }
 
 const char *cetta_continuation_machine_representation_name(
@@ -625,6 +625,7 @@ bool cetta_owned_continuation_storage(
     CettaContinuationStorage *storage) {
     return continuation && continuation->payload &&
         cetta_continuation_provider_valid(continuation->provider) &&
+        continuation->provider->ownership.storage &&
         storage && continuation->provider->ownership.storage(
             continuation->payload, storage) &&
         (storage->shared_bytes == 0u || storage->shared_identity);

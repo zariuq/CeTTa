@@ -10651,6 +10651,97 @@ static CettaContinuationStatus restore_relational_continuation(
 }
 
 typedef struct {
+    size_t live;
+    size_t restored;
+    size_t destroyed;
+} UncountedContinuationOwner;
+
+typedef struct {
+    UncountedContinuationOwner *owner;
+} UncountedContinuationPayload;
+
+static CettaContinuationStatus uncounted_continuation_capture(
+        void *machine, void **payload) {
+    UncountedContinuationOwner *owner = machine;
+    if (!owner || !payload || *payload)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    UncountedContinuationPayload *image = malloc(sizeof(*image));
+    assert(image);
+    image->owner = owner;
+    owner->live++;
+    *payload = image;
+    return CETTA_CONTINUATION_READY;
+}
+
+static CettaContinuationStatus uncounted_continuation_restore(
+        void *machine, void **payload) {
+    UncountedContinuationPayload *image = payload ? *payload : NULL;
+    if (!image || image->owner != machine)
+        return CETTA_CONTINUATION_INVALIDATED;
+    assert(image->owner->live > 0u);
+    image->owner->live--;
+    image->owner->restored++;
+    free(image);
+    *payload = NULL;
+    return CETTA_CONTINUATION_READY;
+}
+
+static void uncounted_continuation_destroy(void *payload) {
+    UncountedContinuationPayload *image = payload;
+    assert(image && image->owner->live > 0u);
+    image->owner->live--;
+    image->owner->destroyed++;
+    free(image);
+}
+
+static void test_continuation_ownership_without_census(void) {
+    const CettaContinuationProvider provider = {
+        .representation_name = "owned-without-census",
+        .ownership = {
+            .capture = uncounted_continuation_capture,
+            .restore = uncounted_continuation_restore,
+            .destroy = uncounted_continuation_destroy,
+        },
+    };
+    UncountedContinuationOwner owner = {0}, other = {0};
+    CettaContinuationMachine machine = {&owner, &provider};
+    CettaOwnedContinuation image = {0};
+    assert(strcmp(cetta_continuation_machine_representation_name(machine),
+                  "owned-without-census") == 0);
+    assert(cetta_continuation_capture(machine, &image) == CETTA_CONTINUATION_READY);
+    CettaContinuationStorage storage = {0};
+    assert(!cetta_owned_continuation_storage(&image, &storage));
+    assert(owner.live == 1u);
+    assert(cetta_continuation_restore(
+               (CettaContinuationMachine){&other, &provider}, &image) ==
+           CETTA_CONTINUATION_INVALIDATED);
+    assert(owner.live == 1u && image.payload);
+    assert(cetta_continuation_restore(machine, &image) == CETTA_CONTINUATION_READY);
+    assert(owner.live == 0u && owner.restored == 1u && !image.payload);
+    assert(cetta_continuation_restore(machine, &image) == CETTA_CONTINUATION_UNSUPPORTED);
+    cetta_owned_continuation_destroy(&image);
+    assert(owner.destroyed == 0u);
+
+    assert(cetta_continuation_capture(machine, &image) == CETTA_CONTINUATION_READY);
+    CettaContinuationStore store;
+    cetta_continuation_store_init(&store);
+    assert(cetta_continuation_store_append(&store, &image));
+    assert(!image.payload && owner.live == 1u);
+    size_t shared = 0u, exclusive = 0u;
+    assert(!cetta_continuation_store_storage(&store, &shared, &exclusive));
+    cetta_continuation_store_destroy(&store);
+    assert(owner.live == 0u && owner.destroyed == 1u);
+
+    CettaContinuationProvider invalid = provider;
+    invalid.ownership.destroy = NULL;
+    assert(cetta_continuation_capture(
+               (CettaContinuationMachine){&owner, &invalid}, &image) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(owner.live == 0u && !image.payload);
+    puts("PASS: continuation ownership survives unavailable census; storage and stale-owner checks decline");
+}
+
+typedef struct {
     size_t calls;
     CettaControllerRankStatus status;
     bool malformed;
@@ -12636,6 +12727,7 @@ int main(int argc, char **argv) {
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
     test_controller_batch_ranker();
+    test_continuation_ownership_without_census();
     test_continuation_hub_atomic_reclamation();
     test_observation_frozen_environment(&answers);
     test_observation_indexed_control_plan();

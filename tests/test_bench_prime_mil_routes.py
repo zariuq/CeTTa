@@ -27,7 +27,7 @@ def route_lines(
         "prime-checking-route-declared-regular": 0,
         "prime-checking-route-closed-regular": 0,
         "prime-checking-route-ambient-formation": 0,
-        "prime-legacy-he-checking": 0,
+        "prime-he-fragment-checking": 0,
         "prime-legacy-he-typed-applicability": legacy_he_applicability,
         "prime-level-normalization-step": 7,
         "prime-declaration-polymorphic-lookup": 2,

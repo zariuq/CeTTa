@@ -51,9 +51,16 @@ def check(binary: Path, evidence: Path) -> None:
                                     f"!(import! &self {kernel.parent / 'kernel_binding_waist_v1.metta'})")
     app_start = text.index("(= (nf $sig (App ")
     app_end = text.index("(= (nf-app ", app_start)
+    direct_kernel = evidence / "direct-normalization-kernel.metta"
+    direct_kernel.write_text(text[:app_start] +
+        "(= (nf $sig (App $f $a)) (nf-app $sig (nf $sig $f) (nf $sig $a)))\n" + text[app_end:])
+    path = evidence / "direct-normalization.metta"
+    path.write_text(f"!(import! &self {direct_kernel})\n" + controls)
+    assert run(path, "prime", "direct-normalization") == wanted
+
     mutants = {
-        "suspended-normalization": text[:app_start] +
-            "(= (nf $sig (App $f $a)) (nf-app $sig (nf $sig $f) (nf $sig $a)))\n" + text[app_end:],
+        "unnormalized-argument": text[:app_start] +
+            "(= (nf $sig (App $f $a)) (nf-app $sig (nf $sig $f) $a))\n" + text[app_end:],
         "malformed-acceptance": text.replace("(= (infer $sig $ctx (Bad $e)) (Bad $e))",
                                            "(= (infer $sig $ctx (Bad $e)) (Srt type))", 1),
     }
@@ -65,7 +72,7 @@ def check(binary: Path, evidence: Path) -> None:
         path.write_text(f"!(import! &self {mutant_kernel})\n" + controls)
         actual = run(path, "prime", label)
         assert actual != wanted, (label, "mutation was not detected")
-        if label == "suspended-normalization":
+        if label == "unnormalized-argument":
             assert actual[1] != wanted[1] and actual[-1] == "[()]", actual
         else:
             assert any(line.startswith("[(Error (assertEqual ") for line in actual), actual
@@ -73,11 +80,17 @@ def check(binary: Path, evidence: Path) -> None:
     lower = prime_source.read_text()
     old = "(= (hol-lowerProof-in $tbl (HBad $e)) (Bad $e))"
     assert old in lower
+    lowering_control = "\n!(assertEqual (hol-lowerProof-in NoTable (HBad malformed-proof)) (Bad malformed-proof))\n"
+    path = evidence / "exact-malformed-lowering.metta"
+    path.write_text(lower + lowering_control)
+    lowering_wanted = source_wanted + ["[()]"]
+    assert run(path, "prime", "exact-malformed-lowering") == lowering_wanted
     path = evidence / "malformed-lowering.metta"
-    path.write_text(lower.replace(old, old.replace("(Bad $e)", "(Err $e)"), 1))
+    path.write_text(lower.replace(old, old.replace("(Bad $e)", "(Err $e)"), 1) + lowering_control)
     actual = run(path, "prime", "malformed-lowering")
-    assert actual != source_wanted and any(line.startswith("[(Error (assertEqual ") for line in actual), actual
-    print("PASS LF guest boundaries: 96 complete outputs in both dialects; 3 precise mutants detected")
+    assert actual[:-1] == source_wanted, actual
+    assert actual[-1].startswith("[(Error (assertEqual "), actual
+    print("PASS LF guest boundaries: 96 complete outputs in both dialects; direct normalization agrees; exact malformed lowering and 3 mutants checked")
 
 
 if __name__ == "__main__":

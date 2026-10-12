@@ -244,6 +244,11 @@ typedef struct CettaLibraryContext {
      * which frees it through `petta_static_imports_free`. */
     void *petta_static_imports;
     void (*petta_static_imports_free)(void *imports);
+    /* The hosted HOL Light checker that Prime consults for HE-style
+     * declarations, in a private space loaded on first use; owned by the
+     * evaluator, which frees it through `prime_hol_guest_free`. */
+    void *prime_hol_guest;
+    void (*prime_hol_guest_free)(void *guest);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;

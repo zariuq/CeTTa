@@ -874,80 +874,7 @@ static bool is_primitive_type_symbol(Atom *atom) {
     return false;
 }
 
-static uint32_t prime_infer_types(Space *space, Arena *a, Atom *term,
-                                  PrimeResourceLedger *ledger,
-                                  PrimeResourcePhase phase,
-                                  bool structural, Atom ***types_out,
-                                  bool *complete_out) {
-    uint64_t before = prime_resource_phase_begin(ledger);
-    CettaTypeInferenceBudget inference = {
-        .steps_limited = ledger->typing.steps_limited,
-        .steps_remaining = ledger->typing.steps_limited
-            ? ledger->typing.steps_remaining : 0,
-        .steps_spent = 0,
-        .work_steps_observed = 0,
-        .type_capacity = ledger->typing.type_capacity,
-        .max_depth_observed = ledger->typing.max_depth_observed,
-        .complete = true,
-        .type_capacity_exhausted = false,
-        .evaluator_stack_exhausted = false,
-        .evaluator_capacity_exhausted = false,
-        .allow_marked_user_type_functions = false,
-    };
-    uint32_t count = structural
-        ? eval_get_atom_types_structural_profiled_budgeted(
-              space, a, term, types_out, &inference)
-        : eval_get_atom_types_profiled_budgeted(
-              space, a, term, types_out, &inference);
-    if (ledger->typing.steps_limited)
-        ledger->typing.steps_remaining = inference.steps_remaining;
-    if (ledger->typing.steps_limited) {
-        if (ledger->typing.steps_spent > UINT64_MAX - inference.steps_spent)
-            ledger->typing.steps_spent = UINT64_MAX;
-        else
-            ledger->typing.steps_spent += inference.steps_spent;
-        if (ledger->typing.work_steps_observed >
-            UINT64_MAX - inference.work_steps_observed) {
-            ledger->typing.work_steps_observed = UINT64_MAX;
-        } else {
-            ledger->typing.work_steps_observed +=
-                inference.work_steps_observed;
-        }
-    }
-    if (inference.max_depth_observed > ledger->typing.max_depth_observed)
-        ledger->typing.max_depth_observed = inference.max_depth_observed;
-    if (inference.type_capacity_exhausted)
-        ledger->typing.type_capacity_exhausted = true;
-    if (inference.evaluator_stack_exhausted)
-        ledger->typing.evaluator_stack_exhausted = true;
-    if (inference.evaluator_capacity_exhausted)
-        ledger->typing.evaluator_capacity_exhausted = true;
-    prime_resource_phase_end(ledger, phase, before);
-    if (complete_out) *complete_out = inference.complete;
-    return count;
-}
-
-static bool inferred_as_type(Space *space, Arena *a, Atom *type,
-                             PrimeResourceLedger *ledger,
-                             bool *dynamic_only, bool *complete_out) {
-    Atom **types = NULL;
-    bool complete = true;
-    uint32_t count = prime_infer_types(
-        space, a, type, ledger, PRIME_RESOURCE_FORMATION, false, &types,
-        &complete);
-    bool saw_type = false;
-    bool saw_dynamic = false;
-    for (uint32_t i = 0; i < count; i++) {
-        if (is_symbol_named(types[i], "Type"))
-            saw_type = true;
-        if (atom_is_symbol_id(types[i], g_builtin_syms.undefined_type))
-            saw_dynamic = true;
-    }
-    free(types);
-    if (dynamic_only) *dynamic_only = saw_dynamic && !saw_type;
-    if (complete_out) *complete_out = complete;
-    return saw_type;
-}
+#include "prime_he_fragments.inc"
 
 typedef struct PrimeVarContext {
     VarId id;
@@ -1325,24 +1252,21 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
         *detail = prime_expr2(a, "unbound-type-variable", type);
         return PRIME_FORM_UNDETERMINED;
     }
-    bool inference_complete = true;
-    if (inferred_as_type(space, a, type, ledger, &dynamic_only,
-                         &inference_complete)) {
+    /* A declared type expression is formed when the static fragments give it
+     * type `Type`, reading Prime's primitive types as types of kind `Type`:
+     * simple-arrow agreement (hol_iff_exact) on the space extended by those
+     * kind declarations (withPrimitiveKinds). */
+    if (prime_he_fragment_forms_type(space, a, type, ledger, &dynamic_only)) {
         *detail = prime_expr2(a, "DeclaredTypeFormation", type);
         return PRIME_FORM_ESTABLISHED;
-    }
-    if (!inference_complete) {
-        *detail = prime_expr2(a, "formation-inference-incomplete", type);
-        return PRIME_FORM_INCOMPLETE;
     }
     if (dynamic_only || type->kind == ATOM_SYMBOL) {
         *detail = prime_expr2(a, "undeclared-type-form", type);
         return PRIME_FORM_UNDETERMINED;
     }
 
-    /* Only HE's inference was asked here, and it found no `Type`: that is no
-     * evidence that the form is ill-formed.  Prime never refutes through
-     * HE's type engine. */
+    /* No grounded fragment forms it, which is no evidence that the form is
+     * ill-formed. */
     *detail = prime_expr2(a, "outside-kernel-fragments",
                           prime_expr2(a, "invalid-type-application", type));
     return PRIME_FORM_UNDETERMINED;
@@ -1559,7 +1483,7 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
             return native;
         }
     }
-    if (route_out) *route_out = CETTA_PRIME_TYPING_ROUTE_LEGACY_HE;
+    if (route_out) *route_out = CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS;
     /* A match against a space that declares the atoms of its functor typed
      * is a query, and a query is a type: the type of its answers.  So is a
      * call to a function whose stored rules the space declares typed. */
@@ -1576,56 +1500,10 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
         return prime_undetermined(
             a, judgment, prime_expr2(a, "universe-schema-not-formed",
                                      schema_head));
+    /* HE-style declarations: the grounded fragments, never HE's engine. */
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_SYNTHESIS);
-    Atom **types = NULL;
-    bool complete = true;
-    uint32_t count = prime_infer_types(
-        space, a, term, ledger, PRIME_RESOURCE_SYNTHESIS, false, &types,
-        &complete);
-    if (!complete) {
-        Atom *reason = prime_expr2(
-            a, ledger->typing.type_capacity_exhausted
-                   ? "synthesis-type-capacity"
-                   : "synthesis-prefix-incomplete",
-            atom_int(a, count));
-        free(types);
-        return prime_incomplete(a, judgment, reason);
-    }
-    /* The kernel's fragments have declined the term, and this enumeration
-     * is HE's inference, not a judgment of Prime: finding no type is no
-     * evidence against one.  Prime never refutes through HE's type engine. */
-    if (count == 0) {
-        free(types);
-        return prime_undetermined(
-            a, judgment,
-            prime_expr2(a, "outside-kernel-fragments",
-                        prime_expr1(a, "no-inferred-type")));
-    }
-
-    uint32_t known_count = 0;
-    bool dynamic_present = false;
-    for (uint32_t i = 0; i < count; i++) {
-        if (atom_is_symbol_id(types[i], g_builtin_syms.undefined_type))
-            dynamic_present = true;
-        else
-            known_count++;
-    }
-    if (known_count == 0) {
-        free(types);
-        return prime_undetermined(a, judgment,
-                                  prime_expr1(a, "dynamic-type-only"));
-    }
-
-    Atom **items = arena_alloc(a, sizeof(Atom *) * (count + 3));
-    items[0] = prime_sym(a, "InferredTypes");
-    items[1] = prime_sym(a, "RuntimeEnumerated");
-    items[2] = prime_expr2(a, "DynamicPresent",
-                           dynamic_present ? atom_true(a) : atom_false(a));
-    for (uint32_t i = 0; i < count; i++) items[i + 3] = types[i];
-    Atom *evidence = atom_expr(a, items, count + 3);
-    free(types);
-    return prime_established(a, judgment, evidence);
+        CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_SYNTHESIS);
+    return prime_he_fragment_synth_verdict(space, a, judgment, term, ledger);
 }
 
 static PrimeFormStatus prime_form_scoped_regular_type(
@@ -4250,40 +4128,25 @@ static Atom *prime_check_or_analyze(
         }
     }
 
-    CettaHeTypingEdge edge = CETTA_HE_EDGE_NONE;
-    Atom *detail = NULL;
-    uint64_t phase_before = prime_resource_phase_begin(ledger);
     if (route_out)
-        *route_out = CETTA_PRIME_TYPING_ROUTE_LEGACY_HE;
+        *route_out = CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS;
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_CHECKING);
-    CettaNikOutcomeV1 status = he_typing_check_term_outcome_budgeted(
-        a, space, term, expected, &ledger->typing,
-        require_exact_or_structural, &edge, &detail);
-    prime_resource_phase_end(ledger, PRIME_RESOURCE_CHECKING, phase_before);
-    Atom *edge_atom = prime_sym(a, he_typing_edge_name(edge));
-    if (status == CETTA_NIK_OUTCOME_ESTABLISHED) {
-        Atom *evidence = prime_expr3(
-            a, require_exact_or_structural ? "CheckedTypingEvidence"
-                                           : "ConsistencyEvidence",
-            edge_atom, detail ? detail : expected);
-        return prime_established(a, judgment, evidence);
-    }
-    /* A mismatch in HE's consistency relation is no refutation in Prime:
-     * the kernel's fragments declined the term, and Prime never refutes
-     * through HE's type engine. */
-    if (status == CETTA_NIK_OUTCOME_REFUTED)
-        return prime_undetermined(
-            a, judgment,
-            prime_expr2(a, "outside-kernel-fragments",
-                        detail ? detail : prime_expr1(a, "type-mismatch")));
-    if (status == CETTA_NIK_OUTCOME_INCOMPLETE)
-        return prime_incomplete(
-            a, judgment,
-            detail ? detail : prime_expr1(a, "typing-resource-incomplete"));
+        CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_CHECKING);
+    /* HE-style declarations: `type:check` establishes the static-fragment
+     * type exactly (hol_iff_exact, reference_iff_tupleHOLTyped) and the
+     * static instances of a first-order principal scheme
+     * (schematic_hol_iff_exact); `type:analyze` establishes AGT consistency
+     * of variable-free types (corePlusR2Consistent_iff_top) and meta-type
+     * entailment (metaAccepts_iff_entailed).  Anything else is
+     * Undetermined. */
+    Atom *reason = NULL;
+    Atom *evidence = prime_he_fragment_check(
+        space, a, term, expected, require_exact_or_structural, ledger,
+        &reason);
+    if (evidence) return prime_established(a, judgment, evidence);
     return prime_undetermined(
         a, judgment,
-        detail ? detail : prime_expr1(a, "typing-boundary-undetermined"));
+        reason ? reason : prime_expr1(a, "typing-boundary-undetermined"));
 }
 
 static Atom *prime_form_judgment(
@@ -5284,32 +5147,21 @@ static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
                                   prime_expr2(a, "refinement-type-fault",
                                               formation_detail));
 
-    Atom *detail = NULL;
-    uint64_t phase_before = prime_resource_phase_begin(ledger);
+    /* A formed type that no `type-index-refinement` declaration mentions
+     * carries no refinement obligation; a refinement declaration on any of
+     * its heads leaves the judgment Undetermined. */
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_LEGACY_HE_REFINEMENT);
-    CettaHeRefinementStatus status =
-        he_typing_check_refinement_status_budgeted(
-            a, space, type, &ledger->typing, &detail);
-    prime_resource_phase_end(ledger, PRIME_RESOURCE_REFINEMENT, phase_before);
-    if (status == CETTA_HE_REFINEMENT_VALID)
+        CETTA_RUNTIME_COUNTER_PRIME_HE_FRAGMENT_REFINEMENT);
+    bool refinement_ok = true;
+    if (prime_he_refinement_free(space, type, &refinement_ok))
         return prime_established(a, judgment,
                                  prime_expr2(a, "RefinementEvidence", type));
-    /* HE's refinement check is not a judgment of Prime: its failure leaves
-     * the refinement undetermined. */
-    if (status == CETTA_HE_REFINEMENT_INVALID)
-        return prime_undetermined(
-            a, judgment,
-            prime_expr2(a, "outside-kernel-fragments",
-                        detail ? detail
-                               : prime_expr1(a, "refinement-failed")));
-    if (status == CETTA_HE_REFINEMENT_INCOMPLETE)
-        return prime_incomplete(
-            a, judgment,
-            detail ? detail : prime_expr1(a, "refinement-resource-incomplete"));
     return prime_undetermined(
         a, judgment,
-        detail ? detail : prime_expr1(a, "refinement-undetermined"));
+        prime_expr2(a, "outside-kernel-fragments",
+                    refinement_ok
+                        ? prime_expr2(a, "type-index-refinement", type)
+                        : prime_expr1(a, "fragment-traversal-allocation")));
 }
 
 typedef struct {
@@ -5432,7 +5284,7 @@ static bool parse_answer_branch(const PrimeAnswerBag *bag, Atom *branch,
 
 /* Preserve the old compact branch receipt while deriving it from the one
  * checking authority path.  Native evidence is named by its constructor;
- * legacy HE evidence keeps its checked edge name. */
+ * checked evidence keeps its checked edge name. */
 static Atom *prime_branch_evidence_label(Arena *arena, Atom *evidence) {
     if (!evidence || evidence->kind != ATOM_EXPR ||
         evidence->expr.len == 0u ||

@@ -39,7 +39,7 @@ typedef enum {
     CETTA_PRIME_TYPING_ROUTE_DECLARED_REGULAR,
     CETTA_PRIME_TYPING_ROUTE_CLOSED_REGULAR,
     CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION,
-    CETTA_PRIME_TYPING_ROUTE_LEGACY_HE
+    CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS
 } CettaPrimeTypingRouteV1;
 
 typedef struct {
@@ -66,7 +66,8 @@ typedef struct {
     /* Checked native object retained by an Established Prime route. Closed
      * routes return intrinsic syntax, scoped routes keep their context, and
      * declared routes quote named declarations from the checked context.
-     * This is NULL for non-established results and for legacy routes. A raw
+     * This is NULL for non-established results and for the HE-declaration
+     * fragment route. A raw
      * boundary can reuse it without repeating elaboration or checking. */
     Atom *canonical_term;
     CettaPrimeTypingResourceObservationV1 resources;
