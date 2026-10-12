@@ -402,6 +402,7 @@ endif
 ifeq ($(ENABLE_DURABLE),1)
 DURABLE_SRC += src/durable_store.c src/durable_value.c src/supervisor.c
 DURABLE_SRC += src/durable_host.c src/durable_dispatch.c src/durable_inbox.c src/durable_timer.c src/telegram_intake.c src/durable_worker.c src/durable_service.c src/telegram_action.c src/telegram_agent.c src/telegram_scheduler.c src/telegram_control.c
+DURABLE_SRC += src/durable_activity.c
 ifeq ($(SQLITE_PROVIDER),vendored)
 DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
 DURABLE_SRC += vendor/sqlite/sqlite3.c
@@ -43500,6 +43501,25 @@ test-telegram-actions: $(TELEGRAM_ACTIONS_TEST_BIN)
 else
 test-telegram-actions:
 	@echo "test-telegram-actions requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
+.PHONY: activity-service test-durable-activity
+ifeq ($(ENABLE_DURABLE),1)
+ACTIVITY_SERVICE_BIN = runtime/activity-service-$(BUILD_OBJ_TAG)
+ACTIVITY_SERVICE_OBJ = runtime/bootstrap/activity-service.$(BUILD_OBJ_TAG).o
+-include $(ACTIVITY_SERVICE_OBJ:.o=.d)
+$(ACTIVITY_SERVICE_OBJ): examples/durable-activities/service.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(ACTIVITY_SERVICE_BIN): $(ACTIVITY_SERVICE_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+activity-service: $(ACTIVITY_SERVICE_BIN)
+test-durable-activity: $(ACTIVITY_SERVICE_BIN)
+	CETTA_ACTIVITY_SERVICE=./$(ACTIVITY_SERVICE_BIN) python3 tests/test_durable_activity.py
+else
+activity-service:
+	@echo "activity-service requires ENABLE_DURABLE=1" >&2
 	@exit 1
 endif
 

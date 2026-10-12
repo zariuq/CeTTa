@@ -228,6 +228,22 @@ static CettaDurableStatus next_task(CettaWorkerEndpoint *e, Peer *p, const char 
     cetta_durable_observation_free(selected);
     cetta_durable_observation_free(o); return s==DURABLE_OK?sent:s;
 }
+CettaDurableStatus cetta_worker_endpoint_wait(CettaWorkerEndpoint *e,
+        int intake_fd, unsigned timeout_ms) {
+    return cetta_worker_endpoint_wait_io(e,intake_fd,-1,timeout_ms);
+}
+CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *e,
+        int intake_fd, int output_fd, unsigned timeout_ms) {
+    if (!e || intake_fd < -1 || output_fd < -1 || timeout_ms > 1000) return DURABLE_INVALID;
+    struct pollfd fds[PEERS+3];
+    fds[0]=(struct pollfd){e->listener,POLLIN,0};
+    fds[1]=(struct pollfd){intake_fd,POLLIN,0};
+    fds[2]=(struct pollfd){output_fd,POLLOUT,0};
+    for (unsigned i=0;i<PEERS;++i)
+        fds[i+3]=(struct pollfd){e->peers[i].fd,e->peers[i].reply?POLLOUT:POLLIN,0};
+    int n=poll(fds,PEERS+3,(int)timeout_ms);
+    return n<0 && errno!=EINTR?DURABLE_IO:DURABLE_OK;
+}
 static CettaDurableStatus result(CettaWorkerEndpoint *e, Peer *p, const char *id,
                                 const unsigned char *body, size_t size, bool receipt) {
     char name[130], input[138]; key(name,e->worker,id);

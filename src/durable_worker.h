@@ -40,6 +40,16 @@ void cetta_worker_endpoint_free(CettaWorkerEndpoint *endpoint);
  * Disconnection is not cancellation of any durable task/result/effect. */
 CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *endpoint,
     unsigned timeout_ms, size_t *requests);
+/* Event-loop wait only: observe listener/peer readiness plus an optional host
+ * intake fd. No I/O, storage, close or evaluator work; step handles the wake.
+ * Readiness remains pending until consumed, including arrivals before poll.
+ * No concurrent endpoint calls. timeout is 0..1000 ms; -1 omits intake. */
+CettaDurableStatus cetta_worker_endpoint_wait(CettaWorkerEndpoint *endpoint,
+    int intake_fd, unsigned timeout_ms);
+/* As above, also wait for a host-owned output fd to become writable.
+ * -1 omits either descriptor. The caller owns nonblocking output buffering. */
+CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *endpoint,
+    int intake_fd, int output_fd, unsigned timeout_ms);
 
 /* Packet: "CWP1", code byte, ID-length byte, ID bytes, remaining body bytes.
  * One packet per seqpacket message. NEXT has no ID/body; RESULT requires both;

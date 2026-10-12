@@ -1274,3 +1274,56 @@ private/separate listeners, malformed packets, protocol separation, stalled
 peers, stale and conflicting release requests, lost replies, service restart,
 and refusal to retry an uncertain send. Agent tests additionally change the
 actor between evaluation and commit and reject mismatched request ledgers.
+
+## Independent durable activities
+
+[`durable_activity.h`](../../src/durable_activity.h) and
+[`durable:activity`](../../lib/durable/activity.metta) provide an embedded
+activity host using the same journal, host acceptance boundary, timers and
+CWP1 workers. A native intake records an occurrence and an owner generation.
+MeTTa accepts it, saves a versioned waiting continuation and emits a worker
+request. The service keeps pumping other inputs and timers. A recorded worker
+reply resumes only its original continuation; its body is inert string data.
+The trusted handler reconstructs a rho receive and performs COMM on the
+original effect channel, then accepts the resulting state and result atomically.
+
+The coordinator has one evaluator thread. External model/tool processes may
+overlap without sharing evaluator arenas or an implicit current turn. Workers
+receive neither decision scopes nor channel grants. Continuations are closed,
+versioned tags; workers cannot supply evaluator code. Inside authored equations,
+snapshot matches use `context-space`, and `Atom` arguments keep templates raw
+until their variables bind. Lexical `&self` identifies the source module.
+
+The ready queue rotates candidate inputs, rebuilding them from the journal
+after restart. Capacity applies backpressure; excess inputs remain recorded.
+Blocked candidates retain metadata watches rather than payload snapshots.
+The embedding loop waits on intake, worker peers and absolute timer deadlines.
+The example also waits for nonblocking result-output readiness and owns only
+one formatted frame; a stalled consumer cannot freeze the worker receipt path.
+Disconnecting a worker does not cancel its task. Revoking a waiting generation
+keeps a subsequent reply as late evidence. Cancelling a periodic timer also
+retires its native resource through an idempotent terminal observation.
+
+Build and test the runnable embedding example:
+
+```sh
+make BUILD=core ENABLE_DURABLE=1 ENABLE_HTTP=1 ENABLE_LIB_PROLOG=0 \
+  ENABLE_MANAGED_SYMBOLS=1 activity-service test-durable-activity
+```
+
+[`service.c`](../../examples/durable-activities/service.c) receives a journal,
+an inherited listening descriptor, a worker name and a ready capacity. Its
+trusted intake uses tab-separated `work`, `notice`, `timer` and `cancel` records;
+JSON request bodies must escape embedded newlines. Result output is a replayable
+observation, not an external delivery receipt. The process-worker adapter and
+delayed HTTP replay live on MeTTaClaw's
+[`feature/durable-responsive-activities-20261012`](https://github.com/godelclaw/mettaclaw/tree/feature/durable-responsive-activities-20261012)
+branch.
+
+This is an activity runtime component, not a migration of the foreground
+cognitive loop. Full prompts need immutable context references when they
+exceed CWP1's existing body bound. Application effect approval and Telegram
+delivery still use their own established boundaries. Timer/intake discovery
+currently scans journal snapshots; terminal journal retention and a sustained
+production soak remain qualification work. Fuel and visit counts are not a
+wall-time bound: the example reports the actual longest service step.
