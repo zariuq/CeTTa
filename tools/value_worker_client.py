@@ -7,7 +7,10 @@ import threading
 import time
 import uuid
 
-from space_service_client import E, S, encode, decode, MAX_BYTES
+if __package__:
+    from .space_service_client import E, S, encode, decode, MAX_BYTES
+else:
+    from space_service_client import E, S, encode, decode, MAX_BYTES
 
 
 class Worker:

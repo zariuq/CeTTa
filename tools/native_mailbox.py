@@ -8,8 +8,12 @@ from pathlib import Path
 import time
 import uuid
 
-from space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
-from value_worker_client import Worker
+if __package__:
+    from .space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
+    from .value_worker_client import Worker
+else:
+    from space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
+    from value_worker_client import Worker
 
 
 class MailboxError(RuntimeError):

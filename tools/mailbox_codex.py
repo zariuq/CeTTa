@@ -13,8 +13,12 @@ from pathlib import Path
 import sys
 import time
 
-from native_mailbox import Mailbox, text
-from space_service_client import Uncertain
+if __package__:
+    from .native_mailbox import Mailbox, text
+    from .space_service_client import Uncertain
+else:
+    from native_mailbox import Mailbox, text
+    from space_service_client import Uncertain
 
 
 class TranscriptPending(OSError):

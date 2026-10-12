@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 import sys
 import uuid
-from mailbox_bridge import deliver
+if __package__:
+    from .mailbox_bridge import deliver
+else:
+    from mailbox_bridge import deliver
 
 
 def main():

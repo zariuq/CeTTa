@@ -12,8 +12,12 @@ import tempfile
 import time
 import uuid
 
-from native_mailbox import Mailbox, MailboxError, text
-from space_service_client import S, ServiceError, Uncertain
+if __package__:
+    from .native_mailbox import Mailbox, MailboxError, text
+    from .space_service_client import S, ServiceError, Uncertain
+else:
+    from native_mailbox import Mailbox, MailboxError, text
+    from space_service_client import S, ServiceError, Uncertain
 
 
 def deliver(directory, identity, correlation, sender, body):
