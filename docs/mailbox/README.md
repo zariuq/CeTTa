@@ -156,8 +156,38 @@ The admitted JSON is a versioned `CodexTurnResult`: fixed thread/turn identity,
 terminal status, non-commentary agent messages, and any reported error.
 Failed and interrupted turns remain explicit terminal data. Duplicate
 completion delivery is harmless after consumption and settlement.
-Qualification uses the installed transport against a local wire fixture;
-live Codex and foreground-agent integration need separate acceptance.
+Qualification uses the installed transport against a local wire fixture and
+the checkpointed agent consumer. A live Codex operation still needs its own
+acceptance check.
+
+## Persistent receivers and consumers
+
+`Mailbox.listen(channel, sender, tag)` stores a persistent receiver.
+`accept(ticket, message_id, channel, sender, tag, owner, generation,
+capacity=...)` checks that receiver and the exact message occurrence, then
+consumes the pending message and saves its registration, owner, delivery
+identity and ready continuation in one conditional native batch. The receiver
+remains. Several messages can share one conversation and even the same body;
+their occurrence identities distinguish them. Ticket hash collisions refuse
+against the retained full identity. The configurable active-wait capacity is
+checked against the same revision as the commit.
+
+`register(..., intent=(MailboxCodexWatch 1 thread turn))` records the receive
+and inert subscription intent together. The turn must equal the receive's
+correlation. A repeated ticket with another thread is a conflict. External
+subscription happens after commitment; the stored intent recovers it.
+
+A consumer must retain ready state until its own durable checkpoint or action
+receipt. That receipt authorizes `settle`; reading alone does not. Independent
+stores require this recoverable handoff, rather than a claim that both commits
+are atomic. `Mailbox(..., expected=(store_uuid, space_id))` reopens an existing
+identity without creating a replacement. Pin that identity across process
+restarts as well as reconnects.
+
+`tools/mailbox_post.py --config bindings.json inbox --body-file note.txt`
+publishes an envelope through the configured directory, using a fresh identity
+and fsync/rename. Supply `--id` only to retry the same occurrence. This is a
+local delivery operation; `published` is not yet an agent checkpoint receipt.
 
 ## Indexing and retention
 

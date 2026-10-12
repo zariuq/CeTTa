@@ -6,6 +6,7 @@ import queue
 import socket
 import sys
 import struct
+import subprocess
 import time
 import unittest
 from unittest.mock import patch
@@ -151,6 +152,35 @@ class BridgeTests(unittest.TestCase):
         deliver(other,"same","request","codex","two")
         self.pump(bridge,lambda:bridge.ingested==2)
         self.assertEqual(self.box.space.match_count(E("MailboxMessage",1,Var(0),Var(1),Var(2),Var(3),Var(4))),2)
+
+    def test_post_tool_publishes_text_with_a_stable_retry_identity_and_rejects_oversize(self):
+        bridge=self.folder(); self.register()
+        config=self.fixture.path/"bindings.json"
+        config.write_text(json.dumps({"bindings":[{"name":"review","sender":"codex","directory":str(self.inbox)}]}))
+        command=[sys.executable,str(ROOT/"tools/mailbox_post.py"),"--config",str(config),
+                 "--id","note","--correlation","request","review"]
+        for _ in range(2):
+            result=subprocess.run(command,input="a plain note 🙂",text=True,capture_output=True,timeout=5)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.pump(bridge,lambda:not Path(json.loads(result.stdout)["path"]).exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"a plain note 🙂")
+        self.assertEqual(self.box.space.match_count(E("MailboxMessage",1,Var(0),Var(1),Var(2),Var(3),Var(4))),1)
+        config.write_text(json.dumps({"max_file_bytes":1,"bindings":[{"name":"review","sender":"codex","directory":str(self.inbox)}]}))
+        result=subprocess.run(command,input="too large",text=True,capture_output=True,timeout=5)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(list(self.inbox.glob("*.json")),[])
+
+    def test_storage_backpressure_keeps_source_and_retries_without_another_file_event(self):
+        self.fixture.options={"max_facts":8}; self.fixture.restart(); self.box.reconnect()
+        bridge=self.folder(); self.register()
+        fillers=[E("Filler",i) for i in range(4)]
+        self.box.space.batch(*(E("add",value) for value in fillers))
+        source=deliver(self.inbox,"held","request","codex","retained")
+        self.pump(bridge,lambda:bridge.held>0)
+        self.assertTrue(source.exists()); self.assertIsNone(self.fixture.process.poll())
+        self.box.space.batch(*(E("remove",value) for value in fillers))
+        self.pump(bridge,lambda:not source.exists())
+        self.assertEqual(self.box.resolve("wait")[6][-1],"retained")
 
     def codex(self,turns):
         client=AppServerFixture(turns); self.addCleanup(client.close)

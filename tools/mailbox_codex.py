@@ -7,6 +7,7 @@ started here. Transcripts reconcile missed notifications after reconnect.
 from __future__ import annotations
 import argparse
 import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
 from pathlib import Path
 import sys
@@ -108,7 +109,8 @@ class CodexBridge:
 
 def transport(path):
     """Load an operator-selected helper; no model can choose executable code."""
-    spec=importlib.util.spec_from_file_location("configured_codex_transport",path)
+    spec=importlib.util.spec_from_file_location("configured_codex_transport",path,
+        loader=SourceFileLoader("configured_codex_transport",str(path)))
     if spec is None or spec.loader is None: raise ValueError("Codex transport module unavailable")
     module=importlib.util.module_from_spec(spec); sys.modules[spec.name]=module
     spec.loader.exec_module(module)
@@ -119,7 +121,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config",required=True)
     args=parser.parse_args(); config=json.loads(Path(args.config).read_text())
-    box=Mailbox(config["socket"],config["space"],config["worker"])
+    box=Mailbox(config["socket"],config["space"],config["worker"],expected=config.get("storage_identity"))
     bridge=CodexBridge(box,config["bindings"])
     factory=transport(config["transport_module"]); delay=.1
     try:

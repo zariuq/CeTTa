@@ -68,6 +68,81 @@ class NativeMailboxTests(unittest.TestCase):
         return box.register(identity,"codex-review",correlation,"codex","godel",generation,
                             E("MailboxResume",1,"review-result","quoted continuation"))
 
+    def test_persistent_listener_distinguishes_messages_in_one_conversation(self):
+        box=self.mailbox()
+        self.assertEqual(box.listen("inbox","peer","arrival"),"listening")
+        for index in range(3):
+            message="message-"+str(index); ticket="ticket-"+str(index)
+            box.send(message,"inbox","same-conversation","peer","text-"+str(index))
+            self.assertEqual(box.accept(ticket,message,"inbox","peer","arrival",ticket,1,capacity=4),"ready")
+            self.assertEqual(box.resolve(ticket)[-1][-1],"text-"+str(index))
+            self.assertEqual(box.accept(ticket,message,"inbox","peer","arrival",ticket,1,capacity=4),"duplicate")
+        self.assertEqual(len(box.active("arrival")),3)
+        self.assertIsNone(box.pending("inbox","peer"))
+        with Client(self.fixture.socket) as client:
+            space=client.open("mailbox")
+            self.assertEqual(space.match_count(E("MailboxListener",1,"inbox","peer","arrival")),1)
+
+    def test_listener_ticket_collision_and_missing_capability_leave_input_pending(self):
+        box=self.mailbox()
+        box.send("m1","inbox","same","peer","one")
+        with self.assertRaises(MailboxError):
+            box.accept("ticket","m1","inbox","peer","arrival","owner",1,capacity=4)
+        self.assertEqual(box.pending("inbox","peer")[-1],"m1")
+        box.listen("inbox","peer","arrival")
+        box.accept("ticket","m1","inbox","peer","arrival","owner",1,capacity=4)
+        box.send("m2","inbox","same","peer","two")
+        with self.assertRaises(MailboxError):
+            box.accept("ticket","m2","inbox","peer","arrival","owner",1,capacity=4)
+        self.assertEqual(box.pending("inbox","peer")[-1],"m2")
+        self.assertEqual(box.resolve("ticket")[-1][-1],"one")
+
+    def test_active_capacity_is_validated_at_the_registration_commit(self):
+        boxes=[self.mailbox(),self.mailbox()]
+        def register(index):
+            try:
+                return boxes[index].register(str(index),"channel",str(index),"peer",str(index),1,
+                    E("MailboxResume",1,"arrival",str(index)),capacity=1)
+            except MailboxError:
+                return "refused"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(register,range(2)))
+        self.assertEqual(sorted(results),["refused","waiting"])
+        self.assertEqual(len(boxes[0].active("arrival",2)),1)
+
+    def test_listener_capacity_backpressure_retains_message_and_completed_identity(self):
+        box=self.mailbox(); box.listen("inbox","peer","arrival")
+        for index in range(2): box.send(str(index),"inbox","same","peer",str(index))
+        box.accept("first","0","inbox","peer","arrival","a",1,capacity=1)
+        with self.assertRaises(MailboxError):
+            box.accept("second","1","inbox","peer","arrival","b",1,capacity=1)
+        self.assertEqual(box.pending("inbox","peer")[-1],"1")
+        box.settle("first","a",1)
+        box.accept("second","1","inbox","peer","arrival","b",1,capacity=1)
+        box.send("0","inbox","same","peer","0")
+        self.assertIsNone(box.pending("inbox","peer"))
+
+    def test_codex_subscription_intent_and_receive_registration_commit_together(self):
+        box=self.mailbox()
+        arguments=("ticket","review","turn","codex","owner",1,E("MailboxResume",1,"arrival","ticket"))
+        self.assertEqual(box.register(*arguments,intent=E("MailboxCodexWatch",1,"thread","turn")),"waiting")
+        wait=box.registered("ticket")
+        self.assertEqual(box.space.match(E("MailboxIntent",1,"ticket",Var(0),Var(1)),Var(1)),
+                         [E("MailboxCodexWatch",1,"thread","turn")])
+        self.assertEqual(box.register(*arguments,intent=E("MailboxCodexWatch",1,"thread","turn")),"duplicate")
+        with self.assertRaises(MailboxError):
+            box.register(*arguments,intent=E("MailboxCodexWatch",1,"different-thread","turn"))
+        self.assertEqual(box.registered("ticket"),wait)
+        self.fixture.restart(); box.reconnect()
+        self.assertEqual(box.registered("ticket"),wait)
+
+    def test_invalid_watch_intent_is_refused_before_journaling(self):
+        box=self.mailbox(); revision=box.space.revision
+        with self.assertRaises(ValueError):
+            box.register("ticket","review","turn","codex","owner",1,E("MailboxResume",1,"arrival","ticket"),
+                         intent=E("MailboxCodexWatch",1,"thread","other-turn"))
+        box.space.describe(); self.assertEqual(box.space.revision,revision)
+
     def test_watch_registration_closes_read_write_race(self):
         with Client(self.fixture.socket) as client:
             space=client.open("notifications")

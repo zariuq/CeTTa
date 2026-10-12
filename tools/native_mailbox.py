@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 import uuid
 
-from space_service_client import Client, E, S, Var, ServiceError, Uncertain
+from space_service_client import Client, Space, E, S, Var, ServiceError, Uncertain
 from value_worker_client import Worker
 
 
@@ -33,7 +33,7 @@ def activity_generation(value):
 
 
 class Mailbox:
-    def __init__(self, socket, name, worker, *, timeout=30, attempts=8):
+    def __init__(self, socket, name, worker, *, timeout=30, attempts=8, expected=None):
         self.client = Client(str(socket), timeout=timeout)
         self.worker = Worker(worker, Path(__file__).resolve().parents[1] /
                              "lib/petta/lib_mailbox.metta", "mailbox:dispatch", timeout=timeout)
@@ -41,10 +41,22 @@ class Mailbox:
         if not isinstance(attempts, int) or isinstance(attempts,bool) or attempts < 1:
             self.close(); raise ValueError("positive contention budget required")
         try:
-            capabilities=self.client.hello()[5][1:]
+            hello=self.client.hello()
+            capabilities=hello[5][1:]
             if S("first-occurrence") not in capabilities or S("revision-waits") not in capabilities:
                 raise MailboxError("native mailbox service capabilities unavailable")
-            self.space = self.client.open(text(name), "native")
+            if expected is None:
+                self.space = self.client.open(text(name), "native")
+            else:
+                if hello[2]!=expected[0]:
+                    raise MailboxError("mailbox storage identity changed")
+                # Recovery may describe an existing space, never create a
+                # replacement with the old name and newly empty authority.
+                self.space = Space(self.client,self.client.call("describe",*expected))
+                if self.space.name!=text(name):
+                    raise MailboxError("mailbox space identity changed")
+            if self.space.backend!="native":
+                raise MailboxError("native mailbox backend required")
         except BaseException:
             self.close(); raise
         self.metrics = {"reads": 0, "plans": 0, "commits": 0, "notifications": 0}
@@ -123,18 +135,101 @@ class Mailbox:
         # worker later fails to match it. A recovered receiver can finish.
         return result
 
-    def register(self, identity, channel, correlation, sender, owner, generation, continuation):
+    def records(self, pattern, revision, limit):
+        """A complete indexed view at one revision; overflow is a refusal.
+
+        The native owner rejects a view exceeding its row/byte budget rather
+        than returning a prefix that could hide an interactive arrival.
+        """
+        view = self.space.query(pattern, pattern, limit)
+        try:
+            if view[4] != revision:
+                raise Changed()
+            rows, offset = [], 0
+            while True:
+                page = self.space.fetch(view, offset)
+                rows.extend(page[3][1:])
+                if page[5]:
+                    return tuple(rows)
+                offset = page[4]
+        finally:
+            try: self.space.close_query(view)
+            except (ServiceError, Uncertain, OSError): pass
+
+    def _active(self, tag, revision, limit):
+        waits = self.records(E("MailboxWait",1,Var(0),Var(1),Var(2),Var(3),Var(4),Var(5),
+                               E("MailboxResume",1,tag,Var(6))),revision,limit)
+        ready = self.records(E("MailboxReady",1,Var(0),Var(1),Var(2),
+                               E("MailboxResume",1,tag,Var(3)),Var(4)),revision,limit)
+        return waits + ready
+
+    def active(self, tag, limit=4096):
+        """Owned waiting/ready continuations; completed history is excluded."""
+        return self._operation(lambda rev: self._active(text(tag),rev,limit))
+
+    def registered(self, identity):
+        """Inspect the immutable registration without consuming a message."""
+        return self._operation(lambda rev: self._registration(text(identity),rev))
+
+    def listen(self, channel, sender, tag):
+        record=E("MailboxListener",1,*map(text,(channel,sender,tag)))
+        return self._operation(lambda rev: self._plan(E("listen",record,self._rows(record,rev))))
+
+    def pending(self, channel, sender):
+        """Select one occurrence for a persistent listener, without consuming it."""
+        return self._operation(lambda rev: self._one(self._rows(
+            E("MailboxPending",1,text(channel),Var(0),text(sender),Var(1)),rev,first=True)))
+
+    def accept(self, identity, message_id, channel, sender, tag, owner, generation, *, capacity):
+        """Consume one message and retain its listener in the same native batch.
+
+        Message identity is checked in full. A shortened/hash-based ticket is
+        only a lookup key: a collision refuses rather than reusing authority.
+        """
+        identity,message_id,channel,sender,tag,owner=map(text,(identity,message_id,channel,sender,tag,owner))
+        generation=activity_generation(generation)
+        if type(capacity) is not int or capacity<1:
+            raise ValueError("positive active-wait admission budget required")
+        def operation(rev):
+            message=self._one(self._rows(E("MailboxMessage",1,message_id,channel,Var(0),sender,Var(1)),rev))
+            if message is None: raise MailboxError("unknown listener message")
+            wait=E("MailboxWait",1,identity,channel,message[4],sender,owner,generation,E("MailboxResume",1,tag,identity))
+            listener=E("MailboxListener",1,channel,sender,tag)
+            old=self._rows(E("MailboxRegistration",1,identity,Var(0)),rev)
+            if not old and len(self._active(tag,rev,capacity+1))>=capacity:
+                raise MailboxError("active-wait capacity; no receive committed")
+            return self._plan(E("accept",listener,wait,message,
+                self._rows(E("MailboxPending",1,channel,message[4],sender,message_id),rev),old,
+                self._rows(E("MailboxOwner",1,owner,generation,Var(0)),rev),
+                self._rows(E("MailboxDelivery",1,identity,Var(0)),rev),self._rows(listener,rev)))
+        return self._operation(operation)
+
+    def register(self, identity, channel, correlation, sender, owner, generation, continuation, *, capacity=None, intent=None):
         identity, channel, correlation, sender, owner=map(text,(identity,channel,correlation,sender,owner))
         generation=activity_generation(generation)
         if not isinstance(continuation,tuple) or len(continuation)!=4 or continuation[:2]!=(S("MailboxResume"),1):
             raise ValueError("versioned inert MailboxResume required")
         text(continuation[2]); text(continuation[3])
+        if capacity is not None and (type(capacity) is not int or capacity<1):
+            raise ValueError("positive active-wait admission budget required")
+        if intent is not None:
+            if (not isinstance(intent,tuple) or len(intent)!=4 or intent[:2]!=(S("MailboxCodexWatch"),1)
+                or intent[3]!=correlation or continuation[3]!=identity):
+                raise ValueError("correlated inert Codex watch intent required")
+            text(intent[2]); text(intent[3])
         wait=E("MailboxWait",1,identity,channel,correlation,sender,owner,generation,continuation)
         def operation(rev):
-            return self._plan(E("register",wait,
-                self._rows(E("MailboxRegistration",1,identity,Var(0)),rev),
+            old=self._rows(E("MailboxRegistration",1,identity,Var(0)),rev)
+            if capacity is not None and not old:
+                if len(self._active(continuation[2],rev,capacity+1))>=capacity:
+                    raise MailboxError("active-wait capacity; no registration committed")
+            request=E("register",wait,old,
                 self._rows(E("MailboxOwner",1,owner,generation,Var(0)),rev),
-                self._rows(E("MailboxRoute",1,channel,correlation,sender,Var(0)),rev)))
+                self._rows(E("MailboxRoute",1,channel,correlation,sender,Var(0)),rev))
+            if intent is not None:
+                request=E("register-intent",*request[1:],E("MailboxIntent",1,identity,continuation[2],intent),
+                          self._rows(E("MailboxIntent",1,identity,Var(0),Var(1)),rev))
+            return self._plan(request)
         return self._operation(operation)
 
     def _registration(self, identity, revision):

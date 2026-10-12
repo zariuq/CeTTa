@@ -13,7 +13,7 @@ import time
 import uuid
 
 from native_mailbox import Mailbox, MailboxError, text
-from space_service_client import ServiceError, Uncertain
+from space_service_client import S, ServiceError, Uncertain
 
 
 def deliver(directory, identity, correlation, sender, body):
@@ -34,6 +34,25 @@ def deliver(directory, identity, correlation, sender, body):
         return target
     finally:
         if os.path.exists(path): os.unlink(path)
+
+
+def health(bridge, path):
+    """Inspectable counters for held deliveries; contains no message bodies."""
+    if not path: return
+    target=Path(path); target.parent.mkdir(parents=True,exist_ok=True)
+    value={"version":1,"observed_at":time.time(),"ingested":bridge.ingested,"held":bridge.held,
+           "retrying":len(bridge.retry),"diagnostics":len(bridge.diagnostics),
+           "reasons":sorted(set(bridge.diagnostics.values()))}
+    fd,temporary=tempfile.mkstemp(prefix=".mailbox-health-",dir=target.parent)
+    try:
+        with os.fdopen(fd,"w") as stream:
+            json.dump(value,stream); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary,target)
+        parent=os.open(target.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try: os.fsync(parent)
+        finally: os.close(parent)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
 
 
 class DirectoryBridge:
@@ -143,7 +162,10 @@ class DirectoryBridge:
             # other channels. Transport uncertainty is retried by its exact
             # durable message identity, never by replaying a mutation plan.
             self.held+=1; self.diagnostics[key]=type(error).__name__
-            if isinstance(error,(OSError,Uncertain)):
+            transient=(isinstance(error,(OSError,Uncertain)) or
+                       isinstance(error,ServiceError) and error.reason in (S("space-limit"),S("stale-revision"),S("snapshot-limit")) or
+                       isinstance(error,MailboxError) and str(error).startswith("mailbox contention"))
+            if transient:
                 self.retry[key]=(binding,path)
                 if self.retry_due is None:
                     self.retry_due=time.monotonic()+self.retry_delay
@@ -203,10 +225,13 @@ def main():
     parser.add_argument("--config",required=True)
     args=parser.parse_args()
     config=json.loads(Path(args.config).read_text())
-    box=Mailbox(config["socket"],config["space"],config["worker"])
+    box=Mailbox(config["socket"],config["space"],config["worker"],expected=config.get("storage_identity"))
     bridge=DirectoryBridge(box,config["bindings"],config.get("max_file_bytes",256*1024))
     try:
-        while True: bridge.poll()
+        health(bridge,config.get("health_path"))
+        while True:
+            bridge.poll()
+            health(bridge,config.get("health_path"))
     except KeyboardInterrupt:
         pass
     finally:
