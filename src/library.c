@@ -141,6 +141,7 @@ enum {
     CETTA_LIBRARY_SPACE_SERVICE = 1u << 17,
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
     CETTA_LIBRARY_MATH = 1u << 18,
+    CETTA_LIBRARY_MAILBOX = 1u << 19,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -171,6 +172,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"llm", CETTA_LIBRARY_LLM, NULL},
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
+    {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif

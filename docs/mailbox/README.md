@@ -1,9 +1,36 @@
 # Native named mailboxes
 
-The mailbox policy is MeTTa: `lib/petta/lib_mailbox.metta` turns owned values
+The mailbox policy and client are MeTTa: `lib/mailbox.metta` turns owned values
 into transition plans over CeTTa's native named space service, which stores
 them durably. The Python host, directory and Codex bridges and command-line
-tools were removed; a CeTTa-native host is the next step.
+tools were removed. The client evaluates plans inside the caller's CeTTa
+process; it needs neither a value worker nor a bridge daemon. The legacy
+`lib/petta/lib_mailbox.metta` path imports the same implementation.
+
+```metta
+!(import! &self mailbox)
+!(mailbox:send $socket "agent-mail" "unique-occurrence" "reader" "writer" "hello")
+!(mailbox:next $socket "agent-mail" "reader")
+; (mailbox:delivery "unique-occurrence" "writer" "hello")
+!(mailbox:ack $socket "agent-mail" "reader" "unique-occurrence")
+```
+
+The recipient name is the channel. `next` first recovers an unacknowledged
+ready delivery, otherwise atomically takes one pending occurrence using the
+MeTTa policy. `ack` settles it; an application should do that after committing
+the turn that read it. A restart before acknowledgement presents the same
+occurrence again. Already settled occurrences are not presented again.
+Send retries with the same identity and content are duplicates; a changed
+body, sender or recipient is a conflict. Both HE and PeTTa dialects run the
+native client. Runtime applications can hide occurrence and acknowledgement
+details from the agent, as GödelClaw does.
+
+`mailbox:watch` waits for the revision of an opened store to change, without
+consuming anything. Capture the store before checking for pending mail and
+watch that revision afterwards; arrivals in between cannot be missed.
+
+The native client conformance test is `tests/test_native_mail_client.py`;
+set `CETTA_BIN` and `CETTA_SPACE_SERVICE` to the two built executables.
 
 ## Build and qualification
 
@@ -14,7 +41,7 @@ make BUILD=core ENABLE_DURABLE=0 ENABLE_HTTP=0 ENABLE_JSON_GSLT=0 \
 
 ## Atomic boundary and semantics
 
-`lib/petta/lib_mailbox.metta` produces transition plans from owned values.
+`lib/mailbox.metta` produces transition plans from owned values.
 The host observes scoped, indexed records at one native space revision and
 conditionally commits the complete plan against that revision. A receive
 removes its stored wait and one pending occurrence and inserts a ready record
