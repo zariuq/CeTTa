@@ -221,6 +221,38 @@ def value_handoff_call(form):
     return evaluated[1]
 
 
+def sealed_native_case_call(form):
+    """CALL of the legacy native return-envelope handoff, or None.
+
+    This recognizes declaration semantics only; the two case branches keep
+    their existing dialect spelling and still unwrap the native envelope.
+    """
+    if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"
+            and isinstance(form[0], Symbol)):
+        return None
+    case = form[1]
+    if not (isinstance(case, list) and len(case) == 3 and case[0] == "case"
+            and isinstance(case[0], Symbol)):
+        return None
+    call, branches = case[1], case[2]
+    if not (isinstance(call, list) and call and isinstance(call[0], Symbol)
+            and call[0].startswith("__cetta_lib_")
+            and isinstance(branches, list) and len(branches) == 2):
+        return None
+    wrapped, plain = branches
+    if not (isinstance(wrapped, list) and len(wrapped) == 2
+            and isinstance(wrapped[0], list) and len(wrapped[0]) == 2
+            and wrapped[0][0] == "return" and isinstance(wrapped[0][0], Symbol)
+            and is_variable(wrapped[0][1])
+            and is_return_of(wrapped[1], wrapped[0][1])
+            and isinstance(wrapped[1][0], Symbol)
+            and isinstance(plain, list) and len(plain) == 2
+            and is_variable(plain[0]) and is_return_of(plain[1], plain[0])
+            and isinstance(plain[1][0], Symbol)):
+        return None
+    return call
+
+
 def spell_value_handoff(call, dialect: str):
     if dialect == "petta":
         return call
@@ -340,6 +372,8 @@ def handoff_heads(forms):
             continue
         head = form[1][0]
         call = value_handoff_call(form[2])
+        if call is None:
+            call = sealed_native_case_call(form[2])
         if call is None:
             other.add(head)
             continue

@@ -804,6 +804,97 @@ static void profile_mutation_gate(TestCounts *counts) {
     cetta_op_lang_v1_free(&wire);
 }
 
+static CettaLdPatternV1 variable(const char *name) {
+    CettaLdPatternV1 out = {0};
+    out.kind = CETTA_LD_PATTERN_FVAR_V1;
+    out.as.fvar = text_owned(name);
+    return out;
+}
+
+static CettaLdPatternV1 bound_index(const char *index) {
+    CettaLdPatternV1 out = {0};
+    out.kind = CETTA_LD_PATTERN_BVAR_V1;
+    out.as.bvar_decimal = malloc(strlen(index) + 1u);
+    if (!out.as.bvar_decimal) abort();
+    memcpy(out.as.bvar_decimal, index, strlen(index) + 1u);
+    return out;
+}
+
+static CettaLdPatternV1 lambda(CettaLdPatternV1 body) {
+    CettaLdPatternV1 out = {0};
+    out.kind = CETTA_LD_PATTERN_LAMBDA_V1;
+    out.as.lambda.body = malloc(sizeof(body));
+    if (!out.as.lambda.body) abort();
+    *out.as.lambda.body = body;
+    return out;
+}
+
+static void binding_scope_gate(TestCounts *counts) {
+    CettaLdRelationRuleV1 rules[2] = {0};
+    for (unsigned i = 0u; i < 2u; ++i) {
+        rules[i].left = app1("Lam", lambda(variable("body")));
+        rules[i].right = app1("Lam", lambda(app1("Lam", lambda(variable("body")))));
+    }
+    CettaLanguageDefCoreV1 language = {0};
+    language.rewrites = rules;
+    language.rewrite_len = 2u;
+    CettaLdCrV1Program program = {0};
+    CettaLdCrV1Status status;
+    char error[256];
+    bool compiled = cetta_ld_cr_v1_compile(&program, &language, &status, error, sizeof(error));
+    (void)expect(counts, compiled, "inward single-binder profile compiles");
+    CettaLdPatternV1 source = app1("Lam", lambda(app2("Pair", bound_index("0"),
+        app1("Lam", lambda(app2("Pair", bound_index("0"), bound_index("1")))))));
+    CettaLdPatternV1 wanted = app1("Lam", lambda(app1("Lam", lambda(app2("Pair", bound_index("1"),
+        app1("Lam", lambda(app2("Pair", bound_index("0"), bound_index("2")))))))));
+    CettaLdCrV1Results results = {0};
+    bool ok = compiled && cetta_ld_cr_v1_reducts(&program, NULL, 1u, 10000u, &source,
+        &results, &status, error, sizeof(error));
+    (void)expect(counts, ok && results.len == 2u && cetta_ld_cr_v1_pattern_equal(&results.items[0].term, &wanted),
+        "inner weakening shifts external references and retains internally bound references");
+    (void)expect(counts, ok && results.len == 2u && cetta_ld_cr_v1_pattern_equal(&results.items[1].term, &wanted) &&
+        results.items[0].trace->rule_index == 0u && results.items[1].trace->rule_index == 1u,
+        "equal binding reducts retain independent ordered rule occurrences");
+    bool atomic = ok;
+    for (uint64_t work = 1u; atomic && work < 80u; ++work) {
+        bool ran = cetta_ld_cr_v1_reducts(&program, NULL, 1u, work, &source, &results, &status, error, sizeof(error));
+        atomic = (ran || status == CETTA_LD_CR_V1_WORK_LIMIT) && results.len == 2u &&
+            cetta_ld_cr_v1_pattern_equal(&results.items[0].term, &wanted);
+    }
+    (void)expect(counts, atomic, "bounded scoped rewriting publishes atomically");
+    cetta_ld_pattern_v1_free(&source);
+    cetta_ld_pattern_v1_free(&wanted);
+    source = app1("Lam", lambda(bound_index("999999999999999999999999999999999999999")));
+    wanted = app1("Lam", lambda(app1("Lam", lambda(bound_index("1000000000000000000000000000000000000000")))));
+    ok = cetta_ld_cr_v1_reducts(&program, NULL, 1u, 10000u, &source, &results, &status, error, sizeof(error));
+    (void)expect(counts, ok && results.len == 2u && cetta_ld_cr_v1_pattern_equal(&results.items[0].term, &wanted),
+        "raw Pattern boundary shifts arbitrary natural indices without machine-word truncation");
+    cetta_ld_pattern_v1_free(&source);
+    cetta_ld_pattern_v1_free(&wanted);
+    CettaLdPatternV1 saved = rules[0].right;
+    rules[0].right = variable("body");
+    CettaLdCrV1Program untouched = program;
+    (void)expect(counts, !cetta_ld_cr_v1_compile(&program, &language, &status, error, sizeof(error)) &&
+        status == CETTA_LD_CR_V1_UNSUPPORTED_PROFILE && program.language == untouched.language,
+        "outward transport leaves an explicit unresolved profile and preserves compiled owner");
+    cetta_ld_pattern_v1_free(&rules[0].right);
+    rules[0].right = saved;
+    saved = rules[0].left;
+    rules[0].left = app2("Pair", variable("body"), app1("Lam", lambda(variable("body"))));
+    (void)expect(counts, !cetta_ld_cr_v1_compile(&program, &language, &status, error, sizeof(error)) &&
+        status == CETTA_LD_CR_V1_UNSUPPORTED_PROFILE,
+        "different capture depths need an explicit occurrence interpretation");
+    cetta_ld_pattern_v1_free(&rules[0].left);
+    rules[0].left = saved;
+    for (unsigned i = 0u; i < 2u; ++i) {
+        cetta_ld_pattern_v1_free(&rules[i].left);
+        cetta_ld_pattern_v1_free(&rules[i].right);
+    }
+    (void)expect(counts, results.len == 2u && results.items[0].term.as.apply.arguments.len == 1u,
+        "scoped reduct storage survives destruction of source rules and input");
+    cetta_ld_cr_v1_results_free(&results);
+}
+
 int main(void) {
     TestCounts counts = {0};
     all_artifacts_compile_gate(&counts);
@@ -812,6 +903,7 @@ int main(void) {
     relation_stage_gate(&counts);
     builtin_equality_gate(&counts);
     profile_mutation_gate(&counts);
+    binding_scope_gate(&counts);
     printf("(LanguageDefContextualRunnerV1Summary %u %u %u)\n",
            counts.passed + counts.failed, counts.passed, counts.failed);
     return counts.failed == 0u ? 0 : 1;

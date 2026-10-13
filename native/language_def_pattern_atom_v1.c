@@ -13,6 +13,12 @@ typedef struct {
     size_t error_buf_size;
 } PatternAtomContextV1;
 
+static const char *const pattern_collection_names[] = {
+    "Mettapedia.OSLF.MeTTaIL.Syntax.CollType.vec",
+    "Mettapedia.OSLF.MeTTaIL.Syntax.CollType.hashBag",
+    "Mettapedia.OSLF.MeTTaIL.Syntax.CollType.hashSet",
+};
+
 static void pattern_atom_set_error(PatternAtomContextV1 *context,
                                    const char *format, ...) {
     va_list arguments;
@@ -95,6 +101,72 @@ static bool pattern_atom_expr(const Atom *source, const char *head,
         atom_is_symbol(source->expr.elems[0], head);
 }
 
+static bool pattern_atom_natural(const Atom *source, char **out,
+                                  PatternAtomContextV1 *context) {
+    char digits[32];
+    const char *text = NULL;
+    if (source && source->kind == ATOM_GROUNDED) {
+        if (source->ground.gkind == GV_INT && source->ground.ival >= 0) {
+            snprintf(digits, sizeof(digits), "%lld", (long long)source->ground.ival);
+            text = digits;
+        } else if (source->ground.gkind == GV_BIGINT) {
+            text = atom_bigint_cstr(source);
+        }
+    }
+    if (!text || !*text)
+        return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                 "Pattern index or arity must be a natural number");
+    for (const char *p = text; *p; ++p) {
+        if (!pattern_atom_take_work(context, 0u)) return false;
+        if (*p < '0' || *p > '9')
+            return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                     "Pattern index or arity must be a natural number");
+    }
+    *out = cetta_bigint_canonicalize_owned(text);
+    return *out != NULL || pattern_atom_fail(context,
+        CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE, "Pattern natural allocation failed");
+}
+
+static bool pattern_atom_optional(const Atom *source, const char *none,
+                                   const char *some, CettaLdOptionalTextV1 *out,
+                                   PatternAtomContextV1 *context) {
+    if (!pattern_atom_take_work(context, 0u)) return false;
+    if (atom_is_symbol((Atom *)source, none)) return true;
+    if (!pattern_atom_expr(source, some, 1u))
+        return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                 "Malformed optional Pattern name");
+    if (!pattern_atom_text(source->expr.elems[1], &out->value, context)) return false;
+    out->present = true;
+    return true;
+}
+
+static bool pattern_atom_names(const Atom *source, CettaLdTextListV1 *out,
+                                PatternAtomContextV1 *context) {
+    const Atom *cursor = source;
+    uint32_t len = 0u;
+    while (!atom_is_symbol((Atom *)cursor, "LNil")) {
+        if (!pattern_atom_take_work(context, 0u)) return false;
+        if (!pattern_atom_expr(cursor, "LCons", 2u))
+            return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                     "Pattern names must be an LCons/LNil list");
+        if (len == UINT32_MAX)
+            return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_RESOURCE_LIMIT,
+                                     "Too many Pattern binder names");
+        ++len;
+        cursor = cursor->expr.elems[2];
+    }
+    if (len) {
+        out->items = calloc(len, sizeof(*out->items));
+        if (!out->items) return pattern_atom_fail(context,
+            CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE, "Pattern names allocation failed");
+    }
+    for (cursor = source; out->len < len; cursor = cursor->expr.elems[2]) {
+        if (!pattern_atom_text(cursor->expr.elems[1], &out->items[out->len], context)) return false;
+        ++out->len;
+    }
+    return true;
+}
+
 static bool pattern_atom_decode_inner(CettaLdPatternV1 *out,
                                       const Atom *source,
                                       PatternAtomContextV1 *context,
@@ -158,9 +230,16 @@ static bool pattern_atom_decode_inner(CettaLdPatternV1 *out,
     CettaLdPatternV1 result;
 
     cetta_ld_pattern_v1_init(&result);
-    if (!out || !source || !pattern_atom_take_work(context, depth))
+    if (!out || !source)
+        return pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                 "Pattern child is missing");
+    if (!pattern_atom_take_work(context, depth))
         return false;
-    if (pattern_atom_expr(source, "FVar", 1u)) {
+    if (pattern_atom_expr(source, "Var", 1u)) {
+        result.kind = CETTA_LD_PATTERN_BVAR_V1;
+        if (!pattern_atom_natural(source->expr.elems[1], &result.as.bvar_decimal, context))
+            goto fail;
+    } else if (pattern_atom_expr(source, "FVar", 1u)) {
         result.kind = CETTA_LD_PATTERN_FVAR_V1;
         if (!pattern_atom_text(source->expr.elems[1], &result.as.fvar,
                                context))
@@ -173,15 +252,59 @@ static bool pattern_atom_decode_inner(CettaLdPatternV1 *out,
                 &result.as.apply.arguments, source->expr.elems[2],
                 context, depth + 1u))
             goto fail;
+    } else if (pattern_atom_expr(source, "PLam", 2u)) {
+        result.kind = CETTA_LD_PATTERN_LAMBDA_V1;
+        result.as.lambda.body = calloc(1u, sizeof(*result.as.lambda.body));
+        if (!result.as.lambda.body) goto allocation_fail;
+        if (!pattern_atom_optional(source->expr.elems[1], "BNone", "BSome",
+                &result.as.lambda.binder, context) ||
+            !pattern_atom_decode_inner(result.as.lambda.body, source->expr.elems[2], context, depth + 1u))
+            goto fail;
+    } else if (pattern_atom_expr(source, "PMultiLam", 3u)) {
+        result.kind = CETTA_LD_PATTERN_MULTI_LAMBDA_V1;
+        result.as.multi_lambda.body = calloc(1u, sizeof(*result.as.multi_lambda.body));
+        if (!result.as.multi_lambda.body) goto allocation_fail;
+        if (!pattern_atom_natural(source->expr.elems[1], &result.as.multi_lambda.arity_decimal, context) ||
+            !pattern_atom_names(source->expr.elems[2], &result.as.multi_lambda.binders, context) ||
+            !pattern_atom_decode_inner(result.as.multi_lambda.body, source->expr.elems[3], context, depth + 1u))
+            goto fail;
+    } else if (pattern_atom_expr(source, "PSubst", 2u)) {
+        result.kind = CETTA_LD_PATTERN_SUBST_V1;
+        result.as.subst.body = calloc(1u, sizeof(*result.as.subst.body));
+        result.as.subst.replacement = calloc(1u, sizeof(*result.as.subst.replacement));
+        if (!result.as.subst.body || !result.as.subst.replacement) goto allocation_fail;
+        if (!pattern_atom_decode_inner(result.as.subst.body, source->expr.elems[1], context, depth + 1u) ||
+            !pattern_atom_decode_inner(result.as.subst.replacement, source->expr.elems[2], context, depth + 1u))
+            goto fail;
+    } else if (pattern_atom_expr(source, "PCollection", 3u)) {
+        result.kind = CETTA_LD_PATTERN_COLLECTION_V1;
+        const Atom *kind = source->expr.elems[1];
+        size_t i = 0u;
+        if (kind && kind->kind == ATOM_GROUNDED && kind->ground.gkind == GV_STRING && kind->ground.sval) {
+            for (; i < 3u; ++i)
+                if (!strcmp(kind->ground.sval, pattern_collection_names[i])) break;
+        } else i = 3u;
+        if (i == 3u) {
+            (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                    "Unknown Pattern collection kind");
+            goto fail;
+        }
+        result.as.collection.collection_type = (CettaLdCollectionTypeV1)i;
+        if (!pattern_atom_list_decode(&result.as.collection.elements, source->expr.elems[2], context, depth + 1u) ||
+            !pattern_atom_optional(source->expr.elems[3], "RNone", "RSome", &result.as.collection.rest, context))
+            goto fail;
     } else {
         (void)pattern_atom_fail(
-            context, CETTA_LD_PATTERN_ATOM_V1_UNSUPPORTED_PROFILE,
-            "contextual runner accepts only PApp/FVar Pattern wires");
+            context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+            "Unknown or malformed LanguageDef Pattern constructor");
         goto fail;
     }
     *out = result;
     return true;
 
+allocation_fail:
+    (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE,
+                            "Pattern child allocation failed");
 fail:
     cetta_ld_pattern_v1_free(&result);
     return false;
@@ -219,80 +342,129 @@ bool cetta_ld_pattern_atom_v1_decode(
     return true;
 }
 
+static Atom *pattern_atom_encode_text(Arena *arena, const CettaLdTextV1 *source,
+                                      PatternAtomContextV1 *context) {
+    if (!source || (source->len && (!source->bytes || memchr(source->bytes, 0, source->len)))) {
+        (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                "Pattern text is not representable by an Atom string");
+        return NULL;
+    }
+    char *text = malloc((size_t)source->len + 1u);
+    if (!text) {
+        (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE,
+                                "Pattern text encoding allocation failed");
+        return NULL;
+    }
+    if (source->len) memcpy(text, source->bytes, source->len);
+    text[source->len] = '\0';
+    Atom *result = atom_string(arena, text);
+    free(text);
+    return result;
+}
+
+static Atom *pattern_atom_encode_natural(Arena *arena, const char *digits,
+                                         PatternAtomContextV1 *context) {
+    if (!digits || !*digits) goto malformed;
+    for (const char *p = digits; *p; ++p) {
+        if (!pattern_atom_take_work(context, 0u)) return NULL;
+        if (*p < '0' || *p > '9') goto malformed;
+    }
+    return atom_bigint(arena, digits);
+malformed:
+    (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                            "Malformed Pattern natural number");
+    return NULL;
+}
+
+static Atom *pattern_atom_encode_optional(Arena *arena, const CettaLdOptionalTextV1 *source,
+                                          const char *none, const char *some,
+                                          PatternAtomContextV1 *context) {
+    if (!pattern_atom_take_work(context, 0u)) return NULL;
+    if (!source->present) return atom_symbol(arena, none);
+    Atom *text = pattern_atom_encode_text(arena, &source->value, context);
+    return text ? atom_expr2(arena, atom_symbol(arena, some), text) : NULL;
+}
+
+static Atom *pattern_atom_encode_inner(Arena *, const CettaLdPatternV1 *, PatternAtomContextV1 *, uint32_t);
+
+static Atom *pattern_atom_encode_list(Arena *arena, const CettaLdPatternListV1 *source,
+                                      PatternAtomContextV1 *context, uint32_t depth) {
+    if (source->len && !source->items) {
+        (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                "Pattern list has no elements");
+        return NULL;
+    }
+    Atom *tail = atom_symbol(arena, "LNil");
+    for (uint32_t i = source->len; i > 0u; --i) {
+        Atom *item = pattern_atom_encode_inner(arena, &source->items[i - 1u], context, depth + 1u);
+        if (!item) return NULL;
+        tail = atom_expr3(arena, atom_symbol(arena, "LCons"), item, tail);
+    }
+    return tail;
+}
+
 static Atom *pattern_atom_encode_inner(Arena *arena,
                                        const CettaLdPatternV1 *source,
                                        PatternAtomContextV1 *context,
                                        uint32_t depth) {
-    Atom *arguments[2];
-
-    if (!arena || !source || !pattern_atom_take_work(context, depth))
+    if (!arena || !source) {
+        (void)pattern_atom_fail(context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+                                "Pattern child is missing");
         return NULL;
+    }
+    if (!pattern_atom_take_work(context, depth))
+        return NULL;
+    if (source->kind == CETTA_LD_PATTERN_BVAR_V1) {
+        Atom *index = pattern_atom_encode_natural(arena, source->as.bvar_decimal, context);
+        return index ? atom_expr2(arena, atom_symbol(arena, "Var"), index) : NULL;
+    }
     if (source->kind == CETTA_LD_PATTERN_FVAR_V1) {
-        char *name = malloc((size_t)source->as.fvar.len + 1u);
-        Atom *result;
-        if (!name) {
-            (void)pattern_atom_fail(
-                context, CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE,
-                "Pattern name encoding allocation failed");
-            return NULL;
-        }
-        if (source->as.fvar.len > 0u && !source->as.fvar.bytes) {
-            free(name);
-            (void)pattern_atom_fail(
-                context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
-                "Pattern name has no bytes");
-            return NULL;
-        }
-        if (source->as.fvar.len > 0u)
-            memcpy(name, source->as.fvar.bytes, source->as.fvar.len);
-        name[source->as.fvar.len] = '\0';
-        result = atom_expr2(arena, atom_symbol(arena, "FVar"),
-                            atom_string(arena, name));
-        free(name);
-        return result;
+        Atom *name = pattern_atom_encode_text(arena, &source->as.fvar, context);
+        return name ? atom_expr2(arena, atom_symbol(arena, "FVar"), name) : NULL;
     }
     if (source->kind == CETTA_LD_PATTERN_APPLY_V1) {
-        Atom *tail = atom_symbol(arena, "LNil");
-        char *head = malloc((size_t)source->as.apply.head.len + 1u);
-        uint32_t index;
-        if (!head) {
-            (void)pattern_atom_fail(
-                context, CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE,
-                "Pattern head encoding allocation failed");
-            return NULL;
-        }
-        if (source->as.apply.head.len > 0u &&
-            !source->as.apply.head.bytes) {
-            free(head);
-            (void)pattern_atom_fail(
-                context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
-                "Pattern head has no bytes");
-            return NULL;
-        }
-        if (source->as.apply.head.len > 0u)
-            memcpy(head, source->as.apply.head.bytes,
-                   source->as.apply.head.len);
-        head[source->as.apply.head.len] = '\0';
-        for (index = source->as.apply.arguments.len; index > 0u; index--) {
-            Atom *item = pattern_atom_encode_inner(
-                arena, &source->as.apply.arguments.items[index - 1u],
-                context, depth + 1u);
-            if (!item) {
-                free(head);
-                return NULL;
-            }
-            tail = atom_expr3(arena, atom_symbol(arena, "LCons"),
-                              item, tail);
-        }
-        arguments[0] = atom_string(arena, head);
-        arguments[1] = tail;
-        free(head);
-        return atom_expr3(arena, atom_symbol(arena, "PApp"),
-                          arguments[0], arguments[1]);
+        Atom *head = pattern_atom_encode_text(arena, &source->as.apply.head, context);
+        Atom *tail = head ? pattern_atom_encode_list(arena, &source->as.apply.arguments, context, depth) : NULL;
+        return tail ? atom_expr3(arena, atom_symbol(arena, "PApp"), head, tail) : NULL;
     }
+    if (source->kind == CETTA_LD_PATTERN_LAMBDA_V1) {
+        Atom *binder = pattern_atom_encode_optional(arena, &source->as.lambda.binder, "BNone", "BSome", context);
+        Atom *body = binder ? pattern_atom_encode_inner(arena, source->as.lambda.body, context, depth + 1u) : NULL;
+        return body ? atom_expr3(arena, atom_symbol(arena, "PLam"), binder, body) : NULL;
+    }
+    if (source->kind == CETTA_LD_PATTERN_MULTI_LAMBDA_V1) {
+        const CettaLdTextListV1 *names = &source->as.multi_lambda.binders;
+        if (names->len && !names->items) goto malformed;
+        Atom *arity = pattern_atom_encode_natural(arena, source->as.multi_lambda.arity_decimal, context);
+        if (!arity) return NULL;
+        Atom *tail = atom_symbol(arena, "LNil");
+        for (uint32_t i = names->len; i > 0u; --i) {
+            if (!pattern_atom_take_work(context, depth)) return NULL;
+            Atom *name = pattern_atom_encode_text(arena, &names->items[i - 1u], context);
+            if (!name) return NULL;
+            tail = atom_expr3(arena, atom_symbol(arena, "LCons"), name, tail);
+        }
+        Atom *body = pattern_atom_encode_inner(arena, source->as.multi_lambda.body, context, depth + 1u);
+        Atom *parts[] = {atom_symbol(arena, "PMultiLam"), arity, tail, body};
+        return body ? atom_expr(arena, parts, 4u) : NULL;
+    }
+    if (source->kind == CETTA_LD_PATTERN_SUBST_V1) {
+        Atom *body = pattern_atom_encode_inner(arena, source->as.subst.body, context, depth + 1u);
+        Atom *replacement = body ? pattern_atom_encode_inner(arena, source->as.subst.replacement, context, depth + 1u) : NULL;
+        return replacement ? atom_expr3(arena, atom_symbol(arena, "PSubst"), body, replacement) : NULL;
+    }
+    if (source->kind == CETTA_LD_PATTERN_COLLECTION_V1) {
+        unsigned kind = source->as.collection.collection_type;
+        if (kind >= 3u) goto malformed;
+        Atom *elements = pattern_atom_encode_list(arena, &source->as.collection.elements, context, depth);
+        Atom *rest = elements ? pattern_atom_encode_optional(arena, &source->as.collection.rest, "RNone", "RSome", context) : NULL;
+        Atom *parts[] = {atom_symbol(arena, "PCollection"), atom_string(arena, pattern_collection_names[kind]), elements, rest};
+        return rest ? atom_expr(arena, parts, 4u) : NULL;
+    }
+malformed:
     (void)pattern_atom_fail(
-        context, CETTA_LD_PATTERN_ATOM_V1_UNSUPPORTED_PROFILE,
-        "contextual runner produced a Pattern outside PApp/FVar");
+        context, CETTA_LD_PATTERN_ATOM_V1_MALFORMED,
+        "Malformed or unknown LanguageDef Pattern value");
     return NULL;
 }
 
@@ -316,6 +488,9 @@ Atom *cetta_ld_pattern_atom_v1_encode(
         return NULL;
     }
     result = pattern_atom_encode_inner(arena, source, &context, 0u);
+    if (!result && context.status == CETTA_LD_PATTERN_ATOM_V1_OK)
+        (void)pattern_atom_fail(&context, CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE,
+                                "Pattern Atom encoding allocation failed");
     if (status)
         *status = result ? CETTA_LD_PATTERN_ATOM_V1_OK : context.status;
     return result;

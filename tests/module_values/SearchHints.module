@@ -1,0 +1,9 @@
+Module SearchHints {
+  Theory Hints() {
+    Empty Exports { Hint; } Terms {
+      SearchDepth . Hint ::= "depth-first";
+      SearchBreadth . Hint ::= "breadth-first";
+    }
+  }
+  theory Hints()
+}

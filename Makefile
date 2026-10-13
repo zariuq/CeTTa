@@ -808,10 +808,12 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/parser_token_runtime_v1.c \
 	native/parser_token_ast_v1.c \
 	native/lbnf_document_v1.c \
+	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c \
 	native/regular_token_compiler_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	native/language_def_contextual_runner_v1.c \
 	native/language_def_pattern_atom_v1.c \
+	native/language_def_pattern_admission_v1.c \
 	native/structural_tree_relabel_v1.c \
 	native/gslt_composition_v1.c \
 	native/syntax_gslt_v1.c \
@@ -1137,7 +1139,7 @@ PAYLOAD_MAP_CAPACITY_TEST_BIN = runtime/test_rhometta_payload_map_capacity-$(BUI
 PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.c
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
-RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_CANON)
+RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
 LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ = runtime/bootstrap/test_lib_parse_gll_utf8_forest.$(BUILD_OBJ_TAG).o
@@ -29839,8 +29841,12 @@ test-rhometta-payload-map-capacity-c: $(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 	@./$(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 
 test-rhocalc-abt-substitution: $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN)
-	@result=$$(./$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN) 2>&1); \
+	@status=0; result=$$(./$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN) 2>&1) || status=$$?; \
 	printf '%s\n' "$$result"; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "FAIL: rho/ABT substitution correspondence exited with status $$status"; \
+		exit "$$status"; \
+	fi; \
 	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RhoCoreCorrespondenceSummary 2 2 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: nameful rho substitution agrees with canonical ABT substitution')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: direct rho payload keys agree with ordinary atom rendering')" -ne 1 ]; then \
@@ -39928,8 +39934,9 @@ test-parser-predictive-compiler-v1: $(PARSER_PREDICTIVE_ANALYZER_V1) tests/test_
 test: test-parser-predictive-compiler-v1
 
 .PHONY: test-parser-artifact-publication-v1
-test-parser-artifact-publication-v1: tests/test_parser_artifact_publication_v1.py tools/parser_artifact_publication_v1.py
+test-parser-artifact-publication-v1: tests/test_parser_artifact_publication_v1.py tools/parser_artifact_publication_v1.py tests/test_parser_artifact_build_v1.py tools/parser_artifact_build_v1.py
 	@python3 tests/test_parser_artifact_publication_v1.py
+	@python3 tests/test_parser_artifact_build_v1.py
 
 test: test-parser-artifact-publication-v1
 
@@ -40050,6 +40057,67 @@ test-lbnf-reference-tools-v1: tools/test_lbnf_reference_ast_v1.py \
 	python3 -m unittest discover -s tests/support -p test_lbnf_reference_v1.py
 
 test: test-lbnf-reference-tools-v1
+
+MODULE_VALUES_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_module_values_v1.$(BUILD_OBJ_TAG).o
+LD_PATTERN_ADMISSION_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_language_def_pattern_admission_v1.$(BUILD_OBJ_TAG).o
+LD_PATTERN_ADMISSION_V1_TEST_BIN = runtime/test-language-def-pattern-admission-v1-$(BUILD_OBJ_TAG)
+$(LD_PATTERN_ADMISSION_V1_TEST_OBJ): tests/support/test_language_def_pattern_admission_v1.c \
+		native/language_def_pattern_admission_v1.h native/language_def_pattern_atom_v1.h $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(LD_PATTERN_ADMISSION_V1_TEST_BIN): $(LD_PATTERN_ADMISSION_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-language-def-pattern-admission-v1
+test-language-def-pattern-admission-v1: $(LD_PATTERN_ADMISSION_V1_TEST_BIN)
+	@$(LD_PATTERN_ADMISSION_V1_TEST_BIN)
+
+test: test-language-def-pattern-admission-v1
+-include $(LD_PATTERN_ADMISSION_V1_TEST_OBJ:.o=.d)
+
+MODULE_VALUES_V1_TEST_BIN = runtime/test-module-values-v1-$(BUILD_OBJ_TAG)
+$(MODULE_VALUES_V1_TEST_OBJ): tests/support/test_module_values_v1.c \
+		native/module_value_v1.h native/module_value_internal_v1.h $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(MODULE_VALUES_V1_TEST_BIN): $(MODULE_VALUES_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-module-values-v1
+test-module-values-v1: $(MODULE_VALUES_V1_TEST_BIN)
+	@$(MODULE_VALUES_V1_TEST_BIN)
+
+test: test-module-values-v1
+-include $(MODULE_VALUES_V1_TEST_OBJ:.o=.d)
+
+.PHONY: test-module-chainer-export-v1 test-module-workflow-v1 test-module-chainer-v1
+test-module-chainer-export-v1:
+	python3 -m unittest discover -s tools -p test_module_chainer_export_v1.py
+
+test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-admission-v1 test-module-chainer-export-v1
+	python3 tools/test_module_values_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-public
+	python3 tools/test_module_layers_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-layers
+	python3 tools/test_module_derived_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-derived
+	python3 tools/test_module_interpretations_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-interpretations
+	python3 tools/test_module_binding_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-binding
+
+test-module-chainer-v1: $(BIN) test-module-chainer-export-v1
+	python3 tools/test_module_chainer_v1.py --cetta "./$(BIN)" \
+		--chainer-root "$(PETTA_CHAINER_ROOT)" --petta-root "$(PETTA_ORACLE_ROOT)" \
+		--output runtime/module-workflow-chainer
+
+test: test-module-chainer-export-v1
+
+.PHONY: test-module-inventory-v1
+test-module-inventory-v1: tests/test_module_inventory_v1.py tools/qualify_module_values_v1.py
+	@python3 tests/test_module_inventory_v1.py
+
+test: test-module-inventory-v1
 
 .PHONY: test-language-def-parser-pack-v1
 test-language-def-parser-pack-v1:
@@ -41714,7 +41782,7 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
-LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_tptp json str
+LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1

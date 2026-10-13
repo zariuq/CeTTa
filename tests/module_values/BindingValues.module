@@ -1,0 +1,70 @@
+Module BindingValues {
+  Theory Names() {
+    Empty Terms {
+      NameX . Name ::= "x";
+      NameY . Name ::= "y";
+    }
+  }
+  Theory Expressions(names: Names) {
+    names Terms {
+      Zero . Expr ::= "z";
+      Ref . Expr ::= "ref(" Name ")";
+      Lam . Expr ::= "lam" (Bind x Name) "." (x)Expr;
+      Pair . Expr ::= "pair(" Expr "," Expr ")";
+    }
+  }
+  Theory Syntax() { Expressions(Names()) }
+  Theory TokenNames() {
+    Empty Terms { position token Name letter+; }
+  }
+  Theory NamedExpressions(names: TokenNames) {
+    names Terms {
+      Zero . Expr ::= "z";
+      Ref . Expr ::= "ref(" Name ")";
+      Lam . Expr ::= "lam" (Bind x Name) "." (x)Expr;
+      Pair . Expr ::= "pair(" Expr "," Expr ")";
+    }
+  }
+  Theory NamedSyntax() { NamedExpressions(TokenNames()) }
+  Theory Renamed() {
+    Syntax() Replacements {
+      [0,1] Lam . Expr => Abs . Expr ::= "fun" (Bind x Name) "->" (x)Expr;
+    }
+  }
+  Theory MissingBinder() {
+    Empty Terms { Lam . Expr ::= "lam" (x)Expr; }
+  }
+  Theory AmbiguousBinder() {
+    Names() Terms { Lam . Expr ::= (Bind x Name) (Bind x Name) (x)Expr; }
+  }
+  Theory BindingTuple() {
+    Names() Terms { Tuple . Product { Name; Name; } ::= (Bind x Name) (x)Name; }
+  }
+  Theory BindingLaw() {
+    Syntax() Rewrites { Keep: (Lam x body) ~> (Lam x body); }
+  }
+  Theory BindingCopy() {
+    NamedSyntax() Rewrites { Copy: (Lam x body) ~> (Lam x (Pair body body)); }
+  }
+  Theory BindingWeaken() {
+    NamedSyntax() Rewrites { Weaken: (Lam x body) ~> (Lam x (Lam y body)); }
+  }
+  Theory BindingWeakenRenamed() {
+    BindingWeaken() Replacements {
+      [0,1] Lam . Expr => Abs . Expr ::= "fun" (Bind x Name) "->" (x)Expr;
+    }
+  }
+  Theory BindingReference() {
+    NamedSyntax() Rewrites { Clear: (Lam x (Ref x)) ~> (Lam x (Zero)); }
+  }
+  Theory BindingEscape() {
+    NamedSyntax() Rewrites { Escape: (Lam x body) ~> body; }
+  }
+  Theory BindingCapture() {
+    NamedSyntax() Rewrites { Capture: (Lam x body) ~> (Lam y body); }
+  }
+  Theory BindingRepeatedContexts() {
+    NamedSyntax() Rewrites { Inconsistent: (Pair (Lam x body) (Lam y body)) ~> (Lam x body); }
+  }
+  theory Syntax()
+}

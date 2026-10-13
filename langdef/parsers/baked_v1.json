@@ -4,6 +4,7 @@
     {"name": "bnf-reader", "format": "authored", "language": "../bnf/plain_bnf_source_v1.metta", "profile": "../bnf/plain_bnf_parser_profile_v1.metta"},
     {"name": "ebnf-reader", "format": "reader", "reader": "ebnf"},
     {"name": "lbnf-reader", "format": "reader", "reader": "lbnf"},
+    {"name": "module-core-reader", "format": "lbnf", "source": "module_core_v1.cf", "start": "Module", "strategy": "general"},
     {"name": "bnf-program", "format": "bnf", "source": "reusable_v1.bnf", "start": "s"},
     {"name": "ebnf-program", "format": "ebnf", "source": "reusable_v1.ebnf", "start": "s"},
     {"name": "joined-left", "format": "lbnf", "source": "joined_left_v1.cf", "start": "S"},
