@@ -5,6 +5,7 @@ and continuations are inert data. The caller owns external action receipts.
 """
 from __future__ import annotations
 from pathlib import Path
+import json
 import time
 import uuid
 
@@ -27,6 +28,15 @@ class Changed(RuntimeError):
 def text(value):
     if not isinstance(value, str) or not value or "\0" in value:
         raise ValueError("nonempty mailbox text required")
+    return value
+
+
+def validate_headers(value):
+    if not isinstance(value,dict) or set(value)!={"from","return_address","in_reply_to"}:
+        raise ValueError("headers require from, return_address and in_reply_to")
+    text(value["from"])
+    for key in ("return_address","in_reply_to"):
+        if value[key] is not None: text(value[key])
     return value
 
 
@@ -137,16 +147,35 @@ class Mailbox:
             time.sleep(.001)
         raise MailboxError("mailbox contention; no decision committed")
 
-    def send(self, identity, channel, correlation, sender, body):
+    def send(self, identity, channel, correlation, sender, body, *, headers=None):
         identity, channel, correlation, sender = map(text, (identity, channel, correlation, sender))
         if not isinstance(body, str):
             raise ValueError("mailbox body must be text data")
         message=E("MailboxMessage",1,identity,channel,correlation,sender,body)
-        result=self._operation(lambda rev: self._plan(E("send",message,
-            self._rows(E("MailboxMessage",1,identity,Var(0),Var(1),Var(2),Var(3)),rev))))
+        if headers is not None:
+            validate_headers(headers)
+        def operation(rev):
+            old=self._rows(E("MailboxMessage",1,identity,Var(0),Var(1),Var(2),Var(3)),rev)
+            additions=()
+            if headers is not None:
+                record=E("MailboxHeaders",1,identity,json.dumps(headers,sort_keys=True,ensure_ascii=False))
+                existing=self._rows(E("MailboxHeaders",1,identity,Var(0)),rev)
+                if existing and existing!=(record,):
+                    raise MailboxError("message identity reused with different headers")
+                if old and not existing:
+                    raise MailboxError("message identity already exists without these headers")
+                if not existing: additions=(E("add",record),)
+            return self._plan(E("send",message,old),additions)
+        result=self._operation(operation)
         # The durable message is acknowledged even if a disposable policy
         # worker later fails to match it. A recovered receiver can finish.
         return result
+
+    def headers(self, identity):
+        def operation(rev):
+            row=self._one(self._rows(E("MailboxHeaders",1,text(identity),Var(0)),rev))
+            return json.loads(row[3]) if row else {}
+        return self._operation(operation)
 
     def records(self, pattern, revision, limit):
         """A complete indexed view at one revision; overflow is a refusal.
@@ -230,10 +259,13 @@ class Mailbox:
         if capacity is not None and (type(capacity) is not int or capacity<1):
             raise ValueError("positive active-wait admission budget required")
         if intent is not None:
-            if (not isinstance(intent,tuple) or len(intent)!=4 or intent[:2]!=(S("MailboxCodexWatch"),1)
-                or intent[3]!=correlation or continuation[3]!=identity):
-                raise ValueError("correlated inert Codex watch intent required")
-            text(intent[2]); text(intent[3])
+            codex=(isinstance(intent,tuple) and len(intent)==4 and intent[:2]==(S("MailboxCodexWatch"),1)
+                   and intent[3]==correlation)
+            ask=(isinstance(intent,tuple) and len(intent)==5 and intent[:2]==(S("MailboxAsk"),1)
+                 and correlation==identity)
+            if not (codex or ask) or continuation[3]!=identity:
+                raise ValueError("correlated inert mailbox intention required")
+            for value in intent[2:]: text(value)
         wait=E("MailboxWait",1,identity,channel,correlation,sender,owner,generation,continuation)
         def operation(rev):
             old=self._rows(E("MailboxRegistration",1,identity,Var(0)),rev)
@@ -251,8 +283,13 @@ class Mailbox:
                 self._rows(E("MailboxOwner",1,owner,generation,Var(0)),rev),
                 self._rows(E("MailboxRoute",1,channel,correlation,sender,Var(0)),rev))
             if intent is not None:
-                request=E("register-intent",*request[1:],E("MailboxIntent",1,identity,continuation[2],intent),
-                          self._rows(E("MailboxIntent",1,identity,Var(0),Var(1)),rev))
+                record=E("MailboxIntent",1,identity,continuation[2],intent)
+                retained=self._rows(E("MailboxIntent",1,identity,Var(0),Var(1)),rev)
+                if intent[:2]==(S("MailboxAsk"),1):
+                    if retained and retained!=(record,): raise MailboxError("intent-identity-conflict")
+                    if not retained: additions+=(E("add",record),)
+                else:
+                    request=E("register-intent",*request[1:],record,retained)
             # Registration and its inert task note share one observed batch.
             # A failed policy plan cannot publish either one.
             return self._plan(request, additions)

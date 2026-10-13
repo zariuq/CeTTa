@@ -89,6 +89,40 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(list((self.inbox/"rejected").glob("*.json"))),2)
         self.assertEqual(self.box.resolve("wait")[6][-1],"good")
 
+    def test_structured_headers_survive_restart_and_duplicate_delivery(self):
+        bridge=self.folder();self.register()
+        headers={"from":"lila","return_address":"lila","in_reply_to":"question"}
+        source=deliver(self.inbox,"structured","request","codex","literal body",headers=headers)
+        self.pump(bridge,lambda:not source.exists())
+        identity=self.box.resolve("wait")[6][2]
+        self.assertEqual(self.box.headers(identity),headers)
+        self.fixture.restart();self.box.reconnect()
+        duplicate=deliver(self.inbox,"structured","request","codex","literal body",headers=headers)
+        bridge.rescan();self.assertFalse(duplicate.exists())
+        self.assertEqual(self.box.headers(identity),headers)
+        self.assertEqual(self.box.space.match_count(E("MailboxHeaders",1,Var(0),Var(1))),1)
+
+    def test_invalid_json_and_plain_text_drops_get_reason_and_valid_example(self):
+        bridge=self.folder()
+        for name,body in (("missing-fields.json",'{"body":"hello"}'),("note.txt","hello")):
+            (self.inbox/name).write_text(body)
+        bridge.scan()
+        self.assertFalse((self.inbox/"note.txt").exists())
+        reasons=[json.loads(p.read_text()) for p in (self.inbox/"rejected").glob("*.reason")]
+        self.assertEqual({r["source"] for r in reasons},{"missing-fields.json","note.txt"})
+        self.assertTrue(all(r["reason"] and r["usage"]=="mailbox-post NAME --body-file FILE" for r in reasons))
+        self.assertEqual(set(reasons[0]["example"]),{"id","correlation","sender","body"})
+
+    def test_conflicting_headers_do_not_rewrite_an_existing_message(self):
+        bridge=self.folder();self.register()
+        headers={"from":"lila","return_address":"lila","in_reply_to":None}
+        source=deliver(self.inbox,"one","request","codex","body",headers=headers)
+        self.pump(bridge,lambda:not source.exists())
+        identity=self.box.resolve("wait")[6][2]
+        changed=deliver(self.inbox,"one","request","codex","body",headers=dict(headers,**{"from":"other"}))
+        bridge.scan();self.assertFalse(changed.exists())
+        self.assertEqual(self.box.headers(identity),headers)
+
     def test_deep_json_is_quarantined_and_cannot_crash_loop_on_rescan(self):
         self.inbox.mkdir()
         malformed=self.inbox/"deep.json"
@@ -217,6 +251,27 @@ class BridgeTests(unittest.TestCase):
         self.box.space.batch(*(E("remove",value) for value in fillers))
         self.pump(bridge,lambda:not source.exists())
         self.assertEqual(self.box.resolve("wait")[6][-1],"retained")
+
+    def test_post_tool_retains_named_return_route_and_refuses_unknown_reply_address(self):
+        config=self.fixture.path/"replyable.json"
+        config.write_text(json.dumps({"bindings":[
+            {"name":"review","sender":"codex","directory":str(self.inbox)},
+            {"name":"writer","sender":"local","directory":str(self.fixture.path/"writer")}
+        ]}))
+        command=[sys.executable,str(ROOT/"tools/mailbox_post.py"),"--config",str(config),
+                 "--from","writer","--reply-to","writer","review"]
+        result=subprocess.run(command,input="please review",text=True,capture_output=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        receipt=json.loads(result.stdout)
+        envelope=json.loads(Path(receipt["path"]).read_text())
+        self.assertEqual(receipt["return_address"],"writer")
+        self.assertEqual(envelope["headers"],{"from":"writer","return_address":"writer","in_reply_to":None})
+        before=set(self.inbox.glob("*.json"))
+        command[command.index("--reply-to")+1]="missing"
+        refused=subprocess.run(command,input="bad address",text=True,capture_output=True,timeout=5)
+        self.assertNotEqual(refused.returncode,0)
+        self.assertIn("reply address",refused.stderr)
+        self.assertEqual(set(self.inbox.glob("*.json")),before)
 
     def codex(self,turns):
         client=AppServerFixture(turns); self.addCleanup(client.close)

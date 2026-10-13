@@ -14,22 +14,28 @@ import time
 import uuid
 
 if __package__:
-    from .native_mailbox import Mailbox, MailboxError, text
+    from .native_mailbox import Mailbox, MailboxError, text, validate_headers
     from .space_service_client import S, ServiceError, Uncertain
     from .value_worker_client import WorkerUnavailable
 else:
-    from native_mailbox import Mailbox, MailboxError, text
+    from native_mailbox import Mailbox, MailboxError, text, validate_headers
     from space_service_client import S, ServiceError, Uncertain
     from value_worker_client import WorkerUnavailable
 
 
-def deliver(directory, identity, correlation, sender, body):
+class DeliveryUncertain(OSError):
+    published=True
+
+
+def deliver(directory, identity, correlation, sender, body, *, headers=None):
     """Publish a complete file by fsync + rename; destination is configuration."""
     directory=Path(directory); directory.mkdir(parents=True,exist_ok=True)
     value={"id":text(identity),"correlation":text(correlation),"sender":text(sender),"body":body}
+    if headers is not None: value["headers"]=validate_headers(headers)
     if not isinstance(body,str):
         raise ValueError("text mailbox body required")
     fd,path=tempfile.mkstemp(prefix=".delivery-",dir=directory)
+    published=False
     try:
         # A setgid mailbox directory gives each writer the receiver's group.
         # Let that receiver read the newly published envelope across accounts.
@@ -38,10 +44,14 @@ def deliver(directory, identity, correlation, sender, body):
             json.dump(value,file,ensure_ascii=False); file.write("\n"); file.flush(); os.fsync(file.fileno())
         target=directory/(uuid.uuid4().hex+".json")
         os.rename(path,target)
+        published=True
         parent=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
         try: os.fsync(parent)
         finally: os.close(parent)
         return target
+    except OSError as error:
+        if published: raise DeliveryUncertain("message was published but durability acknowledgement failed: "+str(error)) from error
+        raise
     finally:
         if os.path.exists(path): os.unlink(path)
 
@@ -126,16 +136,18 @@ class DirectoryBridge:
             if len(raw)>self.max_file_bytes or (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
                 raise ValueError("mailbox file changed during read")
             value=json.loads(raw)
-            if not isinstance(value,dict) or set(value)!={"id","correlation","sender","body"}:
-                raise ValueError("mailbox envelope fields")
+            required={"id","correlation","sender","body"}
+            if not isinstance(value,dict) or not required<=set(value) or set(value)-required-{"headers"}:
+                raise ValueError("mailbox envelope requires id, correlation, sender and body; use mailbox-post NAME --body-file FILE")
             if value["sender"]!=binding["sender"]:
                 raise ValueError("mailbox sender differs from binding")
             # Exact structured occurrence identity, without a lossy hash or
             # filename authority. Equal IDs on different channels stay distinct.
             identity=json.dumps([binding["name"],value["sender"],text(value["id"])],
                                 ensure_ascii=False,separators=(",",":"))
+            options={"headers":validate_headers(value["headers"])} if "headers" in value else {}
             self.mailbox.send(identity,binding["name"],text(value["correlation"]),
-                              value["sender"],value["body"])
+                              value["sender"],value["body"],**options)
             current=path.lstat()
             if (current.st_dev,current.st_ino,current.st_size,current.st_mtime_ns)!=(
                     before.st_dev,before.st_ino,after.st_size,after.st_mtime_ns):
@@ -157,7 +169,7 @@ class DirectoryBridge:
             try: paths=list(directory.iterdir())
             except FileNotFoundError: continue
             for path in paths:
-                if path.suffix!=".json": continue
+                if path.name.startswith(".") or not path.is_file() and not path.is_symlink(): continue
                 self.ingest(binding,path)
 
     def ingest(self,binding,path):
@@ -171,7 +183,7 @@ class DirectoryBridge:
             # A malformed occurrence remains inspectable and cannot stop
             # other channels. Transport uncertainty is retried by its exact
             # durable message identity, never by replaying a mutation plan.
-            self.held+=1; self.diagnostics[key]=type(error).__name__
+            self.held+=1; self.diagnostics[key]=type(error).__name__+": "+str(error)
             transient=(isinstance(error,(Uncertain,WorkerUnavailable)) or
                        isinstance(error,OSError) and error.errno!=errno.ELOOP or
                        isinstance(error,ServiceError) and error.reason in (S("space-limit"),S("stale-revision"),S("snapshot-limit")) or
@@ -187,7 +199,14 @@ class DirectoryBridge:
                 try:
                     rejected=binding["directory"]/"rejected"
                     rejected.mkdir(exist_ok=True)
-                    os.rename(path,rejected/(uuid.uuid4().hex+path.suffix))
+                    target=rejected/(uuid.uuid4().hex+path.suffix)
+                    os.rename(path,target)
+                    explanation={"source":path.name,"reason":self.diagnostics[key],
+                        "usage":"mailbox-post NAME --body-file FILE",
+                        "example":{"id":"unique-message-id","correlation":"unique-message-id","sender":binding["sender"],"body":"Your message"}}
+                    reason=target.with_name(target.name+".reason")
+                    with reason.open("w") as file:
+                        json.dump(explanation,file,ensure_ascii=False);file.write("\n");file.flush();os.fsync(file.fileno())
                     for directory in (rejected,binding["directory"]):
                         parent=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
                         try: os.fsync(parent)
@@ -236,7 +255,7 @@ class DirectoryBridge:
                     directory=binding["directory"]
                     if watched==directory:
                         if mask&(self.DELETE_SELF|self.MOVE_SELF|self.IGNORED): rescan=True
-                        if mask&(self.CLOSE_WRITE|self.MOVED_TO) and name.endswith(".json"):
+                        if mask&(self.CLOSE_WRITE|self.MOVED_TO) and name and not name.startswith("."):
                             arrivals[str(directory/name)]=(binding,directory/name)
                     elif watched==directory.parent and name==directory.name:
                         if mask&(self.CREATE|self.MOVED_TO): rescan=True
