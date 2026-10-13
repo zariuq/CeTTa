@@ -98,7 +98,7 @@ class Mailbox:
             raise MailboxError("nonunique mailbox identity")
         return rows[0] if rows else None
 
-    def _plan(self, request):
+    def _plan(self, request, additions=()):
         self.metrics["plans"] += 1
         value = self.worker.call(request)
         if not isinstance(value, tuple) or not value:
@@ -107,11 +107,12 @@ class Mailbox:
             raise MailboxError(str(value[1]))
         if len(value) != 3 or value[0] != S("MailboxPlan"):
             raise MailboxError("invalid mailbox plan")
-        if value[2]:
+        operations = value[2] + tuple(additions)
+        if operations:
             # An uncertain mutation is surfaced; it is never resubmitted
             # against a fresh revision here. Application identities survive
             # the bounded transport receipt cache and allow later inspection.
-            self.space.batch(*value[2], request_id=uuid.uuid4().hex)
+            self.space.batch(*operations, request_id=uuid.uuid4().hex)
             self.metrics["commits"] += 1
         return value[1].name
 
@@ -216,12 +217,16 @@ class Mailbox:
                 self._rows(E("MailboxDelivery",1,identity,Var(0)),rev),self._rows(listener,rev)))
         return self._operation(operation)
 
-    def register(self, identity, channel, correlation, sender, owner, generation, continuation, *, capacity=None, intent=None):
+    def register(self, identity, channel, correlation, sender, owner, generation, continuation, *, capacity=None, intent=None, context=None):
         identity, channel, correlation, sender, owner=map(text,(identity,channel,correlation,sender,owner))
         generation=activity_generation(generation)
         if not isinstance(continuation,tuple) or len(continuation)!=4 or continuation[:2]!=(S("MailboxResume"),1):
             raise ValueError("versioned inert MailboxResume required")
         text(continuation[2]); text(continuation[3])
+        if context is not None:
+            if not isinstance(context, (tuple, list)) or len(context) != 2:
+                raise ValueError("task context is a task identity and inert note")
+            context = E("MailboxTaskContext",1,identity,continuation[2],text(context[0]),text(context[1]))
         if capacity is not None and (type(capacity) is not int or capacity<1):
             raise ValueError("positive active-wait admission budget required")
         if intent is not None:
@@ -232,6 +237,13 @@ class Mailbox:
         wait=E("MailboxWait",1,identity,channel,correlation,sender,owner,generation,continuation)
         def operation(rev):
             old=self._rows(E("MailboxRegistration",1,identity,Var(0)),rev)
+            additions = ()
+            if context is not None:
+                retained = self._rows(E("MailboxTaskContext",1,identity,Var(0),Var(1),Var(2)),rev)
+                if retained and retained != (context,):
+                    raise MailboxError("task-context-identity-conflict")
+                if not retained:
+                    additions = (E("add",context),)
             if capacity is not None and not old:
                 if len(self._active(continuation[2],rev,capacity+1))>=capacity:
                     raise MailboxError("active-wait capacity; no registration committed")
@@ -241,8 +253,15 @@ class Mailbox:
             if intent is not None:
                 request=E("register-intent",*request[1:],E("MailboxIntent",1,identity,continuation[2],intent),
                           self._rows(E("MailboxIntent",1,identity,Var(0),Var(1)),rev))
-            return self._plan(request)
+            # Registration and its inert task note share one observed batch.
+            # A failed policy plan cannot publish either one.
+            return self._plan(request, additions)
         return self._operation(operation)
+
+    def task_context(self, identity):
+        identity = text(identity)
+        return self._operation(lambda rev: self._one(self._rows(
+            E("MailboxTaskContext",1,identity,Var(0),Var(1),Var(2)),rev)))
 
     def _registration(self, identity, revision):
         record=self._one(self._rows(E("MailboxRegistration",1,identity,Var(0)),revision))

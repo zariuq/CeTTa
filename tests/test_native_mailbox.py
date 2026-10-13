@@ -143,6 +143,22 @@ class NativeMailboxTests(unittest.TestCase):
                          intent=E("MailboxCodexWatch",1,"thread","other-turn"))
         box.space.describe(); self.assertEqual(box.space.revision,revision)
 
+    def test_task_note_and_receive_share_a_commit_and_survive_restart(self):
+        box=self.mailbox()
+        args=("ticket","review","turn","peer","owner",1,E("MailboxResume",1,"arrival","ticket"))
+        self.assertEqual(box.register(*args,context=("task-1","On arrival compare the draft.")),"waiting")
+        retained=E("MailboxTaskContext",1,"ticket","arrival","task-1","On arrival compare the draft.")
+        self.assertEqual(box.task_context("ticket"),retained)
+        self.fixture.restart(); box.reconnect()
+        self.assertEqual(box.register(*args,context=("task-1","On arrival compare the draft.")),"duplicate")
+        self.assertEqual(box.task_context("ticket"),retained)
+        with self.assertRaises(MailboxError):
+            box.register(*args,context=("other-task","replacement"))
+        with self.assertRaises(MailboxError):
+            box.register("other","review","turn","peer","another",1,
+                         E("MailboxResume",1,"arrival","other"),context=("task-2","must not be saved"))
+        self.assertIsNone(box.task_context("other"))
+
     def test_watch_registration_closes_read_write_race(self):
         with Client(self.fixture.socket) as client:
             space=client.open("notifications")
