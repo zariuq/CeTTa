@@ -22,6 +22,7 @@ void cetta_http_result_free(CettaHttpResult *r) {
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
+#include <unistd.h>
 
 #if LIBCURL_VERSION_NUM < 0x075500
 #error "HTTP worker requires libcurl 7.85 or newer with thread-safe initialization and asynchronous DNS"
@@ -61,6 +62,7 @@ struct CettaHttpWorker {
     CettaHttpWorkerHooks hooks;
     size_t count, request_bytes, response_bytes, unacknowledged;
     uint64_t generation;
+    int wakeup_fd;
     bool initialized, available, stopping;
 };
 
@@ -80,6 +82,15 @@ static uint64_t milliseconds(void) {
 static void changed(CettaHttpWorker *w) {
     ++w->generation;
     pthread_cond_broadcast(&w->changed);
+    if (w->wakeup_fd >= 0) { ssize_t ignored = write(w->wakeup_fd, "w", 1); (void)ignored; }
+}
+
+void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *w, int descriptor) {
+    if (!w) return;
+    pthread_mutex_lock(&w->mutex);
+    w->wakeup_fd = descriptor;
+    changed(w);
+    pthread_mutex_unlock(&w->mutex);
 }
 
 static void wake(CettaHttpWorker *w) {
@@ -402,6 +413,7 @@ CettaHttpWorkerStatus cetta_http_worker_new(const CettaHttpWorkerLimits *limits,
                    hooks->record_attempts>1000))) return HTTP_WORKER_INVALID;
     CettaHttpWorker *w=calloc(1,sizeof(*w));
     if (!w) return HTTP_WORKER_NOMEM;
+    w->wakeup_fd = -1;
     w->limits=l; if (hooks) w->hooks=*hooks;
     if (!w->hooks.record_attempts) w->hooks.record_attempts=5;
     if (pthread_mutex_init(&w->mutex,NULL)) { free(w); return HTTP_WORKER_NOMEM; }
@@ -611,6 +623,7 @@ size_t cetta_http_worker_free(CettaHttpWorker *w) {
 }
 #else
 
+void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *w,int fd) { (void)w; (void)fd; }
 bool cetta_http_worker_progress(CettaHttpWorker *w,uint64_t id,CettaHttpProgress *out) {
     (void)w; (void)id; (void)out; return false;
 }

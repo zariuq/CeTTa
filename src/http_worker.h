@@ -141,6 +141,10 @@ void cetta_http_result_free(CettaHttpResult *result);
 uint64_t cetta_http_worker_wait(CettaHttpWorker *worker,
     uint64_t observed_generation, uint32_t timeout_ms);
 
+/* Borrow a nonblocking notification descriptor until worker shutdown.
+ * Writes wake a shared native poll; no evaluator callback crosses threads. */
+void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *worker, int descriptor);
+
 /* Stop admission, abort active transfers, and join the owner. Every remaining
  * durable result is offered to observe once more. Return the number it could
  * not record; their persisted attempts must recover as uncertain. Call only

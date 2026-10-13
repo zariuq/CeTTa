@@ -28764,6 +28764,11 @@ test-lib-shell: $(BIN)
 	fi; \
 	echo "PASS: native shell preserves output, exit status and selectable deadlines"
 
+.PHONY: test-native-io-providers
+test-native-io-providers: $(BIN)
+	CETTA_BIN="$(abspath $(BIN))" CETTA_TEST_HTTP="$(ENABLE_HTTP)" \
+		python3 tests/support/test_native_io_providers.py
+
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
 # A stored row with variables meets a query holding a list built at run time

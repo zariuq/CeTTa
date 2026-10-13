@@ -11,7 +11,10 @@
 (: io:status (-> Number Expression))
 (: io:wait (-> Number Expression))
 (: io:wait (-> Number Number Expression))
+(: io:wait (-> Number String Expression))
+(: io:wait (-> Number Number String Expression))
 (: io:cancel (-> Number Expression))
+(: io:signal (-> Number Number Expression))
 
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:request (-> Atom Atom Expression String Number Number Bool Atom))
@@ -46,6 +49,19 @@
 (= (io:cancel $id)
    (__cetta_lib_io_cancel $id))
 
+; A signal leaves the completion observable. Cancel instead consumes the
+; handle and stops its process group. Timers and processes work without HTTP.
+(= (io:signal $id $signal)
+   (__cetta_lib_io_signal $id $signal))
+
+; Native provider data, not a program to evaluate on the worker thread:
+; (timer:after milliseconds)
+; (proc:request argv cwd env timeout-ms stdout-file stderr-file)
+; Process timeout 0 means no deadline. Output files remain after completion.
+; Status is (proc:running pid elapsed-ms stdout-file stderr-file), then
+; (proc:finished pid exited|signaled|timed-out|failed code stdout-file stderr-file).
+; Timer completion is (timer:fired elapsed-ms).
+
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))
 
@@ -60,6 +76,12 @@
 
 (= (io:wait $id $timeout-ms)
    (__cetta_lib_io_wait $id $timeout-ms))
+
+; Optional progress observation uses the existing native process observer;
+; it never changes execution or admits/refuses a command. The two-argument
+; spelling also accepts timeout-ms and a text progress path (all providers).
+(= (io:wait $id $timeout-ms $progress)
+   (__cetta_lib_io_wait $id $timeout-ms $progress))
 
 ; Explicit error boundaries for clients that retain a pending operation.
 ; The generated dialect spellings preserve these boundaries; an application

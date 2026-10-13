@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -4418,6 +4419,65 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
                                            Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     SymbolId head_id = atom_symbol_current_id(head);
+    if (head_id == g_builtin_syms.lib_system_host) {
+        const char *operation = nargs ? library_text_arg(args[0]) : NULL;
+        struct timespec now;
+        if (!operation) return library_signature_error(a, head, args, nargs, "expected system operation");
+        if (!strcmp(operation, "wall-time") && nargs == 1) {
+            if (clock_gettime(CLOCK_REALTIME, &now))
+                return library_signature_error(a, head, args, nargs, "cannot read wall clock");
+            return atom_float(a, (double)now.tv_sec + (double)now.tv_nsec / 1e9);
+        }
+        if (!strcmp(operation, "pid") && nargs == 1) return atom_int(a, getpid());
+        if (!strcmp(operation, "pid-alive") && nargs == 2) {
+            int pid;
+            if (!library_int_arg(args[1], &pid) || pid <= 0)
+                return library_signature_error(a, head, args, nargs, "expected positive process ID");
+            return !kill(pid, 0) || errno == EPERM ? atom_true(a) : atom_false(a);
+        }
+        if (!strcmp(operation, "format-time") && nargs == 4) {
+            const char *format = library_text_arg(args[1]), *zone = library_text_arg(args[3]);
+            Atom *value = args[2];
+            double seconds = value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_FLOAT
+                ? value->ground.fval : value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT
+                ? (double)value->ground.ival : NAN;
+            if (!format || !zone || !isfinite(seconds) || seconds < -0x1p63 || seconds >= 0x1p63 ||
+                (strcmp(zone, "local") && strcmp(zone, "utc")))
+                return library_signature_error(a, head, args, nargs, "expected format, timestamp and local or utc");
+            time_t timestamp = (time_t)seconds;
+            struct tm date;
+            if (!(strcmp(zone, "utc") ? localtime_r(&timestamp, &date) : gmtime_r(&timestamp, &date)))
+                return library_signature_error(a, head, args, nargs, "timestamp outside calendar range");
+            /* A leading sentinel distinguishes an empty formatted value from
+             * strftime's insufficient-space return. Grow without a text cap. */
+            size_t length = strlen(format);
+            char *pattern = cetta_malloc(length + 2);
+            pattern[0] = '@'; memcpy(pattern + 1, format, length + 1);
+            size_t capacity = length + 128;
+            char *output = cetta_malloc(capacity);
+            size_t size;
+            while (!(size = strftime(output, capacity, pattern, &date))) {
+                if (capacity > SIZE_MAX / 2) { free(pattern); free(output); return library_signature_error(a, head, args, nargs, "formatted time too large"); }
+                capacity *= 2; output = cetta_realloc(output, capacity);
+            }
+            Atom *result = atom_string_n(a, output + 1, size - 1);
+            free(pattern); free(output); return result;
+        }
+        return library_signature_error(a, head, args, nargs, "unsupported system operation or arguments");
+    }
+    if (head_id == g_builtin_syms.lib_system_read_line) {
+        if (!system_zero_arg_ok(args, nargs)) return library_signature_error(a, head, args, nargs, "expected system:read-line");
+        char *line = NULL; size_t capacity = 0;
+        ssize_t size = getline(&line, &capacity, stdin);
+        if (size < 0) {
+            free(line);
+            if (feof(stdin)) return atom_symbol(a, "end_of_file");
+            return library_signature_error(a, head, args, nargs, "cannot read standard input");
+        }
+        if (size && line[size - 1] == '\n') --size;
+        if (size && line[size - 1] == '\r') --size;
+        Atom *result = atom_string_n(a, line, (size_t)size); free(line); return result;
+    }
     if (head_id == g_builtin_syms.lib_system_args) {
         return system_cli_args(ctx, a, head, args, nargs);
     }
@@ -5246,6 +5306,38 @@ static Atom *fs_read_text_result(Arena *a, Atom *head, Atom **args, uint32_t nar
     return result;
 }
 
+static Atom *fs_tail_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    const char *path;
+    size_t limit;
+    if (nargs != 2 || !(path = library_text_arg(args[0])) || !fs_byte_limit(args[1], &limit))
+        return library_signature_error(a, head, args, nargs, "expected filename and tail bytes (0: whole file)");
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return fs_text_failure(a, path, errno);
+    struct stat st;
+    if (fstat(fileno(fp), &st) || st.st_size < 0 || !S_ISREG(st.st_mode)) {
+        int error = errno ? errno : EINVAL;
+        fclose(fp); return fs_text_failure(a, path, error);
+    }
+    uint64_t size = (uint64_t)st.st_size;
+    size_t count = limit && size > limit ? limit : (size_t)size;
+    if (size > INT64_MAX || (uint64_t)count != (limit && size > limit ? limit : size) || count == SIZE_MAX) {
+        fclose(fp); return library_signature_error(a, head, args, nargs, "file size exceeds representable range");
+    }
+    if (fseeko(fp, (off_t)(size - count), SEEK_SET)) {
+        int error = errno; fclose(fp); return fs_text_failure(a, path, error);
+    }
+    CettaStringBuf text;
+    cetta_sb_init(&text); cetta_sb_ensure(&text, count);
+    text.len = fread(text.buf, 1, count, fp); text.buf[text.len] = '\0';
+    if (ferror(fp)) {
+        int error = errno ? errno : EIO; fclose(fp); cetta_sb_free(&text); return fs_text_failure(a, path, error);
+    }
+    fclose(fp); fs_replace_utf8(&text);
+    Atom *result = atom_expr(a, (Atom *[]){atom_symbol(a, "fs:tail"), atom_int(a, (int64_t)size),
+        size > count ? atom_true(a) : atom_false(a), atom_string_n(a, text.buf, text.len)}, 4);
+    cetta_sb_free(&text); return result;
+}
+
 static Atom *fs_read_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *path;
     CettaStringBuf text;
@@ -5444,6 +5536,30 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
     }
     if (head_id == g_builtin_syms.lib_fs_read_text_result) {
         return fs_read_text_result(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_tail_text) {
+        return fs_tail_text(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_entries) {
+        const char *path = nargs == 1 ? library_text_arg(args[0]) : NULL;
+        if (!path) return library_signature_error(a, head, args, nargs, "expected directory");
+        DIR *directory = opendir(path);
+        if (!directory) return fs_text_failure(a, path, errno);
+        size_t count = 0, capacity = 32;
+        Atom **entries = cetta_malloc(capacity * sizeof(*entries));
+        struct dirent *entry;
+        int error;
+        for (;;) {
+            errno = 0; entry = readdir(directory); error = errno;
+            if (!entry) break;
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+            if (count == capacity) { capacity *= 2; entries = cetta_realloc(entries, capacity * sizeof(*entries)); }
+            entries[count++] = atom_string(a, entry->d_name);
+        }
+        closedir(directory);
+        Atom *result = error ? fs_text_failure(a, path, error)
+                             : atom_expr(a, entries, count);
+        free(entries); return result;
     }
     if (head_id == g_builtin_syms.lib_fs_write) {
         return fs_write(a, head, args, nargs);

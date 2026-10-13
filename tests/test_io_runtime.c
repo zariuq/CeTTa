@@ -153,9 +153,11 @@ int main(int argc, char **argv) {
     Atom *capabilities = dispatch(runtime, &arena,
                                   "__cetta_lib_io_capabilities", NULL, 0u);
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 1u &&
-              atom_is_symbol(capabilities->expr.elems[0], "http"),
-          "native provider advertises HTTP");
+              capabilities->expr.len == 3u &&
+              atom_is_symbol(capabilities->expr.elems[0], "http") &&
+              atom_is_symbol(capabilities->expr.elems[1], "proc") &&
+              atom_is_symbol(capabilities->expr.elems[2], "timer"),
+          "native providers advertise HTTP, processes and timers");
 
     if (getenv("CETTA_IO_REPLAY_ONLY")) {
         char replay_url[512];

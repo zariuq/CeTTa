@@ -18,3 +18,5 @@
 (= (fs:grep-page $pattern $path $limit $offset $skips) (__cetta_lib_fs_grep_page $pattern $path $limit $offset $skips))
 (= (fs:update-text $path $operation $first $second $backup-directory) (__cetta_lib_fs_update_text $path $operation $first $second $backup-directory))
 (= (fs:is-file $path) (__cetta_lib_fs_is_file $path))
+(= (fs:tail-text $path $bytes) (__cetta_lib_fs_tail_text $path $bytes))
+(= (fs:entries $path) (__cetta_lib_fs_entries $path))

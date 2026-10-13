@@ -343,8 +343,8 @@ static Atom *fs_update_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     second=args[3]->kind == ATOM_GROUNDED && args[3]->ground.gkind == GV_STRING ? args[3]->ground.sval : NULL;
     if (!first) first=library_text_arg(args[2]);
     if (!second) second=library_text_arg(args[3]);
-    if (!first || !second || (strcmp(op,"write") && strcmp(op,"append") && strcmp(op,"edit")))
-        return library_signature_error(a,head,args,nargs,"expected write, append or edit with text arguments");
+    if (!first || !second || (strcmp(op,"write") && strcmp(op,"replace") && strcmp(op,"append") && strcmp(op,"edit")))
+        return library_signature_error(a,head,args,nargs,"expected write, replace, append or edit with text arguments");
     first_len=args[2]->kind == ATOM_GROUNDED && args[2]->ground.gkind == GV_STRING ? atom_string_len(args[2]) : strlen(first);
     second_len=args[3]->kind == ATOM_GROUNDED && args[3]->ground.gkind == GV_STRING ? atom_string_len(args[3]) : strlen(second);
     char *target=fs_absolute_user_path(path); if (!target) return fs_tools_message(a,"cannot resolve file path");
@@ -352,7 +352,7 @@ static Atom *fs_update_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     char *backup=NULL, *temporary=NULL, *parent=NULL; Atom *result=NULL; struct stat st;
     if (!strcmp(op,"edit") && !first_len) { result=fs_tools_message(a,"old-string is empty"); goto done; }
     bool exists=stat(target,&st)==0 && S_ISREG(st.st_mode);
-    if (exists || strcmp(op,"write")) if (!fs_load_bytes(target,&previous)) { result=fs_tools_error(a,target,errno); goto done; }
+    if (strcmp(op,"replace") && (exists || strcmp(op,"write"))) if (!fs_load_bytes(target,&previous)) { result=fs_tools_error(a,target,errno); goto done; }
     if (!strcmp(op,"edit")) {
         CettaStringBuf text; cetta_sb_init(&text); cetta_sb_append_n(&text,previous.buf ? previous.buf : "",previous.len);
         if (!fs_valid_utf8(&text)) { cetta_sb_free(&text); result=fs_tools_message(a,"file contains invalid UTF-8"); goto done; }
@@ -366,7 +366,7 @@ static Atom *fs_update_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!strcmp(op,"append")) cetta_sb_append_n(&data,previous.buf ? previous.buf : "",previous.len);
         cetta_sb_append_n(&data,first,first_len); if (!strcmp(op,"append")) fs_sb_text(&data,"\n");
     }
-    if (exists) {
+    if (exists && strcmp(op,"replace")) {
         char *directory=fs_absolute_user_path(backup_root); if (!directory) { result=fs_tools_message(a,"cannot resolve backup directory"); goto done; }
         if (!fs_mkdir_parents(directory)) { result=fs_tools_error(a,directory,errno); free(directory); goto done; }
         char hash[65], stamp[32]; cetta_native_sha256_hex((uint8_t *)(previous.buf ? previous.buf : ""),previous.len,hash);
@@ -379,6 +379,7 @@ static Atom *fs_update_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (!ok) { unlink(backup); result=fs_tools_error(a,backup,e); goto done; }
     }
     parent=strdup(target); char *slash=strrchr(parent,'/'); if (slash==parent) slash[1]=0; else *slash=0;
+    if (!strcmp(op,"replace") && !fs_mkdir_parents(parent)) { result=fs_tools_error(a,parent,errno); goto done; }
     const char *base=strrchr(target,'/'); CettaStringBuf name; cetta_sb_init(&name); fs_sb_text(&name,"."); fs_sb_text(&name,base+1); fs_sb_text(&name,".XXXXXX");
     temporary=fs_join_path(parent,name.buf); cetta_sb_free(&name);
     int fd=mkstemp(temporary); if (fd<0) { result=fs_tools_error(a,target,errno); goto done; }

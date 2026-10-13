@@ -405,6 +405,10 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
+    X(lib_system_host, "__cetta_lib_system_host") \
+    X(lib_system_read_line, "__cetta_lib_system_read_line") \
+    X(lib_fs_tail_text, "__cetta_lib_fs_tail_text") \
+    X(lib_fs_entries, "__cetta_lib_fs_entries") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
@@ -434,6 +438,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_io_status, "__cetta_lib_io_status") \
     X(lib_io_wait, "__cetta_lib_io_wait") \
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
+    X(lib_io_signal, "__cetta_lib_io_signal") \
     X(lib_cwp_call, "__cetta_lib_cwp_call") \
     X(lib_proc_run, "__cetta_lib_proc_run") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \

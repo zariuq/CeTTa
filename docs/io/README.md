@@ -1,4 +1,53 @@
-# Native HTTP owner and durable recording boundary
+# Native I/O providers and durable recording boundary
+
+Processes and timers share `io:submit`, owned `io:poll` and `io:wait` with HTTP.
+They work on native hosts without Python, SWI-Prolog or HTTP enabled:
+
+```metta
+(io:submit (timer:after 1000))
+(io:submit (proc:request ("sh" "-c" "make test") "/workspace" inherit
+                        0 "/workspace/build.log" "/workspace/build.log"))
+```
+
+Process submission returns after spawning, rather than waiting for the command
+to finish. Its environment may be `inherit` or explicit name/value pairs. A
+zero process timeout has no deadline. Standard input is `/dev/null`; stdout
+and stderr go to the named files and remain readable after the handle is
+consumed or the runtime exits. The same output path merges both streams.
+The files' parent directories must already exist. Process groups allow
+cancellation and deadlines to stop descendants as well as the direct child.
+
+Process deadlines in this implementation are cooperative: they are checked
+when `io:poll`, `io:status` or `io:wait` pumps the native runtime. An evaluator
+blocked in an unrelated synchronous call does not supervise them. Processes
+that finish during that interval may return an ordinary exit after their
+requested deadline. An independent completion/deadline owner is still needed
+before relying on those deadlines during arbitrary evaluator work.
+
+`io:status handle` reports `(proc:running pid elapsed-ms stdout stderr)` or
+`(proc:finished pid exited|signaled|timed-out|failed code stdout stderr)`.
+Polling or waiting consumes a terminal outcome once. `io:signal handle number`
+signals the group and leaves its completion available; `io:cancel handle`
+stops the group and consumes the handle. Timer outcomes are
+`(timer:fired elapsed-ms)`, with non-consuming
+`(timer:status waiting|ready elapsed-ms)` status.
+
+The native wait polls process descriptors and the HTTP worker's wake pipe,
+using the nearest timer or request deadline for its timeout. Linux uses pidfd;
+when unavailable, process completion is checked at 20 ms intervals. There is
+no per-process or timer quota inherited from HTTP. Waiting for a selected
+handle preserves other providers' completions. Optional progress observation
+uses `io:wait milliseconds progress-path` or
+`io:wait handle milliseconds progress-path`; it does not change execution.
+
+`fs:tail-text path bytes` seeks to the requested file tail and returns
+`(fs:tail total-bytes truncated text)`, repairing malformed UTF-8. Zero bytes
+requests the whole file. `fs:entries path` lists names without a page limit.
+`fs:update-text` operation `replace` atomically updates a state file without
+a backup, creating its parent directories. The existing `write` operation
+continues to preserve a backup. `system:wall-time`, `system:format-time`,
+`system:pid`, `system:pid-alive?` and `system:read-line` expose native host
+utilities; `format-time` takes a format, epoch seconds and `local` or `utc`.
 
 With `ENABLE_HTTP=1`, native requests run on one curl owner thread per I/O
 runtime. The evaluator can sleep or compute without polling to drive transfers.

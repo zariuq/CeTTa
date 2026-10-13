@@ -34,7 +34,7 @@ enum { START_STDIO = 1, START_CWD = 2, START_EXEC = 3 };
 
 static const char *text(Atom *a) {
     if (a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING)
-        return a->ground.sval;
+        return memchr(a->ground.sval, '\0', a->ground.slen) ? NULL : a->ground.sval;
     /* PeTTa's Python/Prolog text is an atom, including strings returned by
      * py-call and read by sread. HE retains its grounded-string contract. */
     if (a && a->kind == ATOM_SYMBOL && eval_current_language_id &&
@@ -233,7 +233,7 @@ static Atom *stream_text(Arena *arena, const Stream *s) {
 /* Optional observation of a blocking call. This never admits, refuses or
  * interrupts work: it only refreshes a progress file and the service watchdog.
  * Like libuv's exit callback, process identity belongs to the parent. */
-static void observe_wait(const char *path, uint64_t sequence) {
+void cetta_proc_observe_wait(const char *path, uint64_t sequence) {
     const char *address = getenv("NOTIFY_SOCKET");
     if (address && address[0]) {
         struct sockaddr_un peer = {.sun_family = AF_UNIX};
@@ -352,6 +352,137 @@ static void child_start(const char *program, char **argv, char **envp, const cha
     child_stop(report, START_EXEC, errno);
 }
 
+struct CettaProcChild {
+    pid_t pid;
+    int pidfd, status, error;
+    bool finished, timed_out;
+    uint64_t started, deadline;
+    char *out, *err;
+};
+
+CettaProcChild *cetta_proc_start(Atom *arguments, const char *cwd, Atom *environment,
+    uint64_t timeout_ms, const char *out, const char *err, char *error, size_t error_size) {
+    bool inherit = environment && environment->kind == ATOM_SYMBOL &&
+                   !strcmp(atom_name_cstr(environment), "inherit");
+    if (!arguments || arguments->kind != ATOM_EXPR || !arguments->expr.len ||
+        (!inherit && (!environment || environment->kind != ATOM_EXPR)) ||
+        !cwd || !*cwd || !out || !*out || !err || !*err) {
+        snprintf(error, error_size, "expected argv, cwd, environment and two output paths");
+        return NULL;
+    }
+    size_t argc = arguments->expr.len, envc = inherit ? 0 : environment->expr.len;
+    char **argv = calloc(argc + 1, sizeof(*argv)), **envp = calloc(envc + 1, sizeof(*envp));
+    char *program = NULL;
+    int output = -1, errors = -1, report[2] = {-1, -1};
+    CettaProcChild *child = calloc(1, sizeof(*child));
+    if (child) child->pidfd = -1;
+    if (!argv || !envp || !child) { errno = ENOMEM; goto failed; }
+    for (size_t i = 0; i < argc; ++i) {
+        argv[i] = (char *)text(arguments->expr.elems[i]);
+        if (!argv[i]) { errno = EINVAL; goto failed; }
+    }
+    if (!argv[0][0]) { errno = EINVAL; goto failed; }
+    const char *path = inherit ? getenv("PATH") : NULL;
+    for (size_t i = 0; i < envc; ++i) {
+        Atom *pair = environment->expr.elems[i];
+        const char *name = pair && pair->kind == ATOM_EXPR && pair->expr.len == 2
+                         ? text(pair->expr.elems[0]) : NULL;
+        const char *value = name ? text(pair->expr.elems[1]) : NULL;
+        if (!name || !value || !*name || strchr(name, '=')) { errno = EINVAL; goto failed; }
+        size_t length = strlen(name) + strlen(value) + 2;
+        envp[i] = malloc(length);
+        if (!envp[i]) { errno = ENOMEM; goto failed; }
+        snprintf(envp[i], length, "%s=%s", name, value);
+        if (!strcmp(name, "PATH")) path = value;
+    }
+    program = resolve_program(argv[0], path, cwd);
+    if (!program) { errno = ENOENT; goto failed; }
+    child->out = strdup(out); child->err = strdup(err);
+    if (!child->out || !child->err) { errno = ENOMEM; goto failed; }
+    output = open(out, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (output < 0) goto failed;
+    errors = !strcmp(out, err) ? dup(output)
+           : open(err, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (errors < 0 || pipe2(report, O_CLOEXEC)) goto failed;
+    struct stat a, b;
+    if (!fstat(output, &a) && !fstat(errors, &b) && a.st_dev == b.st_dev && a.st_ino == b.st_ino) {
+        close(errors); errors = dup(output);
+        if (errors < 0) goto failed;
+    }
+    child->started = now_ms();
+    child->deadline = timeout_ms ? child->started + timeout_ms : UINT64_MAX;
+    child->pid = fork();
+    if (child->pid < 0) { child->pid = 0; goto failed; }
+    if (!child->pid) child_start(program, argv, inherit ? environ : envp, cwd, output, errors, report[1]);
+    setpgid(child->pid, child->pid);
+    close(report[1]); report[1] = -1;
+    int stopped[2];
+    ssize_t got;
+    do { got = read(report[0], stopped, sizeof(stopped)); } while (got < 0 && errno == EINTR);
+    if (got == (ssize_t)sizeof(stopped)) { errno = stopped[1]; goto failed; }
+    if (got < 0) goto failed;
+    child->pidfd = (int)syscall(SYS_pidfd_open, child->pid, 0);
+    goto done;
+failed:
+    snprintf(error, error_size, "process start: %s", strerror(errno));
+    cetta_proc_free(child); child = NULL;
+done:
+    if (output >= 0) close(output);
+    if (errors >= 0) close(errors);
+    if (report[0] >= 0) close(report[0]);
+    if (report[1] >= 0) close(report[1]);
+    if (envp) for (size_t i = 0; i < envc; ++i) free(envp[i]);
+    free(envp); free(argv); free(program);
+    return child;
+}
+
+bool cetta_proc_poll(CettaProcChild *child) {
+    if (!child || child->finished) return true;
+    pid_t observed;
+    do { observed = waitpid(child->pid, &child->status, WNOHANG); } while (observed < 0 && errno == EINTR);
+    if (observed == child->pid) child->finished = true;
+    else if (observed < 0) { child->error = errno; child->finished = true; }
+    else if (now_ms() >= child->deadline) {
+        child->timed_out = true;
+        kill(-child->pid, SIGKILL); kill(child->pid, SIGKILL);
+        do { observed = waitpid(child->pid, &child->status, 0); } while (observed < 0 && errno == EINTR);
+        if (observed < 0) child->error = errno;
+        child->finished = true;
+    }
+    return child->finished;
+}
+int cetta_proc_descriptor(const CettaProcChild *child) { return child ? child->pidfd : -1; }
+uint64_t cetta_proc_deadline(const CettaProcChild *child) { return child ? child->deadline : UINT64_MAX; }
+bool cetta_proc_signal(CettaProcChild *child, int number) {
+    if (!child || number < 0 || number >= NSIG || cetta_proc_poll(child)) return false;
+    return kill(-child->pid, number) == 0;
+}
+Atom *cetta_proc_information(Arena *arena, CettaProcChild *child) {
+    Atom *parts[] = {atom_symbol(arena, "proc:running"), atom_int(arena, child->pid),
+                    atom_int(arena, (int64_t)(now_ms() - child->started)),
+                    atom_string(arena, child->out), atom_string(arena, child->err)};
+    return atom_expr(arena, parts, 5);
+}
+Atom *cetta_proc_outcome(Arena *arena, CettaProcChild *child) {
+    const char *kind = child->error ? "failed" : child->timed_out ? "timed-out"
+                     : WIFEXITED(child->status) ? "exited" : "signaled";
+    int status = child->error ? child->error : child->timed_out ? 0
+               : WIFEXITED(child->status) ? WEXITSTATUS(child->status) : WTERMSIG(child->status);
+    Atom *parts[] = {atom_symbol(arena, "proc:finished"), atom_int(arena, child->pid),
+        atom_symbol(arena, kind), atom_int(arena, status),
+        atom_string(arena, child->out), atom_string(arena, child->err)};
+    return atom_expr(arena, parts, 6);
+}
+void cetta_proc_free(CettaProcChild *child) {
+    if (!child) return;
+    if (child->pid > 0 && !cetta_proc_poll(child)) {
+        kill(-child->pid, SIGKILL); kill(child->pid, SIGKILL);
+        while (waitpid(child->pid, &child->status, 0) < 0 && errno == EINTR) {}
+    }
+    if (child->pidfd >= 0) close(child->pidfd);
+    free(child->out); free(child->err); free(child);
+}
+
 static Atom *proc_run(Arena *arena, Atom **args, uint32_t nargs) {
     if (nargs != 5u && nargs != 6u)
         return invalid(arena, "expected (proc:run argv cwd env timeout-ms max-bytes [options])");
@@ -453,7 +584,7 @@ static Atom *proc_run(Arena *arena, Atom **args, uint32_t nargs) {
     for (;;) {
         uint64_t now = now_ms();
         if (observed && now >= observation) {
-            observe_wait(progress, ++sequence);
+            cetta_proc_observe_wait(progress, ++sequence);
             observation = now + 30000;
         }
         struct pollfd p = {report[0], POLLIN, 0};
@@ -487,7 +618,7 @@ static Atom *proc_run(Arena *arena, Atom **args, uint32_t nargs) {
         uint64_t now = now_ms();
         if (now >= deadline) { timed_out = true; break; }
         if (observed && now >= observation) {
-            observe_wait(progress, ++sequence);
+            cetta_proc_observe_wait(progress, ++sequence);
             observation = now + 30000;
         }
         struct pollfd fds[3];

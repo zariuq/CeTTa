@@ -74,6 +74,7 @@
 ; ("count" occurrences path) for a non-unique edit, or ("error" detail).
 ; Updates preserve bytes on append, normalize newlines on a strict UTF-8 edit,
 ; and atomically replace with a collision-free backup in the supplied directory.
+; Operation replace is an atomic state-file update without a backup.
 (= (fs:line-window $path $start $count)
    (function
      (case (__cetta_lib_fs_line_window $path $start $count)
@@ -98,3 +99,15 @@
    (function
      (case (__cetta_lib_fs_is_file $path)
        (($result (return $result))))))
+
+; Seek to the requested tail, repairing invalid UTF-8 as read-text-result does.
+; Returns (fs:tail total-bytes truncated text). 0 requests the whole file.
+(= (fs:tail-text $path $bytes)
+   (function
+     (case (__cetta_lib_fs_tail_text $path $bytes)
+       (($result (return $result))))))
+
+; Names only, excluding . and ..; errors stay explicit. No implicit page cap.
+(= (fs:entries $path)
+   (function (case (__cetta_lib_fs_entries $path)
+     (($result (return $result))))))
