@@ -2124,7 +2124,13 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
     cases[count++] = atom_bool(arena, false);
     cases[count++] = atom_string(arena, "line\n\"quoted\"\\tail");
     cases[count++] = atom_bigint(arena, "123456789012345678901234567890");
+#if CETTA_BUILD_WITH_GMP
     cases[count++] = atom_rational(arena, "-22/7");
+#else
+    /* Rational construction is unavailable without GMP; NULL is not an
+     * atom and must not be passed to the rendering correspondence check. */
+    if (atom_rational(arena, "-22/7") != NULL) return false;
+#endif
     cases[count++] = atom_expr3(
         arena, atom_symbol(arena, "f"),
         atom_string(arena, "nested\nstring"),
@@ -2138,6 +2144,7 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
                           atom_bool(arena, true)));
 
     for (size_t i = 0u; i < count; i++) {
+        if (!cases[i]) return false;
         char *direct = rho_atom_text_key_direct(cases[i]);
         char *slow = rho_atom_text_key_slow(cases[i]);
         bool equal = direct && slow && strcmp(direct, slow) == 0;

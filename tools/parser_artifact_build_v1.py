@@ -46,8 +46,16 @@ def load_manifest(path):
     for row in rows:
         if row.get("strategy", "auto") not in ("general", "auto", "predictive"):
             raise ValueError("unknown parser execution strategy")
-        if row.get("format") not in ("authored", "syntax", "lbnf", "bnf", "ebnf", "join", "reader"):
+        if row.get("format") not in ("authored", "syntax", "lbnf", "bnf", "ebnf", "join", "reader", "module"):
             raise ValueError("unknown parser input format")
+        if row.get("format") == "module":
+            if any(not isinstance(row.get(key), str) or not row[key]
+                   for key in ("reader", "source", "theory", "start")) or row["reader"] not in names:
+                raise ValueError("module input requires a manifest reader, source, closed theory and start category")
+            catalog = row.get("catalog", {})
+            if not isinstance(catalog, dict) or any(not isinstance(k, str) or not isinstance(v, str)
+                                                    for k, v in catalog.items()):
+                raise ValueError("module catalog maps explicit import locations to source files")
     return rows
 
 
@@ -62,6 +70,8 @@ def dependencies(manifest, rows):
         for key in ("language", "profile", "source", "authority"):
             if key in row:
                 result.add(source_path(manifest, row[key]))
+        if row["format"] == "module":
+            result.update(source_path(manifest, path) for path in row.get("catalog", {}).values())
     # Reader construction and lowering use the existing authored libraries.
     result.update((ROOT / "lib").glob("*bnf.metta"))
     result.update((ROOT / "lib/petta").glob("*bnf.metta"))
@@ -70,6 +80,7 @@ def dependencies(manifest, rows):
     for lane in ("he", "petta"):
         result.update((ROOT / f"langdef/{lane}/generated").glob("plain_bnf*.metta"))
     result.update((ROOT / "lib/langdef.metta", ROOT / "lib/petta/langdef.metta",
+                   ROOT / "lib/lib_module.metta", ROOT / "lib/petta/lib_module.metta",
                    ROOT / "tools/gslt2parse_schema_v1.py",
                    ROOT / "tools/parser_artifact_publication_v1.py", Path(__file__).resolve()))
     if any(not path.is_file() for path in result):
@@ -121,6 +132,35 @@ class Inputs:
                              form("lbnf:lower-document", document, text(name), start,
                                   form("SyntaxLexicalPolicyV1", policy))),
                         form(failure, failure))))
+            if kind == "module":
+                policy = row.get("policy", "bnfc-documented")
+                if policy not in ("bnfc-documented", "bnfc-2.9.6.3-c-flex-2.6.4"):
+                    raise ValueError("unknown module lexical policy")
+                reader = prefix + "reader"
+                document, presentation, language = (prefix + role for role in
+                                                   ("document", "presentation", "language"))
+                # Compile the explicitly named reader through this same pipeline;
+                # do not require a baked parser in the bootstrap executable.
+                bindings = [(reader, self.parser(row["reader"]))]
+                catalog = []
+                for index, (location, path) in enumerate(row.get("catalog", {}).items()):
+                    variable = prefix + f"catalog{index}"
+                    bindings.append((variable, form("module:read-file", reader,
+                        text("build-import:" + location), text(source_path(self.manifest, path)))))
+                    catalog.append(form("ModuleCatalogEntryV1", text(location), variable))
+                catalog_list = "LNil"
+                for item in reversed(catalog):
+                    catalog_list = form("LCons", item, catalog_list)
+                bindings += [
+                    (document, form("module:read-file", reader, text("build-module:" + name),
+                                    text(source_path(self.manifest, row["source"])))),
+                    (presentation, form("module:assemble", document, text(row["theory"]),
+                                        "LNil", catalog_list, "OriginViewV1", text("build-instance:" + name))),
+                    (language, form("module:language", presentation, text(name), text(row["start"]),
+                                    form("SyntaxLexicalPolicyV1", policy))),
+                    (prefix + "closed", form("langdef:close-parser", reader)),
+                ]
+                return lets(bindings, form("module:language-syntax", language))
             if kind == "join":
                 operands = row.get("operands", [])
                 if not isinstance(operands, list) or len(operands) < 2 or not row.get("start"):
@@ -133,27 +173,33 @@ class Inputs:
                                                value, prefix + f"operand{i}")))
                     value = key
                 return lets(bindings, value)
-            raise ValueError("join operands must be syntax, LBNF, or another join")
+            raise ValueError("join operands must be syntax, LBNF, module, or another join")
         finally:
             self.active.remove(name)
 
     def parser(self, name):
+        prefix = f"$build{self.scope}_parser_"
+        self.scope += 1
+        syntax, raw_name, selected, failure, chosen, closed = (prefix + part for part in
+            ("syntax", "raw", "selected", "failure", "chosen", "closed"))
         strategy = self.rows[name].get("strategy", "auto")
-        if self.rows[name]["format"] in ("syntax", "lbnf", "join"):
-            return lets([("$build-syntax", self.syntax(name))],
-                        form("langdef:compile-parser", "$build-syntax", strategy))
+        if self.rows[name]["format"] in ("syntax", "lbnf", "module", "join"):
+            return lets([(syntax, self.syntax(name))],
+                        form("langdef:compile-parser", syntax, strategy))
         raw = self.parser_source(name)
-        selection = form("case", form("__cetta_lib_parser_select_strategy", "$build-raw", strategy),
-                         form(form("(return $build-selected)", "$build-selected"), form("$build-result", "$build-result")))
-        return lets([("$build-raw", raw), ("$build-strategy", selection),
-                     ("$build-close-raw", form("langdef:close-parser", "$build-raw"))], "$build-strategy")
+        selection = form("case", form("__cetta_lib_parser_select_strategy", raw_name, strategy),
+                         form(form(form("return", selected), selected), form(failure, failure)))
+        return lets([(raw_name, raw), (chosen, selection),
+                     (closed, form("langdef:close-parser", raw_name))], chosen)
 
     def parser_source(self, name):
         row = self.rows[name]
         kind = row["format"]
-        if kind in ("syntax", "lbnf", "join"):
-            return lets([("$build-syntax", self.syntax(name))],
-                        form("langdef:load-syntax-gslt-parser", "$build-syntax"))
+        if kind in ("syntax", "lbnf", "module", "join"):
+            syntax = f"$build{self.scope}_syntax"
+            self.scope += 1
+            return lets([(syntax, self.syntax(name))],
+                        form("langdef:load-syntax-gslt-parser", syntax))
         if kind == "authored":
             return form("langdef:load-authored-parser", text(source_path(self.manifest, row["language"])),
                         text(source_path(self.manifest, row["profile"])))
@@ -205,7 +251,8 @@ def run_compiler(binary, directory, name, program, timeout):
 def compile_catalog(binary, manifest, rows, output, header, timeout):
     output.mkdir(parents=True, exist_ok=True)
     inputs = Inputs(manifest, rows)
-    imports = '!(import! &self "lib/lib_lbnf.metta")\n!(import! &self "lib/lib_bnf.metta")\n'
+    imports = ('!(import! &self "lib/lib_lbnf.metta")\n!(import! &self "lib/lib_bnf.metta")\n'
+               '!(import! &self "lib/lib_module.metta")\n')
     with tempfile.TemporaryDirectory(prefix=".partial-", dir=output) as temporary:
         directory = Path(temporary)
         artifacts = []

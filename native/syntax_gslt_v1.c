@@ -422,9 +422,32 @@ done:
 bool cetta_syntax_gslt_data_arg_v1(const char *operation, uint32_t index) {
     /* Consulted for every argument check of a grounded call: one shared
      * prefix test first, then short suffixes. */
-    static const char library[] = "__cetta_lib_", syntax[] = "syntax_gslt_";
+    static const char library[] = "__cetta_lib_", syntax[] = "syntax_gslt_", language[] = "language_def_";
     if (!operation || strncmp(operation, library, sizeof library - 1u)) return false;
     operation += sizeof library - 1u;
+    if (!strncmp(operation, language, sizeof language - 1u)) {
+        const char *suffix = operation + sizeof language - 1u;
+        if (!strcmp(suffix, "term_load_value")) return index == 0u;
+        if (!strcmp(suffix, "term_admit_data")) return index == 2u;
+        if (!strcmp(suffix, "pattern_admit_data")) return index == 2u;
+        if (!strcmp(suffix, "project_parser_result")) return index == 2u;
+        if (!strcmp(suffix, "project_parser_pattern_result")) return index == 2u || index == 3u;
+        if (!strcmp(suffix, "projected_term")) return index == 0u;
+        if (!strcmp(suffix, "contextual_result_term")) return index == 0u;
+        if (!strcmp(suffix, "rewrite_pattern_at_data")) return index == 3u || index == 4u;
+        if (!strcmp(suffix, "rewrite_term_at_data")) return index == 5u || index == 6u;
+        return false;
+    }
+    if (!strcmp(operation, "module_assemble_v1")) return index < 6u;
+    if (!strcmp(operation, "module_core_v1") || !strcmp(operation, "module_rewrite_rules_v1")) return index < 2u;
+    if (!strcmp(operation, "module_attach_layer_v1")) return index < 5u;
+    if (!strcmp(operation, "module_join_layers_over_v1")) return index < 3u;
+    if (!strcmp(operation, "module_join_layers_v1") || !strcmp(operation, "module_layer_fields_v1")) return index < 2u;
+    if (!strcmp(operation, "module_base_core_v1")) return index == 0u;
+    if (!strcmp(operation, "module_language_v1")) return index < 4u;
+    if (!strcmp(operation, "module_language_core_v1") || !strcmp(operation, "module_language_syntax_v1")) return index == 0u;
+    if (!strcmp(operation, "module_document_v1") || !strcmp(operation, "module_finish_v1"))
+        return index < 2u;
     if (!strcmp(operation, "lbnf_bootstrap_v1")) return index == 0u;
     if (!strcmp(operation, "lbnf_finish_v1")) return index == 0u;
     if (!strcmp(operation, "lbnf_document_v1")) return index < 2u;

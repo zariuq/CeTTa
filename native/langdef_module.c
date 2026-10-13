@@ -20,6 +20,7 @@
 #include "native/parser_token_ast_v1.h"
 #include "native/parser_baked_v1.h"
 #include "native/language_def_pattern_atom_v1.h"
+#include "native/language_def_pattern_admission_v1.h"
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/decimal_value_v1.h"
 #include "native/ebnf_derivation_projection_native_v1.h"
@@ -29,6 +30,9 @@
 #include "native/structural_tree_relabel_v1.h"
 #include "native/syntax_gslt_v1.h"
 #include "native/lbnf_document_v1.h"
+#include "native/module_value_v1.h"
+#include "native/module_value_internal_v1.h"
+#include "native/module_fields_v1.h"
 #include "native_handle.h"
 #include "finite_horn_ground_term_v1.h"
 #include "parser_pack_gll_v1.h"
@@ -1169,6 +1173,24 @@ static bool authored_parser_structured_value_decode_document(
     out->root = root;
     memcpy(out->authority_sha256, authority_sha256, sizeof(authority_sha256));
     return true;
+}
+
+static CettaLanguageDefTermV1 *language_def_term_resource_from_value(
+    Atom *value, char *error, size_t error_size) {
+    CettaLanguageDefTermV1 *resource = calloc(1u, sizeof(*resource));
+    if (!resource) { langdef_set_error(error, error_size, "LanguageDef allocation failed"); return NULL; }
+    cetta_op_lang_v1_init(&resource->wire);
+    cetta_language_def_core_v1_init(&resource->language);
+    cetta_ld_cr_v1_program_init(&resource->contextual_program);
+    CettaLdCoreV1Status status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
+    if (!authored_parser_structured_value_decode_language(&resource->wire, value, error, error_size) ||
+        !cetta_language_def_core_v1_decode(&resource->language, &resource->wire, 200000u, &status, error, error_size)) {
+        language_def_term_resource_free(resource); return NULL;
+    }
+    resource->contextual_status = CETTA_LD_CR_V1_OK;
+    resource->contextual_ready = cetta_ld_cr_v1_compile(&resource->contextual_program, &resource->language,
+        &resource->contextual_status, resource->contextual_error, sizeof(resource->contextual_error));
+    return resource;
 }
 
 static CettaAuthoredParserV1 *authored_parser_resource_load_values(
@@ -3898,6 +3920,16 @@ static Atom *langdef_return(Arena *arena, Atom *value) {
     return atom_expr2(arena, atom_symbol(arena, "return"), value);
 }
 
+static Atom *langdef_projection_problem(Arena *arena, const char *status,
+    int64_t alternative, const Atom *span, const char *message) {
+    Atom *fields[] = {atom_symbol(arena, status), atom_int(arena, alternative),
+        span ? atom_deep_copy(arena, (Atom *)span) : atom_symbol(arena, "NoSourceSpanV1"),
+        atom_string(arena, message)};
+    return langdef_return(arena, langdef_expr(arena,
+        !strcmp(status, "resource_limit") ? "LangDef:ProjectionIncompleteV1"
+                                         : "LangDef:ProjectionRejectedV1", fields, 4u));
+}
+
 /* Publication is a transactional boundary whose rejection must remain an
  * inspectable value.  Seal both successful and failed native results before
  * the evaluator can treat an Error payload as control flow. */
@@ -6234,50 +6266,7 @@ bool cetta_langdef_run_file_v1(
 
 static bool langdef_utf8_append(uint8_t **bytes, size_t *len, size_t *cap,
                                 uint32_t codepoint) {
-    uint8_t encoded[4];
-    size_t width;
-    uint8_t *next;
-    if (codepoint == 0u || codepoint > 0x10ffffu ||
-        (codepoint >= 0xd800u && codepoint <= 0xdfffu))
-        return false;
-    if (codepoint <= 0x7fu) {
-        encoded[0] = (uint8_t)codepoint;
-        width = 1u;
-    } else if (codepoint <= 0x7ffu) {
-        encoded[0] = (uint8_t)(0xc0u | (codepoint >> 6u));
-        encoded[1] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 2u;
-    } else if (codepoint <= 0xffffu) {
-        encoded[0] = (uint8_t)(0xe0u | (codepoint >> 12u));
-        encoded[1] = (uint8_t)(0x80u | ((codepoint >> 6u) & 0x3fu));
-        encoded[2] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 3u;
-    } else {
-        encoded[0] = (uint8_t)(0xf0u | (codepoint >> 18u));
-        encoded[1] = (uint8_t)(0x80u | ((codepoint >> 12u) & 0x3fu));
-        encoded[2] = (uint8_t)(0x80u | ((codepoint >> 6u) & 0x3fu));
-        encoded[3] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 4u;
-    }
-    if (*len > SIZE_MAX - width - 1u)
-        return false;
-    if (*len + width + 1u > *cap) {
-        size_t new_cap = *cap ? *cap : 32u;
-        while (new_cap < *len + width + 1u) {
-            if (new_cap > SIZE_MAX / 2u)
-                return false;
-            new_cap *= 2u;
-        }
-        next = realloc(*bytes, new_cap);
-        if (!next)
-            return false;
-        *bytes = next;
-        *cap = new_cap;
-    }
-    memcpy(*bytes + *len, encoded, width);
-    *len += width;
-    (*bytes)[*len] = 0u;
-    return true;
+    return cetta_utf8_append_scalar_impl_v1(bytes, len, cap, codepoint);
 }
 
 bool cetta_utf8_append_scalar_v1(uint8_t **bytes, size_t *len, size_t *cap,
@@ -8829,17 +8818,19 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                     ctx, STRUCTURAL_TREE_RELABEL_HANDLE_KIND, id)));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_term_load")) {
-        const char *path;
+    if (atom_is_symbol(head, "__cetta_lib_language_def_term_load") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_term_load_value")) {
+        const char *path = NULL;
         CettaLanguageDefTermV1 *resource;
         uint64_t id;
 
-        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+        bool structured = atom_is_symbol(head, "__cetta_lib_language_def_term_load_value");
+        if (nargs != 1u || (!structured && !cetta_langdef_text_arg(args[0], &path)))
             return langdef_error(
                 arena, head,
                 "langdef:load-language expects one LanguageDef wire path");
-        resource = language_def_term_resource_load(
-            path, error, sizeof(error));
+        resource = structured ? language_def_term_resource_from_value(args[0], error, sizeof(error)) :
+            language_def_term_resource_load(path, error, sizeof(error));
         if (!resource)
             return langdef_error(
                 arena, head,
@@ -8892,7 +8883,122 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, "LangDef:LanguageWireSHA256", arguments, 1u));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_term_admit")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_contextual_result_term")) {
+        Atom *envelope = nargs == 2u ? args[0] : NULL;
+        if (!envelope || envelope->kind != ATOM_EXPR || envelope->expr.len < 2u ||
+            !atom_is_symbol(envelope->expr.elems[0], "LangDef:ContextualResults") ||
+            !args[1] || args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+            args[1]->ground.ival < 0 || (uint64_t)args[1]->ground.ival >= envelope->expr.len - 2u)
+            return langdef_context_fault(arena, "bad_argument", "Expected a contextual result and an in-range alternative index");
+        Atom *entry = envelope->expr.elems[(size_t)args[1]->ground.ival + 2u];
+        if (!cetta_langdef_expr_head(entry, "LangDef:ContextualResult", 2u))
+            return langdef_context_fault(arena, "bad_argument", "Malformed contextual result entry");
+        return langdef_return(arena, atom_deep_copy(arena, entry->expr.elems[1]));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_projected_term")) {
+        if (nargs != 2u || !cetta_langdef_expr_head(args[0], "LangDef:ProjectedTermsV1", 2u) ||
+            !args[0]->expr.elems[1] || args[0]->expr.elems[1]->kind != ATOM_EXPR ||
+            !args[1] || args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+            args[1]->ground.ival < 0 || (uint64_t)args[1]->ground.ival >= args[0]->expr.elems[1]->expr.len)
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "langdef:projected-term expects a projection and an in-range alternative index");
+        Atom *entry = args[0]->expr.elems[1]->expr.elems[args[1]->ground.ival];
+        if (!cetta_langdef_expr_head(entry, "LangDef:ProjectedTermV1", 2u))
+            return langdef_projection_problem(arena, "bad_argument", args[1]->ground.ival, NULL,
+                "malformed projected term entry");
+        return langdef_return(arena, atom_deep_copy(arena, entry->expr.elems[1]));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_project_parser_result") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_project_parser_pattern_result")) {
+        bool pattern_projection = atom_is_symbol(head, "__cetta_lib_language_def_project_parser_pattern_result");
+        uint64_t id;
+        CettaLanguageDefTermV1 *resource;
+        const char *category;
+        if (nargs != (pattern_projection ? 4u : 3u) ||
+            !cetta_native_handle_arg(args[0], LANGUAGE_DEF_TERM_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(ctx, LANGUAGE_DEF_TERM_HANDLE_KIND, id)) ||
+            !cetta_langdef_text_arg(args[1], &category))
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "Projection expects a live LanguageDef handle, category, optional Pattern profile and parser result");
+        Atom *input = args[pattern_projection ? 3u : 2u];
+        if (cetta_langdef_expr_head(input, "ParserRejectedV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserLexicalRejectedV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserIncompleteV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserCyclicV1", 1u) ||
+            cetta_langdef_expr_head(input, "ParserFailureV1", 1u))
+            return langdef_return(arena, atom_deep_copy(arena, input));
+        if (!cetta_langdef_expr_head(input, "ParserAcceptedV1", 2u) ||
+            !input->expr.elems[1] || input->expr.elems[1]->kind != ATOM_EXPR ||
+            !input->expr.elems[1]->expr.len ||
+            !cetta_langdef_expr_head(input->expr.elems[2], "ParserSpanV1", 4u))
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "expected a nonempty accepted parser value vector or parser outcome");
+        Atom *values = input->expr.elems[1];
+        if ((size_t)values->expr.len > SIZE_MAX / sizeof(Atom *))
+            return langdef_projection_problem(arena, "resource_limit", -1, NULL,
+                "AST projection alternative vector exceeds its allocation bound");
+        Atom **projected = arena_alloc(arena, (size_t)values->expr.len * sizeof(*projected));
+        if (!projected)
+            return langdef_projection_problem(arena, "resource_limit", -1, NULL,
+                "could not allocate the AST projection alternative vector");
+        for (CettaExprLen i = 0u; i < values->expr.len; ++i) {
+            CettaLdGroundTermV1Status status;
+            char error[256] = {0};
+            Atom *term = NULL, *sources = NULL;
+            const Atom *blame = NULL;
+            bool ok = pattern_projection ? cetta_language_def_pattern_v1_project_ast(arena, &resource->language,
+                    category, args[2], values->expr.elems[i], UINT32_MAX, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+                    &term, &sources, &blame, &status, error, sizeof(error)) :
+                cetta_language_def_ground_term_v1_project_ast(arena, &resource->language,
+                    category, values->expr.elems[i], UINT32_MAX, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+                    &term, &sources, &blame, &status, error, sizeof(error));
+            if (!ok) {
+                return langdef_projection_problem(arena, cetta_ld_ground_term_v1_status_name(status),
+                    i, blame, error[0] ? error : "AST projection rejected the value");
+            }
+            Atom *entry[] = {term, sources};
+            projected[i] = langdef_expr(arena, "LangDef:ProjectedTermV1", entry, 2u);
+        }
+        Atom *result[] = {atom_expr(arena, projected, values->expr.len),
+            atom_deep_copy(arena, input->expr.elems[2])};
+        return langdef_return(arena, langdef_expr(arena, "LangDef:ProjectedTermsV1", result, 2u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_pattern_admit_data")) {
+        uint64_t id;
+        CettaLanguageDefTermV1 *resource;
+        const char *category;
+        if (nargs != 3u ||
+            !cetta_native_handle_arg(args[0], LANGUAGE_DEF_TERM_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(ctx, LANGUAGE_DEF_TERM_HANDLE_KIND, id)) ||
+            !cetta_langdef_text_arg(args[1], &category))
+            return langdef_error(arena, head,
+                "langdef:admit-pattern-data expects a live LanguageDef handle, category and Pattern");
+        CettaLdPatternV1 pattern;
+        CettaLdPatternAtomV1Status wire_status;
+        CettaLdPatternAdmissionV1Status admission_status;
+        char detail[256] = {0};
+        cetta_ld_pattern_v1_init(&pattern);
+        bool decoded = cetta_ld_pattern_atom_v1_decode(&pattern, args[2], LANGDEF_DEFAULT_REPLAY_DEPTH,
+            LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS, &wire_status, detail, sizeof(detail));
+        bool admitted = decoded && cetta_language_def_pattern_v1_admit(&resource->language,
+            category, &pattern, LANGDEF_DEFAULT_REPLAY_DEPTH, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+            &admission_status, detail, sizeof(detail));
+        cetta_ld_pattern_v1_free(&pattern);
+        if (admitted) return langdef_return(arena, langdef_expr(arena, "LangDef:TermAdmitted", NULL, 0u));
+        Atom *fields[] = {atom_symbol(arena, decoded ?
+            cetta_ld_pattern_admission_v1_status_name(admission_status) : cetta_ld_pattern_atom_v1_status_name(wire_status)),
+            atom_string(arena, detail)};
+        bool incomplete = decoded ? admission_status == CETTA_LD_PA_V1_RESOURCE_LIMIT :
+            (wire_status == CETTA_LD_PATTERN_ATOM_V1_RESOURCE_LIMIT || wire_status == CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE);
+        return langdef_return(arena, langdef_expr(arena,
+            incomplete ? "LangDef:TermIncompleteV1" : "LangDef:TermRejected", fields, 2u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_term_admit") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_term_admit_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         const char *category;
@@ -8932,7 +9038,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         }
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         CettaLanguageDefRelationEnvV1 relation_environment = {0};
@@ -9017,7 +9124,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         return langdef_return(arena, encoded);
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         CettaLanguageDefRelationEnvV1 relation_environment = {0};
@@ -9607,6 +9715,119 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
 
     /* Syntax GSLT values close the chain: the earlier operations keep their
      * existing dispatch cost. */
+    if (atom_is_symbol(head, "__cetta_lib_module_attach_layer_v1")) {
+        ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+        if (nargs != 5u) {
+            module_fail_v1(&work, "malformed-layer", "Layer attachment expects a base, origin, schema, category and fields.");
+            return work.refusal;
+        }
+        CettaLanguageDefTermV1 *schema = language_def_term_resource_from_value(args[2], error, sizeof(error));
+        if (!schema) {
+            module_fail_v1(&work, "malformed-layer-schema", error[0] ? error : "Expected an authoring LanguageDef.");
+            return work.refusal;
+        }
+        Atom *result = cetta_module_attach_layer_v1(arena, args[0], args[1], args[2],
+            &schema->language, args[3], args[4]);
+        language_def_term_resource_free(schema);
+        return result;
+    }
+    if (atom_is_symbol(head, "__cetta_lib_module_join_layers_over_v1")) {
+        ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+        if (nargs != 3u) {
+            module_fail_v1(&work, "malformed-layer-operation", "Layer change of base expects a target core and two decorated values.");
+            return work.refusal;
+        }
+        CettaLanguageDefTermV1 *target = language_def_term_resource_from_value(args[0], error, sizeof(error));
+        if (!target) {
+            module_fail_v1(&work, "malformed-layer-base", error[0] ? error : "Expected a target LanguageDef.");
+            return work.refusal;
+        }
+        language_def_term_resource_free(target);
+        return cetta_module_join_layers_over_v1(arena, args[0], args[1], args[2]);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_module_join_layers_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_base_core_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_layer_fields_v1")) {
+        bool core_only = atom_is_symbol(head, "__cetta_lib_module_base_core_v1");
+        if (nargs != (core_only ? 1u : 2u)) {
+            ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+            module_fail_v1(&work, "malformed-layer-operation", "Layer operation has the wrong number of operands.");
+            return work.refusal;
+        }
+        if (core_only) return cetta_module_base_core_v1(arena, args[0]);
+        if (atom_is_symbol(head, "__cetta_lib_module_join_layers_v1"))
+            return cetta_module_join_layers_v1(arena, args[0], args[1]);
+        return cetta_module_layer_fields_v1(arena, args[0], args[1]);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_rewrite_rules_v1")) {
+        Atom *rules = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module rule export expects a presentation and a language name.");
+        bool ok = cetta_module_value_v1_rewrite_rules(arena, args[0], args[1], 1000000u, &rules, &refusal);
+        return ok ? rules : refusal ? refusal : langdef_error(arena, head, "Module rule export failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_interpret_v1")) {
+        Atom *result = NULL, *refusal = NULL;
+        if (nargs != 3u) return langdef_error(arena, head,
+            "Module interpretation expects required and supplied presentations and a method.");
+        bool ok = cetta_module_value_v1_interpret(arena, args[0], args[1], args[2], 1000000u, &result, &refusal);
+        return ok ? result : refusal ? refusal : langdef_error(arena, head, "Module interpretation failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_core_v1")) {
+        Atom *language = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module core construction expects a presentation and a language name.");
+        bool ok = cetta_module_value_v1_core(arena, args[0], args[1], 1000000u, &language, &refusal);
+        return ok ? language : refusal ? refusal : langdef_error(arena, head, "Module core construction failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_language_v1")) {
+        CettaLbnfLoweredV1 lowered = {0}; Atom *language = NULL, *refusal = NULL;
+        if (nargs != 4u) return langdef_error(arena, head,
+            "Module language lowering expects a presentation, name, start category and lexical policy.");
+        if (!cetta_module_value_v1_language(arena, args[0], args[1], args[2], args[3], 1000000u,
+                &lowered, &language, &refusal))
+            return refusal ? refusal : langdef_error(arena, head, "Module language lowering failed.");
+        Atom *syntax = cetta_syntax_gslt_admit_v1(arena, lowered.language, lowered.profile,
+            lowered.policy, lowered.origins, syntax_gslt_admission_v1);
+        Atom *fields[] = {language, syntax};
+        return module_make_v1(arena, "ModuleLanguageV1", fields, 2u);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_language_core_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_language_syntax_v1")) {
+        if (nargs != 1u || !module_form_v1(args[0], "ModuleLanguageV1", 2u))
+            return langdef_error(arena, head, "Expected a lowered module language value.");
+        return atom_deep_copy(arena, args[0]->expr.elems[atom_is_symbol(head, "__cetta_lib_module_language_core_v1") ? 1u : 2u]);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_assemble_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 6u) return langdef_error(arena, head,
+            "Module assembly expects a module, theory, arguments, catalog, origin policy and instance key.");
+        CettaGsltOriginPolicyV1 policy;
+        if (atom_is_symbol(args[4], "OriginCoherentV1")) policy = CETTA_GSLT_ORIGIN_COHERENT_V1;
+        else if (atom_is_symbol(args[4], "OriginViewV1")) policy = CETTA_GSLT_ORIGIN_VIEW_V1;
+        else return langdef_error(arena, head, "Expected a named module origin policy.");
+        bool ok = cetta_module_value_v1_assemble(arena, args[0], args[1], args[2], args[3],
+            policy, args[5], 1000000u, &value, &refusal);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, "Module assembly failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_document_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_finish_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module reading expects a source namespace and labelled parser data.");
+        bool ok = atom_is_symbol(head, "__cetta_lib_module_document_v1")
+            ? cetta_module_value_v1_project(arena, args[0], args[1], 1000000u, &value, &refusal)
+            : cetta_module_value_v1_finish_read(arena, args[0], args[1], 1000000u, &value, &refusal);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, "Module projection failed.");
+    }
+
     if (atom_is_symbol(head, "__cetta_lib_lbnf_bootstrap_v1")) {
         Atom *document = NULL;
         char error[512];

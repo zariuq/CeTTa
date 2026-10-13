@@ -1,0 +1,67 @@
+Module RewriteBundles {
+  Theory Naturals() {
+    Empty Exports { Nat; } Terms {
+      NatZ . Nat ::= "z";
+      NatS . Nat ::= "s" "(" Nat ")";
+      NatAdd . Nat ::= "add" "(" Nat "," Nat ")";
+    }
+  }
+  Theory Arithmetic(n: Naturals) {
+    n Rewrites {
+      AddZero: (NatAdd (NatZ) value) ~> value;
+      AddSuccessor: (NatAdd (NatS left) right) ~> (NatS (NatAdd left right));
+    }
+  }
+  Theory SuccessorContext(n: Naturals) {
+    n Rewrites {
+      UnderSuccessor: let source ~> target in (NatS source) ~> (NatS target);
+    }
+  }
+  Theory DuplicateZero(n: Naturals) {
+    n Rewrites {
+      AddZeroAgain: (NatAdd (NatZ) value) ~> value;
+    }
+  }
+  Theory DuplicatePaths(n: Naturals) {
+    Arithmetic(n) \/ DuplicateZero(n)
+  }
+  Theory SharedCopy(r: Arithmetic) {
+    r \/ r
+  }
+  Theory SharedTwice(n: Naturals) {
+    let r = Arithmetic(n) in (SharedCopy(r))
+  }
+  Theory SharedSignature(n: Naturals) {
+    Arithmetic(n) /\ n
+  }
+  Theory DanglingRules(n: Naturals) {
+    Arithmetic(n) \ n
+  }
+  Theory ChangedZero(n: Naturals) {
+    n Rewrites {
+      ZeroStep: (NatZ) ~> (NatS (NatZ));
+    }
+  }
+  Theory AdditionalBehavior(n: Naturals) {
+    Arithmetic(n) \/ ChangedZero(n)
+  }
+  Theory Sequences() {
+    Empty Exports { Seq; } Terms {
+      SeqEmpty . Seq ::= "empty";
+      SeqCons . Seq ::= "cons" "(" Seq ")";
+      SeqJoin . Seq ::= "join" "(" Seq "," Seq ")";
+    }
+  }
+  Theory SequenceRules(s: Sequences) {
+    s Rewrites {
+      JoinEmpty: (SeqJoin (SeqEmpty) rest) ~> rest;
+    }
+  }
+  Theory Independent(n: Naturals, s: Sequences) {
+    Arithmetic(n) \/ SequenceRules(s)
+  }
+  Theory Together(n: Naturals, s: Sequences) {
+    Arithmetic(n) \/ SuccessorContext(n) \/ SequenceRules(s)
+  }
+  theory Naturals()
+}

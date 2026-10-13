@@ -110,6 +110,10 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
+(: langdef:parse-authored-text (-> %Undefined% %Undefined% Atom))
+(: langdef:parse-authored-file (-> %Undefined% %Undefined% Atom))
+(: langdef:parse-authored-text-evidence (-> %Undefined% %Undefined% %Undefined% Atom))
+(: langdef:parse-authored-file-evidence (-> %Undefined% %Undefined% %Undefined% Atom))
 (= (langdef:parse-authored-text $handle $source)
    (function
      (case (__cetta_lib_authored_parser_parse_text $handle $source)
@@ -230,6 +234,14 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
+(: __cetta_lib_language_def_term_load_value (-> Atom %Undefined%))
+(: langdef:load-language-value (-> Atom %Undefined%))
+(= (langdef:load-language-value $wire)
+   (function
+     (case (__cetta_lib_language_def_term_load_value $wire)
+       (((return $handle) (return $handle))
+        ($result (return $result))))))
+
 ; Exact content identity of the checked LanguageDef wire owned by a live
 ; admission handle.  The digest covers the wire bytes that were decoded; it
 ; is suitable for rejecting artifacts produced against a different revision.
@@ -249,7 +261,53 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
-; Compute every contextual reduct of an exact PApp/FVar Pattern wire.  The
+; Project every labelled parser alternative into the selected LanguageDef's
+; ground carrier, retaining its occurrence source map. Non-accepted parser
+; outcomes pass through; a malformed alternative refuses the whole batch.
+(: langdef:project-parser-result (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_language_def_project_parser_result (-> %Undefined% %Undefined% Atom %Undefined%))
+(: LangDef:ProjectedTermsV1 (-> Atom Atom Atom))
+(: LangDef:ProjectedTermV1 (-> Atom Atom Atom))
+(: LangDef:TermSourceV1 (-> Atom Atom Atom Atom Atom Atom))
+(= (langdef:project-parser-result $handle $category $result)
+   (function
+     (case (__cetta_lib_language_def_project_parser_result $handle $category $result)
+       (((return $value) (return $value))
+        ($value (return $value))))))
+
+; Named-token binding is an explicit projection profile, not a convention
+; imposed on every grammar. It shares the alternative and source-map carrier.
+(: langdef:project-parser-pattern-result (-> %Undefined% %Undefined% Atom Atom Atom))
+(: __cetta_lib_language_def_project_parser_pattern_result (-> %Undefined% %Undefined% Atom Atom %Undefined%))
+(: LangDef:NamedTokensV1 (-> Atom Atom))
+(: LangDef:BinderSourceV1 (-> Atom Atom Atom Atom Atom))
+(= (langdef:project-parser-pattern-result $handle $category $profile $result)
+   (function
+     (case (__cetta_lib_language_def_project_parser_pattern_result $handle $category $profile $result)
+       (((return $value) (return $value))
+        ($value (return $value))))))
+
+; Select one already projected alternative explicitly, returning object data
+; without evaluating its constructors in the host language.
+(: langdef:projected-term (-> Atom %Undefined% Atom))
+(: __cetta_lib_language_def_projected_term (-> Atom %Undefined% %Undefined%))
+(= (langdef:projected-term $projection $index)
+   (function
+     (case (__cetta_lib_language_def_projected_term $projection $index)
+       (((return $term) (return $term))
+        ($term (return $term))))))
+
+; Select one contextual reduct as inert object data. The original result
+; retains its completeness flag, ordered alternatives and derivation traces.
+(: langdef:contextual-result-term (-> Atom %Undefined% Atom))
+(: __cetta_lib_language_def_contextual_result_term (-> Atom %Undefined% %Undefined%))
+(= (langdef:contextual-result-term $results $index)
+   (function
+     (case (__cetta_lib_language_def_contextual_result_term $results $index)
+       (((return $term) (return $term))
+        ($term (return $term))))))
+
+; Compute every contextual reduct in the supported Pattern profile. The
 ; result preserves source-rule order, multiplicity, nested congruence evidence,
 ; and explicit relation-provider receipts.  This low-level semantic boundary
 ; deliberately does not coerce ordinary guest atoms into Pattern values.
@@ -271,6 +329,49 @@
       $context-fuel $work-limit $relation-rows $term)
    (function
      (case (__cetta_lib_language_def_rewrite_term_at
+             $handle $source-category $target-category
+             $context-fuel $work-limit $relation-rows $term)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; The data variants use the same admission and contextual engines, but keep
+; term, Pattern and relation-row operands inert under host equations. Compute
+; those values with let/case before this handoff; use the operations above
+; when operands are programs that should be interpreted first.
+; Closed locally nameless Pattern admission uses the same core declarations.
+; Display names are metadata; bound indices are checked in their typed scope.
+(: langdef:admit-pattern-data (-> %Undefined% %Undefined% Atom Atom))
+(: LangDef:TermIncompleteV1 (-> Atom Atom Atom))
+(: __cetta_lib_language_def_pattern_admit_data (-> %Undefined% %Undefined% Atom %Undefined%))
+(= (langdef:admit-pattern-data $handle $category $pattern)
+   (function
+     (case (__cetta_lib_language_def_pattern_admit_data $handle $category $pattern)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(: langdef:admit-term-data (-> %Undefined% %Undefined% Atom Atom))
+(: __cetta_lib_language_def_term_admit_data (-> %Undefined% %Undefined% Atom %Undefined%))
+(= (langdef:admit-term-data $handle $category $term)
+   (function
+     (case (__cetta_lib_language_def_term_admit_data $handle $category $term)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(: langdef:rewrite-pattern-at-data (-> %Undefined% %Undefined% %Undefined% Atom Atom Atom))
+(: __cetta_lib_language_def_rewrite_pattern_at_data (-> %Undefined% %Undefined% %Undefined% Atom Atom %Undefined%))
+(= (langdef:rewrite-pattern-at-data $handle $context-fuel $work-limit $relation-rows $pattern)
+   (function
+     (case (__cetta_lib_language_def_rewrite_pattern_at_data
+             $handle $context-fuel $work-limit $relation-rows $pattern)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(: langdef:rewrite-term-at-data (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% Atom Atom Atom))
+(: __cetta_lib_language_def_rewrite_term_at_data (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined% Atom Atom %Undefined%))
+(= (langdef:rewrite-term-at-data $handle $source-category $target-category
+      $context-fuel $work-limit $relation-rows $term)
+   (function
+     (case (__cetta_lib_language_def_rewrite_term_at_data
              $handle $source-category $target-category
              $context-fuel $work-limit $relation-rows $term)
        (((return $result) (return $result))
