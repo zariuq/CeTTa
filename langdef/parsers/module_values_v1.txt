@@ -1,0 +1,313 @@
+Module language values and explicit rewrite consumers
+===================================================
+
+Run from the repository root:
+  ./cetta --lang he --profile extended examples/module_rewrite_values_v1.metta
+  ./cetta --lang petta --profile extended examples/module_rewrite_values_v1.metta
+  ./cetta --lang prime examples/module_rewrite_values_v1.metta
+
+The example reads three independent modules, assembles an arithmetic core,
+attaches two independently authored declaration layers, parses add(z,s(z)),
+admits (NatAdd (NatZ) (NatS (NatZ))), and explicitly rewrites it to
+(NatS (NatZ)). It does not install the object language's equations in MeTTa.
+
+The in-tree module-core-reader is built through the shared parser artifact
+pipeline. Load it with langdef:load-baked-parser. It accepts declaration
+authoring and finite theory builders. It is not the historical space/process
+grammar: its keyword inventory excludes process-only keywords. Both readers
+use an explicitly selected lexical policy; neither changes that policy.
+An existing historical reader can instead be supplied to module:read-file.
+
+Core workflow
+-------------
+  module:read-text / module:read-file reader namespace source
+  module:assemble module theory arguments catalog origin-policy instance-key
+  module:core presentation name
+  module:language presentation name entrypoint lexical-policy
+  module:language-core / module:language-syntax language
+
+Catalogs and instance keys are explicit values. Supplied arguments and bound
+instances share declaration origins. Fresh applications do not silently share
+because their syntax or compiled preparation happens to be equal.
+
+Theory arguments resolve their declared interface through the module's local
+theories and explicit imports/catalog. The assembler constructs that interface
+with a private invocation counter, preserving the supplied argument's origins
+and the identities of subsequent instances. It tries IdentityInclusionV1 once
+at the application boundary. An unresolved obligation returns
+ModuleParameterUnknownV1 with the parameter, interface path and method outcome.
+No partially assembled presentation is published.
+
+  module:try-interpret required-presentation supplied-presentation method
+
+IdentityInclusionV1 returns ModuleInterpretationFoundV1 with both constructed
+cores and their declaration-index correspondence, or ModuleInterpretationUnknownV1
+with an unresolved obligation. Unknown means this method did not establish an
+interpretation; it does not prove that the theories are incompatible. Other
+method values remain explicit unknown outcomes until an implementation exists.
+The raw result is inspectable data, not an unforgeable proof object accepted by
+another consumer. Application performs its own construction check.
+
+The identity method permits extra declarations, different concrete constructor
+notation and different law display names. It checks carrier sorts and constructor
+profiles and compares law contexts, premises and patterns. Required rewrite rows
+must match distinct supplied occurrences in order. Core inclusion alone does not
+establish conservativity. Equations being derivable does not by itself provide an
+executable rewrite rule.
+
+Exact sort/constructor names, parameter metadata and law syntax are sufficient
+matching assumptions of this method. Their necessity for general interpretations
+is not established: explicit renaming, derived equations and elaboration can
+require other witnesses. Existing Replacements can adapt a presentation before
+application. Interpretations.module demonstrates an unknown identity search,
+an explicit adaptation, successful application and execution of the adapted rule.
+It also covers extra behavior, different notation and law names, missing
+equations and a rewrite in the wrong direction.
+
+Replacement checking retains complete binding profiles, including binder names
+and nesting. An unchanged profile permits structural transport. A changed profile
+returns a BindingShapeV1 interpretation obligation; this method neither erases
+binders nor claims that a scope-correct binder renaming is impossible. Such an
+interpretation needs its own scope correspondence. A source (Bind x S) spelling
+slot and (x)T body now lower to the existing abstraction parameter S -> T. The
+spelling is retained in notation metadata, not made an extra semantic argument.
+Nested source abstraction annotations and binding tuple elaboration still need
+their own correspondence. Single-binder law fields use the same declaration
+metadata, with the explicit scope interpretation described below.
+
+Use langdef:compile-parser on the resulting syntax. Ordinary parsing reuses
+immutable preparation; evidence and audit operations are separate. The same
+syntax can be frozen, restored or baked through the parser build manifest.
+langdef:project-parser-result uses the supplied core to turn labelled ASTs into
+typed constructor terms, retaining alternative occurrences and source positions.
+langdef:admit-term-data and langdef:rewrite-term-at-data consume inert values.
+Computations producing those values should be performed in explicit let bindings.
+
+Consumer capability belongs to the requested operation, not to the whole core.
+First-order admission and projection check the constructors a term actually uses;
+an unrelated binding declaration does not disable them. Declarations outside
+that consumer's profile still participate in constructor-ambiguity checks. A
+category-wide Pattern codec check is stronger: every constructor reachable from
+that category must have a supported codec. None of these checks claims to execute
+binding syntax through the first-order consumer.
+
+Named binding projection
+-------------------------
+  langdef:project-parser-pattern-result authority category profile parser-result
+  langdef:admit-pattern-data authority category pattern
+
+The explicit profile (LangDef:NamedTokensV1 (LCons "Name" LNil)) interprets
+the selected raw/label token categories as names. Each category has its own
+namespace. A reference selects the nearest same-spelling binder in that
+category; intervening binders of any category still contribute bound indices.
+This is one partial interpretation, not a requirement on other languages or
+projection profiles. Constructor-valued names and other namespace conventions
+need their own interpretation.
+
+The declaration's syntax labels locate the spelling and body fields, including
+reordered notation. Bodies become canonical PLam/BNone arguments; references
+become Var indices. No host equation is evaluated. Unbound names are positioned
+scope refusals, and resource exhaustion remains an incomplete outcome. Equal
+input alternatives are retained in order, without collapsing their multiplicity.
+Result publication is atomic across the complete alternative vector.
+
+The result uses the existing ProjectedTermsV1 carrier. TermSourceV1 rows index
+semantic Pattern nodes; additional BinderSourceV1 rows retain the binder node
+index, original name, spelling span and token coordinates. Thus alpha-equivalent
+terms may have different source maps. langdef:projected-term selects one
+alternative explicitly, while admit-pattern-data checks the closed object
+against the same core, without executing substitutions or laws.
+Pattern admission's resource/depth exhaustion returns TermIncompleteV1 rather
+than claiming that the term is ill-typed. Its codec and checker currently have
+bounded recursion; the AST-to-Pattern projection itself uses an explicit stack.
+
+Single-binder rewrite interpretation
+------------------------------------
+A source law such as
+  (Lam x body) ~> (Lam x (Lam y body))
+uses x and y as binder slots, not free law variables or object arguments.
+Occurrences of these names at their declared categories become bound indices;
+body is a context-dependent metavariable. The native runner matches it under
+the original binder and shifts its external references when introducing y.
+Binders internal to the matched body retain their own references.
+
+This partial method recognizes equal LHS capture contexts and RHS extensions
+by inner binders. Matching name/type stacks are one sufficient correspondence,
+not a mathematical necessity. Outward motion, changed binder correspondence
+or incompatible repeated occurrences report unresolved-scope-transport. A
+dependency-aware or explicitly renamed interpretation can extend coverage.
+Premise dependencies are currently interpreted at the rule root; opening a
+matched body's scope in a premise needs a contextual dependency interpretation.
+
+langdef:rewrite-pattern-at-data returns every supported reduct with its ordered
+rule trace. langdef:contextual-result-term selects an indexed term as inert data
+for further admission or rewriting. The original results retain completeness
+and all traces. Importing or reading the rules never installs host equations.
+
+examples/module_binding_values_v1.metta is a runnable read/assemble/compile/
+parse/project/admit/rewrite example. It preserves an outer reference through an
+introduced binder, admits the reduct, and includes an unbound-name negative.
+
+Raw declaration layers
+----------------------
+  module:attach-layer base origin schema category fields
+  module:join-layers left right
+  module:join-layers-over target-core left right
+  module:base-core extended
+  module:layer-fields extended origin
+
+A layer stores its complete schema, category, portable origin and ordered field
+list beside the exact core. Attachment checks newly supplied fields through that
+schema's admission operation. This raw codec supports law-free schemas; schemas
+with equations or rewrites require a separately licensed elaborator and are
+refused. Attachment alone never executes fields or grants operational meaning.
+
+The two-argument join requires identical base cores. The explicit over operation
+accepts a separately assembled target LanguageDef and carries both raw layers
+to it. Raw fields refer to their own schemas, not symbols of the decorated core,
+so this action preserves them unchanged. It does not construct an interpretation,
+choose a core union, or certify conservativity. Core-relative executable fields
+require a reference-preserving transport specific to their elaboration.
+An identical shared layer occurs
+once; incompatible data at a shared origin is refused. Equal field occurrences
+inside a layer remain distinct. Ordinary observations decode and copy data,
+without invoking parser compilation or unsolicited provenance audits. The raw
+carrier is not an unforgeable admission certificate: a consumer must admit data
+against its schema at the semantic boundary, particularly when accepting manually
+constructed or restored raw values.
+
+SourceNotes.module and SearchHints.module demonstrate independently authored
+languages for metadata. SearchDepth is data, not an implicit search-mode switch.
+
+Derived authoring conveniences
+------------------------------
+examples/module_derived_values_v1.metta reads two independent modules over a
+supplied natural-number presentation. The first supplies a named-substitution
+rewrite declaration; the second adds finite tuple notation. Their composed
+LanguageDef parses and admits tuple values and executes the first module's
+ordinary core rule. Both parser entrypoints are compiled once and reused.
+
+The supported substitution profile consists of resolved free names and ordered
+constructor applications. (Subst body replacement name) substitutes all matching
+free occurrences simultaneously. The replacement is checked at the inferred
+target sort; its variables belong to the surrounding law context. A target
+absent from the body, a sort mismatch or a binding pattern is explicitly refused.
+Dotted spellings are exact resolved names, not a new binder-resolution operation.
+
+Product { S1; S2; } elaborates already resolved base sorts into an ordinary
+generated carrier sort and an ordinary constructor signature with those two
+parameters in order. Product {} has a nullary signature. The declaration's
+nonterminal slots must match its components exactly; generated sorts occupy a
+reserved namespace and conflicting constructor heads are refused. This supplies
+finite tuple syntax and typing, not projection equations, eta laws or categorical
+products. Nested product components and binding categories need their own checked
+elaborations. Inherited equations and rewrite occurrences are retained unchanged.
+
+These are source conveniences compiled into the authoritative core, not new
+LanguageDef primitives. They do not license arbitrary law-bearing metadata layers.
+
+Composed reusable and baked consumer
+------------------------------------
+tests/module_values/ComposedDerived.module composes the independently authored
+named-substitution and tuple extensions, then joins the binding language. Its
+Complete theory produces one core with both executable arithmetic rules and
+scoped weakening. The three entrypoints Expr, Nat and Wrapped use that same core.
+
+  python3 tools/test_module_derived_v1.py --cetta ./cetta --output runtime/module-composed --composed-only
+
+This exercises the closed theory through live and restored parsers, projects and
+admits its terms, runs each selected rewrite, retains both metadata layers over
+the composite core, and checks hostile host equations. The binders remain scoped;
+reading or composing a rule does not install it in the host evaluator.
+
+A parser build manifest can use format "module", with source, a closed theory
+name, start category, strategy, a reader naming another manifest entry, and an
+explicit catalog mapping import locations to module source paths. Parameterized
+theories can be applied inside that closed entrypoint. Sources are relative to
+the manifest; logical module origins do not depend on the checkout directory.
+The reader is built through the same compiler pipeline, not loaded from a baked
+catalog during bootstrap. Catalog inputs participate in build dependencies.
+
+  make PARSER_BUILD_MANIFEST=tests/module_values/baked_v1.json BIN=runtime/cetta-module-baked
+  python3 tools/test_module_derived_v1.py --cetta runtime/cetta-module-baked --output runtime/module-baked --composed-only --baked-parser composed-binding
+
+The fixture bakes the general, non-predictive binding parser. Its values, source
+positions, alternative multiplicity and packed evidence match the live and
+restored parser. Failed or interrupted generation leaves the published catalog
+unchanged. Build preparation is not part of ordinary parsing.
+
+Existing chainer consumer
+------------------------
+module:rewrite-rules returns (ModuleRewriteRulesV1 core occurrences), where each
+ModuleRuleOccurrenceV1 contains its portable origin and exact core RewriteRule.
+The order and multiplicity are the core's, not a set of constructor labels.
+
+tools/module_chainer_v1.py renders these values for the existing PeTTaChainer.
+Supply a live core authority, an explicit namespace, knowledge base and evidence
+value. Source terms must be closed before native admission. The relation is:
+  (ModuleRewriteStepV1 namespace category origin source target)
+Origin is part of the result so equal-valued independent derivations do not
+collapse into one fact. Context premises refer to that same explicit relation;
+there is no automatic context closure or transitive closure. Proof-token heads
+are injective portable occurrence spellings because the chainer indexes those
+heads. The complete origin and rule label also remain readable in the proof.
+
+The adapter handles first-order constructor rules and explicit congruence
+premises. Binding, freshness and relation-provider profiles require their own
+adapters; they are not assigned guessed meanings. The chainer selects search and
+evidence behavior. It does not become the language's definition or certify the
+native runtime's adequacy.
+
+Qualification
+-------------
+  make test-module-workflow-v1
+  make test-module-chainer-v1 PETTA_CHAINER_ROOT=<checkout> PETTA_ORACLE_ROOT=<checkout>
+
+The chainer test uses the existing pinned compatibility sources. Its runtime
+dependencies must be enabled in the selected CeTTa build. It tests actual root
+and contextual derivations, distinct equal-result occurrences and wrong-sort
+refusal. Module workflows run in HE extended, PeTTa extended and local Prime.
+
+Mathematical boundaries
+-----------------------
+The authoritative LanguageDef still supplies types, terms, equations and
+rewrites. CoGSLT raw declaration codecs and product authoring preserve complete
+extension rows and the core. Constructor projection has a separate Lean typing
+theorem. These do not establish native adequacy, binder-aware evaluation or
+conservativity of arbitrary new rewrites. Derived named substitution and product
+category elaborations have separately checked core-action and tuple-typing
+theorems. The native constructor-profile implementations are qualified by
+differential, sort, ownership and negative controls; native adequacy and the
+broader binding/category profiles remain separate obligations.
+Resolved binder elaboration preserves and reflects body typing in its extended
+context. Named-token resolution has an independently specified nearest-binding
+relation, typed-object and injective-renaming theorems. These do not establish
+adequacy of native slot decoding or the textual frontend. The single-binder
+example is proved against the existing core rule interpreter for arbitrary
+matched bodies. Its shift agrees with intrinsic declaration-derived weakening.
+A negative control proves that a captured result can have the correct type:
+postchecking types does not replace scope-preserving substitution.
+
+DerivedLayerTransport connects the tuple and named-substitution authoring layers
+to the shared coGSLT CompositionalTransport. Actual sort and constructor references
+move; free variable names and binder indices do not. Identity, composition,
+payload composition and elaboration commute with that transport. The composed
+realization emits the extended core and compiled named actions. Its tuple-side
+conservativity observation is the existing premise-free top-level rewrite result
+list, including order and multiplicity, not all possible contextual or effect
+observations. Injectivity is unnecessary for the algebraic transport equations;
+freshness, admission and stronger conservativity still need separate hypotheses.
+
+Every conservativity claim must specify its observation and hypotheses. The
+structural-coproduct operational theorem transports exact ordered results for
+embedded old terms at each contextual fuel, under its compatibility and commuting
+premise-evaluator conditions. Existential and universal observations of that
+result list therefore transport with their predicates, as do order and
+multiplicity. Arbitrary overlapping additions do not have this exactness
+guarantee: adding an outcome can preserve an existential observation while
+breaking a universal one. A particular overlap may have stronger preservation
+with a separate witness. This is not a claim about all termination, strategy or
+effect observations, nor a blanket impossibility of conservative overlap.
+Even may-preservation requires retention of old derivations and the relevant
+premise policy; it is not inferred from arbitrary changes to an evaluator.
+Full OSLF and GSLT-ML execution are outside this interface.

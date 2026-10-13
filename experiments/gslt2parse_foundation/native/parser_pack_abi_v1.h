@@ -118,6 +118,18 @@ typedef struct {
 void ppabi_v1_pack_init(PPABIV1Pack *pack);
 void ppabi_v1_pack_free(PPABIV1Pack *pack);
 
+/* Portable storage metadata for the immutable compiled pack. Symbolic atoms,
+ * cached canonical spellings and dense occurrence order are retained; no
+ * process-local symbol number or pointer is serialized. Import restores this
+ * data without compilation, hashing or provenance replay. */
+Atom *ppabi_v1_pack_export_storage(
+    Arena *arena, const PPABIV1Pack *pack, char *error, size_t error_size);
+bool ppabi_v1_pack_import_storage(
+    PPABIV1Pack *out, const Atom *storage, char *error, size_t error_size);
+/* Explicit structural audit against the existing ABI admission boundary. */
+bool ppabi_v1_pack_check_storage(
+    const PPABIV1Pack *pack, char *error, size_t error_size);
+
 /* Require structurally consistent derivation roots covering every artifact.
  * The ABI checks coverage and identity; proof replay belongs to the caller. */
 bool ppabi_v1_pack_load(PPABIV1Pack *out,

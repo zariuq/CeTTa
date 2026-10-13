@@ -8,6 +8,7 @@
 typedef struct {
     const CettaLdTextV1 *name;
     const CettaLdPatternV1 *value;
+    uint32_t depth;
 } CrBindingV1;
 
 typedef struct {
@@ -191,8 +192,43 @@ static bool cr_text_clone(CrContextV1 *context, CettaLdTextV1 *out,
     return true;
 }
 
-static bool cr_pattern_clone(CrContextV1 *context, CettaLdPatternV1 *out,
-                             const CettaLdPatternV1 *source) {
+/* Exact natural-number addition, including indices larger than a host word.
+ * The cutoff is the number of binders internal to the copied value. */
+static char *cr_index_lift(CrContextV1 *context, const char *source,
+                           uint32_t cutoff, uint32_t amount) {
+    char bound[16];
+    size_t len, width, i;
+    uint64_t carry;
+    if (!source || !*source) return NULL;
+    len = strlen(source);
+    for (i = 0u; i < len; ++i) if (source[i] < '0' || source[i] > '9') return NULL;
+    if (len > 1u && source[0] == '0') return NULL;
+    (void)snprintf(bound, sizeof(bound), "%u", cutoff);
+    width = strlen(bound);
+    if (len < width || (len == width && strcmp(source, bound) < 0)) amount = 0u;
+    if (len > SIZE_MAX - 12u) return NULL;
+    char *out = malloc(len + 12u);
+    if (!out) {
+        (void)cr_fail(context, CETTA_LD_CR_V1_ALLOCATION_FAILURE, "could not copy a bound index");
+        return NULL;
+    }
+    memcpy(out + 10u, source, len + 1u);
+    carry = amount;
+    i = len + 10u;
+    while (carry && i > 0u) {
+        --i;
+        uint64_t digit = (i >= 10u ? (uint64_t)(out[i] - '0') : 0u) + carry;
+        out[i] = (char)('0' + digit % 10u);
+        carry = digit / 10u;
+    }
+    size_t start = i < 10u ? i : 10u;
+    memmove(out, out + start, len + 11u - start);
+    return out;
+}
+
+static bool cr_pattern_copy(CrContextV1 *context, CettaLdPatternV1 *out,
+                            const CettaLdPatternV1 *source,
+                            uint32_t cutoff, uint32_t amount) {
     CettaLdPatternV1 result;
     uint32_t index;
     if (!out || !source)
@@ -203,6 +239,22 @@ static bool cr_pattern_clone(CrContextV1 *context, CettaLdPatternV1 *out,
     cetta_ld_pattern_v1_init(&result);
     result.kind = source->kind;
     switch (source->kind) {
+    case CETTA_LD_PATTERN_BVAR_V1:
+        result.as.bvar_decimal = cr_index_lift(context, source->as.bvar_decimal, cutoff, amount);
+        if (!result.as.bvar_decimal) goto fail;
+        break;
+    case CETTA_LD_PATTERN_LAMBDA_V1:
+        if (cutoff == UINT32_MAX) goto fail;
+        result.as.lambda.binder.present = source->as.lambda.binder.present;
+        if (source->as.lambda.binder.present &&
+            !cr_text_clone(context, &result.as.lambda.binder.value, &source->as.lambda.binder.value)) goto fail;
+        result.as.lambda.body = calloc(1u, sizeof(*result.as.lambda.body));
+        if (!result.as.lambda.body) {
+            (void)cr_fail(context, CETTA_LD_CR_V1_ALLOCATION_FAILURE, "could not copy a lambda body");
+            goto fail;
+        }
+        if (!cr_pattern_copy(context, result.as.lambda.body, source->as.lambda.body, cutoff + 1u, amount)) goto fail;
+        break;
     case CETTA_LD_PATTERN_FVAR_V1:
         if (!cr_text_clone(context, &result.as.fvar, &source->as.fvar))
             goto fail;
@@ -222,23 +274,30 @@ static bool cr_pattern_clone(CrContextV1 *context, CettaLdPatternV1 *out,
                 goto fail;
             }
             for (index = 0u; index < result.as.apply.arguments.len; index++) {
-                if (!cr_pattern_clone(
+                if (!cr_pattern_copy(
                         context, &result.as.apply.arguments.items[index],
-                        &source->as.apply.arguments.items[index]))
+                        &source->as.apply.arguments.items[index], cutoff, amount))
                     goto fail;
             }
         }
         break;
     default:
         (void)cr_fail(context, CETTA_LD_CR_V1_UNSUPPORTED_PROFILE,
-                      "contextual runner result left the PApp/FVar profile");
+                      "contextual runner result left its constructor/single-binder profile");
         goto fail;
     }
     *out = result;
     return true;
 fail:
+    if (context->status == CETTA_LD_CR_V1_OK)
+        (void)cr_fail(context, CETTA_LD_CR_V1_BAD_ARGUMENT, "malformed bound Pattern");
     cetta_ld_pattern_v1_free(&result);
     return false;
+}
+
+static bool cr_pattern_clone(CrContextV1 *context, CettaLdPatternV1 *out,
+                             const CettaLdPatternV1 *source) {
+    return cr_pattern_copy(context, out, source, 0u, 0u);
 }
 
 static void cr_trace_free(CettaLdCrV1Trace *trace) {
@@ -383,7 +442,7 @@ static bool cr_bindings_clone(CrContextV1 *context, CrBindingsV1 *out,
 
 static bool cr_bindings_add(CrContextV1 *context, CrBindingsV1 *bindings,
                             const CettaLdTextV1 *name,
-                            const CettaLdPatternV1 *value) {
+                            const CettaLdPatternV1 *value, uint32_t depth) {
     CrBindingV1 *grown;
     uint32_t next_capacity;
     if (!bindings || !name || !value)
@@ -402,14 +461,14 @@ static bool cr_bindings_add(CrContextV1 *context, CrBindingsV1 *bindings,
         bindings->items = grown;
         bindings->capacity = next_capacity;
     }
-    bindings->items[bindings->len++] = (CrBindingV1){name, value};
+    bindings->items[bindings->len++] = (CrBindingV1){name, value, depth};
     return true;
 }
 
-static CrMatchResultV1 cr_match_pattern(CrContextV1 *context,
+static CrMatchResultV1 cr_match_pattern_at(CrContextV1 *context,
                                         const CettaLdPatternV1 *pattern,
                                         const CettaLdPatternV1 *term,
-                                        CrBindingsV1 *bindings) {
+                                        CrBindingsV1 *bindings, uint32_t depth) {
     const CettaLdPatternV1 *existing;
     uint32_t index;
     CrMatchResultV1 child;
@@ -421,32 +480,44 @@ static CrMatchResultV1 cr_match_pattern(CrContextV1 *context,
         if (existing)
             return cetta_ld_cr_v1_pattern_equal(existing, term)
                 ? CR_MATCH_SUCCESS_V1 : CR_MATCH_MISS_V1;
-        return cr_bindings_add(context, bindings, &pattern->as.fvar, term)
+        return cr_bindings_add(context, bindings, &pattern->as.fvar, term, depth)
             ? CR_MATCH_SUCCESS_V1 : CR_MATCH_FAILURE_V1;
+    case CETTA_LD_PATTERN_BVAR_V1:
+        return cetta_ld_cr_v1_pattern_equal(pattern, term) ? CR_MATCH_SUCCESS_V1 : CR_MATCH_MISS_V1;
+    case CETTA_LD_PATTERN_LAMBDA_V1:
+        if (term->kind != CETTA_LD_PATTERN_LAMBDA_V1) return CR_MATCH_MISS_V1;
+        if (depth == UINT32_MAX) return CR_MATCH_FAILURE_V1;
+        /* Binder spellings are metadata, as in the core matchPattern. */
+        return cr_match_pattern_at(context, pattern->as.lambda.body, term->as.lambda.body, bindings, depth + 1u);
     case CETTA_LD_PATTERN_APPLY_V1:
         if (term->kind != CETTA_LD_PATTERN_APPLY_V1 ||
             !cr_text_equal(&pattern->as.apply.head, &term->as.apply.head) ||
             pattern->as.apply.arguments.len != term->as.apply.arguments.len)
             return CR_MATCH_MISS_V1;
         for (index = 0u; index < pattern->as.apply.arguments.len; index++) {
-            child = cr_match_pattern(
+            child = cr_match_pattern_at(
                 context, &pattern->as.apply.arguments.items[index],
-                &term->as.apply.arguments.items[index], bindings);
+                &term->as.apply.arguments.items[index], bindings, depth);
             if (child != CR_MATCH_SUCCESS_V1)
                 return child;
         }
         return CR_MATCH_SUCCESS_V1;
     default:
         (void)cr_fail(context, CETTA_LD_CR_V1_UNSUPPORTED_PROFILE,
-                      "matcher encountered a Pattern outside PApp/FVar");
+                      "matcher encountered an unresolved Pattern form");
         return CR_MATCH_FAILURE_V1;
     }
 }
 
-static bool cr_apply_bindings(CrContextV1 *context,
+static CrMatchResultV1 cr_match_pattern(CrContextV1 *context,
+    const CettaLdPatternV1 *pattern, const CettaLdPatternV1 *term, CrBindingsV1 *bindings) {
+    return cr_match_pattern_at(context, pattern, term, bindings, 0u);
+}
+
+static bool cr_apply_bindings_at(CrContextV1 *context,
                               const CrBindingsV1 *bindings,
                               const CettaLdPatternV1 *pattern,
-                              CettaLdPatternV1 *out) {
+                              CettaLdPatternV1 *out, uint32_t depth, bool scoped) {
     const CettaLdPatternV1 *value;
     CettaLdPatternV1 result;
     uint32_t index;
@@ -454,11 +525,34 @@ static bool cr_apply_bindings(CrContextV1 *context,
         return false;
     if (pattern->kind == CETTA_LD_PATTERN_FVAR_V1) {
         value = cr_bindings_lookup(bindings, &pattern->as.fvar);
-        return cr_pattern_clone(context, out, value ? value : pattern);
+        uint32_t captured = 0u;
+        if (value && scoped) for (index = 0u; index < bindings->len; ++index)
+            if (cr_text_equal(bindings->items[index].name, &pattern->as.fvar)) {
+                captured = bindings->items[index].depth; break;
+            }
+        if (scoped && captured > depth)
+            return cr_fail(context, CETTA_LD_CR_V1_UNSUPPORTED_PROFILE, "outward metavariable transport needs a dependency witness");
+        return cr_pattern_copy(context, out, value ? value : pattern, 0u, value && scoped ? depth - captured : 0u);
+    }
+    if (pattern->kind == CETTA_LD_PATTERN_BVAR_V1) return cr_pattern_clone(context, out, pattern);
+    if (pattern->kind == CETTA_LD_PATTERN_LAMBDA_V1) {
+        cetta_ld_pattern_v1_init(&result);
+        result.kind = CETTA_LD_PATTERN_LAMBDA_V1;
+        result.as.lambda.binder.present = pattern->as.lambda.binder.present;
+        if (pattern->as.lambda.binder.present &&
+            !cr_text_clone(context, &result.as.lambda.binder.value, &pattern->as.lambda.binder.value)) goto fail;
+        result.as.lambda.body = calloc(1u, sizeof(*result.as.lambda.body));
+        if (!result.as.lambda.body) {
+            (void)cr_fail(context, CETTA_LD_CR_V1_ALLOCATION_FAILURE, "could not instantiate a lambda body"); goto fail;
+        }
+        if (depth == UINT32_MAX || !cr_apply_bindings_at(context, bindings, pattern->as.lambda.body,
+            result.as.lambda.body, depth + 1u, scoped)) goto fail;
+        *out = result;
+        return true;
     }
     if (pattern->kind != CETTA_LD_PATTERN_APPLY_V1)
         return cr_fail(context, CETTA_LD_CR_V1_UNSUPPORTED_PROFILE,
-                       "binding application encountered a Pattern outside PApp/FVar");
+                       "binding application encountered an unresolved Pattern form");
     cetta_ld_pattern_v1_init(&result);
     result.kind = CETTA_LD_PATTERN_APPLY_V1;
     if (!cr_text_clone(context, &result.as.apply.head,
@@ -475,10 +569,10 @@ static bool cr_apply_bindings(CrContextV1 *context,
             goto fail;
         }
         for (index = 0u; index < result.as.apply.arguments.len; index++) {
-            if (!cr_apply_bindings(
+            if (!cr_apply_bindings_at(
                     context, bindings,
                     &pattern->as.apply.arguments.items[index],
-                    &result.as.apply.arguments.items[index]))
+                    &result.as.apply.arguments.items[index], depth, scoped))
                 goto fail;
         }
     }
@@ -487,6 +581,11 @@ static bool cr_apply_bindings(CrContextV1 *context,
 fail:
     cetta_ld_pattern_v1_free(&result);
     return false;
+}
+
+static bool cr_apply_bindings(CrContextV1 *context, const CrBindingsV1 *bindings,
+    const CettaLdPatternV1 *pattern, CettaLdPatternV1 *out) {
+    return cr_apply_bindings_at(context, bindings, pattern, out, 0u, false);
 }
 
 static void cr_branch_free(CrBranchV1 *branch) {
@@ -571,6 +670,9 @@ static bool cr_pattern_fresh(const CettaLdPatternV1 *pattern,
         return false;
     if (pattern->kind == CETTA_LD_PATTERN_FVAR_V1)
         return !cr_text_equal(&pattern->as.fvar, name);
+    if (pattern->kind == CETTA_LD_PATTERN_BVAR_V1) return true;
+    if (pattern->kind == CETTA_LD_PATTERN_LAMBDA_V1)
+        return cr_pattern_fresh(pattern->as.lambda.body, name);
     if (pattern->kind != CETTA_LD_PATTERN_APPLY_V1)
         return false;
     for (index = 0u; index < pattern->as.apply.arguments.len; index++) {
@@ -590,8 +692,8 @@ static bool cr_finish_rule(CrContextV1 *context, uint32_t rule_index,
                        "invalid contextual rule completion");
     memset(&item, 0, sizeof(item));
     cetta_ld_pattern_v1_init(&item.term);
-    if (!cr_apply_bindings(context, &branch->bindings, &rule->right,
-                           &item.term))
+    if (!cr_apply_bindings_at(context, &branch->bindings, &rule->right,
+                              &item.term, 0u, true))
         return false;
     item.trace = calloc(1u, sizeof(*item.trace));
     if (!item.trace) {
@@ -922,6 +1024,15 @@ static bool cr_pattern_supported(const CettaLdPatternV1 *pattern) {
         return false;
     if (pattern->kind == CETTA_LD_PATTERN_FVAR_V1)
         return pattern->as.fvar.len == 0u || pattern->as.fvar.bytes;
+    if (pattern->kind == CETTA_LD_PATTERN_BVAR_V1) {
+        const char *n = pattern->as.bvar_decimal;
+        if (!n || !*n || (n[0] == '0' && n[1])) return false;
+        for (; *n; ++n) if (*n < '0' || *n > '9') return false;
+        return true;
+    }
+    if (pattern->kind == CETTA_LD_PATTERN_LAMBDA_V1)
+        return (!pattern->as.lambda.binder.present || !pattern->as.lambda.binder.value.len ||
+                pattern->as.lambda.binder.value.bytes) && cr_pattern_supported(pattern->as.lambda.body);
     if (pattern->kind != CETTA_LD_PATTERN_APPLY_V1 ||
         (pattern->as.apply.head.len > 0u && !pattern->as.apply.head.bytes))
         return false;
@@ -930,6 +1041,50 @@ static bool cr_pattern_supported(const CettaLdPatternV1 *pattern) {
             return false;
     }
     return true;
+}
+
+/* A partial executable scope profile, not the definition of a valid rule.
+ * The ordinary core applier shifts inward from the LHS capture depth.
+ * Outward transport, differently scoped repeated LHS occurrences, and
+ * contextual premise dependencies require the richer binding interpreter. */
+static bool cr_scope_profile(CrContextV1 *context, CrBindingsV1 *captures,
+    const CettaLdPatternV1 *pattern, uint32_t depth, unsigned phase) {
+    if (pattern->kind == CETTA_LD_PATTERN_FVAR_V1) {
+        for (uint32_t i = 0u; i < captures->len; ++i) {
+            if (!cr_text_equal(captures->items[i].name, &pattern->as.fvar)) continue;
+            uint32_t captured = captures->items[i].depth;
+            return phase == 0u ? captured == depth : phase == 1u ? captured <= depth : captured == 0u;
+        }
+        return phase != 0u || cr_bindings_add(context, captures, &pattern->as.fvar, pattern, depth);
+    }
+    if (pattern->kind == CETTA_LD_PATTERN_BVAR_V1) return true;
+    if (pattern->kind == CETTA_LD_PATTERN_LAMBDA_V1)
+        return phase != 2u && depth < UINT32_MAX &&
+            cr_scope_profile(context, captures, pattern->as.lambda.body, depth + 1u, phase);
+    if (pattern->kind != CETTA_LD_PATTERN_APPLY_V1) return false;
+    for (uint32_t i = 0u; i < pattern->as.apply.arguments.len; ++i)
+        if (!cr_scope_profile(context, captures, &pattern->as.apply.arguments.items[i], depth, phase)) return false;
+    return true;
+}
+
+static bool cr_premise_scope_profile(CrContextV1 *context, CrBindingsV1 *captures,
+    const CettaLdPremiseV1 *premise) {
+    switch (premise->kind) {
+    case CETTA_LD_PREMISE_FRESHNESS_V1:
+        for (uint32_t i = 0u; i < captures->len; ++i)
+            if (captures->items[i].depth && cr_text_equal(captures->items[i].name, &premise->as.freshness.variable)) return false;
+        return cr_scope_profile(context, captures, &premise->as.freshness.term, 0u, 2u);
+    case CETTA_LD_PREMISE_CONGRUENCE_V1:
+        return cr_scope_profile(context, captures, &premise->as.congruence.left, 0u, 2u) &&
+            cr_scope_profile(context, captures, &premise->as.congruence.right, 0u, 2u);
+    case CETTA_LD_PREMISE_RELATION_QUERY_V1:
+        for (uint32_t i = 0u; i < premise->as.relation_query.arguments.len; ++i)
+            if (!cr_scope_profile(context, captures, &premise->as.relation_query.arguments.items[i], 0u, 2u)) return false;
+        return true;
+    case CETTA_LD_PREMISE_FOR_ALL_V1:
+        return cr_premise_scope_profile(context, captures, premise->as.for_all.body);
+    }
+    return false;
 }
 
 static bool cr_premise_supported(const CettaLdPremiseV1 *premise) {
@@ -988,7 +1143,7 @@ bool cetta_ld_cr_v1_compile(CettaLdCrV1Program *out,
             if (error_buf && error_buf_size > 0u)
                 (void)snprintf(
                     error_buf, error_buf_size,
-                    "rewrite row %u leaves the PApp/FVar contextual profile",
+                    "rewrite row %u leaves the constructor/single-binder contextual profile",
                     rule_index);
             return false;
         }
@@ -1000,10 +1155,26 @@ bool cetta_ld_cr_v1_compile(CettaLdCrV1Program *out,
                 if (error_buf && error_buf_size > 0u)
                     (void)snprintf(
                         error_buf, error_buf_size,
-                        "rewrite row %u premise %u leaves the PApp/FVar contextual profile",
+                        "rewrite row %u premise %u leaves the contextual Pattern profile",
                         rule_index, premise_index);
                 return false;
             }
+        }
+        CrBindingsV1 captures = {0};
+        CrContextV1 context = {0};
+        context.remaining_work = UINT64_MAX;
+        context.error_buf = error_buf;
+        context.error_buf_size = error_buf_size;
+        bool resolved = cr_scope_profile(&context, &captures, &rule->left, 0u, 0u) &&
+            cr_scope_profile(&context, &captures, &rule->right, 0u, 1u);
+        for (premise_index = 0u; resolved && premise_index < rule->premises.len; ++premise_index)
+            resolved = cr_premise_scope_profile(&context, &captures, &rule->premises.items[premise_index]);
+        cr_bindings_free(&captures);
+        if (!resolved) {
+            if (status) *status = context.status == CETTA_LD_CR_V1_OK ? CETTA_LD_CR_V1_UNSUPPORTED_PROFILE : context.status;
+            if (context.status == CETTA_LD_CR_V1_OK && error_buf && error_buf_size)
+                (void)snprintf(error_buf, error_buf_size, "rewrite row %u needs an explicit dependency/scope interpretation", rule_index);
+            return false;
         }
     }
     result.language = language;

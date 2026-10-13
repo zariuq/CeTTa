@@ -684,11 +684,16 @@ JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.gener
 JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
 JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
 JSON_GSLT_VALUE_TARGET_SOURCE_V1 = langdef/json/occurrence_preserving_value_v1.metta
+JSON_PREDICTIVE_OUTPUTS_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/lexical_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.inc
+JSON_PREDICTIVE_ARTIFACTS_V1 = $(JSON_PREDICTIVE_OUTPUTS_V1) $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.report.json
+JSON_DFA_EMITTER_V1 = runtime/emit-regular-span-dfa-v1
+PARSER_PREDICTIVE_ANALYZER_V1 = runtime/analyze-parser-predictive-v1
 JSON_GSLT_RUNTIME_SRC =
 ifeq ($(ENABLE_JSON_GSLT),1)
 JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
+	native/json_direct_v1.c \
 	native/json_runtime_v1.c \
 	native/json_nik_v1.c \
 	native/json_elaboration_plan_v1.c \
@@ -794,6 +799,7 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c \
+	native/parser_baked_v1.c \
 	native/operational_language_def_v1.c \
 	native/language_def_core_v1.c \
 	native/language_def_ground_term_v1.c \
@@ -802,10 +808,12 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/parser_token_runtime_v1.c \
 	native/parser_token_ast_v1.c \
 	native/lbnf_document_v1.c \
+	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c \
 	native/regular_token_compiler_v1.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	native/language_def_contextual_runner_v1.c \
 	native/language_def_pattern_atom_v1.c \
+	native/language_def_pattern_admission_v1.c \
 	native/structural_tree_relabel_v1.c \
 	native/gslt_composition_v1.c \
 	native/syntax_gslt_v1.c \
@@ -817,8 +825,17 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/decimal_value_v1.c \
 	native/tptp_official_snapshot_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c
+PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
+PARSER_BUILD_MANIFEST_KEY := $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --manifest-key)
+PARSER_BAKED_HEADER = runtime/generated/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).h
+PARSER_BAKED_STAMP = $(BOOTSTRAP_TMPDIR)/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).stamp
+PARSER_BAKED_SELECTION_STAMP = $(BOOTSTRAP_TMPDIR)/parser_baked_selection_v1.$(BUILD_OBJ_TAG).stamp
+PARSER_BAKED_OBJ = $(BOOTSTRAP_TMPDIR)/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).o
+PARSER_COMPILER_CATALOG_OBJ = $(BOOTSTRAP_TMPDIR)/parser_baked_compiler_v1.$(BUILD_OBJ_TAG).o
+PARSER_COMPILER_BIN = runtime/cetta-parser-compiler-$(BUILD_OBJ_TAG)
+PARSER_BUILD_INPUTS = $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --dependencies)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
+OBJ = $(filter-out native/parser_baked_v1.$(BUILD_OBJ_TAG).runtime-stats.o,$(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)) $(PARSER_BAKED_OBJ)
 PUBLIC_BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
 PUBLIC_BIN_FORCE =
 ifeq ($(CETTA_TEST_ISOLATED),1)
@@ -831,7 +848,7 @@ endif
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).runtime-stats.o
 BIN_FORCE =
 else
-OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).o)
+OBJ = $(filter-out native/parser_baked_v1.$(BUILD_OBJ_TAG).o,$(SRC:.c=.$(BUILD_OBJ_TAG).o)) $(PARSER_BAKED_OBJ)
 PUBLIC_BIN = cetta
 PUBLIC_BIN_FORCE = FORCE
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).o
@@ -1122,7 +1139,7 @@ PAYLOAD_MAP_CAPACITY_TEST_BIN = runtime/test_rhometta_payload_map_capacity-$(BUI
 PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.c
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
-RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_CANON)
+RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
 LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ = runtime/bootstrap/test_lib_parse_gll_utf8_forest.$(BUILD_OBJ_TAG).o
@@ -3409,6 +3426,7 @@ OPT_IN_FEATURE_TESTS = \
 	tests/test_io_no_http.metta \
 	tests/test_io_rho_bridge.metta \
 	tests/test_io_syntax.metta \
+	tests/test_json_direct_reference.metta \
 	tests/test_json_gslt_byte_lengths.metta \
 	tests/test_json_gslt_hostile_constructors.metta \
 	tests/test_json_gslt_invalid_number.metta \
@@ -6217,6 +6235,41 @@ endef
 
 $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 	$(link_cetta_binary)
+
+# The compiler links the normal runtime, stdlib and ABT signatures, but an
+# empty catalog. It cannot depend on the artifacts it is about to produce.
+$(PARSER_COMPILER_CATALOG_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -DCETTA_PARSER_COMPILER)
+
+$(PARSER_COMPILER_BIN): $(filter-out $(PARSER_BAKED_OBJ),$(OBJ)) $(PARSER_COMPILER_CATALOG_OBJ) $(BRIDGE_DEPS)
+	$(link_cetta_binary)
+
+$(PARSER_BAKED_HEADER): $(PARSER_BAKED_STAMP)
+
+$(PARSER_BAKED_STAMP): $(PARSER_COMPILER_BIN) $(PARSER_BUILD_MANIFEST) $(PARSER_BUILD_INPUTS)
+	@mkdir -p $(dir $(PARSER_BAKED_HEADER)) $(BOOTSTRAP_TMPDIR)
+	python3 tools/parser_artifact_build_v1.py --cetta $(PARSER_COMPILER_BIN) \
+		--manifest "$(PARSER_BUILD_MANIFEST)" --header $(PARSER_BAKED_HEADER) \
+		--output runtime/generated/parser-artifacts-$(BUILD_OBJ_TAG)
+	@touch $@
+
+$(PARSER_BAKED_SELECTION_STAMP): FORCE
+	@mkdir -p $(BOOTSTRAP_TMPDIR)
+	@set -eu; \
+	if [ ! -f "$@" ] || [ "$$(cat "$@")" != "$(PARSER_BUILD_MANIFEST_KEY)" ]; then \
+		tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-selection.XXXXXX"); \
+		trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+		printf '%s\n' '$(PARSER_BUILD_MANIFEST_KEY)' > "$$tmp_out"; \
+		mv "$$tmp_out" "$@"; \
+	fi
+
+$(PARSER_BAKED_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(PARSER_BAKED_HEADER) $(BUILD_CONFIG_HEADER) $(PARSER_BAKED_SELECTION_STAMP)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -DCETTA_PARSER_BAKED_HEADER='"$(PARSER_BAKED_HEADER)"')
+
+-include $(PARSER_COMPILER_CATALOG_OBJ:.o=.d) $(PARSER_BAKED_OBJ:.o=.d)
+
+.PHONY: parser-artifacts
+parser-artifacts: $(PARSER_BAKED_HEADER)
 
 ifneq ($(BIN),$(PUBLIC_BIN))
 $(PUBLIC_BIN): $(OBJ) $(BRIDGE_DEPS) $(PUBLIC_BIN_FORCE)
@@ -29877,8 +29930,12 @@ test-rhometta-payload-map-capacity-c: $(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 	@./$(PAYLOAD_MAP_CAPACITY_TEST_BIN)
 
 test-rhocalc-abt-substitution: $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN)
-	@result=$$(./$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN) 2>&1); \
+	@status=0; result=$$(./$(RHOCALC_ABT_SUBSTITUTION_TEST_BIN) 2>&1) || status=$$?; \
 	printf '%s\n' "$$result"; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "FAIL: rho/ABT substitution correspondence exited with status $$status"; \
+		exit "$$status"; \
+	fi; \
 	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RhoCoreCorrespondenceSummary 2 2 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: nameful rho substitution agrees with canonical ABT substitution')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: direct rho payload keys agree with ordinary atom rendering')" -ne 1 ]; then \
@@ -39625,8 +39682,21 @@ test-language-def-contextual-runner-v1: \
 		$(TPTP_OFFICIAL_INCLUDE_RESOLUTION_CARRIER_V1)
 	@$(LANGUAGE_DEF_CONTEXTUAL_RUNNER_V1_TEST_BIN)
 
-# C-only deterministic source embedding for build-time language packages.
+# Offline predictive compilation and C-only deterministic source embedding.
 # Generated artifacts stay under runtime/generated and are never checked in.
+$(JSON_DFA_EMITTER_V1): tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc -Iexperiments/gslt2parse_foundation/native tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c src/lib_parse_native_grammar.c -Wl,--gc-sections -o $@
+
+$(PARSER_PREDICTIVE_ANALYZER_V1): tools/analyze_parser_predictive_v1.c src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h src/gslt_dense_bitset_v1.c src/gslt_dense_bitset_v1.h src/atom.c src/generated/cetta_execution_contracts.generated.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc tools/analyze_parser_predictive_v1.c src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c src/atom.c -Wl,--gc-sections -o $@
+
+$(JSON_PREDICTIVE_ARTIFACTS_V1) &: tools/json_predictive_v1.py tools/parser_predictive_v1.py tools/parser_artifact_publication_v1.py tools/gslt2parse_schema_v1.py $(PARSER_PREDICTIVE_ANALYZER_V1) $(JSON_DFA_EMITTER_V1) $(JSON_GSLT_LANGUAGE_SOURCE_V1) $(JSON_GSLT_PROFILE_SOURCE_V1) $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) native/json_elaboration_plan_v1.c
+	python3 tools/json_predictive_v1.py --syntax $(JSON_GSLT_LANGUAGE_SOURCE_V1) --profile $(JSON_GSLT_PROFILE_SOURCE_V1) --target $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) --elaboration native/json_elaboration_plan_v1.c --dfa-compiler $(JSON_DFA_EMITTER_V1) --predictive-compiler $(PARSER_PREDICTIVE_ANALYZER_V1) --output $(JSON_GSLT_GENERATED_DIR_V1)
+
+native/json_direct_v1.$(BUILD_OBJ_TAG).o native/json_direct_v1.$(BUILD_OBJ_TAG).stage0.o native/json_direct_v1.$(BUILD_OBJ_TAG).runtime-stats.o: $(JSON_PREDICTIVE_OUTPUTS_V1)
+
 $(JSON_SOURCE_EMBED_TOOL_V1): $(JSON_SOURCE_EMBED_TOOL_V1_SRC)
 	@mkdir -p $(dir $@)
 	@set -eu; \
@@ -39707,6 +39777,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_nik_v1.c \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
+	native/json_direct_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
@@ -39739,7 +39810,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES = \
 JSON_NIK_V1_TEST_C_SOURCES = \
 	$(JSON_NIK_V1_TEST_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
-LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
+LANGUAGE_DEF_PARSER_PACK_V1_CORE_HEADERS = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_HEADER) \
 	native/parser_token_profile_v1.h \
 	native/parser_token_runtime_v1.h \
@@ -39751,11 +39822,6 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	native/gslt_composition_v1.h \
 	experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.h \
 	$(PARSER_PACK_IDENTITY_WIRE_V1_HEADER) \
-	native/json_cst_value_v1.h \
-	native/json_elaboration_plan_v1.h \
-	native/json_nik_v1.h \
-	native/json_runtime_v1.h \
-	native/json_value_v1.h \
 	$(LANGUAGE_DEF_CORE_V1_HEADER) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.h \
@@ -39773,6 +39839,18 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	src/atom.h \
 	src/name_key.h
 
+JSON_NATIVE_HEADERS_V1 = \
+	native/json_cst_value_v1.h \
+	native/json_elaboration_plan_v1.h \
+	native/json_nik_v1.h \
+	native/json_runtime_v1.h \
+	native/json_value_v1.h \
+	native/json_direct_v1.h \
+	$(JSON_PREDICTIVE_OUTPUTS_V1)
+
+LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_CORE_HEADERS) $(JSON_NATIVE_HEADERS_V1)
+
 $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
@@ -39788,6 +39866,26 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
+
+JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
+$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-direct-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread $(if $(filter 1,$(ENABLE_GMP)),$(GMP_LDFLAGS),); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-json-direct-v1-body
+test-json-direct-v1-body: $(JSON_DIRECT_V1_TEST_BIN)
+	@$(JSON_DIRECT_V1_TEST_BIN)
+	@python3 tests/test_json_predictive_v1.py
+
+.PHONY: test-json-direct-v1
+test-json-direct-v1:
+	@$(MAKE) --no-print-directory BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-json-direct-v1-body
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
@@ -39889,6 +39987,130 @@ $(JSON_NIK_V1_TEST_BIN): \
 test-language-def-parser-pack-v1-body: $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 	@$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 
+PARSER_VALUES_V1_TEST_BIN = runtime/test-parser-values-v1-$(BUILD_OBJ_TAG)
+$(PARSER_VALUES_V1_TEST_BIN): tests/support/test_parser_values_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.h \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-values-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PARSER_QUALIFICATION -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" tests/support/test_parser_values_v1.c \
+		experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-Wl,--gc-sections -Wl,--wrap=cetta_native_sha256_init \
+		-Wl,--wrap=cetta_native_sha256_hex \
+		-Wl,--wrap=cetta_lp_native_gll_prepare -Wl,--wrap=cetta_lp_native_glr_prepare \
+		-Wl,--wrap=rsdfa_v1_plan_build \
+		-Wl,--wrap=cetta_language_def_parser_pack_v1_compile_source \
+		-Wl,--wrap=ppabi_v1_pack_start_is_closed $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-parser-values-v1
+test-parser-values-v1: $(PARSER_VALUES_V1_TEST_BIN)
+	@$(PARSER_VALUES_V1_TEST_BIN)
+
+.PHONY: test-parser-values-public-v1
+test-parser-values-public-v1: $(BIN) tools/test_parser_values_v1.py
+	python3 tools/test_parser_values_v1.py --cetta $(BIN) --output runtime/parser-values-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-values-v1 test-parser-values-public-v1
+
+.PHONY: test-parser-predictive-public-v1
+test-parser-predictive-public-v1: $(BIN) tools/test_parser_predictive_v1.py
+	python3 tools/test_parser_predictive_v1.py --cetta $(BIN) --output runtime/parser-predictive-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-predictive-public-v1
+
+.PHONY: test-parser-predictive-compiler-v1
+test-parser-predictive-compiler-v1: $(PARSER_PREDICTIVE_ANALYZER_V1) tests/test_parser_predictive_compiler_v1.py tools/parser_predictive_v1.py
+	python3 tests/test_parser_predictive_compiler_v1.py
+
+test: test-parser-predictive-compiler-v1
+
+.PHONY: test-parser-artifact-publication-v1
+test-parser-artifact-publication-v1: tests/test_parser_artifact_publication_v1.py tools/parser_artifact_publication_v1.py tests/test_parser_artifact_build_v1.py tools/parser_artifact_build_v1.py
+	@python3 tests/test_parser_artifact_publication_v1.py
+	@python3 tests/test_parser_artifact_build_v1.py
+
+test: test-parser-artifact-publication-v1
+
+.PHONY: test-parser-deep-public-v1
+test-parser-deep-public-v1: $(BIN) tools/test_parser_deep_v1.py
+	python3 tools/test_parser_deep_v1.py --cetta $(BIN) --output runtime/parser-deep-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-deep-public-v1
+
+.PHONY: test-parser-frontends-public-v1
+test-parser-frontends-public-v1: $(BIN) tools/test_parser_frontends_v1.py
+	python3 tools/test_parser_frontends_v1.py --cetta $(BIN) --output runtime/parser-frontends-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-frontends-public-v1
+
+.PHONY: test-prime-native-values-public-v1
+test-prime-native-values-public-v1: $(BIN) tools/test_prime_native_values_v1.py
+	python3 tools/test_prime_native_values_v1.py --cetta $(BIN) --output runtime/prime-native-values-public-$(BUILD_OBJ_TAG)
+
+test: test-prime-native-values-public-v1
+
+.PHONY: test-parser-artifacts-public-v1
+test-parser-artifacts-public-v1: $(BIN)
+	@python3 tools/test_parser_artifacts_v1.py --cetta $(BIN) --output runtime/parser-artifacts-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-artifacts-public-v1
+
+.PHONY: test-parser-baking-public-v1
+test-parser-baking-public-v1: $(BIN) tools/test_parser_baking_v1.py
+	@python3 tools/test_parser_baking_v1.py --cetta $(BIN) --output runtime/parser-baking-public-$(BUILD_OBJ_TAG)
+
+test: test-parser-baking-public-v1
+
+PARSER_PUBLIC_WORK_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_parser_public_work_v1.$(BUILD_OBJ_TAG).o
+PARSER_PUBLIC_WORK_V1_TEST_BIN = runtime/test-parser-public-work-v1-$(BUILD_OBJ_TAG)
+$(PARSER_PUBLIC_WORK_V1_TEST_OBJ): tests/support/test_parser_public_work_v1.c $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(PARSER_PUBLIC_WORK_V1_TEST_BIN): $(PARSER_PUBLIC_WORK_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-public-work.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS) \
+		-Wl,--wrap=cetta_native_sha256_init -Wl,--wrap=cetta_native_sha256_hex \
+		-Wl,--wrap=cetta_lp_native_gll_prepare -Wl,--wrap=cetta_lp_native_glr_prepare \
+		-Wl,--wrap=rsdfa_v1_plan_build -Wl,--wrap=cetta_language_def_parser_pack_v1_compile_source \
+		-Wl,--wrap=cetta_language_def_parser_pack_v1_compile \
+		-Wl,--wrap=ppabi_v1_pack_start_is_closed \
+		-Wl,--wrap=cetta_lp_native_utf8_scalar_view_validate -Wl,--wrap=cetta_lp_native_utf8_lattice_validate \
+		-Wl,--wrap=cetta_lp_native_predictive_build; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-parser-public-work-v1
+test-parser-public-work-v1: $(PARSER_PUBLIC_WORK_V1_TEST_BIN)
+	@mkdir -p runtime/parser-public-work
+	@$(PARSER_PUBLIC_WORK_V1_TEST_BIN)
+
+test: test-parser-public-work-v1
+-include $(PARSER_PUBLIC_WORK_V1_TEST_OBJ:.o=.d)
+
+PARSER_ARTIFACT_BENCH_OBJ = $(BOOTSTRAP_TMPDIR)/bench_parser_artifacts_v1.$(BUILD_OBJ_TAG).o
+PARSER_ARTIFACT_BENCH_BIN = runtime/bench-parser-artifacts-v1-$(BUILD_OBJ_TAG)
+$(PARSER_ARTIFACT_BENCH_OBJ): benchmarks/bench_parser_artifacts_v1.c $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(PARSER_ARTIFACT_BENCH_BIN): $(PARSER_ARTIFACT_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: bench-parser-artifacts-v1
+bench-parser-artifacts-v1: $(PARSER_ARTIFACT_BENCH_BIN)
+	@mkdir -p runtime/parser-artifact-benchmark
+	@$(PARSER_ARTIFACT_BENCH_BIN) runtime/parser-artifact-benchmark/parser.tpp
+
+-include $(PARSER_ARTIFACT_BENCH_OBJ:.o=.d)
+
 $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN): \
 		$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_C_SOURCES) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
@@ -39933,6 +40155,67 @@ test-lbnf-reference-tools-v1: tools/test_lbnf_reference_ast_v1.py \
 	python3 -m unittest discover -s tests/support -p test_lbnf_reference_v1.py
 
 test: test-lbnf-reference-tools-v1
+
+MODULE_VALUES_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_module_values_v1.$(BUILD_OBJ_TAG).o
+LD_PATTERN_ADMISSION_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_language_def_pattern_admission_v1.$(BUILD_OBJ_TAG).o
+LD_PATTERN_ADMISSION_V1_TEST_BIN = runtime/test-language-def-pattern-admission-v1-$(BUILD_OBJ_TAG)
+$(LD_PATTERN_ADMISSION_V1_TEST_OBJ): tests/support/test_language_def_pattern_admission_v1.c \
+		native/language_def_pattern_admission_v1.h native/language_def_pattern_atom_v1.h $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(LD_PATTERN_ADMISSION_V1_TEST_BIN): $(LD_PATTERN_ADMISSION_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-language-def-pattern-admission-v1
+test-language-def-pattern-admission-v1: $(LD_PATTERN_ADMISSION_V1_TEST_BIN)
+	@$(LD_PATTERN_ADMISSION_V1_TEST_BIN)
+
+test: test-language-def-pattern-admission-v1
+-include $(LD_PATTERN_ADMISSION_V1_TEST_OBJ:.o=.d)
+
+MODULE_VALUES_V1_TEST_BIN = runtime/test-module-values-v1-$(BUILD_OBJ_TAG)
+$(MODULE_VALUES_V1_TEST_OBJ): tests/support/test_module_values_v1.c \
+		native/module_value_v1.h native/module_value_internal_v1.h $(BUILD_CONFIG_HEADER)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(MODULE_VALUES_V1_TEST_BIN): $(MODULE_VALUES_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-module-values-v1
+test-module-values-v1: $(MODULE_VALUES_V1_TEST_BIN)
+	@$(MODULE_VALUES_V1_TEST_BIN)
+
+test: test-module-values-v1
+-include $(MODULE_VALUES_V1_TEST_OBJ:.o=.d)
+
+.PHONY: test-module-chainer-export-v1 test-module-workflow-v1 test-module-chainer-v1
+test-module-chainer-export-v1:
+	python3 -m unittest discover -s tools -p test_module_chainer_export_v1.py
+
+test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-admission-v1 test-module-chainer-export-v1
+	python3 tools/test_module_values_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-public
+	python3 tools/test_module_layers_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-layers
+	python3 tools/test_module_derived_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-derived
+	python3 tools/test_module_interpretations_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-interpretations
+	python3 tools/test_module_binding_v1.py --cetta "./$(BIN)" \
+		--output runtime/module-workflow-binding
+
+test-module-chainer-v1: $(BIN) test-module-chainer-export-v1
+	python3 tools/test_module_chainer_v1.py --cetta "./$(BIN)" \
+		--chainer-root "$(PETTA_CHAINER_ROOT)" --petta-root "$(PETTA_ORACLE_ROOT)" \
+		--output runtime/module-workflow-chainer
+
+test: test-module-chainer-export-v1
+
+.PHONY: test-module-inventory-v1
+test-module-inventory-v1: tests/test_module_inventory_v1.py tools/qualify_module_values_v1.py
+	@python3 tests/test_module_inventory_v1.py
+
+test: test-module-inventory-v1
 
 .PHONY: test-language-def-parser-pack-v1
 test-language-def-parser-pack-v1:
@@ -39982,7 +40265,7 @@ PLAIN_BNF_META_PARSER_V1_C_SOURCES = \
 
 $(PLAIN_BNF_META_PARSER_V1_TEST_BIN): \
 		$(PLAIN_BNF_META_PARSER_V1_C_SOURCES) \
-		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_CORE_HEADERS) \
 		langdef/bnf/plain_bnf_source_v1.metta \
 		langdef/bnf/plain_bnf_parser_profile_v1.metta \
 		langdef/bnf/plain_bnf_grammar_v1.metta \
@@ -40006,6 +40289,20 @@ $(PLAIN_BNF_META_PARSER_V1_TEST_BIN): \
 .PHONY: test-plain-bnf-meta-parser-v1-body
 test-plain-bnf-meta-parser-v1-body: $(PLAIN_BNF_META_PARSER_V1_TEST_BIN)
 	@$(PLAIN_BNF_META_PARSER_V1_TEST_BIN)
+
+.PHONY: test-bnf-reusable-parser-example-v1
+test-bnf-reusable-parser-example-v1: $(BIN) examples/reusable-bnf-parser.metta \
+		examples/reusable-bnf-parser.expected examples/reusable-bnf-parser.petta.expected
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/reusable-bnf-parser.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	for lang in he prime petta; do \
+		$(BIN) --lang "$$lang" examples/reusable-bnf-parser.metta > "$$actual"; \
+		expected=examples/reusable-bnf-parser.expected; \
+		if [ "$$lang" = petta ]; then expected=examples/reusable-bnf-parser.petta.expected; fi; \
+		diff -u "$$expected" "$$actual"; \
+	done; \
+	echo '(ReusableBnfParserExampleV1Summary 3 3 0)'
 
 .PHONY: test-plain-bnf-meta-parser-v1
 test-plain-bnf-meta-parser-v1:
@@ -41583,7 +41880,7 @@ test-tptp-official-dollar-words-v1-body: $(BIN) prepare-tptp-compact-morphism-v1
 LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
-LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_tptp json str
+LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 .PHONY: test-library-spellings-v1
@@ -42295,6 +42592,8 @@ qualify-json-gslt-native-forest-exact-v1:
 .PHONY: test-json-gslt-c-only-closure-body
 test-json-gslt-c-only-closure-body: \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_DFA_EMITTER_V1) \
+		$(JSON_PREDICTIVE_ARTIFACTS_V1) \
 		$(JSON_GSLT_EMBEDDED_C_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 	@set -eu; \
@@ -42302,21 +42601,24 @@ test-json-gslt-c-only-closure-body: \
 	trap 'rm -f "$$dry"' EXIT INT TERM; \
 	$(MAKE) --no-print-directory -Bn \
 		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
+		$(foreach artifact,$(JSON_PREDICTIVE_ARTIFACTS_V1),-o $(artifact)) \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_DFA_EMITTER_V1) \
 		$(JSON_GSLT_EMBEDDED_C_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) > "$$dry"; \
 	if grep -E '(^|[[:space:]/])(python([0-9.]*)?|swipl)([[:space:]]|$$)' \
 		"$$dry" >/dev/null; then \
-		echo "FAIL: JSON source/compiler closure invokes Python or SWI" >&2; \
+		echo "FAIL: JSON native compilation after table generation invokes Python or SWI" >&2; \
 		cat "$$dry" >&2; exit 1; \
 	fi; \
 	if ldd $(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_DFA_EMITTER_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) 2>/dev/null | \
 		grep -E 'libpython|libswipl|libcurl|libgmp' >/dev/null; then \
 		echo "FAIL: JSON source/compiler closure links an unrelated provider" >&2; \
 		exit 1; \
 	fi; \
-	echo "PASS: JSON authored-source compiler closure is C-only and provider-isolated"
+	echo "PASS: JSON native compilation after offline table generation is C-only and provider-isolated"
 
 .PHONY: test-json-gslt-c-only-closure
 test-json-gslt-c-only-closure:
@@ -42852,9 +43154,11 @@ test-io-json-bridge:
 
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
+		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
 		tests/test_json_gslt_hostile_constructors.petta.expected \
+		tests/test_json_gslt_hostile_constructors.prime.expected \
 		tests/test_json_gslt_byte_lengths.metta \
 		tests/test_json_gslt_byte_lengths.expected \
 		tests/test_json_gslt_byte_lengths.petta.expected
@@ -42881,6 +43185,8 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 	done; \
 	$(BIN) --lang prime tests/test_json_gslt_library.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_library.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_hostile_constructors.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_hostile_constructors.prime.expected "$$actual"; \
 	$(BIN) --lang prime tests/test_json_gslt_byte_lengths.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_byte_lengths.expected "$$actual"; \
 	$(BIN) --lang prime tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
@@ -42889,7 +43195,14 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
 	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
-	echo "(JsonGsltLibrarySummary 21 21 0)"
+	$(BIN) --lang he tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.petta.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	python3 tests/test_json_deep_v1.py "$(BIN)"; \
+	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library
 test-json-gslt-library:
@@ -42932,7 +43245,7 @@ test-json-gslt-sanitizers:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
 		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
 		ENABLE_PRIME_EVAL_STACK=0 \
-		test-json-nik-v1-body
+		test-json-nik-v1-body test-json-direct-v1-body
 	@$(MAKE) --no-print-directory -B \
 		BUILD=core CETTA_TEST_ISOLATED=1 \
 		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
@@ -42942,6 +43255,7 @@ test-json-gslt-sanitizers:
 .PHONY: test-json-gslt
 .NOTPARALLEL: test-json-gslt
 test-json-gslt: \
+		test-json-direct-v1 \
 		test-language-def-parser-pack-v1 \
 		test-parser-pack-forest-encoding-v1 \
 		test-json-nik-v1 \
