@@ -13,3 +13,8 @@
 (= (fs:try-canonical-under $directory $requested-path) (__cetta_lib_fs_try_canonical_under $directory $requested-path))
 (= (fs:read-lines $path) (__cetta_lib_fs_read_lines $path))
 (= (fs:read-lines-between $path $start $end) (__cetta_lib_fs_read_lines_between $path $start $end))
+(= (fs:line-window $path $start $count) (__cetta_lib_fs_line_window $path $start $count))
+(= (fs:tree-page $path $depth $limit $offset $skips) (__cetta_lib_fs_tree_page $path $depth $limit $offset $skips))
+(= (fs:grep-page $pattern $path $limit $offset $skips) (__cetta_lib_fs_grep_page $pattern $path $limit $offset $skips))
+(= (fs:update-text $path $operation $first $second $backup-directory) (__cetta_lib_fs_update_text $path $operation $first $second $backup-directory))
+(= (fs:is-file $path) (__cetta_lib_fs_is_file $path))

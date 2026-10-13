@@ -677,6 +677,13 @@ Libraries:
   - `fs:read-text` preserves all bytes. `fs:read-text-result path max-bytes errors`
     returns structured success or filesystem failure; `max-bytes` is caller-owned
     (0 means unlimited), and `errors` is `"raw"` or `"replace"` for malformed UTF-8.
+    `fs:line-window` streams numbered line windows. `fs:tree-page` and
+    `fs:grep-page` return explicit continuation offsets; callers choose skipped
+    directories. Search uses PCRE2 (build with `libpcre2-dev`, run with
+    `libpcre2-8`); unavailable support returns an explicit error.
+    `fs:update-text` supports write, append and exact edits with atomic replacement,
+    permissions, SHA-256 receipts and collision-free backups in a caller-selected
+    directory. `fs:is-file` distinguishes regular files from directories.
     Oversized files return `("limit" max-bytes)`, never silently truncated text.
 
 Useful workloads:

@@ -240,17 +240,21 @@ static void cetta_sb_init(CettaStringBuf *sb) {
 }
 
 static void cetta_sb_ensure(CettaStringBuf *sb, size_t extra) {
+    if (extra > SIZE_MAX - sb->len - 1) abort();
     size_t need = sb->len + extra + 1;
     if (need <= sb->cap) return;
-    size_t next = sb->cap ? sb->cap * 2 : 64;
-    while (next < need) next *= 2;
+    size_t next = sb->cap ? (sb->cap <= SIZE_MAX / 2 ? sb->cap * 2 : need) : 64;
+    while (next < need) {
+        if (next > SIZE_MAX / 2) { next = need; break; }
+        next *= 2;
+    }
     sb->buf = cetta_realloc(sb->buf, next);
     sb->cap = next;
 }
 
 static void cetta_sb_append_n(CettaStringBuf *sb, const char *s, size_t n) {
     cetta_sb_ensure(sb, n);
-    memcpy(sb->buf + sb->len, s, n);
+    if (n) memcpy(sb->buf + sb->len, s, n);
     sb->len += n;
     sb->buf[sb->len] = '\0';
 }
@@ -5416,10 +5420,17 @@ static Atom *fs_read_lines_between(Arena *a, Atom *head, Atom **args, uint32_t n
     return result;
 }
 
+#include "library_fs_tools.inc"
+
 static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
                                        Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     SymbolId head_id = atom_symbol_current_id(head);
+    if (head_id == g_builtin_syms.lib_fs_line_window) return fs_line_window(a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_fs_tree_page) return fs_tree_page(a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_fs_grep_page) return fs_grep_page(a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_fs_update_text) return fs_update_text(a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_fs_is_file) return fs_is_file(a, head, args, nargs);
     if (head_id == g_builtin_syms.lib_fs_exists) {
         return fs_exists(a, head, args, nargs);
     }

@@ -414,6 +414,11 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_try_canonical_under, "__cetta_lib_fs_try_canonical_under") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
     X(lib_fs_read_text_result, "__cetta_lib_fs_read_text_result") \
+    X(lib_fs_line_window, "__cetta_lib_fs_line_window") \
+    X(lib_fs_tree_page, "__cetta_lib_fs_tree_page") \
+    X(lib_fs_grep_page, "__cetta_lib_fs_grep_page") \
+    X(lib_fs_update_text, "__cetta_lib_fs_update_text") \
+    X(lib_fs_is_file, "__cetta_lib_fs_is_file") \
     X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
