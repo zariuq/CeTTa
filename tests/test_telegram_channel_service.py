@@ -4,7 +4,7 @@
 A client in the role of an agent's own loop reads deliveries in batches,
 acknowledges them, submits keyed actions (also unprompted, to another
 chat), and reads delivery receipts. A SIGKILL between submission and
-delivery never repeats a send; a lost response holds only its own chat.
+delivery never repeats a send; a lost response does not block later messages.
 """
 import json
 import pathlib
@@ -223,18 +223,28 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-channel-') as temp:
                 task, receipt = next_task(proc, path, 'rejection')
                 assert receipt == ['rejected', '99.0.00000000000000000001', 'action-not-permitted'], receipt
                 ack(path, task)
-                # A lost response is uncertain and holds its own chat only.
+                # A lost response stays uncertain without holding any later message.
                 assert submit(path, '42.0.00000000000000000003', [['send', 'lost reply', 'plain']]) == STORED
                 task, receipt = next_task(proc, path, 'uncertain receipt')
                 assert receipt[:4] == ['delivery', '42.0.00000000000000000003', 0, 1] and receipt[4][0] == 'uncertain', receipt
                 ack(path, task)
-                assert submit(path, '42.0.00000000000000000004', [['send', 'must wait', 'plain']]) == STORED
+                assert submit(path, '42.0.00000000000000000004', [['send', 'following message', 'plain']]) == STORED
                 assert submit(path, '84.0.00000000000000000002', [['send', 'other chat', 'plain']]) == STORED
-                task, receipt = next_task(proc, path, 'other chat receipt')
-                assert receipt[1] == '84.0.00000000000000000002' and receipt[4][0] == 'delivered', receipt
-                ack(path, task)
-                time.sleep(.3)
-                assert (42, 'must wait') not in server.sent and server.sent.count((42, 'lost reply')) == 1
+                received = set()
+                for _ in range(2):
+                    task, receipt = next_task(proc, path, 'following receipt')
+                    assert receipt[4][0] == 'delivered', receipt
+                    received.add(receipt[1])
+                    ack(path, task)
+                assert received == {'42.0.00000000000000000004','84.0.00000000000000000002'}
+                assert (42, 'following message') in server.sent
+                assert server.sent.count((42, 'lost reply')) == 1
+                # Restart and resubmit the original occurrence: it must not send twice.
+                stop(proc)
+                proc = start()
+                assert submit(path, '42.0.00000000000000000003', [['send', 'lost reply', 'plain']]) == STORED
+                time.sleep(.2)
+                assert server.sent.count((42, 'lost reply')) == 1
                 assert all(chat in (42, 84) for chat, _ in server.sent)
                 deliveries = [t for t in rows(db, 'host.worker-tasks').values() if b'"input"' in t]
                 assert not any(b'"update_id":40' in t for t in deliveries) and len(deliveries) == 3, deliveries
@@ -250,4 +260,4 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-channel-') as temp:
                         proc.kill(); proc.communicate(timeout=5)
                 listener.close()
         print(f'{"HTTPS" if tls else "HTTP"}/{protocol}: channel deliveries, batched reads, keyed and unprompted sends, '
-              f'receipts, restart without repetition, forbidden chat and held uncertainty passed')
+              f'receipts, restart without repetition, forbidden chat and uncertainty without blocking passed')

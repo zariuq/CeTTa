@@ -19,6 +19,11 @@
 (: http:timeouts (-> Number Number Number Atom))
 (: http:header (-> String String Atom))
 (: http:response (-> Number String Atom))
+; Add retry-after after the three http:timeouts values to request metadata.
+; The response carries Retry-After seconds, or -1 when the header is absent.
+; Requests without that option retain the ordinary http:response shape.
+(: http:response-with-metadata (-> Number String Atom Atom))
+(: http:retry-after (-> Number Atom))
 
 (= (io:capabilities)
    (__cetta_lib_io_capabilities ()))

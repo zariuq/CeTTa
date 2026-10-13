@@ -187,13 +187,9 @@
        (if (telegram:contains $code (6 7 35 60)) (tg-agent:not-sent) (tg-agent:outcome $outcome $action)))
       ($other (tg-agent:outcome $outcome $action)))))
 
-; A definitive outcome (delivered, failed with a 4xx, or never started)
-; advances the lane and is reported. Only uncertain delivery holds the lane:
-; the next message to that chat must not overtake one that may have arrived.
-(= (tg-channel:advances $result)
-   (case $result
-     (((tg-agent:uncertain $reason) False)
-      ($other True))))
+; Every terminal observation advances the lane. An uncertain message keeps
+; its own outcome and is never retried; later messages can still be sent.
+(= (tg-channel:advances $result) True)
 
 ; Completion views: 2 original intent, 3 outcome, 4 writable delivery key
 ; (grant 2). Channel 0 = the client worker, for the receipt only.

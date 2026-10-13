@@ -49,6 +49,8 @@ typedef struct CettaIoRequest {
     size_t response_len;
     size_t response_cap;
     long status;
+    int64_t retry_after;
+    bool response_metadata;
     int transport_code;
     char transport_message[256];
     bool response_too_large;
@@ -408,6 +410,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     }
     CettaIoRequest *request = cetta_malloc(sizeof(*request));
     memset(request, 0, sizeof(*request));
+    request->retry_after = -1;
     request->method = io_strdup(method);
     request->url = io_strdup(url);
     request->body = io_strdup(body);
@@ -416,7 +419,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     request->follow_redirects = follow_redirects;
     if (atom->expr.len==9u) {
         Atom *options=atom->expr.elems[8]; int64_t connect, first, idle;
-        if (!options || options->kind!=ATOM_EXPR || options->expr.len!=4u ||
+        if (!options || options->kind!=ATOM_EXPR || (options->expr.len!=4u && options->expr.len!=5u) ||
             !atom_is_symbol(options->expr.elems[0],"http:timeouts") ||
             !io_nonnegative_int_arg(options->expr.elems[1],&connect) ||
             !io_nonnegative_int_arg(options->expr.elems[2],&first) ||
@@ -431,6 +434,14 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
             io_request_free(NULL,request); return NULL;
         }
 #endif
+        if (options->expr.len==5u) {
+            Atom *metadata=options->expr.elems[4];
+            if (!atom_is_symbol(metadata,"retry-after")) {
+                snprintf(error,error_size,"expected retry-after response metadata option");
+                io_request_free(NULL,request); return NULL;
+            }
+            request->response_metadata=true;
+        }
         request->connect_timeout_ms=(uint32_t)connect;
         request->first_byte_timeout_ms=(uint32_t)first;
         request->idle_timeout_ms=(uint32_t)idle;
@@ -539,6 +550,7 @@ static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
         snprintf(request->transport_message, sizeof(request->transport_message),
                  "%s", curl_easy_strerror((CURLcode)result.transport_code));
         request->status = result.status;
+        request->retry_after = result.retry_after;
         request->response_too_large = result.response_too_large;
         request->response_budget_exceeded = result.response_budget_exceeded;
         request->response_has_nul = result.body_size && memchr(result.body, 0, result.body_size);
@@ -818,6 +830,12 @@ static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
                        atom_string(arena, request->transport_message)},
             4u);
         return atom_error(arena, io_http_source(arena, request), reason);
+    }
+    if (request->response_metadata) {
+        Atom *items[] = {atom_symbol(arena,"http:response-with-metadata"), atom_int(arena,request->status),
+            atom_string(arena,request->response?request->response:""),
+            atom_expr2(arena,atom_symbol(arena,"http:retry-after"),atom_int(arena,request->retry_after))};
+        return atom_expr(arena,items,4u);
     }
     return atom_expr3(
         arena, atom_symbol(arena, "http:response"),

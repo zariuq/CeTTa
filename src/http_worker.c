@@ -209,14 +209,19 @@ static void clear_easy(CettaHttpWorker *w, Job *j, bool added) {
 
 static void finish(CettaHttpWorker *w, Job *j, CURLcode code, bool cancelled) {
     long response=0, request_size=0;
+    curl_off_t retry_after=-1;
     bool known=false;
     if (j->easy) {
         curl_easy_getinfo(j->easy,CURLINFO_RESPONSE_CODE,&response);
+        struct curl_header *retry_header=NULL;
+        if (curl_easy_header(j->easy,"Retry-After",0,CURLH_HEADER,-1,&retry_header)==CURLHE_OK)
+            curl_easy_getinfo(j->easy,CURLINFO_RETRY_AFTER,&retry_after);
         known=curl_easy_getinfo(j->easy,CURLINFO_REQUEST_SIZE,&request_size)==CURLE_OK && request_size>=0;
     }
     clear_easy(w,j,j->result.started);
     pthread_mutex_lock(&w->mutex);
     j->result.transport_code=code; j->result.status=response; j->result.cancelled=cancelled;
+    j->result.retry_after=(int64_t)retry_after;
     j->result.request_size_known=known; j->result.request_size=request_size;
     j->state=OBSERVING; j->retry_at=0;
     pthread_mutex_unlock(&w->mutex);

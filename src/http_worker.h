@@ -53,6 +53,7 @@ typedef struct {
     bool allocation_failed;
     int transport_code;             /* CURLcode; no token-bearing error text */
     long status;
+    int64_t retry_after;             /* seconds parsed by curl; -1 when absent */
     bool request_size_known;
     long request_size;              /* libcurl diagnostic, not a retry permit */
     unsigned char *body;
