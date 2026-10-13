@@ -18283,6 +18283,10 @@ test-git-module: $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
+.PHONY: test-git-subprocess-output
+test-git-subprocess-output: $(BIN)
+	CETTA_BIN="$(abspath $(BIN))" python3 tests/test_git_subprocess_output.py -v
+
 test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	@pass=0; fail=0; \
 	printf '%s\n' \
