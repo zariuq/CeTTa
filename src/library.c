@@ -25,6 +25,8 @@
 #include "library_durable.h"
 #include "library_json.h"
 #include "str_natives.h"
+#include "utf8.h"
+#include <math.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -5101,6 +5103,152 @@ static Atom *fs_try_canonical_under(Arena *a, Atom *head, Atom **args,
     return result;
 }
 
+/* Replace each malformed UTF-8 subsequence, preserving valid prefixes of a
+ * truncated sequence as one replacement, as Python's errors="replace" does.
+ * Valid files retain the original buffer; allocation starts at the first error. */
+static void fs_replace_utf8(CettaStringBuf *text) {
+    const uint8_t *bytes = (const uint8_t *)text->buf;
+    CettaStringBuf repaired;
+    size_t pos = 0u, copied = 0u;
+    cetta_sb_init(&repaired);
+    while (pos < text->len) {
+        uint32_t scalar, width;
+        if (bytes[pos] < 0x80u) { pos++; continue; }
+        if (cetta_utf8_decode_one(bytes, text->len, pos, &scalar, &width)) {
+            pos += width;
+            continue;
+        }
+        cetta_sb_append_n(&repaired, text->buf + copied, pos - copied);
+        cetta_sb_append_n(&repaired, "\xef\xbf\xbd", 3u);
+        uint8_t first = bytes[pos];
+        size_t expected = first >= 0xc2u && first <= 0xdfu ? 2u :
+                          first >= 0xe0u && first <= 0xefu ? 3u :
+                          first >= 0xf0u && first <= 0xf4u ? 4u : 1u;
+        size_t consumed = 1u;
+        while (consumed < expected && pos + consumed < text->len) {
+            uint8_t next = bytes[pos + consumed];
+            if ((next & 0xc0u) != 0x80u) break;
+            if (consumed == 1u &&
+                ((first == 0xe0u && next < 0xa0u) ||
+                 (first == 0xedu && next > 0x9fu) ||
+                 (first == 0xf0u && next < 0x90u) ||
+                 (first == 0xf4u && next > 0x8fu))) break;
+            consumed++;
+        }
+        pos += consumed;
+        copied = pos;
+    }
+    if (repaired.buf) {
+        cetta_sb_append_n(&repaired, text->buf + copied, text->len - copied);
+        cetta_sb_free(text);
+        *text = repaired;
+    }
+}
+
+static bool fs_byte_limit(Atom *arg, size_t *limit) {
+    int64_t value;
+    if (arg && arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_INT) {
+        value = arg->ground.ival;
+    } else if (arg && arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_FLOAT) {
+        double number = arg->ground.fval;
+        if (!isfinite(number) || number >= (double)INT64_MAX ||
+            number < (double)INT64_MIN) return false;
+        value = (int64_t)number;
+    } else {
+        const char *number = library_text_arg(arg);
+        char *end;
+        if (!number) return false;
+        errno = 0;
+        value = strtoll(number, &end, 10);
+        if (number == end || errno == ERANGE) return false;
+        while (isspace((unsigned char)*end)) end++;
+        if (*end) return false;
+    }
+    if (value > 0 && (uint64_t)value >= SIZE_MAX) return false;
+    *limit = value > 0 ? (size_t)value : 0u;
+    return true;
+}
+
+static Atom *fs_text_failure(Arena *a, const char *path, int error) {
+    if (error == ENOENT) {
+        char *cwd = getcwd(NULL, 0);
+        Atom *result = atom_expr2(a, atom_string(a, "missing"),
+                                 atom_string(a, cwd ? cwd : "unavailable"));
+        free(cwd);
+        return result;
+    }
+    if (error == EISDIR || error == EACCES || error == EPERM)
+        return atom_expr2(a, atom_string(a, error == EISDIR ? "directory" : "denied"),
+                          atom_string(a, ""));
+    char prefix[64];
+    snprintf(prefix, sizeof(prefix), "[Errno %d] ", error);
+    CettaStringBuf detail;
+    cetta_sb_init(&detail);
+    cetta_sb_append_n(&detail, prefix, strlen(prefix));
+    cetta_sb_append_n(&detail, strerror(error), strlen(strerror(error)));
+    cetta_sb_append_n(&detail, ": ", 2u);
+    cetta_sb_append_n(&detail, path, strlen(path));
+    Atom *result = atom_expr3(a, atom_string(a, "error"),
+                             atom_string(a, error == ENOTDIR ? "NotADirectoryError" : "OSError"),
+                             atom_string_n(a, detail.buf, detail.len));
+    cetta_sb_free(&detail);
+    return result;
+}
+
+/* Structured I/O results let MeTTa choose how to present success and failure.
+ * Read at most limit+1 bytes to distinguish a complete file from an oversized
+ * one; zero means unlimited. No result is silently truncated. */
+static Atom *fs_read_text_result(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    const char *path, *errors;
+    size_t limit;
+    if (nargs != 3 || !(path = library_text_arg(args[0])) ||
+        !fs_byte_limit(args[1], &limit) || !(errors = library_text_arg(args[2])) ||
+        (strcmp(errors, "raw") != 0 && strcmp(errors, "replace") != 0))
+        return library_signature_error(a, head, args, nargs,
+                                       "expected filename, byte limit (0: unlimited), and raw or replace");
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return fs_text_failure(a, path, errno);
+    struct stat st;
+    CettaStringBuf text;
+    cetta_sb_init(&text);
+    if (fstat(fileno(fp), &st) == 0) {
+        if (S_ISDIR(st.st_mode)) { fclose(fp); return fs_text_failure(a, path, EISDIR); }
+        if (S_ISREG(st.st_mode) && st.st_size > 0) {
+            uint64_t reserve = (uint64_t)st.st_size;
+            if (limit && reserve > limit + 1u) reserve = limit + 1u;
+            if (reserve < SIZE_MAX) cetta_sb_ensure(&text, (size_t)reserve);
+        }
+    }
+    for (;;) {
+        size_t count = 65536u;
+        if (limit && count > limit + 1u - text.len) count = limit + 1u - text.len;
+        cetta_sb_ensure(&text, count);
+        size_t got = fread(text.buf + text.len, 1u, count, fp);
+        text.len += got;
+        text.buf[text.len] = '\0';
+        if (limit && text.len > limit) {
+            fclose(fp);
+            cetta_sb_free(&text);
+            return atom_expr2(a, atom_string(a, "limit"), atom_int(a, (int64_t)limit));
+        }
+        if (got < count) {
+            if (ferror(fp)) {
+                int error = errno ? errno : EIO;
+                fclose(fp);
+                cetta_sb_free(&text);
+                return fs_text_failure(a, path, error);
+            }
+            break;
+        }
+    }
+    fclose(fp);
+    if (strcmp(errors, "replace") == 0) fs_replace_utf8(&text);
+    Atom *result = atom_expr2(a, atom_string(a, "ok"),
+                             atom_string_n(a, text.buf, text.len));
+    cetta_sb_free(&text);
+    return result;
+}
+
 static Atom *fs_read_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *path;
     CettaStringBuf text;
@@ -5289,6 +5437,9 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
     }
     if (head_id == g_builtin_syms.lib_fs_read_text) {
         return fs_read_text(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_read_text_result) {
+        return fs_read_text_result(a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_fs_write) {
         return fs_write(a, head, args, nargs);

@@ -3,6 +3,14 @@
      (case (__cetta_lib_fs_read_text $path)
        (($result (return $result))))))
 
+; Structured results: ("ok" text), ("limit" max-bytes), ("missing" cwd),
+; ("directory" ""), ("denied" ""), or ("error" class detail).
+; 0 means unlimited. Raw preserves bytes; replace repairs malformed UTF-8.
+(= (fs:read-text-result $path $max-bytes $errors)
+   (function
+     (case (__cetta_lib_fs_read_text_result $path $max-bytes $errors)
+       (($result (return $result))))))
+
 (= (fs:write $path $text)
    (function
      (case (__cetta_lib_fs_write $path $text)

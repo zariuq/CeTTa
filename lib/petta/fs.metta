@@ -3,6 +3,7 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (= (fs:read-text $path) (__cetta_lib_fs_read_text $path))
+(= (fs:read-text-result $path $max-bytes $errors) (__cetta_lib_fs_read_text_result $path $max-bytes $errors))
 (= (fs:write $path $text) (__cetta_lib_fs_write $path $text))
 (= (fs:append-text $path $text) (__cetta_lib_fs_append_text $path $text))
 (= (fs:exists $path) (__cetta_lib_fs_exists $path))

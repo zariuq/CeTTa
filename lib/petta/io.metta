@@ -16,6 +16,8 @@
 (: http:timeouts (-> Number Number Number Atom))
 (: http:header (-> String String Atom))
 (: http:response (-> Number String Atom))
+(: http:response-with-metadata (-> Number String Atom Atom))
+(: http:retry-after (-> Number Atom))
 (= (io:capabilities) (__cetta_lib_io_capabilities ()))
 (= (io:submit $request) (__cetta_lib_io_submit $request))
 (= (io:poll) (__cetta_lib_io_poll ()))

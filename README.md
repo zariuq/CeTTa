@@ -674,6 +674,10 @@ Libraries:
 - `lib/mork.metta`: narrow MORK-facing helper interface
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
   extension libraries used by the current profile interfaces
+  - `fs:read-text` preserves all bytes. `fs:read-text-result path max-bytes errors`
+    returns structured success or filesystem failure; `max-bytes` is caller-owned
+    (0 means unlimited), and `errors` is `"raw"` or `"replace"` for malformed UTF-8.
+    Oversized files return `("limit" max-bytes)`, never silently truncated text.
 
 Useful workloads:
 
