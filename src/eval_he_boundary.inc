@@ -360,8 +360,11 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 "(metta <atom> <type> <space>)"), &frame->env);
         frame->phase = HE_INSTRUCTION_DONE;
     } else if (head == g_builtin_syms.context_space && nargs == 0u) {
+        /* The interpreter's context, the space of the running evaluation:
+         * evalc and metta choose the space that looks up equations. */
         outcome_set_add(os, atom_space(a,
-            cetta_library_logical_module_space(g_library_context, s)),
+            cetta_library_logical_module_space(g_library_context,
+                g_eval_root_space ? g_eval_root_space : s)),
             &frame->env);
         frame->phase = HE_INSTRUCTION_DONE;
     } else if (head == g_builtin_syms.call_native) {

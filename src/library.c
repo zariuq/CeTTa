@@ -523,8 +523,11 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         controller &&
         cetta_search_controller_policy_parse(
             controller, &requested_controller);
+    /* HE's relations run on the compiled open-equation machine under HE's
+     * rules, which compiles them from this program's occurrence plans. */
     bool needs_occurrence_program =
         language_id == CETTA_LANGUAGE_PETTA ||
+        language_id == CETTA_LANGUAGE_HE ||
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     ctx->petta_program = needs_occurrence_program
@@ -8602,7 +8605,7 @@ static bool cetta_library_petta_execute_document_ids(
                 source_plan =
                     petta_program_declaration_block_plan_at(
                         block, block_index - index);
-                if (!source || !source_plan) {
+                if (!source) {
                     petta_program_declaration_block_free(block);
                     if (failure_out)
                         *failure_out =

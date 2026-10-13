@@ -2611,7 +2611,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(
                 block, index);
-        if (!source || !plan) {
+        if (!source) {
             ok = false;
             break;
         }
@@ -2649,12 +2649,17 @@ static bool main_load_planned_declaration_block(
     if (!block) return false;
     bool ok = space_add_atom_ids_batch(
         space, atom_ids, (CettaCount)atom_count);
+    /* A fact is only stored: the program reads equations and type
+     * declarations, so nothing else is decoded for it. */
     for (int index = 0; ok && index < atom_count; index++) {
+        if (!petta_program_form_id_may_affect_metadata(universe,
+                                                       atom_ids[index]))
+            continue;
         Atom *source = term_universe_get_atom(
             universe, atom_ids[index]);
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(block, index);
-        ok = source && plan &&
+        ok = source &&
              petta_program_note_add(program, space, source, plan);
     }
     petta_program_declaration_block_free(block);
@@ -4531,9 +4536,12 @@ process_petta_document:
                     &registry, &libraries.term_universe, &eval_arena, &arena,
                     atom_ids[form]);
         }
-        bool prime_relational_plan =
-            libraries.prime_relational_plan_enabled;
-        bool loaded = prime_relational_plan
+        /* Prime and HE also read each declaration into the program their
+         * compiled relations come from. */
+        bool planned =
+            libraries.prime_relational_plan_enabled ||
+            (lang->id == CETTA_LANGUAGE_HE && libraries.petta_program);
+        bool loaded = planned
             ? main_load_planned_declaration_block(
                   libraries.petta_program, &space,
                   &libraries.term_universe, atom_ids + i,

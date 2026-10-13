@@ -282,8 +282,13 @@ tests/test_gparse_native_runtime_grammar_shared.metta	he	metta	extended	main	nat
 tests/test_gparse_native_slr_parse_shared.metta	he	metta	extended	main	native	test	golden	-
 tests/test_gparse_native_slr_summary.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_car_cdr_answers.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_cold_scan_numbers.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_collected_reread.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_compat_syntax_regressions.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_compiled_route.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_completion.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_context_space.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_deferred_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_delayed_binding.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test	golden	-
@@ -304,6 +309,7 @@ tests/test_he_nullary_call_types.metta	he	metta	extended	main	native	test	golden
 tests/test_he_path_index_open_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_path_index_swap_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_program_rule_rows.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_raise_completion.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_relay_delivery.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_return_contract_correlation.metta	he	metta	extended	main	native	test	golden	-

@@ -18320,6 +18320,12 @@ static bool petta_machine_advance_choice(
                 &machine->heap,
                 choice->as.collapse.items,
                 (CettaExprLen)visible_len);
+            if (collected && machine->host.collected_value_reducible &&
+                machine->host.collected_value_reducible(
+                    machine->host.context, machine->space, collected)) {
+                *failure = PETTA_MACHINE_STEP_DECLINED;
+                return false;
+            }
             if (!collected ||
                 !petta_push_unify(
                     machine, collected,
@@ -19379,6 +19385,65 @@ static bool petta_machine_push_completion(PettaMachineImpl *machine,
     }
     *expected = result;
     return true;
+}
+
+/* Whether evaluating `term` may give more than one answer under HE: it
+ * reaches, outside a collection, a superpose, a match, or a call of a head
+ * the program gives equations.  A collapse gives one tuple, the atom an
+ * add-atom or a remove-atom stores is not evaluated, and a value gives
+ * itself. */
+static bool petta_machine_he_may_branch(const PettaMachineImpl *machine,
+                                        const Atom *term, uint32_t depth) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u)
+        return false;
+    if (depth >= 64u)
+        return true;
+    const Atom *head = term->expr.elems[0];
+    if (head->kind == ATOM_SYMBOL) {
+        SymbolId id = head->sym_id;
+        if (id == g_builtin_syms.collapse || id == g_builtin_syms.quote ||
+            id == g_builtin_syms.add_atom || id == g_builtin_syms.remove_atom)
+            return false;
+        if (id == g_builtin_syms.superpose || id == g_builtin_syms.match ||
+            id == g_builtin_syms.get_atoms)
+            return true;
+        if (petta_semantics_form(id) == PETTA_FORM_NONE &&
+            id != g_builtin_syms.let && id != g_builtin_syms.let_star &&
+            id != g_builtin_syms.case_text && id != g_builtin_syms.chain &&
+            petta_machine_has_equations(machine, id))
+            return true;
+    }
+    for (CettaExprIndex index = head->kind == ATOM_SYMBOL ? 1u : 0u;
+         index < term->expr.len; index++) {
+        if (petta_machine_he_may_branch(machine, term->expr.elems[index],
+                                        depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* HE completes every evaluation before its consumer reads it: Rust's
+ * `metta` collects an expression's alternatives and only then returns
+ * them.  The order shows only through effects, and a call and a match
+ * complete where they start.  Under effects, an evaluation that may give
+ * more than one answer completes as one producer, unless it is the tail of
+ * an enclosing completion or the root of a machine whose answers are taken
+ * whole. */
+static bool petta_machine_he_completes_evaluation(
+    const PettaMachineImpl *machine, const PettaGoal *goal) {
+    if (!machine->host.eager_argument_faults ||
+        machine->host.completion_streams_successes ||
+        goal->kind != PETTA_GOAL_SOLVE || !goal->second || !goal->first ||
+        goal->first->kind != ATOM_EXPR)
+        return false;
+    const PettaGoal *top = machine->goal_len
+        ? &machine->goals[machine->goal_len - 1u] : NULL;
+    if (top && top->kind == PETTA_GOAL_COMPLETION_YIELD &&
+        top->first == goal->second)
+        return false;
+    if (machine->goal_len == 0u && machine->answers_collected_whole)
+        return false;
+    return petta_machine_he_may_branch(machine, goal->first, 0u);
 }
 
 /* Whether a language that completes producers lets this call stream: its
@@ -28413,6 +28478,25 @@ static bool petta_machine_open_cut(PettaMachineImpl *machine,
     return true;
 }
 
+/* The machine's step for a cursor that stopped with `reason` after it was
+ * taken.  A withdrawn cursor declines the run: its host evaluates the run
+ * again from the start, where nothing the cursor did is visible. */
+static PettaMachineStep petta_open_handoff_step(
+    CettaOpenEquationHandoff reason) {
+    switch (reason) {
+    case CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT:
+        return PETTA_MACHINE_STEP_SUSPENDED;
+    case CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR:
+        return PETTA_MACHINE_STEP_HOST_ERROR;
+    case CETTA_OPEN_EQUATION_HANDOFF_STACK:
+        return PETTA_MACHINE_STEP_STACK;
+    case CETTA_OPEN_EQUATION_HANDOFF_WITHDRAWN:
+        return PETTA_MACHINE_STEP_DECLINED;
+    default:
+        return PETTA_MACHINE_STEP_CAPACITY;
+    }
+}
+
 /* Error events from either resume path cross the same producer scopes. */
 static bool petta_machine_open_raise(PettaMachineImpl *machine,
     PettaOpenAnswers *open, Atom *value, PettaMachineStep *failure) {
@@ -28491,13 +28575,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
     if (step == CETTA_OPEN_EQUATION_HANDOFF ||
         step == CETTA_OPEN_EQUATION_FAULT) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_STOP);
-        *failure = reason == CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT
-            ? PETTA_MACHINE_STEP_SUSPENDED
-            : reason == CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR
-                ? PETTA_MACHINE_STEP_HOST_ERROR
-            : reason == CETTA_OPEN_EQUATION_HANDOFF_STACK
-                ? PETTA_MACHINE_STEP_STACK
-            : PETTA_MACHINE_STEP_CAPACITY;
+        *failure = petta_open_handoff_step(reason);
         return false;
     }
     if (step == CETTA_OPEN_EQUATION_RAISE)
@@ -28656,13 +28734,7 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_STOP);
         CettaOpenEquationHandoff reason =
             cetta_open_equation_cursor_handoff(open->cursor);
-        *failure = reason == CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT
-            ? PETTA_MACHINE_STEP_SUSPENDED
-            : reason == CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR
-                ? PETTA_MACHINE_STEP_HOST_ERROR
-            : reason == CETTA_OPEN_EQUATION_HANDOFF_STACK
-                ? PETTA_MACHINE_STEP_STACK
-            : PETTA_MACHINE_STEP_CAPACITY;
+        *failure = petta_open_handoff_step(reason);
         return false;
     }
     if (!last &&
@@ -30072,6 +30144,19 @@ static bool petta_machine_dispatch_solve(
         written_call.builtin_only = false;
         goal = &written_call;
         plan = goal->plan;
+    }
+
+    PettaGoal completed_goal;
+    if (petta_machine_he_completes_evaluation(machine, goal)) {
+        Atom *target = goal->second;
+        if (!petta_machine_push_completion(machine, goal->first, &target,
+                                           goal->barrier, false)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        completed_goal = *goal;
+        completed_goal.second = target;
+        goal = &completed_goal;
     }
 
     bool result_matched = goal->result_matched;
@@ -34914,6 +34999,10 @@ static bool petta_machine_dispatch_goal(
          * result fails before this continuation is reached.
          */
         bool decided = petta_semantics_truth_value(first, &truth);
+        /* HE's condition is an argument: its error is the if's value. */
+        if (!decided && machine->host.eager_argument_faults &&
+            atom_is_error(first))
+            return petta_machine_unify_resolved(machine, first, goal.fourth);
         if (!decided && machine->host.if_keeps_undecided_call) {
             bool two = !goal.third || atom_is_petta_no_result(goal.third);
             Atom *items[4] = {

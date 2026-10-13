@@ -297,6 +297,12 @@ typedef struct {
      * is neither leaves the call itself, branches unevaluated, as its value.
      * PeTTa takes any other condition value as false. */
     bool if_keeps_undecided_call;
+    /* Whether a collected tuple would evaluate further where a binder
+     * instantiates it, as HE evaluates it there: the machine declines its
+     * run at such a tuple.  Set only for a run that can be declined and
+     * reads a collected value so. */
+    bool (*collected_value_reducible)(void *context, Space *space,
+                                      Atom *value);
     /* No computation of this run has an effect, so a completed producer may
      * hand its successes on as they arrive and hold back only its errors:
      * the completed answers, normalized, are the same. */

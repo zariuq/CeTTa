@@ -390,6 +390,13 @@ bool petta_program_is_equation(Atom *atom);
 /* True exactly when adding atom can change the program-owned equation or
  * declaration catalog.  Ordinary data remains solely a Space occurrence. */
 bool petta_program_atom_affects_metadata(Atom *atom);
+/* Whether the stored form `id` may affect the program's metadata: a
+ * three-part expression headed by a rule form or a type declaration's colon.
+ * It reads the id's record without decoding the form, so a loader can store
+ * a fact without building it; petta_program_atom_affects_metadata decides
+ * the rest. */
+bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
+                                               AtomId id);
 /* Observe one already-admitted Space addition.  Data outside the program
  * projection is accepted without copying; equations and declarations are
  * retained in the program-owned catalog. */
@@ -473,6 +480,8 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
     const AtomId *atoms, int atom_count);
 void petta_program_declaration_block_free(
     PettaDeclarationBlock *block);
+/* The plan of the block's index-th form: an equation's, and NULL for any
+ * other form, which is stored as it is. */
 const PettaPlanNode *petta_program_declaration_block_plan_at(
     const PettaDeclarationBlock *block, int index);
 

@@ -1652,6 +1652,17 @@ static bool petta_program_type_declaration_view(
     return true;
 }
 
+bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
+                                               AtomId id) {
+    if (!universe || tu_kind(universe, id) != ATOM_EXPR ||
+        tu_arity(universe, id) != 3u)
+        return false;
+    SymbolId head = tu_head_sym(universe, id);
+    return head == g_builtin_syms.equals ||
+        head == g_builtin_syms.equals_percent ||
+        head == g_builtin_syms.colon;
+}
+
 bool petta_program_atom_affects_metadata(Atom *atom) {
     return petta_rule_syntax_view(atom,
                CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL,
@@ -4294,6 +4305,9 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
     bool ok = petta_program_collect_callability(
         program, &callability);
     for (int index = 0; ok && index < atom_count; index++) {
+        if (!petta_program_form_id_may_affect_metadata(universe,
+                                                       atoms[index]))
+            continue;
         Atom *atom = term_universe_get_atom(universe, atoms[index]);
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
@@ -4306,8 +4320,15 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
             }
         }
     }
+    /* Only an equation keeps a plan (petta_program_note_add); a fact or a
+     * declaration is stored as it is, so it is not planned. */
     for (int index = 0; ok && index < atom_count; index++) {
+        if (!petta_program_form_id_may_affect_metadata(universe,
+                                                       atoms[index]))
+            continue;
         Atom *atom = term_universe_get_atom(universe, atoms[index]);
+        if (!petta_program_admits_equation(program, atom))
+            continue;
         block->plans[index] =
             petta_plan_build(program, &callability, atom);
         ok = block->plans[index] != NULL;
