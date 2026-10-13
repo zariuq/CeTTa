@@ -160,6 +160,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PETTA_1_0_6,
 };
 
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -172,6 +173,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1,
 };
 
 static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE = {
@@ -183,6 +185,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1,
 };
 #endif
 
@@ -371,6 +374,25 @@ static bool cetta_eval_option_store(CettaEvaluatorOptions *options,
     entry->kind = kind;
     entry->int_value = int_value;
     copy_setting_string(entry->repr, sizeof(entry->repr), repr);
+    if (strcmp(key, "type-judgments") == 0) {
+        unsigned mode = strcmp(entry->repr, "resolved") == 0
+                ? CETTA_HE_TYPE_JUDGMENTS_RESOLVED
+            : strcmp(entry->repr, "per-revision") == 0
+                ? CETTA_HE_TYPE_JUDGMENTS_PER_REVISION
+                : CETTA_HE_TYPE_JUDGMENTS_PER_CALL;
+        options->he_typing = (uint8_t)
+            ((options->he_typing & ~CETTA_HE_TYPE_JUDGMENTS_MASK) | mode);
+    }
+    if (strcmp(key, "curried-arrows") == 0) {
+        bool on = kind == CETTA_EVAL_OPTION_VALUE_INT
+            ? int_value != 0
+            : strcmp(entry->repr, "on") == 0 ||
+              strcmp(entry->repr, "true") == 0 ||
+              strcmp(entry->repr, "True") == 0;
+        options->he_typing = on
+            ? (uint8_t)(options->he_typing | CETTA_HE_TYPING_CURRIED_ARROWS)
+            : (uint8_t)(options->he_typing & ~CETTA_HE_TYPING_CURRIED_ARROWS);
+    }
     return true;
 }
 
@@ -451,6 +473,56 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 #else
     return false;
 #endif
+}
+
+/* PeTTa 1.0.6 reads the libraries vendored from release v1.0.6.  PeTTa 1.1
+ * reads the typed libraries of PeTTa's main line first (typecheck/), and
+ * runs under its checker unless a program names another 1.1 profile. */
+static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
+    {CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_LANGUAGE_PETTA, "1.0.6",
+     NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default"},
+    {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
+     "typecheck-v2", "typecheck", "PeTTa's typed language"},
+};
+
+const CettaLanguageVersion *cetta_language_version_from_name(
+    CettaLanguageId language_id, const char *name) {
+    if (!name)
+        return NULL;
+    for (size_t i = 0u;
+         i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
+         i++) {
+        if (CETTA_LANGUAGE_VERSIONS[i].language_id == language_id &&
+            strcmp(CETTA_LANGUAGE_VERSIONS[i].name, name) == 0)
+            return &CETTA_LANGUAGE_VERSIONS[i];
+    }
+    return NULL;
+}
+
+const CettaLanguageVersion *cetta_language_version_of(
+    CettaLanguageId language_id, const CettaProfile *profile) {
+    CettaLanguageVersionId id = profile && profile->language_id == language_id
+        ? profile->version : CETTA_LANGUAGE_VERSION_NONE;
+    if (id == CETTA_LANGUAGE_VERSION_NONE &&
+        language_id == CETTA_LANGUAGE_PETTA)
+        id = CETTA_LANGUAGE_VERSION_PETTA_1_0_6;
+    for (size_t i = 0u;
+         i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
+         i++) {
+        if (CETTA_LANGUAGE_VERSIONS[i].id == id)
+            return &CETTA_LANGUAGE_VERSIONS[i];
+    }
+    return NULL;
+}
+
+void cetta_language_print_versions(FILE *out, CettaLanguageId language_id) {
+    for (size_t i = 0u;
+         i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
+         i++) {
+        if (CETTA_LANGUAGE_VERSIONS[i].language_id == language_id)
+            fprintf(out, "%s\t%s\n", CETTA_LANGUAGE_VERSIONS[i].name,
+                    CETTA_LANGUAGE_VERSIONS[i].note);
+    }
 }
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
@@ -708,10 +780,22 @@ const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name) {
     return NULL;
 }
 
-bool cetta_language_allows_builtin(CettaLanguageId language_id,
-                                   const CettaProfile *profile,
-                                   const char *name) {
-    const CettaBuiltinPolicy *policy = cetta_builtin_policy_lookup(name);
+_Static_assert(sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]) <
+                   CETTA_BUILTIN_POLICY_POSITIONS,
+               "every policy has a position");
+
+uint32_t cetta_builtin_policy_position(const CettaBuiltinPolicy *policy) {
+    return policy ? (uint32_t)(policy - CETTA_BUILTIN_POLICIES) + 1u : 0u;
+}
+
+const CettaBuiltinPolicy *cetta_builtin_policy_at_position(uint32_t position) {
+    size_t count = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
+    return position && position <= count ? &CETTA_BUILTIN_POLICIES[position - 1u] : NULL;
+}
+
+bool cetta_language_allows_builtin_policy(CettaLanguageId language_id,
+                                          const CettaProfile *profile,
+                                          const CettaBuiltinPolicy *policy) {
     if (!policy) return true;
     /* Other language adapters use the general builtin mask. Structural
        order is explicitly an HE/PeTTa extended-profile operation. */
@@ -723,6 +807,13 @@ bool cetta_language_allows_builtin(CettaLanguageId language_id,
          strcmp(policy->name, "@>=") == 0))
         return false;
     return cetta_language_visible_in(language_id, profile, policy->visibility_mask);
+}
+
+bool cetta_language_allows_builtin(CettaLanguageId language_id,
+                                   const CettaProfile *profile,
+                                   const char *name) {
+    return cetta_language_allows_builtin_policy(
+        language_id, profile, cetta_builtin_policy_lookup(name));
 }
 
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,

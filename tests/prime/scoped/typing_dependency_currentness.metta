@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 (: X (u 0))
 (: x X)
 

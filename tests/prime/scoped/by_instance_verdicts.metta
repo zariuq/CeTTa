@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A fact used by (pf:by ...) is instantiated by matching its conclusion
 ; against the goal.  Matching is first order, so it can miss an instance that
@@ -10,7 +10,7 @@
 ; quantified variable at such a position, that one instance is decided by
 ; conversion.  Anything else is left undetermined.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy nat refl@nat subst@nat)
 !(hol:define &thy add (-> nat nat nat)

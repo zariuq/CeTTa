@@ -241,12 +241,15 @@
   (value bind)
   (value branch)
   (value evaluate)
+  (value bind-sequence)
   (sort OperandRole)
   (operand-role evaluated)
   (operand-role pattern)
+  (operand-role pattern-pairs)
   (control-operands bind pattern evaluated evaluated)
   (control-operands branch evaluated evaluated evaluated)
   (control-operands evaluate evaluated)
+  (control-operands bind-sequence pattern-pairs evaluated)
   (state (fold-frame $items $index $accumulator bind-step))
   (state (fold-frame $items $index $accumulator evaluate-step))
   (state (fold-frame $items $index $accumulator evacuate-carry))
@@ -283,6 +286,18 @@
        (demand (ordinary-fold $step) $item)))
   (law pattern-operands-are-not-evaluation-contexts
     (= (effects (control-operand pattern $syntax)) pure))
+  (law bind-sequence-is-nested-binds
+    (= (bind-sequence (cons-atom ($pattern $value) $rest) $body)
+       (bind $pattern $value (bind-sequence $rest $body))))
+  (law empty-bind-sequence-is-its-body
+    (= (bind-sequence () $body) $body))
+  (law pattern-pairs-evaluate-only-their-values
+    (= (effects (control-operand pattern-pairs
+                  (cons-atom ($pattern $value) $rest)))
+       (join (effects $value)
+             (effects (control-operand pattern-pairs $rest)))))
+  (law empty-pattern-pairs-are-pure
+    (= (effects (control-operand pattern-pairs ())) pure))
   (law represented-sequence-fold-equivalence
     (implies
       (= (sequence-representation $name)
@@ -693,6 +708,7 @@
   (prepared-pure-intrinsic-head
     union-atom 2 strict-all concatenate-expressions)
   (fold-control-head let 3 bind)
+  (fold-control-head let* 2 bind-sequence)
   (fold-control-head if 3 branch)
   (fold-control-head eval 1 evaluate)
   (fold-control-head function 1 evaluate)

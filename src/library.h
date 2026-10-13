@@ -249,6 +249,10 @@ typedef struct CettaLibraryContext {
      * evaluator, which frees it through `prime_hol_guest_free`. */
     void *prime_hol_guest;
     void (*prime_hol_guest_free)(void *guest);
+    /* The dependent checker has its own selected library and execution
+     * state, with the same lifetime as this host. */
+    void *prime_lf_guest;
+    void (*prime_lf_guest_free)(void *guest);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -362,6 +366,9 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Arena *persistent_arena, Registry *registry,
                                  int fuel, Space **module_space_out,
                                  Atom **error_out);
+/* Whether `error`, as cetta_library_import_module reports a failure, says
+ * that no file answers the requested module. */
+bool cetta_library_import_error_is_missing_module(Atom *error);
 /* Whether `space` is a module space the library context owns and frees. */
 bool cetta_library_owns_space(const CettaLibraryContext *ctx,
                               const Space *space);

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Identity elimination at a universe carrier transports a term along a path
 ; between types.  The language declares the eliminator with two universe
@@ -7,7 +7,7 @@
 ; the result a term of the end type.  At reflexivity the transport is its
 ; input; along a path that is not reflexivity it stays as it is.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: A (u 0)))
 !(add-atom &s (: B (u 0)))

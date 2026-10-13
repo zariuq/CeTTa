@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The base-two logarithm, a recursion that is not structural, on three faces:
 ;   log2 0 = 0,  log2 1 = 0,  log2 (n + 2) = 1 + log2 (half (n + 2)),

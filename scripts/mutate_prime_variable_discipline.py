@@ -31,19 +31,20 @@ def main() -> int:
         # without asking the checker.
         fragments = replace_once(
             fragments,
-            "    } else if (!static_expected) {",
-            "    } else if (atom_has_vars(expected)) {\n"
-            "        answer = prime_he_judged(\n"
+            "    if (!static_expected)\n",
+            "    if (atom_has_vars(expected))\n"
+            "        return prime_he_judged(\n"
             "            PRIME_HE_JUDGED_ESTABLISHED,\n"
             "            prime_he_checked_evidence(\n"
-            "                a, prime_he_fragment_name(a, &e.result), expected));\n"
-            "    } else if (!static_expected) {",
+            "                a, false, prime_he_fragment_name(a, &c), expected));\n"
+            "    if (!static_expected)\n",
         )
         # Implicit generalization: rigid declaration variables become solvable.
         fragments = replace_once(
             fragments,
-            "    if (atom_has_vars(type) && !all_schemes &&",
-            "    if (false && atom_has_vars(type) && !all_schemes &&",
+            "                admitted = all_schemes || prime_he_scheme_admitted(space, term);\n",
+            "                admitted = true || all_schemes ||\n"
+            "                           prime_he_scheme_admitted(space, term);\n",
         )
     except ValueError as error:
         print(error, file=sys.stderr)

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Higher-order mathematics in the hol: proof language: list-map fusion,
 ;   forall xs. mapf f (mapf g xs) = mapf (comp f g) xs

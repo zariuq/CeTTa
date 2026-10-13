@@ -10,7 +10,7 @@
 !(import! &self ../../lib/prime/hol_light/derived.metta)
 !(import! &self ../../lib/prime/hol_light/profile.metta)
 !(import! &self ../../lib/prime/hol_light/native.metta)
-(hol:profile core)
+(hol:profile base)
 
 (= (native-example:identity)
   (function (return

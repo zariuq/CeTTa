@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Native arithmetic as an oracle with a specification, with the trust it
 ; needs placed in the open.  The positive binary numbers and their sum,

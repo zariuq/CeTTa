@@ -5830,6 +5830,7 @@ static void test_activated_empty_authority(
         .context = &probe,
         .candidate_snapshot_lease = test_equation_guard_snapshot_lease,
         .classify = terminal_empty_classify,
+        .classify_may_override = true,
         .evaluate = terminal_empty_evaluate,
         .measure_stats = true,
         .source_output_constraints = true,
@@ -7942,6 +7943,7 @@ static void test_quoted_result_override(Space *space, Arena *arena) {
     PettaMachineHost host = {
         .context = &probe,
         .classify = quoted_result_override_classify,
+        .classify_may_override = true,
         .evaluate = host_projection_evaluate,
         .source_output_constraints = true,
     };
@@ -9930,12 +9932,18 @@ static bool test_analysis_has_runtime_classifier(
         space, requirement);
 }
 
-static Atom *test_analysis_error_atom(
-    void *opaque, Arena *arena, Atom *source,
-    int exit_code, const char *diagnostic) {
+static Atom *test_analysis_type_error_atom(
+    void *opaque, Arena *arena, Atom *value, Atom *requirement,
+    PettaAnalysisReason reason) {
     (void)opaque;
-    return petta_typecheck_error_atom(
-        arena, source, exit_code, diagnostic);
+    (void)reason;
+    return petta_semantics_type_mismatch_error(arena, value, requirement);
+}
+
+static Atom *test_analysis_overload_error_atom(
+    void *opaque, Arena *arena, Atom *function) {
+    (void)opaque;
+    return petta_semantics_no_matching_overload_error(arena, function);
 }
 
 static const char *test_analysis_reason_name(
@@ -9961,7 +9969,8 @@ static const PettaAnalysisService test_analysis_service = {
     .judge_value = test_analysis_judge_value,
     .type_has_runtime_classifier =
         test_analysis_has_runtime_classifier,
-    .error_atom = test_analysis_error_atom,
+    .type_error_atom = test_analysis_type_error_atom,
+    .overload_error_atom = test_analysis_overload_error_atom,
     .reason_name = test_analysis_reason_name,
     .validate_ready_call = test_analysis_boundary_accept,
 };
@@ -10471,7 +10480,8 @@ static void test_analysis_capability_contract(
             .judge_value = test_analysis_judge_value,
             .type_has_runtime_classifier =
                 test_analysis_has_runtime_classifier,
-            .error_atom = test_analysis_error_atom,
+            .type_error_atom = test_analysis_type_error_atom,
+            .overload_error_atom = test_analysis_overload_error_atom,
             .reason_name = test_analysis_reason_name,
         },
     };
@@ -10486,7 +10496,8 @@ static void test_analysis_capability_contract(
             .judge_value = test_analysis_judge_value,
             .type_has_runtime_classifier =
                 test_analysis_has_runtime_classifier,
-            .error_atom = test_analysis_error_atom,
+            .type_error_atom = test_analysis_type_error_atom,
+            .overload_error_atom = test_analysis_overload_error_atom,
             .reason_name = test_analysis_reason_name,
             .validate_ready_call = test_analysis_boundary_accept,
         },

@@ -1,13 +1,16 @@
 true
 true
+true
 self-imp
 true
 (all prop (lam p (imp p p)))
 false
 (Undetermined (hol:unknown-name missing))
 true
+(hol:profile base)
 set
 true
 (Undetermined (hol:unknown-name universeIn))
-(Undetermined (hol:unknown-name self-imp))
-hol:proves
+(Undetermined (set:unknown-name self-imp))
+set:proves
+hol:of

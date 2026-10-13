@@ -587,37 +587,33 @@ bool bindings_frame_index_replace_slot_value(
     return true;
 }
 
-bool bindings_frame_index_write_slot_ref(
-        Bindings *bindings, BindingsFrameRef ref, uint32_t slot,
+bool bindings_frame_index_write_resolved_slot(
+        Bindings *bindings, BindingsFrameIndexEntry *frame, uint32_t slot,
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out) {
     if (version_out)
         *version_out = 0u;
     if (authority_moved_out)
         *authority_moved_out = false;
-    if (!bindings || !bindings->frame_index || !value.skeleton ||
-        !bindings_frame_ref_is_valid(ref)) {
+    if (!bindings || !bindings->frame_index || !frame || !value.skeleton ||
+        slot >= frame->slot_len) {
         return false;
     }
-    BindingsFrameIndexEntry *frame =
-        bindings_frame_index_find_ref(bindings->frame_index, ref);
-    if (!frame || slot >= frame->slot_len)
-        return false;
+    bool directory_shared = atomic_load_explicit(
+        &bindings->frame_index->references, memory_order_acquire) != 1u;
     bool authority_moved =
-        atomic_load_explicit(
-            &bindings->frame_index->references,
-            memory_order_acquire) != 1u ||
+        directory_shared ||
         atomic_load_explicit(
             frame->storage_references,
             memory_order_acquire) != 1u;
-    if (!bindings_frame_index_detach(bindings))
-        return false;
-    /* A detached directory preserves its handle table.  Resolve the stable
-     * handle again after copy-on-write instead of recovering the activation
-     * from its epoch or relying on a movable array position. */
-    frame = bindings_frame_index_find_ref(bindings->frame_index, ref);
-    if (!frame || slot >= frame->slot_len)
-        return false;
+    if (directory_shared) {
+        BindingsFrameRef ref = {.identity = frame->epoch};
+        if (!bindings_frame_index_detach(bindings))
+            return false;
+        frame = bindings_frame_index_find_ref(bindings->frame_index, ref);
+        if (!frame || slot >= frame->slot_len)
+            return false;
+    }
     if (!bindings_frame_index_entry_detach(frame))
         return false;
     if (bindings->frame_index->write_clock == UINT64_MAX ||
@@ -632,6 +628,16 @@ bool bindings_frame_index_write_slot_ref(
     if (authority_moved_out)
         *authority_moved_out = authority_moved;
     return true;
+}
+
+bool bindings_frame_index_write_slot_ref(
+        Bindings *bindings, BindingsFrameRef ref, uint32_t slot,
+        BindingValue value, uint64_t *version_out,
+        bool *authority_moved_out) {
+    BindingsFrameIndexEntry *frame = bindings
+        ? bindings_frame_index_find_ref(bindings->frame_index, ref) : NULL;
+    return bindings_frame_index_write_resolved_slot(
+        bindings, frame, slot, value, version_out, authority_moved_out);
 }
 
 BindingsFrameIndexEntry *bindings_frame_index_detach_entry_ref(
@@ -923,6 +929,75 @@ bool bindings_frame_index_register(
         false);
 }
 
+/* Imported writes are merged in the recipient's chronology. Keep its clock
+ * past both histories before stamping those writes. A newly admitted frame
+ * also brings its activation boundary and unbound-slot history; an existing
+ * activation keeps its own boundary. */
+static bool bindings_frame_index_merge_lineage(
+        Bindings *destination, const BindingsFrameIndexEntry *source,
+        uint64_t source_clock, bool new_frame) {
+    if (!destination || !destination->frame_index || !source)
+        return false;
+    if ((new_frame || destination->frame_index->write_clock < source_clock) &&
+        !bindings_frame_index_detach(destination))
+        return false;
+    if (destination->frame_index->write_clock < source_clock)
+        destination->frame_index->write_clock = source_clock;
+    if (!new_frame)
+        return true;
+    BindingsFrameIndexEntry *target = bindings_frame_index_find_frame(
+        destination->frame_index, source->epoch);
+    if (!target || !bindings_frame_index_entry_detach(target))
+        return false;
+    target->activation_write_boundary = source->activation_write_boundary;
+    target->has_activation_write_boundary = source->has_activation_write_boundary;
+    for (uint32_t slot = 0u; slot < source->slot_len; slot++) {
+        uint32_t target_slot = 0u;
+        if (!bindings_frame_index_find_slot(target,
+                bindings_frame_slot_source_id(source, slot), &target_slot))
+            return false;
+        target->write_version[target_slot] = source->write_version[slot];
+    }
+    return true;
+}
+
+/* A frame numbered from its first identifier names each slot past its schema
+ * by its position.  A receiving frame that names its slots by a schema of its
+ * own cannot grow by position; it takes the source's slots by those names,
+ * presented as the source presents them.  The schema of those names: */
+static BindingsFrameSchema *bindings_frame_positional_schema(
+        const BindingsFrameIndexEntry *frame) {
+    if (!frame->schema->source_ids_contiguous ||
+        frame->schema->source_first_id != 1u ||
+        frame->slot_len <= frame->schema->len ||
+        (size_t)frame->slot_len > SIZE_MAX / sizeof(VarId))
+        return NULL;
+    VarId *ids = cetta_malloc((size_t)frame->slot_len * sizeof(*ids));
+    for (uint32_t slot = 0u; slot < frame->slot_len; slot++)
+        ids[slot] = bindings_frame_slot_source_id(frame, slot);
+    BindingsFrameSchema *schema = bindings_frame_schema_new(ids, frame->slot_len);
+    free(ids);
+    if (!schema)
+        return NULL;
+    for (uint32_t slot = 0u; slot < frame->slot_len; slot++) {
+        schema->spellings[slot] = bindings_frame_slot_spelling(frame, slot);
+        schema->name_keys[slot] = bindings_frame_slot_name_key(frame, slot);
+    }
+    return schema;
+}
+
+static bool bindings_frame_index_register_positional_slots(
+        Bindings *destination, const BindingsFrameIndexEntry *frame) {
+    BindingsFrameSchema *schema = bindings_frame_positional_schema(frame);
+    if (!schema)
+        return false;
+    bool registered = bindings_frame_index_register_kind(
+        destination, schema->source_ids, schema->len, frame->epoch,
+        frame->schema_complete, schema, NULL, false);
+    bindings_frame_schema_release(schema);
+    return registered;
+}
+
 bool bindings_frame_index_merge_schemas(
     Bindings *destination, const Bindings *source) {
     if (!destination || !source)
@@ -932,14 +1007,20 @@ bool bindings_frame_index_merge_schemas(
     for (uint32_t i = 0u; i < source->frame_index->len; i++) {
         const BindingsFrameIndexEntry *frame =
             &source->frame_index->frames[i];
+        bool new_frame = !bindings_frame_index_find_frame_const(
+            destination->frame_index, frame->epoch);
         if (!bindings_frame_index_register_kind(
                 destination, frame->schema->source_ids, frame->schema->len,
                 frame->epoch, frame->schema_complete, frame->schema, NULL,
                 false) ||
             (frame->slot_len > frame->schema->len &&
-             !bindings_frame_index_grow_slots(destination, frame->epoch, frame->slot_len))) {
+             !bindings_frame_index_grow_slots(destination, frame->epoch, frame->slot_len) &&
+             !bindings_frame_index_register_positional_slots(destination, frame))) {
             return false;
         }
+        if (!bindings_frame_index_merge_lineage(destination, frame,
+                source->frame_index->write_clock, new_frame))
+            return false;
     }
     return true;
 }
@@ -1151,6 +1232,18 @@ static bool bindings_frame_merge_slot_extent(
     return true;
 }
 
+static bool bindings_builder_register_positional_slots(
+        BindingsBuilder *builder, const BindingsFrameIndexEntry *frame) {
+    BindingsFrameSchema *schema = bindings_frame_positional_schema(frame);
+    if (!schema)
+        return false;
+    bool registered = bindings_builder_register_frame_kind(
+        builder, schema->source_ids, schema->len, frame->epoch,
+        frame->schema_complete, schema, NULL);
+    bindings_frame_schema_release(schema);
+    return registered;
+}
+
 bool bindings_builder_merge_frame_schemas(
         BindingsBuilder *builder, const Bindings *source) {
     if (!builder || !source)
@@ -1160,6 +1253,8 @@ bool bindings_builder_merge_frame_schemas(
              index < source->frame_index->len; index++) {
             const BindingsFrameIndexEntry *frame =
                 &source->frame_index->frames[index];
+            bool new_frame = !bindings_frame_index_find_frame_const(
+                builder->current.frame_index, frame->epoch);
             uint32_t needed = 0u;
             if (bindings_frame_merge_slot_extent(
                     bindings_frame_index_find_frame_const(
@@ -1167,6 +1262,9 @@ bool bindings_builder_merge_frame_schemas(
                     frame, &needed)) {
                 if (!bindings_frame_index_grow_slots(
                         &builder->current, frame->epoch, needed))
+                    return false;
+                if (!bindings_frame_index_merge_lineage(&builder->current,
+                        frame, source->frame_index->write_clock, false))
                     return false;
                 continue;
             }
@@ -1182,13 +1280,20 @@ bool bindings_builder_merge_frame_schemas(
                 if (!bindings_builder_merge_frame_by_growth(
                         builder, frame))
                     return false;
+                if (!bindings_frame_index_merge_lineage(&builder->current,
+                        frame, source->frame_index->write_clock, false))
+                    return false;
                 continue;
             }
             if (frame->slot_len > frame->schema->len &&
                 !bindings_frame_index_grow_slots(
-                    &builder->current, frame->epoch, frame->slot_len)) {
+                    &builder->current, frame->epoch, frame->slot_len) &&
+                !bindings_builder_register_positional_slots(builder, frame)) {
                 return false;
             }
+            if (!bindings_frame_index_merge_lineage(&builder->current, frame,
+                    source->frame_index->write_clock, new_frame))
+                return false;
         }
     }
     return true;

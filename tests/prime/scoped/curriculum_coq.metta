@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The Coq ladder (ICL01-ICL09), ported where the hol: language can state it:
 ; Booleans, naturals, pairs, the connectives, discrimination and injectivity
@@ -7,7 +7,7 @@
 ; terms with substitution.  Excluded middle is an axiom, as in the ladder.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(hol:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
 !(pf:equality &thy bool refl@bool subst@bool)

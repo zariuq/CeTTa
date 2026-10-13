@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Datatypes declared with parameters, `(T (: A1 S1) ... (: An Sn))`.  The
 ; parameters are uniform: every occurrence of T in a constructor is T at
@@ -6,7 +6,7 @@
 ; used to answer every declaration with parameters, not admitted yet, now
 ; answers only where those conditions fail; a declaration that cannot have
 ; a model is refuted.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
 
 ; ---- Admitted: uniform parameters.

@@ -88,6 +88,38 @@ typedef struct {
 #endif
 } PrimeNeedCellView;
 
+/* Borrowed immutable history, newest update first. The snapshot's arena
+ * owners must remain alive while this cursor or its payload views are used.
+ * No cell is forced, no occurrence is consumed, and lookup indexes are not
+ * traversed. Repeated updates of one cell remain separate records. */
+typedef struct {
+    const PrimeNeedFrame *next;
+    uint64_t session_id;
+    uint64_t remaining;
+    bool invalid;
+} PrimeNeedHistoryIterator;
+
+typedef struct {
+    uint64_t session_id;
+    uint64_t serial;
+    uint64_t thunk_id;
+    uint64_t depth;
+    PrimeNeedCellView cell;
+} PrimeNeedHistoryView;
+
+typedef enum {
+    PRIME_NEED_HISTORY_ENTRY,
+    PRIME_NEED_HISTORY_DONE,
+    PRIME_NEED_HISTORY_INVALID,
+} PrimeNeedHistoryStep;
+
+/* A failed begin invalidates the cursor rather than retaining its old view. */
+bool prime_need_snapshot_history_begin(const PrimeNeedSnapshot *snapshot,
+                                      PrimeNeedHistoryIterator *iterator);
+/* DONE is stable. INVALID is sticky and leaves the output view unchanged. */
+PrimeNeedHistoryStep prime_need_snapshot_history_next(
+    PrimeNeedHistoryIterator *iterator, PrimeNeedHistoryView *view);
+
 /* A Prime answer carries the finite causal support that justified it.  The
  * native representation is an immutable event DAG: appending an event adds a
  * causal child, while merging compatible independent supports adds a join
@@ -199,6 +231,10 @@ bool prime_need_snapshot_settled_ancestor(const PrimeNeedSnapshot *base,
                                           PrimeNeedSnapshot *out);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
+/* Share a plain physical-copy episode with the other roots of one owner.
+ * Semantic mappers/resolvers are outside this identity-preserving boundary. */
+bool prime_need_snapshot_promote_with_session(
+    AtomDeepCopySession *copy_session, PrimeNeedSnapshot *snapshot);
 /* Copy only the suffix owned by `forbidden` into `dst`, retaining an older
  * immutable prefix that already excludes `forbidden`.  The source-owned
  * suffix must be contiguous.  This is the promotion operation used before a
@@ -335,6 +371,8 @@ static inline bool prime_need_branch_state_merge(
 }
 bool prime_need_branch_state_promote(
     Arena *dst, PrimeNeedBranchState *state);
+bool prime_need_branch_state_promote_with_session(
+    AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
 bool prime_need_branch_state_promote_suffix(
     Arena *dst, const Arena *forbidden, PrimeNeedBranchState *state);
 bool prime_need_branch_state_promote_suffix_with_session(

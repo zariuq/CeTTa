@@ -162,6 +162,11 @@ Atom *prime_semantics_judge_typing_direct(
     Arena *arena, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps);
 
+/* The verdict of `type:of` on `term` from the routes before the HE-style
+ * declaration fragments, or NULL when none of them answers it.  `get-type`
+ * answers from these first. */
+Atom *prime_semantics_native_type_of(Arena *arena, Space *space, Atom *term);
+
 /* The same judgment authority with its actual resource account and retained
  * native term returned to a composing caller. No judgment is replayed. The
  * optional term output follows AuthorityObservation's established-only rule. */
@@ -523,28 +528,46 @@ void prime_semantics_theorem_record(
 /* A space that comes to hold another's contents holds its theorem records. */
 void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to);
 
-/* The type of an atom from its HE-style declarations, read through the HOL
+/* The types of an atom from its HE-style declarations, read through the HOL
  * contract and decided by the hosted HOL Light checker, as Prime's `get-type`
- * answers it.  Every open declaration is read as a type scheme. */
+ * answers them: one type per derivation, in HE's order.  Every open
+ * declaration is read as a type scheme.
+ *
+ * `type:of` reads the same declarations through the same contract, and where
+ * it reads them alike the two agree: the types it establishes are these
+ * types, the same bag; its refutation, False, is no type here; and when these
+ * types are `%Undefined%` it stays unevaluated.  It does not read them alike
+ * where `get-type` answers and it stays unevaluated: an open declaration that
+ * no `type-scheme` marks, whose variables Prime's judgments keep rigid; HE's
+ * gradual reading of an argument that nothing types or of a `%Undefined%`
+ * parameter; a parameter of meta-type; and Prime's own term formers, which a
+ * native route judges.  Where a native route answers `type:of`, these types
+ * are the HE reading of the same declarations. */
 typedef enum {
-    /* The checker accepted *type_out. */
+    /* The checker accepted every type in *types_out. */
     CETTA_PRIME_HE_TYPE_CHECKED = 0,
-    /* Inside a grounded fragment, and the checker refused it: no type. */
+    /* Inside the grounded fragments, and the checker refused every way of
+     * typing it: no type. */
     CETTA_PRIME_HE_TYPE_NONE,
     /* An application whose arguments are consistent with the parameter
      * types of its head's single arrow declaration, the static ones checked
-     * by the checker: *type_out is the declared return type, its gradual
+     * by the checker: *types_out holds the declared return type, its gradual
      * type in the sense of Abstracting Gradual Typing. */
     CETTA_PRIME_HE_TYPE_GRADUAL,
     /* No declaration types any part of the atom: the unknown type. */
     CETTA_PRIME_HE_TYPE_UNKNOWN,
     /* Declared, but outside the grounded fragments or not checked. */
-    CETTA_PRIME_HE_TYPE_UNDETERMINED
+    CETTA_PRIME_HE_TYPE_UNDETERMINED,
+    /* A symbol whose declared types a subtype declaration reaches: the
+     * declarations are not all its types, and the type is unknown. */
+    CETTA_PRIME_HE_TYPE_OPEN
 } CettaPrimeHeTypeAnswer;
 
-CettaPrimeHeTypeAnswer cetta_prime_he_declaration_type(Space *space, Arena *a,
-                                                       Atom *term,
-                                                       Atom **type_out);
+/* The types are allocated in the arena. */
+CettaPrimeHeTypeAnswer cetta_prime_he_declaration_types(Space *space, Arena *a,
+                                                        Atom *term,
+                                                        Atom ***types_out,
+                                                        uint32_t *count_out);
 
 /* Inside the grounded fragments, the checker refuses that `argument` has the
  * static type `expected`: a typed application may drop the alternative.

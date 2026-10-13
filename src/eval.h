@@ -303,6 +303,9 @@ void eval_prime_judgment_note_he_engine(void);
 /* Evaluate one closed request of the hosted HOL Light checker's own
  * operations in its private space.  False, with a reason, when the checker
  * cannot be loaded, is already running, or gives no single answer. */
+/* The hosted LF kernel: the same contract as the HOL Light checker above. */
+bool eval_prime_lf_guest_evaluate(Arena *a, Atom *request,
+                                  Atom **answer_out, Atom **reason_out);
 bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
                                    Atom **answer_out, Atom **reason_out);
 bool eval_prime_hol_guest_running(void);

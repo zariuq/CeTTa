@@ -54,7 +54,7 @@ static void check_request_cache_lifetime(Arena *persistent, Space *space) {
     g_var_intern = NULL;
     const uint64_t revision = space_revision(space);
     expect_status(&request, space,
-        "(hol:proves (pf:fix x (pf:all-elim (pf:known universeIn) (cacheFunction x)))"
+        "(set:proves (pf:fix x (pf:all-elim (pf:known universeIn) (cacheFunction x)))"
         " (all Field (lam x (In (cacheFunction x) (UnivOf (cacheFunction x))))))",
         false, 0u, "Established");
     arena_reset(&request, start);
@@ -62,7 +62,7 @@ static void check_request_cache_lifetime(Arena *persistent, Space *space) {
      * even when resetting the arena does not return its pages to malloc. */
     for (unsigned i = 0u; i < 4096u; i++) (void)atom_int(&request, (int64_t)i);
     expect_status(&request, space,
-        "(hol:define cacheApply (-> (-> Field Field) Field Field)"
+        "(set:define cacheApply (-> (-> Field Field) Field Field)"
         " (= (cacheApply $f $x) ($f $x)))",
         false, 0u, "Established");
     checks++;
@@ -227,7 +227,7 @@ static Atom *lowest_level_instance(Arena *arena, Atom *type) {
  * level of its motive. */
 static void check_inductive_shared_allowance(Arena *arena, Space *space) {
     Atom *query = parse_one(arena,
-        "(hol:inductive BudgetTree (u 0)"
+        "(set:inductive BudgetTree (u 0)"
         " (: BudgetLeaf BudgetTree) (: BudgetNode (-> Field BudgetTree)))");
     Atom *verdict = prime_scoped_judgment_judge(
         arena, space, query, false, 0u);
@@ -235,7 +235,7 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
             verdict->expr.len == 4u
         ? verdict->expr.elems[3] : NULL;
     if (!published || published->kind != ATOM_EXPR ||
-        !atom_is_symbol(published->expr.elems[0], "HolPublish")) {
+        !atom_is_symbol(published->expr.elems[0], "SetPublish")) {
         checks++;
         failures++;
         fprintf(stderr, "FAIL: no generated BudgetTree inventory\n");
@@ -244,7 +244,7 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
     Space view;
     space_init_overlay(&view, space);
     Atom *signature_verdict = prime_scoped_judgment_judge(
-        arena, space, parse_one(arena, "(hol:signature)"), false, 0u);
+        arena, space, parse_one(arena, "(set:signature)"), false, 0u);
     Atom *signature = signature_verdict->expr.elems[3]->expr.elems[1];
     for (CettaExprIndex i = 0u; i < signature->expr.len; i++)
         space_add(&view, signature->expr.elems[i]);
@@ -273,7 +273,7 @@ static void check_inductive_shared_allowance(Arena *arena, Space *space) {
                     atom_symbol(arena, "type:check"), principle,
                     atom_symbol(arena, "prop")}, 3u);
         } else if (entry->kind == ATOM_EXPR && entry->expr.len == 8u &&
-                   atom_is_symbol(entry->expr.elems[0], "hol:known") &&
+                   atom_is_symbol(entry->expr.elems[0], "set:known") &&
                    atom_is_symbol(entry->expr.elems[1], "BudgetTree-ind")) {
             principle = entry->expr.elems[2];
         } else if (entry->kind == ATOM_EXPR && entry->expr.len == 3u &&
@@ -425,14 +425,14 @@ int main(void) {
     space_remove(&space, unsupported);
     expect_status(&arena, &space, "(set:known-proposition corePairing)",
                   false, 0u, "Established");
-    space_add(&space, parse_one(&arena, "(hol:profile megalodon-hotg)"));
+    space_add(&space, parse_one(&arena, "(set:profile megalodon-hotg)"));
 
     /* Conflicting explicit profiles also confer no interpretation. */
-    Atom *conflicting = parse_one(&arena, "(hol:profile core)");
+    Atom *conflicting = parse_one(&arena, "(hol:profile base)");
     space_add(&space, conflicting);
     checks++;
     if (prime_scoped_judgment_judge(&arena, &space,
-            parse_one(&arena, "(hol:of Empty)"), false, 0u) != NULL) {
+            parse_one(&arena, "(set:of Empty)"), false, 0u) != NULL) {
         failures++;
         fprintf(stderr, "FAIL: conflicting profiles interpreted a set judgment\n");
     }
@@ -440,10 +440,10 @@ int main(void) {
     check_overlay_rule_inventory(&arena, &universe);
 
     const char *valid =
-        "(hol:proves (pf:all-elim (pf:known universeIn) Empty)"
+        "(set:proves (pf:all-elim (pf:known universeIn) Empty)"
         " (In Empty (UnivOf Empty)))";
     const char *wrong_target =
-        "(hol:proves (pf:all-elim (pf:known universeIn) Empty)"
+        "(set:proves (pf:all-elim (pf:known universeIn) Empty)"
         " (In Empty Empty))";
 
     /* Exhaustion of the conversion authority is not a new decision route. */
@@ -453,17 +453,17 @@ int main(void) {
     expect_status(&arena, &space, valid, false, 0u, "Established");
     expect_status(&arena, &space, wrong_target, false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:proves (pf:known missing) Falsum)", false, 0u, "Undetermined");
+        "(set:proves (pf:known missing) Falsum)", false, 0u, "Undetermined");
     /* A bad submitted proof of a true proposition is rejected, not accepted
      * merely because another proof of that proposition exists. */
     expect_status(&arena, &space,
-        "(hol:proves (pf:hyp 0) (In Empty (Power Empty)))",
+        "(set:proves (pf:hyp 0) (In Empty (Power Empty)))",
         false, 0u, "Refuted");
 
     /* Dependent use rechecks the exact package before applying the consumer.
      * Exhaustion remains incomplete; with an unbounded budget the same
      * package and consumer establish a genuine dependent application. */
-    Atom *proof_query = parse_one(&arena, "(hol:native-proof universeIn)");
+    Atom *proof_query = parse_one(&arena, "(set:native-proof universeIn)");
     Atom *proof_verdict = prime_scoped_judgment_judge(
         &arena, &space, proof_query, false, 0u);
     Atom *proof_evidence = proof_verdict && proof_verdict->kind == ATOM_EXPR &&
@@ -475,7 +475,7 @@ int main(void) {
         ? proof_evidence->expr.elems[1] : NULL;
     Atom *proof_type = package && package->kind == ATOM_EXPR &&
             package->expr.len == 10u &&
-            atom_is_symbol(package->expr.elems[0], "HolNativeProofV1")
+            atom_is_symbol(package->expr.elems[0], "SetNativeProofV1")
         ? package->expr.elems[5] : NULL;
     Atom *consumer = proof_type
         ? atom_expr(
@@ -487,7 +487,7 @@ int main(void) {
     Atom *use = package && consumer
         ? atom_expr(
             &arena,
-            (Atom *[]){atom_symbol(&arena, "hol:native-use"), package,
+            (Atom *[]){atom_symbol(&arena, "set:native-use"), package,
                        consumer},
             3u)
         : NULL;
@@ -530,35 +530,35 @@ int main(void) {
     /* Constructor shape and positivity are not field-type formation. The
      * existing authority's abstention must not be relabeled as refutation. */
     expect_status(&arena, &space,
-        "(hol:inductive GhostTree (u 0) (: GhostNode (-> MissingType GhostTree)))",
+        "(set:inductive GhostTree (u 0) (: GhostNode (-> MissingType GhostTree)))",
         false, 0u, "Undetermined");
     /* A set is a type of the sort of all sets, above (u 0): a field whose
      * type is the set Empty is a checked universe violation at (u 0). */
     expect_status(&arena, &space,
-        "(hol:inductive ValueTree (u 0) (: ValueNode (-> Empty ValueTree)))",
+        "(set:inductive ValueTree (u 0) (: ValueNode (-> Empty ValueTree)))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:inductive BadLevel (u -1) (: BadLevelCtor BadLevel))",
+        "(set:inductive BadLevel (u -1) (: BadLevelCtor BadLevel))",
         false, 0u, "Refuted");
     space_add(&space, parse_one(&arena, "(: Large (u 1))"));
     space_add(&space, parse_one(&arena, "(: Field (u 0))"));
     expect_status(&arena, &space,
-        "(hol:inductive SmallTree (u 0) (: SmallNode (-> Large SmallTree)))",
+        "(set:inductive SmallTree (u 0) (: SmallNode (-> Large SmallTree)))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:inductive LargeTree (u 1) (: LargeNode (-> Large LargeTree)))",
+        "(set:inductive LargeTree (u 1) (: LargeNode (-> Large LargeTree)))",
         false, 0u, "Established");
     expect_status(&arena, &space,
-        "(hol:inductive P (u 0) (: MkP P))",
+        "(set:inductive P (u 0) (: MkP P))",
         false, 0u, "Established");
     expect_status(&arena, &space,
-        "(hol:inductive NameTree (u 0) (: v1 (-> Field NameTree)))",
+        "(set:inductive NameTree (u 0) (: v1 (-> Field NameTree)))",
         false, 0u, "Established");
     expect_status(&arena, &space,
-        "(hol:inductive ConflictTree (u 0) (: ConflictTree-rec ConflictTree))",
+        "(set:inductive ConflictTree (u 0) (: ConflictTree-rec ConflictTree))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:inductive WideTree (u 0)"
+        "(set:inductive WideTree (u 0)"
         " (: WideNode (-> Field Field Field Field Field Field Field Field Field WideTree)))",
         false, 0u, "Established");
 
@@ -570,34 +570,34 @@ int main(void) {
      * Bounded formation and both native endpoint checks share one allowance;
      * every refusal leaves the temporary declaration out of the theory. */
     expect_status(&arena, &space,
-        "(hol:define missingId (-> MissingType MissingType) (= (missingId $x) $x))",
+        "(set:define missingId (-> MissingType MissingType) (= (missingId $x) $x))",
         false, 0u, "Undetermined");
     /* Empty is a type, a set: the identity on it is no function into Field,
      * a checked refutation. */
     expect_status(&arena, &space,
-        "(hol:define valueDomain (-> Empty Field) (= (valueDomain $x) $x))",
+        "(set:define valueDomain (-> Empty Field) (= (valueDomain $x) $x))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:define badDefinition (-> (u -1) Field) (= (badDefinition $x) $x))",
+        "(set:define badDefinition (-> (u -1) Field) (= (badDefinition $x) $x))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:define typeId (-> (u 0) (u 0)) (= (typeId $x) $x))",
+        "(set:define typeId (-> (u 0) (u 0)) (= (typeId $x) $x))",
         false, 0u, "Established");
     expect_status(&arena, &space,
-        "(hol:define dependentId (-> (A : (u 0)) (x : A) A) (= (dependentId $A $x) $x))",
+        "(set:define dependentId (-> (A : (u 0)) (x : A) A) (= (dependentId $A $x) $x))",
         false, 0u, "Established");
     expect_status(&arena, &space,
-        "(hol:define wrongDependent (-> (A : (u 0)) (x : A) A) (= (wrongDependent $A $x) $A))",
+        "(set:define wrongDependent (-> (A : (u 0)) (x : A) A) (= (wrongDependent $A $x) $A))",
         false, 0u, "Refuted");
     expect_status(&arena, &space,
-        "(hol:define danglingDependent (-> (A : (u 0)) (x : A) A) (= (danglingDependent $A $x) $missing))",
+        "(set:define danglingDependent (-> (A : (u 0)) (x : A) A) (= (danglingDependent $A $x) $missing))",
         false, 0u, "Undetermined");
     expect_status(&arena, &space,
-        "(hol:define reflexiveEvidence (-> (A : (u 0)) (x : A) (id A x x))"
+        "(set:define reflexiveEvidence (-> (A : (u 0)) (x : A) (id A x x))"
         " (= (reflexiveEvidence $A $x) (refl $x)))",
         false, 0u, "Established");
     Atom *dependent_query = parse_one(&arena,
-        "(hol:define budgetDependent (-> (A : (u 0)) (x : A) A) (= (budgetDependent $A $x) $x))");
+        "(set:define budgetDependent (-> (A : (u 0)) (x : A) A) (= (budgetDependent $A $x) $x))");
     uint64_t dependent_revision = space_revision(&space);
     uint64_t dependent_steps = minimum_judgment_steps(&arena, &space, dependent_query);
     checks++;
@@ -620,7 +620,7 @@ int main(void) {
         fprintf(stderr, "FAIL: dependent clause checking published before admission\n");
     }
     Atom *definition_query = parse_one(&arena,
-        "(hol:define budgetId (-> Field Field) (= (budgetId $x) $x))");
+        "(set:define budgetId (-> Field Field) (= (budgetId $x) $x))");
     uint64_t definition_revision = space_revision(&space);
     uint64_t definition_steps = minimum_judgment_steps(&arena, &space, definition_query);
     checks++;

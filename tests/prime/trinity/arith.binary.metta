@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Arithmetic in the language: binary numbers and fractions as declared
 ; datatypes, on three faces.

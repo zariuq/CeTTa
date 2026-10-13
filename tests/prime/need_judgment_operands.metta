@@ -3,7 +3,7 @@
 ; the form `let` delivers, never as the cell that stands for it: a derivable
 ; judgment moved into an equation stays derivable, and an underivable one
 ; stays refuted.
-(hol:profile core)
+(hol:profile base)
 !(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &self (: Wrap (-> (u 0) (u 0))))
 !(add-atom &self (: wrap0 (Wrap num)))

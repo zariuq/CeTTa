@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual source admission, retained-proof projection and dependent use."""
 
+import re
 import argparse
 import hashlib
 from dataclasses import replace
@@ -183,7 +184,7 @@ class NativeProjectionTests(unittest.TestCase):
 
     def test_annotation_checks_formation_and_proof(self):
         result = self.run_program('''
-(hol:profile core)
+(hol:profile base)
 !(hol:theorem annotated (all prop (lam p (imp p p)))
  (pf:typed (all prop (lam p (imp p p)))
    (pf:all-intro (pf:imp-intro (pf:hyp 0)))))
@@ -358,7 +359,11 @@ class NativeProjectionTests(unittest.TestCase):
         # it is read here over the source's own carrier, whose type is a type
         # of the least universe: the pair holds two of its values.
         pair_program = (root.parent.parent / "prime/profiles/megalodon_hotg/scoped/native_higher_order_pair.metta").read_text()
-        pair_program = pair_program.replace("(hol:profile megalodon-hotg)", "(hol:profile core)")
+        # The fixture is a set: program of the HOTG set theory; over the base
+        # logic its judgments and packages are the hol: ones.
+        pair_program = pair_program.replace("(set:profile megalodon-hotg)", "(hol:profile base)")
+        pair_program = re.sub(r"\((set):(?!profile)", "(hol:", pair_program)
+        pair_program = re.sub(r"\bSet(Native[A-Za-z]*V1)\b", r"Hol\1", pair_program)
         for prime_spelling, source_spelling in [
                 ("(Sort (LevelAbove 1))", "(Sort (LevelConst 0))"),
                 ("(Sort (LevelAbove 0))", "(DeclConst mg-base-0)"),

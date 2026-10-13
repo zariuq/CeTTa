@@ -1,5 +1,6 @@
 #include "atom.h"
 #include "match.h"
+#include "binding/slot_store_internal.h"
 #include "term_canon.h"
 #include "stats.h"
 #include "term_universe.h"
@@ -266,6 +267,77 @@ static void test_sparse_frame_write_context_growth(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
+static void test_resolved_frame_write_boundaries(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
+    VarId ids[] = {101u, 103u, 107u};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "focus-a", ids[0]),
+        atom_var_with_id(arena, "focus-b", ids[1]),
+        atom_var_with_id(arena, "focus-c", ids[2])
+    };
+    BindingsFrameSchema *schema = bindings_frame_schema_new_presented(
+        ids, variables, 3u);
+    Bindings base;
+    bindings_init(&base);
+    CHECK(schema && bindings_register_complete_frame_schema(&base, schema, epoch),
+          "resolved write fixture registers one presented inventory");
+    bindings_frame_schema_release(schema);
+    BindingsBuilder left, right;
+    bool left_ready = bindings_builder_init(&left, &base);
+    bool right_ready = bindings_builder_init(&right, &base);
+    CHECK(left_ready && right_ready, "two builders share the initial frame");
+    if (!left_ready || !right_ready) {
+        if (left_ready) bindings_builder_free(&left);
+        if (right_ready) bindings_builder_free(&right);
+        bindings_free(&base);
+        return;
+    }
+    Atom *a = atom_var_with_id(arena, "focus-a", var_epoch_id(ids[0], epoch));
+    Atom *b = atom_var_with_id(arena, "focus-b", var_epoch_id(ids[1], epoch));
+    Atom *c = atom_var_with_id(arena, "focus-c", var_epoch_id(ids[2], epoch));
+    test_runtime_stats_reset_counters();
+    CHECK(bindings_builder_add_var_fresh(&left, a, atom_int(arena, 11)) &&
+              binding_is_int(&left.current, a->var_id, 11) &&
+              !bindings_lookup_value_id(&right.current, a->var_id).skeleton &&
+              !bindings_lookup_value_id(&base, a->var_id).skeleton,
+          "a resolved write detaches without modifying either shared owner");
+    CHECK(test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_DETACH) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_DETACH) == 1u,
+          "one shared write detaches the directory and frame exactly once");
+    CHECK(bindings_builder_add_var_fresh(&left, b, a) &&
+              atom_eq(bindings_apply(&left.current, arena, b), atom_int(arena, 11)) &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_DETACH) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_DETACH) == 1u,
+          "the next private write retains alias meaning without another detach");
+    uint32_t mark = bindings_builder_save(&left);
+    Bindings captured;
+    CHECK(bindings_clone(&captured, &left.current),
+          "a captured image shares the frame before a later write");
+    CHECK(bindings_builder_add_var_fresh(&left, c, atom_int(arena, 13)) &&
+              !bindings_lookup_value_id(&captured, c->var_id).skeleton &&
+              !bindings_builder_add_var_fresh(&left, a, atom_int(arena, 99)) &&
+              binding_is_int(&left.current, a->var_id, 11),
+          "capture and a conflicting bind preserve the prior slot authority");
+    bindings_builder_rollback(&left, mark);
+    CHECK(!bindings_lookup_value_id(&left.current, c->var_id).skeleton &&
+              bindings_builder_add_var_fresh(&right, a, atom_int(arena, 17)) &&
+              binding_is_int(&right.current, a->var_id, 17) &&
+              binding_is_int(&captured, a->var_id, 11),
+          "rollback and a sibling write keep the captured world independent");
+    bindings_builder_free(&left);
+    bindings_builder_free(&right);
+    bindings_free(&base);
+    CHECK(binding_is_int(&captured, a->var_id, 11) &&
+              atom_eq(bindings_apply(&captured, arena, b), atom_int(arena, 11)),
+          "the captured frame and alias survive both builders and their parent");
+    bindings_free(&captured);
+}
+
 static void test_borrowed_root_identity(Arena *arena) {
     Atom *first = atom_var_with_id(arena, "same-root-name", test_id(9000u));
     Atom *second = atom_var_with_id(arena, "same-root-name", test_id(9001u));
@@ -339,6 +411,253 @@ static bool lookup_frame_value(const Bindings *bindings, VarId id, BindingValue 
     return true;
 }
 
+static bool find_frame_state(const Bindings *bindings, uint32_t epoch,
+                             BindingsFrameStateView *view) {
+    BindingsFrameStateIterator iterator = {.bindings = bindings};
+    while (bindings_frame_state_next(&iterator, view))
+        if (view->ref.identity == epoch)
+            return true;
+    return false;
+}
+
+static bool frame_state_slots_are(const Bindings *bindings, uint32_t epoch,
+                                  const VarId *ids, Atom *first, Atom *second, Atom *third) {
+    BindingsFrameStateView view;
+    if (!find_frame_state(bindings, epoch, &view) || view.slot_count != 3u ||
+        view.schema_slot_count != 3u)
+        return false;
+    Atom *expected[] = {first, second, third};
+    for (uint32_t i = 0u; i < 3u; ++i) {
+        BindingsFrameSlotStateView slot;
+        if (!bindings_frame_state_read_slot(&view, i, &slot) ||
+            slot.source_id != ids[i] || slot.var_id != var_epoch_id(ids[i], epoch) ||
+            !slot.declared_in_schema ||
+            slot.value.skeleton != expected[i] ||
+            (expected[i] && slot.write_version == 0u))
+            return false;
+    }
+    BindingsFrameSlotStateView unchanged = {.source_id = UINT64_MAX};
+    BindingsFrameStateView wrong_generation = view;
+    wrong_generation.ref.identity ^= UINT32_C(1) << CETTA_FRAME_HANDLE_BITS;
+    return !bindings_frame_state_read_slot(&view, 3u, &unchanged) &&
+        unchanged.source_id == UINT64_MAX &&
+        !bindings_frame_state_read_slot(&wrong_generation, 0u, &unchanged) &&
+        unchanged.source_id == UINT64_MAX &&
+        !bindings_frame_state_read_slot(NULL, 0u, &unchanged) &&
+        unchanged.source_id == UINT64_MAX;
+}
+
+/* Exercise direct promotion, builder promotion and the retained capsule used
+ * by native reply/continuation boundaries against the same joined world. */
+static void test_joint_world_promotion(unsigned mode) {
+    Arena source, survivor;
+    arena_init(&source);
+    arena_init(&survivor);
+    Atom *payload = atom_expr2(&source, atom_symbol(&source, "SharedWorldPayload"),
+                              atom_int(&source, 7));
+    Atom *independent = atom_expr2(&source, atom_symbol(&source, "SharedWorldPayload"),
+                                  atom_int(&source, 7));
+    Bindings carrier;
+    bindings_init(&carrier);
+    StateCell state = {.value = payload};
+    PrimeNeedBranchState *branch = bindings_branch_state_mut(&carrier);
+    Atom *captured = NULL;
+    bool ready = payload && branch && prime_need_branch_state_begin(&source, branch) &&
+        prime_need_branch_state_write(&source, branch, &state, payload, payload, branch) &&
+        prime_need_branch_state_value(branch, &state, &captured);
+    /* State evidence snapshots its input. Share that actual captured node
+     * with the logical/Need roots, rather than assuming input pointer reuse. */
+    if (ready)
+        payload = captured;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (ready)
+        *bindings_receipt_mut(&carrier) = *branch;
+#endif
+    const uint32_t epoch = 9421u;
+    VarId ids[] = {42u, 43u};
+    ready = ready && independent && payload != independent && atom_eq(payload, independent) &&
+        bindings_register_contextual_frame(&carrier, ids, 2u, epoch) &&
+        bindings_add_id(&carrier, var_epoch_id(ids[0], epoch), SYMBOL_ID_NONE, payload) &&
+        bindings_add_id(&carrier, var_epoch_id(ids[1], epoch), SYMBOL_ID_NONE, independent);
+    PrimeNeedSnapshot *need = bindings_need_mut(&carrier);
+    uint64_t thunk = 0u;
+    ready = ready && need && prime_need_snapshot_begin(need) &&
+        prime_need_snapshot_allocate(&source, need, payload, need, &thunk) &&
+        prime_need_snapshot_start_evaluation(&source, need, thunk, 17u, need) &&
+        prime_need_snapshot_resolve_value(&source, need, thunk, 17u, payload, need);
+    uint64_t need_session = need ? need->session_id : 0u;
+    Arena split_owner;
+    arena_init(&split_owner);
+    Bindings split;
+    bool split_cloned = ready && bindings_clone(&split, &carrier);
+    bool split_promoted = split_cloned &&
+        bindings_promote_logical_atoms_to_arena(&split, &split_owner) &&
+        prime_need_snapshot_promote(&split_owner, bindings_need_mut(&split)) &&
+        prime_need_branch_state_promote(&split_owner, bindings_branch_state_mut(&split));
+    BindingsFrameStateView split_frame;
+    BindingsFrameSlotStateView split_slot;
+    PrimeNeedCellView split_memo;
+    CHECK(split_promoted && find_frame_state(&split, epoch, &split_frame) &&
+              bindings_frame_state_read_slot(&split_frame, 0u, &split_slot) &&
+              prime_need_snapshot_lookup(bindings_need_view(&split), thunk, &split_memo) &&
+              split_slot.value.skeleton != split_memo.cached &&
+              atom_eq(split_slot.value.skeleton, split_memo.cached),
+          "separate physical-copy episodes split a shared node despite equal values");
+    if (split_cloned)
+        bindings_free(&split);
+    arena_free(&split_owner);
+    bool promoted = false;
+    if (mode == 2u) {
+        Arena capsule;
+        arena_init_detached(&capsule);
+        Atom *saved = ready ? bindings_capture_value(&capsule, &carrier) : NULL;
+        Bindings restored;
+        promoted = saved && bindings_restore_captured_value(saved, &restored);
+        if (promoted) {
+            bindings_free(&carrier);
+            carrier = restored;
+        }
+        arena_free(&capsule);
+        CHECK(promoted && carrier.owners != NULL,
+              "restored joined world retains its capsule after the capsule arena is released");
+        Arena observation;
+        arena_init_detached(&observation);
+        Atom *visible = promoted ? bindings_to_atom(&observation, &carrier) : NULL;
+        Bindings structural;
+        bindings_init(&structural);
+        bool decoded = visible && bindings_from_atom(visible, &structural);
+        CHECK(decoded && !bindings_prime_present(&structural) &&
+                  bindings_prime_present(&carrier),
+              "the structural binding codec is not a retained operational world");
+        bindings_free(&structural);
+        arena_free(&observation);
+    } else if (mode == 1u) {
+        BindingsBuilder builder;
+        bool initialized = ready && bindings_builder_init(&builder, &carrier);
+        promoted = initialized && bindings_builder_promote_atoms_to_arena(&builder, &survivor);
+        if (promoted) {
+            bindings_free(&carrier);
+            bindings_builder_take(&builder, &carrier);
+        } else if (initialized) {
+            bindings_builder_free(&builder);
+        }
+    } else {
+        promoted = ready && bindings_promote_atoms_to_arena(&carrier, &survivor);
+    }
+    CHECK(promoted,
+          "joint world promotion accepts contextual bindings, Need history and state evidence");
+    BindingsFrameStateView frame;
+    BindingsFrameSlotStateView first, second;
+    PrimeNeedCellView memo;
+    Atom *branch_value = NULL;
+    bool read = promoted && find_frame_state(&carrier, epoch, &frame) &&
+        bindings_frame_state_read_slot(&frame, 0u, &first) &&
+        bindings_frame_state_read_slot(&frame, 1u, &second) &&
+        prime_need_snapshot_lookup(bindings_need_view(&carrier), thunk, &memo) &&
+        prime_need_branch_state_value(bindings_branch_state_view(&carrier), &state, &branch_value);
+    CHECK(read && first.value.skeleton == memo.origin && memo.origin == memo.cached &&
+              memo.cached == branch_value && first.value.skeleton != payload &&
+              second.value.skeleton != first.value.skeleton &&
+              atom_eq(second.value.skeleton, first.value.skeleton),
+          "one world transport keeps shared payload identity and independent equal nodes distinct");
+    PrimeNeedHistoryIterator history;
+    PrimeNeedHistoryView record;
+    bool history_preserved = read &&
+        prime_need_snapshot_history_begin(bindings_need_view(&carrier), &history);
+    for (unsigned i = 0u; history_preserved && i < 3u; ++i)
+        history_preserved = prime_need_snapshot_history_next(&history, &record) ==
+            PRIME_NEED_HISTORY_ENTRY && record.cell.origin == first.value.skeleton;
+    CHECK(history_preserved && prime_need_snapshot_history_next(&history, &record) ==
+              PRIME_NEED_HISTORY_DONE && bindings_need_view(&carrier)->session_id == need_session,
+          "transport retains one producer across its exact immutable history");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    PrimeNeedReceiptEvent observed;
+    CHECK(read && prime_need_receipt_event_at(bindings_receipt_view(&carrier), 0u, &observed) &&
+              observed.after == first.value.skeleton,
+          "receipt payload shares the transported operational and logical node");
+#endif
+    if (read)
+        state.value = first.value.skeleton;
+    arena_free(&source);
+    CHECK(read && first.value.skeleton &&
+              (mode == 2u || arena_owns_ptr(&survivor, first.value.skeleton)) &&
+              prime_need_snapshot_excludes_arena(bindings_need_view(&carrier), &source),
+          "the joint retained world survives source-arena reclamation");
+    bindings_free(&carrier);
+    arena_free(&survivor);
+}
+
+static void test_saved_contextual_frame_refinement(void) {
+    Arena source, capsule, observation;
+    arena_init_detached(&source);
+    arena_init_detached(&capsule);
+    arena_init_detached(&observation);
+    Bindings env, restored, sibling;
+    bindings_init(&env);
+    bindings_init(&restored);
+    bindings_init(&sibling);
+    VarId ids[] = {51u, 52u, 53u};
+    CettaFrameIdentityScope identities = {0};
+    CettaFrameIdentity target_epoch = 0u, source_epoch = 0u, empty_epoch = 0u;
+    Atom *raw = atom_var_with_id(&source, "late-field", ids[1]);
+    bool ready = raw &&
+        cetta_frame_identity_scope_try(&identities, &target_epoch) &&
+        cetta_frame_identity_scope_try(&identities, &source_epoch) &&
+        cetta_frame_identity_scope_try(&identities, &empty_epoch) &&
+        bindings_register_contextual_frame(&env, ids, 3u, target_epoch) &&
+        bindings_register_contextual_frame(&env, ids, 3u, source_epoch) &&
+        bindings_register_contextual_frame(&env, ids, 3u, empty_epoch) &&
+        bindings_add_id(&env, var_epoch_id(ids[0], target_epoch), SYMBOL_ID_NONE, raw) &&
+        bindings_rewrite_value_id(&env, var_epoch_id(ids[0], target_epoch),
+                                 binding_value_from_context(raw, source_epoch));
+    Atom *saved = ready ? bindings_capture_value(&capsule, &env) : NULL;
+    ready = saved && bindings_restore_captured_value(saved, &restored) &&
+        bindings_clone(&sibling, &restored);
+    bindings_free(&env);
+    arena_free(&capsule);
+    arena_free(&source);
+    cetta_frame_identity_scope_clear(&identities);
+    BindingValue held = bindings_lookup_value_id(&restored, var_epoch_id(ids[0], target_epoch));
+    BindingsFrameStateView frame;
+    CHECK(ready && held.skeleton && held.skeleton->kind == ATOM_VAR &&
+              held.skeleton->var_id == ids[1] && held.epoch == source_epoch &&
+              held.kind == BINDING_VALUE_CONTEXTUAL &&
+              find_frame_state(&restored, empty_epoch, &frame) && frame.slot_count == 3u &&
+              frame.owns_identity &&
+              frame_state_slots_are(&restored, empty_epoch, ids, NULL, NULL, NULL),
+          "a retained contextual world keeps raw syntax, its lexical frame and wholly unbound inventories");
+    Atom *seven = atom_int(&observation, 7);
+    Atom *eleven = atom_int(&observation, 11);
+    ready = ready &&
+        bindings_add_id(&restored, var_epoch_id(ids[1], source_epoch), SYMBOL_ID_NONE, seven) &&
+        bindings_add_id(&sibling, var_epoch_id(ids[1], source_epoch), SYMBOL_ID_NONE, eleven);
+    Atom *left = ready ? bindings_apply_value(&restored, &observation, held) : NULL;
+    Atom *right = ready ? bindings_apply_value(&sibling, &observation, held) : NULL;
+    Atom *without_context = ready
+        ? bindings_apply_value(&restored, &observation, binding_value_from_atom(held.skeleton))
+        : NULL;
+    CHECK(ready && left == seven && right == eleven &&
+              bindings_lookup_value_id(&restored, var_epoch_id(ids[0], target_epoch)).skeleton ==
+                  held.skeleton &&
+              bindings_lookup_value_id(&sibling, var_epoch_id(ids[0], target_epoch)).skeleton ==
+                  held.skeleton,
+          "one retained raw payload observes each branch's later refinement without capturing its substitution");
+    CHECK(ready && without_context && without_context->kind == ATOM_VAR &&
+              without_context->var_id == ids[1] && !atom_eq(without_context, left),
+          "discarding the lexical frame loses a later contextual binding");
+    bindings_free(&restored);
+    bindings_free(&sibling);
+    arena_free(&observation);
+    bool target_live = cetta_frame_identity_retain(target_epoch);
+    bool source_live = cetta_frame_identity_retain(source_epoch);
+    bool empty_live = cetta_frame_identity_retain(empty_epoch);
+    CHECK(!target_live && !source_live && !empty_live,
+          "releasing every retained contextual image ends all three lexical authorities");
+    if (target_live) cetta_frame_identity_release(target_epoch);
+    if (source_live) cetta_frame_identity_release(source_epoch);
+    if (empty_live) cetta_frame_identity_release(empty_epoch);
+}
+
 static void test_dense_frame_indexed_suffix(Arena *arena) {
     VarId ids[] = {UINT64_C(80001), UINT64_C(80003), UINT64_C(80008)};
     Atom *variables[] = {
@@ -356,8 +675,14 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     Atom *before = atom_int(arena, 11);
     Atom *after = atom_int(arena, 22);
     Atom *later = atom_int(arena, 33);
-    ready = bindings_builder_register_contextual_frame(&builder, ids, 3u, epoch) &&
-        bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
+    ready = bindings_builder_register_contextual_frame(&builder, ids, 3u, epoch);
+    uint32_t frame_count = UINT32_MAX;
+    CHECK(ready && bindings_frame_state_count(&builder.current, &frame_count) &&
+              frame_count == 1u,
+          "frame count includes an entirely unbound registered inventory");
+    CHECK(ready && frame_state_slots_are(&builder.current, epoch, ids, NULL, NULL, NULL),
+          "current frame readback retains a registered inventory with no assignments");
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
             SYMBOL_ID_NONE, before);
     uint32_t begin = builder.current.len;
     BindingsActivationView frame;
@@ -367,24 +692,43 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
         bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
             SYMBOL_ID_NONE, after);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 0u, NULL) &&
-              dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL),
+              dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL) &&
+              frame_state_slots_are(&builder.current, epoch, ids, before, after, NULL),
           "activation observation excludes earlier writes and retains unbound slots");
+    BindingsFrameStateView stale;
+    CHECK(find_frame_state(&builder.current, epoch, &stale) &&
+              stale.has_activation_write_boundary && stale.activation_write_boundary != 0u,
+          "current frame readback retains the activation boundary separately from its values");
     Bindings snapshot;
     bool cloned = ready && bindings_clone(&snapshot, &builder.current);
+    uint32_t snapshot_count = UINT32_MAX;
+    CHECK(cloned && bindings_frame_state_count(&snapshot, &snapshot_count) &&
+              snapshot_count == frame_count,
+          "capturing an image retains the registered frame count");
     uint32_t mark = bindings_builder_save(&builder);
     ready = cloned && bindings_builder_add_id_fresh(
         &builder, var_epoch_id(ids[2], epoch), SYMBOL_ID_NONE, later);
     bindings_lookup_index_test_clear(&builder.current);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 2u, later) &&
-              !bindings_lookup_value_id(&snapshot, var_epoch_id(ids[2], epoch)).skeleton,
+              !bindings_lookup_value_id(&snapshot, var_epoch_id(ids[2], epoch)).skeleton &&
+              frame_state_slots_are(&builder.current, epoch, ids, before, after, later) &&
+              frame_state_slots_are(&snapshot, epoch, ids, before, after, NULL),
           "an identity view observes copy-on-write slots without pointer refresh");
+    BindingsFrameSlotStateView untouched = {.source_id = UINT64_MAX};
+    CHECK(!bindings_frame_state_read_slot(&stale, 0u, &untouched) &&
+              untouched.source_id == UINT64_MAX,
+          "a borrowed frame readback rejects a changed branch image");
     bindings_builder_rollback(&builder, mark);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL),
           "rollback is immediately visible through the same activation identity");
+    CHECK(ready && frame_state_slots_are(&builder.current, epoch, ids, before, after, NULL),
+          "fresh current frame readback sees the exact restored slot state");
     ready = ready && bindings_rewrite_value_id(&builder.current,
         var_epoch_id(ids[1], epoch), binding_value_from_atom(later));
     CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, later) &&
-              bindings_lookup_value_id(&snapshot, var_epoch_id(ids[1], epoch)).skeleton == after,
+              bindings_lookup_value_id(&snapshot, var_epoch_id(ids[1], epoch)).skeleton == after &&
+              frame_state_slots_are(&builder.current, epoch, ids, before, later, NULL) &&
+              frame_state_slots_are(&snapshot, epoch, ids, before, after, NULL),
           "a rewritten slot changes the current image without altering a sibling");
     if (cloned)
         bindings_free(&snapshot);
@@ -392,9 +736,123 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     CHECK(!bindings_activation_view_available(&frame, &builder.current),
           "a released activation view cannot resolve a slot");
     bindings_builder_free(&builder);
+
+    Bindings grown;
+    bindings_init(&grown);
+    VarId first_source = 1u;
+    const uint32_t positional_epoch = epoch + 1u;
+    bool grown_ready = bindings_register_contextual_frame(
+        &grown, &first_source, 1u, positional_epoch) &&
+        bindings_frame_index_grow_slots(&grown, positional_epoch, 3u);
+    BindingsFrameStateView positional;
+    BindingsFrameSlotStateView implicit;
+    uint32_t symbols_before = atomic_load_explicit(&g_symbols->entry_len, memory_order_relaxed);
+    CHECK(grown_ready && find_frame_state(&grown, positional_epoch, &positional) &&
+              positional.slot_count == 3u && positional.schema_slot_count == 1u &&
+              bindings_frame_state_read_slot(&positional, 2u, &implicit) &&
+              implicit.source_id == 3u && implicit.var_id == var_epoch_id(3u, positional_epoch) &&
+              !implicit.declared_in_schema && implicit.spelling == SYMBOL_ID_NONE &&
+              !implicit.name_key && !implicit.value.skeleton && implicit.write_version == 0u &&
+              atomic_load_explicit(&g_symbols->entry_len, memory_order_relaxed) == symbols_before &&
+              grown.prime_ext == NULL,
+          "implicit positional readback does not intern a name or materialize occurrence state");
+    bindings_free(&grown);
+    bindings_init(&grown);
+    frame_count = UINT32_MAX;
+    CHECK(bindings_frame_state_count(&grown, &frame_count) && frame_count == 0u,
+          "an empty frame directory has a successful zero count");
+    BindingsFrameDirectoryStateView directory_view;
+    CHECK(bindings_frame_state_directory(&grown, &directory_view) &&
+              directory_view.bindings == &grown && directory_view.directory == NULL &&
+              directory_view.frame_count == 0u && directory_view.schema_revision == 0u &&
+              directory_view.write_clock == 0u,
+          "an absent directory has an explicit borrowed zero state");
+    directory_view.frame_count = 41u;
+    CHECK(!bindings_frame_state_directory(NULL, &directory_view) &&
+              directory_view.frame_count == 41u &&
+              !bindings_frame_state_directory(&grown, NULL),
+          "refused directory inspection leaves its output unchanged");
+    frame_count = 37u;
+    CHECK(!bindings_frame_state_count(NULL, &frame_count) && frame_count == 37u &&
+              !bindings_frame_state_count(&grown, NULL),
+          "refused count inspection leaves its output unchanged");
+    BindingsFrameStateIterator empty = {.bindings = &grown};
+    BindingsFrameStateView sentinel = {.ref = {.identity = UINT32_MAX}};
+    CHECK(!bindings_frame_state_next(&empty, &sentinel) &&
+              !bindings_frame_state_next(&empty, &sentinel) &&
+              sentinel.ref.identity == UINT32_MAX,
+          "empty frame directory readback terminates without changing its output");
+    VarId sources[] = {9u, 27u};
+    bool counted = bindings_register_contextual_frame(&grown, sources, 2u, epoch + 2u) &&
+        bindings_register_contextual_frame(&grown, sources, 2u, epoch + 3u) &&
+        bindings_frame_state_count(&grown, &frame_count);
+    BindingsFrameStateIterator all = {.bindings = &grown};
+    uint32_t rows = 0u;
+    while (bindings_frame_state_next(&all, &sentinel))
+        rows++;
+    CHECK(counted && frame_count == 2u && rows == frame_count &&
+              bindings_frame_state_count(&grown, &snapshot_count) &&
+              snapshot_count == frame_count,
+          "complete readback enumerates every advertised frame, including unbound ones");
+    CHECK(counted && bindings_frame_state_directory(&grown, &directory_view) &&
+              directory_view.directory == grown.frame_index &&
+              directory_view.frame_count == frame_count &&
+              directory_view.schema_revision == grown.frame_index->schema_revision &&
+              directory_view.write_clock == grown.frame_index->write_clock,
+          "directory readback samples count and lineage independently of bound slots");
+    if (counted) {
+        /* Deliberately invalid metadata distinguishes refusal from exhaustion.
+         * Restore the identity before releasing this test-owned directory. */
+        uint32_t saved_identity = grown.frame_index->frames[0].epoch;
+        grown.frame_index->frames[0].epoch = 0u;
+        BindingsFrameStateIterator refused = {.bindings = &grown};
+        sentinel.ref.identity = UINT32_MAX;
+        CHECK(bindings_frame_state_count(&grown, &frame_count) && frame_count == 2u &&
+                  !bindings_frame_state_next(&refused, &sentinel) &&
+                  refused.frame == 0u && sentinel.ref.identity == UINT32_MAX,
+              "iterator refusal cannot certify completion of an advertised inventory");
+        grown.frame_index->frames[0].epoch = saved_identity;
+    }
+    bindings_free(&grown);
 }
 
 static void test_generation_checked_frame_handles(Arena *arena) {
+    Atom qualified_variable = {
+        .kind = ATOM_VAR,
+        .var_id = ((VarId)99u << 32) | (VarId)9u,
+    };
+    const uint32_t first_context = (2u << 20) | 5u;
+    const uint32_t second_context = (3u << 20) | 6u;
+    BindingValue materialized = binding_value_from_atom(&qualified_variable);
+    materialized.epoch = first_context;
+    CHECK(binding_value_variable_id(materialized) == qualified_variable.var_id &&
+              var_epoch_suffix(binding_value_variable_id(materialized)) == 99u,
+          "materialized variable inspection retains its complete existing identifier");
+    BindingValue contextual = binding_value_from_context(
+        &qualified_variable, first_context);
+    BindingValue persistent = binding_value_from_persistent_context(
+        &qualified_variable, second_context);
+    CHECK(binding_value_variable_id(contextual) ==
+                  (((VarId)first_context << 32) | (VarId)9u) &&
+              binding_value_variable_id(persistent) ==
+                  (((VarId)second_context << 32) | (VarId)9u) &&
+              contextual.skeleton == persistent.skeleton,
+          "one variable pointer keeps distinct contextual epochs and replaces the previous suffix");
+    Atom nonvariable = {.kind = ATOM_SYMBOL};
+    CHECK(binding_value_variable_id(binding_value_from_atom(NULL)) == VAR_ID_NONE &&
+              binding_value_variable_id(binding_value_from_context(
+                  &nonvariable, first_context)) == VAR_ID_NONE,
+          "variable inspection refuses null and nonvariable skeletons");
+    Atom zero_base = {.kind = ATOM_VAR, .var_id = (VarId)99u << 32};
+    VarId before_fresh = fresh_var_id();
+    VarId allocated = binding_value_variable_id(
+        binding_value_from_context(&zero_base, first_context));
+    VarId after_fresh = fresh_var_id();
+    CHECK(var_base_id(allocated) == var_base_id(before_fresh) + 1u &&
+              after_fresh == (VarId)var_base_id(allocated) + 1u &&
+              var_epoch_suffix(allocated) == first_context &&
+              zero_base.var_id == (VarId)99u << 32,
+          "zero-base contextual qualification consumes a fresh identity and leaves the skeleton intact");
     VarId source_id = UINT64_C(88001);
     VarId unrelated_source_id = UINT64_C(88002);
     Atom *source = atom_var_with_id(
@@ -442,6 +900,14 @@ static void test_generation_checked_frame_handles(Arena *arena) {
               &builder.current, var_epoch_id(source_id, 300u))
         : binding_value_from_atom(NULL);
     BindingsFrameRef stored_ref = binding_value_frame_ref(stored_context);
+    BindingsFrameStateView contextual_state;
+    BindingsFrameSlotStateView contextual_slot;
+    CHECK(ready && find_frame_state(&builder.current, 300u, &contextual_state) &&
+              bindings_frame_state_read_slot(&contextual_state, 0u, &contextual_slot) &&
+              contextual_slot.value.kind == stored_context.kind &&
+              contextual_slot.value.epoch == 200u &&
+              contextual_slot.value.skeleton == source,
+          "current frame readback keeps contextual syntax and its lexical identity separate");
     BindingValue resolved_context = binding_value_from_atom(NULL);
     test_runtime_stats_reset_counters();
     bool resolved_direct = ready && bindings_resolve_value_exact(
@@ -1213,6 +1679,343 @@ static void test_frame_registration_compaction_rebase(Arena *arena) {
                   &extension_known, &extension_entry) && !extension_known,
           "rollback removes post-compaction frame extensions without erasing the projected base");
     bindings_builder_free(&builder);
+}
+
+/* A snapshot of the current ground value owes no rollback to an older RHS.
+ * Builder compaction with a live checkpoint does: its native inverse record
+ * can restore a contextual RHS whose frame is unbound in the current image. */
+static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
+    VarId ids[] = {71u, 72u, 73u};
+    CettaFrameIdentityScope identities = {0};
+    CettaFrameIdentity target_epoch = 0u, source_epoch = 0u, unrelated_epoch = 0u;
+    Bindings base, snapshot;
+    bindings_init(&base);
+    bindings_init(&snapshot);
+    Atom *raw = atom_var_with_id(arena, "checkpoint-context-field", ids[1]);
+    Atom *ground = atom_int(arena, 83);
+    bool ready = raw && ground &&
+        cetta_frame_identity_scope_try(&identities, &target_epoch) &&
+        cetta_frame_identity_scope_try(&identities, &source_epoch) &&
+        cetta_frame_identity_scope_try(&identities, &unrelated_epoch) &&
+        bindings_register_complete_contextual_frame(&base, ids, 3u, target_epoch) &&
+        bindings_register_complete_contextual_frame(&base, ids, 3u, source_epoch) &&
+        bindings_register_complete_contextual_frame(&base, ids, 3u, unrelated_epoch);
+    VarId target_id = var_epoch_id(ids[0], target_epoch);
+    Atom *root = atom_var_with_id(arena, "checkpoint-context-root", target_id);
+    ready = ready && root && bindings_add_id(&base, target_id, SYMBOL_ID_NONE, raw) &&
+        bindings_rewrite_value_id(&base, target_id,
+                                 binding_value_from_context(raw, source_epoch));
+    BindingsBuilder builder, baseline;
+    bool builder_ready = ready && bindings_builder_init(&builder, &base);
+    BindingsFrameStateView target_view;
+    BindingsFrameSlotStateView previous;
+    ready = builder_ready && find_frame_state(&builder.current, target_epoch, &target_view) &&
+        bindings_frame_state_read_slot(&target_view, 0u, &previous) &&
+        previous.value.skeleton == raw && binding_value_is_contextual(previous.value) &&
+        binding_value_frame_ref(previous.value).identity == source_epoch &&
+        bindings_builder_prepare_fresh_entries(&builder, 1u);
+    uint32_t checkpoint = ready ? bindings_builder_save(&builder) : UINT32_MAX;
+    uint32_t write_mark = ready ? bindings_builder_history_mark(&builder) : UINT32_MAX;
+    uint64_t written_version = 0u;
+    /* Ordinary unification fills an alias target rather than replacing an
+     * occupied slot. Arrange the replacement with the real native slot writer
+     * and its exact inverse data; rollback and compaction remain the runtime's. */
+    ready = ready && checkpoint != UINT32_MAX && write_mark == checkpoint &&
+        builder.frame_undo_len < builder.frame_undo_cap &&
+        bindings_frame_index_write_slot_ref(&builder.current, target_view.ref, 0u,
+            binding_value_from_atom(ground), &written_version, NULL);
+    if (ready) {
+        builder.frame_undo[builder.frame_undo_len++] = (BindingsFrameUndoEntry){
+            .previous_value = previous.value,
+            .previous_write_version = previous.write_version,
+            .written_write_version = written_version,
+            .frame_ref = target_view.ref,
+            .source_id = (uint32_t)ids[0],
+            .slot = 0u,
+            .trail_mark = write_mark,
+        };
+        builder.growth_count++;
+    }
+    CHECK(ready && binding_is_int(&builder.current, target_id, 83) &&
+              written_version > previous.write_version,
+          "contextual checkpoint fixture records a real replacement and its exact native inverse");
+
+    bool baseline_ready = ready && bindings_builder_clone(&baseline, &builder);
+    if (baseline_ready)
+        bindings_builder_rollback(&baseline, checkpoint);
+    BindingValue restored = binding_value_from_atom(NULL);
+    CHECK(baseline_ready && lookup_frame_value(&baseline.current, target_id, &restored) &&
+              restored.skeleton == previous.value.skeleton &&
+              restored.kind == previous.value.kind && restored.epoch == previous.value.epoch &&
+              binding_value_frame_ref(restored).identity == source_epoch &&
+              frame_state_slots_are(&baseline.current, source_epoch, ids, NULL, NULL, NULL),
+          "native rollback without compaction restores the contextual RHS and its unbound frame authority");
+
+    BindingsFrameStateView omitted;
+    bool projected = ready && bindings_project_reachable(&builder.current, &root, 1u, &snapshot);
+    CHECK(projected && binding_is_int(&snapshot, target_id, 83) &&
+              !find_frame_state(&snapshot, source_epoch, &omitted) &&
+              !find_frame_state(&snapshot, unrelated_epoch, &omitted),
+          "current-value snapshot projection owes no pre-capture rollback and drops unreachable frames");
+
+    uint32_t marks[] = {checkpoint};
+    bool compacted = ready && bindings_builder_compact_reachable(
+        &builder, &root, 1u, marks, 1u, NULL, NULL);
+    CHECK(compacted && binding_is_int(&builder.current, target_id, 83) &&
+              frame_state_slots_are(&builder.current, source_epoch, ids, NULL, NULL, NULL) &&
+              !find_frame_state(&builder.current, unrelated_epoch, &omitted),
+          "live-checkpoint compaction retains contextual previous-RHS authority without retaining unrelated frames");
+    if (compacted)
+        bindings_builder_rollback(&builder, marks[0]);
+    restored = binding_value_from_atom(NULL);
+    CHECK(compacted && lookup_frame_value(&builder.current, target_id, &restored) &&
+              restored.skeleton == previous.value.skeleton &&
+              restored.kind == previous.value.kind && restored.epoch == previous.value.epoch &&
+              binding_value_frame_ref(restored).identity == source_epoch &&
+              frame_state_slots_are(&builder.current, source_epoch, ids, NULL, NULL, NULL),
+          "compacted rollback restores the exact contextual RHS with its complete unbound frame inventory");
+    if (baseline_ready)
+        bindings_builder_free(&baseline);
+    if (builder_ready)
+        bindings_builder_free(&builder);
+    bindings_free(&snapshot);
+    bindings_free(&base);
+    cetta_frame_identity_scope_clear(&identities);
+}
+
+static void test_all_unbound_logical_merge_authority(Arena *arena) {
+    VarId ids[] = {81u, 82u, 83u};
+    CettaFrameIdentityScope identities = {0};
+    CettaFrameIdentity source_epoch = 0u, destination_epoch = 0u;
+    bool identities_ready = cetta_frame_identity_scope_try(&identities, &source_epoch) &&
+        cetta_frame_identity_scope_try(&identities, &destination_epoch);
+    for (unsigned live = 0u; live < 2u; live++) {
+        for (unsigned mode = 0u; mode < 3u; mode++) {
+            Bindings source, destination;
+            bindings_init(&source);
+            bindings_init(&destination);
+            bool ready = identities_ready;
+            if (mode != 1u)
+                ready = ready && bindings_register_complete_contextual_frame(
+                    &source, ids, 3u, source_epoch);
+            else
+                ready = ready && bindings_add_id(&source, test_id(9400u),
+                    SYMBOL_ID_NONE, atom_int(arena, 89));
+            if (mode != 0u)
+                ready = ready && bindings_register_complete_contextual_frame(
+                    &destination, ids, 3u, destination_epoch);
+            else
+                ready = ready && bindings_add_id(&destination, test_id(9401u),
+                    SYMBOL_ID_NONE, atom_int(arena, 97));
+            CHECK(ready && (mode == 1u || bindings_logically_empty(&source)) &&
+                      (mode == 0u || bindings_logically_empty(&destination)),
+                  "logical-merge fixture distinguishes all-unbound authority from assigned values");
+            bool merged = ready && (live
+                ? bindings_try_merge_live(&destination, &source)
+                : bindings_try_merge(&destination, &source));
+            CHECK(merged &&
+                      (mode == 1u || frame_state_slots_are(&destination, source_epoch,
+                                                         ids, NULL, NULL, NULL)) &&
+                      (mode == 0u || frame_state_slots_are(&destination, destination_epoch,
+                                                         ids, NULL, NULL, NULL)) &&
+                      (mode != 1u || binding_is_int(&destination, test_id(9400u), 89)) &&
+                      (mode != 0u || binding_is_int(&destination, test_id(9401u), 97)),
+                  live
+                      ? "live logical merge retains unbound source and destination frame authority"
+                      : "logical merge retains unbound source and destination frame authority");
+            CHECK(ready && (mode == 1u || frame_state_slots_are(&source, source_epoch,
+                                                             ids, NULL, NULL, NULL)) &&
+                      (mode != 1u || binding_is_int(&source, test_id(9400u), 89)),
+                  "logical merge leaves source authority and assignments unchanged");
+            bindings_free(&destination);
+            bindings_free(&source);
+        }
+    }
+    cetta_frame_identity_scope_clear(&identities);
+}
+
+/* Native rollback consumes the slot writes but preserves the directory clock
+ * and activation boundary. Logical admission keeps that lineage; importing a
+ * bound value is a new receiving write, unlike copying an exact image. */
+static void test_logical_merge_frame_lineage(Arena *arena) {
+    VarId ids[] = {91u, 92u, 93u};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "merge-lineage-first", ids[0]),
+        atom_var_with_id(arena, "merge-lineage-second", ids[1]),
+        atom_var_with_id(arena, "merge-lineage-third", ids[2]),
+    };
+    CettaFrameIdentityScope identities = {0};
+    CettaFrameIdentity epoch = 0u;
+    Bindings source;
+    bindings_init(&source);
+    bool ready = variables[0] && variables[1] && variables[2] &&
+        cetta_frame_identity_scope_try(&identities, &epoch) &&
+        bindings_register_complete_contextual_frame(&source, ids, 3u, epoch);
+    BindingsBuilder source_builder;
+    bool source_builder_ready = ready && bindings_builder_init(&source_builder, &source);
+    uint32_t mark = source_builder_ready ? bindings_builder_save(&source_builder) : UINT32_MAX;
+    BindingsFrameStateView written;
+    ready = source_builder_ready && mark != UINT32_MAX &&
+        bindings_builder_add_id_fresh(&source_builder, var_epoch_id(ids[0], epoch),
+            SYMBOL_ID_NONE, atom_int(arena, 101)) &&
+        find_frame_state(&source_builder.current, epoch, &written) &&
+        bindings_frame_index_mark_activation_boundary_ref(&source_builder.current,
+            written.ref, written.write_clock) &&
+        bindings_builder_add_id_fresh(&source_builder, var_epoch_id(ids[2], epoch),
+            SYMBOL_ID_NONE, atom_int(arena, 103));
+    if (ready) {
+        bindings_builder_rollback(&source_builder, mark);
+        bindings_free(&source);
+        bindings_builder_take(&source_builder, &source);
+        source_builder_ready = false;
+    }
+    BindingsFrameStateView source_before;
+    ready = ready && find_frame_state(&source, epoch, &source_before) &&
+        source_before.has_activation_write_boundary &&
+        source_before.activation_write_boundary > 0u &&
+        source_before.write_clock > source_before.activation_write_boundary &&
+        frame_state_slots_are(&source, epoch, ids, NULL, NULL, NULL);
+    CHECK(ready && bindings_logically_empty(&source),
+          "real rollback leaves an all-unbound frame with a nonzero clock and activation boundary");
+    if (!ready) {
+        if (source_builder_ready)
+            bindings_builder_free(&source_builder);
+        bindings_free(&source);
+        cetta_frame_identity_scope_clear(&identities);
+        return;
+    }
+
+    for (unsigned route = 0u; route < 3u; route++) {
+        for (unsigned mode = 0u; mode < 3u; mode++) {
+            Bindings incoming, destination, copied;
+            bindings_init(&incoming);
+            bindings_init(&destination);
+            bindings_init(&copied);
+            Atom *imported = atom_int(arena, 107);
+            bool case_ready = imported && bindings_clone(&incoming, &source);
+            if (mode == 1u) {
+                BindingsFrameStateView child;
+                case_ready = case_ready && find_frame_state(&incoming, epoch, &child) &&
+                    bindings_frame_index_mark_activation_boundary_ref(&incoming,
+                        child.ref, child.write_clock) &&
+                    bindings_clone(&destination, &source);
+            } else if (mode == 2u) {
+                case_ready = case_ready && bindings_add_id(&incoming,
+                    var_epoch_id(ids[1], epoch), SYMBOL_ID_NONE, imported);
+            }
+            /* A real receiving assignment keeps the live route on logical
+             * merge rather than its exact-image clone shortcut. */
+            case_ready = case_ready && bindings_add_id(&destination,
+                test_id(9500u + route * 3u + mode), SYMBOL_ID_NONE, atom_int(arena, 109));
+            BindingsFrameStateView incoming_before = {0};
+            BindingsFrameSlotStateView incoming_slots[3] = {0};
+            case_ready = case_ready && find_frame_state(&incoming, epoch, &incoming_before);
+            for (uint32_t slot = 0u; slot < 3u && case_ready; slot++)
+                case_ready = bindings_frame_state_read_slot(&incoming_before, slot,
+                    &incoming_slots[slot]);
+            CHECK(case_ready && incoming_before.write_clock > 0u &&
+                      incoming_before.has_activation_write_boundary &&
+                      (mode == 2u || bindings_logically_empty(&incoming)) &&
+                      (mode != 1u || incoming_before.activation_write_boundary !=
+                          source_before.activation_write_boundary),
+                  "merge-lineage fixture supplies genuine source time and a distinct child boundary");
+
+            if (mode == 2u) {
+                BindingsFrameStateView copy_view;
+                BindingsFrameSlotStateView copy_slot;
+                bool copy_ready = case_ready && bindings_clone(&copied, &incoming);
+                CHECK(copy_ready && find_frame_state(&copied, epoch, &copy_view) &&
+                          bindings_frame_state_read_slot(&copy_view, 1u, &copy_slot) &&
+                          copy_view.write_clock == incoming_before.write_clock &&
+                          copy_view.activation_write_boundary == incoming_before.activation_write_boundary &&
+                          copy_slot.value.skeleton == imported &&
+                          copy_slot.write_version == incoming_slots[1].write_version,
+                      "exact image copy preserves the imported value's original write version");
+            }
+
+            BindingsBuilder receiver;
+            bool receiver_ready = false;
+            bool merged = false;
+            if (route == 2u) {
+                receiver_ready = case_ready && bindings_builder_init(&receiver, &destination);
+                merged = receiver_ready && bindings_builder_try_merge(&receiver, &incoming);
+            } else {
+                merged = case_ready && (route == 0u
+                    ? bindings_try_merge(&destination, &incoming)
+                    : bindings_try_merge_live(&destination, &incoming));
+                receiver_ready = merged && bindings_builder_init(&receiver, &destination);
+            }
+            BindingsFrameStateView received;
+            BindingsFrameSlotStateView received_slots[3];
+            bool admitted = merged && receiver_ready &&
+                find_frame_state(&receiver.current, epoch, &received);
+            uint64_t expected_boundary = mode == 1u
+                ? source_before.activation_write_boundary : incoming_before.activation_write_boundary;
+            admitted = admitted && received.has_activation_write_boundary &&
+                received.activation_write_boundary == expected_boundary &&
+                received.write_clock >= incoming_before.write_clock &&
+                received.schema_complete && received.slot_count == 3u;
+            for (uint32_t slot = 0u; slot < 3u && admitted; slot++) {
+                admitted = bindings_frame_state_read_slot(&received, slot, &received_slots[slot]) &&
+                    received_slots[slot].source_id == incoming_slots[slot].source_id &&
+                    received_slots[slot].value.skeleton == incoming_slots[slot].value.skeleton;
+                if (admitted && !incoming_slots[slot].value.skeleton)
+                    admitted = received_slots[slot].write_version == incoming_slots[slot].write_version;
+            }
+            CHECK(admitted,
+                  mode == 1u
+                      ? "logical merge preserves the receiving activation boundary instead of overwriting it with a child boundary"
+                      : "new frame admission preserves source boundary and unbound versions and advances the receiving frontier");
+            if (mode == 2u) {
+                CHECK(admitted && received_slots[1].write_version > incoming_before.write_clock &&
+                          received_slots[1].write_version > incoming_slots[1].write_version,
+                      "logical merge restamps a bound imported value as a receiving write");
+            }
+
+            BindingsActivationView activation;
+            bindings_activation_view_init(&activation);
+            Atom *later = atom_int(arena, 113);
+            bool later_ready = admitted && later && bindings_activation_view_prepare(&activation,
+                &receiver, ids, variables, 3u, epoch, 0u) &&
+                activation.first_write_version == expected_boundary &&
+                bindings_builder_add_id_fresh(&receiver, var_epoch_id(ids[0], epoch),
+                    SYMBOL_ID_NONE, later);
+            BindingsFrameStateView after;
+            BindingsFrameSlotStateView later_slot;
+            CHECK(later_ready && find_frame_state(&receiver.current, epoch, &after) &&
+                      bindings_frame_state_read_slot(&after, 0u, &later_slot) &&
+                      later_slot.write_version > incoming_before.write_clock &&
+                      dense_slot_is(&receiver.current, &activation, 0u, later),
+                  "a later receiving write lies beyond the source frontier and is visible to its activation");
+
+            BindingsFrameStateView source_after, incoming_after;
+            bool unchanged = find_frame_state(&source, epoch, &source_after) &&
+                source_after.write_clock == source_before.write_clock &&
+                source_after.has_activation_write_boundary == source_before.has_activation_write_boundary &&
+                source_after.activation_write_boundary == source_before.activation_write_boundary &&
+                frame_state_slots_are(&source, epoch, ids, NULL, NULL, NULL) &&
+                case_ready && find_frame_state(&incoming, epoch, &incoming_after) &&
+                incoming_after.write_clock == incoming_before.write_clock &&
+                incoming_after.has_activation_write_boundary == incoming_before.has_activation_write_boundary &&
+                incoming_after.activation_write_boundary == incoming_before.activation_write_boundary;
+            for (uint32_t slot = 0u; slot < 3u && unchanged; slot++) {
+                BindingsFrameSlotStateView current;
+                unchanged = bindings_frame_state_read_slot(&incoming_after, slot, &current) &&
+                    current.value.skeleton == incoming_slots[slot].value.skeleton &&
+                    current.write_version == incoming_slots[slot].write_version;
+            }
+            CHECK(unchanged,
+                  "logical merge and receiving writes leave both source images and their lineage metadata unchanged");
+            bindings_activation_view_free(&activation);
+            if (receiver_ready)
+                bindings_builder_free(&receiver);
+            bindings_free(&copied);
+            bindings_free(&destination);
+            bindings_free(&incoming);
+        }
+    }
+    bindings_free(&source);
+    cetta_frame_identity_scope_clear(&identities);
 }
 
 static void test_frame_registration_undo_promotion(void) {
@@ -2687,10 +3490,15 @@ int main(void) {
     test_arena_retained_owners();
     test_saved_binding_value_lifetime();
     test_sparse_frame_write_context_growth(&arena);
+    test_resolved_frame_write_boundaries(&arena);
 
     test_borrowed_root_identity(&arena);
     test_term_stability_summary(&arena);
     test_dense_frame_indexed_suffix(&arena);
+    test_joint_world_promotion(0u);
+    test_joint_world_promotion(1u);
+    test_joint_world_promotion(2u);
+    test_saved_contextual_frame_refinement();
     test_generation_checked_frame_handles(&arena);
     test_persistent_frame_index_partition(&arena);
     test_frame_slot_is_value_authority(&arena);
@@ -2701,6 +3509,9 @@ int main(void) {
     test_frame_schema_branch_lifetime(&arena);
     test_builder_frame_registration_rollback(&arena);
     test_frame_registration_compaction_rebase(&arena);
+    test_contextual_previous_rhs_compaction_rollback(&arena);
+    test_all_unbound_logical_merge_authority(&arena);
+    test_logical_merge_frame_lineage(&arena);
     test_variable_inventory(&arena);
     test_unframed_context_import(&arena);
     test_frame_registration_undo_promotion();

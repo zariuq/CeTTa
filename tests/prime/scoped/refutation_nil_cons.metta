@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; What a refutation at declared datatypes rests on.  The conversion
 ; algorithm refutes an equation when the two sides have different normal
@@ -45,17 +45,17 @@
 ; Lists of another element type: the same constructor names, but not the
 ; lists of numbers Lean declares.  The same lists of numbers in another space
 ; cite the theorem there.
-!(bind! &bits (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &bits (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &bits bit (u 0) (: b0 bit) (: b1 bit))
 !(hol:inductive &bits list (u 0) (: nil list) (: cons (-> bit list list)))
 !(try (type:eq &bits nil (cons b0 nil)))
 ; Numbers with a third constructor: the lists over them are not Lean's
 ; either, though the two sides are written alike.
-!(bind! &extended (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &extended (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &extended num (u 0) (: zero num) (: suc (-> num num)) (: infinity num))
 !(hol:inductive &extended list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &extended nil (cons zero nil)))
-!(bind! &numbers (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &numbers (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &numbers num (u 0) (: zero num) (: suc (-> num num)))
 !(hol:inductive &numbers list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &numbers nil (cons (suc (suc zero)) nil)))

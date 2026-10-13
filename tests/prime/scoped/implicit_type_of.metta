@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A type query on a term whose implicit parameters are not all determined
 ; answers that it is undetermined, as `try` shows it, rather than standing

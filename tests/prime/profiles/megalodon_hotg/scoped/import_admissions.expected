@@ -5,4 +5,4 @@
 [Undetermined]
 [(Published reused)]
 [True]
-[(hol:proves (pf:known forged) (imp (In Empty Empty) (In Empty Empty)))]
+[(set:proves (pf:known forged) (imp (In Empty Empty) (In Empty Empty)))]

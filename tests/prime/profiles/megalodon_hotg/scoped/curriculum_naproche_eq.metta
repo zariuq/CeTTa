@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; The Naproche-ZF curriculum with the signature's equation as the identity of
 ; sets.  The theorems, definitions and proofs are those of the Naproche
@@ -7,7 +7,7 @@
 ; two showcase theorems, Cantor's theorem and the Burali-Forti antinomy.  The
 ; one difference is equality.  There the identity of sets is a definition,
 ; Leibniz's same; here the theory adopts the rule of
-; substitution, (hol:rule eq-subst), and the identity of sets is eq set, the
+; substitution, (set:rule eq-subst), and the identity of sets is eq set, the
 ; equation that extensionality concludes.  A step that used an identity,
 ;   (pf:imp-elim (pf:all-elim h (lam m B)) k)     with h : same x y,
 ; is now
@@ -31,23 +31,23 @@
 ; signature does not state; it is the one axiom here, the statement of
 ; Megalodon's Eps_i_ax and the same axiom as in the Megalodon curriculum.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(add-atom &thy (hol:rule eq-subst))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(add-atom &thy (set:rule eq-subst))
 
 ; ---- logic: the connectives as definitions (Naproche-ZF reads its
 ; statements in higher-order logic; existence here ranges over sets)
-!(hol:define &thy not (-> prop prop) (= (not $A) (imp $A Falsum)))
-!(hol:define &thy and (-> prop prop prop)
+!(set:define &thy not (-> prop prop) (= (not $A) (imp $A Falsum)))
+!(set:define &thy and (-> prop prop prop)
    (= (and $A $B) (all prop (lam p (imp (imp $A (imp $B p)) p)))))
-!(hol:define &thy or (-> prop prop prop)
+!(set:define &thy or (-> prop prop prop)
    (= (or $A $B) (all prop (lam p (imp (imp $A p) (imp (imp $B p) p))))))
-!(hol:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
-!(hol:define &thy ex (-> (-> set prop) prop)
+!(set:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
+!(set:define &thy ex (-> (-> set prop) prop)
    (= (ex $P) (all prop (lam p (imp (all set (lam x (imp ($P x) p))) p)))))
 
 ; ---- sets (Naproche-ZF library: sets): inclusion, the laws taken apart
 ; into introduction and elimination, extensionality, and equality
-!(hol:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(set:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
 ; sets: every set includes itself
 !(pf:theorem &thy subq-refl (all set (lam X (Subq X X)))
    (pf:fix X (pf:fix x (pf:assume h h))))
@@ -257,20 +257,20 @@
 ; ---- pairs (Naproche-ZF library: relations): the unordered pair, the
 ; singleton, and Kuratowski's ordered pair {{a}, {a, b}}
 ; the law of the choice operator: Eps_set P has the property P when some set has it
-!(hol:axiom &thy EpsI (all (-> set prop) (lam P (all set (lam x (imp (P x) (P (Eps_set P))))))))
+!(set:axiom &thy EpsI (all (-> set prop) (lam P (all set (lam x (imp (P x) (P (Eps_set P))))))))
 ; pick a b X is a when Empty is a member of X, and b when it is not
-!(hol:define &thy pick (-> set set set set)
+!(set:define &thy pick (-> set set set set)
    (= (pick $a $b $X)
      (Eps_set (lam w (and (imp (In Empty $X) (eq set w $a)) (imp (not (In Empty $X)) (eq set w $b)))))))
 ; both a b has a and b among its members: replacement over {Empty, {Empty}}
-!(hol:define &thy both (-> set set set)
+!(set:define &thy both (-> set set set)
    (= (both $a $b) (Repl (Power (Power Empty)) (lam X (pick $a $b X)))))
 ; the unordered pair: the members of both a b that are a or b
-!(hol:define &thy UPair (-> set set set)
+!(set:define &thy UPair (-> set set set)
    (= (UPair $a $b) (Sep (both $a $b) (lam w (or (eq set w $a) (eq set w $b))))))
 ; the singleton, and Kuratowski's ordered pair
-!(hol:define &thy Sing (-> set set) (= (Sing $a) (Sep (Power $a) (lam w (eq set w $a)))))
-!(hol:define &thy kpair (-> set set set) (= (kpair $a $b) (UPair (Sing $a) (UPair $a $b))))
+!(set:define &thy Sing (-> set set) (= (Sing $a) (Sep (Power $a) (lam w (eq set w $a)))))
+!(set:define &thy kpair (-> set set set) (= (kpair $a $b) (UPair (Sing $a) (UPair $a $b))))
 ; relations (pairs): the chosen set is a when Empty is a member of X
 !(pf:theorem &thy pick-yes
    (all set (lam a (all set (lam b (all set (lam X (imp (In Empty X) (eq set (pick a b X) a))))))))
@@ -613,14 +613,14 @@
 ; ---- relations (Naproche-ZF library: relations): the union of two sets, a
 ; relation as a set of ordered pairs, its domain and range, and the cartesian
 ; product separated from the power set of the power set of A and B together
-!(hol:define &thy binunion (-> set set set) (= (binunion $X $Y) (Union (UPair $X $Y))))
-!(hol:define &thy relation (-> set prop)
+!(set:define &thy binunion (-> set set set) (= (binunion $X $Y) (Union (UPair $X $Y))))
+!(set:define &thy relation (-> set prop)
    (= (relation $R) (all set (lam z (imp (In z $R) (ex (lam x (ex (lam y (eq set z (kpair x y)))))))))))
-!(hol:define &thy dom (-> set set)
+!(set:define &thy dom (-> set set)
    (= (dom $R) (Sep (Union (Union $R)) (lam x (ex (lam y (In (kpair x y) $R)))))))
-!(hol:define &thy ran (-> set set)
+!(set:define &thy ran (-> set set)
    (= (ran $R) (Sep (Union (Union $R)) (lam y (ex (lam x (In (kpair x y) $R)))))))
-!(hol:define &thy prod (-> set set set)
+!(set:define &thy prod (-> set set set)
    (= (prod $A $B)
      (Sep
        (Power (Power (binunion $A $B)))
@@ -889,23 +889,23 @@
 ; ---- functions (Naproche-ZF library: functions): a function from A to B is a
 ; functional and total relation inside the product; a surjection reaches every
 ; member of B
-!(hol:define &thy functional (-> set prop)
+!(set:define &thy functional (-> set prop)
    (= (functional $f)
      (all set
        (lam x
          (all set
            (lam y (all set (lam z (imp (In (kpair x y) $f) (imp (In (kpair x z) $f) (eq set y z)))))))))))
-!(hol:define &thy total (-> set set prop)
+!(set:define &thy total (-> set set prop)
    (= (total $f $A) (all set (lam x (imp (In x $A) (ex (lam y (In (kpair x y) $f))))))))
-!(hol:define &thy function (-> set set set prop)
+!(set:define &thy function (-> set set set prop)
    (= (function $f $A $B) (and (Subq $f (prod $A $B)) (and (functional $f) (total $f $A)))))
-!(hol:define &thy onto (-> set set set prop)
+!(set:define &thy onto (-> set set set prop)
    (= (onto $f $A $B)
      (all set (lam y (imp (In y $B) (ex (lam x (and (In x $A) (In (kpair x y) $f)))))))))
-!(hol:define &thy surjection (-> set set set prop)
+!(set:define &thy surjection (-> set set set prop)
    (= (surjection $f $A $B) (and (function $f $A $B) (onto $f $A $B))))
 ; the identity relation on A: the pairs of a member of A with itself
-!(hol:define &thy id-rel (-> set set)
+!(set:define &thy id-rel (-> set set)
    (= (id-rel $A) (Sep (prod $A $A) (lam z (ex (lam x (eq set z (kpair x x))))))))
 ; functions: a function from A is defined on all of A
 !(pf:theorem &thy function-dom
@@ -1284,11 +1284,11 @@
 ; use.  Membership is well-founded by the law of induction on membership, so
 ; this definition needs no well-ordering clause; that membership is a linear
 ; order of the ordinals is classical and is not claimed here.
-!(hol:define &thy TransSet (-> set prop)
+!(set:define &thy TransSet (-> set prop)
    (= (TransSet $X) (all set (lam x (imp (In x $X) (Subq x $X))))))
-!(hol:define &thy ordinal (-> set prop)
+!(set:define &thy ordinal (-> set prop)
    (= (ordinal $a) (and (TransSet $a) (all set (lam b (imp (In b $a) (TransSet b)))))))
-!(hol:define &thy succ (-> set set) (= (succ $a) (binunion $a (Sing $a))))
+!(set:define &thy succ (-> set set) (= (succ $a) (binunion $a (Sing $a))))
 ; ordinals (transitive sets): the power set of a transitive set is transitive
 !(pf:theorem &thy transset-power (all set (lam A (imp (TransSet A) (TransSet (Power A)))))
    (pf:fix A (pf:assume hA (pf:fix x (pf:assume hx (pf:fix y (pf:assume hy
@@ -1564,9 +1564,9 @@
 
 ; ---- orders (Naproche-ZF library: orders): a strict order on a set, for a
 ; relation of the logic; membership is one on every ordinal
-!(hol:define &thy irreflexive-on (-> (-> set set prop) set prop)
+!(set:define &thy irreflexive-on (-> (-> set set prop) set prop)
    (= (irreflexive-on $R $A) (all set (lam x (imp (In x $A) (not ($R x x)))))))
-!(hol:define &thy transitive-on (-> (-> set set prop) set prop)
+!(set:define &thy transitive-on (-> (-> set set prop) set prop)
    (= (transitive-on $R $A)
      (all set
        (lam x
@@ -1575,7 +1575,7 @@
              (all set
                (lam z
                  (imp (In x $A) (imp (In y $A) (imp (In z $A) (imp ($R x y) (imp ($R y z) ($R x z))))))))))))))
-!(hol:define &thy strict-order (-> (-> set set prop) set prop)
+!(set:define &thy strict-order (-> (-> set set prop) set prop)
    (= (strict-order $R $A) (and (irreflexive-on $R $A) (transitive-on $R $A))))
 ; orders: membership, as the relation (lam x (lam y (In x y))) of the logic,
 ; is a strict order on every ordinal
@@ -1672,7 +1672,7 @@
 ; The rule is substitution, not a reading of eq as Leibniz's: an equation
 ; instantiated as if it were a universal is still refused.
 !(let ($verdict $why)
-      (try (hol:proves &thy
+      (try (set:proves &thy
         (quote (pf:fix x (pf:fix y (pf:assume e (pf:assume h (pf:imp-elim (pf:all-elim e (lam m (In m Empty))) h))))))
         (quote (all set (lam x (all set (lam y (imp (eq set x y) (imp (In x Empty) (In y Empty))))))))))
    (let $head (car-atom $why) ($verdict $head)))
@@ -1684,7 +1684,7 @@
 ; ordinal-strict-order does not prove the same of the converse relation
 ; (lam x (lam y (In y x))).
 !(let ($verdict $why)
-      (try (hol:proves &thy
+      (try (set:proves &thy
         (quote
           (pf:fix a (pf:assume ha (pf:fix p1 (pf:assume k2
             (pf:imp-elim
@@ -1715,56 +1715,56 @@
 ; (the theorems and the laws its package declares) and the laws and the axiom
 ; it rests on through them; substitution is a rule constant of the package,
 ; not an assumption:
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy russell)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy russell)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy russell) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy no-universal-set)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy no-universal-set)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy no-universal-set) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy kpair-inj)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy kpair-inj)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy kpair-inj) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy cantor)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy cantor)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy cantor) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy cantor-fn)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy cantor-fn)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy cantor-fn) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy burali-forti)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy burali-forti)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy burali-forti) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy ordinal-succ)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy ordinal-succ)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy ordinal-succ) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy ordinal-union)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy ordinal-union)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy ordinal-union) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy ordinal-strict-order)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy ordinal-strict-order)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy ordinal-strict-order) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy eq-sym)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy eq-sym)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy eq-sym) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy eq-trans)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy eq-trans)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy eq-trans) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy eq-in-empty)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy eq-in-empty)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy eq-in-empty) (type-face $name (cites $cites) (rests-on $rests)))))
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &thy set-ext-identity)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &thy set-ext-identity)
    (let $cites (map-atom $rows $r (car-atom $r))
      (let $rests (pf:rests-on &thy set-ext-identity) (type-face $name (cites $cites) (rests-on $rests)))))
 
@@ -1774,11 +1774,11 @@
 ; of higher-order logic over its sets and in the set model of the tower package;
 ; that a set is a member of its power set holds in the latter; and no declared
 ; set is a member of itself, at every reading of the set-theory constants.
-!(let (quote $p) (lift (hol:known-proposition &thy no-universal-set))
+!(let (quote $p) (lift (set:known-proposition &thy no-universal-set))
    (quote (set-face no-universal-set $p
      "Mettapedia.Logic.HOL.Embedding.ZFSetHenkinInterpretation.universalSet_false"
      "TowerInterpretation.MegalodonHOTG.universalSet_false_in_model")))
-!(let (quote $p) (lift (hol:known-proposition &thy power-self))
+!(let (quote $p) (lift (set:known-proposition &thy power-self))
    (quote (set-face power-self $p "TowerInterpretation.MegalodonHOTG.powerIn_holds")))
-!(let (quote $p) (lift (hol:known-proposition &thy in-irrefl))
+!(let (quote $p) (lift (set:known-proposition &thy in-irrefl))
    (quote (set-face in-irrefl $p (at-a-declared-set) "TowerInterpretation.MegalodonHOTG.selfMember_type_empty")))

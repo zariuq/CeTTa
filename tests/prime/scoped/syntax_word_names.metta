@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A program may name its own constants with the words of the term syntax
 ; (lam, app, fst, pair) and of the kernel's own spelling (App, Lam, FVar,
@@ -7,7 +7,7 @@
 ; term syntax spelled the same is read only where no declaration of that name
 ; takes the arguments given, so a constructor `lam` of one argument and the
 ; lambdas of the same theory live side by side.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:inductive &s bool (u 0) (: true bool) (: false bool))
 

@@ -1,14 +1,17 @@
-; Moving theorems between the HOTG theory and the bare logic.
+; Moving theorems between the HOTG set theory and the logic it is over.
+; HOTG is a set: theory over hol: base, so its theorems are read with set:
+; judgments, and what the logic alone checks is published with hol: ones.
 ;
 ; Relativization: a theorem phi of the Megalodon HOTG theory becomes, in a
 ; space with the bare logic, the theorem
 ;     all In Empty Union Power Sep Repl Eps_set UnivOf.
 ;       law1 -> ... -> law11 -> phi
 ; with the eight constants of the HOTG signature as variables, bound under
-; their own names, and its eleven laws as hypotheses. Its proof is the HOTG proof with each constant
-; read as the corresponding variable, each cited law as the corresponding
-; hypothesis, and each cited HOTG theorem as its own relativization applied
-; to the variables and the hypotheses. The bare logic checks the result.
+; their own names, and its eleven laws as hypotheses.  Its proof is the HOTG
+; proof with each constant read as the corresponding variable, each cited law
+; as the corresponding hypothesis, and each cited HOTG theorem as its own
+; relativization applied to the variables and the hypotheses.  The bare logic
+; checks the result.
 ;
 ; Inclusion: a theorem of the bare logic is checked afresh in a HOTG space,
 ; with the theorems it cites included first.
@@ -110,7 +113,7 @@
   (if (== $laws ()) (function (return $statement))
     (let $law (car-atom $laws)
       (let $rest (cdr-atom $laws)
-        (let $stated (hol:known-proposition $source $law)
+        (let $stated (set:known-proposition $source $law)
           (let $inner (hol-rel:hypotheses $source $rest $statement)
             (let $whole (cons-atom imp ($stated $inner))
               (function (return $whole)))))))))
@@ -121,7 +124,7 @@
   (if (== $constants ()) (function (return $body))
     (let $constant (car-atom $constants)
       (let $rest (cdr-atom $constants)
-        (let $type (hol:of $source $constant)
+        (let $type (set:of $source $constant)
           (let $inner (hol-rel:generalize $source $rest $body)
             (let $binder (cons-atom $constant (: $type))
               (let $family (cons-atom lam ($binder $inner))
@@ -299,8 +302,8 @@
   (case (hol-rel:find $target hol-rel:relativized $name)
     (((Some $known) $known)
      (None
-       (let $statement (hol:known-proposition $source $name)
-         (let $proof (hol:known-proof $source $name)
+       (let $statement (set:known-proposition $source $name)
+         (let $proof (set:known-proof $source $name)
            (let $body (hol-rel:proof $source $target $proof 0 0)
              (case (hol-rel:unsupported $body)
                (((Some $form) (function (return (HOL:RelativizationRefused $name (unsupported $form)))))
@@ -336,11 +339,11 @@
                  (let $new-name (parse (format-args "inc:{}" ($name)))
                    (let $qs (cons-atom quote ($statement))
                      (let $qp (cons-atom quote ($renamed-proof))
-                       (let $published (hol:theorem $target $new-name $qs $qp)
+                       (let $published (set:theorem $target $new-name $qs $qp)
                          (if (== $published $new-name)
                            (let $marked (add-atom $target (hol-rel:included $name $new-name))
                              $new-name)
-                           (let $why (try (hol:theorem $target $new-name $qs $qp))
+                           (let $why (try (set:theorem $target $new-name $qs $qp))
                              (function (return (HOL:InclusionRefused $name $why))))))))))))))))))
 
 ; The names a proof cites with pf:known.
@@ -402,9 +405,9 @@
           (let $proof (hol-rel:apply-laws $at-constants $laws)
             (let $qs (cons-atom quote ($statement))
               (let $qp (cons-atom quote ($proof))
-                (let $published (hol:theorem $hotg $name $qs $qp)
+                (let $published (set:theorem $hotg $name $qs $qp)
                   (if (== $published $name) $name
-                    (let $why (try (hol:theorem $hotg $name $qs $qp))
+                    (let $why (try (set:theorem $hotg $name $qs $qp))
                       (function (return (HOL:InstantiationRefused $name $why))))))))))))))
 
 (= (hol-rel:apply-constants $proof $constants)

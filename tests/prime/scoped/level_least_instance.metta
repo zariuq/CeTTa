@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A declaration over a level variable is used at its least level instance:
 ; the least assignment of its level variables at which the arguments have
@@ -6,7 +6,7 @@
 ; (u (max $l c)) the kernel finds that least assignment; where none exists
 ; it abstains, and nothing is refuted.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: Small (u 3)))
 !(add-atom &s (: Big (u omega)))

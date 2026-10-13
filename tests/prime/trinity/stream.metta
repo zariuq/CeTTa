@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The numbers from n, a process that never ends, on three faces:
 ;   from n = scons n (from (suc n))

@@ -117,9 +117,15 @@ typedef struct {
         PettaAnalysisResult *result);
     bool (*type_has_runtime_classifier)(
         void *host_context, Space *space, Atom *requirement);
-    Atom *(*error_atom)(
-        void *host_context, Arena *arena, Atom *source,
-        int exit_code, const char *diagnostic);
+    /* The errors the language raises at run time: `value` does not satisfy
+     * `requirement`, or no declared overload of `function` applies to a
+     * call.  The machine raises them as any error, so catch delimits them
+     * and only an uncaught one ends the run. */
+    Atom *(*type_error_atom)(
+        void *host_context, Arena *arena, Atom *value, Atom *requirement,
+        PettaAnalysisReason reason);
+    Atom *(*overload_error_atom)(
+        void *host_context, Arena *arena, Atom *function);
     const char *(*reason_name)(
         void *host_context, PettaAnalysisReason reason);
     PettaMachineBoundaryResult (*validate_ready_call)(
@@ -296,6 +302,20 @@ typedef struct {
     /* Explicit dependent domains belong to the active language profile,
      * not to the shared declaration cache or residual-type analysis. */
     bool dependent_type_domains;
+    /* HE gives `if` equations only for True and False, so a condition that
+     * is neither leaves the call itself, branches unevaluated, as its value.
+     * PeTTa takes any other condition value as false. */
+    bool if_keeps_undecided_call;
+    /* Whether a collected tuple would evaluate further where a binder
+     * instantiates it, as HE evaluates it there: the machine declines its
+     * run at such a tuple.  Set only for a run that can be declined and
+     * reads a collected value so. */
+    bool (*collected_value_reducible)(void *context, Space *space,
+                                      Atom *value);
+    /* No computation of this run has an effect, so a completed producer may
+     * hand its successes on as they arrive and hold back only its errors:
+     * the completed answers, normalized, are the same. */
+    bool completion_streams_successes;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -308,6 +328,11 @@ typedef struct {
     bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
+    /* The classifier may answer PETTA_MACHINE_HOST_READY_OVERRIDE, which
+     * supersedes a machine-native form.  A host that never does leaves this
+     * false; the machine then classifies only where another mode decides
+     * something. */
+    bool classify_may_override;
     /* Direct grounded execution is a physical realization of a language
      * call.  The host therefore retains profile-owned admission for each
      * shared opcode; absence preserves the standalone machine's unrestricted
@@ -319,6 +344,22 @@ typedef struct {
     bool (*grounded_call)(void *context, Space *space, Arena *arena,
         Atom *head, Atom **arguments, uint32_t argument_count,
         CettaCallOutcome *outcome);
+    /* Optional language-owned rows of a match over the machine's space. A
+     * language that matches by its own rules (numeric coherence, completed
+     * snapshots) supplies every row before any template runs; each template
+     * is then instantiated by its row and evaluated as source. */
+    bool (*match_rows)(void *context, Space *space, Arena *arena,
+        Atom *pattern, BindingSet *rows);
+    /* Optional: the same rows given directly as instances of the template, in
+     * row order. False declines without effect; the rows are then taken. */
+    bool (*match_instances)(void *context, Space *space, Arena *arena,
+        Atom *pattern, Atom *template, Atom ***instances, CettaIndex *count);
+    /* Optional: a language that completes every producer before its caller
+     * consumes it may let an admitted relation stream its answers instead. */
+    bool (*stream_head_admitted)(void *context, Space *space, Arena *arena,
+        SymbolId head, uint32_t arity);
+    bool (*stream_admitted)(void *context, Space *space, Arena *arena,
+        Atom *call);
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */
@@ -500,6 +541,19 @@ typedef struct {
      * compilation.  False means only that no decline is known. */
     bool (*answer_cursor_declined)(
         void *context, Space *space, SymbolId head, CettaExprLen arity);
+    /* For a language whose producers complete before their callers consume
+     * them: the closed call's finite answers from the same producer its
+     * canonical evaluator uses, run to completion.  True with every answer
+     * in `outcomes`; false publishes nothing and leaves the call to equation
+     * search. */
+    bool (*collect_closed_answers)(
+        void *context, Space *space, Arena *result_arena,
+        Atom *prepared_call, OutcomeSet *outcomes);
+    /* Whether a ground term evaluates to itself in the host language: a
+     * grounded value, a symbol nothing defines, or a term of constructors
+     * with no error field. */
+    bool (*normal_data_value)(
+        void *context, Space *space, Arena *scratch, Atom *atom);
     /* Every host authority an answer producer's enumeration depends on
      * besides the Space program: callability, transaction state, and the
      * relation-dispatch registrations.  Equal tokens at two times mean the
@@ -707,6 +761,9 @@ bool petta_machine_init(
     Atom *query, const Bindings *base_environment,
     const PettaMachineHost *host);
 
+/* Its driver takes every answer of this machine before anything consumes
+ * them, as a collection or a completed evaluation does. */
+void petta_machine_set_answers_collected_whole(PettaMachine *machine);
 bool petta_machine_init_with_plan(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
@@ -719,6 +776,33 @@ PettaMachineStep petta_machine_next(
 /* A native typecheck-v2 refutation is semantic, not ordinary search
  * exhaustion.  The evaluator reads this diagnostic only after the machine
  * terminates and turns it into the profile's process-level rejection. */
+/* Work of a table store since a root machine leased it.  Forwarding: a
+ * table whose generator ends in a call of a complete table delivers that
+ * table's answers through an edge.  Membership index work of answer merges:
+ * round answers examined, index probes and inserted keys.  A count of a
+ * complete table in its reader's tail position is one answer weighted by the
+ * table's size.  The store keeps these counters, not every machine. */
+typedef struct {
+    uint64_t forward_edges;
+    uint64_t forward_view_reads;
+    uint64_t forward_expanded_answers;
+    uint64_t forward_declined_continuation;
+    uint64_t forward_declined_open;
+    uint64_t forward_declined_incomplete;
+    uint64_t forward_declined_policy;
+    uint64_t forward_declined_branching;
+    uint64_t forward_declined_shared_child;
+    uint64_t forward_declined_overlap;
+    uint64_t merge_answers;
+    uint64_t index_probes;
+    uint64_t index_inserts;
+    uint64_t count_folds;
+    uint64_t count_fold_answers;
+} PettaTableStats;
+
+bool petta_machine_table_stats(
+    const PettaMachine *machine, PettaTableStats *stats);
+
 const char *petta_machine_typecheck_diagnostic(
     const PettaMachine *machine);
 int petta_machine_typecheck_exit_code(const PettaMachine *machine);

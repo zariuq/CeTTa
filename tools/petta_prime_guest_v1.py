@@ -379,7 +379,7 @@ def lower(text: str, external_heads: tuple[str, ...] = (),
             helpers.append(form("=", form(alias, *arguments), body))
         translated = helpers + translated
     if adapter.sequence_primitives:
-        # These source primitives are absent from the Prime surface. Their
+        # These source primitives are absent from Prime's vocabulary. Their
         # ground flat-sequence contract is authored using existing target
         # operations. Membership retains every positive occurrence, including
         # duplicates; a false result is produced only when none was found.

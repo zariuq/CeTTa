@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 !(add-atom &self (hol:rule hol-equality))
 !(hol:define CarrierAlias (u 0) (= CarrierAlias prop))
 !(car-atom (try (hol:check Falsum CarrierAlias)))

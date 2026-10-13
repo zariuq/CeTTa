@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 !(car-atom (try (hol:proves (pf:all-intro (pf:eq-refl prop (pf:var 0))) (all prop (lam p (eq prop p p))))))
 !(add-atom &self (hol:rule eq-subst))
 !(car-atom (try (hol:proves (pf:all-intro (pf:eq-refl prop (pf:var 0))) (all prop (lam p (eq prop p p))))))

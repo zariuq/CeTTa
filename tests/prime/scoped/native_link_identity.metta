@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Linking a native proof package under the named identity interpretation.
 ; The retained source proof of zero-add uses three assumptions: induction,

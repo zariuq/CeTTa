@@ -76,6 +76,11 @@ int parse_metta_bytes_prefix_ids(
 bool parser_set_document_ids_backend(
     const ParserDocumentIdsBackend *backend);
 void parser_clear_document_ids_backend(void *context);
+/* Read with the built-in reader, whose syntax settings the caller chooses,
+ * instead of the installed document reader; returns the previous setting.
+ * A hosted checker reads its own source this way, whatever reader the
+ * program's language installed. */
+bool parser_set_builtin_document_reader(bool builtin);
 
 /*
  * Project a neutral, already-recognized S-expression document into CeTTa's

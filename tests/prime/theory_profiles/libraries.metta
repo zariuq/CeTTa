@@ -2,5 +2,5 @@
 !(import! &logic ../../../lib/profiles/hol.metta)
 !(import! &hotg ../../../lib/profiles/megalodon_hotg.metta)
 !(hol:proves &logic (pf:imp-intro (pf:hyp 0)) (imp Falsum Falsum))
-!(hol:of &hotg Empty)
+!(set:of &hotg Empty)
 !(let $r (set:of Empty) (car-atom $r))

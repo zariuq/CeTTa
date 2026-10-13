@@ -17,6 +17,421 @@ static bool lookup_frame_value(const Bindings *bindings, VarId id, BindingValue 
 static unsigned checks, failures;
 #define CHECK(c, m) do { checks++; if (!(c)) { failures++; fprintf(stderr,"FAIL: %s\n",m); } } while (0)
 
+typedef struct {
+    BindingsTermCursorContextV1 bindings;
+    unsigned resolutions;
+} CursorBindingObservation;
+
+static CettaGsltTermViewStatusV1 observe_cursor_binding(
+        void *context, CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *target) {
+    CursorBindingObservation *observation = context;
+    observation->resolutions++;
+    return bindings_resolve_term_cursor_v1(&observation->bindings, source, target);
+}
+
+static void term_cursor_children(Arena *arena) {
+    Atom *root_variable = atom_var_with_id(arena, "cursor-root", UINT64_C(990101));
+    Atom *child_variable = atom_var_with_id(arena, "cursor-child", UINT64_C(990102));
+    Atom *outer = atom_symbol(arena, "cursor-outer");
+    Atom *local = atom_symbol(arena, "cursor-local");
+    Atom *head = atom_symbol(arena, "cursor-head");
+    Atom *written_call = atom_expr3(
+        arena, atom_symbol(arena, "+"), atom_int(arena, 1), atom_int(arena, 2));
+    Atom *children[] = {head, child_variable, written_call, child_variable};
+    Atom *body = atom_expr(arena, children, 4u);
+    const uint32_t epoch = 718u;
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize native term cursor bindings");
+    CHECK(bindings_builder_add_var_fresh(&builder, child_variable, outer),
+          "construct the outer environment of a returned expression");
+    uint32_t first = builder.current.len;
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    VarId ids[] = {root_variable->var_id};
+    Atom *variables[] = {root_variable};
+    CHECK(bindings_activation_view_prepare(
+              &frame, &builder, ids, variables, 1u, epoch, first) &&
+          bindings_builder_add_id_fresh(&builder,
+              var_epoch_id(root_variable->var_id, epoch), root_variable->sym_id, body) &&
+          bindings_builder_add_id_fresh(&builder,
+              var_epoch_id(child_variable->var_id, epoch), child_variable->sym_id, local),
+          "construct a source scope with a different value for the same child variable");
+
+    CursorBindingObservation observation = {{&builder.current, &frame}, 0u};
+    CettaGsltTermCursorObserverV1 observer = {observe_cursor_binding, &observation};
+    CettaGsltTermCursorV1 parent = {0}, source_parent = {0};
+    CHECK(cetta_gslt_term_cursor_resolve_root_v1(
+              observer, (CettaGsltTermCursorV1){root_variable, &frame}, &parent) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && parent.source == body && parent.scope == NULL &&
+          observation.resolutions == 1u,
+          "native root resolution enters the returned expression's outer environment");
+    CHECK(cetta_gslt_term_cursor_resolve_root_v1(
+              observer, (CettaGsltTermCursorV1){body, &frame}, &source_parent) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && source_parent.source == body &&
+          source_parent.scope == &frame && observation.resolutions == 1u,
+          "an expression already in the source environment retains that environment");
+
+    CettaGsltTermCursorV1 observed[4] = {{0}};
+    bool ordered = true;
+    for (CettaExprIndex index = 0u; index < 4u; index++)
+        ordered = ordered && cetta_gslt_term_cursor_child_v1(parent, index, &observed[index]) &&
+            observed[index].source == children[index] && observed[index].scope == parent.scope;
+    CHECK(ordered && observed[1].source == observed[3].source &&
+          observed[1].scope == observed[3].scope && observed[0].source != observed[2].source,
+          "child observation preserves the raw ordered vector and both repeated occurrences");
+    CettaGsltTermCursorV1 local_child = {0}, outer_result = {0}, local_result = {0};
+    CHECK(cetta_gslt_term_cursor_child_v1(source_parent, 1u, &local_child) &&
+          local_child.source == observed[1].source && local_child.scope != observed[1].scope &&
+          cetta_gslt_term_cursor_resolve_root_v1(observer, observed[1], &outer_result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && outer_result.source == outer &&
+          cetta_gslt_term_cursor_resolve_root_v1(observer, local_child, &local_result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && local_result.source == local,
+          "one child pointer under distinct scopes resolves to distinct native values");
+
+    unsigned resolutions = observation.resolutions;
+    size_t bytes = arena_accounted_live_bytes(arena);
+    CettaGsltTermCursorV1 literal = {0}, call_head = {0};
+    CHECK(observed[2].source == written_call && written_call->kind == ATOM_EXPR &&
+          cetta_gslt_term_cursor_resolve_root_v1(observer, observed[2], &literal) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && literal.source == written_call &&
+          cetta_gslt_term_cursor_child_v1(literal, 0u, &call_head) &&
+          call_head.source == written_call->expr.elems[0] && atom_is_symbol(call_head.source, "+") &&
+          written_call->expr.len == 3u && written_call->expr.elems[1]->ground.ival == 1 &&
+          written_call->expr.elems[2]->ground.ival == 2 &&
+          observation.resolutions == resolutions && arena_accounted_live_bytes(arena) == bytes,
+          "structural child observation retains a written call without resolving or evaluating it");
+
+    CettaGsltTermCursorV1 rejected = observed[1];
+    CHECK(!cetta_gslt_term_cursor_child_v1(parent, parent.source->expr.len, &rejected) &&
+          rejected.source == NULL && rejected.scope == NULL,
+          "the first out-of-range child resets a previously populated output");
+    rejected = local_child;
+    CHECK(!cetta_gslt_term_cursor_child_v1(source_parent, UINT64_MAX, &rejected) &&
+          rejected.source == NULL && rejected.scope == NULL,
+          "a full-width out-of-range index cannot wrap into an earlier child");
+    rejected = local_child;
+    CHECK(!cetta_gslt_term_cursor_child_v1(
+              (CettaGsltTermCursorV1){root_variable, &frame}, 0u, &rejected) &&
+          rejected.source == NULL && rejected.scope == NULL,
+          "an unresolved variable is not an expression parent and clears child output");
+    rejected = local_child;
+    CHECK(!cetta_gslt_term_cursor_child_v1(
+              (CettaGsltTermCursorV1){NULL, &frame}, 0u, &rejected) &&
+          rejected.source == NULL && rejected.scope == NULL &&
+          !cetta_gslt_term_cursor_child_v1(parent, 0u, NULL),
+          "missing parent and missing output refuse child observation");
+    Atom empty_expression = {0};
+    empty_expression.kind = ATOM_EXPR;
+    rejected = local_child;
+    CHECK(!cetta_gslt_term_cursor_child_v1(
+              (CettaGsltTermCursorV1){&empty_expression, &frame}, 0u, &rejected) &&
+          rejected.source == NULL && rejected.scope == NULL,
+          "a zero-length expression does not dereference its null element storage");
+
+    /* The raw helper reports indexed access, not validity of the child atom. */
+    Atom *null_element[] = {NULL};
+    Atom sparse_expression = {0};
+    sparse_expression.kind = ATOM_EXPR;
+    sparse_expression.expr.elems = null_element;
+    sparse_expression.expr.len = 1u;
+    CHECK(cetta_gslt_term_cursor_child_v1(
+              (CettaGsltTermCursorV1){&sparse_expression, &frame}, 0u, &rejected) &&
+          rejected.source == NULL && rejected.scope == &frame,
+          "in-range null child is raw indexed success, distinct from a refused index");
+    CHECK(body->expr.len == 4u && body->expr.elems[0] == head &&
+          body->expr.elems[1] == child_variable && body->expr.elems[2] == written_call &&
+          body->expr.elems[3] == child_variable && parent.scope == NULL &&
+          source_parent.scope == &frame,
+          "child reads and refusals leave the source vector and both parent scopes unchanged");
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
+}
+
+static void activation_cursor_resolution(Arena *arena) {
+    Atom *source = atom_var_with_id(arena, "activation-cursor-source", UINT64_C(990201));
+    Atom *alias = atom_var_with_id(arena, "activation-cursor-alias", UINT64_C(990202));
+    Atom *other = atom_var_with_id(arena, "activation-cursor-other", UINT64_C(990203));
+    Atom *seven = atom_int(arena, 7);
+    Atom *eleven = atom_int(arena, 11);
+    Atom *thirteen = atom_int(arena, 13);
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity source_epoch = 0u, alias_epoch = 0u;
+    CHECK(cetta_frame_identity_scope_try(&identities, &source_epoch) &&
+          cetta_frame_identity_scope_try(&identities, &alias_epoch),
+          "acquire native frame identities for activation cursor observation");
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize activation cursor bindings");
+    VarId source_ids[] = {source->var_id};
+    Atom *source_variables[] = {source};
+    VarId source_key = var_epoch_id(source->var_id, source_epoch);
+    CHECK(bindings_builder_add_var_fresh(&builder, source, eleven) &&
+          bindings_builder_register_contextual_frame(
+              &builder, source_ids, 1u, source_epoch) &&
+          bindings_builder_add_id_fresh(&builder, source_key, source->sym_id, seven),
+          "construct an ordinary namesake and an earlier write in the source frame");
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    CHECK(bindings_activation_view_prepare(
+              &frame, &builder, source_ids, source_variables, 1u,
+              source_epoch, builder.current.len) && frame.first_write_version > 0u,
+          "prepare a real activation boundary after the framed write");
+    BindingValue slot_value;
+    bool present = true;
+    CHECK(bindings_lookup_value_id(&builder.current, source_key).skeleton == seven &&
+          bindings_activation_view_read_slot(
+              &builder.current, &frame, 0u, &slot_value, &present) &&
+          !present && slot_value.skeleton == NULL,
+          "an authoritative bound slot preceding the activation is not an activation output");
+    BindingsTermCursorContextV1 context = {&builder.current, &frame};
+    CettaGsltTermCursorV1 result = {thirteen, &frame};
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, &frame}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == source && result.scope == &frame,
+          "a known preboundary slot keeps the authored variable and suppresses its ordinary namesake");
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, NULL}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == eleven && result.scope == NULL,
+          "the same variable in the outer domain sees its ordinary binding");
+
+    BindingsActivationView copied = frame;
+    result = (CettaGsltTermCursorV1){thirteen, &frame};
+    CHECK(bindings_activation_view_available(&copied, &builder.current) &&
+          bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, &copied}, &result) ==
+              CETTA_GSLT_TERM_VIEW_DEFER_V1 && result.source == NULL && result.scope == NULL,
+          "equal activation metadata at another address cannot satisfy the selected scope pointer");
+    context.frame = &copied;
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, &copied}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == source && result.scope == &copied,
+          "selecting the copied view permits its own unchanged scoped variable");
+    context.frame = &frame;
+    CHECK(bindings_rewrite_value_id(
+              &builder.current, source_key, binding_value_from_atom(thirteen)),
+          "write a new framed value after the activation boundary");
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, &frame}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == thirteen && result.scope == NULL,
+          "a later materialized write enters the outer cursor domain");
+
+    CETTA_FRAME_IDENTITY_SCOPE(retired_identity);
+    CettaFrameIdentity retired_epoch = 0u, replacement_epoch = 0u;
+    BindingsBuilder retired_builder;
+    CHECK(bindings_builder_init(&retired_builder, NULL) &&
+          cetta_frame_identity_scope_try(&retired_identity, &retired_epoch),
+          "construct a separate owned activation to retire");
+    BindingsActivationView stale;
+    bindings_activation_view_init(&stale);
+    CHECK(bindings_activation_view_prepare(
+              &stale, &retired_builder, source_ids, source_variables, 1u,
+              retired_epoch, 0u) &&
+          bindings_activation_view_available(&stale, &retired_builder.current),
+          "a prepared activation has an available authority before its image is released");
+    bindings_builder_free(&retired_builder);
+    cetta_frame_identity_scope_clear(&retired_identity);
+    CHECK(cetta_frame_identity_scope_try(&identities, &replacement_epoch) &&
+          cetta_frame_handle(replacement_epoch) == cetta_frame_handle(retired_epoch) &&
+          cetta_frame_generation(replacement_epoch) > cetta_frame_generation(retired_epoch) &&
+          !cetta_frame_identity_retain(retired_epoch) &&
+          bindings_builder_register_contextual_frame(
+              &builder, source_ids, 1u, replacement_epoch),
+          "final release permits native handle reuse and refuses the retired incarnation");
+    Atom *stale_variable = atom_var_with_id(
+        arena, "activation-cursor-stale", var_epoch_id(source->var_id, stale.epoch));
+    context.frame = &stale;
+    result = (CettaGsltTermCursorV1){thirteen, &frame};
+    CHECK(!bindings_activation_view_available(&stale, &builder.current) &&
+          bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, &stale}, &result) ==
+              CETTA_GSLT_TERM_VIEW_DEFER_V1 && result.source == NULL && result.scope == NULL,
+          "an explicit scope with the same handle and a stale generation refuses observation");
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){stale_variable, NULL}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == stale_variable && result.scope == NULL,
+          "a stale packed coordinate in the outer domain remains an open variable");
+    CettaGsltTermCursorObserverV1 observer = {bindings_resolve_term_cursor_v1, &context};
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){seven, &stale}, &result) ==
+              CETTA_GSLT_TERM_VIEW_DEFER_V1 &&
+          cetta_gslt_term_cursor_resolve_root_v1(observer,
+              (CettaGsltTermCursorV1){seven, &stale}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == seven && result.scope == &stale,
+          "structural nonvariable root observation bypasses the binding adapter's scope borrow");
+    context.frame = &frame;
+
+    VarId alias_ids[] = {alias->var_id};
+    CHECK(bindings_builder_register_contextual_frame(
+              &builder, alias_ids, 1u, alias_epoch) &&
+          bindings_builder_add_id_fresh(&builder,
+              var_epoch_id(alias->var_id, alias_epoch), alias->sym_id, seven),
+          "construct a ground target in a different retained lexical frame");
+    Atom *qualified_source = atom_var_with_id(
+        arena, "activation-cursor-qualified", source_key);
+    for (unsigned persistent = 0u; persistent < 2u; persistent++) {
+        BindingValue contextual = persistent
+            ? binding_value_from_persistent_context(alias, alias_epoch)
+            : binding_value_from_context(alias, alias_epoch);
+        CHECK(bindings_rewrite_value_id(&builder.current, source_key, contextual),
+              "store a contextual alias as a postboundary activation value");
+        BindingValue resolved;
+        CHECK(bindings_resolve_value_preview(&builder.current, contextual, &resolved) &&
+              resolved.skeleton == seven && resolved.kind == BINDING_VALUE_MATERIALIZED,
+              "the stored contextual alias has an independently resolvable ground target");
+        result = (CettaGsltTermCursorV1){thirteen, &frame};
+        CHECK(bindings_resolve_term_cursor_v1(&context,
+                  (CettaGsltTermCursorV1){source, &frame}, &result) ==
+                  CETTA_GSLT_TERM_VIEW_DEFER_V1 && result.source == NULL && result.scope == NULL,
+              "the scoped cursor defers a contextual variable before following its ground alias");
+        CHECK(bindings_resolve_term_cursor_v1(&context,
+                  (CettaGsltTermCursorV1){qualified_source, NULL}, &result) ==
+                  CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == seven && result.scope == NULL,
+              "the outer cursor follows that same contextual alias to its ground target");
+    }
+
+    Atom *same_identity = atom_var_with_id(
+        arena, "activation-cursor-other-spelling", source->var_id);
+    CHECK(same_identity != source && bindings_rewrite_value_id(
+              &builder.current, source->var_id, binding_value_from_atom(same_identity)),
+          "construct a self-link to a distinct atom with the same exact variable identity");
+    BindingValue preview;
+    CHECK(bindings_resolve_value_preview(&builder.current,
+              binding_value_from_atom(source), &preview) && preview.skeleton == source &&
+          preview.kind == BINDING_VALUE_MATERIALIZED && preview.epoch == 0u &&
+          bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, NULL}, &result) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == source && result.scope == NULL,
+          "an equal-identity self-link preserves the current root rather than adopting the next pointer");
+    CHECK(bindings_builder_add_var_fresh(&builder, other, seven) &&
+          bindings_rewrite_value_id(
+              &builder.current, source->var_id, binding_value_from_atom(other)) &&
+          bindings_rewrite_value_id(
+              &builder.current, other->var_id, binding_value_from_atom(source)),
+          "construct a two-variable cycle through the native logical value writers");
+    result = (CettaGsltTermCursorV1){thirteen, &frame};
+    CHECK(!bindings_resolve_value_preview(&builder.current,
+              binding_value_from_atom(source), &preview) &&
+          bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){source, NULL}, &result) ==
+              CETTA_GSLT_TERM_VIEW_DEFER_V1 && result.source == NULL && result.scope == NULL,
+          "a longer variable cycle cannot certify a cursor root and clears its output");
+    bindings_activation_view_free(&stale);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
+}
+
+static void alias_root_query_controls(Arena *arena) {
+    Atom *source = atom_var_with_id(arena, "alias-query-source", UINT64_C(990301));
+    Atom *other = atom_var_with_id(arena, "alias-query-other", UINT64_C(990302));
+    Atom *seven = atom_int(arena, 7);
+    Atom *written_call = atom_expr2(arena, atom_symbol(arena, "alias-query-written"), source);
+    Bindings rows;
+    bindings_init(&rows);
+    CHECK(bindings_add_var(&rows, source, seven) &&
+          bindings_add_var(&rows, other, seven) && bindings_prepare_logical_write(&rows),
+          "construct an owned ordinary-row inventory for alias observation");
+    rows.entries[1].var_id = source->var_id;
+    rows.entries[1].value = (BindingValue){.skeleton = NULL, .epoch = 19u,
+        .kind = BINDING_VALUE_CONTEXTUAL};
+    bindings_invalidate_after_key_rewrite(&rows);
+    BindingValue newest = bindings_lookup_value_id(&rows, source->var_id);
+    CHECK(newest.skeleton == NULL && newest.epoch == 19u &&
+          newest.kind == BINDING_VALUE_CONTEXTUAL,
+          "the newest null row retains its metadata and shadows an older bound value");
+    BindingValue result = binding_value_from_atom(seven);
+    CHECK(bindings_resolve_value_preview(&rows, binding_value_from_atom(source), &result) &&
+          result.skeleton == source && result.epoch == 0u &&
+          result.kind == BINDING_VALUE_MATERIALIZED && rows.len == 2u,
+          "a null shadow leaves the source open without resurrecting its older alias");
+    CHECK(bindings_resolve_value_preview(&rows,
+              binding_value_from_persistent_context(written_call, 17u), &result) &&
+          result.skeleton == written_call && result.epoch == 17u &&
+          result.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT &&
+          written_call->expr.elems[1] == source,
+          "terminal root observation retains written children and the complete contextual operand");
+    bindings_free(&rows);
+
+    VarId private_id = CETTA_VARIANT_PRIVATE_SLOT_TAG | UINT64_C(27);
+    Atom *private_variable = atom_var_with_id(arena, "alias-query-private", private_id);
+    bindings_init(&rows);
+    CHECK(atom_var_id_is_private_variant(private_id) &&
+          bindings_add_var(&rows, private_variable, seven),
+          "construct a private-variant binding with a nonzero upper word");
+    CHECK(bindings_lookup_value_id(&rows, private_id).skeleton == seven &&
+          bindings_resolve_value_preview(&rows,
+              binding_value_from_atom(private_variable), &result) && result.skeleton == seven,
+          "private-variant identifiers use the ordinary domain rather than a frame lookup");
+    bindings_free(&rows);
+
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity epoch = 0u;
+    BindingsBuilder builder;
+    CHECK(cetta_frame_identity_scope_try(&identities, &epoch) &&
+          bindings_builder_init(&builder, NULL), "acquire a live identity for a mixed alias chain");
+    VarId source_ids[] = {source->var_id};
+    CHECK(bindings_builder_register_contextual_frame(&builder, source_ids, 1u, epoch) &&
+          bindings_builder_add_var_fresh(&builder, source, seven) &&
+          bindings_builder_add_id_fresh(&builder, var_epoch_id(source->var_id, epoch),
+              source->sym_id, source),
+          "construct a framed alias to an ordinary variable with the same source atom");
+    BindingValue contextual = binding_value_from_context(source, epoch);
+    BindingValue first_edge = bindings_lookup_value_id(
+        &builder.current, var_epoch_id(source->var_id, epoch));
+    CHECK(first_edge.skeleton == source && first_edge.kind == BINDING_VALUE_MATERIALIZED,
+          "one mixed-chain lookup changes context without replacing the source pointer");
+    CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
+          result.skeleton == seven && result.kind == BINDING_VALUE_MATERIALIZED &&
+          result.epoch == 0u,
+          "root observation follows the frame edge and then the independent ordinary edge");
+    CHECK(bindings_resolve_value_exact(&builder.current, contextual, &result) &&
+          result.skeleton == seven && result.kind == BINDING_VALUE_MATERIALIZED,
+          "exact type-root observation follows the same mixed-domain alias chain");
+    Atom *held = atom_expr3(arena, atom_symbol(arena, "+"),
+        atom_int(arena, 1), atom_int(arena, 2));
+    Atom *body_children[] = {atom_symbol(arena, "alias-query-body"), other, held, other};
+    Atom *body = atom_expr(arena, body_children, 4u);
+    CHECK(bindings_builder_add_var_fresh(&builder, other, seven) &&
+          bindings_rewrite_value_id(&builder.current, source->var_id,
+              binding_value_from_atom(body)),
+          "return a materialized compound whose child belongs to the ordinary image");
+    CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
+          result.skeleton == body && result.epoch == 0u &&
+          result.kind == BINDING_VALUE_MATERIALIZED &&
+          result.skeleton->expr.elems[1] == other &&
+          result.skeleton->expr.elems[2] == held &&
+          result.skeleton->expr.elems[3] == other,
+          "resolving a returned root preserves repeated children and the written call");
+    BindingsTermCursorContextV1 context = {&builder.current, NULL};
+    CettaGsltTermCursorV1 returned = {0}, child = {0};
+    Atom *qualified = atom_var_with_id(arena, "alias-query-qualified",
+        var_epoch_id(source->var_id, epoch));
+    CHECK(bindings_resolve_term_cursor_v1(&context,
+              (CettaGsltTermCursorV1){qualified, NULL}, &returned) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && returned.source == body &&
+          returned.scope == NULL &&
+          cetta_gslt_term_cursor_child_v1(returned, 1u, &child) &&
+          child.source == other && child.scope == NULL,
+          "the native cursor reads a returned child before any separate child resolution");
+    Bindings branch;
+    bindings_init(&branch);
+    Atom *eleven = atom_int(arena, 11);
+    CHECK(bindings_clone(&branch, &builder.current) &&
+          bindings_rewrite_value_id(&branch, other->var_id,
+              binding_value_from_atom(eleven)),
+          "retain the returned syntax while changing one branch's child binding");
+    BindingValue original_child, branch_child;
+    CHECK(bindings_resolve_value_preview(&builder.current,
+              binding_value_from_atom(other), &original_child) &&
+          bindings_resolve_value_preview(&branch,
+              binding_value_from_atom(other), &branch_child) &&
+          original_child.skeleton == seven && branch_child.skeleton == eleven &&
+          body->expr.elems[1] == other && body->expr.elems[3] == other &&
+          body->expr.elems[2] == held,
+          "the same repeated child pointer observes its selected branch without rewriting syntax");
+    bindings_free(&branch);
+    bindings_builder_free(&builder);
+}
+
 static void exercise(Arena *a, bool epoch) {
     Atom *f = atom_symbol(a,"frame-test-f");
     Atom *x = atom_var_with_id(a,"same-spelling",UINT64_C(10001));
@@ -2433,6 +2848,18 @@ int main(int argc, char **argv) {
     VarInternTable vars; var_intern_init(&vars); g_var_intern=&vars;
     Arena arena; arena_init(&arena);
     test_runtime_stats_reset_counters();
+    if (argc > 1 && strcmp(argv[1], "--cursor-children") == 0) {
+        term_cursor_children(&arena);
+        goto report;
+    }
+    if (argc > 1 && strcmp(argv[1], "--activation-cursor") == 0) {
+        activation_cursor_resolution(&arena);
+        goto report;
+    }
+    if (argc > 1 && strcmp(argv[1], "--alias-query") == 0) {
+        alias_root_query_controls(&arena);
+        goto report;
+    }
     exercise(&arena,false); exercise(&arena,true); epoch_separation(&arena); plan_validation(&arena); plan_head_order(&arena); planned_cycle_support_owns_context(&arena); unplanned_activation_owns_complete_context(&arena); test_nested_head_dereferences(&arena);
     test_type_wildcards(&arena);
     test_unary_spine(&arena);
@@ -2463,6 +2890,10 @@ int main(int argc, char **argv) {
     attempt_profile(&arena);
     attempt_outcomes_cover_matchers(&arena);
     query_slot_nonoriginal();
+    term_cursor_children(&arena);
+    activation_cursor_resolution(&arena);
+    alias_root_query_controls(&arena);
+report:
     printf("MatchWorklistFrames checks=%u failures=%u\n",checks,failures);
     arena_free(&arena); bindings_thread_cache_free(); g_var_intern=NULL; var_intern_free(&vars);
     g_symbols=NULL; symbol_table_free(&symbols);

@@ -806,6 +806,19 @@ bool cetta_petta_typecheck_v3_compatibility_block(
         cetta_petta_typecheck_v3_opt_license_is_current(
             &result->native.optimization_license, space,
             forms, form_count, native_policy);
+    /* A refutation both judgments agree on also names PeTTa's kind of
+     * refutation, which the legacy judgment states. */
+    if (agrees && result->verdict == PETTA_ANALYSIS_REFUTED &&
+        result->legacy.diagnostic[0]) {
+        (void)snprintf(
+            result->diagnostic, sizeof result->diagnostic,
+            "%s: native=%s; legacy=%s; %.200s; %.240s",
+            cetta_petta_typecheck_v3_route_name(result->route),
+            cetta_petta_typecheck_v3_verdict_name(result->native.verdict),
+            petta_typecheck_verdict_name(result->legacy.verdict),
+            result->native.diagnostic, result->legacy.diagnostic);
+        return true;
+    }
     (void)snprintf(
         result->diagnostic, sizeof result->diagnostic,
         "%s: native=%s; legacy=%s; %.400s",

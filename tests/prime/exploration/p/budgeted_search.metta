@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Budgeted plan search: exhaustion is Incomplete, never Refuted.
 ;
@@ -175,7 +175,7 @@
 ; ---- the ITP half: an established verdict carries a checked proof -------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: X prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal

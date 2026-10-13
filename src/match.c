@@ -2220,6 +2220,83 @@ bool bindings_iterator_next(BindingsIterator *iterator, Binding *binding_out) {
     return false;
 }
 
+bool bindings_frame_state_directory(const Bindings *bindings,
+                                    BindingsFrameDirectoryStateView *view) {
+    if (!bindings || !view)
+        return false;
+    const BindingsFrameIndex *index = bindings->frame_index;
+    *view = (BindingsFrameDirectoryStateView){
+        .bindings = bindings,
+        .directory = index,
+        .frame_count = index ? index->len : 0u,
+        .schema_revision = index ? index->schema_revision : 0u,
+        .write_clock = index ? index->write_clock : 0u,
+    };
+    return true;
+}
+
+bool bindings_frame_state_count(const Bindings *bindings, uint32_t *count_out) {
+    BindingsFrameDirectoryStateView view;
+    if (!count_out || !bindings_frame_state_directory(bindings, &view))
+        return false;
+    *count_out = view.frame_count;
+    return true;
+}
+
+bool bindings_frame_state_next(BindingsFrameStateIterator *iterator,
+                                BindingsFrameStateView *view) {
+    if (!iterator || !iterator->bindings || !view)
+        return false;
+    const BindingsFrameIndex *index = iterator->bindings->frame_index;
+    if (!index || iterator->frame >= index->len)
+        return false;
+    const BindingsFrameIndexEntry *frame = &index->frames[iterator->frame];
+    BindingsFrameRef ref = bindings_frame_ref_from_entry(index, frame);
+    if (!bindings_frame_ref_is_valid(ref))
+        return false;
+    *view = (BindingsFrameStateView){
+        .bindings = iterator->bindings,
+        .directory = index,
+        .ref = ref,
+        .slot_count = frame->slot_len,
+        .schema_slot_count = frame->schema->len,
+        .schema_revision = index->schema_revision,
+        .write_clock = index->write_clock,
+        .activation_write_boundary = frame->activation_write_boundary,
+        .has_activation_write_boundary = frame->has_activation_write_boundary,
+        .schema_complete = frame->schema_complete,
+        .owns_identity = frame->owns_identity,
+    };
+    iterator->frame++;
+    return true;
+}
+
+bool bindings_frame_state_read_slot(const BindingsFrameStateView *view,
+                                    uint32_t slot, BindingsFrameSlotStateView *out) {
+    if (!view || !view->bindings || !out || slot >= view->slot_count)
+        return false;
+    const BindingsFrameIndex *index = view->bindings->frame_index;
+    if (!index || index != view->directory ||
+        index->schema_revision != view->schema_revision ||
+        index->write_clock != view->write_clock)
+        return false;
+    const BindingsFrameIndexEntry *frame = bindings_frame_index_find_ref_const(index, view->ref);
+    if (!frame || frame->slot_len != view->slot_count)
+        return false;
+    VarId source = bindings_frame_slot_source_id(frame, slot);
+    bool declared = slot < frame->schema->len;
+    *out = (BindingsFrameSlotStateView){
+        .source_id = source,
+        .var_id = var_epoch_id(source, frame->epoch),
+        .spelling = declared ? bindings_frame_slot_spelling(frame, slot) : SYMBOL_ID_NONE,
+        .name_key = declared ? bindings_frame_slot_name_key(frame, slot) : NULL,
+        .declared_in_schema = declared,
+        .value = frame->values[slot],
+        .write_version = frame->write_version[slot],
+    };
+    return true;
+}
+
 static bool bindings_for_each_current_binding(
         const Bindings *bindings, BindingsCurrentBindingVisitor visitor,
         void *context) {
@@ -2255,6 +2332,39 @@ bool bindings_has_bound_values(const Bindings *bindings) {
     return bindings &&
         (bindings->len != 0u ||
          bindings_frame_value_count(bindings) != 0u);
+}
+
+bool bindings_has_frame_authority(const Bindings *bindings) {
+    return bindings && bindings->frame_index && bindings->frame_index->len != 0u;
+}
+
+bool bindings_retain_frame_state(Bindings *dst, const Bindings *src) {
+    if (!dst || !src)
+        return false;
+    if (dst == src || !bindings_has_frame_authority(src))
+        return true;
+    if (!bindings_frame_index_merge_schemas(dst, src) ||
+        !bindings_frame_index_detach(dst))
+        return false;
+    if (dst->frame_index->write_clock < src->frame_index->write_clock)
+        dst->frame_index->write_clock = src->frame_index->write_clock;
+    for (uint32_t i = 0u; i < src->frame_index->len; i++) {
+        const BindingsFrameIndexEntry *source = &src->frame_index->frames[i];
+        BindingsFrameIndexEntry *target =
+            bindings_frame_index_find_frame(dst->frame_index, source->epoch);
+        if (!target || !bindings_frame_index_entry_detach(target))
+            return false;
+        target->activation_write_boundary = source->activation_write_boundary;
+        target->has_activation_write_boundary = source->has_activation_write_boundary;
+        for (uint32_t slot = 0u; slot < source->slot_len; slot++) {
+            uint32_t target_slot = 0u;
+            if (!bindings_frame_index_find_slot(target,
+                    bindings_frame_slot_source_id(source, slot), &target_slot))
+                return false;
+            target->write_version[target_slot] = source->write_version[slot];
+        }
+    }
+    return true;
 }
 
 size_t bindings_frame_binding_count(const Bindings *bindings, BindingsFrameRef ref) {
@@ -3648,21 +3758,32 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
     return promoted;
 }
 
-bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
-    if (!bindings_promote_logical_atoms_to_arena(bindings, dst))
-        return false;
+static bool bindings_promote_occurrence_with_session(
+    Bindings *bindings, AtomDeepCopySession *session) {
     if (!bindings->prime_ext)
         return true;
-    if (!prime_need_snapshot_promote(
-            dst, &bindings->prime_ext->prime_need) ||
-        !prime_need_branch_state_promote(
-            dst, &bindings->prime_ext->branch_state))
+    if (!prime_need_snapshot_promote_with_session(
+            session, &bindings->prime_ext->prime_need) ||
+        !prime_need_branch_state_promote_with_session(
+            session, &bindings->prime_ext->branch_state))
         return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if (!prime_need_receipt_promote(dst, &bindings->prime_ext->receipt))
+    if (!prime_need_branch_state_promote_with_session(session, &bindings->prime_ext->receipt))
         return false;
 #endif
     return true;
+}
+
+bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
+    if (!bindings || !dst)
+        return false;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(dst);
+    if (!session)
+        return false;
+    bool promoted = bindings_promote_logical_atoms_with_session(bindings, session) &&
+        bindings_promote_occurrence_with_session(bindings, session);
+    atom_deep_copy_session_free(session);
+    return promoted;
 }
 
 void bindings_move(Bindings *dst, Bindings *src) {
@@ -4338,12 +4459,13 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
     if (!src || (!bindings_has_bound_values(src) && src->eq_len == 0 &&
-                 !bindings_prime_present(src)))
+                 !bindings_prime_present(src) &&
+                 !bindings_has_frame_authority(src)))
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
     if (dst && !bindings_has_bound_values(dst) && dst->eq_len == 0 &&
-        !bindings_prime_present(dst)) {
+        !bindings_prime_present(dst) && !bindings_has_frame_authority(dst)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         Bindings cloned;
         if (!bindings_clone(&cloned, src))
@@ -6126,8 +6248,8 @@ static bool bindings_builder_record_frame_slot_value(
         bb->trail_len == 0u) {
         return false;
     }
-    const BindingsFrameIndexEntry *frame =
-        bindings_frame_index_find_ref_const(
+    BindingsFrameIndexEntry *frame =
+        bindings_frame_index_find_ref(
             bb->current.frame_index, ref);
     if (!frame)
         return false;
@@ -6155,8 +6277,8 @@ static bool bindings_builder_record_frame_slot_value(
         .trail_mark = bb->trail_len - 1u,
     };
     bool authority_moved = false;
-    if (!bindings_frame_index_write_slot_ref(
-            &bb->current, ref, slot, value,
+    if (!bindings_frame_index_write_resolved_slot(
+            &bb->current, frame, slot, value,
             &undo.written_write_version, &authority_moved)) {
         return false;
     }
@@ -6498,43 +6620,43 @@ bool bindings_builder_clone(BindingsBuilder *dst,
     return true;
 }
 
-bool bindings_builder_promote_prime_atoms_to_arena(
-        BindingsBuilder *bb, Arena *owner) {
-    if (!bb || !owner ||
+static bool bindings_builder_promote_prime_with_session(
+        BindingsBuilder *bb, AtomDeepCopySession *session) {
+    if (!bb || !atom_deep_copy_session_plain_arena(session) ||
         bb->prime_trail_len > bb->prime_trail_cap ||
         (bb->prime_trail_len > 0u && !bb->prime_trail)) {
         return false;
     }
-    if (bb->current.prime_ext &&
-        (!prime_need_snapshot_promote(
-             owner, &bb->current.prime_ext->prime_need) ||
-         !prime_need_branch_state_promote(
-             owner, &bb->current.prime_ext->branch_state))) {
+    if (!bindings_promote_occurrence_with_session(&bb->current, session)) {
         return false;
     }
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if (bb->current.prime_ext &&
-        !prime_need_receipt_promote(
-            owner, &bb->current.prime_ext->receipt)) {
-        return false;
-    }
-#endif
     for (uint32_t i = 0u; i < bb->prime_trail_len; i++) {
         PrimeOccurrence *occurrence = &bb->prime_trail[i];
-        if (!prime_need_snapshot_promote(
-                owner, &occurrence->prime_need) ||
-            !prime_need_branch_state_promote(
-                owner, &occurrence->branch_state)) {
+        if (!prime_need_snapshot_promote_with_session(
+                session, &occurrence->prime_need) ||
+            !prime_need_branch_state_promote_with_session(
+                session, &occurrence->branch_state)) {
             return false;
         }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (!prime_need_receipt_promote(
-                owner, &occurrence->receipt)) {
+        if (!prime_need_branch_state_promote_with_session(
+                session, &occurrence->receipt)) {
             return false;
         }
 #endif
     }
     return true;
+}
+
+bool bindings_builder_promote_prime_atoms_to_arena(BindingsBuilder *bb, Arena *owner) {
+    if (!bb || !owner)
+        return false;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(owner);
+    if (!session)
+        return false;
+    bool promoted = bindings_builder_promote_prime_with_session(bb, session);
+    atom_deep_copy_session_free(session);
+    return promoted;
 }
 
 bool bindings_builder_promote_atoms_to_arena(
@@ -6596,9 +6718,10 @@ bool bindings_builder_promote_atoms_to_arena(
         bindings_frame_schema_release(source_schema);
         bb->frame_registration_undo[i].previous_schema = copy_schema;
     }
+    if (promoted)
+        promoted = bindings_builder_promote_prime_with_session(bb, session);
     atom_deep_copy_session_free(session);
-    return promoted &&
-        bindings_builder_promote_prime_atoms_to_arena(bb, owner);
+    return promoted;
 }
 
 void bindings_builder_free(BindingsBuilder *bb) {
@@ -6842,9 +6965,16 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
         *authoritative_value_out = binding_value_from_atom(NULL);
     if (!bb)
         return false;
-    if (binding_id_has_frame(var_id) &&
-        !bindings_builder_frame_index_ensure_id(bb, var_id))
-        return false;
+    const BindingsFrameIndexEntry *framed_entry = NULL;
+    uint32_t framed_slot = 0u;
+    bool framed = binding_id_has_frame(var_id);
+    if (framed && !bindings_frame_index_find_coordinate(
+            &bb->current, var_id, &framed_entry, &framed_slot)) {
+        if (!bindings_builder_frame_index_ensure_id(bb, var_id) ||
+            !bindings_frame_index_find_coordinate(
+                &bb->current, var_id, &framed_entry, &framed_slot))
+            return false;
+    }
     if (val.skeleton->kind == ATOM_VAR &&
         binding_var_eq(var_id, binding_value_variable_id(val)))
         return true;
@@ -6856,23 +6986,18 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             return true;
     }
 
-    const BindingsFrameIndexEntry *framed_entry = NULL;
-    uint32_t framed_slot = 0u;
-    bool framed = binding_id_has_frame(var_id) &&
-        bindings_frame_index_find_coordinate(
-            &bb->current, var_id, &framed_entry, &framed_slot);
     BindingsFrameRef framed_ref = framed
-        ? bindings_frame_ref_from_entry(
-              bb->current.frame_index, framed_entry)
+        ? (BindingsFrameRef){.identity = framed_entry->epoch}
         : (BindingsFrameRef){0};
     BindingValue existing = binding_value_from_atom(NULL);
     if (framed) {
-        if (!bindings_frame_ref_is_valid(framed_ref) ||
-            !bindings_frame_index_ensure_presentation_slot(
+        /* Presentation may detach the directory; copy the value before that
+         * boundary and keep only the stable reference afterward. RHS admission
+         * below may also move sparse slots, so the write resolves them again. */
+        existing = framed_entry->values[framed_slot];
+        if (!bindings_frame_index_ensure_presentation_slot(
                 &bb->current, framed_ref, framed_slot,
-                var_id, spelling, name_key) ||
-            !bindings_frame_index_lookup_value_slot(
-                &bb->current, framed_ref, framed_slot, &existing)) {
+                var_id, spelling, name_key)) {
             return false;
         }
     } else {
@@ -7317,7 +7442,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     if (!bb || !src)
         return true;
     if (!bindings_has_bound_values(src) && src->eq_len == 0 &&
-        !bindings_prime_present(src))
+        !bindings_prime_present(src) && !bindings_has_frame_authority(src))
         return true;
     bindings_assert_no_private_variant_slots(&bb->current);
     bindings_assert_no_private_variant_slots(src);
@@ -9256,6 +9381,14 @@ static bool bindings_projection_copy_live_frame_values(
         const BindingsReachableVars *live) {
     if (!src || !dst || !live)
         return false;
+    /* The directory clock is an allocation frontier, not the maximum version
+     * of a selected bound slot. Dropping an old write cannot rewind it. */
+    if (src->frame_index && dst->frame_index) {
+        if (!bindings_frame_index_detach(dst))
+            return false;
+        if (dst->frame_index->write_clock < src->frame_index->write_clock)
+            dst->frame_index->write_clock = src->frame_index->write_clock;
+    }
     for (size_t index = 0u; index < live->work_len; index++) {
         VarId id = live->work[index];
         bool known = false;
@@ -9270,18 +9403,11 @@ static bool bindings_projection_copy_live_frame_values(
                 source, (VarId)var_base_id(id), &source_slot)) {
             return false;
         }
-        BindingValue value = source->values[source_slot];
-        if (!value.skeleton)
-            continue;
         VarId source_id = (VarId)var_base_id(id);
         if (!bindings_frame_index_ensure_presentation(
                 dst, id, bindings_frame_slot_spelling(source, source_slot),
                 bindings_frame_slot_name_key(source, source_slot)) ||
             !bindings_frame_index_detach(dst)) {
-            return false;
-        }
-        if (!bindings_frame_index_prepare_value_context(
-                dst, NULL, &value, false)) {
             return false;
         }
         BindingsFrameIndexEntry *target =
@@ -9293,6 +9419,19 @@ static bool bindings_projection_copy_live_frame_values(
             !bindings_frame_index_entry_detach(target)) {
             return false;
         }
+        target->activation_write_boundary = source->activation_write_boundary;
+        target->has_activation_write_boundary = source->has_activation_write_boundary;
+        target->write_version[target_slot] = source->write_version[source_slot];
+        BindingValue value = source->values[source_slot];
+        if (!value.skeleton)
+            continue;
+        if (!bindings_frame_index_prepare_value_context(dst, NULL, &value, false))
+            return false;
+        /* Preparing a contextual payload can grow or detach the directory. */
+        target = bindings_frame_index_find_frame(dst->frame_index, var_epoch_suffix(id));
+        if (!target || !bindings_frame_index_find_slot(target, source_id, &target_slot) ||
+            !bindings_frame_index_entry_detach(target))
+            return false;
         if (!bindings_frame_index_replace_slot_value(
                 dst->frame_index, target, target_slot, value)) {
             return false;
@@ -9300,15 +9439,6 @@ static bool bindings_projection_copy_live_frame_values(
         bindings_rhs_variable_bloom_add(dst, value);
         target->write_version[target_slot] =
             source->write_version[source_slot];
-        target->activation_write_boundary =
-            source->activation_write_boundary;
-        target->has_activation_write_boundary =
-            source->has_activation_write_boundary;
-        if (dst->frame_index->write_clock <
-                src->frame_index->write_clock) {
-            dst->frame_index->write_clock =
-                src->frame_index->write_clock;
-        }
     }
     return true;
 }
@@ -9451,10 +9581,12 @@ fail:
     return false;
 }
 
-static bool bindings_project_reachable_selected(
+static bool bindings_project_reachable_selected_history(
     const Bindings *src, Atom *const *roots, size_t root_count,
     const BindingsEpochRoot *epoch_roots,
     size_t epoch_root_count,
+    const BindingsFrameUndoEntry *frame_history, uint32_t history_count,
+    uint32_t rollback_floor,
     Bindings *dst, bool **keep_entries_out,
     bool **keep_constraints_out) {
     bool return_selection =
@@ -9581,6 +9713,20 @@ static bool bindings_project_reachable_selected(
                 goto fail;
             }
         }
+        /* A live checkpoint can restore an older contextual RHS even when
+         * the current slot is ground. Its context is a retained dependency
+         * of that coordinate, and may itself expose further history. */
+        for (uint32_t i = 0u; i < history_count; i++) {
+            const BindingsFrameUndoEntry *undo = &frame_history[i];
+            VarId id = var_epoch_id((VarId)undo->source_id,
+                                   undo->frame_ref.identity);
+            if (undo->written_write_version != 0u &&
+                undo->trail_mark >= rollback_floor &&
+                bindings_reachable_vars_contains(&live, id) &&
+                !bindings_reachable_vars_add_value(&live, undo->previous_value)) {
+                goto fail;
+            }
+        }
         if (live.work_next == live.work_len && !added_constraint)
             break;
     }
@@ -9656,6 +9802,15 @@ fail:
     free(keep_constraints);
     bindings_reachable_vars_free(&live);
     return false;
+}
+
+static bool bindings_project_reachable_selected(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots, size_t epoch_root_count,
+    Bindings *dst, bool **keep_entries_out, bool **keep_constraints_out) {
+    return bindings_project_reachable_selected_history(
+        src, roots, root_count, epoch_roots, epoch_root_count,
+        NULL, 0u, 0u, dst, keep_entries_out, keep_constraints_out);
 }
 
 bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
@@ -9806,12 +9961,19 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
             return false;
     }
 
+    uint32_t rollback_floor = old_trail_len;
+    for (size_t i = 0u; i < checkpoint_count; i++) {
+        if (checkpoint_marks[i] < rollback_floor)
+            rollback_floor = checkpoint_marks[i];
+    }
     Bindings projected;
     bool *keep_entries = NULL;
     bool *keep_constraints = NULL;
-    if (!bindings_project_reachable_selected(
+    if (!bindings_project_reachable_selected_history(
             &bb->current, roots, root_count,
-            epoch_roots, epoch_root_count, &projected,
+            epoch_roots, epoch_root_count,
+            bb->frame_undo, checkpoint_count ? bb->frame_undo_len : 0u,
+            rollback_floor, &projected,
             &keep_entries, &keep_constraints)) {
         return false;
     }

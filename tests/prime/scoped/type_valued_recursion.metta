@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A function into a universe, defined by structural recursion on the numbers,
 ; computes a type at each number.  Values are checked at the computed types.
@@ -6,7 +6,7 @@
 ; along a path between numbers into a type that differs from the start type;
 ; the result is not the method.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 
 ; n-tuples of numbers.

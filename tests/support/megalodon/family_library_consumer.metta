@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Specialize the imported family theorem to the identity family. This is a
 ; new retained proof, using the source membership relation and universe map.

@@ -197,16 +197,19 @@ bool prime_scoped_judgment_is_head_id(SymbolId head) {
  * its well-founded sets and least-universe operator. Eps_set is declared;
  * its choice law is an additional explicit assumption, not a seed here.
  *
- * A space selects its theory with ordinary inspectable data, a profile of
- * the native logic with
- *   (hol:profile core)
- *   (hol:profile megalodon-hotg)
- * or a material set profile with (set:profile prime-common) and its
- * siblings. Fresh spaces use the shared material core. Unknown or
- * conflicting selections confer no interpretation, and a judgment is
- * interpreted only in a space whose theory belongs to its namespace. An
- * imported library may supply the same declaration; selection never
- * changes another independent space.
+ * A space selects its theory with ordinary inspectable data: the native
+ * higher-order logic alone with
+ *   (hol:profile base)
+ * and a set theory with (set:profile prime-common), the default, its
+ * siblings, or
+ *   (set:profile megalodon-hotg)
+ * Every set profile is a theory over the same base logic: its signature
+ * is the base logic's, spelled in set:, together with its own constants
+ * and laws (sj_profile_base_logic).  Fresh spaces use the shared material
+ * fragment.  Unknown or conflicting selections confer no interpretation,
+ * and a judgment is interpreted only in a space whose theory belongs to its
+ * namespace.  An imported library may supply the same declaration;
+ * selection never changes another independent space.
  *
  * Definitions are checked in signature order by the declared judgment.
  * Native rule constants implement the logical introductions/eliminations;
@@ -226,11 +229,10 @@ typedef enum {
 
 static SjTheoryProfile g_sj_signature_profile = SJ_PROFILE_HOL;
 
-/* The namespace of a profile: the native logic's profiles are `hol:`, the
- * material set profiles `set:`. */
+/* The namespace of a profile: the native logic alone is `hol:`; every set
+ * theory over it, the material fragment and HOTG alike, is `set:`. */
 static SjFace sj_profile_face(SjTheoryProfile profile) {
-    return profile == SJ_PROFILE_HOL || profile == SJ_PROFILE_MEGALODON_HOTG
-        ? SJ_FACE_HOL : SJ_FACE_SET;
+    return profile == SJ_PROFILE_HOL ? SJ_FACE_HOL : SJ_FACE_SET;
 }
 
 /* The atom head that selects a profile of a namespace. */
@@ -296,26 +298,33 @@ const char *prime_scoped_word(const char *word, bool hol) {
     return sj_spelled_in(hol ? SJ_FACE_HOL : SJ_FACE_SET, word);
 }
 
-static const char SJ_HOL_SIGNATURE_TEXT[] =
-    "(: prop (u 0))\n"
-    "(: imp (-> prop (-> prop prop)))\n"
-    "(: all (-> (A : class) (-> (-> A prop) prop)))\n"
-    "(hol:define Falsum prop (= Falsum (all prop (lam p p))))\n"
+/* The base logic, written once: its declarations and its rule constants,
+ * spelled in the namespace NS of the profile that includes them.  The base
+ * logic alone is (hol:profile base); every set profile over it includes the
+ * same text spelled in set: (sj_profile_base_logic). */
+#define SJ_BASE_LOGIC_DECLARATIONS(NS) \
+    "(: prop (u 0))\n" \
+    "(: imp (-> prop (-> prop prop)))\n" \
+    "(: all (-> (A : class) (-> (-> A prop) prop)))\n" \
+    "(" NS ":define Falsum prop (= Falsum (all prop (lam p p))))\n" \
     "(: eq (-> (A : class) (-> A (-> A prop))))\n"
-    "(hol:native-rule impI imp-intro)\n"
-    "(hol:native-rule impE imp-elim)\n"
-    "(hol:native-rule allI all-intro)\n"
-    "(hol:native-rule allE all-elim)\n"
-    "(hol:native-rule eqI eq-intro)\n"
-    "(hol:native-rule eqE eq-elim)\n"
-    "(hol:native-rule eqS eq-subst)\n";
+#define SJ_BASE_LOGIC_RULES(NS) \
+    "(" NS ":native-rule impI imp-intro)\n" \
+    "(" NS ":native-rule impE imp-elim)\n" \
+    "(" NS ":native-rule allI all-intro)\n" \
+    "(" NS ":native-rule allE all-elim)\n" \
+    "(" NS ":native-rule eqI eq-intro)\n" \
+    "(" NS ":native-rule eqE eq-elim)\n" \
+    "(" NS ":native-rule eqS eq-subst)\n"
 
+static const char SJ_HOL_SIGNATURE_TEXT[] =
+    SJ_BASE_LOGIC_DECLARATIONS("hol")
+    SJ_BASE_LOGIC_RULES("hol");
+
+/* Megalodon HOTG: a set theory over the base logic, with the set constants
+ * and eleven laws below. */
 static const char SJ_MEGALODON_HOTG_SIGNATURE_TEXT[] =
-    "(: prop (u 0))\n"
-    "(: imp (-> prop (-> prop prop)))\n"
-    "(: all (-> (A : class) (-> (-> A prop) prop)))\n"
-    "(hol:define Falsum prop (= Falsum (all prop (lam p p))))\n"
-    "(: eq (-> (A : class) (-> A (-> A prop))))\n"
+    SJ_BASE_LOGIC_DECLARATIONS("set")
     "(: In (-> set (-> set prop)))\n"
     "(: Empty set)\n"
     "(: Union (-> set set))\n"
@@ -325,62 +334,56 @@ static const char SJ_MEGALODON_HOTG_SIGNATURE_TEXT[] =
     "(: Eps_set (-> (-> set prop) set))\n"
     "(: UnivOf (-> set set))\n"
     /* extensionality, Megalodon law_extensionality: sets with the same members are equal. */
-    "(hol:seed extensionality (all set (lam a (all set (lam b (imp (all set (lam x (all "
+    "(set:seed extensionality (all set (lam a (all set (lam b (imp (all set (lam x (all "
     "prop (lam r (imp (imp (imp (In x a) (In x b)) (imp (imp (In x b) (In x a)) r)) "
     "r))))) (eq set a b)))))))\n"
     /* emptyLaw, Megalodon law_empty: nothing is a member of Empty. */
-    "(hol:seed emptyLaw (all set (lam x (imp (In x Empty) Falsum))))\n"
+    "(set:seed emptyLaw (all set (lam x (imp (In x Empty) Falsum))))\n"
     /* unionLaw, Megalodon law_union: the members of a union. */
-    "(hol:seed unionLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
+    "(set:seed unionLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
     "(In x (Union a)) (all prop (lam r (imp (all set (lam y (imp (all prop (lam r (imp "
     "(imp (In y a) (imp (In x y) r)) r))) r))) r)))) (imp (imp (all prop (lam r (imp (all"
     " set (lam y (imp (all prop (lam r (imp (imp (In y a) (imp (In x y) r)) r))) r))) "
     "r))) (In x (Union a))) r)) r))))))))\n"
     /* powerLaw, Megalodon law_power: the members of a power set. */
-    "(hol:seed powerLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
+    "(set:seed powerLaw (all set (lam a (all set (lam x (all prop (lam r (imp (imp (imp "
     "(In x (Power a)) (all set (lam y (imp (In y x) (In y a))))) (imp (imp (all set (lam "
     "y (imp (In y x) (In y a)))) (In x (Power a))) r)) r))))))))\n"
     /* separationLaw, Megalodon law_separation: the members of a separated set. */
-    "(hol:seed separationLaw (all set (lam a (all (-> set prop) (lam P (all set (lam x "
+    "(set:seed separationLaw (all set (lam a (all (-> set prop) (lam P (all set (lam x "
     "(all prop (lam r (imp (imp (imp (In x (Sep a P)) (all prop (lam r (imp (imp (In x a)"
     " (imp (P x) r)) r)))) (imp (imp (all prop (lam r (imp (imp (In x a) (imp (P x) r)) "
     "r))) (In x (Sep a P))) r)) r))))))))))\n"
     /* replacementLaw, Megalodon law_replacement: the members of a replacement. */
-    "(hol:seed replacementLaw (all set (lam a (all (-> set set) (lam F (all set (lam y "
+    "(set:seed replacementLaw (all set (lam a (all (-> set set) (lam F (all set (lam y "
     "(all prop (lam r (imp (imp (imp (In y (Repl a F)) (all prop (lam r (imp (all set "
     "(lam x (imp (all prop (lam r (imp (imp (In x a) (imp (eq set (F x) y) r)) r))) r))) "
     "r)))) (imp (imp (all prop (lam r (imp (all set (lam x (imp (all prop (lam r (imp "
     "(imp (In x a) (imp (eq set (F x) y) r)) r))) r))) r))) (In y (Repl a F))) r)) "
     "r))))))))))\n"
     /* setInduction, Megalodon law_set_induction: induction on membership. */
-    "(hol:seed setInduction (all (-> set prop) (lam P (imp (all set (lam X (imp (all set "
+    "(set:seed setInduction (all (-> set prop) (lam P (imp (all set (lam X (imp (all set "
     "(lam x (imp (In x X) (P x)))) (P X)))) (all set (lam X (P X)))))))\n"
     /* universeIn, Megalodon law_universe_in: a set is a member of its universe. */
-    "(hol:seed universeIn (all set (lam N (In N (UnivOf N)))))\n"
+    "(set:seed universeIn (all set (lam N (In N (UnivOf N)))))\n"
     /* universeTransitive, Megalodon law_universe_transitive: a universe is transitive. */
-    "(hol:seed universeTransitive (all set (lam N (all set (lam x (imp (In x (UnivOf N)) "
+    "(set:seed universeTransitive (all set (lam N (all set (lam x (imp (In x (UnivOf N)) "
     "(all set (lam z (imp (In z x) (In z (UnivOf N)))))))))))\n"
     /* universeClosed, Megalodon law_universe_closed: a universe is closed. */
-    "(hol:seed universeClosed (all set (lam N (all prop (lam r (imp (imp (all set (lam x "
+    "(set:seed universeClosed (all set (lam N (all prop (lam r (imp (imp (all set (lam x "
     "(imp (In x (UnivOf N)) (In (Union x) (UnivOf N))))) (imp (all prop (lam r (imp (imp "
     "(all set (lam x (imp (In x (UnivOf N)) (In (Power x) (UnivOf N))))) (imp (all set "
     "(lam a (imp (In a (UnivOf N)) (all (-> set set) (lam f (imp (all set (lam x (imp (In"
     " x a) (In (f x) (UnivOf N))))) (In (Repl a f) (UnivOf N)))))))) r)) r))) r)) r))))))\n"
     /* universeMinimal, Megalodon law_universe_minimal: a universe is the least such set. */
-    "(hol:seed universeMinimal (all set (lam N (all set (lam U (imp (In N U) (imp (all "
+    "(set:seed universeMinimal (all set (lam N (all set (lam U (imp (In N U) (imp (all "
     "set (lam x (imp (In x U) (all set (lam z (imp (In z x) (In z U))))))) (imp (all prop"
     " (lam r (imp (imp (all set (lam x (imp (In x U) (In (Union x) U)))) (imp (all prop "
     "(lam r (imp (imp (all set (lam x (imp (In x U) (In (Power x) U)))) (imp (all set "
     "(lam a (imp (In a U) (all (-> set set) (lam f (imp (all set (lam x (imp (In x a) (In"
     " (f x) U)))) (In (Repl a f) U))))))) r)) r))) r)) r))) (all set (lam z (imp (In z "
     "(UnivOf N)) (In z U))))))))))))\n"
-    "(hol:native-rule impI imp-intro)\n"
-    "(hol:native-rule impE imp-elim)\n"
-    "(hol:native-rule allI all-intro)\n"
-    "(hol:native-rule allE all-elim)\n"
-    "(hol:native-rule eqI eq-intro)\n"
-    "(hol:native-rule eqE eq-elim)\n"
-    "(hol:native-rule eqS eq-subst)\n";
+    SJ_BASE_LOGIC_RULES("set");
 
 /* Content digest of the admitted signature: the theory a published fact was
  * checked against.  Reuse under a different signature is not automatic. */
@@ -415,8 +418,8 @@ static const char *sj_signature_digest(void) {
     return sj_profile_digest(g_sj_signature_profile);
 }
 
-/* The word a space declares to select the profile, `(set:profile word)`
- * for a set profile and `(hol:profile word)` for a profile of the logic. */
+/* The word a space declares to select the profile, `(hol:profile word)` for
+ * the base logic and `(set:profile word)` for a set theory over it. */
 static const char *sj_profile_name(SjTheoryProfile profile) {
     switch (profile) {
     case SJ_PROFILE_MEGALODON_HOTG: return "megalodon-hotg";
@@ -424,8 +427,23 @@ static const char *sj_profile_name(SjTheoryProfile profile) {
     case SJ_PROFILE_FOUNDATION_COMMON: return "foundation-common";
     case SJ_PROFILE_CLASSICAL_COMMON: return "classical-common";
     case SJ_PROFILE_CLASSICAL_FOUNDATION_COMMON: return "classical-foundation-common";
-    default: return "core";
+    default: return "base";
     }
+}
+
+/* The base logic of a profile: the profile whose signature it extends.  The
+ * base logic is its own base; a set profile is a theory over the base logic
+ * when its signature includes the base logic's declarations and rules,
+ * spelled in set:, which is checked on the text rather than assumed.  None
+ * (SJ_PROFILE_UNSELECTED) when the text does not. */
+static SjTheoryProfile sj_profile_base_logic(SjTheoryProfile profile) {
+    static const char declarations[] = SJ_BASE_LOGIC_DECLARATIONS("set");
+    static const char rules[] = SJ_BASE_LOGIC_RULES("set");
+    if (profile == SJ_PROFILE_HOL) return SJ_PROFILE_HOL;
+    if (profile == SJ_PROFILE_UNSELECTED) return SJ_PROFILE_UNSELECTED;
+    const char *text = sj_profile_signature_text(profile);
+    return text && strncmp(text, declarations, sizeof declarations - 1u) == 0 &&
+           strstr(text, rules) ? SJ_PROFILE_HOL : SJ_PROFILE_UNSELECTED;
 }
 
 static SjTheoryProfile sj_profile_from_name(SjFace face, Atom *name) {
@@ -824,6 +842,14 @@ static SjTheoryProfile sj_space_profile(Space *space) {
 bool prime_scoped_space_is_hol(Space *space) {
     SjTheoryProfile profile = sj_space_profile(space);
     return profile != SJ_PROFILE_UNSELECTED && sj_profile_face(profile) == SJ_FACE_HOL;
+}
+
+/* The namespace a space's records are spelled in, for the services the
+ * evaluator calls outside any judgment, where the profile of the last
+ * judgment is not this space's. */
+static SjFace sj_space_face(Space *space) {
+    SjTheoryProfile profile = sj_space_profile(space);
+    return profile == SJ_PROFILE_UNSELECTED ? SJ_FACE_SET : sj_profile_face(profile);
 }
 
 
@@ -6749,6 +6775,14 @@ static Atom *sj_link_declined(Arena *a, Atom *judgment,
     return sj_undetermined(a, judgment, evidence);
 }
 
+/* A native package of either namespace.  One of the other namespace is
+ * well formed; it is then refused by the profile its signature names, as a
+ * receipt of the other namespace is. */
+static bool sj_is_native_package(Atom *package) {
+    return sj_is_expr(package, "SetNativeProofV1", SJ_NATIVE_PACKAGE_LEN) ||
+           sj_is_expr(package, "HolNativeProofV1", SJ_NATIVE_PACKAGE_LEN);
+}
+
 static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
                                            Atom *interpretation,
                                            Atom *package, SjProofState *st) {
@@ -6756,7 +6790,7 @@ static Atom *sj_set_native_link_with_state(Arena *a, Atom *judgment,
         return sj_undetermined(a, judgment,
                                sj_expr2(a, SJ_S("set:native-link-interpretation"),
                                         interpretation));
-    if (!sj_is_expr(package, SJ_S("SetNativeProofV1"), SJ_NATIVE_PACKAGE_LEN))
+    if (!sj_is_native_package(package))
         return sj_refuted(a, judgment,
                           sj_expr1(a, SJ_S("set:native-package-syntax")));
     Atom *name = package->expr.elems[SJ_NATIVE_PACKAGE_NAME];
@@ -7066,7 +7100,7 @@ static Atom *sj_set_native_use(Arena *a, Space *space, Atom *judgment,
         sj_is_expr(package, SJ_S("SetNativeProofV1"), SJ_NATIVE_PACKAGE_LEN) &&
         sj_interpretation_declared(a, space, "identity");
     Atom *native = linked ? package->expr.elems[SJ_NATIVE_LINKED_PACKAGE] : package;
-    if (!sj_is_expr(native, SJ_S("SetNativeProofV1"), SJ_NATIVE_PACKAGE_LEN))
+    if (!sj_is_native_package(native))
         return sj_refuted(a, judgment,
                           sj_expr1(a, SJ_S("set:native-package-syntax")));
     Atom *name = native->expr.elems[SJ_NATIVE_PACKAGE_NAME];
@@ -8426,19 +8460,20 @@ static Atom *sj_inductive_check_declarations(
     Atom *universe, const SjParameters *params, Atom *formation,
     Atom **names, Atom **types, Atom **full_types, size_t ctor_count,
     Atom *rec_name, Atom *rec_type, Atom *rec_type_lowest,
-    Atom *principle_name, Atom *principle, CettaPrimeRegularKernelBudget *budget) {
+    Atom *principle_name, Atom *principle, CettaPrimeRegularKernelBudget *budget,
+    bool type_open, const bool *ctor_open) {
     Space view;
     space_init_overlay(&view, &env->overlay);
     if (params->count == 0u) {
         Atom *obstruction = sj_declaration_check_obstruction(
             a, &view, judgment, type, sj_expr2(a, "type:formed", universe), budget, NULL);
-        if (!obstruction)
+        if (!obstruction && !type_open)
             space_add(&view, sj_expr3(a, ":", type, universe));
         for (size_t i = 0u; i < ctor_count && !obstruction; i++) {
             obstruction = sj_declaration_check_obstruction(
                 a, &view, judgment, names[i],
                 sj_expr3(a, "type:check", types[i], universe), budget, NULL);
-            if (!obstruction)
+            if (!obstruction && !ctor_open[i])
                 space_add(&view, sj_expr3(a, ":", names[i], types[i]));
         }
         if (!obstruction)
@@ -8472,7 +8507,7 @@ static Atom *sj_inductive_check_declarations(
         constants[i] = sj_parameter_constant(st, judgment, params->names[i]);
     Atom *obstruction = sj_declaration_check_obstruction(
         a, &view, judgment, type, sj_expr2(a, "type:formed", formation), budget, NULL);
-    if (!obstruction)
+    if (!obstruction && !type_open)
         space_add(&view, sj_expr3(a, ":", type, formation));
     /* The fields and the result of each constructor, in the datatype's sort,
      * with the parameters standing as constants of their sorts. */
@@ -8638,6 +8673,30 @@ static SjOccurrence sj_parameter_occurrence(Atom *t, Atom *name,
 static Atom *sj_inductive_set_model(Arena *a, Atom *name, Atom *decl,
                                     const SjParameters *params);
 
+/* An open declaration: a name declared in the current space by one bare type
+ * declaration `(: name type)` with exactly `expected` as its type, and with
+ * no definition, no admission record and no entry in the signature.  A type
+ * declared this way is a set about which nothing else is known: it may be
+ * empty, and its members are the constants declared at it.  `set:inductive`
+ * closes it: the type and its declared constants become the datatype and its
+ * constructors, and the closure is the further commitment that they are all
+ * of its members. */
+static bool sj_open_declaration(Arena *a, SjSetEnv *env, Space *space,
+                                Atom *name, Atom *expected) {
+    if (!name || name->kind != ATOM_SYMBOL || !expected || !space) return false;
+    if (sj_definition_of(name)) return false;
+    for (size_t i = 0u; i < env->signature_count; i++)
+        if (atom_eq(env->signature[i]->expr.elems[1], name)) return false;
+    bool ambiguous = false;
+    if (sj_known_lookup(a, env, space, name, &ambiguous) || ambiguous) return false;
+    Atom **declared = NULL;
+    uint32_t count = space_get_declared_types(space, a, name, &declared);
+    bool open = count == 1u && declared &&
+                atom_eq(sj_arrow_with_all_arguments(a, declared[0]), expected);
+    free(declared);
+    return open;
+}
+
 static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
                               bool limited, uint64_t steps) {
     if (limited && steps == 0u)
@@ -8645,7 +8704,10 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     CettaPrimeRegularKernelBudget budget;
     cetta_prime_regular_kernel_budget_init(&budget, limited, steps);
     CettaExprLen len = judgment->expr.len;
-    if (len < 4u) return sj_refuted(a, judgment, sj_expr1(a, SJ_S("set:inductive-arity")));
+    /* The name and the universe suffice: a datatype with no constructors is
+     * the empty type, whose principle has no cases and whose recursor has
+     * no methods. */
+    if (len < 3u) return sj_refuted(a, judgment, sj_expr1(a, SJ_S("set:inductive-arity")));
     Atom *type = judgment->expr.elems[1];
     Atom *universe = judgment->expr.elems[2];
     /* A name with parameters, `(T (: A1 S1) ... (: An Sn))`, declares a type
@@ -8702,8 +8764,26 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
         return sj_undetermined(a, judgment, sj_expr1(a, SJ_S("set:signature-unavailable")));
     SjProofState st;
     sj_proof_state_init(&st, a, space, env, false, 0u, false, true);
-    if (sj_name_taken(&st, type))
-        return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:inductive-already-declared"), type));
+    /* The type of the datatype's name: its universe, or with parameters the
+     * function type from their sorts to the universe. */
+    Atom *declared_formation = universe;
+    if (params.count > 0u) {
+        Atom **items = arena_alloc(a, sizeof(Atom *) * (params.count + 2u));
+        if (!items)
+            return sj_incomplete(a, judgment, sj_expr1(a, SJ_S("set:inductive-storage")));
+        items[0] = sj_sym(a, "->");
+        for (size_t k = 0u; k < params.count; k++) items[1u + k] = params.sorts[k];
+        items[1u + params.count] = universe;
+        declared_formation = atom_expr(a, items, (CettaExprLen)(params.count + 2u));
+    }
+    /* A name declared open in this space is closed by this declaration; any
+     * other declared name is refused. */
+    bool type_open = false;
+    if (sj_name_taken(&st, type)) {
+        type_open = sj_open_declaration(a, env, space, type, declared_formation);
+        if (!type_open)
+            return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:inductive-already-declared"), type));
+    }
     /* Each parameter ranges over a sort.  Its sort mentions neither the
      * datatype, which is not declared before its parameters, nor another
      * parameter: a parameter whose sort depends on an earlier one, and a
@@ -8723,10 +8803,12 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     size_t ctor_count = len - 3u;
     Atom **names = arena_alloc(a, sizeof(Atom *) * ctor_count);
     Atom **types = arena_alloc(a, sizeof(Atom *) * ctor_count);
-    if (!names || !types)
+    bool *ctor_open = arena_alloc(a, sizeof(bool) * (ctor_count ? ctor_count : 1u));
+    if (!names || !types || !ctor_open)
         return sj_incomplete(a, judgment, sj_expr1(a, SJ_S("set:inductive-storage")));
     memset(names, 0, sizeof(Atom *) * ctor_count);
     memset(types, 0, sizeof(Atom *) * ctor_count);
+    memset(ctor_open, 0, sizeof(bool) * (ctor_count ? ctor_count : 1u));
     for (size_t i = 0u; i < ctor_count; i++) {
         Atom *c = judgment->expr.elems[3u + i];
         if (!c || c->kind != ATOM_EXPR || c->expr.len != 3u || c->expr.elems[1]->kind != ATOM_SYMBOL)
@@ -8741,8 +8823,16 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
         for (size_t j = 0u; j < params.count; j++)
             if (atom_eq(params.names[j], name))
                 return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:inductive-duplicate"), name));
-        if (atom_eq(name, type) || sj_name_taken(&st, name))
+        if (atom_eq(name, type))
             return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:inductive-already-declared"), name));
+        /* When an open type is closed, a constant declared open at exactly
+         * its constructor type becomes that constructor. */
+        if (sj_name_taken(&st, name)) {
+            if (!type_open || params.count > 0u ||
+                !sj_open_declaration(a, env, space, name, ctype))
+                return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:inductive-already-declared"), name));
+            ctor_open[i] = true;
+        }
         /* result type T, or T at its parameters; each argument is that type
          * or a type not mentioning T */
         if (atom_eq(ctype, self)) {
@@ -9005,7 +9095,7 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     Atom *formation_obstruction = sj_inductive_check_declarations(
         a, env, &st, judgment, type, universe, &params, formation, names, types,
         full_types, ctor_count, rec_name, rec_type, rec_type_lowest,
-        principle_name, principle, &budget);
+        principle_name, principle, &budget, type_open, ctor_open);
     if (formation_obstruction) return formation_obstruction;
     /* The level rule of the set model: a datatype in a sort takes parameters
      * in that sort or below it.  A declaration the kernel accepts with a
@@ -9041,9 +9131,12 @@ static Atom *sj_set_inductive(Arena *a, Space *space, Atom *judgment,
     published[n++] = sj_sym(a, SJ_S("SetPublish"));
     published[n++] = sj_known_record(a, type, decl, "inductive", set_model, NULL, revision);
     published[n++] = sj_known_record(a, principle_name, principle, "inductive", NULL, NULL, revision);
-    published[n++] = sj_expr3(a, ":", type, formation);
+    /* Names declared open keep their declarations; the closure adds the rest. */
+    if (!type_open)
+        published[n++] = sj_expr3(a, ":", type, formation);
     for (size_t i = 0u; i < ctor_count; i++)
-        published[n++] = sj_expr3(a, ":", names[i], full_types[i]);
+        if (!ctor_open[i])
+            published[n++] = sj_expr3(a, ":", names[i], full_types[i]);
     published[n++] = sj_expr3(a, ":", rec_name, rec_type);
     for (size_t i = 0u; i < ctor_count; i++)
         published[n++] = rule_atoms[i];
@@ -13025,6 +13118,17 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
                 return sj_undetermined(a, judgment, sj_expr1(a, SJ_S("set:catalogue-data")));
             return sj_established(a, judgment, sj_expr2(a, "PrimeScopedValue", catalogue[0]));
         }
+        /* The base logic this space's theory is a theory over, as the atom
+         * that selects it: (hol:profile base) for every profile whose
+         * signature extends the base logic's. */
+        if (len == 2u && atom_is_symbol(judgment->expr.elems[1], "base-logic")) {
+            SjTheoryProfile base = sj_profile_base_logic(g_sj_signature_profile);
+            if (base == SJ_PROFILE_UNSELECTED)
+                return sj_undetermined(a, judgment, sj_expr1(a, SJ_S("set:base-logic-unknown")));
+            return sj_established(a, judgment, sj_expr2(a, "PrimeScopedValue",
+                sj_expr2(a, sj_profile_selection_head(sj_profile_face(base)),
+                         sj_sym(a, sj_profile_name(base)))));
+        }
         if (len == 2u && atom_is_symbol(judgment->expr.elems[1], "profiles")) {
             Atom *profiles[SJ_PROFILE_COUNT];
             for (int profile = 0; profile < SJ_PROFILE_COUNT; profile++)
@@ -13470,8 +13574,11 @@ static SjImplicitIndex *sj_implicit_index(Arena *scratch, Space *space) {
     index->datatypes = NULL;
     index->datatype_count = 0u;
     Arena *a = &index->arena;
+    /* Called by the evaluator outside any judgment: the records are spelled
+     * in this space's namespace, whatever the last judgment's was. */
+    const char *known = sj_spelled_in(sj_space_face(space), "set:known");
     Atom *items[SJ_KNOWN_LEN] = {
-        sj_sym(scratch, SJ_S("set:known")), atom_var(scratch, "n"), atom_var(scratch, "p"),
+        sj_sym(scratch, known), atom_var(scratch, "n"), atom_var(scratch, "p"),
         sj_sym(scratch, "inductive"), atom_var(scratch, "f"), atom_var(scratch, "d"),
         atom_var(scratch, "r"), atom_var(scratch, "s")};
     Atom *pattern = atom_expr(scratch, items, SJ_KNOWN_LEN);
@@ -13481,7 +13588,7 @@ static SjImplicitIndex *sj_implicit_index(Arena *scratch, Space *space) {
     index->datatypes = arena_alloc(a, sizeof(Atom *) * (count ? (size_t)count : 1u));
     for (CettaIndex i = 0u; i < count; i++) {
         Atom *record = space_match_candidate_at64(space, candidates[i]);
-        if (!sj_is_expr(record, SJ_S("set:known"), SJ_KNOWN_LEN) ||
+        if (!sj_is_expr(record, known, SJ_KNOWN_LEN) ||
             !atom_is_symbol(record->expr.elems[SJ_KNOWN_ORIGIN], "inductive") ||
             record->expr.elems[SJ_KNOWN_NAME]->kind != ATOM_SYMBOL)
             continue;

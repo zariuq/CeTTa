@@ -3,6 +3,7 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (: system:monotonic-ns (-> Number))
+(: system:cwd (-> String))
 (= (system:args) (__cetta_lib_system_args ()))
 (= (system:arg $index) (__cetta_lib_system_arg $index))
 (= (system:argc) (__cetta_lib_system_arg_count ()))

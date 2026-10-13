@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; Equality that proofs can use: three routes, side by side.
 ;
@@ -18,7 +18,7 @@
 ;
 ; R1  Substitution is a rule of the logic: (pf:eq-subst P e h) proves P b from
 ;     e : eq T a b and h : P a, at any carrier T.  A theory adopts the rule by
-;     declaring (hol:rule eq-subst).  Nothing else is assumed; reflexivity at
+;     declaring (set:rule eq-subst).  Nothing else is assumed; reflexivity at
 ;     set is a theorem of extensionality.
 ; R2  Identity is defined as Leibniz defines it: same x y when every property
 ;     of x is one of y.  Rewriting, symmetry and transitivity are then logic
@@ -50,17 +50,17 @@
 ; the theorems it cites by name, and the lengths of its proof and of its
 ; proof term, in which a cited theorem is one constant.
 (= (face $route $space $name)
-   (let (HolNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
-        (hol:native-proof $space $name)
+   (let (SetNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
+        (set:native-proof $space $name)
      (let $assumed (pf:rests-on $space $name)
        (let $checked (syntax-length $proof)
          (let $native (syntax-length $term)
            ($route $name (assumes $assumed) (proof $checked) (term $native)))))))
 
 ; ---- R1: substitution is a rule of the logic
-!(bind! &r1 (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(add-atom &r1 (hol:rule eq-subst))
-!(hol:define &r1 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(bind! &r1 (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(add-atom &r1 (set:rule eq-subst))
+!(set:define &r1 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
 ; reflexivity at set, a theorem of extensionality
 !(pf:theorem &r1 eq-refl (all set (lam x (eq set x x)))
    (pf:fix x
@@ -114,31 +114,31 @@
 ;   eqS@A : Pi (P : A -> prop) (a b : A). Holds (eq@A a b) -> Holds (P a) -> Holds (P b)
 ; in either presentation, and the package links under the identity reading,
 ; at a carrier of the least universe and at set.
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
-      (hol:native-proof &r1 rewrite)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $rows $digest)
+      (set:native-proof &r1 rewrite)
    (let (PrimeCtxDecl $key $declared $rest) $context ($key $declared)))
-!(let $v (try (hol:native-proof &r1 symmetric rule-constants)) (car-atom $v))
-!(let $p (hol:native-proof &r1 rewrite-prop) (let $v (try (hol:native-link &r1 identity $p)) (car-atom $v)))
-!(let $p (hol:native-proof &r1 symmetric) (let $v (try (hol:native-link &r1 identity $p)) (car-atom $v)))
+!(let $v (try (set:native-proof &r1 symmetric rule-constants)) (car-atom $v))
+!(let $p (set:native-proof &r1 rewrite-prop) (let $v (try (set:native-link &r1 identity $p)) (car-atom $v)))
+!(let $p (set:native-proof &r1 symmetric) (let $v (try (set:native-link &r1 identity $p)) (car-atom $v)))
 
 ; Controls.  The motive is written at the place to rewrite: a motive that
 ; abstracts the other place does not prove the step.
 !(let ($verdict $why)
-      (try (hol:proves &r1
+      (try (set:proves &r1
         (quote (pf:fix a (pf:fix b (pf:fix X (pf:assume e (pf:assume h (pf:eq-subst (lam m (In a m)) e h)))))))
         (quote (all set (lam a (all set (lam b (all set (lam X (imp (eq set a b) (imp (In a X) (In b X))))))))))))
    (let $head (car-atom $why) ($verdict $head)))
 ; and rewriting one place of a membership of a in itself does not rewrite the
 ; other
 !(let ($verdict $why)
-      (try (hol:proves &r1
+      (try (set:proves &r1
         (quote (pf:fix a (pf:fix b (pf:assume e (pf:assume h (pf:eq-subst (lam m (In m a)) e h))))))
         (quote (all set (lam a (all set (lam b (imp (eq set a b) (imp (In a a) (In a b))))))))))
    (let $head (car-atom $why) ($verdict $head)))
 ; An equation at a function carrier does not rewrite a set: the motive is read
 ; at the equation's carrier.
 !(let ($verdict $why)
-      (try (hol:proves &r1
+      (try (set:proves &r1
         (quote (pf:fix F (pf:fix G (pf:fix x (pf:fix X (pf:assume e (pf:assume h
           (pf:eq-subst (lam m (In m X)) e h))))))))
         (quote
@@ -154,20 +154,20 @@
    (let $head (car-atom $why) ($verdict $head)))
 ; The major premise must prove an equation.
 !(let ($verdict $why)
-      (try (hol:proves &r1
+      (try (set:proves &r1
         (quote (pf:fix a (pf:fix X (pf:assume h (pf:eq-subst (lam m (In m X)) h h)))))
         (quote (all set (lam a (all set (lam X (imp (In a X) (In a X)))))))))
    (let $head (car-atom $why) ($verdict $head)))
 ; A theory that has not adopted the rule does not check a proof that uses it.
-!(bind! &plain (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(try (hol:proves &plain
+!(bind! &plain (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(try (set:proves &plain
    (quote (pf:fix a (pf:fix b (pf:fix X (pf:assume e (pf:assume h (pf:eq-subst (lam m (In m X)) e h)))))))
    (quote (all set (lam a (all set (lam b (all set (lam X (imp (eq set a b) (imp (In a X) (In b X))))))))))))
 
 ; ---- R2: identity defined as Leibniz defines it
-!(bind! &r2 (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(hol:define &r2 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
-!(hol:define &r2 same (-> set set prop)
+!(bind! &r2 (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(set:define &r2 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(set:define &r2 same (-> set set prop)
    (= (same $x $y) (all (-> set prop) (lam Q (imp (Q $x) (Q $y))))))
 ; the law of this route: extensionality yields identity, not only an equation.
 ; It does not make the replacement law usable: a member of a replacement is
@@ -176,7 +176,7 @@
 ; does not give: read eq as having the same rank and a replacement as every
 ; set of the rank of a value, and the laws and same-ext hold while two sets
 ; of one rank are equal and not the same.
-!(hol:axiom &r2 same-ext
+!(set:axiom &r2 same-ext
    (all set (lam X (all set (lam Y (imp (Subq X Y) (imp (Subq Y X) (same X Y))))))))
 !(pf:theorem &r2 same-refl (all set (lam x (same x x))) (pf:fix x (pf:fix Q (pf:assume h h))))
 !(pf:theorem &r2 rewrite
@@ -197,8 +197,8 @@
      (pf:imp-elim (pf:imp-elim (pf:all-elim (pf:all-elim (pf:known same-ext) X) Y) xy) yx))))))
 
 ; ---- R3: the signature's eq with the laws of a carrier
-!(bind! &r3 (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(hol:define &r3 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(bind! &r3 (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(set:define &r3 Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
 !(pf:equality &r3 set refl@set subst@set
    (pf:fix x
      (pf:imp-elim
@@ -230,14 +230,14 @@
 ; is not checked.
 !(let (quote $proof) (lift (pf:expand (pf:fix F (pf:fix G (pf:assume e (pf:sym (-> set set) F G e))))))
    (let ($verdict $why)
-        (try (hol:proves &r3 (quote $proof)
+        (try (set:proves &r3 (quote $proof)
           (quote (all (-> set set) (lam F (all (-> set set) (lam G (imp (eq (-> set set) F G) (eq (-> set set) G F)))))))))
      (let $head (car-atom $why) ($verdict $head))))
 
 ; ---- side by side: what each route assumes, what each proves, proof lengths
-!(match &r1 (hol:rule $rule) (adopted r1 $rule))
-!(hol:known-proposition &r2 same-ext)
-!(hol:known-proposition &r3 subst@set)
+!(match &r1 (set:rule $rule) (adopted r1 $rule))
+!(set:known-proposition &r2 same-ext)
+!(set:known-proposition &r3 subst@set)
 !(face r1 &r1 rewrite)
 !(face r2 &r2 rewrite)
 !(face r3 &r3 rewrite)

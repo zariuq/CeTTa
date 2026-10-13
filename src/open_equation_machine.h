@@ -104,6 +104,12 @@ typedef struct {
      * `collect` itself, where the profile offers them; the region then runs
      * them too. */
     bool bounded_collections;
+    /* HE's reading of a match: its results are its template's instances,
+     * each evaluated whole.  The region's code for a template takes a
+     * row's values as they are, which agrees while no value could reduce;
+     * each match leg keeps its own source, which the host evaluates for a
+     * row whose values could (`value_reducible`). */
+    bool evaluates_instances;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
@@ -196,6 +202,10 @@ typedef enum {
     CETTA_OPEN_EQUATION_HANDOFF_BUDGET,
     CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR,
     CETTA_OPEN_EQUATION_HANDOFF_STACK,
+    /* Under `withdraws_on_error`, an error reached a position whose
+     * language reads it otherwise than the region: the host evaluates the
+     * whole call again, as if the cursor had never run. */
+    CETTA_OPEN_EQUATION_HANDOFF_WITHDRAWN,
 } CettaOpenEquationHandoff;
 
 typedef enum {
@@ -297,6 +307,41 @@ typedef struct {
      * (DispatchErrorScope); the region's dispatches then recover too. */
     bool dispatch_recovers;
     bool raises_abort_collections;
+    /* HE's rule for a call of a relation whose equations' heads all refuse
+     * its arguments: the call is its own value, as HE's interpreter returns
+     * an expression no equation reduces.  An equation whose head matched
+     * and whose body has no answers still gives the call no value.  False:
+     * such a call fails, as PeTTa's does. */
+    bool unmatched_call_is_value;
+    /* Under `evaluates_instances`: whether a stored row holds a part the
+     * language would evaluate further (an expression the program can
+     * reduce, or a variable).  NULL: no row is checked. */
+    bool (*value_reducible)(void *context, Space *space, Atom *row);
+    /* HE's error is a value that replaces the evaluation reading it, and
+     * that a completed producer drops beside a success; the region keeps
+     * PeTTa's reading.  An error a host goal answers, or one the region
+     * raises, withdraws the cursor (CETTA_OPEN_EQUATION_HANDOFF_WITHDRAWN).
+     * The host admits this only where nothing the cursor did is visible
+     * before it completes: no effect, and answers the host still holds. */
+    bool withdraws_on_error;
+    /* Under HE where the cursor cannot be withdrawn (the run has effects):
+     * an error raises to the innermost collection, which holds it beside
+     * its answers and drops it if any answer succeeded; with no collection
+     * it is the call's answer, which the host's completion holds beside the
+     * call's others.  This is HE's completion where the host admitted only
+     * closures whose evaluations that may give more than one answer are
+     * tails or a collection's, whose collections' values are not read, and
+     * which have no case and no superpose.  Once the cursor has changed a
+     * space, a handoff is a fault: the host cannot run the call again. */
+    bool raises_he_errors;
+    /* With `raises_he_errors`, a conjunction's rows complete before its
+     * template runs: a leg with more than one row and legs after it goes to
+     * the host, which completes the conjunction from that leg on. */
+    bool completes_producers;
+    /* With `withdraws_on_error`: a collected tuple that `value_reducible`
+     * finds would evaluate further withdraws the cursor, since HE evaluates
+     * it again where a binder instantiates it and the run reads one so. */
+    bool withdraws_reducible_collections;
     /* Storage the host keeps for the cursor's whole life, released only
      * after the cursor is gone, as the older generation the region shares.
      * A ground value a host goal takes from the region is copied there once
@@ -536,6 +581,8 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor);
 typedef struct {
     uint64_t activations;
     uint64_t head_failures;
+    /* Calls that were their own value (`unmatched_call_is_value`). */
+    uint64_t unmatched_values;
     uint64_t answers;
     uint64_t trail_writes;
     uint64_t collections;

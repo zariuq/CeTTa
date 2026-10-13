@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Two reversals of a list, typed.  The lists, append and the two reversals
 ; are declared in &self; the kernel checks each declaration before it admits

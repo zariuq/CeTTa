@@ -2,6 +2,7 @@
 (scope:profile lexical-fresh per-call reference)
 
 (: system:monotonic-ns (-> Number))
+(: system:cwd (-> String))
 
 (= (system:args)
    (function

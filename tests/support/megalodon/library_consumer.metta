@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A later development uses the loaded source theorem as a retained premise,
 ; proves a new theorem, then consumes its native proof dependently.  The

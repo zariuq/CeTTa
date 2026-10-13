@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A symbol the program defines is produced only when something demands it.
 ; A cyclic symbol handed to a function that never uses that argument is never

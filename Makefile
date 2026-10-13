@@ -124,13 +124,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 103
+PRIME_NEED_ALGEBRA_CHECKS := 127
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 111
+PRIME_NEED_ALGEBRA_CHECKS := 136
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -884,6 +884,7 @@ PREPARED_PURE_ANSWER_TEST_OBJ = runtime/bootstrap/test_prepared_pure_answer_prod
 PREPARED_PURE_ANSWER_TEST_BIN = runtime/test_prepared_pure_answer_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o $(COMPILED_READER_RUNTIME_OBJ),$(OBJ))
 PRIME_CAPABILITY_OPEN_TEST_BIN = runtime/test_prime_capability_opening-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_CALL_FAILURE_TEST_BIN = runtime/test_prime_call_failure_zero-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 STABLE_OCCURRENCE_TRANSPORT_TEST_BIN = runtime/test_stable_occurrence_transport-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3201,6 +3202,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/common_set/default_core.metta \
 	tests/prime/common_set/assumption_origins.metta \
 	tests/prime/common_set/construction_origins.metta \
+	tests/prime/common_set/open_declarations.metta \
 	tests/prime/common_set/schema_resources.metta \
 	tests/prime/scoped/rule_dependency_currentness.metta \
 	tests/prime/theory_profiles/libraries.metta \
@@ -3248,6 +3250,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_patterns.metta \
 	tests/prime/stored_variable_identity.metta \
 	tests/prime/error_continues.metta \
+	tests/prime/no_value_kinds.metta \
 	tests/prime/atom_result_type.metta \
 	tests/prime/computed_lambda_arguments.metta \
 	tests/prime/let_bound_learner.metta \
@@ -3283,6 +3286,8 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/written_domains.metta \
 	tests/prime/conformance/regular_declarations.metta \
 	tests/prime/conformance/he_declarations_hol_checked.metta \
+	tests/prime/conformance/he_typeof_get_type.metta \
+	tests/prime/conformance/he_typeof_get_type_native.metta \
 	tests/prime/conformance/he_tuple_projections.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/open_lambda_pi.metta \
@@ -5279,7 +5284,7 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 	for mutation in FUNCTION_BINDING_LEAK DYNAMIC_SCOPE; do \
 		case "$$mutation" in \
 			FUNCTION_BINDING_LEAK) diagnostic='FAIL: function projection retains caller and closure bindings only' ;; \
-			DYNAMIC_SCOPE) diagnostic='FAIL: cell projection excludes unrelated continuation bindings' ;; \
+			DYNAMIC_SCOPE) diagnostic='FAIL: cell projection preserves captured identity across same-spelled caller bindings' ;; \
 		esac; \
 		projection_bin="$$mutation_dir/test-$$mutation"; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) \
@@ -19217,14 +19222,18 @@ test-petta-libpl-leak-ownership-body: $(BIN) $(LSAN_SCOPE_PROBE_BIN)
 test-gc-full-fast-differential-contract:
 	@scripts/test_gc_full_fast_differential_contract.sh
 
+# Sanitized frames are larger, and the evaluator's C-stack guard takes its
+# budget from the stack limit: the sanitized suites run with a larger stack.
+SANITIZER_STACK_KB ?= 65536
+
 test-asan:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-asan-main:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-asan-mork:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-tsan:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc
@@ -21565,9 +21574,11 @@ probe-heavy-diagnostics: $(BIN)
 	echo "---"; \
 	echo "$$count heavy diagnostic probes"
 
+# Native NIK regression checks remain in `test`. Experimental cross-realization
+# proof qualification is opt-in: run `make test-prime-nik-v1` when working on
+# that subsystem; it is outside the routine correctness and sanitizer gates.
 test-correctness-all:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-nik-qualification-v1
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-symbolic-battery
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-held-symbolic
@@ -22690,6 +22701,15 @@ test-prime-dependent-formation-langdef-mutations: $(PRIME_DEPENDENT_FORMATION_LA
 
 test-prime-coverage:
 	@python3 scripts/check_prime_coverage.py
+
+test-prime-he-guest-boundary: runtime/test_prime_he_guest_boundary-$(BUILD_OBJ_TAG)
+	@"$<"
+
+runtime/test_prime_he_guest_boundary-$(BUILD_OBJ_TAG): tests/support/test_prime_he_guest_boundary.c src/prime_semantics.c src/prime_he_fragments.inc $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_prime_he_guest_boundary.c \
+		$(filter-out src/prime_semantics.$(BUILD_OBJ_TAG).o src/prime_semantics.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
+
+test-prime-all: test-prime-he-guest-boundary
 
 test-prime-crossdialect: $(BIN)
 	@python3 scripts/check_prime_crossdialect.py "$(abspath $(BIN))"
@@ -23956,6 +23976,17 @@ test-prime: test-prime-fast-fixtures
 
 .PHONY: test-prime-fast-fixtures
 test-prime-fast-fixtures: test-prime-capability-opening
+.PHONY: test-prime-call-failure-zero
+test-prime-fast-fixtures: test-prime-call-failure-zero
+# A failed native call in Prime is zero answers, never the datum Empty.
+test-prime-call-failure-zero: $(PRIME_CALL_FAILURE_TEST_BIN)
+	@$(call cetta_exec,./$(PRIME_CALL_FAILURE_TEST_BIN))
+
+$(PRIME_CALL_FAILURE_TEST_BIN): tests/test_prime_call_failure_zero.c src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_call_failure_zero.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+
 .PHONY: test-prime-fuel-verdicts
 test-prime-fast-fixtures: test-prime-fuel-verdicts
 # A query that runs out of fuel is reported as incomplete in its place, the
@@ -25062,6 +25093,16 @@ test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collection
 		diff <(cat tests/profile_he_prime_type_formation.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
+	for profile in he he-compat extended he-prime; do \
+		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/profile_he_prime_own_pair.metta 2>&1); \
+		if [ "$$result" = "$$(cat tests/profile_he_prime_own_pair.expected)" ]; then \
+			echo "PASS: $$profile types a program's own pair by its declaration"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$profile types a program's own pair by its declaration"; \
+			diff <(cat tests/profile_he_prime_own_pair.expected) <(echo "$$result") | head -10; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
 	result=$$($(CETTA_BIN_INVOKE) --profile he-prime --lang he tests/profile_he_prime_dtt_typed_corpus.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dtt_typed_corpus.expected)" ]; then \
 		echo "PASS: he-prime DTT typed seed corpus"; pass=$$((pass + 1)); \
@@ -28166,6 +28207,34 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_forwarding.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_tabled_forwarding.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: forwarded PeTTa tables change an observation of the flat replay"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	forward_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_forwarding.metta \
+		2>&1 >/dev/null); \
+	for case in edges view_reads declined_continuation declined_open \
+			declined_incomplete declined_policy declined_branching \
+			declined_shared_child declined_overlap; do \
+		if ! printf '%s\n' "$$forward_stats" | \
+				grep -Eq "table_forward_$${case}=[1-9][0-9]*"; then \
+			echo "FAIL: table forwarding case $$case was not exercised"; \
+			exit 1; \
+		fi; \
+	done; \
+	if ! printf '%s\n' "$$forward_stats" | \
+			grep -Eq 'table_count_folds=[1-9][0-9]*'; then \
+		echo "FAIL: a count of a complete table was not folded"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_tabled_effect_boundary.metta 2>&1); \
 	expected=$$(cat \
 		tests/petta/search_machine_tabled_effect_boundary.base.expected); \
@@ -28947,11 +29016,12 @@ test-petta-tier-views-over-kept-storage: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_views_over_kept_storage.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_views_over_kept_storage.expected)" ]; then \
-			echo "FAIL: list walks within 5 s on the $$route route"; \
+			echo "FAIL: list walks within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/tier_views_over_kept_storage.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -28968,11 +29038,12 @@ test-petta-tier-tail-superpose: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_tail_superpose.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_tail_superpose.expected)" ]; then \
-			echo "FAIL: tail superpose within 5 s on the $$route route"; \
+			echo "FAIL: tail superpose within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/tier_tail_superpose.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -28989,11 +29060,12 @@ test-petta-prepared-decons-views: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/prepared_decons_views.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/prepared_decons_views.expected)" ]; then \
-			echo "FAIL: deconstruction walks within 5 s on the $$route route"; \
+			echo "FAIL: deconstruction walks within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/prepared_decons_views.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -29010,7 +29082,8 @@ test-petta-tier-list-heads: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 10 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_list_heads.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_list_heads.expected)" ]; then \
@@ -29917,6 +29990,59 @@ test-petta-typecheck-v3-file-runner-v1: \
 		tests/petta/typecheck_v2_repros/03_unsupported_equation_rhs_number.metta); \
 	printf '%s\n' "$$open" | grep -Fq $$'PettaTypecheckV3FileV1\tundetermined\t'; \
 	echo 'PASS: whole-file v3 runner preserves established, refuted, and open outcomes'
+
+# PeTTa's language versions: 1.0.6, untyped, with the libraries of release
+# v1.0.6; 1.1, typed, with its main line's libraries (lib/petta/typecheck/).
+# Each case runs one fixture under the arguments given and must exit as
+# given, with the phrase in its output.  The library a version reads is
+# compared exactly.
+.PHONY: test-petta-language-versions
+test: test-petta-language-versions
+test-petta-language-versions: $(BIN)
+	@set -eu; \
+	dir=tests/petta/language_versions; failures=0; \
+	while IFS=$$'\t' read -r file arguments status phrase; do \
+		case "$$file" in ''|'#'*) continue;; esac; \
+		set +e; \
+		output=$$(timeout 60 $(CETTA_BIN_INVOKE) $$arguments $$dir/$$file 2>&1); \
+		actual=$$?; \
+		set -e; \
+		if [ "$$actual" != "$$status" ] || \
+		   ! printf '%s\n' "$$output" | grep -Fq -- "$$phrase" || \
+		   { [ "$$status" = 0 ] && printf '%s\n' "$$output" | grep -Fq '❌'; }; then \
+			echo "FAIL: $$file ($$arguments): exit $$actual, expected $$status with '$$phrase'"; \
+			printf '%s\n' "$$output" | tail -5; \
+			failures=$$((failures + 1)); \
+		fi; \
+	done < $$dir/cases.tsv; \
+	for version in 1.0.6 1.1; do \
+		output=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang petta@$$version \
+			$$dir/library_version.metta 2>&1); \
+		if [ "$$output" != "$$(cat $$dir/library_version.$$version.expected)" ]; then \
+			echo "FAIL: petta@$$version reads another lib_roman"; \
+			printf '%s\n' "$$output"; failures=$$((failures + 1)); \
+		fi; \
+	done; \
+	[ $$failures -eq 0 ]; \
+	echo 'PASS: PeTTa 1.0.6 and 1.1 select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
+
+# Two PeTTa runtime regressions: a declared constructor in a typed space's
+# match pattern is literal structure, and a specialization chosen through a
+# cons pattern is not reused for a list passed flat.
+.PHONY: test-petta-pattern-structure
+test: test-petta-pattern-structure
+test-petta-pattern-structure: $(BIN)
+	@set -eu; \
+	for fixture in typed_space_constructor_pattern specializer_route_cons_positions; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 timeout 60 $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended tests/petta/$$fixture.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+			echo "FAIL: $$fixture"; \
+			diff <(cat tests/petta/$$fixture.expected) <(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: typed-space patterns keep declared constructors literal; cons-path specializations are not reused for flat lists'
 
 test-petta-typecheck-v3-profile: $(BIN)
 	@set -e; \
@@ -31796,10 +31922,11 @@ test-petta-oem-collection-stress: $(BIN)
 test: test-petta-oem-queue-drain
 test-petta-oem-queue-drain: $(BIN)
 	@set -eu; \
-	actual=$$(timeout 10 $(CETTA_BIN_INVOKE) --lang petta \
+	actual=$$(timeout $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) \
+		$(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/oem_queue_drain.metta 2>&1) || true; \
 	if [ "$$actual" != "$$(cat tests/petta/oem_queue_drain.expected)" ]; then \
-		echo "FAIL: a queue drain of 200,000 items within 10 s"; \
+		echo "FAIL: a queue drain of 200,000 items within $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) s"; \
 		diff <(cat tests/petta/oem_queue_drain.expected) \
 			<(printf '%s\n' "$$actual") | head -10; \
 		exit 1; \
@@ -37166,6 +37293,11 @@ TRACKED_GENERATED_V1 = \
 	$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 	$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C)
 
+# A lock that seals a compiled native artifact holds that artifact's digest
+# in the ordinary build; a sanitized build compiles it differently, so the
+# sanitized check leaves those locks to the ordinary one.
+TRACKED_GENERATED_FLAVOR_SEALED_V1 = $(METAMATH_DIRECT_RUNTIME_LOCK_V1)
+
 # Regenerate every tracked output from its sources and require the bytes git
 # holds for it in the index, so what is committed or about to be, headers
 # included; a generated header git does not track fails too.  The check
@@ -37177,7 +37309,7 @@ check-generated:
 	@set -eu; \
 	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/check-generated.XXXXXX"); \
 	trap 'rm -rf "$${work:?}"' EXIT INT TERM; \
-	outputs="$(TRACKED_GENERATED_V1)"; \
+	outputs="$(if $(filter 1,$(ENABLE_SANITIZERS)),$(filter-out $(TRACKED_GENERATED_FLAVOR_SEALED_V1),$(TRACKED_GENERATED_V1)),$(TRACKED_GENERATED_V1))"; \
 	compared=""; \
 	for output in $$outputs; do \
 		compared="$$compared $$output"; \
@@ -40391,6 +40523,8 @@ test-decl-langdef-import-v1-body: $(BIN) $(DECL_LANGDEF_MANIFEST_V1) $(DECL_LANG
 	echo '(DeclImportV1Summary 12 12 0)'
 
 .PHONY: test-decl-langdef-regeneration-v1
+# The link check reads the ordinary build: sanitizer instrumentation keeps
+# every linked object alive, so unused bridge code stays in that build.
 test-decl-langdef-regeneration-v1: $(LANGDEF_COMPILER_V1_BIN)
 	@set -eu; \
 	work=$$(mktemp -d runtime/decl-langdef-regeneration.XXXXXX); \
@@ -40408,7 +40542,8 @@ test-decl-langdef-regeneration-v1: $(LANGDEF_COMPILER_V1_BIN)
 		<(rg -v '^; source-package-sha256 ' $(DECL_LANGDEF_PROGRAM_V1)); \
 	cmp -s "$$work/pack" $(DECL_LANGDEF_PACK_V1); \
 	cmp -s "$$work/lock" $(DECL_LANGDEF_LOCK_V1); \
-	if ldd $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; then \
+	if [ "$(ENABLE_SANITIZERS)" != 1 ] && \
+			ldd $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; then \
 		echo 'langdef compiler unexpectedly links Python or SWI-Prolog'; exit 1; \
 	fi; \
 	echo '(DeclLangDefRegenerationV1Summary 5 5 0)'
@@ -44074,6 +44209,174 @@ test-bounded-select-wide-count: $(BIN)
 test-bounded-select-threads: test-bounded-select-wide-count
 test: test-bounded-select-wide-count
 
+# Lazy selection in HE's extended profiles, opt-in with
+# (pragma! select-mode lazy): a selection of k answers performs only the work
+# those answers need, and its answers are those of eager selection.  Three
+# mutations must be caught: a run that never stops at its bound (NO_STOP), a
+# run that passes errors and Empty on before its frames complete
+# (ERRORS_EARLY), and controls that evaluate their source in full before
+# consuming it (SOURCE_WHOLE).
+HE_LAZY_SELECTION_MUTATION_DIR ?= runtime/he-lazy-selection-mutations
+.PHONY: test-he-lazy-selection
+test: test-he-lazy-selection
+test-he-lazy-selection: $(BIN)
+	@set -eu; \
+	dir=tests/he/lazy_selection; \
+	lazy_answers=$$(printf '!(pragma! select-mode lazy)\n'; cat $$dir/answers.metta); \
+	for profile in extended he-prime; do \
+		for fixture in effects infinite answers; do \
+			actual=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+				$$dir/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$dir/$$fixture.expected)" ]; then \
+				echo "FAIL: lazy selection $$fixture ($$profile)"; \
+				diff <(cat $$dir/$$fixture.expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+		lazy=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+			-e "$$lazy_answers" 2>&1 | tail -n +2); \
+		if [ "$$lazy" != "$$(cat $$dir/answers.expected)" ]; then \
+			echo "FAIL: lazy selection answers differ from eager ($$profile)"; \
+			diff <(cat $$dir/answers.expected) <(printf '%s\n' "$$lazy") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: lazy selection does only the work its answers need, with eager selection's answers"; \
+	mkdir -p "$(HE_LAZY_SELECTION_MUTATION_DIR)"; \
+	for mutation in NO_STOP ERRORS_EARLY SOURCE_WHOLE; do \
+		object="$(HE_LAZY_SELECTION_MUTATION_DIR)/eval-$$mutation.o"; \
+		binary="$(HE_LAZY_SELECTION_MUTATION_DIR)/cetta-$$mutation"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) \
+			-DCETTA_HE_LAZY_MUTATION_$$mutation=1 \
+			-c src/eval.c -o "$$object"; \
+		$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+			"$$object" -o "$$binary" $(LDFLAGS); \
+		set +e; \
+		effects=$$(timeout 60 "$$binary" --lang he --profile extended \
+			$$dir/effects.metta 2>&1); \
+		effects_status=$$?; \
+		answers=$$(timeout 60 "$$binary" --lang he --profile extended \
+			-e "$$lazy_answers" 2>&1 | tail -n +2); \
+		set -e; \
+		if [ $$effects_status -eq 0 ] && \
+		   [ "$$effects" = "$$(cat $$dir/effects.expected)" ] && \
+		   [ "$$answers" = "$$(cat $$dir/answers.expected)" ]; then \
+			echo "FAIL: lazy selection $$mutation mutation survived"; exit 1; \
+		fi; \
+		echo "PASS: lazy selection $$mutation mutation killed"; \
+	done
+
+# HE typing judgments decided per program revision, opt-in with
+# (pragma! type-judgments per-revision) or (pragma! type-judgments resolved)
+# in the `he` and `extended` profiles: each mode gives per-call checking's
+# answers, a declaration or subtype edge added, removed or imported at run
+# time changes the judgment, result checks stay, get-type's evaluation of an
+# untyped call stays an evaluation, and the other profiles leave the pragma
+# without effect.  The mutation that keys judgments without the declaration
+# revision must be caught.
+HE_TYPE_JUDGMENTS_DIR ?= runtime/he-type-judgments
+.PHONY: test-he-type-judgments
+test: test-he-type-judgments
+test-he-type-judgments: $(BIN)
+	@set -eu; \
+	src=tests/he/type_judgments; out="$(HE_TYPE_JUDGMENTS_DIR)"; \
+	mkdir -p "$$out"; \
+	cp $$src/declaration_revision_lib.metta "$$out/"; \
+	for fixture in declaration_revision typed dependencies; do \
+		for mode in per-call per-revision resolved; do \
+			{ printf '!(pragma! type-judgments %s)\n' $$mode; \
+			  cat $$src/$$fixture.metta; } > "$$out/$$fixture.$$mode.metta"; \
+		done; \
+	done; \
+	for profile in he extended he-compat he-prime; do \
+		for fixture in declaration_revision typed dependencies; do \
+			per_call=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he \
+				--profile $$profile "$$out/$$fixture.per-call.metta" 2>&1 | tail -n +2); \
+			if [ $$profile != he-prime ] && [ -f $$src/$$fixture.expected ] && \
+			   [ "$$per_call" != "$$(cat $$src/$$fixture.expected)" ]; then \
+				echo "FAIL: type judgments $$fixture per-call ($$profile)"; \
+				diff <(cat $$src/$$fixture.expected) <(printf '%s\n' "$$per_call") | head -20; \
+				exit 1; \
+			fi; \
+			for mode in per-revision resolved; do \
+				actual=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he \
+					--profile $$profile "$$out/$$fixture.$$mode.metta" 2>&1 | tail -n +2); \
+				if [ "$$actual" != "$$per_call" ]; then \
+					echo "FAIL: type judgments $$fixture $$mode differs from per-call ($$profile)"; \
+					diff <(printf '%s\n' "$$per_call") <(printf '%s\n' "$$actual") | head -20; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: type judgments per revision and resolved give per-call checking's answers"; \
+	object="$$out/eval-IGNORE_DECLARATIONS.o"; \
+	binary="$$out/cetta-IGNORE_DECLARATIONS"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-DCETTA_HE_TYPE_JUDGMENTS_MUTATION_IGNORE_DECLARATIONS=1 \
+		-c src/eval.c -o "$$object"; \
+	$(CC) $(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
+		"$$object" -o "$$binary" $(LDFLAGS); \
+	set +e; \
+	actual=$$(timeout 60 "$$binary" --lang he --profile extended \
+		"$$out/declaration_revision.per-revision.metta" 2>&1 | tail -n +2); \
+	set -e; \
+	if [ "$$actual" = "$$(cat $$src/declaration_revision.expected)" ]; then \
+		echo "FAIL: type judgments IGNORE_DECLARATIONS mutation survived"; exit 1; \
+	fi; \
+	echo "PASS: type judgments IGNORE_DECLARATIONS mutation killed"
+
+# Curried arrows in HE's `he` and `extended` profiles, opt-in with
+# --curried-arrows or (pragma! curried-arrows on): partial application and
+# over-application read function types as HOL does, full arity first.  A
+# program that reads as declared behaves as without the setting, turning it
+# off restores the declared reading, and he-compat leaves it without effect.
+.PHONY: test-he-curried-arrows
+test: test-he-curried-arrows
+test-he-curried-arrows: $(BIN)
+	@set -eu; \
+	dir=tests/he/curried_arrows; \
+	fixtures="curried overloads separating"; \
+	same() { [ "$$(printf '%s' "$$1" | sed -E 's/0x[0-9a-f]+/0xADDR/g')" = \
+		"$$(printf '%s' "$$2" | sed -E 's/0x[0-9a-f]+/0xADDR/g')" ]; }; \
+	for profile in he extended; do \
+		for fixture in $$fixtures; do \
+			actual=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+				--curried-arrows $$dir/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$dir/$$fixture.expected)" ]; then \
+				echo "FAIL: curried arrows $$fixture ($$profile)"; \
+				diff <(cat $$dir/$$fixture.expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+		for fixture in curried.off:curried pragma:pragma; do \
+			actual=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+				$$dir/$${fixture#*:}.metta 2>&1); \
+			if [ "$$actual" != "$$(cat $$dir/$${fixture%%:*}.expected)" ]; then \
+				echo "FAIL: curried arrows $${fixture%%:*} ($$profile)"; \
+				diff <(cat $$dir/$${fixture%%:*}.expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+		for program in tests/he_*.metta; do \
+			plain=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+				$$program 2>&1); \
+			curried=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+				--curried-arrows $$program 2>&1); \
+			if ! same "$$plain" "$$curried"; then \
+				echo "FAIL: curried arrows change $$program ($$profile)"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	plain=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile he-compat \
+		$$dir/curried.metta 2>&1); \
+	curried=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang he --profile he-compat \
+		--curried-arrows $$dir/curried.metta 2>&1); \
+	if [ "$$plain" != "$$curried" ]; then \
+		echo "FAIL: curried arrows reach he-compat"; exit 1; \
+	fi; \
+	echo "PASS: curried arrows read partial and over-application; declared readings unchanged"
+
 .PHONY: test-petta-variable-inventory-order
 test-petta-variable-inventory-order: $(BIN)
 	@set -eu; \
@@ -44477,3 +44780,62 @@ $(ANSWER_STORAGE_TEST_BIN): $(ANSWER_STORAGE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TE
 $(ANSWER_STORAGE_TEST_OBJ): tests/support/test_answer_storage.c src/answer_storage.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
+
+test: test-petta-space-head-chains
+test-petta-space-head-chains: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/space_head_chains.metta); \
+	expected=$$(cat tests/petta/space_head_chains.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: declarations and equations are read through the chain of their head'
+
+test: test-petta-space-marked-removal
+test-petta-space-marked-removal: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/space_marked_removal.metta); \
+	expected=$$(cat tests/petta/space_marked_removal.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: removed rows leave the others in order for every reader, running matches included'
+test: test-petta-path-index-bound-lead
+test-petta-path-index-bound-lead: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/path_index_bound_lead.metta); \
+	expected=$$(cat tests/petta/path_index_bound_lead.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: a lookup whose bound field leads reads the position index of that field, kept through removal by marks'
+
+test: test-petta-path-index-open-rows
+test-petta-path-index-open-rows: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/path_index_open_rows.metta); \
+	expected=$$(cat tests/petta/path_index_open_rows.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: position indexes keep open rows of several heads as candidates'
+
+test: test-petta-program-rule-rows
+test-petta-program-rule-rows: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/program_rule_rows.metta); \
+	expected=$$(cat tests/petta/program_rule_rows.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: a program reads rules among facts, a rule added while running, and a rule holding a space'

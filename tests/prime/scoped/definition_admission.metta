@@ -1,7 +1,7 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Definitions earn formation and native clause checking before publication.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(let $r (try (hol:define &thy missingId (-> MissingType MissingType)
                 (= (missingId $x) $x))) (car-atom $r))
 !(hol:define &thy missingId (-> MissingType MissingType)

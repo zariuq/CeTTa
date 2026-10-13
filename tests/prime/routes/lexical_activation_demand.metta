@@ -1,5 +1,5 @@
 ; Allocating a pattern scope does not evaluate its source or continuation.
-(hol:profile core)
+(hol:profile base)
 !(bind! &theory (new-space))
 !(bind! &number 7)
 (= (pending $space)

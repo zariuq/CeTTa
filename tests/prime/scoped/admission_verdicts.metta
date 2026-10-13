@@ -1,10 +1,10 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A definition or datatype that is legal but not yet admitted is answered
 ; Undetermined.  A refusal needs a witness that no evidence admits it: a
 ; value that would contain itself, a non-positive field, a constructor of
 ; another type.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:inductive &s bool (u 0) (: true bool) (: false bool))
 

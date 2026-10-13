@@ -1,11 +1,11 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Map fusion with map defined, as Agda writes it:
 ;   map-compose []       = refl
 ;   map-compose (x ∷ xs) = cong (f (g x) ∷_) (map-compose xs)
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: f (-> elem elem)) (: g (-> elem elem))))
 !(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(pf:equality &thy list refl@list subst@list)

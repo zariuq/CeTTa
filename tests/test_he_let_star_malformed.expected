@@ -1,0 +1,8 @@
+[((Error (let* ((a)) 8) "List of (<pattern> <atom>) pairs is expected as a second argument"))]
+[((Error (let* ((b)) (+ 1 1)) "List of (<pattern> <atom>) pairs is expected as a second argument"))]
+[((Error (let* (($b 2 3)) 1) "List of (<pattern> <atom>) pairs is expected as a second argument"))]
+[((Error (let* ((oops)) 3) "List of (<pattern> <atom>) pairs is expected as a second argument"))]
+[((Error (let* ((c d e)) 1) "List of (<pattern> <atom>) pairs is expected as a second argument"))]
+[(3)]
+[(3)]
+[(3)]

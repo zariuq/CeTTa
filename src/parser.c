@@ -160,6 +160,14 @@ void parser_clear_document_ids_backend(void *context) {
         memset(&g_document_ids_backend, 0, sizeof(g_document_ids_backend));
 }
 
+/* The installed reader is not reentered: while it runs, or while a caller
+ * asks for the built-in reader, the built-in reader parses. */
+bool parser_set_builtin_document_reader(bool builtin) {
+    bool old = g_document_ids_backend_active;
+    g_document_ids_backend_active = builtin;
+    return old;
+}
+
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
 /* The scanners read text_len bytes of text, which may hold NUL and is
@@ -825,6 +833,9 @@ ParserHostProjectionV1 *parser_host_projection_v1_new(
     projection->namespace_sugar = g_namespace_sugar_enabled;
     arena_init(&projection->scratch);
     arena_set_hashcons(&projection->scratch, NULL);
+    /* The root mark holds the first block, so starting a form keeps it
+     * instead of claiming a block for every form. */
+    arena_reserve(&projection->scratch, 1u);
     projection->scratch_root = arena_mark(&projection->scratch);
     parser_var_scope_init(&projection->scope);
     return projection;

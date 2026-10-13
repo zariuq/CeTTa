@@ -283,7 +283,7 @@
                           (let $target-type (hol-light:tr-type $interp $type)
                             (let $equation (hol-light:tr-node2 = $symbol $translated)
                               (let $quoted (hol-light:tr-node1 quote $equation)
-                                (let $defined (hol:define $target $symbol $target-type $quoted)
+                                (let $defined (hol-light:tr-define $target $symbol $target-type $quoted)
                                   (if (== $defined $symbol)
                                     (let $marked (add-atom $target (hol-light:transport-defined $symbol))
                                       $symbol)
@@ -466,7 +466,7 @@
   (case (hol-light:tr-member-tuple $name
           (collapse (match $target (hol-light:transport-commitment $known $s) $known)))
     ((False (let $quoted (hol-light:tr-node1 quote $statement)
-           (let $published (hol:axiom $target $name $quoted)
+           (let $published (hol-light:tr-axiom $target $name $quoted)
              (if (== $published $name)
                (let $marked (add-atom $target (hol-light:transport-commitment $name $statement))
                  $name)
@@ -622,17 +622,43 @@
              (None (hol-light:tr-publish $target $interp $hyps $conclusion $statement $key
                      $request $frees $body)))))))))
 
+; The target's namespace: hol: in a space of the logic alone, set: in a set
+; theory over it (HOTG among them).  Each publication is the judgment of that
+; namespace.
+(= (hol-light:tr-namespace $target)
+  (if (== (collapse (match $target (hol:profile $p) $p)) ()) set hol))
+
+(= (hol-light:tr-define $target $symbol $type $quoted)
+  (if (== (hol-light:tr-namespace $target) hol)
+    (hol:define $target $symbol $type $quoted)
+    (set:define $target $symbol $type $quoted)))
+
+(= (hol-light:tr-axiom $target $name $quoted)
+  (if (== (hol-light:tr-namespace $target) hol)
+    (hol:axiom $target $name $quoted)
+    (set:axiom $target $name $quoted)))
+
+(= (hol-light:tr-theorem $target $name $qs $qp)
+  (if (== (hol-light:tr-namespace $target) hol)
+    (hol:theorem $target $name $qs $qp)
+    (set:theorem $target $name $qs $qp)))
+
+(= (hol-light:tr-try-theorem $target $name $qs $qp)
+  (if (== (hol-light:tr-namespace $target) hol)
+    (try (hol:theorem $target $name $qs $qp))
+    (try (set:theorem $target $name $qs $qp))))
+
 ; Publish a replayed step: the proof is checked by the target's own checker.
 (= (hol-light:tr-publish $target $interp $hyps $conclusion $statement $key $request $frees $body)
           (let $proof (hol-light:tr-skeleton $frees $hyps $body)
             (let $name (hol-light:tr-fresh-name $target)
               (let $qs (hol-light:tr-node1 quote $statement)
                 (let $qp (hol-light:tr-node1 quote $proof)
-                  (let $published (hol:theorem $target $name $qs $qp)
+                  (let $published (hol-light:tr-theorem $target $name $qs $qp)
                     (if (== $published $name)
                       (let $marked (add-atom $target (hol-light:transported $hyps $conclusion $name))
                         $name)
-                      (let $why (try (hol:theorem $target $name $qs $qp))
+                      (let $why (hol-light:tr-try-theorem $target $name $qs $qp)
                         (function (return (HOL:TransportRefused $key $request $why)))))))))))
 
 ; The proof body of one primitive step, inside the conclusion's skeleton.

@@ -2,7 +2,7 @@
 ; and an explicit identity interpretation makes that proof usable by a
 ; dependent computation. The original language instance and source proof
 ; remain available beside the computed value.
-(hol:profile core)
+(hol:profile base)
 !(import! &self pf)
 !(import! &self "../../langdef/prime/declared_binding_package_v1.metta")
 !(import! &self "../../langdef/prime/declared_binding_dependent_package_v1.metta")

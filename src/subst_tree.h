@@ -164,6 +164,12 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
 /* Transport retained leaf coordinates through one validated stable
  * occurrence contraction and restore every bucket's exact leaf count.
  * Returns the number of removed leaves. */
+/* Remove the posting of row `idx` for an indexed atom, or move it to row
+ * `to`; false when the posting is not in the tree. */
+bool stree_remove_id(SubstTree *t, const TermUniverse *universe,
+                     AtomId atom_id, CettaIndex idx);
+bool stree_relabel_id(SubstTree *t, const TermUniverse *universe,
+                      AtomId atom_id, CettaIndex from, CettaIndex to);
 CettaCount stree_transport_stable_coordinates(
     SubstTree *t, const CettaIndex *source_to_target,
     CettaCount source_len);

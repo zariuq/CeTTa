@@ -70,15 +70,49 @@
    (type:analyze partial Nat)
    (type:check vague Nat))
 
-; Outside every fragment: conflicting declarations, a dependent telescope and
-; an undeclared head.
+; Overloads: every declaration is its own constant, so a symbol declared
+; twice has both types, and a judgment has one answer per derivation.
 (: dup A)
 (: dup B)
+(: pick (-> A Nat))
+(: pick (-> B Nat))
+!(Overloads
+   (type:check dup A)
+   (type:check dup B)
+   (type:check dup Nat)
+   (type:check (pick dup) Nat)
+   (type:check (pick dup) A))
+
+; An arrow is a type of its own arity: an application of another arity has
+; no type, and an arrow returning an arrow takes one argument at a time.
+(: k (-> A (-> A B)))
+!(Arity
+   (type:check (f a a) B)
+   (type:check (f) B)
+   (type:check ((k a) a) B)
+   (type:check (k a a) B)
+   (type:check (k a) (-> A B)))
+
+; A binder `(: $x A)` names its argument, the `he-prime` extension: what
+; follows it sees the argument itself.  The hosted LF kernel decides it.
 (: Fam (-> A Type))
 (: dep (-> (: $x A) (Fam $x)))
-!(Outside
-   (type:check dup A)
+(: a2 A)
+!(Dependent
+   (type:of (dep a))
    (type:check (dep a) (Fam a))
+   (type:check (dep a) (Fam a2))
+   (type:check (dep Z) (Fam a)))
+
+; A declaration whose type applies a declared type family outside its domain
+; declares nothing.
+(: badFam (Fam Z))
+!(IllFormed
+   (type:of badFam)
+   (type:check badFam (Fam a)))
+
+; Outside every fragment: an undeclared head.
+!(Outside
    (type:of (mystery a)))
 
 ; A telescope component whose variable occurs nowhere later binds nothing:
@@ -95,10 +129,9 @@
    (type:formed (Nat Bool))
    (type:formed (-> Nat Mystery)))
 
-; An arrow inside a product is read curried; an arrow whose return is an
-; arrow has no faithful reading, so the checker is not asked.  A scheme
-; instance that substitutes an arrow lies outside the first-order fragment.
-; `(T)` is the product of `T` and the unit type.
+; An arrow inside a product is a type of its own arity, so `(-> A (-> A B))`
+; and `(-> A A B)` are different types.  A scheme's variable may stand for an
+; arrow.  `(T)` is the product of `T` and the unit type.
 (: pairs (List (-> A B)))
 (: curried (List (-> A (-> A B))))
 (: single (Nat))
@@ -106,16 +139,20 @@
    (type:check pairs (List (-> A B)))
    (type:check pairs (List (-> B A)))
    (type:check curried (List (-> A A B)))
+   (type:check curried (List (-> A (-> A B))))
    (type:check nil (List (-> A B)))
    (type:check single (Nat))
    (type:check single Nat))
 
-; get-type: the checked type, no type when the checker refuses, a symbol's
-; declarations outside the fragments, and the gradual type of an application
-; whose arguments are consistent with its head's parameters.
+; get-type: the checked types, one per derivation, no type when the checker
+; refuses every way of typing the atom, and the gradual type of an
+; application whose arguments are consistent with its head's parameters.
 !(get-type (f a))
 !(collapse (get-type (cons Z Z)))
 !(get-type dup)
+!(get-type (pick dup))
+!(get-type ((k a) a))
+!(collapse (get-type (k a a)))
 !(get-type (f mystery))
 !(get-type 7)
 
@@ -124,3 +161,20 @@
 (: Indexed (-> $t Number Type))
 !(get-type (Indexed mystery 3))
 !(get-type (Indexed mystery Z))
+
+; Malformed telescopes do not acquire a verdict through the dependent route.
+(: repeated-binder (-> (: $x A) (: $x A) (Fam $x)))
+(: forward-binder (-> (: $x (Fam $y)) (: $y A) (Fam $y)))
+(: self-binder (-> (: $x (Fam $x)) (Fam $x)))
+!(BinderScopes
+   (type:check (repeated-binder a a) (Fam a))
+   (type:check (forward-binder a a) (Fam a))
+   (type:check (self-binder a) (Fam a)))
+
+; An instantiated arrow must still belong to the contract grammar.
+(: scoped-list (List Atom))
+(: scoped-f (-> (List $t) $t Nat))
+(type-scheme scoped-f)
+(: scoped-z $s)
+(type-scheme scoped-z)
+!(InstanceAdmission (type:check (scoped-f scoped-list scoped-z) Nat))

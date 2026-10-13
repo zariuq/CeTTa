@@ -51,3 +51,27 @@ def instruction_gate(baseline, candidate, control_a, control_b):
                 paired_percent=[float(100 * value) for value in differences],
                 paired_median_percent=float(100 * median(differences)),
                 paired_range_percent=[float(100 * lower), float(100 * upper)])
+
+
+def layout_gate(baselines, candidates, control_a, control_b):
+    """The follow-up for a flagged comparison: each side also linked from the
+    same objects in other orders.  A regression is confirmed when every
+    candidate build exceeds every baseline build by more than the
+    identical-artifact spread; an improvement likewise.  Anything else is a
+    layout-sized difference, reported with its size."""
+    def build_median(samples):
+        return median(row["instructions"] for row in samples.values())
+    base = [build_median(samples) for samples in baselines]
+    cand = [build_median(samples) for samples in candidates]
+    spread = max(abs(control_a[k]["instructions"] - control_b[k]["instructions"])
+                 for k in control_a)
+    if min(cand) - max(base) > spread:
+        status = "confirmed_regression"
+    elif min(base) - max(cand) > spread:
+        status = "confirmed_improvement"
+    else:
+        status = "layout_sized"
+    middle = median(base)
+    return dict(status=status, baseline_builds=base, candidate_builds=cand,
+                control_spread=spread,
+                median_percent=float(100 * Fraction(median(cand) - middle, middle)))
