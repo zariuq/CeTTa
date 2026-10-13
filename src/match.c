@@ -6003,8 +6003,8 @@ static bool bindings_builder_record_frame_slot_value(
         bb->trail_len == 0u) {
         return false;
     }
-    const BindingsFrameIndexEntry *frame =
-        bindings_frame_index_find_ref_const(
+    BindingsFrameIndexEntry *frame =
+        bindings_frame_index_find_ref(
             bb->current.frame_index, ref);
     if (!frame)
         return false;
@@ -6032,8 +6032,8 @@ static bool bindings_builder_record_frame_slot_value(
         .trail_mark = bb->trail_len - 1u,
     };
     bool authority_moved = false;
-    if (!bindings_frame_index_write_slot_ref(
-            &bb->current, ref, slot, value,
+    if (!bindings_frame_index_write_resolved_slot(
+            &bb->current, frame, slot, value,
             &undo.written_write_version, &authority_moved)) {
         return false;
     }
@@ -6719,9 +6719,16 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
         *authoritative_value_out = binding_value_from_atom(NULL);
     if (!bb)
         return false;
-    if (binding_id_has_frame(var_id) &&
-        !bindings_builder_frame_index_ensure_id(bb, var_id))
-        return false;
+    const BindingsFrameIndexEntry *framed_entry = NULL;
+    uint32_t framed_slot = 0u;
+    bool framed = binding_id_has_frame(var_id);
+    if (framed && !bindings_frame_index_find_coordinate(
+            &bb->current, var_id, &framed_entry, &framed_slot)) {
+        if (!bindings_builder_frame_index_ensure_id(bb, var_id) ||
+            !bindings_frame_index_find_coordinate(
+                &bb->current, var_id, &framed_entry, &framed_slot))
+            return false;
+    }
     if (val.skeleton->kind == ATOM_VAR &&
         binding_var_eq(var_id, binding_value_variable_id(val)))
         return true;
@@ -6733,23 +6740,18 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             return true;
     }
 
-    const BindingsFrameIndexEntry *framed_entry = NULL;
-    uint32_t framed_slot = 0u;
-    bool framed = binding_id_has_frame(var_id) &&
-        bindings_frame_index_find_coordinate(
-            &bb->current, var_id, &framed_entry, &framed_slot);
     BindingsFrameRef framed_ref = framed
-        ? bindings_frame_ref_from_entry(
-              bb->current.frame_index, framed_entry)
+        ? (BindingsFrameRef){.identity = framed_entry->epoch}
         : (BindingsFrameRef){0};
     BindingValue existing = binding_value_from_atom(NULL);
     if (framed) {
-        if (!bindings_frame_ref_is_valid(framed_ref) ||
-            !bindings_frame_index_ensure_presentation_slot(
+        /* Presentation may detach the directory; copy the value before that
+         * boundary and keep only the stable reference afterward. RHS admission
+         * below may also move sparse slots, so the write resolves them again. */
+        existing = framed_entry->values[framed_slot];
+        if (!bindings_frame_index_ensure_presentation_slot(
                 &bb->current, framed_ref, framed_slot,
-                var_id, spelling, name_key) ||
-            !bindings_frame_index_lookup_value_slot(
-                &bb->current, framed_ref, framed_slot, &existing)) {
+                var_id, spelling, name_key)) {
             return false;
         }
     } else {

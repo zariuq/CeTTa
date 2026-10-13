@@ -5830,6 +5830,7 @@ static void test_activated_empty_authority(
         .context = &probe,
         .candidate_snapshot_lease = test_equation_guard_snapshot_lease,
         .classify = terminal_empty_classify,
+        .classify_may_override = true,
         .evaluate = terminal_empty_evaluate,
         .measure_stats = true,
         .source_output_constraints = true,
@@ -7942,6 +7943,7 @@ static void test_quoted_result_override(Space *space, Arena *arena) {
     PettaMachineHost host = {
         .context = &probe,
         .classify = quoted_result_override_classify,
+        .classify_may_override = true,
         .evaluate = host_projection_evaluate,
         .source_output_constraints = true,
     };

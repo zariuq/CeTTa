@@ -313,6 +313,11 @@ typedef struct {
     bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
+    /* The classifier may answer PETTA_MACHINE_HOST_READY_OVERRIDE, which
+     * supersedes a machine-native form.  A host that never does leaves this
+     * false; the machine then classifies only where another mode decides
+     * something. */
+    bool classify_may_override;
     /* Direct grounded execution is a physical realization of a language
      * call.  The host therefore retains profile-owned admission for each
      * shared opcode; absence preserves the standalone machine's unrestricted

@@ -125,6 +125,16 @@ bool bindings_frame_index_write_slot_ref(
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out);
 
+/* A short-lived focus already resolved in bindings->frame_index. No operation
+ * that can replace the directory, move entries, or grow a schema may occur
+ * between resolving frame and this call. Copy-on-write inside the operation
+ * reacquires the entry by its generational identity. The focus never escapes
+ * to a continuation or a captured image. */
+bool bindings_frame_index_write_resolved_slot(
+        Bindings *bindings, BindingsFrameIndexEntry *frame, uint32_t slot,
+        BindingValue value, uint64_t *version_out,
+        bool *authority_moved_out);
+
 /* The entry named by `ref`, owned by this image and ready for writes. */
 BindingsFrameIndexEntry *bindings_frame_index_detach_entry_ref(
         Bindings *bindings, BindingsFrameRef ref);

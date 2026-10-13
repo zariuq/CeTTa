@@ -266,6 +266,77 @@ static void test_sparse_frame_write_context_growth(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
+static void test_resolved_frame_write_boundaries(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
+    VarId ids[] = {101u, 103u, 107u};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "focus-a", ids[0]),
+        atom_var_with_id(arena, "focus-b", ids[1]),
+        atom_var_with_id(arena, "focus-c", ids[2])
+    };
+    BindingsFrameSchema *schema = bindings_frame_schema_new_presented(
+        ids, variables, 3u);
+    Bindings base;
+    bindings_init(&base);
+    CHECK(schema && bindings_register_complete_frame_schema(&base, schema, epoch),
+          "resolved write fixture registers one presented inventory");
+    bindings_frame_schema_release(schema);
+    BindingsBuilder left, right;
+    bool left_ready = bindings_builder_init(&left, &base);
+    bool right_ready = bindings_builder_init(&right, &base);
+    CHECK(left_ready && right_ready, "two builders share the initial frame");
+    if (!left_ready || !right_ready) {
+        if (left_ready) bindings_builder_free(&left);
+        if (right_ready) bindings_builder_free(&right);
+        bindings_free(&base);
+        return;
+    }
+    Atom *a = atom_var_with_id(arena, "focus-a", var_epoch_id(ids[0], epoch));
+    Atom *b = atom_var_with_id(arena, "focus-b", var_epoch_id(ids[1], epoch));
+    Atom *c = atom_var_with_id(arena, "focus-c", var_epoch_id(ids[2], epoch));
+    test_runtime_stats_reset_counters();
+    CHECK(bindings_builder_add_var_fresh(&left, a, atom_int(arena, 11)) &&
+              binding_is_int(&left.current, a->var_id, 11) &&
+              !bindings_lookup_value_id(&right.current, a->var_id).skeleton &&
+              !bindings_lookup_value_id(&base, a->var_id).skeleton,
+          "a resolved write detaches without modifying either shared owner");
+    CHECK(test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_DETACH) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_DETACH) == 1u,
+          "one shared write detaches the directory and frame exactly once");
+    CHECK(bindings_builder_add_var_fresh(&left, b, a) &&
+              atom_eq(bindings_apply(&left.current, arena, b), atom_int(arena, 11)) &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_DETACH) == 1u &&
+              test_runtime_stats_counter(
+              CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_DETACH) == 1u,
+          "the next private write retains alias meaning without another detach");
+    uint32_t mark = bindings_builder_save(&left);
+    Bindings captured;
+    CHECK(bindings_clone(&captured, &left.current),
+          "a captured image shares the frame before a later write");
+    CHECK(bindings_builder_add_var_fresh(&left, c, atom_int(arena, 13)) &&
+              !bindings_lookup_value_id(&captured, c->var_id).skeleton &&
+              !bindings_builder_add_var_fresh(&left, a, atom_int(arena, 99)) &&
+              binding_is_int(&left.current, a->var_id, 11),
+          "capture and a conflicting bind preserve the prior slot authority");
+    bindings_builder_rollback(&left, mark);
+    CHECK(!bindings_lookup_value_id(&left.current, c->var_id).skeleton &&
+              bindings_builder_add_var_fresh(&right, a, atom_int(arena, 17)) &&
+              binding_is_int(&right.current, a->var_id, 17) &&
+              binding_is_int(&captured, a->var_id, 11),
+          "rollback and a sibling write keep the captured world independent");
+    bindings_builder_free(&left);
+    bindings_builder_free(&right);
+    bindings_free(&base);
+    CHECK(binding_is_int(&captured, a->var_id, 11) &&
+              atom_eq(bindings_apply(&captured, arena, b), atom_int(arena, 11)),
+          "the captured frame and alias survive both builders and their parent");
+    bindings_free(&captured);
+}
+
 static void test_borrowed_root_identity(Arena *arena) {
     Atom *first = atom_var_with_id(arena, "same-root-name", test_id(9000u));
     Atom *second = atom_var_with_id(arena, "same-root-name", test_id(9001u));
@@ -2670,6 +2741,7 @@ int main(void) {
     test_arena_retained_owners();
     test_saved_binding_value_lifetime();
     test_sparse_frame_write_context_growth(&arena);
+    test_resolved_frame_write_boundaries(&arena);
 
     test_borrowed_root_identity(&arena);
     test_term_stability_summary(&arena);

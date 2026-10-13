@@ -3700,6 +3700,8 @@ typedef enum {
     SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT = 1u << 0,
     SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE = 1u << 1,
     SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION = 1u << 2,
+    /* With DECLARATION: the declaration is a `(:< sub super)` row. */
+    SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE = 1u << 3,
 } SpaceMutationEquationProjection;
 
 typedef enum {
@@ -4312,9 +4314,11 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
                 SymbolId head = tu_head_sym(s->native.universe, atom_id);
                 if (head == g_builtin_syms.equals || head == g_builtin_syms.equals_percent)
                     return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
-                if (head == g_builtin_syms.colon ||
-                    head == g_builtin_syms.subtype)
+                if (head == g_builtin_syms.colon)
                     return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
+                if (head == g_builtin_syms.subtype)
+                    return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                        SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
             }
             return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
         }
@@ -4325,9 +4329,11 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
         if (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
             space_atom_form_is(atom, g_builtin_syms.equals_percent, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
-        if (space_atom_form_is(atom, g_builtin_syms.colon, 3u) ||
-            space_atom_form_is(atom, g_builtin_syms.subtype, 3u))
+        if (space_atom_form_is(atom, g_builtin_syms.colon, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
+        if (space_atom_form_is(atom, g_builtin_syms.subtype, 3u))
+            return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
         return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     }
     return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
@@ -6518,9 +6524,14 @@ static void space_publish_mutation(
     if (equation_projection &
             ~(SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
               SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
-              SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)) {
+              SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+              SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE)) {
         abort();
     }
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))
+        s->declares_subtypes = true;
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
@@ -9456,8 +9467,12 @@ static uint32_t he_close_type_array(Space *s, Arena *a, Atom ***types_io,
                                     uint32_t count, uint32_t from,
                                     CettaTypeInferenceBudget *budget);
 
-static bool he_types_close_under_subtypes(void) {
-    return eval_current_language_id &&
+static bool he_program_declares_subtypes(const Space *s);
+
+/* HE closes types under the program's subtypes; most programs declare
+ * none, so the space's own flag is read before anything else. */
+static bool he_types_close_under_subtypes(const Space *s) {
+    return he_program_declares_subtypes(s) && eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_HE;
 }
 
@@ -9497,7 +9512,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
         count = include_direct_annotations
                     ? get_annotated_types(s, a, atom, &types, budget, NULL)
                     : 0;
-        if (count && he_types_close_under_subtypes())
+        if (count && he_types_close_under_subtypes(s))
             count = he_close_type_array(s, a, &types, count, 0u, budget);
         break;
     case ATOM_EXPR:
@@ -9510,7 +9525,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
         count = include_direct_annotations
                     ? get_annotated_types(s, a, atom, &types, budget, NULL)
                     : 0;
-        if (count && he_types_close_under_subtypes())
+        if (count && he_types_close_under_subtypes(s))
             count = he_close_type_array(s, a, &types, count, 0u, budget);
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
@@ -9646,7 +9661,7 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
         if (count == 0 && atom->expr.len > 0 && !tried_func_type &&
             (!budget || budget->complete)) {
             count = infer_tuple_value_types(s, a, atom, &types, budget);
-            if (count && he_types_close_under_subtypes())
+            if (count && he_types_close_under_subtypes(s))
                 count = he_close_type_array(s, a, &types, count, 0u, budget);
         }
         break;
@@ -9733,34 +9748,25 @@ static uint32_t he_direct_supertypes(Space *s, Arena *a, Atom *type,
     return count;
 }
 
-/* Whether the program `s` presents declares a subtype. Subtype rows are
- * declarations, so the program token changes with them. */
-static bool he_program_declares_subtypes(Space *s) {
-    static _Thread_local struct {
-        SpaceProgramToken token;
-        bool valid;
-        bool declares;
-    } cache[4];
-    SpaceProgramToken token = space_program_token(s);
-    unsigned slot = (unsigned)(((uintptr_t)s >> 6) & 3u);
-    if (cache[slot].valid && space_program_token_eq(cache[slot].token, token))
-        return cache[slot].declares;
-    Arena scratch;
-    arena_init(&scratch);
-    arena_set_hashcons(&scratch, NULL);
-    Atom *pattern = atom_expr3(&scratch,
-        atom_symbol_id(&scratch, g_builtin_syms.subtype),
-        atom_var(&scratch, "%he-subtype"), atom_var(&scratch, "%he-supertype"));
-    BindingSet found;
-    binding_set_init(&found);
-    space_query_conjunction(s, &scratch, &pattern, 1u, NULL, &found);
-    bool declares = found.len != 0u;
-    binding_set_free(&found);
-    arena_free(&scratch);
-    cache[slot].token = token;
-    cache[slot].valid = true;
-    cache[slot].declares = declares;
-    return declares;
+/* Whether the program `s` presents declares a subtype: its own rows, the
+ * spaces its overlays read through, and its imports. */
+static bool he_program_declares_subtypes(const Space *s) {
+    if (!s)
+        return false;
+    if (s->declares_subtypes)
+        return true;
+    if (!s->overlay_base && s->dep_count == 0u)
+        return false;
+    for (const Space *at = s->overlay_base; at; at = at->overlay_base)
+        if (at->declares_subtypes)
+            return true;
+    uint32_t dependencies = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dependencies; d++) {
+        const Space *dependency = space_dependency_at(s, d);
+        if (dependency && dependency->declares_subtypes)
+            return true;
+    }
+    return false;
 }
 
 static bool he_repeats_ancestor(const HeTypings *list, uint32_t index,

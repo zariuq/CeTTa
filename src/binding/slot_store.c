@@ -587,37 +587,33 @@ bool bindings_frame_index_replace_slot_value(
     return true;
 }
 
-bool bindings_frame_index_write_slot_ref(
-        Bindings *bindings, BindingsFrameRef ref, uint32_t slot,
+bool bindings_frame_index_write_resolved_slot(
+        Bindings *bindings, BindingsFrameIndexEntry *frame, uint32_t slot,
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out) {
     if (version_out)
         *version_out = 0u;
     if (authority_moved_out)
         *authority_moved_out = false;
-    if (!bindings || !bindings->frame_index || !value.skeleton ||
-        !bindings_frame_ref_is_valid(ref)) {
+    if (!bindings || !bindings->frame_index || !frame || !value.skeleton ||
+        slot >= frame->slot_len) {
         return false;
     }
-    BindingsFrameIndexEntry *frame =
-        bindings_frame_index_find_ref(bindings->frame_index, ref);
-    if (!frame || slot >= frame->slot_len)
-        return false;
+    bool directory_shared = atomic_load_explicit(
+        &bindings->frame_index->references, memory_order_acquire) != 1u;
     bool authority_moved =
-        atomic_load_explicit(
-            &bindings->frame_index->references,
-            memory_order_acquire) != 1u ||
+        directory_shared ||
         atomic_load_explicit(
             frame->storage_references,
             memory_order_acquire) != 1u;
-    if (!bindings_frame_index_detach(bindings))
-        return false;
-    /* A detached directory preserves its handle table.  Resolve the stable
-     * handle again after copy-on-write instead of recovering the activation
-     * from its epoch or relying on a movable array position. */
-    frame = bindings_frame_index_find_ref(bindings->frame_index, ref);
-    if (!frame || slot >= frame->slot_len)
-        return false;
+    if (directory_shared) {
+        BindingsFrameRef ref = {.identity = frame->epoch};
+        if (!bindings_frame_index_detach(bindings))
+            return false;
+        frame = bindings_frame_index_find_ref(bindings->frame_index, ref);
+        if (!frame || slot >= frame->slot_len)
+            return false;
+    }
     if (!bindings_frame_index_entry_detach(frame))
         return false;
     if (bindings->frame_index->write_clock == UINT64_MAX ||
@@ -632,6 +628,16 @@ bool bindings_frame_index_write_slot_ref(
     if (authority_moved_out)
         *authority_moved_out = authority_moved;
     return true;
+}
+
+bool bindings_frame_index_write_slot_ref(
+        Bindings *bindings, BindingsFrameRef ref, uint32_t slot,
+        BindingValue value, uint64_t *version_out,
+        bool *authority_moved_out) {
+    BindingsFrameIndexEntry *frame = bindings
+        ? bindings_frame_index_find_ref(bindings->frame_index, ref) : NULL;
+    return bindings_frame_index_write_resolved_slot(
+        bindings, frame, slot, value, version_out, authority_moved_out);
 }
 
 BindingsFrameIndexEntry *bindings_frame_index_detach_entry_ref(

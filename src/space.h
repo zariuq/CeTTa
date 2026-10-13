@@ -233,6 +233,10 @@ typedef struct Space {
        equation and declaration projections together and nothing else, so
        caches of those facts key on this pair rather than on `revision`. */
     uint64_t declaration_revision;
+    /* A `(:< sub super)` row, or a mutation that could not be classified, has
+       been published here. Never cleared: a read that finds it false knows
+       the space has no subtype rows. */
+    bool declares_subtypes;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
        publications preserve it.  An overlay folds the stamps of its actual

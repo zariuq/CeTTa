@@ -25300,12 +25300,10 @@ static bool petta_machine_try_ready_grounded_slots(
         : grounded_op_is_type_pure(head_id);
     if (!direct)
         return false;
-    PettaMachineHostMode host_mode = machine->host.classify
-        ? machine->host.classify(
-              machine->host.context, machine->space,
-              goal->first)
-        : PETTA_MACHINE_HOST_NONE;
-    if (host_mode == PETTA_MACHINE_HOST_READY_OVERRIDE)
+    if (machine->host.classify && machine->host.classify_may_override &&
+        machine->host.classify(
+            machine->host.context, machine->space, goal->first) ==
+            PETTA_MACHINE_HOST_READY_OVERRIDE)
         return false;
 
     CettaExprLen nargs = goal->first->expr.len - 1u;
@@ -29039,10 +29037,9 @@ activation_tail_segment:
     if (goal->plan && goal->plan->role == PETTA_PLAN_STATIC_CALL &&
         source->kind == ATOM_EXPR && source->expr.len == 1u &&
         atom_is_symbol_id(source->expr.elems[0], g_builtin_syms.empty_form)) {
-        PettaMachineHostMode mode = machine->host.classify
-            ? machine->host.classify(machine->host.context, machine->space, source)
-            : PETTA_MACHINE_HOST_NONE;
-        if (mode != PETTA_MACHINE_HOST_READY_OVERRIDE)
+        if (!machine->host.classify || !machine->host.classify_may_override ||
+            machine->host.classify(machine->host.context, machine->space,
+                                   source) != PETTA_MACHINE_HOST_READY_OVERRIDE)
             return false;
         if (!petta_goal_push(machine, &(PettaGoal){
                 .kind = PETTA_GOAL_HOST_READY,
@@ -29958,6 +29955,87 @@ static Atom *petta_machine_fold_step(
     return result;
 }
 
+/* The operands of a type-pure grounded call as one register instruction
+ * reads them: each argument slot resolved in the live environment, ground,
+ * and already a value, under an exact native arity, so PeTTa currying is
+ * never bypassed.  False leaves the call to the canonical path. */
+static bool petta_machine_pure_call_operands(
+    PettaMachineImpl *machine, const Bindings *environment, Atom *call,
+    const PettaPlanNode *plan, Atom **arguments) {
+    CettaExprLen nargs = call->expr.len - 1u;
+    PeTTaNamedArity arity = petta_machine_source_named_arity(
+        machine, call->expr.elems[0], nargs);
+    if (!arity.known || !arity.exact)
+        return false;
+    for (CettaExprIndex index = 0u; index < nargs; index++) {
+        const PettaPlanNode *argument_plan =
+            petta_plan_child(plan, index + 1u);
+        Atom *source = call->expr.elems[index + 1u];
+        if (argument_plan && argument_plan->contains_call &&
+            source && atom_has_vars(source))
+            return false;
+        Atom *argument = petta_machine_resolve_root(
+            environment, source);
+        if (argument && atom_has_vars(argument))
+            argument = petta_machine_apply_bindings(
+                machine, environment, &machine->heap, source);
+        if (!argument || atom_has_vars(argument) ||
+            !petta_machine_immediate_value(argument, argument_plan) ||
+            petta_semantics_value_contains_observable_open_cons(argument))
+            return false;
+        arguments[index] = argument;
+    }
+    return true;
+}
+
+/* The truth value an `if` condition's own goal would deliver, when that
+ * goal would be one register instruction: no program equation and no
+ * written call for its head, a call position, and either a closed nested
+ * type-pure tree or ready operands, compared by the scalar truth paths,
+ * which raise no error.  The condition is then read without a destination
+ * variable or a selection goal.  Anything else keeps the condition goal. */
+static bool petta_machine_if_scalar_condition(
+    PettaMachineImpl *machine, const Bindings *environment,
+    Atom *condition, const PettaPlanNode *plan, bool *truth_out) {
+    if (!condition || condition->kind != ATOM_EXPR ||
+        condition->expr.len < 2u || condition->expr.len > 3u ||
+        condition->expr.elems[0]->kind != ATOM_SYMBOL ||
+        (plan && plan->role == PETTA_PLAN_DATA) ||
+        petta_machine_builtin_equations(machine, condition, plan) ||
+        (plan && petta_plan_reduces_written_call(
+                     machine, plan, condition)))
+        return false;
+    CettaExprLen nargs = condition->expr.len - 1u;
+    bool nested_operand = false;
+    for (CettaExprIndex index = 1u; index < condition->expr.len; index++)
+        nested_operand = nested_operand ||
+            condition->expr.elems[index]->kind == ATOM_EXPR;
+    if (nested_operand) {
+        bool nested = false;
+        Atom *reduced = atom_has_vars(condition)
+            ? NULL
+            : petta_machine_reduce_closed_scalar(
+                  machine, condition, plan, 0u, &nested);
+        if (!reduced || !nested ||
+            !petta_semantics_truth_value(reduced, truth_out))
+            return false;
+        machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+        return true;
+    }
+    Atom *arguments[2] = {NULL, NULL};
+    if (!petta_machine_type_pure_call_ready(
+            condition->expr.elems[0]->sym_id, nargs, plan) ||
+        !petta_machine_pure_call_operands(
+            machine, environment, condition, plan, arguments) ||
+        !petta_machine_try_plain_scalar_truth(
+            machine, condition->expr.elems[0], arguments,
+            (uint32_t)nargs, truth_out))
+        return false;
+    machine->stats.pure_grounded_slot_frame_entries++;
+    machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+    return true;
+}
+
 static bool petta_machine_dispatch_solve(
     PettaMachineImpl *machine, const PettaGoal *goal,
     PettaMachineStep *failure) {
@@ -30096,38 +30174,15 @@ static bool petta_machine_dispatch_solve(
             goal->first->expr.elems[0]->sym_id,
             goal->first->expr.len - 1u, plan)) {
         CettaExprLen nargs = goal->first->expr.len - 1u;
-        PeTTaNamedArity arity = petta_machine_source_named_arity(
-            machine, goal->first->expr.elems[0], nargs);
         Atom *inline_arguments[8];
         Atom **arguments = nargs <= 8u
             ? inline_arguments
             : arena_alloc(
                   &machine->heap,
                   sizeof(*arguments) * (size_t)nargs);
-        bool ready = arity.known && arity.exact &&
-            (nargs <= 8u || arguments != NULL);
-        for (CettaExprIndex index = 0u;
-             ready && index < nargs; index++) {
-            const PettaPlanNode *argument_plan =
-                petta_plan_child(plan, index + 1u);
-            Atom *source = goal->first->expr.elems[index + 1u];
-            if (argument_plan && argument_plan->contains_call &&
-                source && atom_has_vars(source)) {
-                ready = false;
-                break;
-            }
-            Atom *argument = petta_machine_resolve_root(
-                environment, source);
-            if (argument && atom_has_vars(argument))
-                argument = petta_machine_apply_bindings(
-                    machine, environment, &machine->heap, source);
-            ready = argument && !atom_has_vars(argument) &&
-                petta_machine_immediate_value(argument, argument_plan) &&
-                !petta_semantics_value_contains_observable_open_cons(
-                    argument);
-            if (ready)
-                arguments[index] = argument;
-        }
+        bool ready = arguments &&
+            petta_machine_pure_call_operands(
+                machine, environment, goal->first, plan, arguments);
         if (ready) {
             machine->stats.pure_grounded_slot_frame_entries++;
             bool truth = false;
@@ -30471,7 +30526,8 @@ static bool petta_machine_dispatch_solve(
         }
     }
 
-    PettaMachineHostMode override_mode = machine->host.classify
+    PettaMachineHostMode override_mode =
+        machine->host.classify && machine->host.classify_may_override
         ? machine->host.classify(
               machine->host.context, machine->space, expression)
         : PETTA_MACHINE_HOST_NONE;
@@ -31712,10 +31768,45 @@ static bool petta_machine_dispatch_solve(
     }
     if (form == PETTA_FORM_IF &&
         (nargs == 2u || nargs == 3u)) {
-        Atom *condition = petta_fresh_variable(machine);
         Atom *otherwise = nargs == 3u
             ? expression->expr.elems[3]
             : atom_petta_no_result(&machine->heap);
+        /* Metered, traced or externally observed execution keeps the
+         * condition's goal boundary, as the selection's resume does. */
+        bool truth = false;
+        if (machine->host.unlimited_transition_budget &&
+            !machine->host.analysis &&
+            !machine->host.externalize_equation_choices &&
+            !machine->host.begin_relation_call &&
+            !machine->host.record_equation_use &&
+            !petta_machine_trace_enabled() &&
+            petta_machine_if_scalar_condition(
+                machine, environment, expression->expr.elems[1],
+                petta_plan_child(plan, 1u), &truth)) {
+            PettaIfBranchSelection selected = petta_if_select_branch(
+                truth, expression->expr.elems[2], otherwise,
+                petta_plan_child(plan, 2u),
+                nargs == 3u ? petta_plan_child(plan, 3u) : NULL);
+            if (selected.plan && petta_if_resume_segment_enabled()) {
+                PettaGoal resumed = {
+                    .kind = PETTA_GOAL_SOLVE,
+                    .barrier = goal->barrier,
+                    .first = selected.branch,
+                    .second = expected,
+                    .plan = selected.plan,
+                };
+                return petta_machine_dispatch_solve(
+                    machine, &resumed, failure);
+            }
+            if (!petta_push_solve_planned(
+                    machine, selected.branch, expected,
+                    goal->barrier, selected.plan)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return true;
+        }
+        Atom *condition = petta_fresh_variable(machine);
         if (!petta_goal_push(
                 machine,
                 &(PettaGoal){
@@ -31791,6 +31882,27 @@ static bool petta_machine_dispatch_solve(
             return true;
         }
         if (value_let || machine->host.literal_binding_patterns) {
+            /* A variable pattern is its source's destination. Each value is
+             * delivered into the binder itself, so an unbound returned value
+             * keeps its authored coordinate exactly as it would through an
+             * intermediate destination, without minting one or scheduling a
+             * separate unification. */
+            Atom *pattern = expression->expr.elems[binder_index];
+            if (machine->host.literal_binding_patterns &&
+                machine->host.retain_query_variable_identity &&
+                pattern->kind == ATOM_VAR) {
+                if (!petta_push_solve_planned(machine,
+                        expression->expr.elems[3], expected, goal->barrier,
+                        petta_plan_child(plan, 3u)) ||
+                    !petta_push_solve_planned(machine,
+                        expression->expr.elems[source_index], pattern,
+                        goal->barrier,
+                        petta_plan_child(plan, source_index))) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                return true;
+            }
             Atom *value = petta_fresh_variable(machine);
             if (!value || !petta_push_solve_planned(machine,
                     expression->expr.elems[3], expected, goal->barrier,
@@ -35058,14 +35170,16 @@ static bool petta_machine_dispatch_goal(
      * positive-list of pure operators here; a NULL result falls through to
      * the host so "not ready" and extension behavior remain unchanged.
      */
+    bool ready_host_goal = goal.kind == PETTA_GOAL_HOST_READY ||
+        goal.kind == PETTA_GOAL_HOST_STRICT_READY;
     PettaMachineHostMode ready_host_mode =
-        first && machine->host.classify
+        ready_host_goal && first && machine->host.classify &&
+            machine->host.classify_may_override
             ? machine->host.classify(
                   machine->host.context, machine->space, first)
             : PETTA_MACHINE_HOST_NONE;
     if (ready_host_mode != PETTA_MACHINE_HOST_READY_OVERRIDE &&
-        (goal.kind == PETTA_GOAL_HOST_READY ||
-         goal.kind == PETTA_GOAL_HOST_STRICT_READY) &&
+        ready_host_goal &&
         first && first->kind == ATOM_EXPR &&
         first->expr.len > 0u &&
         first->expr.len - 1u <= UINT32_MAX) {

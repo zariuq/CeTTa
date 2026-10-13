@@ -21595,6 +21595,26 @@ static uint32_t eval_get_atom_types_profiled_uncached_mode(
     return count;
 }
 
+/* HE's get-type: its type checker's derivations (space_he_type_answers),
+ * then the profile's own steps, as the profiled inference applies them: the
+ * declarations the profile shows, well-formed types, and in a profile with
+ * dependent telescopes the dependent reading of an application that nothing
+ * else types. */
+static uint32_t eval_he_get_type_answers(Space *s, Arena *a, Atom *atom,
+                                         Atom ***out_types) {
+    uint32_t count = space_he_type_answers(s, a, atom, out_types);
+    count = filter_profile_visible_declared_types(atom, out_types, count);
+    count = filter_well_formed_profiled_types(s, a, out_types, count);
+    if (eval_dependent_telescope_enabled() && atom->kind == ATOM_EXPR &&
+        count == 0) {
+        free(*out_types);
+        *out_types = NULL;
+        count = infer_dependent_application_types(s, a, atom, out_types);
+    }
+    normalize_profiled_type_results(s, a, *out_types, count);
+    return count;
+}
+
 static uint32_t eval_get_atom_types_profiled_uncached(Space *s, Arena *a,
                                                        Atom *atom,
                                                        Atom ***out_types) {
@@ -21661,7 +21681,7 @@ static bool eval_get_type_intrinsic_answers(
     Atom **types = NULL;
     /* HE's get-type enumerates its type checker's derivations. */
     uint32_t count = eval_current_language_id() == CETTA_LANGUAGE_HE
-        ? space_he_type_answers(s, a, target, &types)
+        ? eval_he_get_type_answers(s, a, target, &types)
         : eval_get_atom_types_profiled(s, a, target, &types);
     /* The legacy evaluator gives an otherwise-untyped expression one final
      * evaluation opportunity.  Machine callers normally arrive with a
@@ -52281,7 +52301,7 @@ petta_lowered_to_shared_form:
         Space *typed_space =
             payload_resolve_space_read((Space *)resolved_space->ground.ptr);
         uint32_t n = eval_current_language_id() == CETTA_LANGUAGE_HE
-            ? space_he_type_answers(typed_space, a, target, &types)
+            ? eval_he_get_type_answers(typed_space, a, target, &types)
             : eval_get_atom_types_profiled(typed_space, a, target, &types);
         for (uint32_t i = 0; i < n; i++)
             outcome_set_add(os, types[i], &_empty);
