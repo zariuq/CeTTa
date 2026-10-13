@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Executing a definition admitted through its scrutinee-first form.
 ;
@@ -8,17 +8,17 @@
 ; scrutinee. An accumulator the kernel knows nothing about is carried along
 ; and returned; a call whose scrutinee is unknown stays a call.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
-!(set:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))
+!(hol:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))
 !(pf:theory &thy ((: q num)))
-!(set:define &thy add-onto (-> num num num)
+!(hol:define &thy add-onto (-> num num num)
    (= (add-onto $acc zero) $acc)
    (= (add-onto $acc (succ $n)) (add-onto (succ $acc) $n)))
-!(set:eq &thy (add-onto q zero) q)
-!(set:eq &thy (add-onto q (succ (succ zero))) (succ (succ q)))
-!(set:eq &thy (add-onto zero q) (add-onto zero q))
-!(set:eq &thy (add-onto zero q) zero)
+!(hol:eq &thy (add-onto q zero) q)
+!(hol:eq &thy (add-onto q (succ (succ zero))) (succ (succ q)))
+!(hol:eq &thy (add-onto zero q) (add-onto zero q))
+!(hol:eq &thy (add-onto zero q) zero)
 
 ; The same rewriting on ordinary equations, run by the call-by-need
 ; evaluator: the authored equations and their scrutinee-first form give the

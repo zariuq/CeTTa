@@ -4,7 +4,7 @@
 [Refuted]
 [()]
 [Refuted]
-[(set:inductive &thy GhostTree (u 0) (: GhostNode (-> MissingType GhostTree)))]
+[(hol:inductive &thy GhostTree (u 0) (: GhostNode (-> MissingType GhostTree)))]
 [True]
 [True]
 [True]

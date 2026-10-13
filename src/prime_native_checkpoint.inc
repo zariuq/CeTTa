@@ -154,7 +154,7 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
         if(retired)continue;
         if(source->control_nested || source->control_nested_operation ||
             source->control_nested_retained || source->dialect_source ||
-            source->dialect_return_advice || source->space!=copy->source->space ||
+            source->space!=copy->source->space ||
             source->arena!=copy->source->driver.arena)
             return parent_copy_refuse(copy,"FrameExternalOwner");
         if(source->child_initialized) {
@@ -312,7 +312,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     memset(&image->child,0,sizeof(image->child));image->child_initialized=false;
     image->equation_search=equation;image->match_rows=NULL;
     image->normalization_children=NULL;image->control_selection=NULL;image->control_child_bounds=NULL;
-    image->dialect_source=NULL;image->dialect_return_advice=NULL;image->control_nested=NULL;
+    image->dialect_source=NULL;image->control_return_advice=NULL;image->control_nested=NULL;
     image->control_nested_operation=NULL;
     if(source->child_initialized&&!source->control_retired) {
         /* The registered embedded object's address stays fixed; an empty
@@ -359,6 +359,20 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     PC_ATOM(&image->control_nested_policy,bound_pattern);PC_ATOM(&image->control_nested_policy,bound_expression);
     if(source->env_initialized){image->env_initialized=true;if(!parent_copy_environment(copy,&image->env,&source->env))return false;}
     if(source->child_initialized&&!parent_copy_outcomes(copy,&source->child,&image->child))return false;
+    /* Return scheduling belongs to each physical child occurrence. Preserve
+     * the optional array and its links to this parent's existing advice graph,
+     * including shared holders whose keys can change after the copy. */
+    if(source->control_return_advice_length>source->control_return_advice_capacity ||
+        source->control_return_advice_length>source->child.len ||
+        (source->control_return_advice_length&&!source->child_initialized))
+        return parent_copy_refuse(copy,"ReturnAdviceExtent");
+    PC_ARRAY(image,source,control_return_advice,source->control_return_advice_capacity);
+    for(size_t i=0u;i<source->control_return_advice_length;i++) {
+        PrimeNativeReturnAdvice *d=&image->control_return_advice[i];
+        const PrimeNativeReturnAdvice *s=&source->control_return_advice[i];
+        PC_ATOM(d,key);PC_ATOM(d,bound);
+        PC_EDGE(d,s,advice,parent_copy_advice_kind);
+    }
     PC_ARRAY(image,source,normalization_children,source->normalization_child_count);
     for(size_t i=0u;i<source->normalization_child_count;i++)if(!parent_copy_atom(copy,&image->normalization_children[i]))return false;
     PC_ARRAY(image,source,control_selection,source->control_selection_length);
@@ -374,7 +388,10 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     if(source->kind==PRIME_EVAL_STACK_FRAME_FORCE) {
         PrimeNeedCellView expected;
         if(!prime_need_snapshot_lookup(&source->before,source->thunk_id,&expected)||
-            expected.cache_state!=source->cell.cache_state||expected.origin!=source->cell.origin||expected.cached!=source->cell.cached||
+            expected.cache_state!=source->cell.cache_state||expected.value_role!=source->cell.value_role||
+            expected.value_producer_thunk!=source->cell.value_producer_thunk||
+            expected.value_producer_update!=source->cell.value_producer_update||
+            expected.origin!=source->cell.origin||expected.cached!=source->cell.cached||
             expected.authority_id!=source->cell.authority_id||expected.evaluator_id!=source->cell.evaluator_id||expected.storage_key!=source->cell.storage_key||
             expected.import_key!=source->cell.import_key||expected.source_occurrence_id!=source->cell.source_occurrence_id||
             expected.source_argument_index!=source->cell.source_argument_index

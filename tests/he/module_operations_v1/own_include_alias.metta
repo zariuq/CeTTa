@@ -1,0 +1,5 @@
+(own-alias-row 29)
+!(println! (== &own (module-space-no-deps &self)))
+!(bind! &inside-own (module-space-no-deps &self))
+!(println! (== &own &inside-own))
+!(println! (collapse (match &inside-own (own-alias-row $x) $x)))

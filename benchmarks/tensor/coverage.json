@@ -1,0 +1,104 @@
+{
+  "scope": "native tensors, Python interchange, hypervectors and retrieval; PyTorch training first",
+  "families": [
+    {
+      "id": "value-and-arithmetic",
+      "current": "contiguous i64/f64/u8 constructors, exact identity, reshape, copy, functional update, add/mul/sum/dot, codec",
+      "remaining": [
+        "strided bounds and overlap",
+        "broadcasting and promotion",
+        "indexing and slicing",
+        "f32 and additional numerical dtypes",
+        "matrix and general contraction",
+        "general elementwise and reduction operations"
+      ]
+    },
+    {
+      "id": "ownership-and-control",
+      "current": "native unit gate and dialect fixtures; separate sanitizer and compiled mutation qualification",
+      "remaining": [
+        "strided owner lifetime",
+        "external alias contracts",
+        "asynchronous provider pins",
+        "whole-operation failure unwinding"
+      ]
+    },
+    {
+      "id": "python-interchange",
+      "current": "safe owned contiguous buffer/sequence ingress via binary client; optional NumPy reference; foreign-object calls",
+      "remaining": [
+        "direct lib_py tensor exchange and buffer export",
+        "DLPack capsule ownership",
+        "copy policy and external writes",
+        "generic module protocol tests",
+        "PyTorch differentiation and custom-op boundary"
+      ]
+    },
+    {
+      "id": "retrieval-lifecycle",
+      "current": "MeTTa collection policy: exact packed cosine, IDs, revisions, profiles, equality/and/or filters, metadata patches, episode links, deletion and batch queries",
+      "remaining": [
+        "l2 collection search",
+        "range/text filters",
+        "embedding inference adapters",
+        "cross-process collection transactions beyond per-call CAS"
+      ]
+    },
+    {
+      "id": "hypervectors",
+      "current": "ordinary dense tensor substrate",
+      "remaining": [
+        "packed binary XOR/popcount/Hamming",
+        "bipolar and real/complex binding",
+        "permutations",
+        "bundling and tie policy",
+        "seeded unbiased codebooks",
+        "retrieval task accuracy"
+      ]
+    },
+    {
+      "id": "execution-providers",
+      "current": "ordered reference CPU loops and end-to-end fill/sum/dot measurements",
+      "remaining": [
+        "isolated kernel versus allocation/hash measurements",
+        "BLAS providers",
+        "GPU transfers and synchronization",
+        "operation graphs and fusion",
+        "provider numerical and deterministic profiles"
+      ]
+    },
+    {
+      "id": "ann-quality",
+      "current": "small generated exact reference; optional Chroma tie-aware recall measurement",
+      "remaining": [
+        "native ANN provider",
+        "recall/latency/memory tradeoff",
+        "clustered/anisotropic/adversarial distributions",
+        "selective filter recall",
+        "update/delete churn",
+        "small real-data relevance fixture"
+      ]
+    },
+    {
+      "id": "service-and-durability",
+      "current": "native tensor capability, captured revision snapshots, conditional mutation receipts, journal/checkpoint, worker/owner restart and index rebuild, Chroma export/replay/shadow/cutover/rollback",
+      "remaining": [
+        "PathMap/MORK tensor ingress",
+        "automatic retention policy",
+        "long-duration workload qualification",
+        "distributed service deployment"
+      ]
+    },
+    {
+      "id": "training-and-learning",
+      "current": "PyTorch foreign-object examples; no native autograd graph",
+      "remaining": [
+        "PyTorch/native data roundtrip",
+        "custom-op gradient checks",
+        "small deterministic training workload",
+        "native differentiation fragment",
+        "native optimizer/training qualification"
+      ]
+    }
+  ]
+}

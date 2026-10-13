@@ -337,6 +337,46 @@ static const Arena *prime_replay_read_span(PrimeReplayComparison *c,const void *
     }
     return NULL;
 }
+/* Spelled symbols own their text in the held arena. Validate that payload
+ * before any semantic accessor can follow it; registration is not a read. */
+static bool prime_replay_read_symbol_payload(PrimeReplayComparison *c,
+    const Atom *atom,bool right) {
+    if(atom->arena_id==ATOM_ARENA_ID_FORWARDED)
+        return prime_replay_compare_refuse(c,"atom.symbol","ForwardedSymbol");
+    if(!atom_symbol_is_spelled(atom))return true;
+    const CettaSymbolSpelling *text=atom->spelling;
+    if(!prime_replay_read_span(c,text,sizeof(*text),right))
+        return prime_replay_compare_refuse(c,"atom.spelling","UnheldSpelling");
+    size_t length=text->len;
+    if(length>SIZE_MAX-sizeof(*text)-1u ||
+        !prime_replay_read_span(c,text,sizeof(*text)+length+1u,right))
+        return prime_replay_compare_refuse(c,"atom.spelling","UnheldSpellingBytes");
+    return true;
+}
+/* Payload ownership was checked by the Atom/projection visitor. This
+ * comparison also supports distinct field labels without treating them as
+ * a refusal; byte work is charged even when no registration exists. */
+static bool prime_replay_symbols_equal(PrimeReplayComparison *c,
+    const Atom *a,const Atom *b,bool *equal) {
+    *equal=false;
+    if(!prime_replay_compare_tick(c,"projection.symbol",1u,false))return false;
+    if(!atom_symbol_is_spelled(a)&&!atom_symbol_is_spelled(b)) {
+        *equal=a->symbol_number==b->symbol_number;return true;
+    }
+    size_t length=atom_symbol_length(a);
+    if(length!=atom_symbol_length(b))return true;
+    const char *left=atom_symbol_bytes(a),*right=atom_symbol_bytes(b);
+    for(size_t i=0u;i<length;i++) {
+        if(!prime_replay_compare_tick(c,"projection.symbol_byte",1u,false))return false;
+        if(left[i]!=right[i])return true;
+    }
+    *equal=true;return true;
+}
+static bool prime_replay_read_symbol(PrimeReplayComparison *c,const Atom *a,const Atom *b) {
+    bool equal=false;
+    return prime_replay_symbols_equal(c,a,b,&equal)&&
+        (equal||prime_replay_compare_refuse(c,"projection.symbol","SymbolMismatch"));
+}
 static bool prime_replay_read_arena_inventory(PrimeReplayComparison *c) {
     while(c->arena_at<c->arena_count) {
         PrimeReplayArenaPair p=c->arenas[c->arena_at++];
@@ -381,7 +421,7 @@ static bool prime_replay_read_atom_graph(PrimeReplayComparison *c) {
         if(!prime_replay_read_scalar(c,"atom.kind",a->kind,b->kind)||
             !prime_replay_read_scalar(c,"atom.flags",a->flags,b->flags)||
             !prime_replay_read_scalar(c,"atom.structural_facts",a->structural_facts,b->structural_facts)||
-            !prime_replay_read_scalar(c,"atom.symbol",a->sym_id,b->sym_id)||
+            !prime_replay_read_scalar(c,"atom.symbol",a->symbol_number,b->symbol_number)||
             !prime_replay_read_identity(c,"atom.variable",CETTA_CHECKPOINT_VAR,a->var_id,b->var_id)||
             !prime_replay_read_identity(c,"atom.arena",CETTA_CHECKPOINT_ARENA,a->arena_id,b->arena_id))return false;
         if((a->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)&&
@@ -390,12 +430,23 @@ static bool prime_replay_read_atom_graph(PrimeReplayComparison *c) {
         if(a->flags&ATOM_FLAG_HASH_VALID) {
             if(!prime_replay_read_scalar(c,"atom.hash_cache",a->hash_cache,b->hash_cache))return false;
         } else if(!prime_replay_read_physical(c,"atom.inactive_hash_cache",a->hash_cache,b->hash_cache))return false;
+        if(a->kind==ATOM_SYMBOL&&
+            (!prime_replay_read_symbol_payload(c,a,false)||
+             !prime_replay_read_symbol_payload(c,b,true)))return false;
         if(a->kind==ATOM_VAR) {
             uint32_t af=var_epoch_suffix(a->var_id),bf=var_epoch_suffix(b->var_id);
             if((af&&(!ao||!arena_checkpoint_holds_frame(ao,af,&c->read,false)))||
                 (bf&&(!bo||!arena_checkpoint_holds_frame(bo,bf,&c->read,true))))
                 return prime_replay_compare_refuse(c,"atom.variable_owner","MissingFrameHold");
             if(!prime_replay_read_atom_domain(c,"atom.name_key",a->name_key,b->name_key,domain))return false;
+        } else if(a->kind==ATOM_SYMBOL&&
+            (atom_symbol_is_spelled(a)||atom_symbol_is_spelled(b))) {
+            if(!atom_symbol_is_spelled(a)||!atom_symbol_is_spelled(b)||
+                !prime_replay_read_address(c,"atom.spelling",a->spelling,b->spelling)||
+                !prime_replay_read_scalar(c,"atom.spelling_hash",a->spelling->hash,b->spelling->hash)||
+                !prime_replay_read_bytes(c,"atom.spelling_bytes",a->spelling->bytes,
+                    (size_t)a->spelling->len+1u,b->spelling->bytes,
+                    (size_t)b->spelling->len+1u))return false;
         } else if(a->name_key||b->name_key)return prime_replay_compare_refuse(c,"atom.name_key","UnexpectedNameKey");
         if(a->kind==ATOM_EXPR) {
             if(!prime_replay_read_scalar(c,"atom.length",a->expr.len,b->expr.len)||

@@ -27,7 +27,7 @@ python3 tools/megalodon_native_projection_v1.py \
 
 The consumer locates the source theorem `test_assume`, proves a new theorem
 using it as a retained premise, and applies its native proof to a dependent
-consumer. It also computes the application with `set:native-normalize`,
+consumer. It also computes the application with `hol:native-normalize`,
 obtaining the identity function on proofs of `False`, checked at `False → False`.
 No proof of `False` is introduced.
 
@@ -91,8 +91,8 @@ dependency boundary is not a trusted proof cache.
 A later consumer may call functions declared after the proof package was made.
 Its current declarations and transitively reachable rules extend the execution
 context, which the dependent kernel checks along with the application and its
-result. The original proof package remains unchanged. `SetNativeUseV1` and
-`SetNativeNormalFormV1` are observations of this current-theory execution, not
+result. The original proof package remains unchanged. `HolNativeUseV1` and
+`HolNativeNormalFormV1` are observations of this current-theory execution, not
 standalone authority certificates for the consumer or a frozen copy of its
 ambient theory. An undeclared consumer constant is still rejected.
 The package's assumption list describes its source proof; it does not summarize
@@ -156,14 +156,14 @@ with the host's type universe or establish the truth of the source axioms.
 
 ## Computing dependent consumers
 
-`(set:native-use package consumer)` checks the application and retains it.
-`(set:native-normalize package consumer)` additionally computes the application
+`(hol:native-use package consumer)` checks the application and retains it.
+`(hol:native-normalize package consumer)` additionally computes the application
 and its synthesized dependent type using the existing regular conversion
 engine. It independently checks the computed value against the computed type,
 then returns:
 
 ```metta
-(SetNativeNormalFormV1 package consumer application value source-type normal-type)
+(HolNativeNormalFormV1 package consumer application value source-type normal-type)
 ```
 
 Both operations revalidate the package in the current theory. The original

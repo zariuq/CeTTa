@@ -1,28 +1,28 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Two reversals of a list, on the face of sets.  The definitions add their
-; equations to the set: language, which the checker uses as computation.
+; equations to the hol: language, which the checker uses as computation.
 ; Here "rev l = rev-onto nil l" is proved for every list, through the lemma
 ; "rev-onto acc l = append (rev l) acc", proved by induction on l; an invalid
 ; proof of the lemma is not accepted.  A wrong reversal, which puts each
 ; number back in front, is proved to be the identity, and the statement
 ; that it is rev is refuted at the list [0, 1].
 !(import! &self pf)
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
-!(set:define &self rev (-> list list)
+!(hol:define &self rev (-> list list)
    (= (rev nil) nil)
    (= (rev (cons $a $as)) (append (rev $as) (cons $a nil))))
-!(set:define &self rev-onto (-> list list list)
+!(hol:define &self rev-onto (-> list list list)
    (= (rev-onto $acc nil) $acc)
    (= (rev-onto $acc (cons $x $xs)) (rev-onto (cons $x $acc) $xs)))
-!(set:define &self wrong-rev (-> list list)
+!(hol:define &self wrong-rev (-> list list)
    (= (wrong-rev nil) nil)
    (= (wrong-rev (cons $a $as)) (append (cons $a nil) (wrong-rev $as))))
-!(set:known-proposition &self list-ind)
+!(hol:known-proposition &self list-ind)
 !(pf:equality &self list refl@list subst@list)
 
 ; ---- Two facts about append, by induction on the first list.
@@ -64,7 +64,7 @@
      (pf:calc list (rev l)
        (= (append (rev l) nil) (sym (by append-nil)))
        (= (rev-onto nil l) (sym (by rev-onto-append))))))
-!(set:known-proposition &self rev-is-rev-onto)
+!(hol:known-proposition &self rev-is-rev-onto)
 ; The theorem used at the list [0, 1]: pf:by finds the instance from the
 ; goal, and the same instance can be given explicitly.
 !(pf:proves &self (pf:by rev-is-rev-onto)
@@ -116,10 +116,10 @@
 ; So it is not rev.  Two predicates into prop tell a list that starts with
 ; zero; wrong-rev keeps [0, 1] and rev turns it into [1, 0], so substitution
 ; along "wrong-rev [0, 1] = rev [0, 1]" turns that truth into Falsum.
-!(set:define &self is-zero (-> num prop)
+!(hol:define &self is-zero (-> num prop)
    (= (is-zero zero) (all prop (lam p (imp p p))))
    (= (is-zero (suc $n)) Falsum))
-!(set:define &self starts-with-zero (-> list prop)
+!(hol:define &self starts-with-zero (-> list prop)
    (= (starts-with-zero nil) Falsum)
    (= (starts-with-zero (cons $a $as)) (is-zero $a)))
 !(pf:theorem &self wrong-rev-refuted

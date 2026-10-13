@@ -106,6 +106,8 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
 /* Recognize the structural contracts, including every physical occurrence.
  * An additional, reordered, or altered equation is not silently ignored. */
 static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
+    if ((eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
+        space_directional_rules_may_match_known_head(space, head)) return false;
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(space, head, &cursor))
         return false;
@@ -117,7 +119,7 @@ static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
             break;
         SpaceEquationOccurrence occurrence;
         if (step != SPACE_EQUATION_CURSOR_ITEM ||
-            !space_equation_occurrence_resolve(id, &occurrence))
+            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(), &occurrence))
             return false;
         Atom *lhs = occurrence.lhs;
         Atom *rhs = occurrence.rhs;
@@ -176,7 +178,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
         if (prepared_pure_requires_native_handler(admission->space,
                 expression ? term : &head_call))
             return false;
-        SymbolId head = expression ? atom_head_symbol_id(term) : term->sym_id;
+        SymbolId head = expression ? atom_head_symbol_id(term) : atom_symbol_current_id(term);
         bool intrinsic = he_execution_intrinsic(head);
         if (intrinsic && head != g_builtin_syms.let &&
             head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form &&
@@ -189,7 +191,12 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
              head == g_builtin_syms.empty_form) &&
             !he_execution_intrinsic_signatures(admission, head))
             return false;
-        if (expression && head == SYMBOL_ID_NONE && admission->open_root)
+        /* The structural machine interprets computed heads by application.
+         * HE can instead match an equation against the entire compound head,
+         * including a closed SKI term. That boundary needs HE's canonical
+         * owner until the machine has a whole-head equation policy. */
+        if (expression && head == SYMBOL_ID_NONE &&
+            (admission->open_root || term->expr.elems[0]->kind != ATOM_VAR))
             return false;
         if (expression && head == g_builtin_syms.if_text) {
             bool truth;
@@ -199,7 +206,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                   expr_nargs(term->expr.elems[1]) != 2u)))
                 return false;
         }
-        if (intrinsic && space_equations_may_match_known_head(admission->space, head) &&
+        if (intrinsic && eval_space_has_equations(admission->space, head) &&
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
@@ -208,7 +215,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
              space_head_declares_type(admission->space, head)))
             return false;
         if (!intrinsic && head != SYMBOL_ID_NONE &&
-            space_equations_may_match_known_head(admission->space, head)) {
+            eval_space_has_equations(admission->space, head)) {
             bool seen = false;
             for (size_t index = 0u; index < admission->head_count; index++)
                 seen |= admission->heads[index] == head;
@@ -221,7 +228,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                 }
                 admission->heads[admission->head_count++] = head;
                 SpaceEquationCursor cursor;
-                if (!space_equation_cursor_init(admission->space, head, &cursor))
+                if (!space_rule_cursor_init(admission->space, head, eval_admitted_rule_forms(), &cursor))
                     return false;
                 for (;;) {
                     SpaceEquationOccurrenceId id;
@@ -232,7 +239,7 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                     /* Pattern constants can become callable values through
                      * a fresh match binding, just as body constants can. */
                     if (step != SPACE_EQUATION_CURSOR_ITEM ||
-                        !space_equation_occurrence_resolve(id, &occurrence) ||
+                        !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(), &occurrence) ||
                         !he_execution_push(admission, occurrence.lhs) ||
                         !he_execution_push(admission, occurrence.rhs))
                         return false;
@@ -316,7 +323,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
             return true;
     }
     if (!g_library_context->petta_program)
-        g_library_context->petta_program = petta_program_new();
+        g_library_context->petta_program = petta_program_new_with_rules(eval_admitted_rule_forms());
     if (!g_library_context->petta_program ||
         !petta_program_synchronize_space(g_library_context->petta_program, space))
         return false;
@@ -325,7 +332,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_active_petta_search_machine = true;
     bool complete = petta_eval_machine_run(space, arena, source, type, fuel,
         environment, preserve_bindings, outcomes, PETTA_RELATION_SAFETY_STATIC,
-        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false);
+        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
     g_active_petta_search_machine = enclosing_active;
     g_he_shared_execution = false;
     return complete;

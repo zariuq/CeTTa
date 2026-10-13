@@ -17,7 +17,10 @@ BindingsFrameSchema *bindings_frame_schema_new_presented(
 BindingsFrameSchema *bindings_frame_schema_copy_lookup(
     const BindingsFrameSchema *source, const AtomDeepCopySession *atoms);
 /* Copy immutable presentation roots through the enclosing Atom session,
- * preserving shared schema identity. Returns one owned reference. */
+ * preserving shared schema identity. Returns one owned reference. The
+ * session separately holds source and image metadata until it closes;
+ * referenced arenas retain the enclosing transport's lifetime contract.
+ * Copying an already registered image returns that same image. */
 BindingsFrameSchema *bindings_frame_schema_copy_with_session(
     const BindingsFrameSchema *source, AtomDeepCopySession *atoms);
 void bindings_frame_schema_retain(BindingsFrameSchema *schema);

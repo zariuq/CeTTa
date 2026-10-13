@@ -1955,6 +1955,69 @@ static void test_batched_expression_identity(void) {
     }
 }
 
+static Atom *read_test_symbol(void *context, SymbolId symbol) {
+    return registry_lookup_id(context, symbol);
+}
+
+static void test_copy_reads_symbols_once_with_owned_values(void) {
+    Arena persistent, source, output;
+    TermUniverse universe;
+    Registry names;
+    Space module;
+    arena_init(&persistent);
+    arena_init(&source);
+    arena_init(&output);
+    ArenaMark origin = arena_mark(&source);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&module, &universe);
+    registry_init(&names);
+    Atom *word = atom_symbol(&source, "read-token");
+    Atom *later = atom_symbol(&source, "read-later");
+    Atom *value = atom_expr2(&source, atom_symbol(&source, "pair"), later);
+    registry_bind_id(&names, atom_symbol_current_id(word), value);
+    registry_bind_id(&names, atom_symbol_current_id(later), atom_int(&source, 99));
+    Atom *form = atom_expr3(&source, atom_symbol(&source, "form"), word, word);
+    AtomId id = term_universe_store_atom_id(&universe, NULL, form);
+    assert(id != CETTA_ATOM_ID_NONE && tu_hdr(&universe, id));
+    Atom *read = term_universe_copy_atom_read_symbols(
+        &universe, &output, id, read_test_symbol, &names);
+    assert(read && read->expr.elems[1] == read->expr.elems[2]);
+    assert(atom_eq(read->expr.elems[1], value));
+    assert(!atom_eq(read->expr.elems[1]->expr.elems[1], atom_int(&output, 99)));
+    assert(arena_owns_atom(&output, read->expr.elems[1]->expr.elems[1]));
+    assert(atom_eq(term_universe_get_atom(&universe, id)->expr.elems[1], word));
+    assert(atom_eq(term_universe_copy_atom_read_symbols(
+                       &universe, &output, id, NULL, NULL), form));
+
+    Atom *variable = atom_var_with_name_key(&source, word, 17u);
+    AtomId variable_id = term_universe_store_atom_id(&universe, NULL, variable);
+    Atom *read_variable = term_universe_copy_atom_read_symbols(
+        &universe, &output, variable_id, read_test_symbol, &names);
+    assert(read_variable && read_variable->kind == ATOM_VAR);
+    assert(atom_eq(read_variable->name_key, word));
+
+    Atom *opaque = atom_expr3(&source, atom_symbol(&source, "form"),
+                              atom_space(&source, &module), word);
+    AtomId opaque_id = term_universe_store_atom_id(&universe, NULL, opaque);
+    assert(opaque_id != CETTA_ATOM_ID_NONE && !tu_hdr(&universe, opaque_id));
+    Atom *read_opaque = term_universe_copy_atom_read_symbols(
+        &universe, &output, opaque_id, read_test_symbol, &names);
+    assert(read_opaque && read_opaque->expr.elems[1]->ground.ptr == &module);
+    assert(atom_eq(read_opaque->expr.elems[2], value));
+    registry_free(&names);
+    arena_reset(&source, origin);
+    Atom *expected = atom_expr2(&output, atom_symbol(&output, "pair"),
+                                atom_symbol(&output, "read-later"));
+    assert(atom_eq(read->expr.elems[1], expected));
+    assert(atom_eq(read_opaque->expr.elems[2], expected));
+    space_free(&module);
+    term_universe_free(&universe);
+    arena_free(&output);
+    arena_free(&source);
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1990,6 +2053,7 @@ int main(void) {
     test_source_arena_id_memo_contract();
     test_shallow_ground_admit_shares_structure_keeps_occurrences();
     test_intrinsic_variable_support_contract();
+    test_copy_reads_symbols_once_with_owned_values();
     arena_init(&persistent);
     arena_init(&scratch);
     term_universe_init(&universe);
@@ -2776,21 +2840,21 @@ int main(void) {
     assert(coordinate_existence_applicable);
     Atom *seen_arguments[1] = {seen_alpha};
     assert(term_universe_lookup_symbol_application(
-               &universe, seen_head->sym_id, seen_arguments, 1u) == seen_id);
+               &universe, atom_symbol_current_id(seen_head), seen_arguments, 1u) == seen_id);
     assert(space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *missing_seen_arguments[1] = {missing_seen_coordinates[1]};
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, missing_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), missing_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *open_seen_arguments[1] = {
         atom_var(&scratch, "$open-seen-argument"),
     };
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, open_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), open_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(!coordinate_existence_applicable);
     assert(!space_match_exists_ground_exact_expression_coordinates(

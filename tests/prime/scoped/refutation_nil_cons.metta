@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; What a refutation at declared datatypes rests on.  The conversion
 ; algorithm refutes an equation when the two sides have different normal
@@ -13,9 +13,9 @@
 ; derivable).  The refutation cites that theorem when the comparison is
 ; exactly that one, closed, over the numbers and lists declared as Lean
 ; declares them; every other refutation keeps its assumption.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
 
@@ -36,28 +36,28 @@
 !(try (type:eq &self (lam (x : num) nil) (lam (x : num) (cons x nil))))
 ; Another datatype of the same shape under other names, and one with a third
 ; constructor: not the lists Lean declares.
-!(set:inductive &self seq (u 0) (: snil seq) (: scons (-> num seq seq)))
+!(hol:inductive &self seq (u 0) (: snil seq) (: scons (-> num seq seq)))
 !(try (type:eq &self snil (scons zero snil)))
-!(set:inductive &self blist (u 0) (: bnil blist) (: bcons (-> num blist blist)) (: bextra blist))
+!(hol:inductive &self blist (u 0) (: bnil blist) (: bcons (-> num blist blist)) (: bextra blist))
 !(try (type:eq &self bnil (bcons zero bnil)))
 ; Equal sides are not refuted.
 !(try (type:eq &self (cons zero nil) (cons zero nil)))
 ; Lists of another element type: the same constructor names, but not the
 ; lists of numbers Lean declares.  The same lists of numbers in another space
 ; cite the theorem there.
-!(bind! &bits (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &bits bit (u 0) (: b0 bit) (: b1 bit))
-!(set:inductive &bits list (u 0) (: nil list) (: cons (-> bit list list)))
+!(bind! &bits (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &bits bit (u 0) (: b0 bit) (: b1 bit))
+!(hol:inductive &bits list (u 0) (: nil list) (: cons (-> bit list list)))
 !(try (type:eq &bits nil (cons b0 nil)))
 ; Numbers with a third constructor: the lists over them are not Lean's
 ; either, though the two sides are written alike.
-!(bind! &extended (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &extended num (u 0) (: zero num) (: suc (-> num num)) (: infinity num))
-!(set:inductive &extended list (u 0) (: nil list) (: cons (-> num list list)))
+!(bind! &extended (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &extended num (u 0) (: zero num) (: suc (-> num num)) (: infinity num))
+!(hol:inductive &extended list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &extended nil (cons zero nil)))
-!(bind! &numbers (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &numbers num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &numbers list (u 0) (: nil list) (: cons (-> num list list)))
+!(bind! &numbers (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &numbers num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &numbers list (u 0) (: nil list) (: cons (-> num list list)))
 !(try (type:eq &numbers nil (cons (suc (suc zero)) nil)))
 ; The verdict follows the space: with nil also declared a number by a raw
 ; atom, the comparison is not decided; without it, the theorem is cited again.

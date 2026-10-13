@@ -181,8 +181,8 @@ static bool petta_runtime_is_rng_marker(
     const struct CettaPettaRuntimeState *state =
         context ? context->petta_runtime : NULL;
     if (petta_runtime_symbol_facts_current(state))
-        return atom->sym_id == state->rng_marker;
-    return symbol_eq_cstr(g_symbols, atom->sym_id, "&rng");
+        return atom_symbol_current_id(atom) == state->rng_marker;
+    return atom_symbol_equals_cstr(atom, "&rng");
 }
 
 static bool petta_runtime_int64(const Atom *atom, int64_t *value) {
@@ -592,7 +592,7 @@ bool cetta_petta_runtime_call(
         expression->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
-    SymbolId head = expression->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expression->expr.elems[0]);
     switch (petta_runtime_op(context, head)) {
     case PETTA_RUNTIME_OP_ARGV:
         *recognized = true;

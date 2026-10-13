@@ -50,4 +50,16 @@ int he_compiled_reader_v1_parse_file_ids(
     HECompiledReaderV1Receipt *receipt, char *error_buf,
     size_t error_buf_size);
 
+/* Retain complete forms on syntax failure, without accepting that failure.
+ * The caller owns out_ids on success or failure; complete_count excludes
+ * the malformed form. The ordinary document entry points stay atomic. */
+int he_compiled_reader_v1_parse_bytes_prefix_ids(
+    HECompiledReaderV1 *reader, const uint8_t *input, size_t input_len,
+    TermUniverse *universe, AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
+int he_compiled_reader_v1_parse_file_prefix_ids(
+    HECompiledReaderV1 *reader, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size);
+
 #endif /* CETTA_HE_COMPILED_READER_H */

@@ -1,0 +1,5 @@
+(= (target) (empty))
+(= (put $key $value) (add-atom &self (= ($key) $value)))
+!(put target 50)
+!(collapse (target))
+!(collapse (match &self (= (target) $body) $body))

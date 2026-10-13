@@ -1,16 +1,16 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The retained zero-add proof is stored as text addressed by its sha256.
 ; A consumer opens that text and checks the hash. The hash alone is not the
 ; article. A missing, altered, wrong-index, or stale address does not open it.
 !(import! &self pf)
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 !(pf:equality &self num refl@num subst@num)
-!(set:known-proposition &self num-ind)
-!(set:define &self add (-> num num num)
+!(hol:known-proposition &self num-ind)
+!(hol:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:theorem &self zero-add
+!(hol:theorem &self zero-add
    (all num (lam k (eq num (add zero k) k)))
    (pf:imp-elim
      (pf:imp-elim
@@ -48,8 +48,8 @@
                    (Checked Opened)
                    (Altered)))){$text})))
 
-!(let $package (set:native-proof zero-add)
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof zero-add)
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $text (repr $term)
    (let $article-digest (sha256 $text)
     (let $_ (add-atom &self
@@ -59,8 +59,8 @@
              (MegalodonSharedArticleV1 0 $article-digest "rev-zero-add" $body)
              $body){$article-digest})
        (let $article (car-atom $opened)
-        (let $use (set:native-use $package (Lam $type (idx 0)))
-         (let (SetNativeUseV1 $checked $consumer $result $result-type) $use
+        (let $use (hol:native-use $package (Lam $type (idx 0)))
+         (let (HolNativeUseV1 $checked $consumer $result $result-type) $use
           (ResolvedArticle $resolved
             (and (== $checked $package) (== $article (repr $term)))
             (size-atom $assumptions))))))))))))
@@ -78,8 +78,8 @@
 
 ; A matching hash of some other text is not the checked term. Acceptance
 ; requires the opened article to be that term.
-!(let $package (set:native-proof zero-add)
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof zero-add)
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $text "(not-a-proof-term)"
    (let $article-digest (sha256 $text)
     (let $_ (add-atom &self
@@ -90,5 +90,5 @@
        (ArticleNotEvidence (== $article (repr $term))
          (== (sha256 $article) $article-digest)))))))))
 
-!(let $origins (collapse (match &self (set:known $n $p $origin $tree $depends $revision $signature) $origin))
+!(let $origins (collapse (match &self (hol:known $n $p $origin $tree $depends $revision $signature) $origin))
   (Inventory $origins))

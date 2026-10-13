@@ -39,7 +39,7 @@ typedef enum {
     CETTA_PRIME_TYPING_ROUTE_DECLARED_REGULAR,
     CETTA_PRIME_TYPING_ROUTE_CLOSED_REGULAR,
     CETTA_PRIME_TYPING_ROUTE_AMBIENT_FORMATION,
-    CETTA_PRIME_TYPING_ROUTE_LEGACY_HE
+    CETTA_PRIME_TYPING_ROUTE_HE_DECLARATION_FRAGMENTS
 } CettaPrimeTypingRouteV1;
 
 typedef struct {
@@ -66,7 +66,8 @@ typedef struct {
     /* Checked native object retained by an Established Prime route. Closed
      * routes return intrinsic syntax, scoped routes keep their context, and
      * declared routes quote named declarations from the checked context.
-     * This is NULL for non-established results and for legacy routes. A raw
+     * This is NULL for non-established results and for the HE-declaration
+     * fragment route. A raw
      * boundary can reuse it without repeating elaboration or checking. */
     Atom *canonical_term;
     CettaPrimeTypingResourceObservationV1 resources;
@@ -429,6 +430,10 @@ Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
  * filled as a hole of quoted code, textually.  NULL on failure. */
 Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
                                 Atom *value);
+/* As above, retaining value's free variables for capture avoidance and its
+ * syntax in patterns/quoted holes, with a distinct runtime value carrier. */
+Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
+                                  Atom *value, Atom *runtime_value);
 Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
                                         Atom *term);
 
@@ -524,5 +529,34 @@ void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to);
 /* A bounded noninitializing read; completion and emptiness are separate. */
 bool prime_semantics_theorem_instance_empty(uint64_t instance, size_t limit,
     size_t *visited, bool *empty);
+
+/* The type of an atom from its HE-style declarations, read through the HOL
+ * contract and decided by the hosted HOL Light checker, as Prime's `get-type`
+ * answers it.  Every open declaration is read as a type scheme. */
+typedef enum {
+    /* The checker accepted *type_out. */
+    CETTA_PRIME_HE_TYPE_CHECKED = 0,
+    /* Inside a grounded fragment, and the checker refused it: no type. */
+    CETTA_PRIME_HE_TYPE_NONE,
+    /* An application whose arguments are consistent with the parameter
+     * types of its head's single arrow declaration, the static ones checked
+     * by the checker: *type_out is the declared return type, its gradual
+     * type in the sense of Abstracting Gradual Typing. */
+    CETTA_PRIME_HE_TYPE_GRADUAL,
+    /* No declaration types any part of the atom: the unknown type. */
+    CETTA_PRIME_HE_TYPE_UNKNOWN,
+    /* Declared, but outside the grounded fragments or not checked. */
+    CETTA_PRIME_HE_TYPE_UNDETERMINED
+} CettaPrimeHeTypeAnswer;
+
+CettaPrimeHeTypeAnswer cetta_prime_he_declaration_type(Space *space, Arena *a,
+                                                       Atom *term,
+                                                       Atom **type_out);
+
+/* Inside the grounded fragments, the checker refuses that `argument` has the
+ * static type `expected`: a typed application may drop the alternative.
+ * False whenever the judgment is outside the fragments. */
+bool cetta_prime_he_argument_refuted(Space *space, Arena *a, Atom *argument,
+                                     Atom *expected);
 
 #endif /* CETTA_PRIME_SEMANTICS_H */

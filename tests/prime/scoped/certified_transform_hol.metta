@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Ordinary arithmetic through the certified-transformation library.
 ; Addition recurses on its second argument, so `add zero n = n` is not
@@ -6,17 +6,17 @@
 ; Successor transport uses the incoming evidence. Reflexivity of the
 ; successor does not.
 !(import! &self pf)
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 !(pf:equality &self num refl@num subst@num)
-!(set:define &self add (-> num num num)
+!(hol:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:define &self dbl (-> num num)
+!(hol:define &self dbl (-> num num)
    (= (dbl zero) zero)
    (= (dbl (suc $n)) (suc (suc (dbl $n)))))
-!(set:define &self eqAt (-> num (u 0))
+!(hol:define &self eqAt (-> num (u 0))
    (= (eqAt $n) (id num (add zero $n) $n)))
-!(set:define &self sucMove
+!(hol:define &self sucMove
    (-> (n : num) (e : (eqAt n)) (eqAt (suc n)))
    (= (sucMove $n $e)
       (id:eliminate num (add zero $n)
@@ -24,7 +24,7 @@
          (refl (suc (add zero $n)))
          $n $e)))
 !(import! &self ./certified_transform_lib.metta)
-!(set:define &self sucStep
+!(hol:define &self sucStep
    (-> (x : num) (e : (eqAt x)) (sigma (y : num) (eqAt y)))
    (= (sucStep $x $e) (transportCert num eqAt suc sucMove $x $e)))
 !(add-atom &self (: n num))

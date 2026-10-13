@@ -7,9 +7,9 @@
 (= (race) (superpose ((candidate p) (candidate q))))
 ; 1. Membership: the first answer is one of the accepted answers.
 !(let $a (once (race)) (or (== $a p) (== $a q)))
-; 2. Effects: how many candidates ran to produce that one answer.  Observed:
-;    both.  This evaluator's once selects from the whole set after every
-;    candidate has run; it is a filter on answers, not a strategy on effects.
+; 2. Effects: how many candidates ran to produce that one answer.  One:
+;    `once` takes the branches of the race one at a time and stops at its
+;    first answer, so the candidate after it never runs.
 !(collapse (match &log (ran $v) $v))
 ; 3. Exhaustion is not refutation: an empty race has no first answer, and
 ;    try says so without claiming the candidates were refuted.

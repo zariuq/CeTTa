@@ -424,7 +424,7 @@ class Projection:
                 # A source definition names its entire value, including a
                 # function value. The native declaration checker supplies its
                 # expected type; no saturated equation or eta wrapper is needed.
-                command = expr("set:define", symbol, native_type,
+                command = expr("hol:define", symbol, native_type,
                                expr("=", symbol, self.term(body, position)))
                 self.retain_specialization(
                     symbol, item.kind, arguments, type_articles + body_articles)
@@ -438,7 +438,7 @@ class Projection:
             if item.kind == "AXIOM":
                 # An imported axiom stays an assumption of a hosted document.
                 # It is not a theorem and it does not select a foundation.
-                command = expr("set:axiom", symbol, proposition)
+                command = expr("hol:axiom", symbol, proposition)
                 hosted = expr(
                     "MegalodonHostedAssumptionV1", symbol, sx.Symbol("AXIOM"),
                     sx.StringLiteral(item.label), proposition)
@@ -450,7 +450,7 @@ class Projection:
                         self.declarations(position), inferred, body)
                 except definitions.ConversionMismatch as error:
                     raise ValueError("projected proof does not establish the declared source formula") from error
-                command = expr("set:theorem", symbol, proposition, proof)
+                command = expr("hol:theorem", symbol, proposition, proof)
                 # The proof's synthesized formula and the declared source formula
                 # are identified by this retained conversion article. Dropping it
                 # would leave the projection's representation change unchecked.
@@ -558,7 +558,7 @@ class Projection:
             tuple(self.host_article(article) for article in articles))))
 
     def render(self) -> str:
-        return "(set:profile hol)\n" + "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
+        return "(hol:profile core)\n" + "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
 
 
 def dependent_use(instance: Instance) -> str:
@@ -567,11 +567,11 @@ def dependent_use(instance: Instance) -> str:
     Inspect the returned package structurally. Evaluating it again as a let
     source can execute the code stored in its proof-term field.
     """
-    return f'''!(let $package (set:native-proof {instance.name})
+    return f'''!(let $package (hol:native-proof {instance.name})
  (unify $package
-      (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
-  (let (SetNativeUseV1 $checked $consumer $result $result-type)
-       (set:native-use $package (Lam $type (Refl (idx 0))))
+      (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+  (let (HolNativeUseV1 $checked $consumer $result $result-type)
+       (hol:native-use $package (Lam $type (Refl (idx 0))))
    (unify $result-type (Id $carrier $left $right)
     (ImportedNativeUse {instance.position} (== $left $term) (== $right $term)
       (size-atom $assumptions))

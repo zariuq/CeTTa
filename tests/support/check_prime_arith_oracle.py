@@ -51,7 +51,7 @@ def report(ok, message):
 def definitions_and_rest():
     lines = FIXTURE.read_text().rstrip("\n").split("\n")
     marker = next(i for i, line in enumerate(lines)
-                  if line.startswith("!(set:define &self written"))
+                  if line.startswith("!(hol:define &self written"))
     return lines[:marker + 1], lines[marker + 1:]
 
 

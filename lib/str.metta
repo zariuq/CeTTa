@@ -179,3 +179,22 @@
    (function
      (case (__cetta_lib_str unescape $scheme $text)
        (($result (return $result))))))
+
+; ASCII letters in lower case; every other byte unchanged.
+(= (str:lower $text)
+   (function
+     (case (__cetta_lib_str lower $text)
+       (($result (return $result))))))
+
+; Length and slices in characters: a well-formed UTF-8 sequence, or a byte
+; that does not begin one.  Unlike the codepoint operations they take any
+; bytes; a slice's offsets past the text are clamped to it.
+(= (str:char-length $text)
+   (function
+     (case (__cetta_lib_str char-length $text)
+       (($result (return $result))))))
+
+(= (str:char-slice $text $start $end)
+   (function
+     (case (__cetta_lib_str char-slice $text $start $end)
+       (($result (return $result))))))

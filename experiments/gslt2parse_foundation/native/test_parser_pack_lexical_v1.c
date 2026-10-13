@@ -329,6 +329,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     PPGuardRelationV1 mutated_relation;
     PPGuardRelationV1 absent_relation;
     PPGuardRelationV1 borrowed_relation;
+    PPGuardRelationV1 repeated_owner_relation;
     PPGuardRelationV1 wrong_owner_relation;
     PPGuardRelationV1 expiring_relation;
     HashConsTable active_hashcons;
@@ -337,6 +338,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     Arena expiring_owner;
     const Arena *borrowed_owners[1] = {arena};
     const Arena *wrong_owners[1] = {&wrong_owner};
+    const Arena *repeated_owners[3] = {arena, &wrong_owner, arena};
     const Arena *expiring_owners[1] = {&expiring_owner};
     Atom *shared = atom_symbol(arena, "shared-value");
     Atom *base_value = atom_symbol(arena, "base-token-value");
@@ -369,6 +371,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     ppguard_relation_v1_init(&mutated_relation);
     ppguard_relation_v1_init(&absent_relation);
     ppguard_relation_v1_init(&borrowed_relation);
+    ppguard_relation_v1_init(&repeated_owner_relation);
     ppguard_relation_v1_init(&wrong_owner_relation);
     ppguard_relation_v1_init(&expiring_relation);
     g_hashcons = saved_hashcons;
@@ -470,6 +473,20 @@ static void test_guard_relation_contract(TestCounts *counts,
 
     error[0] = '\0';
     REQUIRE(counts,
+            ppguard_relation_v1_build_borrowed_atoms(
+                &base, base_witness_values, 1u,
+                guard_terminal_ids, 2u,
+                matches, 6u, repeated_owners, 3u, DIGEST_A,
+                &repeated_owner_relation, error, sizeof(error)) &&
+                ppguard_relation_v1_validate(
+                    &repeated_owner_relation, error, sizeof(error)) &&
+                strcmp(repeated_owner_relation.relation_digest,
+                       relation.relation_digest) == 0,
+            error[0] ? error :
+                "repeated live owners preserve existential containment and digest");
+
+    error[0] = '\0';
+    REQUIRE(counts,
             !ppguard_relation_v1_build_borrowed_atoms(
                 &base, base_witness_values, 1u,
                 guard_terminal_ids, 2u,
@@ -498,6 +515,42 @@ static void test_guard_relation_contract(TestCounts *counts,
                     &expiring_relation, error, sizeof(error)),
             error[0] ? error :
                 "borrowed guard relation accepts its live owner");
+    {
+        Atom *partial_values[1] = {(Atom *)(
+            expiring_owner.head->data + expiring_owner.head->used -
+            sizeof(Atom) / 2u)};
+        Atom *unused_values[1] = {(Atom *)(
+            expiring_owner.head->data + expiring_owner.head->used)};
+
+        error[0] = '\0';
+        REQUIRE(counts,
+                !ppguard_relation_v1_build_borrowed_atoms(
+                    &base, partial_values, 1u, guard_terminal_ids, 2u,
+                    &expiring_match, 1u, expiring_owners, 1u, DIGEST_A,
+                    &wrong_owner_relation, error, sizeof(error)) &&
+                    strstr(error, "owner") != NULL,
+                "borrowed roots must fit completely in an active range");
+        error[0] = '\0';
+        REQUIRE(counts,
+                !ppguard_relation_v1_build_borrowed_atoms(
+                    &base, unused_values, 1u, guard_terminal_ids, 2u,
+                    &expiring_match, 1u, expiring_owners, 1u, DIGEST_A,
+                    &wrong_owner_relation, error, sizeof(error)) &&
+                    strstr(error, "owner") != NULL,
+                "unused arena capacity does not establish root ownership");
+    }
+    for (index = 0u; index < 32u; index++) {
+        if (!arena_alloc(&expiring_owner, ARENA_BLOCK_SIZE))
+            break;
+    }
+    REQUIRE(counts, index == 32u,
+            "owner growth allocates independent live blocks");
+    error[0] = '\0';
+    REQUIRE(counts,
+            ppguard_relation_v1_validate(
+                &expiring_relation, error, sizeof(error)),
+            error[0] ? error :
+                "fresh validation accepts old roots after live owner growth");
     arena_free(&expiring_owner);
     error[0] = '\0';
     REQUIRE(counts,
@@ -666,6 +719,7 @@ static void test_guard_relation_contract(TestCounts *counts,
 done:
     ppguard_relation_v1_free(&expiring_relation);
     ppguard_relation_v1_free(&wrong_owner_relation);
+    ppguard_relation_v1_free(&repeated_owner_relation);
     ppguard_relation_v1_free(&borrowed_relation);
     ppguard_relation_v1_free(&absent_relation);
     ppguard_relation_v1_free(&mutated_relation);
@@ -985,6 +1039,323 @@ done:
     ppguard_relation_v1_free(&relation);
 }
 
+static bool check_external_token_carrier(TestCounts *counts) {
+    Arena arena, binding_inputs;
+    PPABIV1Pack pack;
+    CettaLpNativeGrammar grammar;
+    PPNativeV1Result gll, glr;
+    RSDFAV1Plan dfa;
+    RSDFAV1Program program;
+    RSDFAV1BuildOutcome build_outcome;
+    const uint8_t source[] = {'a', 'b'};
+    static const CettaLpNativeUnicodeRange a_range[] = {{97u, 97u}};
+    static const CettaLpNativeUnicodeRange b_range[] = {{98u, 98u}};
+    static const uint32_t starts[] = {0u};
+    static const RSDFAV1NfaEdge edges[] = {
+        {0u, 1u, RSDFA_V1_NFA_RANGES, a_range, 1u},
+        {1u, 2u, RSDFA_V1_NFA_RANGES, b_range, 1u},
+    };
+    static const RSDFAV1NfaAccept accepts[] = {{2u, 0u}};
+    const RSDFAV1Nfa nfa = {
+        .state_len = 3u, .start_states = starts, .start_len = 1u,
+        .edges = edges, .edge_len = 2u, .accepts = accepts,
+        .accept_len = 1u, .tag_len = 1u,
+    };
+    RSDFAV1ByteToken token;
+    RSDFAV1ByteCursorScanResult scan;
+    Atom *root, *token_state, *layout_state, *root_rhs[2], *productions[3];
+    Atom *argument, *token_identity, *token_rhs;
+    Atom *witnesses[1];
+    PPNativeV1TerminalExtension terminal;
+    PPNativeV1ProductionExtension token_production;
+    PPABIV1Item token_item;
+    PPNativeV1ForestExtension extension;
+    PPNativeV1TokenBindingPlan binding_plan;
+    uint32_t terminal_ids[2], codepoints[] = {97u, 98u};
+    uint32_t byte_offsets[] = {0u, 1u, 2u}, offsets[] = {0u, 1u, 1u, 2u};
+    CettaLpNativeUtf8LatticeEdge lattice_edges[2];
+    CettaLpNativeUtf8Lattice lattice;
+    int32_t root_id, token_state_id;
+    char error[512] = {0};
+    bool ok = false;
+
+    arena_init(&arena);
+    arena_init(&binding_inputs);
+    ppnative_v1_token_binding_plan_init(&binding_plan);
+    ppabi_v1_pack_init(&pack);
+    cetta_lp_native_grammar_init(&grammar);
+    ppnative_v1_result_init(&gll);
+    ppnative_v1_result_init(&glr);
+    rsdfa_v1_plan_init(&dfa);
+    rsdfa_v1_program_init(&program);
+    root = unary(&arena, "pp-def", atom_symbol(&arena, "whole-token-root"));
+    token_state = unary(&arena, "pp-def", atom_symbol(&arena, "whole-token"));
+    layout_state = atom_symbol(&arena, "test-token-layout");
+    root_rhs[0] = nonterminal(&arena, token_state);
+    root_rhs[1] = unary(&arena, "pp-terminal", atom_symbol(&arena, "pp-terminal-eof"));
+    argument = slot(&arena, 0u);
+    productions[0] = production(&arena, "whole-token-left", root, root_rhs, 2u,
+                                 apply(&arena, "SharedConstructor", &argument, 1u));
+    productions[1] = production(&arena, "whole-token-right", root, root_rhs, 2u,
+                                 apply(&arena, "SharedConstructor", &argument, 1u));
+    productions[2] = production(&arena, "whole-token-layout", layout_state, NULL, 0u,
+                                 unary(&arena, "pa-const", atom_symbol(&arena, "layout-value")));
+    REQUIRE(counts, load_pack(&arena, productions, 3u, &pack, error, sizeof(error)), error);
+    root_id = ppnative_v1_state_find(&pack, root);
+    token_state_id = ppnative_v1_state_find(&pack, token_state);
+    REQUIRE(counts, root_id >= 0 && token_state_id >= 0 && pack.terminal_len == 1u &&
+                pack.terminals[0].kind == PPABI_V1_TERMINAL_EOF &&
+                !ppabi_v1_pack_start_is_closed(&pack, root, error, sizeof(error)),
+            "a token reference remains open before its real terminal binding");
+    token_identity = unary(&arena, "pp-span-terminal", atom_symbol(&arena, "whole-token"));
+    terminal = (PPNativeV1TerminalExtension){pack.terminal_len, token_identity};
+    token_item = (PPABIV1Item){PPABI_V1_ITEM_TERMINAL, terminal.terminal_id};
+    token_rhs = unary(&arena, "pp-terminal", token_identity);
+    token_production = (PPNativeV1ProductionExtension){
+        .production_id = pack.production_len,
+        .identity = production(&arena, "whole-token-binding", token_state, &token_rhs, 1u,
+                                slot(&arena, 0u)),
+        .lhs_state_id = (uint32_t)token_state_id, .items = &token_item, .item_len = 1u,
+    };
+    token_production.action = token_production.identity->expr.elems[4];
+    witnesses[0] = atom_string(&arena, "ab");
+    extension = (PPNativeV1ForestExtension){
+        .terminals = &terminal, .terminal_len = 1u,
+        .productions = &token_production, .production_len = 1u,
+        .witness_values = witnesses, .witness_len = 1u,
+    };
+    REQUIRE(counts, ppnative_v1_start_is_closed_extended(&pack, root, &extension,
+                    error, sizeof(error)) &&
+                ppnative_v1_grammar_build(&pack, &grammar) &&
+                ppnative_v1_grammar_extend(&pack, &extension, &grammar, error, sizeof(error)),
+            error[0] ? error : "supplemental terminals close the token grammar");
+    {
+        PPNativeV1TokenBindingInput input = {
+            .state = atom_deep_copy(&binding_inputs, token_state),
+            .tag = atom_symbol(&binding_inputs, "whole-token"),
+            .prefix_state = atom_deep_copy(&binding_inputs, layout_state),
+        };
+        REQUIRE(counts, ppnative_v1_token_binding_plan_build(&pack, root, &input, 1u,
+                    &binding_plan, error, sizeof(error)) &&
+                binding_plan.extension.state_len == 0u &&
+                binding_plan.extension.terminal_len == 1u &&
+                binding_plan.extension.production_len == 1u &&
+                binding_plan.productions[0].item_len == 2u &&
+                arena_owns_ptr(&binding_plan.arena, binding_plan.productions[0].identity) &&
+                atom_eq(binding_plan.terminals[0].identity, token_identity),
+                error[0] ? error : "an owned token plan closes existing token references");
+        arena_free(&binding_inputs);
+        extension = binding_plan.extension;
+        extension.witness_values = witnesses;
+        extension.witness_len = 1u;
+        cetta_lp_native_grammar_free(&grammar);
+        cetta_lp_native_grammar_init(&grammar);
+        REQUIRE(counts, ppnative_v1_start_is_closed_extended(&pack, root, &extension,
+                    error, sizeof(error)) && ppnative_v1_grammar_build(&pack, &grammar) &&
+                ppnative_v1_grammar_extend(&pack, &extension, &grammar, error, sizeof(error)),
+                "binding metadata survives release of its input arena");
+    }
+    REQUIRE(counts, rsdfa_v1_plan_build(&nfa, 16u, 32u, &dfa, &build_outcome,
+                    error, sizeof(error)) && build_outcome == RSDFA_V1_BUILD_COMPLETED &&
+                rsdfa_v1_plan_export_program(&dfa, &program, error, sizeof(error)) &&
+                rsdfa_v1_program_scan_byte_cursor_longest(&program, source, 2u, 0u, 16u,
+                    &token, 1u, &scan, error, sizeof(error)) &&
+                scan.accept_len == 1u && token.start_byte == 0u && token.end_byte == 2u,
+            "a byte automaton supplies one complete multi-byte token span");
+    terminal_ids[0] = 0u;
+    terminal_ids[1] = terminal.terminal_id;
+    lattice_edges[0] = (CettaLpNativeUtf8LatticeEdge){
+        .terminal_id = terminal.terminal_id,
+        .scalar_left = token.start_byte, .scalar_right = token.end_byte,
+        .byte_left = token.start_byte, .byte_right = token.end_byte,
+        .value_kind = CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS, .value = 0u,
+    };
+    lattice_edges[1] = (CettaLpNativeUtf8LatticeEdge){
+        .terminal_id = 0u, .scalar_left = 2u, .scalar_right = 2u,
+        .byte_left = 2u, .byte_right = 2u,
+        .value_kind = CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF, .value = 0u,
+    };
+    lattice = (CettaLpNativeUtf8Lattice){
+        .terminal_ids = terminal_ids, .terminal_len = 2u,
+        .codepoints = codepoints, .byte_offsets = byte_offsets,
+        .scalar_len = 2u, .input_byte_len = 2u,
+        .edges = lattice_edges, .edge_len = 2u,
+        .start_offsets = offsets, .start_offset_len = 4u,
+    };
+    REQUIRE(counts, cetta_lp_native_utf8_lattice_validate(&lattice, error, sizeof(error)) &&
+                cetta_lp_native_gll_parse_utf8_lattice_forest_complete(&grammar,
+                    (uint32_t)root_id, &lattice, 10000u, &gll.forest, error, sizeof(error)) &&
+                cetta_lp_native_glr_parse_utf8_lattice_forest(&grammar,
+                    (uint32_t)root_id, &lattice, 10000u, &glr.forest, error, sizeof(error)) &&
+                ppnative_v1_finish_extended(&gll, &pack, root, &extension,
+                    128u, 128u, error, sizeof(error)) &&
+                ppnative_v1_finish_extended(&glr, &pack, root, &extension,
+                    128u, 128u, error, sizeof(error)), error);
+    REQUIRE(counts, gll.forest.root_len != 0u && glr.forest.root_len != 0u &&
+                gll.outcome == PPNATIVE_V1_COMPLETED && glr.outcome == PPNATIVE_V1_COMPLETED &&
+                gll.semantic_result_len == 1u && glr.semantic_result_len == 1u &&
+                atom_eq(gll.semantic_results[0], glr.semantic_results[0]) &&
+                gll.canonical_forest_materialized && glr.canonical_forest_materialized &&
+                atom_eq(gll.canonical_forest, glr.canonical_forest) &&
+                strcmp(gll.forest_digest, glr.forest_digest) == 0,
+            "whole-token values and canonical packed evidence agree across backends");
+    {
+        bool found_left = false, found_right = false;
+        for (uint32_t i = 0u; i < gll.forest.choice_len; ++i) {
+            uint32_t p = gll.forest.choices[i].production_index;
+            if (p < pack.production_len) {
+                found_left |= atom_is_symbol(pack.productions[p].identity->expr.elems[1],
+                                              "whole-token-left");
+                found_right |= atom_is_symbol(pack.productions[p].identity->expr.elems[1],
+                                               "whole-token-right");
+            }
+        }
+        REQUIRE(counts, found_left && found_right,
+                "equal constructor results retain both distinct production occurrences");
+    }
+    token_production = binding_plan.productions[0];
+    token_production.action = unary(&arena, "pa-const", atom_string(&arena, "wrong"));
+    extension.productions = &token_production;
+    REQUIRE(counts, !ppnative_v1_start_is_closed_extended(&pack, root, &extension,
+                    error, sizeof(error)),
+            "a terminal binding cannot substitute an inconsistent semantic action");
+    {
+        Atom *unused = unary(&arena, "pp-def", atom_symbol(&arena, "unused-token"));
+        PPNativeV1TokenBindingInput inputs[2] = {
+            {.state = token_state, .tag = atom_symbol(&arena, "whole-token")},
+            {.state = unused, .tag = atom_symbol(&arena, "unused-token")},
+        };
+        REQUIRE(counts, ppnative_v1_token_binding_plan_build(&pack, root, inputs, 2u,
+                    &binding_plan, error, sizeof(error)) &&
+                binding_plan.extension.state_len == 1u &&
+                binding_plan.states[0].state_id == pack.state_len &&
+                atom_eq(binding_plan.states[0].identity, unused) &&
+                ppnative_v1_start_is_closed_extended(&pack, root, &binding_plan.extension,
+                    error, sizeof(error)),
+                error[0] ? error : "unreferenced tokens retain a real declared extension state");
+        if (!result_is(&gll, "(result (SharedConstructor \"ab\") nil)"))
+            report_result_failure("owned-token-binding", &gll);
+        REQUIRE(counts, result_is(&gll, "(result (SharedConstructor \"ab\") nil)") &&
+                forest_contains(&gll, "whole-token-left"),
+                "finished values and evidence survive replacement of binding metadata");
+        PPNativeV1ProductionExtension *retained = binding_plan.productions;
+        inputs[0].prefix_state = atom_symbol(&arena, "not-a-declared-prefix");
+        REQUIRE(counts, !ppnative_v1_token_binding_plan_build(&pack, root, inputs, 2u,
+                    &binding_plan, error, sizeof(error)) && strstr(error, "prefix") &&
+                binding_plan.productions == retained,
+                "an unknown token prefix refuses atomically");
+        inputs[0].prefix_state = NULL;
+        inputs[1].tag = inputs[0].tag;
+        REQUIRE(counts, !ppnative_v1_token_binding_plan_build(&pack, root, inputs, 2u,
+                    &binding_plan, error, sizeof(error)) &&
+                strstr(error, "duplicate") && binding_plan.productions == retained,
+                "duplicate tags refuse atomically");
+        inputs[1] = inputs[0];
+        inputs[1].tag = atom_symbol(&arena, "another-tag");
+        REQUIRE(counts, !ppnative_v1_token_binding_plan_build(&pack, root, inputs, 2u,
+                    &binding_plan, error, sizeof(error)) &&
+                strstr(error, "duplicate") && binding_plan.productions == retained,
+                "duplicate token states refuse atomically");
+        inputs[0].state = root;
+        REQUIRE(counts, !ppnative_v1_token_binding_plan_build(&pack, root, inputs, 1u,
+                    &binding_plan, error, sizeof(error)) &&
+                strstr(error, "base grammar") && binding_plan.productions == retained,
+                "a token cannot redefine a base grammar state");
+        inputs[0].state = unused;
+        REQUIRE(counts, !ppnative_v1_token_binding_plan_build(&pack, root, inputs, 1u,
+                    &binding_plan, error, sizeof(error)) && binding_plan.productions == retained &&
+                ppnative_v1_start_is_closed_extended(&pack, root, &binding_plan.extension,
+                    error, sizeof(error)),
+                "an incomplete replacement leaves the previous closed plan intact");
+    }
+    {
+        const uint8_t utf8[] = {0xceu, 0xbbu};
+        static const CettaLpNativeUnicodeRange first[] = {{0xceu, 0xceu}};
+        static const CettaLpNativeUnicodeRange second[] = {{0xbbu, 0xbbu}};
+        static const RSDFAV1NfaEdge utf8_edges[] = {
+            {0u, 1u, RSDFA_V1_NFA_RANGES, first, 1u},
+            {1u, 2u, RSDFA_V1_NFA_RANGES, second, 1u},
+        };
+        const RSDFAV1Nfa utf8_nfa = {
+            .state_len = 3u, .start_states = starts, .start_len = 1u,
+            .edges = utf8_edges, .edge_len = 2u, .accepts = accepts,
+            .accept_len = 1u, .tag_len = 1u,
+        };
+        uint32_t utf8_codepoints[] = {955u}, utf8_byte_offsets[] = {0u, 2u};
+        uint32_t utf8_terminal_ids[] = {0u, 1u, 2u}, utf8_offsets[] = {0u, 1u, 2u};
+        rsdfa_v1_program_free(&program);
+        rsdfa_v1_plan_free(&dfa);
+        rsdfa_v1_plan_init(&dfa);
+        REQUIRE(counts, rsdfa_v1_plan_build(&utf8_nfa, 16u, 32u, &dfa, &build_outcome,
+                    error, sizeof(error)) && build_outcome == RSDFA_V1_BUILD_COMPLETED &&
+                rsdfa_v1_plan_export_program(&dfa, &program, error, sizeof(error)) &&
+                rsdfa_v1_program_scan_byte_cursor_longest(&program, utf8, 2u, 0u, 16u,
+                    &token, 1u, &scan, error, sizeof(error)) &&
+                scan.accept_len == 1u && token.start_byte == 0u && token.end_byte == 2u,
+                "a byte recognizer retains both bytes of a UTF-8 token");
+        witnesses[0] = atom_string(&arena, "λ");
+        extension = binding_plan.extension;
+        extension.witness_values = witnesses;
+        extension.witness_len = 1u;
+        lattice_edges[0] = (CettaLpNativeUtf8LatticeEdge){
+            .terminal_id = 1u, .scalar_left = 0u, .scalar_right = 1u,
+            .byte_left = token.start_byte, .byte_right = token.end_byte,
+            .value_kind = CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS, .value = 0u,
+        };
+        lattice_edges[1] = (CettaLpNativeUtf8LatticeEdge){
+            .terminal_id = 0u, .scalar_left = 1u, .scalar_right = 1u,
+            .byte_left = 2u, .byte_right = 2u,
+            .value_kind = CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF, .value = 0u,
+        };
+        lattice = (CettaLpNativeUtf8Lattice){
+            .terminal_ids = utf8_terminal_ids, .terminal_len = 3u,
+            .codepoints = utf8_codepoints, .byte_offsets = utf8_byte_offsets,
+            .scalar_len = 1u, .input_byte_len = 2u,
+            .edges = lattice_edges, .edge_len = 2u,
+            .start_offsets = utf8_offsets, .start_offset_len = 3u,
+        };
+        REQUIRE(counts, cetta_lp_native_utf8_lattice_validate(&lattice, error, sizeof(error)),
+                "whole-token byte spans map to the original Unicode scalar boundary");
+        lattice_edges[0].byte_right = 1u;
+        REQUIRE(counts, !cetta_lp_native_utf8_lattice_validate(&lattice, error, sizeof(error)),
+                "a byte boundary inside a UTF-8 scalar cannot become a parser boundary");
+        lattice_edges[0].byte_right = 2u;
+        cetta_lp_native_grammar_free(&grammar);
+        cetta_lp_native_grammar_init(&grammar);
+        ppnative_v1_result_free(&gll);
+        ppnative_v1_result_free(&glr);
+        ppnative_v1_result_init(&gll);
+        ppnative_v1_result_init(&glr);
+        REQUIRE(counts, ppnative_v1_grammar_build(&pack, &grammar) &&
+                ppnative_v1_grammar_extend(&pack, &extension, &grammar, error, sizeof(error)) &&
+                cetta_lp_native_gll_parse_utf8_lattice_forest_complete(&grammar,
+                    (uint32_t)root_id, &lattice, 10000u, &gll.forest, error, sizeof(error)) &&
+                cetta_lp_native_glr_parse_utf8_lattice_forest(&grammar,
+                    (uint32_t)root_id, &lattice, 10000u, &glr.forest, error, sizeof(error)) &&
+                ppnative_v1_finish_extended(&gll, &pack, root, &extension,
+                    128u, 128u, error, sizeof(error)) &&
+                ppnative_v1_finish_extended(&glr, &pack, root, &extension,
+                    128u, 128u, error, sizeof(error)), error);
+        REQUIRE(counts, result_is(&gll, "(result (SharedConstructor \"λ\") nil)") &&
+                result_is(&glr, "(result (SharedConstructor \"λ\") nil)") &&
+                atom_eq(gll.canonical_forest, glr.canonical_forest) &&
+                strcmp(gll.forest_digest, glr.forest_digest) == 0,
+                "UTF-8 token values and packed evidence agree across GLL and GLR");
+    }
+    ok = true;
+done:
+    ppnative_v1_token_binding_plan_free(&binding_plan);
+    arena_free(&binding_inputs);
+    rsdfa_v1_program_free(&program);
+    rsdfa_v1_plan_free(&dfa);
+    ppnative_v1_result_free(&glr);
+    ppnative_v1_result_free(&gll);
+    cetta_lp_native_grammar_free(&grammar);
+    ppabi_v1_pack_free(&pack);
+    arena_free(&arena);
+    return ok;
+}
+
 int main(void) {
     static const uint8_t input[] = {
         0xceu, 0xbbu, 'a', 'a', 0xceu, 0xbbu,
@@ -1101,6 +1472,8 @@ int main(void) {
     rsdfa_v1_plan_init(&dfa_plan);
     rsdfa_v1_scan_result_init(&scan);
     rsdfa_v1_parser_lattice_init(&lattice);
+    REQUIRE(&counts, check_external_token_carrier(&counts),
+            "whole-token carrier controls pass");
 
     test_guard_relation_contract(
         &guard_counts, &arena, guard_digest);

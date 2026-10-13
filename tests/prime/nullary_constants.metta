@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A symbol is a constant with no arguments.  A symbol the program defines
 ; evaluates by its definition, as a request and as an argument; a symbol it
@@ -58,18 +58,18 @@
 !(call0)
 !(wrap call0)
 
-; A constant declared by `set:define` runs, is typed and is reasoned about:
+; A constant declared by `hol:define` runs, is typed and is reasoned about:
 ; the kernel unfolds it when it compares terms, and running it unfolds it in
 ; the same way, one firing.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self two nat (= two (succ (succ zero))))
-!(set:define &self dbl (-> nat nat) (= (dbl zero) zero) (= (dbl (succ $n)) (succ (succ (dbl $n)))))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self two nat (= two (succ (succ zero))))
+!(hol:define &self dbl (-> nat nat) (= (dbl zero) zero) (= (dbl (succ $n)) (succ (succ (dbl $n)))))
 ! two
 !(dbl two)
 !(type:eq (dbl two) (succ (succ (succ (succ zero)))))
 !(cost:firings two)
 !(cost:firings (dbl two))
-!(set:define &self four nat (= four (dbl two)))
+!(hol:define &self four nat (= four (dbl two)))
 ! four
 !(type:eq four (succ (succ (succ (succ zero)))))
 ; A constructor is not a definition: it stays itself.

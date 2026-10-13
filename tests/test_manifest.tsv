@@ -89,6 +89,7 @@ tests/prime/demand/bubbles.metta	prime	metta		any	native	test-prime	golden	Prime
 tests/prime/error_continues.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_answer_demand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/function_faults.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/held_patterns.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -96,11 +97,14 @@ tests/prime/lambda_names.metta	prime	metta		any	native	test-prime	golden	Prime n
 tests/prime/let_bound_learner.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/lift_brackets.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_activation_operand.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_judgment_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_native_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_sequential_unification_refinement.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/nik_plural_checking.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -245,6 +249,11 @@ tests/prime/scoped/typed_eta_conversion.metta	prime	metta		any	native	test-prime
 tests/prime/scoped/typing_dependency_currentness.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/scoped/universe_transport.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/scoped/wide_definitions.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/scoped/wide_equation_pick18.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/scoped/wide_equation_pick200.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/scoped/wide_equation_pick24.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/scoped/wide_equation_pick40.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/scoped/wide_equation_pick64.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/search_controller_frontier.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/stored_variable_identity.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/symbols/admission_conservative.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -453,9 +462,13 @@ tests/test_gparse_native_slr_parse_shared.metta	he	metta	extended	main	native	te
 tests/test_gparse_native_slr_summary.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_compat_syntax_regressions.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_nullary_call_types.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_return_contract_correlation.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_word_tokens.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose_bang_name_regression.metta	he	metta	extended	main	native	test	golden	-
@@ -549,6 +562,7 @@ tests/test_lib_parse_regression.metta	he	metta	extended	main	native	test	golden	
 tests/test_lib_parse_shared_cert_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_list_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
+tests/test_lts_he_argument_effects.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_he_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_mi_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_cost_causal_trace.metta	he	metta	extended	main	native	test	golden	-
@@ -559,6 +573,7 @@ tests/test_lts_rho_cost_parallel_runtime_stats.metta	he	metta	extended	runtime-s
 tests/test_lts_rho_cost_search_budget.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_syntax.metta	he	metta	extended	main	native	test	golden	-
+tests/test_managed_symbol_exact_membership.metta	he	metta	extended	main	native	test	golden	-
 tests/test_map_filter_atom.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	extended	main	native	test	golden	-

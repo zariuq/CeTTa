@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The HOL4 ladder (HOL01-HOL06): propositional logic, induction on naturals
 ; and lists, definitions of functions, datatypes and an inductive relation,
@@ -6,15 +6,15 @@
 ; excluded-middle axiom, and the LCF primitives as the checker's own rules.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &thy list (u 0) (: nil list) (: cons (-> num list list)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &thy list (u 0) (: nil list) (: cons (-> num list list)))
 !(pf:equality &thy num refl@num subst@num)
 !(pf:equality &thy list refl@list subst@list)
-!(set:define &thy falsum prop (= falsum (all prop (lam p p))))
-!(set:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))
-!(set:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
-!(set:define &thy or (-> prop prop prop) (= (or $p $q) (all prop (lam r (imp (imp $p r) (imp (imp $q r) r))))))
+!(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
+!(hol:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))
+!(hol:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
+!(hol:define &thy or (-> prop prop prop) (= (or $p $q) (all prop (lam r (imp (imp $p r) (imp (imp $q r) r))))))
 
 ; ---- HOL01 logic
 !(pf:theorem &thy imp-id (all prop (lam p (imp p p))) (pf:fix p (pf:assume h h)))
@@ -29,7 +29,7 @@
               (pf:assume nq (pf:by nq (pf:by hpq (pf:assume hp (pf:assume hq hq)))))))))))
 
 ; ---- HOL02 induction
-!(set:define &thy add (-> num num num) (= (add zero $m) $m) (= (add (suc $n) $m) (suc (add $n $m))))
+!(hol:define &thy add (-> num num num) (= (add zero $m) $m) (= (add (suc $n) $m) (suc (add $n $m))))
 !(pf:theorem &thy add-zero-r (all num (lam n (eq num (add n zero) n)))
    (pf:induction num-ind (lam n (eq num (add n zero) n))
      (pf:refl num zero)
@@ -45,9 +45,9 @@
        (pf:calc num (add (suc k) m)
          (= (suc (add m k))  (cong num (lam r (suc r)) (add k m) (add m k) (pf:by ih)))
          (= (add m (suc k))  (sym (by add-suc-r)))))))))
-!(set:define &thy append (-> list list list) (= (append nil $k) $k) (= (append (cons $x $l) $k) (cons $x (append $l $k))))
-!(set:define &thy length (-> list num) (= (length nil) zero) (= (length (cons $x $l)) (suc (length $l))))
-!(set:define &thy rev (-> list list) (= (rev nil) nil) (= (rev (cons $x $l)) (append (rev $l) (cons $x nil))))
+!(hol:define &thy append (-> list list list) (= (append nil $k) $k) (= (append (cons $x $l) $k) (cons $x (append $l $k))))
+!(hol:define &thy length (-> list num) (= (length nil) zero) (= (length (cons $x $l)) (suc (length $l))))
+!(hol:define &thy rev (-> list list) (= (rev nil) nil) (= (rev (cons $x $l)) (append (rev $l) (cons $x nil))))
 !(pf:theorem &thy length-append (all list (lam l (all list (lam k (eq num (length (append l k)) (add (length l) (length k)))))))
    (pf:induction list-ind (lam l (all list (lam k (eq num (length (append l k)) (add (length l) (length k))))))
      (pf:fix k (pf:refl num (length k)))
@@ -76,12 +76,12 @@
          (= (cons x l)                                 (cong list (lam r (cons x r)) (rev (rev l)) l (pf:by ih)))))))))
 
 ; ---- HOL03 definitions: a function, a datatype with its size, an inductive relation
-!(set:define &thy dbl (-> num num) (= (dbl zero) zero) (= (dbl (suc $n)) (suc (suc (dbl $n)))))
+!(hol:define &thy dbl (-> num num) (= (dbl zero) zero) (= (dbl (suc $n)) (suc (suc (dbl $n)))))
 !(pf:theorem &thy dbl-two (eq num (dbl (suc (suc zero))) (suc (suc (suc (suc zero))))) (pf:refl num (suc (suc (suc (suc zero))))))
-!(set:inductive &thy tree (u 0) (: leaf tree) (: node (-> tree num tree tree)))
-!(set:define &thy tsize (-> tree num) (= (tsize leaf) zero) (= (tsize (node $l $v $r)) (suc (add (tsize $l) (tsize $r)))))
+!(hol:inductive &thy tree (u 0) (: leaf tree) (: node (-> tree num tree tree)))
+!(hol:define &thy tsize (-> tree num) (= (tsize leaf) zero) (= (tsize (node $l $v $r)) (suc (add (tsize $l) (tsize $r)))))
 !(pf:theorem &thy tsize-node (eq num (tsize (node leaf zero leaf)) (suc zero)) (pf:refl num (suc zero)))
-!(set:define &thy ev (-> num prop)
+!(hol:define &thy ev (-> num prop)
    (= (ev $n) (all (-> num prop) (lam P (imp (P zero) (imp (all num (lam m (imp (P m) (P (suc (suc m)))))) (P $n)))))))
 !(pf:theorem &thy ev-ss0 (ev (suc (suc zero)))
    (pf:fix P (pf:assume base (pf:assume step (pf:imp-elim (pf:all-elim step zero) base)))))
@@ -91,12 +91,12 @@
    (all (-> num prop) (lam P (all (-> num prop) (lam Q (imp (all num (lam x (imp (P x) (Q x)))) (imp (all num (lam x (P x))) (all num (lam x (Q x)))))))))
    (pf:fix P (pf:fix Q (pf:assume mono (pf:assume allp (pf:fix x (pf:by mono (pf:all-elim allp x))))))))
 !(pf:theory &thy ((: choose (-> (-> num prop) num))))
-!(set:axiom &thy select-intro (all (-> num prop) (lam P (all num (lam x (imp (P x) (P (choose P))))))))
+!(hol:axiom &thy select-intro (all (-> num prop) (lam P (all num (lam x (imp (P x) (P (choose P))))))))
 !(pf:theorem &thy select-use (all (-> num prop) (lam P (imp (P zero) (P (choose P)))))
    (pf:fix P (pf:assume h (pf:by select-intro h))))
 
 ; ---- HOL05 classical: from excluded middle, double negation and Peirce
-!(set:axiom &thy excluded-middle (all prop (lam p (or p (neg p)))))
+!(hol:axiom &thy excluded-middle (all prop (lam p (or p (neg p)))))
 !(pf:theorem &thy double-neg (all prop (lam p (imp (neg (neg p)) p)))
    (pf:fix p (pf:assume nnp
      (pf:by (pf:all-elim (pf:known excluded-middle) p) (pf:assume hp hp) (pf:assume np (pf:by (pf:imp-elim nnp np)))))))
@@ -108,5 +108,5 @@
 !(pf:theory &thy ((: x num) (: y num)))
 !(pf:proves &thy (pf:refl num x) (eq num x x))
 !(pf:proves &thy (pf:fix p (pf:assume hp hp)) (all prop (lam p (imp p p))))
-!(set:define &thy apply (-> (-> num num) num num) (= (apply $f $x) ($f $x)))
+!(hol:define &thy apply (-> (-> num num) num num) (= (apply $f $x) ($f $x)))
 !(pf:proves &thy (pf:refl num y) (eq num (apply (lam z z) y) y))

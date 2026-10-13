@@ -2,6 +2,7 @@
 #define CETTA_SESSION_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <limits.h>
 #include <stdio.h>
@@ -11,8 +12,11 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+/* A module is named by one file-system name. */
+#ifndef NAME_MAX
+#define NAME_MAX 255
+#endif
 
-#define CETTA_MAX_MODULE_NAMESPACE 128
 #define CETTA_MAX_REMOTE_REVISION 128
 #define CETTA_MAX_EVAL_OPTION_KEY 64
 #define CETTA_MAX_EVAL_OPTION_REPR 128
@@ -182,13 +186,15 @@ typedef struct {
 typedef struct {
     CettaModuleSpecKind kind;
     char raw_spec[PATH_MAX];
-    char namespace_name[CETTA_MAX_MODULE_NAMESPACE];
+    char namespace_name[NAME_MAX + 1];
     char path_or_member[PATH_MAX];
+    /* include reports a name that does not resolve as it was written. */
+    bool reports_written_name;
 } CettaModuleSpec;
 
 typedef struct {
     CettaModuleProviderKind provider_kind;
-    char namespace_name[CETTA_MAX_MODULE_NAMESPACE];
+    char namespace_name[NAME_MAX + 1];
     char root_path[PATH_MAX];
     CettaModuleLocatorKind locator_kind;
     char source_locator[PATH_MAX];
@@ -254,6 +260,12 @@ typedef struct {
     CettaModulePolicy module_policy;
     CettaEvaluatorOptions options;
     CettaProcessControl process_control;
+    /* Native host authority, never a pragma/environment/MeTTa option. The
+     * host supplies a fresh observation and accepts only closed proposals. */
+    bool speculative;
+    /* Shared by nested evaluations and their workers; never rolled back with
+     * a rejected branch or hidden by an expression's error handling. */
+    _Atomic uint64_t effect_denials;
     /* Optional native assertion observer; execution owns the callback scope.
      * It neither handles exceptions nor changes a dialect's test result. */
     void (*test_verdict)(void *context, bool passed);

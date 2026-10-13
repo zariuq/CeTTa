@@ -1,0 +1,8 @@
+!(import! &self runner_document)
+!(bridge-document)
+!(match &self (bridge-doc-value $x) $x)
+!(bridge-error-document)
+!(match &self (bridge-before-error $x) $x)
+!(collapse (match &self (bridge-after-error $x) $x))
+!(bridge-parse-document)
+!(match &self (bridge-before-parse $x) $x)

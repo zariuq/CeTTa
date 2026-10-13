@@ -15,3 +15,5 @@
 [()]
 [True]
 [(error (BadArgType 2 String Number))]
+[False]
+[(Error (== 1 Kinded) (BadArgType 2 Number Kind))]

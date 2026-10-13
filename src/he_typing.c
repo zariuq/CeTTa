@@ -542,8 +542,8 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
         /* A grounded op that is NOT type-pure names a computation with effects
          * or nondeterminism. It must never run inside a type, and a user marker
          * cannot override that. */
-        if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id) &&
-            !grounded_op_is_type_pure(head->sym_id) &&
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(atom_symbol_current_id(head)) &&
+            !grounded_op_is_type_pure(atom_symbol_current_id(head)) &&
             !atom_has_vars(norm)) {
             *status = HE_NORM_INADMISSIBLE;
             goto fail;
@@ -900,6 +900,7 @@ static HeTypeValidity check_type_refinements(Arena *a, Space *space,
 
 CettaHeRefinementStatus he_typing_check_refinement_status(
     Arena *a, Space *space, Atom *type, uint64_t fuel, Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     Atom *detail = NULL;
     HeTypeValidity status = check_type_refinements(a, space, type, &fuel,
                                                    &detail, 0, NULL);
@@ -917,6 +918,7 @@ CettaHeRefinementStatus he_typing_check_refinement_status(
 CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
     Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) return CETTA_HE_REFINEMENT_INCOMPLETE;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     g_active_typing_budget = budget;
@@ -1243,6 +1245,7 @@ CettaNikOutcomeV1 he_typing_check_term_outcome(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t fuel,
     bool require_exact_or_structural, CettaHeTypingEdge *edge_out,
     Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     HeEdge edge = HE_NONE;
     uint64_t remaining = fuel;
     CettaNikOutcomeV1 status = classify_type_mode(
@@ -1256,6 +1259,7 @@ CettaNikOutcomeV1 he_typing_check_term_outcome_budgeted(
     Arena *a, Space *space, Atom *term, Atom *expected,
     CettaHeTypingBudget *budget, bool require_exact_or_structural,
     CettaHeTypingEdge *edge_out, Atom **detail_out) {
+    eval_prime_judgment_note_he_engine();
     if (!budget) return CETTA_NIK_OUTCOME_INCOMPLETE;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     g_active_typing_budget = budget;
@@ -1822,7 +1826,7 @@ static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
         ctx->query_var_cap = ncap;
     }
     ctx->query_vars[ctx->query_var_count++] =
-        (ChainQueryVar){var->var_id, var->sym_id, var->name_key};
+        (ChainQueryVar){var->var_id, atom_symbol_current_id(var), var->name_key};
     return true;
 }
 
@@ -3689,7 +3693,7 @@ bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
 Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (!eval_current_profile_enables_dependent_telescope()) return NULL;
-    const char *name = symbol_bytes(g_symbols, head->sym_id);
+    const char *name = atom_symbol_bytes(head);
     if (!he_typing_is_op(name)) return NULL;
 
     if (strcmp(name, "normalize-type") == 0) {

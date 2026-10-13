@@ -6,6 +6,8 @@
 
 #include "library.h"
 #include "library_supervise.h"
+#include "library_pattern.h"
+#include "library_hol.h"
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
@@ -35,11 +37,12 @@ static bool native_symbol_arg(Arena *a, Atom *atom, SymbolId *out) {
     if (!a || !atom || !out)
         return false;
     if (atom->kind == ATOM_SYMBOL) {
-        *out = atom->sym_id;
+        /* Grammar entry points encode the start sort as a numeric key. */
+        *out = atom_symbol_register_id(atom);
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        *out = atom_symbol(a, atom->ground.sval)->sym_id;
+        *out = atom_symbol_current_id(atom_symbol(a, atom->ground.sval));
         return true;
     }
     return false;
@@ -1179,17 +1182,35 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
     if (!ctx || !mod || !mod->name)
         return false;
     for (i = 0; i < ctx->loaded_module_len; i++) {
-        if (strcmp(ctx->loaded_modules[i].display_name, mod->name) == 0)
+        if (strcmp(ctx->loaded_modules[i]->display_name, mod->name) == 0)
             return true;
     }
     return false;
 }
 
+/* A langdef native answers data: a parse, a forest, a handle, an
+ * inspection or a refusal.  It reports that answer as a completed value, so
+ * no dialect interprets it again.  Interpretation in the library is
+ * explicit, never implied by a constructor that shares its name with a
+ * program's equation. */
+static bool langdef_module_call(CettaLibraryContext *ctx, Space *space,
+                                Arena *a, Atom *head, Atom **args,
+                                uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result =
+        cetta_langdef_module_dispatch(ctx, space, a, head, args, nargs);
+    if (!result)
+        return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
-    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch, NULL},
+    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call},
+    {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
+    {"hol", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", cetta_hol_module_call},
 #if CETTA_BUILD_WITH_DURABLE
-    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_"},
+    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},
 #endif
 };
 
@@ -1205,10 +1226,10 @@ const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
     return NULL;
 }
 
-Atom *cetta_native_module_dispatch_active(struct CettaLibraryContext *ctx,
+bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                          uint32_t active_mask) {
+                                     uint32_t active_mask, CettaCallOutcome *out) {
     uint32_t i;
 
     for (i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
@@ -1220,9 +1241,13 @@ Atom *cetta_native_module_dispatch_active(struct CettaLibraryContext *ctx,
         if ((active_mask & mod->import_bit) == 0 &&
             !native_module_loaded(ctx, mod))
             continue;
-        result = mod->dispatch(ctx, space, a, head, args, nargs);
-        if (result)
-            return result;
+        if (mod->call && mod->call(ctx, space, a, head, args, nargs, out))
+            return true;
+        result = mod->dispatch ? mod->dispatch(ctx, space, a, head, args, nargs) : NULL;
+        if (result) {
+            *out = cetta_call_value(result);
+            return true;
+        }
     }
-    return NULL;
+    return false;
 }

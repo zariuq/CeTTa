@@ -112,8 +112,7 @@ GdlSourceParseV1 gdl_source_package_view_v1(
             profile_digest_field->expr.elems[1], &declared_profile) ||
         !gdl_source_expr_named_v1(revision_field, "revision", 2u) ||
         revision_field->expr.elems[1]->kind != ATOM_SYMBOL ||
-        !(declared_revision = symbol_bytes(
-            g_symbols, revision_field->expr.elems[1]->sym_id)) ||
+        !(declared_revision = atom_symbol_bytes(revision_field->expr.elems[1])) ||
         !gdl_source_expr_named_v1(source_text_field, "source-text", 2u) ||
         !gdl_source_string_v1(source_text_field->expr.elems[1], &source) ||
         !gdl_source_expr_named_v1(profile_text_field, "profile-text", 2u) ||

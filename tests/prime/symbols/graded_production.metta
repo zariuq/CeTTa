@@ -1,11 +1,11 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A shared production is charged once per shared occurrence.  The grade is
 ; the firing count of declared definitions (cost:firings); `two` is admitted,
 ; so producing it is one firing, however often it is used.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self two nat (= two (succ (succ zero))))
-!(set:define &self dbl (-> nat nat) (= (dbl zero) zero) (= (dbl (succ $n)) (succ (succ (dbl $n)))))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self two nat (= two (succ (succ zero))))
+!(hol:define &self dbl (-> nat nat) (= (dbl zero) zero) (= (dbl (succ $n)) (succ (succ (dbl $n)))))
 (= (pairc $x) (P $x $x))
 !(cost:firings two)
 !(cost:firings (P two two))

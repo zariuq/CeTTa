@@ -1,0 +1,5 @@
+!(import! &self pat)
+(= (adapter-score $x) (+ $x 10))
+(= (adapter-client $n)
+   (pat:case% (p $n)
+     (((p zero) unused) ((p $local) (adapter-score $local)))))

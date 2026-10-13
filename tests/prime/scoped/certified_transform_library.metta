@@ -1,37 +1,37 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Certified transformations for a supplied family. The family here is the
 ; predicate of zero-addition, which is not definitional in the second
 ; argument. A step must use the incoming evidence. Reflexivity of the
 ; successor does not inhabit that predicate at a neutral index.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
-!(set:define &thy add (-> num num num)
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:define &thy add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:define &thy eqAt (-> num (u 0))
+!(hol:define &thy eqAt (-> num (u 0))
    (= (eqAt $n) (id num (add zero $n) $n)))
-!(set:define &thy sucMove
+!(hol:define &thy sucMove
    (-> (n : num) (e : (eqAt n)) (eqAt (suc n)))
    (= (sucMove $n $e)
       (id:eliminate num (add zero $n)
          (lam y (lam p (id num (suc (add zero $n)) (suc y))))
          (refl (suc (add zero $n)))
          $n $e)))
-!(set:define &thy keepCert
+!(hol:define &thy keepCert
    (-> (A : (u 0)) (P : (-> A (u 0))) (x : A) (e : (P x))
        (sigma (y : A) (P y)))
    (= (keepCert $A $P $x $e) (pair $x $e)))
-!(set:define &thy transportCert
+!(hol:define &thy transportCert
    (-> (A : (u 0)) (P : (-> A (u 0))) (h : (-> A A))
        (move : (-> (x : A) (e : (P x)) (P (h x))))
        (x : A) (e : (P x))
        (sigma (y : A) (P y)))
    (= (transportCert $A $P $h $move $x $e) (pair ($h $x) ($move $x $e))))
-!(set:define &thy sucStep
+!(hol:define &thy sucStep
    (-> (x : num) (e : (eqAt x)) (sigma (y : num) (eqAt y)))
    (= (sucStep $x $e) (transportCert num eqAt suc sucMove $x $e)))
-!(set:define &thy composeCert
+!(hol:define &thy composeCert
    (-> (A : (u 0)) (P : (-> A (u 0)))
        (step1 : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
        (step2 : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
@@ -39,7 +39,7 @@
        (sigma (z : A) (P z)))
    (= (composeCert $A $P $step1 $step2 $x $e)
       ((lam pack ($step2 (fst pack) (snd pack))) ($step1 $x $e))))
-!(set:define &thy iterCert
+!(hol:define &thy iterCert
    (-> (n : num) (A : (u 0)) (P : (-> A (u 0)))
        (step : (-> (x : A) (e : (P x)) (sigma (y : A) (P y))))
        (x : A) (e : (P x))
@@ -47,7 +47,7 @@
    (= (iterCert zero $A $P $step $x $e) (pair $x $e))
    (= (iterCert (suc $n) $A $P $step $x $e)
       ((lam pack (iterCert $n $A $P $step (fst pack) (snd pack))) ($step $x $e))))
-!(set:define &thy returnIter
+!(hol:define &thy returnIter
    (-> (A : (u 0))
        (-> (P : (-> A (u 0)))
            (-> (n : num)
@@ -97,33 +97,33 @@
 ; A family that reduces to a closed inductive is covered by that inductive.
 ; One defined as another such family is too. A neutral application that
 ; does not reduce, and an identity indexed by an earlier argument, are not.
-!(set:define &thy Fam (-> num (u 0)) (= (Fam $n) num))
-!(set:define &thy onFam
+!(hol:define &thy Fam (-> num (u 0)) (= (Fam $n) num))
+!(hol:define &thy onFam
    (-> (n : num) (xs : (Fam n)) num)
    (= (onFam $n zero) $n)
    (= (onFam $n (suc $k)) $n))
 !(type:eq &thy (onFam (suc zero) zero) (suc zero))
-!(set:define &thy Via (-> num (u 0)) (= (Via $n) (Fam $n)))
-!(set:define &thy onVia
+!(hol:define &thy Via (-> num (u 0)) (= (Via $n) (Fam $n)))
+!(hol:define &thy onVia
    (-> (n : num) (xs : (Via n)) num)
    (= (onVia $n zero) $n)
    (= (onVia $n (suc $k)) $n))
 !(type:eq &thy (onVia zero (suc zero)) zero)
-!(set:define &thy IdAt (-> num (u 0)) (= (IdAt $n) (id num $n $n)))
-!(try (set:define &thy onIdAt
+!(hol:define &thy IdAt (-> num (u 0)) (= (IdAt $n) (id num $n $n)))
+!(try (hol:define &thy onIdAt
    (-> (n : num) (xs : (IdAt n)) num)
    (= (onIdAt $n zero) zero)
    (= (onIdAt $n (suc $k)) zero)))
-!(set:define &thy StuckFam (-> num (u 0))
+!(hol:define &thy StuckFam (-> num (u 0))
    (= (StuckFam zero) num)
    (= (StuckFam (suc $k)) num))
-!(try (set:define &thy onStuck
+!(try (hol:define &thy onStuck
    (-> (n : num) (xs : (StuckFam n)) num)
    (= (onStuck $n zero) zero)
    (= (onStuck $n (suc $k)) zero)))
-!(try (set:define &thy onClosedId
+!(try (hol:define &thy onClosedId
    (-> (n : num) (xs : (id num zero zero)) num)
    (= (onClosedId $n (refl zero)) zero)))
-!(try (set:define &thy onIndex
+!(try (hol:define &thy onIndex
    (-> (n : num) (xs : (id num n n)) num)
    (= (onIndex $n (refl $n)) zero)))

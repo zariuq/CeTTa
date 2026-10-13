@@ -559,6 +559,8 @@ typedef struct {
     CettaContinuationStatus (*restore)(
         void *machine, void **payload);
     void (*destroy)(void *payload);
+    /* Optional census. Its absence makes storage observation unavailable;
+     * capture, restore and destruction retain their ownership contract. */
     bool (*storage)(
         const void *payload,
         CettaContinuationStorage *storage);

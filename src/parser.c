@@ -38,12 +38,25 @@ size_t parser_supported_expression_depth(void) {
 #endif
 
 static __thread bool g_rational_literals_enabled = true;
+static __thread bool g_runtime_data_symbols = false;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
+static __thread bool g_namespace_sugar_enabled = true;
 static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
 static ParserDocumentIdsBackend g_document_ids_backend;
 static __thread bool g_document_ids_backend_active = false;
+
+static SymbolId parser_intern_token(const char *text) {
+    return g_runtime_data_symbols
+        ? symbol_intern_data_cstr(g_symbols, text)
+        : symbol_intern_cstr(g_symbols, text);
+}
+
+static Atom *parser_symbol_token(Arena *arena, const char *text) {
+    return g_runtime_data_symbols ? atom_symbol_data(arena, text)
+        : atom_symbol_id(arena, parser_intern_token(text));
+}
 
 static const ParserSyntaxFormSpec g_syntax_forms[] = {
     {PARSER_SYNTAX_QUOTE,
@@ -101,6 +114,16 @@ bool parser_set_rational_literals_enabled(bool enabled) {
 
 bool parser_rational_literals_enabled(void) {
     return g_rational_literals_enabled;
+}
+
+bool parser_set_namespace_sugar_enabled(bool enabled) {
+    bool old = g_namespace_sugar_enabled;
+    g_namespace_sugar_enabled = enabled;
+    return old;
+}
+
+bool parser_namespace_sugar_enabled(void) {
+    return g_namespace_sugar_enabled;
 }
 
 bool parser_set_universal_name_syntax_enabled(bool enabled) {
@@ -188,8 +211,9 @@ static bool is_list_token_char(char c) {
 }
 
 /* The bar alone, which marks a list's rest; a token may start with it. */
-static bool parser_at_list_bar(const char *text, size_t pos) {
-    return text[pos] == '|' && !is_list_token_char(text[pos + 1u]);
+static bool parser_at_list_bar(const char *text, size_t text_len, size_t pos) {
+    return text[pos] == '|' &&
+        (!parser_more(text, text_len, pos + 1u) || !is_list_token_char(text[pos + 1u]));
 }
 
 static bool is_token_char_in(char c, bool in_list) {
@@ -241,7 +265,7 @@ static bool namespace_token_looks_qualified(const char *tok, char separator) {
     return !at_segment_start;
 }
 
-const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
+static const char *parser_namespace_token(Arena *a, const char *tok) {
     if (!tok || !*tok || !strchr(tok, '.'))
         return tok;
     if (strchr(tok, '/') || tok[0] == '.' || namespace_token_has_file_extension(tok))
@@ -255,6 +279,10 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
         canonical[i] = (tok[i] == '.') ? ':' : tok[i];
     canonical[len] = '\0';
     return canonical;
+}
+
+const char *parser_canonicalize_namespace_token(Arena *a, const char *tok) {
+    return g_namespace_sugar_enabled ? parser_namespace_token(a, tok) : tok;
 }
 
 static char decode_string_escape(char c) {
@@ -388,6 +416,7 @@ struct ParserHostProjectionV1 {
     ArenaMark scratch_root;
     ParserVarScope scope;
     bool form_active;
+    bool namespace_sugar;
 };
 
 static void parser_var_scope_init(ParserVarScope *scope) {
@@ -506,7 +535,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
         return expr;
     }
 
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     bool is_var = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_VAR);
     bool is_ref = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_REF);
     bool is_exec = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_EXEC);
@@ -528,8 +557,8 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
     Atom *arg = expr->expr.elems[1];
     if (is_var) {
         if (arg->kind == ATOM_SYMBOL) {
-            VarId id = parser_var_scope_id(scope, arg->sym_id);
-            return atom_var_with_spelling(a, arg->sym_id, id);
+            VarId id = parser_var_scope_id(scope, atom_symbol_current_id(arg));
+            return atom_var_with_spelling(a, atom_symbol_current_id(arg), id);
         }
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key)) {
@@ -547,7 +576,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
             char *legacy = arena_alloc(a, len + 2u);
             legacy[0] = '&';
             memcpy(legacy + 1u, name, len + 1u);
-            return atom_symbol(a, legacy);
+            return parser_symbol_token(a, legacy);
         }
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key) &&
@@ -673,51 +702,147 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
     return PARSER_SYN_LOWER_INVALID;
 }
 
-static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
-                                     const char *tok) {
+typedef enum {
+    PARSER_NAMED_LITERAL_NONE,
+    PARSER_NAMED_LITERAL_TRUE,
+    PARSER_NAMED_LITERAL_FALSE,
+    PARSER_NAMED_LITERAL_PI,
+    PARSER_NAMED_LITERAL_EXP,
+} ParserNamedLiteral;
+
+/* Both readers classify the same bounded token before selecting their atom
+ * or universe representation. The lexer already supplies its exact length. */
+static ParserNamedLiteral parser_named_literal(const char *token, size_t length) {
+    switch (length) {
+    case 2u:
+        if (memcmp(token, "PI", 2u) == 0)
+            return PARSER_NAMED_LITERAL_PI;
+        break;
+    case 3u:
+        if (memcmp(token, "EXP", 3u) == 0)
+            return PARSER_NAMED_LITERAL_EXP;
+        break;
+    case 4u:
+        if (memcmp(token, "True", 4u) == 0)
+            return PARSER_NAMED_LITERAL_TRUE;
+        break;
+    case 5u:
+        if (memcmp(token, "False", 5u) == 0)
+            return PARSER_NAMED_LITERAL_FALSE;
+        break;
+    }
+    return PARSER_NAMED_LITERAL_NONE;
+}
+
+typedef struct {
+    bool rational_literals;
+    bool namespace_sugar;
+} ParserWordPolicy;
+
+/* A NULL universe selects arena construction; otherwise the word is born
+ * directly in that universe. Neither target renders or reparses a value. */
+typedef union {
+    Atom *atom;
+    AtomId id;
+} ParserWordValue;
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_bool(Arena *a, TermUniverse *universe,
+                                       bool value) {
+    return universe ? (ParserWordValue){.id = tu_intern_bool(universe, value)}
+                    : (ParserWordValue){.atom = atom_bool(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_int(Arena *a, TermUniverse *universe,
+                                      int64_t value) {
+    return universe ? (ParserWordValue){.id = tu_intern_int(universe, value)}
+                    : (ParserWordValue){.atom = atom_int(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_float(Arena *a, TermUniverse *universe,
+                                        double value) {
+    return universe ? (ParserWordValue){.id = tu_intern_float(universe, value)}
+                    : (ParserWordValue){.atom = atom_float(a, value)};
+}
+
+__attribute__((always_inline))
+static inline ParserWordValue parser_word_exact(Arena *a, TermUniverse *universe,
+                                        const char *tok, bool rational) {
+    if (universe) {
+        return (ParserWordValue){.id = rational
+            ? tu_intern_rational(universe, tok)
+            : tu_intern_bigint(universe, tok)};
+    }
+    return (ParserWordValue){.atom = rational ? atom_rational(a, tok)
+                                            : atom_bigint(a, tok)};
+}
+
+/* The shared word-grounding decision path. Delimiters, strings, variable
+ * identity and token bindings belong to the surrounding reader. Inline the
+ * target dispatch so parser-only bootstrap tools retain arena construction
+ * without acquiring term-universe constructor dependencies. */
+__attribute__((always_inline))
+static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *universe,
+                                          const char *tok, size_t length,
+                                          ParserWordPolicy policy) {
+    if (!a || !tok || !*tok) {
+        return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
+                        : (ParserWordValue){.atom = NULL};
+    }
+    switch (parser_named_literal(tok, length)) {
+    case PARSER_NAMED_LITERAL_TRUE: return parser_word_bool(a, universe, true);
+    case PARSER_NAMED_LITERAL_FALSE: return parser_word_bool(a, universe, false);
+    case PARSER_NAMED_LITERAL_PI: return parser_word_float(a, universe, M_PI);
+    case PARSER_NAMED_LITERAL_EXP: return parser_word_float(a, universe, M_E);
+    case PARSER_NAMED_LITERAL_NONE: break;
+    }
+
     char *endp;
-    long long val;
-
-    if (!universe || !scratch || !tok || !*tok)
-        return CETTA_ATOM_ID_NONE;
-    if (strcmp(tok, "True") == 0)
-        return tu_intern_bool(universe, true);
-    if (strcmp(tok, "False") == 0)
-        return tu_intern_bool(universe, false);
-    if (strcmp(tok, "PI") == 0)
-        return tu_intern_float(universe, M_PI);
-    if (strcmp(tok, "EXP") == 0)
-        return tu_intern_float(universe, M_E);
-
     errno = 0;
-    val = strtoll(tok, &endp, 10);
+    long long val = strtoll(tok, &endp, 10);
     if (*endp == '\0' && errno == 0)
-        return tu_intern_int(universe, (int64_t)val);
-    if (!strchr(tok, '.')) {
-        if (g_rational_literals_enabled && strchr(tok, '/')) {
-            AtomId rational_id = tu_intern_rational(universe, tok);
-            if (rational_id != CETTA_ATOM_ID_NONE)
-                return rational_id;
+        return parser_word_int(a, universe, (int64_t)val);
+
+    bool has_dot = strchr(tok, '.') != NULL;
+    if (!has_dot) {
+        if (policy.rational_literals && strchr(tok, '/')) {
+            ParserWordValue rational = parser_word_exact(a, universe, tok, true);
+            if (universe ? rational.id != CETTA_ATOM_ID_NONE
+                         : rational.atom != NULL)
+                return rational;
         }
         char *canonical = cetta_bigint_canonicalize_owned(tok);
         if (canonical) {
             free(canonical);
-            return tu_intern_bigint(universe, tok);
+            return parser_word_exact(a, universe, tok, false);
         }
-    }
-    if (strchr(tok, '.')) {
+    } else {
         char *fendp;
-        /* A value past the float range reads as the nearest float, zero, a
-         * subnormal or an infinity, as Hyperon reads it; strtod reports
-         * those with ERANGE. */
+        /* Preserve the dot requirement and accept the nearest float even
+         * when strtod reports ERANGE (zero, subnormal or infinity). */
         double fval = strtod(tok, &fendp);
         if (*fendp == '\0')
-            return tu_intern_float(universe, fval);
+            return parser_word_float(a, universe, fval);
     }
-    return tu_intern_symbol(
-        universe, symbol_intern_cstr(
-                      g_symbols,
-                      parser_canonicalize_namespace_token(scratch, tok)));
+
+    const char *canonical = policy.namespace_sugar
+        ? parser_namespace_token(a, tok) : tok;
+    if (universe) {
+        SymbolId spelling = symbol_intern_cstr(g_symbols, canonical);
+        return (ParserWordValue){.id = tu_intern_symbol(universe, spelling)};
+    }
+    return (ParserWordValue){.atom = parser_symbol_token(a, canonical)};
+}
+
+static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
+                                     const char *tok, size_t length,
+                                     bool namespace_sugar) {
+    if (!universe)
+        return CETTA_ATOM_ID_NONE;
+    ParserWordPolicy policy = {g_rational_literals_enabled, namespace_sugar};
+    return parser_ground_word(scratch, universe, tok, length, policy).id;
 }
 
 ParserHostProjectionV1 *parser_host_projection_v1_new(
@@ -730,11 +855,18 @@ ParserHostProjectionV1 *parser_host_projection_v1_new(
     if (!projection)
         return NULL;
     projection->universe = universe;
+    projection->namespace_sugar = g_namespace_sugar_enabled;
     arena_init(&projection->scratch);
     arena_set_hashcons(&projection->scratch, NULL);
     projection->scratch_root = arena_mark(&projection->scratch);
     parser_var_scope_init(&projection->scope);
     return projection;
+}
+
+void parser_host_projection_v1_set_namespace_sugar(
+    ParserHostProjectionV1 *projection, bool enabled) {
+    if (projection)
+        projection->namespace_sugar = enabled;
 }
 
 void parser_host_projection_v1_free(ParserHostProjectionV1 *projection) {
@@ -778,7 +910,8 @@ AtomId parser_host_projection_v1_word_bytes(
     char *text = parser_host_projection_v1_cstr(
         projection, bytes, len, true);
     return text ? parser_project_word_id(
-                      projection->universe, &projection->scratch, text)
+                      projection->universe, &projection->scratch, text, len,
+                      projection->namespace_sugar)
                 : CETTA_ATOM_ID_NONE;
 }
 
@@ -791,8 +924,8 @@ AtomId parser_host_projection_v1_variable_bytes(
 
     if (!text)
         return CETTA_ATOM_ID_NONE;
-    canonical = parser_canonicalize_namespace_token(
-        &projection->scratch, text);
+    canonical = projection->namespace_sugar
+        ? parser_namespace_token(&projection->scratch, text) : text;
     spelling = symbol_intern_cstr(g_symbols, canonical);
     return tu_intern_var(
         projection->universe, spelling,
@@ -856,20 +989,17 @@ AtomId parser_host_projection_v1_braces(
     return tu_braces_from_ids(projection->universe, children, child_len);
 }
 
-static AtomId parser_project_atom_id_scoped(
-    ParserHostProjectionV1 *projection, Atom *atom, uint32_t depth) {
-    if (!projection || !atom || depth == 0u)
-        return CETTA_ATOM_ID_NONE;
+static AtomId parser_project_atom_leaf(ParserHostProjectionV1 *projection, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL: {
-        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
-        size_t len = symbol_len(g_symbols, atom->sym_id);
+        const char *bytes = atom_symbol_bytes(atom);
+        size_t len = atom_symbol_length(atom);
         return parser_host_projection_v1_word_bytes(
             projection, (const uint8_t *)bytes, len);
     }
     case ATOM_VAR: {
-        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
-        size_t len = symbol_len(g_symbols, atom->sym_id);
+        const char *bytes = atom_symbol_bytes(atom);
+        size_t len = atom_symbol_length(atom);
         return len == 0u
                    ? parser_host_projection_v1_anonymous_variable(projection)
                    : parser_host_projection_v1_variable_bytes(
@@ -878,28 +1008,87 @@ static AtomId parser_project_atom_id_scoped(
     case ATOM_GROUNDED:
         return term_universe_store_atom_id(
             projection->universe, &projection->scratch, atom);
-    case ATOM_EXPR: {
-        AtomId *children = NULL;
-        AtomId result = CETTA_ATOM_ID_NONE;
-        CettaExprLen arity = atom->expr.len;
-        if (arity > 0u) {
-            children = cetta_malloc(sizeof(*children) * (size_t)arity);
-            if (!children)
-                return CETTA_ATOM_ID_NONE;
-        }
-        for (CettaExprIndex index = 0u; index < arity; index++) {
-            children[index] = parser_project_atom_id_scoped(
-                projection, atom->expr.elems[index], depth - 1u);
-            if (children[index] == CETTA_ATOM_ID_NONE)
-                goto done;
-        }
-        result = parser_host_projection_v1_expression(
-            projection, children, arity);
-done:
-        free(children);
+    case ATOM_EXPR: break;
+    }
+    return CETTA_ATOM_ID_NONE;
+}
+
+typedef struct {
+    Atom *source;
+    AtomId *children;
+    CettaExprIndex next;
+    uint32_t depth;
+} ParserProjectionFrame;
+
+static AtomId parser_project_atom_id_scoped(
+    ParserHostProjectionV1 *projection, Atom *atom, uint32_t depth) {
+    ParserProjectionFrame inline_frames[32];
+    ParserProjectionFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
+    AtomId result = CETTA_ATOM_ID_NONE;
+    if (!projection)
         return result;
+    for (;;) {
+        if (!atom || !depth)
+            goto fail;
+        if (atom->kind != ATOM_EXPR) {
+            result = parser_project_atom_leaf(projection, atom);
+        } else if (!atom->expr.len) {
+            result = parser_host_projection_v1_expression(projection, NULL, 0u);
+        } else {
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
+                    goto fail;
+                size_t next_cap = cap * 2u;
+                ParserProjectionFrame *next = frames == inline_frames
+                    ? malloc(sizeof(*next) * next_cap)
+                    : realloc(frames, sizeof(*next) * next_cap);
+                if (!next)
+                    goto fail;
+                if (frames == inline_frames)
+                    memcpy(next, inline_frames, sizeof(*next) * len);
+                frames = next;
+                cap = next_cap;
+            }
+            if (!cetta_expr_len_mul_fits_size(atom->expr.len, sizeof(AtomId)))
+                goto fail;
+            AtomId *children = malloc(sizeof(*children) * (size_t)atom->expr.len);
+            if (!children)
+                goto fail;
+            frames[len++] = (ParserProjectionFrame){atom, children, 0u, depth};
+            atom = atom->expr.elems[0];
+            depth--;
+            continue;
+        }
+        if (result == CETTA_ATOM_ID_NONE)
+            goto fail;
+        while (len) {
+            ParserProjectionFrame *frame = &frames[len - 1u];
+            frame->children[frame->next++] = result;
+            if (frame->next < frame->source->expr.len) {
+                atom = frame->source->expr.elems[frame->next];
+                depth = frame->depth - 1u;
+                break;
+            }
+            result = parser_host_projection_v1_expression(
+                projection, frame->children, frame->source->expr.len);
+            free(frame->children);
+            len--;
+            if (result == CETTA_ATOM_ID_NONE)
+                goto fail;
+        }
+        if (!len)
+            break;
     }
-    }
+    if (frames != inline_frames)
+        free(frames);
+    return result;
+
+fail:
+    while (len)
+        free(frames[--len].children);
+    if (frames != inline_frames)
+        free(frames);
     return CETTA_ATOM_ID_NONE;
 }
 
@@ -961,310 +1150,15 @@ static bool parser_at_binding_mark(const char *text, size_t text_len,
              is_list_token_char(text[pos + 2u]));
 }
 
-static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
-                                   size_t text_len, size_t *pos,
-                                   ParserVarScope *scope, int depth,
-                                   bool in_list);
-
-/* One term without its meta-arguments: a prefix's operand. */
-static Atom *parse_term_scoped_in(Arena *a, const char *text,
-                                  size_t text_len, size_t *pos,
-                                  ParserVarScope *scope, int depth,
-                                  bool in_list);
-
-static Atom *parse_sexpr_scoped(Arena *a, const char *text, size_t text_len,
-                                size_t *pos, ParserVarScope *scope, int depth) {
-    return parse_sexpr_scoped_in(a, text, text_len, pos, scope, depth, false);
-}
-
-/* [x y] and [x y | rest]: elements separated by layout, then optionally the
- * bar alone and one rest element, in brackets. */
-static Atom *parse_list_scoped(Arena *a, const char *text, size_t text_len,
-                               size_t *pos, ParserVarScope *scope, int depth) {
-    Atom **elems = NULL;
-    uint32_t n = 0, cap = 0;
-    Atom *rest = NULL;
-    Atom *list = NULL;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (parser_more(text, text_len, *pos) && text[*pos] == ']') {
-            (*pos)++;
-            list = atom_list(a, elems, n);
-            goto done;
-        }
-        /* `:=` is reserved inside brackets. */
-        if (g_universal_name_syntax_enabled &&
-            parser_at_binding_mark(text, text_len, *pos))
-            goto done;
-        if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
-            if (n == 0u)
-                goto done;
-            (*pos)++;
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (g_universal_name_syntax_enabled &&
-                parser_at_binding_mark(text, text_len, *pos))
-                goto done;
-            rest = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                         depth - 1, true);
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (!rest || !parser_more(text, text_len, *pos) || text[*pos] != ']')
-                goto done;
-            (*pos)++;
-            list = atom_list_with_rest(a, elems, n, rest);
-            goto done;
-        }
-        Atom *element = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                              depth - 1, true);
-        if (!element)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            elems = cetta_realloc(elems, sizeof(Atom *) * cap);
-        }
-        elems[n++] = element;
-    }
-done:
-    free(elems);
-    return list;
-}
-
-/* A braces node {x y ...} (Prime's universal name syntax): its elements
- * are read as an expression's. */
-static Atom *parse_braces_scoped(Arena *a, const char *text, size_t text_len,
-                                 size_t *pos, ParserVarScope *scope,
-                                 int depth) {
-    Atom **children = NULL;
-    uint32_t n = 0, cap = 0;
-    Atom *braces = NULL;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (!parser_more(text, text_len, *pos))
-            goto done;
-        if (text[*pos] == '}') {
-            (*pos)++;
-            braces = atom_prime_braces(a, children, n);
-            goto done;
-        }
-        Atom *child = parse_sexpr_scoped(a, text, text_len, pos, scope,
-                                         depth - 1);
-        if (!child)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            children = cetta_realloc(children, sizeof(Atom *) * cap);
-        }
-        children[n++] = child;
-    }
-done:
-    free(children);
-    return braces;
-}
-
-/* A touching bracket's elements, T[...]: list elements, among which the
- * binding mark is a word, with no rest. */
-static Atom *parse_touching_list_scoped(Arena *a, const char *text,
-                                        size_t text_len, size_t *pos,
-                                        ParserVarScope *scope, int depth) {
-    Atom **elems = NULL;
-    uint32_t n = 0, cap = 0;
-    Atom *list = NULL;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (!parser_more(text, text_len, *pos))
-            goto done;
-        if (text[*pos] == ']') {
-            (*pos)++;
-            list = atom_list(a, elems, n);
-            goto done;
-        }
-        if (parser_at_list_bar(text, *pos))
-            goto done;
-        Atom *element = parse_sexpr_scoped_in(a, text, text_len, pos, scope,
-                                              depth - 1, true);
-        if (!element)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            elems = cetta_realloc(elems, sizeof(Atom *) * cap);
-        }
-        elems[n++] = element;
-    }
-done:
-    free(elems);
-    return list;
-}
-
-/* The meta-arguments touching the end of `term`: T[...] and T{...} read as
- * (meta T [...]) and (meta T {...}), left to right.  The reader gives no
- * head a meaning. */
-static Atom *parse_meta_arguments_scoped(Arena *a, const char *text,
-                                         size_t text_len, size_t *pos,
-                                         ParserVarScope *scope, int depth,
-                                         Atom *term) {
-    while (term && g_universal_name_syntax_enabled &&
-           parser_more(text, text_len, *pos) &&
-           (text[*pos] == '[' || text[*pos] == '{')) {
-        if (depth <= 1)
-            return NULL;
-        Atom *argument = text[*pos] == '{'
-            ? parse_braces_scoped(a, text, text_len, pos, scope, depth)
-            : parse_touching_list_scoped(a, text, text_len, pos, scope,
-                                         depth);
-        if (!argument)
-            return NULL;
-        term = atom_expr3(a, atom_symbol(a, "meta"), term, argument);
-    }
-    return term;
-}
-
-static Atom *parse_sexpr_scoped_in(Arena *a, const char *text,
-                                   size_t text_len, size_t *pos,
-                                   ParserVarScope *scope, int depth,
-                                   bool in_list) {
-    Atom *term = parse_term_scoped_in(a, text, text_len, pos, scope, depth,
-                                      in_list);
-    return parse_meta_arguments_scoped(a, text, text_len, pos, scope, depth,
-                                       term);
-}
-
-static Atom *parse_term_scoped_in(Arena *a, const char *text,
-                                  size_t text_len, size_t *pos,
-                                  ParserVarScope *scope, int depth,
-                                  bool in_list) {
-    if (depth <= 0)
-        return NULL;
-    skip_whitespace_and_comments(text, text_len, pos);
-    if (!parser_more(text, text_len, *pos)) return NULL;
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
-        text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
-        *pos += 2u;
-        Atom *key = parse_term_scoped_in(a, text, text_len, pos, scope,
-                                         depth - 1, in_list);
-        if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
-            return NULL;
-        Atom *quoted = atom_expr2(
-            a, atom_symbol_id(a, g_builtin_syms.quote), key);
-        return atom_expr2(
-            a, atom_symbol(a, "resolve-name"), quoted);
-    }
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
-        text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
-        *pos += 2u;
-        Atom *key = parse_term_scoped_in(a, text, text_len, pos, scope,
-                                         depth - 1, in_list);
-        if (!key) return NULL;
-        VarId id = parser_var_scope_name_id(scope, key);
-        return id == VAR_ID_NONE ? NULL : atom_var_with_name_key(a, key, id);
-    }
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
-        (*pos)++;
-        Atom *payload = parse_term_scoped_in(a, text, text_len, pos, scope,
-                                             depth - 1, in_list);
-        return payload
-                   ? atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote),
-                                payload)
-                   : NULL;
-    }
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_UNQUOTE) &&
-        parser_more(text, text_len, *pos + 1u) &&
-        !isspace((unsigned char)text[*pos + 1u]) &&
-        text[*pos + 1u] != ')' && text[*pos + 1u] != ';' &&
-        text[*pos + 1u] != '}' &&
-        (!in_list || text[*pos + 1u] != ']')) {
-        (*pos)++;
-        Atom *payload = parse_term_scoped_in(a, text, text_len, pos, scope,
-                                             depth - 1, in_list);
-        return payload
-                   ? atom_expr2(a, atom_symbol(a, "unquote"), payload)
-                   : NULL;
-    }
-
-    /* String literal */
-    if (text[*pos] == '"') {
-        (*pos)++;
-        size_t start = *pos;
-        while (parser_more(text, text_len, *pos) && text[*pos] != '"') {
-            if (text[*pos] == '\\' && parser_more(text, text_len, *pos + 1u))
-                (*pos)++;
-            (*pos)++;
-        }
-        if (!parser_more(text, text_len, *pos)) return NULL;
-        size_t len = *pos - start;
-        char *buf = arena_alloc(a, len + 1);
-        size_t out = parser_decode_string_body(text, start, *pos, buf);
-        (*pos)++;
-        return atom_string_n(a, buf, out);
-    }
-
-    if (g_universal_name_syntax_enabled && text[*pos] == '{')
-        return parse_braces_scoped(a, text, text_len, pos, scope, depth);
-
-    if (g_list_syntax_enabled && text[*pos] == '[')
-        return parse_list_scoped(a, text, text_len, pos, scope, depth);
-
-    /* Expression */
-    if (text[*pos] == '(') {
-        (*pos)++;
-        /* Collect children (dynamically sized) */
-        Atom **children = NULL;
-        uint32_t n = 0, ccap = 0;
-        for (;;) {
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (!parser_more(text, text_len, *pos) || text[*pos] == ')') break;
-            Atom *child = parse_sexpr_scoped(a, text, text_len, pos, scope,
-                                             depth - 1);
-            if (!child) {
-                free(children);
-                return NULL;
-            }
-            if (n >= ccap) {
-                ccap = ccap ? ccap * 2 : 16;
-                children = cetta_realloc(children, sizeof(Atom *) * ccap);
-            }
-            children[n++] = child;
-        }
-        if (!parser_more(text, text_len, *pos) || text[*pos] != ')') {
-            free(children);
-            return NULL;
-        }
-        (*pos)++;
-        Atom *expr = atom_expr(a, children, n);
-        free(children);
-        return parser_lower_syn_expression(a, expr, scope);
-    }
-
-    /* Token: symbol, variable, or number */
-    size_t start = *pos;
-    /* In Prime's reader brackets end every token. */
-    while (parser_more(text, text_len, *pos) &&
-           is_token_char_in(text[*pos],
-                            in_list || g_universal_name_syntax_enabled))
-        (*pos)++;
-    size_t len = *pos - start;
-    if (len == 0) return NULL;
-
-    char *tok = arena_alloc(a, len + 1);
-    memcpy(tok, text + start, len);
-    tok[len] = '\0';
-
+static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
+    Arena *a, char *tok, size_t len, ParserVarScope *scope) {
     /* Prime's bare `$` is a fresh anonymous variable. Named variables keep
        their ordinary per-form co-reference. */
     if (tok[0] == '$') {
         if (len > 1) {
             const char *spelling_text =
                 parser_canonicalize_namespace_token(a, tok + 1);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+            SymbolId spelling = parser_intern_token(spelling_text);
             VarId id = parser_var_scope_id(scope, spelling);
             return atom_var_with_spelling(a, spelling, id);
         }
@@ -1275,55 +1169,457 @@ static Atom *parse_term_scoped_in(Arena *a, const char *text,
         }
     }
 
-    /* Boolean */
-    if (strcmp(tok, "True") == 0)  return atom_bool(a, true);
-    if (strcmp(tok, "False") == 0) return atom_bool(a, false);
-
-    /* HE math.rs registers PI and EXP as grounded numeric tokens. */
-    if (strcmp(tok, "PI") == 0)  return atom_float(a, M_PI);
-    if (strcmp(tok, "EXP") == 0) return atom_float(a, M_E);
-
-    /* Integer: try to parse */
-    char *endp;
-    errno = 0;
-    long long val = strtoll(tok, &endp, 10);
-    if (*endp == '\0' && errno == 0) {
-        return atom_int(a, (int64_t)val);
-    }
-    if (!strchr(tok, '.')) {
-        if (g_rational_literals_enabled && strchr(tok, '/')) {
-            Atom *rational = atom_rational(a, tok);
-            if (rational)
-                return rational;
-        }
-        char *canonical = cetta_bigint_canonicalize_owned(tok);
-        if (canonical) {
-            free(canonical);
-            return atom_bigint(a, tok);
-        }
-    }
-
-    /* Float: try to parse (must contain '.') */
-    if (strchr(tok, '.')) {
-        char *fendp;
-        /* Past the float range: the nearest float, as above. */
-        double fval = strtod(tok, &fendp);
-        if (*fendp == '\0') {
-            return atom_float(a, fval);
-        }
-    }
-
-    /* Symbol */
-    return atom_symbol_id(a, symbol_intern_cstr(g_symbols,
-                                                parser_canonicalize_namespace_token(a, tok)));
+    ParserWordPolicy policy = {g_rational_literals_enabled,
+                               g_namespace_sugar_enabled};
+    return parser_ground_word(a, NULL, tok, len, policy).atom;
 }
 
-Atom *parse_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos) {
+typedef union {
+    Atom *atom;
+    AtomId id;
+} ParserReadValue;
+
+typedef enum {
+    PARSER_READ_EXPRESSION,
+    PARSER_READ_LIST,
+    PARSER_READ_LIST_REST,
+    PARSER_READ_BRACES,
+    PARSER_READ_TOUCHING_LIST,
+    PARSER_READ_META,
+    PARSER_READ_REF,
+    PARSER_READ_VARIABLE,
+    PARSER_READ_QUOTE,
+    PARSER_READ_UNQUOTE,
+} ParserReadKind;
+
+typedef struct ParserReadBackend ParserReadBackend;
+
+typedef struct {
+    ParserReadKind kind;
+    const ParserReadBackend *backend;
+    bool in_list;
+    bool term_only;
+    int depth;
+    ParserReadValue base;
+    void *children;
+    uint32_t len;
+    uint32_t cap;
+} ParserReadFrame;
+
+typedef struct {
+    TermUniverse *universe;
+    Arena *arena;
+    ParserVarScope *scope;
+} ParserReadContext;
+
+struct ParserReadBackend {
+    bool ids;
+    ParserReadValue (*word)(ParserReadContext *, char *, size_t);
+    ParserReadValue (*string)(ParserReadContext *, char *, size_t);
+    ParserReadValue (*container)(ParserReadContext *, const ParserReadFrame *, ParserReadValue);
+    ParserReadValue (*prefix)(ParserReadContext *, ParserReadKind, Atom *);
+    ParserReadValue (*meta)(ParserReadContext *, ParserReadValue, ParserReadValue);
+};
+
+typedef struct {
+    ParserReadFrame inline_frames[32];
+    ParserReadFrame *frames;
+    size_t len;
+    size_t cap;
+} ParserReadStack;
+
+static inline __attribute__((always_inline)) bool parser_read_push(
+    ParserReadStack *stack, ParserReadFrame frame) {
+    if (stack->len == stack->cap) {
+        if (stack->cap > SIZE_MAX / 2u ||
+            stack->cap * 2u > SIZE_MAX / sizeof(*stack->frames))
+            return false;
+        size_t cap = stack->cap * 2u;
+        ParserReadFrame *next = stack->frames == stack->inline_frames
+            ? malloc(cap * sizeof(*next))
+            : realloc(stack->frames, cap * sizeof(*next));
+        if (!next)
+            return false;
+        if (stack->frames == stack->inline_frames)
+            memcpy(next, stack->inline_frames, stack->len * sizeof(*next));
+        stack->frames = next;
+        stack->cap = cap;
+    }
+    stack->frames[stack->len++] = frame;
+    return true;
+}
+
+static inline __attribute__((always_inline)) bool parser_read_append(
+    ParserReadFrame *frame, ParserReadValue value) {
+    size_t width = frame->backend->ids ? sizeof(AtomId) : sizeof(Atom *);
+    if (frame->len == frame->cap) {
+        if (frame->cap > UINT32_MAX / 2u)
+            return false;
+        uint32_t cap = frame->cap ? frame->cap * 2u
+            : frame->kind == PARSER_READ_EXPRESSION ? 16u : 8u;
+        if (!cetta_expr_len_mul_fits_size(cap, width))
+            return false;
+        void *next = realloc(frame->children, cap * width);
+        if (!next)
+            return false;
+        frame->children = next;
+        frame->cap = cap;
+    }
+    if (frame->backend->ids)
+        ((AtomId *)frame->children)[frame->len++] = value.id;
+    else
+        ((Atom **)frame->children)[frame->len++] = value.atom;
+    return true;
+}
+
+static ParserReadValue parser_read_id_word(ParserReadContext *ctx, char *word, size_t length) {
+    AtomId result;
+    if (word[0] == '$' && (length > 1u || parser_bare_dollar_is_variable())) {
+        const char *name = length > 1u
+            ? parser_canonicalize_namespace_token(ctx->arena, word + 1u) : "";
+        SymbolId spelling = symbol_intern_cstr(g_symbols, name);
+        VarId id = length > 1u ? parser_var_scope_id(ctx->scope, spelling)
+            : parser_bare_dollar_id(ctx->scope, spelling);
+        result = tu_intern_var(ctx->universe, spelling, id);
+    } else {
+        result = parser_project_word_id(ctx->universe, ctx->arena, word, length,
+                                        g_namespace_sugar_enabled);
+    }
+    return (ParserReadValue){.id = result};
+}
+
+static ParserReadValue parser_read_id_string(ParserReadContext *ctx, char *bytes, size_t length) {
+    return (ParserReadValue){.id = tu_intern_string_n(ctx->universe, bytes, length)};
+}
+
+static inline __attribute__((always_inline)) ParserReadValue parser_read_atom_container(ParserReadContext *ctx,
+    const ParserReadFrame *frame, ParserReadValue rest) {
+    Atom *result;
+    if (frame->kind == PARSER_READ_BRACES) {
+        result = atom_prime_braces(ctx->arena, frame->children, frame->len);
+    } else if (frame->kind != PARSER_READ_EXPRESSION) {
+        result = rest.atom
+            ? atom_list_with_rest(ctx->arena, frame->children, frame->len, rest.atom)
+            : atom_list(ctx->arena, frame->children, frame->len);
+    } else {
+        result = parser_lower_syn_expression(ctx->arena,
+            atom_expr(ctx->arena, frame->children, frame->len), ctx->scope);
+    }
+    return (ParserReadValue){.atom = result};
+}
+
+static ParserReadValue parser_read_id_container(ParserReadContext *ctx,
+    const ParserReadFrame *frame, ParserReadValue rest) {
+    AtomId result = CETTA_ATOM_ID_NONE;
+    if (frame->kind == PARSER_READ_BRACES) {
+        result = tu_braces_from_ids(ctx->universe, frame->children, frame->len);
+    } else if (frame->kind != PARSER_READ_EXPRESSION) {
+        result = tu_list_from_ids(ctx->universe, frame->children, frame->len, rest.id);
+    } else {
+        ParserSynLowerStatus lowered = parser_lower_syn_expression_id(
+            ctx->universe, ctx->arena, frame->children, frame->len, ctx->scope, &result);
+        if (lowered == PARSER_SYN_LOWER_NOT_FORM)
+            result = tu_expr_from_ids(ctx->universe, frame->children, frame->len);
+        else if (lowered == PARSER_SYN_LOWER_INVALID)
+            result = CETTA_ATOM_ID_NONE;
+    }
+    return (ParserReadValue){.id = result};
+}
+
+static ParserReadValue parser_read_id_meta(ParserReadContext *ctx,
+    ParserReadValue base, ParserReadValue argument) {
+    AtomId parts[3] = {
+        tu_intern_symbol(ctx->universe, symbol_intern_cstr(g_symbols, "meta")),
+        base.id, argument.id,
+    };
+    return (ParserReadValue){.id = tu_expr_from_ids(ctx->universe, parts, 3u)};
+}
+
+static Atom *parser_read_prefix_atom(ParserReadContext *ctx, ParserReadKind kind, Atom *payload) {
+    if (kind == PARSER_READ_VARIABLE) {
+        VarId id = parser_var_scope_name_id(ctx->scope, payload);
+        return id == VAR_ID_NONE ? NULL : atom_var_with_name_key(ctx->arena, payload, id);
+    }
+    if (kind == PARSER_READ_REF) {
+        if (parser_var_scope_name_key_id(ctx->scope, payload) == NAME_ID_NONE)
+            return NULL;
+        payload = atom_expr2(ctx->arena, atom_symbol_id(ctx->arena, g_builtin_syms.quote), payload);
+        return atom_expr2(ctx->arena, atom_symbol(ctx->arena, "resolve-name"), payload);
+    }
+    return atom_expr2(ctx->arena,
+        kind == PARSER_READ_QUOTE ? atom_symbol_id(ctx->arena, g_builtin_syms.quote)
+            : atom_symbol(ctx->arena, "unquote"), payload);
+}
+
+static ParserReadValue parser_read_id_prefix(ParserReadContext *ctx, ParserReadKind kind, Atom *payload) {
+    AtomId result = CETTA_ATOM_ID_NONE;
+    if (kind == PARSER_READ_VARIABLE) {
+        VarId id = parser_var_scope_name_id(ctx->scope, payload);
+        if (id != VAR_ID_NONE) {
+            AtomId key = term_universe_store_atom_id(ctx->universe, ctx->arena, payload);
+            if (key != CETTA_ATOM_ID_NONE)
+                result = tu_intern_named_var(ctx->universe, key, id);
+        }
+    } else {
+        Atom *form = parser_read_prefix_atom(ctx, kind, payload);
+        if (form)
+            result = term_universe_store_atom_id(ctx->universe, ctx->arena, form);
+    }
+    return (ParserReadValue){.id = result};
+}
+
+/* Keep ID conversion callbacks at the requesting call site: an atom-only
+ * generator can discard them without linking a TermUniverse. Atom construction
+ * takes a direct path in the same grammar. */
+static const ParserReadBackend g_parser_atom_backend = {.ids = false};
+
+/* One grammar driver serves borrowed atoms and persistent IDs. Prefix forms
+ * retain the original atom-valued name interpretation before publication to
+ * the requesting backend. The declared depth budget belongs to the syntax,
+ * independently of native call depth, and every unfinished buffer is owned
+ * by exactly one frame. */
+static ParserReadValue parser_read_scoped(
+    TermUniverse *universe, Arena *arena, const char *text, size_t text_len,
+    size_t *pos, ParserVarScope *scope, int depth, const ParserReadBackend *backend) {
+    if (!backend)
+        backend = &g_parser_atom_backend;
+    const ParserReadBackend *root_backend = backend;
+    ParserReadContext context = {universe, arena, scope};
+    bool in_list = false;
+    /* Prefix operands consume one term; touching suffixes belong to the
+     * completed prefix. Container children consume their own suffixes. */
+    bool term_only = false;
+    ParserReadStack stack;
+    stack.frames = stack.inline_frames;
+    stack.len = 0u;
+    stack.cap = 32u;
+    ParserReadValue result;
+    if (!arena || !text || !pos || (backend->ids && !universe))
+        goto fail;
+
+read_node:
+    if (depth <= 0)
+        goto fail;
+    skip_whitespace_and_comments(text, text_len, pos);
+
+read_trimmed_node:
+    if (depth <= 0 || !parser_more(text, text_len, *pos))
+        goto fail;
+    {
+        ParserReadFrame frame = {
+            .backend = backend, .in_list = in_list,
+            .term_only = term_only, .depth = depth,
+        };
+        bool next = parser_more(text, text_len, *pos + 1u);
+        char token = text[*pos];
+        char following = next ? text[*pos + 1u] : '\0';
+        bool prefix = g_universal_name_syntax_enabled;
+        if (prefix && next &&
+            token == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
+            following == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
+            frame.kind = PARSER_READ_REF;
+            *pos += 2u;
+        } else if (prefix && next &&
+                   token == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
+                   following == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
+            frame.kind = PARSER_READ_VARIABLE;
+            *pos += 2u;
+        } else if (prefix && token == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
+            frame.kind = PARSER_READ_QUOTE;
+            (*pos)++;
+        } else if (prefix && token == parser_syntax_compact_char(PARSER_SYNTAX_UNQUOTE) &&
+                   next && !isspace((unsigned char)following) &&
+                   following != ')' && following != ';' && following != '}' &&
+                   (!in_list || following != ']')) {
+            frame.kind = PARSER_READ_UNQUOTE;
+            (*pos)++;
+        } else {
+            prefix = false;
+        }
+        if (prefix) {
+            if (!parser_read_push(&stack, frame))
+                goto fail;
+            backend = &g_parser_atom_backend;
+            term_only = true;
+            depth--;
+            goto read_node;
+        }
+        if (token == '(' || (g_list_syntax_enabled && token == '[') ||
+            (g_universal_name_syntax_enabled && token == '{')) {
+            frame.kind = token == '(' ? PARSER_READ_EXPRESSION
+                : token == '{' ? PARSER_READ_BRACES : PARSER_READ_LIST;
+            if (!parser_read_push(&stack, frame))
+                goto fail;
+            (*pos)++;
+            goto read_container;
+        }
+        if (token == '"') {
+            (*pos)++;
+            size_t start = *pos;
+            while (parser_more(text, text_len, *pos) && text[*pos] != '"') {
+                if (text[*pos] == '\\' && parser_more(text, text_len, *pos + 1u))
+                    (*pos)++;
+                (*pos)++;
+            }
+            if (!parser_more(text, text_len, *pos))
+                goto fail;
+            char *buffer = arena_alloc(arena, *pos - start + 1u);
+            size_t length = parser_decode_string_body(text, start, *pos, buffer);
+            (*pos)++;
+            result = backend->ids ? backend->string(&context, buffer, length)
+                : (ParserReadValue){.atom = atom_string_n(arena, buffer, length)};
+            goto term_delivered;
+        }
+        size_t start = *pos;
+        while (parser_more(text, text_len, *pos) &&
+               is_token_char_in(text[*pos], in_list || g_universal_name_syntax_enabled))
+            (*pos)++;
+        size_t length = *pos - start;
+        if (!length)
+            goto fail;
+        char *word = arena_alloc(arena, length + 1u);
+        memcpy(word, text + start, length);
+        word[length] = '\0';
+        result = backend->ids ? backend->word(&context, word, length)
+            : (ParserReadValue){.atom = parser_read_word_atom(arena, word, length, scope)};
+        goto term_delivered;
+    }
+
+read_container:
+    {
+        ParserReadFrame *frame = &stack.frames[stack.len - 1u];
+        skip_whitespace_and_comments(text, text_len, pos);
+        char close = frame->kind == PARSER_READ_EXPRESSION ? ')'
+            : frame->kind == PARSER_READ_BRACES ? '}' : ']';
+        if (parser_more(text, text_len, *pos) && text[*pos] == close) {
+            (*pos)++;
+            backend = frame->backend;
+            in_list = frame->in_list;
+            term_only = frame->term_only;
+            depth = frame->depth;
+            ParserReadValue rest;
+            if (backend->ids) rest.id = CETTA_ATOM_ID_NONE;
+            else rest.atom = NULL;
+            result = backend->ids ? backend->container(&context, frame, rest)
+                : parser_read_atom_container(&context, frame, rest);
+            free(frame->children);
+            stack.len--;
+            goto term_delivered;
+        }
+        if (frame->kind == PARSER_READ_LIST && g_universal_name_syntax_enabled &&
+            parser_at_binding_mark(text, text_len, *pos))
+            goto fail;
+        if ((frame->kind == PARSER_READ_LIST || frame->kind == PARSER_READ_TOUCHING_LIST) &&
+            parser_more(text, text_len, *pos) && parser_at_list_bar(text, text_len, *pos)) {
+            if (frame->kind == PARSER_READ_TOUCHING_LIST || !frame->len)
+                goto fail;
+            frame->kind = PARSER_READ_LIST_REST;
+            (*pos)++;
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (g_universal_name_syntax_enabled &&
+                parser_at_binding_mark(text, text_len, *pos))
+                goto fail;
+            backend = frame->backend;
+            in_list = true;
+            term_only = false;
+            depth = frame->depth - 1;
+            goto read_trimmed_node;
+        }
+        backend = frame->backend;
+        in_list = frame->kind == PARSER_READ_LIST ||
+                  frame->kind == PARSER_READ_TOUCHING_LIST;
+        term_only = false;
+        depth = frame->depth - 1;
+        goto read_trimmed_node;
+    }
+
+term_delivered:
+    if (backend->ids ? result.id == CETTA_ATOM_ID_NONE : result.atom == NULL)
+        goto fail;
+    /* Layout ends the suffix chain. The saved term is never read again and
+     * each suffix is constructed in the same requesting backend. */
+    if (!term_only && g_universal_name_syntax_enabled &&
+        parser_more(text, text_len, *pos) && (text[*pos] == '[' || text[*pos] == '{')) {
+        if (depth <= 1)
+            goto fail;
+        ParserReadFrame meta = {
+            .kind = PARSER_READ_META, .backend = backend, .in_list = in_list,
+            .term_only = term_only, .depth = depth, .base = result,
+        };
+        ParserReadFrame argument = {
+            .kind = text[*pos] == '{' ? PARSER_READ_BRACES : PARSER_READ_TOUCHING_LIST,
+            .backend = backend, .in_list = in_list, .term_only = true, .depth = depth,
+        };
+        if (!parser_read_push(&stack, meta) || !parser_read_push(&stack, argument))
+            goto fail;
+        (*pos)++;
+        goto read_container;
+    }
+    if (!stack.len) {
+        if (stack.frames != stack.inline_frames)
+            free(stack.frames);
+        return result;
+    }
+    {
+        ParserReadFrame *frame = &stack.frames[stack.len - 1u];
+        if (frame->kind == PARSER_READ_EXPRESSION || frame->kind == PARSER_READ_LIST ||
+            frame->kind == PARSER_READ_BRACES || frame->kind == PARSER_READ_TOUCHING_LIST) {
+            if (!parser_read_append(frame, result))
+                goto fail;
+            goto read_container;
+        }
+        if (frame->kind == PARSER_READ_LIST_REST) {
+            skip_whitespace_and_comments(text, text_len, pos);
+            if (!parser_more(text, text_len, *pos) || text[*pos] != ']')
+                goto fail;
+            (*pos)++;
+            backend = frame->backend;
+            result = backend->ids ? backend->container(&context, frame, result)
+                : parser_read_atom_container(&context, frame, result);
+        } else if (frame->kind == PARSER_READ_META) {
+            backend = frame->backend;
+            result = backend->ids ? backend->meta(&context, frame->base, result)
+                : (ParserReadValue){.atom = atom_expr3(arena, atom_symbol(arena, "meta"),
+                                                       frame->base.atom, result.atom)};
+        } else {
+            Atom *payload = result.atom;
+            backend = frame->backend;
+            result = backend->ids ? backend->prefix(&context, frame->kind, payload)
+                : (ParserReadValue){.atom = parser_read_prefix_atom(&context, frame->kind, payload)};
+        }
+        in_list = frame->in_list;
+        term_only = frame->term_only;
+        depth = frame->depth;
+        free(frame->children);
+        stack.len--;
+        goto term_delivered;
+    }
+
+fail:
+    while (stack.len)
+        free(stack.frames[--stack.len].children);
+    if (stack.frames != stack.inline_frames)
+        free(stack.frames);
+    if (root_backend->ids) result.id = CETTA_ATOM_ID_NONE;
+    else result.atom = NULL;
+    return result;
+}
+
+Atom *parse_sexpr_n(Arena *arena, const char *text, size_t text_len, size_t *pos) {
     ParserVarScope scope;
     parser_var_scope_init(&scope);
-    Atom *result = parse_sexpr_scoped(a, text, text_len, pos, &scope,
-                                      CETTA_PARSE_DEPTH_LIMIT);
+    Atom *result = parser_read_scoped(NULL, arena, text, text_len, pos, &scope,
+                                     CETTA_PARSE_DEPTH_LIMIT, NULL).atom;
     parser_var_scope_free(&scope);
+    return result;
+}
+
+Atom *parse_data_sexpr_n(Arena *a, const char *text, size_t text_len,
+                         size_t *pos) {
+    bool previous = g_runtime_data_symbols;
+    g_runtime_data_symbols = true;
+    Atom *result = parse_sexpr_n(a, text, text_len, pos);
+    g_runtime_data_symbols = previous;
     return result;
 }
 
@@ -1331,359 +1627,26 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
     return parse_sexpr_n(a, text, PARSER_TEXT_NUL_TERMINATED, pos);
 }
 
-static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
-                                          Arena *scratch, const char *text,
-                                          size_t text_len, size_t *pos,
-                                          ParserVarScope *scope,
-                                          int depth, bool in_list);
-
-/* One term without its meta-arguments (parse_term_scoped_in). */
-static AtomId parse_term_to_id_scoped_in(TermUniverse *universe,
-                                         Arena *scratch, const char *text,
-                                         size_t text_len, size_t *pos,
-                                         ParserVarScope *scope,
-                                         int depth, bool in_list);
-
 static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
                                        const char *text, size_t text_len,
                                        size_t *pos, ParserVarScope *scope,
                                        int depth) {
-    return parse_sexpr_to_id_scoped_in(universe, scratch, text, text_len, pos,
-                                       scope, depth, false);
-}
-
-static AtomId parse_list_to_id_scoped(TermUniverse *universe, Arena *scratch,
-                                      const char *text, size_t text_len,
-                                      size_t *pos, ParserVarScope *scope,
-                                      int depth) {
-    AtomId *elems = NULL;
-    uint32_t n = 0, cap = 0;
-    AtomId rest = CETTA_ATOM_ID_NONE;
-    AtomId list = CETTA_ATOM_ID_NONE;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (parser_more(text, text_len, *pos) && text[*pos] == ']') {
-            (*pos)++;
-            list = tu_list_from_ids(universe, elems, n, CETTA_ATOM_ID_NONE);
-            goto done;
-        }
-        /* `:=` is reserved inside brackets. */
-        if (g_universal_name_syntax_enabled &&
-            parser_at_binding_mark(text, text_len, *pos))
-            goto done;
-        if (parser_more(text, text_len, *pos) && parser_at_list_bar(text, *pos)) {
-            if (n == 0u)
-                goto done;
-            (*pos)++;
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (g_universal_name_syntax_enabled &&
-                parser_at_binding_mark(text, text_len, *pos))
-                goto done;
-            rest = parse_sexpr_to_id_scoped_in(
-                universe, scratch, text, text_len, pos, scope, depth - 1, true);
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (rest == CETTA_ATOM_ID_NONE || !parser_more(text, text_len, *pos) ||
-                text[*pos] != ']')
-                goto done;
-            (*pos)++;
-            list = tu_list_from_ids(universe, elems, n, rest);
-            goto done;
-        }
-        AtomId element = parse_sexpr_to_id_scoped_in(
-            universe, scratch, text, text_len, pos, scope, depth - 1, true);
-        if (element == CETTA_ATOM_ID_NONE)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            elems = cetta_realloc(elems, sizeof(AtomId) * cap);
-        }
-        elems[n++] = element;
-    }
-done:
-    free(elems);
-    return list;
-}
-
-/* A braces node (parse_braces_scoped). */
-static AtomId parse_braces_to_id_scoped(TermUniverse *universe,
-                                        Arena *scratch, const char *text,
-                                        size_t text_len, size_t *pos,
-                                        ParserVarScope *scope, int depth) {
-    AtomId *children = NULL;
-    uint32_t n = 0, cap = 0;
-    AtomId braces = CETTA_ATOM_ID_NONE;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (!parser_more(text, text_len, *pos))
-            goto done;
-        if (text[*pos] == '}') {
-            (*pos)++;
-            braces = tu_braces_from_ids(universe, children, n);
-            goto done;
-        }
-        AtomId child = parse_sexpr_to_id_scoped(universe, scratch, text,
-                                                text_len, pos, scope,
-                                                depth - 1);
-        if (child == CETTA_ATOM_ID_NONE)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            children = cetta_realloc(children, sizeof(AtomId) * cap);
-        }
-        children[n++] = child;
-    }
-done:
-    free(children);
-    return braces;
-}
-
-/* A touching bracket's elements (parse_touching_list_scoped). */
-static AtomId parse_touching_list_to_id_scoped(TermUniverse *universe,
-                                               Arena *scratch,
-                                               const char *text,
-                                               size_t text_len, size_t *pos,
-                                               ParserVarScope *scope,
-                                               int depth) {
-    AtomId *elems = NULL;
-    uint32_t n = 0, cap = 0;
-    AtomId list = CETTA_ATOM_ID_NONE;
-    (*pos)++;
-    for (;;) {
-        skip_whitespace_and_comments(text, text_len, pos);
-        if (!parser_more(text, text_len, *pos))
-            goto done;
-        if (text[*pos] == ']') {
-            (*pos)++;
-            list = tu_list_from_ids(universe, elems, n, CETTA_ATOM_ID_NONE);
-            goto done;
-        }
-        if (parser_at_list_bar(text, *pos))
-            goto done;
-        AtomId element = parse_sexpr_to_id_scoped_in(
-            universe, scratch, text, text_len, pos, scope, depth - 1, true);
-        if (element == CETTA_ATOM_ID_NONE)
-            goto done;
-        if (n >= cap) {
-            cap = cap ? cap * 2 : 8;
-            elems = cetta_realloc(elems, sizeof(AtomId) * cap);
-        }
-        elems[n++] = element;
-    }
-done:
-    free(elems);
-    return list;
-}
-
-/* The meta-arguments touching the end of `term`
- * (parse_meta_arguments_scoped). */
-static AtomId parse_meta_arguments_to_id_scoped(TermUniverse *universe,
-                                                Arena *scratch,
-                                                const char *text,
-                                                size_t text_len, size_t *pos,
-                                                ParserVarScope *scope,
-                                                int depth, AtomId term) {
-    while (term != CETTA_ATOM_ID_NONE && g_universal_name_syntax_enabled &&
-           parser_more(text, text_len, *pos) &&
-           (text[*pos] == '[' || text[*pos] == '{')) {
-        if (depth <= 1)
-            return CETTA_ATOM_ID_NONE;
-        AtomId argument = text[*pos] == '{'
-            ? parse_braces_to_id_scoped(universe, scratch, text, text_len,
-                                        pos, scope, depth)
-            : parse_touching_list_to_id_scoped(universe, scratch, text,
-                                               text_len, pos, scope, depth);
-        if (argument == CETTA_ATOM_ID_NONE)
-            return CETTA_ATOM_ID_NONE;
-        AtomId parts[3] = {
-            tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, "meta")),
-            term, argument,
-        };
-        term = tu_expr_from_ids(universe, parts, 3u);
-    }
-    return term;
-}
-
-static AtomId parse_sexpr_to_id_scoped_in(TermUniverse *universe,
-                                          Arena *scratch, const char *text,
-                                          size_t text_len, size_t *pos,
-                                          ParserVarScope *scope,
-                                          int depth, bool in_list) {
-    AtomId term = parse_term_to_id_scoped_in(
-        universe, scratch, text, text_len, pos, scope, depth, in_list);
-    return parse_meta_arguments_to_id_scoped(
-        universe, scratch, text, text_len, pos, scope, depth, term);
-}
-
-static AtomId parse_term_to_id_scoped_in(TermUniverse *universe,
-                                         Arena *scratch, const char *text,
-                                         size_t text_len, size_t *pos,
-                                         ParserVarScope *scope,
-                                         int depth, bool in_list) {
-    if (depth <= 0)
-        return CETTA_ATOM_ID_NONE;
-    skip_whitespace_and_comments(text, text_len, pos);
-    if (!parser_more(text, text_len, *pos) || !universe)
-        return CETTA_ATOM_ID_NONE;
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_REF) &&
-        text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
-        *pos += 2u;
-        Atom *key = parse_term_scoped_in(
-            scratch, text, text_len, pos, scope, depth - 1, in_list);
-        if (!key || parser_var_scope_name_key_id(scope, key) == NAME_ID_NONE)
-            return CETTA_ATOM_ID_NONE;
-        Atom *quoted = atom_expr2(
-            scratch, atom_symbol_id(scratch, g_builtin_syms.quote), key);
-        Atom *ref = atom_expr2(
-            scratch, atom_symbol(scratch, "resolve-name"),
-            quoted);
-        return term_universe_store_atom_id(universe, scratch, ref);
-    }
-
-    if (g_universal_name_syntax_enabled &&
-        text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_VAR) &&
-        text[*pos + 1u] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE)) {
-        *pos += 2u;
-        Atom *key = parse_term_scoped_in(
-            scratch, text, text_len, pos, scope, depth - 1, in_list);
-        if (!key) return CETTA_ATOM_ID_NONE;
-        VarId var_id = parser_var_scope_name_id(scope, key);
-        if (var_id == VAR_ID_NONE) return CETTA_ATOM_ID_NONE;
-        AtomId key_id = term_universe_store_atom_id(universe, scratch, key);
-        return key_id == CETTA_ATOM_ID_NONE
-                   ? CETTA_ATOM_ID_NONE
-                   : tu_intern_named_var(universe, key_id, var_id);
-    }
-
-    if (g_universal_name_syntax_enabled &&
-        (text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_QUOTE) ||
-         (text[*pos] == parser_syntax_compact_char(PARSER_SYNTAX_UNQUOTE) &&
-          parser_more(text, text_len, *pos + 1u) &&
-          !isspace((unsigned char)text[*pos + 1u]) &&
-          text[*pos + 1u] != ')' && text[*pos + 1u] != ';'))) {
-        bool quote = text[*pos] ==
-                     parser_syntax_compact_char(PARSER_SYNTAX_QUOTE);
-        (*pos)++;
-        Atom *payload = parse_term_scoped_in(
-            scratch, text, text_len, pos, scope, depth - 1, in_list);
-        if (!payload) return CETTA_ATOM_ID_NONE;
-        Atom *form = atom_expr2(
-            scratch,
-            quote ? atom_symbol_id(scratch, g_builtin_syms.quote)
-                  : atom_symbol(scratch, "unquote"),
-            payload);
-        return term_universe_store_atom_id(universe, scratch, form);
-    }
-
-    if (text[*pos] == '"') {
-        (*pos)++;
-        size_t start = *pos;
-        while (parser_more(text, text_len, *pos) && text[*pos] != '"') {
-            if (text[*pos] == '\\' && parser_more(text, text_len, *pos + 1u))
-                (*pos)++;
-            (*pos)++;
-        }
-        if (!parser_more(text, text_len, *pos))
-            return CETTA_ATOM_ID_NONE;
-        size_t len = *pos - start;
-        char *buf = arena_alloc(scratch, len + 1);
-        size_t out = parser_decode_string_body(text, start, *pos, buf);
-        (*pos)++;
-        return tu_intern_string_n(universe, buf, out);
-    }
-
-    if (g_universal_name_syntax_enabled && text[*pos] == '{')
-        return parse_braces_to_id_scoped(universe, scratch, text, text_len,
-                                         pos, scope, depth);
-
-    if (g_list_syntax_enabled && text[*pos] == '[')
-        return parse_list_to_id_scoped(universe, scratch, text, text_len, pos,
-                                       scope, depth);
-
-    if (text[*pos] == '(') {
-        AtomId *children = NULL;
-        uint32_t n = 0;
-        uint32_t ccap = 0;
-        AtomId expr_id = CETTA_ATOM_ID_NONE;
-        (*pos)++;
-        for (;;) {
-            skip_whitespace_and_comments(text, text_len, pos);
-            if (!parser_more(text, text_len, *pos) || text[*pos] == ')')
-                break;
-            AtomId child_id =
-                parse_sexpr_to_id_scoped(universe, scratch, text, text_len,
-                                         pos, scope, depth - 1);
-            if (child_id == CETTA_ATOM_ID_NONE) {
-                free(children);
-                return CETTA_ATOM_ID_NONE;
-            }
-            if (n >= ccap) {
-                ccap = ccap ? ccap * 2 : 16;
-                children = cetta_realloc(children, sizeof(AtomId) * ccap);
-            }
-            children[n++] = child_id;
-        }
-        if (!parser_more(text, text_len, *pos) || text[*pos] != ')') {
-            free(children);
-            return CETTA_ATOM_ID_NONE;
-        }
-        (*pos)++;
-        ParserSynLowerStatus lowered = parser_lower_syn_expression_id(
-            universe, scratch, children, n, scope, &expr_id);
-        if (lowered == PARSER_SYN_LOWER_NOT_FORM) {
-            expr_id = tu_expr_from_ids(universe, children, n);
-        } else if (lowered == PARSER_SYN_LOWER_INVALID) {
-            expr_id = CETTA_ATOM_ID_NONE;
-        }
-        free(children);
-        return expr_id;
-    }
-
-    size_t start = *pos;
-    /* In Prime's reader brackets end every token. */
-    while (parser_more(text, text_len, *pos) &&
-           is_token_char_in(text[*pos],
-                            in_list || g_universal_name_syntax_enabled))
-        (*pos)++;
-    size_t len = *pos - start;
-    if (len == 0)
-        return CETTA_ATOM_ID_NONE;
-
-    char *tok = arena_alloc(scratch, len + 1);
-    memcpy(tok, text + start, len);
-    tok[len] = '\0';
-
-    if (tok[0] == '$') {
-        if (len > 1) {
-            const char *spelling_text =
-                parser_canonicalize_namespace_token(scratch, tok + 1);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
-            VarId id = parser_var_scope_id(scope, spelling);
-            return tu_intern_var(universe, spelling, id);
-        }
-        if (parser_bare_dollar_is_variable()) {
-            SymbolId spelling = symbol_intern_cstr(g_symbols, "");
-            VarId id = parser_bare_dollar_id(scope, spelling);
-            return tu_intern_var(universe, spelling, id);
-        }
-    }
-
-    return parser_project_word_id(universe, scratch, tok);
+    const ParserReadBackend backend = {
+        true, parser_read_id_word, parser_read_id_string,
+        parser_read_id_container, parser_read_id_prefix, parser_read_id_meta,
+    };
+    return parser_read_scoped(universe, scratch, text, text_len, pos, scope,
+                              depth, &backend).id;
 }
 
 AtomId parse_sexpr_to_id(TermUniverse *universe, const char *text, size_t *pos) {
     ParserVarScope scope;
     Arena scratch;
-    AtomId result = CETTA_ATOM_ID_NONE;
     parser_var_scope_init(&scope);
     arena_init(&scratch);
     arena_set_hashcons(&scratch, NULL);
-    result = parse_sexpr_to_id_scoped(universe, &scratch, text,
-                                      PARSER_TEXT_NUL_TERMINATED, pos, &scope,
-                                      CETTA_PARSE_DEPTH_LIMIT);
+    AtomId result = parse_sexpr_to_id_scoped(universe, &scratch, text,
+        PARSER_TEXT_NUL_TERMINATED, pos, &scope, CETTA_PARSE_DEPTH_LIMIT);
     arena_free(&scratch);
     parser_var_scope_free(&scope);
     return result;
@@ -1694,7 +1657,7 @@ bool parser_syn_exec_payload(Atom *form, Atom **payload_out) {
     if (!form || form->kind != ATOM_EXPR || form->expr.len != 2u ||
         form->expr.elems[0]->kind != ATOM_SYMBOL ||
         !parser_symbol_is_syntax_form(
-            form->expr.elems[0]->sym_id, PARSER_SYNTAX_EXEC)) {
+            atom_symbol_current_id(form->expr.elems[0]), PARSER_SYNTAX_EXEC)) {
         return false;
     }
     if (payload_out) *payload_out = form->expr.elems[1];
@@ -1772,36 +1735,85 @@ static ParserRenderVar *parser_render_var_find(ParserRenderContext *ctx,
     return NULL;
 }
 
+typedef struct {
+    Atom *source;
+    CettaExprIndex next;
+    int depth;
+} ParserSyntaxWalkFrame;
+
+static bool parser_render_record_var(ParserRenderContext *ctx, Atom *atom) {
+    if (parser_render_var_find(ctx, atom->var_id))
+        return true;
+    if (ctx->len == ctx->cap) {
+        size_t next = ctx->cap ? ctx->cap * 2u : 16u;
+        if (next < ctx->cap || next > SIZE_MAX / sizeof(*ctx->vars))
+            return false;
+        ParserRenderVar *vars = realloc(ctx->vars, next * sizeof(*vars));
+        if (!vars)
+            return false;
+        ctx->vars = vars;
+        ctx->cap = next;
+    }
+    ctx->vars[ctx->len++] = (ParserRenderVar){
+        .id = atom->var_id,
+        .named = atom->name_key != NULL,
+        .spelling = atom_symbol_current_id(atom),
+        .key = atom->name_key,
+    };
+    return true;
+}
+
 static bool parser_render_collect_vars(ParserRenderContext *ctx, Atom *atom,
                                        int depth) {
-    if (!atom || depth <= 0)
-        return false;
-    if (atom->kind == ATOM_VAR) {
-        if (parser_render_var_find(ctx, atom->var_id))
-            return true;
-        if (ctx->len == ctx->cap) {
-            size_t next = ctx->cap ? ctx->cap * 2u : 16u;
-            if (next < ctx->cap || next > SIZE_MAX / sizeof(*ctx->vars))
-                return false;
-            ctx->vars = cetta_realloc(ctx->vars, next * sizeof(*ctx->vars));
-            ctx->cap = next;
+    ParserSyntaxWalkFrame inline_frames[32];
+    ParserSyntaxWalkFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
+    bool ok = false;
+    for (;;) {
+        if (!atom || depth <= 0)
+            goto done;
+        if (atom->kind == ATOM_VAR) {
+            if (!parser_render_record_var(ctx, atom))
+                goto done;
+        } else if (atom->kind == ATOM_EXPR && atom_authored_len(atom)) {
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
+                    goto done;
+                size_t next_cap = cap * 2u;
+                ParserSyntaxWalkFrame *next = frames == inline_frames
+                    ? malloc(sizeof(*next) * next_cap)
+                    : realloc(frames, sizeof(*next) * next_cap);
+                if (!next)
+                    goto done;
+                if (frames == inline_frames)
+                    memcpy(next, inline_frames, sizeof(*next) * len);
+                frames = next;
+                cap = next_cap;
+            }
+            frames[len++] = (ParserSyntaxWalkFrame){atom, 0u, depth};
+            atom = atom->expr.elems[0];
+            depth--;
+            continue;
         }
-        ctx->vars[ctx->len++] = (ParserRenderVar){
-            .id = atom->var_id,
-            .named = atom->name_key != NULL,
-            .spelling = atom->sym_id,
-            .key = atom->name_key,
-            .fresh_key = NULL,
-            .collides = false,
-        };
-        return true;
+        while (len) {
+            ParserSyntaxWalkFrame *frame = &frames[len - 1u];
+            if (++frame->next < atom_authored_len(frame->source)) {
+                atom = frame->source->expr.elems[frame->next];
+                depth = frame->depth - 1;
+                break;
+            }
+            len--;
+        }
+        if (!len) {
+            ok = true;
+            break;
+        }
     }
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++)
-        if (!parser_render_collect_vars(ctx, atom->expr.elems[i], depth - 1))
-            return false;
-    return true;
+
+done:
+    if (frames != inline_frames)
+        free(frames);
+    return ok;
 }
 
 static bool parser_render_var_same_presentation(const ParserRenderVar *a,
@@ -1848,48 +1860,6 @@ static bool parser_render_prepare_vars(ParserRenderContext *ctx) {
     return true;
 }
 
-static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
-                               ParserSyntaxPrintMode mode, int depth);
-
-static bool parser_render_var(FILE *out, ParserRenderContext *ctx, Atom *atom,
-                              ParserSyntaxPrintMode mode, int depth) {
-    ParserRenderVar *entry = parser_render_var_find(ctx, atom->var_id);
-    if (!entry)
-        return false;
-    Atom *key = entry->fresh_key ? entry->fresh_key : entry->key;
-    bool named = key != NULL;
-    bool compact = mode == PARSER_SYNTAX_PRINT_COMPACT &&
-                   g_universal_name_syntax_enabled;
-    const ParserSyntaxFormSpec *var_spec =
-        parser_syntax_form(PARSER_SYNTAX_VAR);
-    const ParserSyntaxFormSpec *quote_spec =
-        parser_syntax_form(PARSER_SYNTAX_QUOTE);
-
-    if (compact) {
-        fputs(var_spec->compact, out);
-        if (named) {
-            fputs(quote_spec->compact, out);
-            return parser_render_form(out, ctx, key, mode, depth - 1);
-        }
-        fputs(symbol_bytes(g_symbols, entry->spelling), out);
-        return true;
-    }
-
-    fprintf(out, "(%s ", var_spec->expanded);
-    if (named) {
-        fprintf(out, "(%s ", quote_spec->expanded);
-        if (!parser_render_form(out, ctx, key, PARSER_SYNTAX_PRINT_EXPANDED,
-                                depth - 1)) {
-            return false;
-        }
-        fputc(')', out);
-    } else {
-        fputs(symbol_bytes(g_symbols, entry->spelling), out);
-    }
-    fputc(')', out);
-    return true;
-}
-
 static bool parser_render_grounded(FILE *out, Atom *atom) {
     switch (atom->ground.gkind) {
     case GV_INT:
@@ -1908,6 +1878,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
@@ -1918,139 +1889,192 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     return false;
 }
 
+typedef struct {
+    Atom *source;
+    Atom *single;
+    CettaExprIndex start;
+    CettaExprIndex next;
+    CettaExprIndex end;
+    ParserSyntaxPrintMode mode;
+    int depth;
+    const char *close;
+    bool list;
+    bool open;
+    bool touching;
+} ParserRenderFrame;
+
 static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
                                ParserSyntaxPrintMode mode, int depth) {
-    if (!out || !ctx || !atom || depth <= 0)
+    ParserRenderFrame inline_frames[32];
+    ParserRenderFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
+    bool ok = false;
+    if (!out || !ctx)
         return false;
-    if (atom->kind == ATOM_VAR)
-        return parser_render_var(out, ctx, atom, mode, depth);
-    if (atom->kind == ATOM_GROUNDED)
-        return parser_render_grounded(out, atom);
-    if (atom->kind == ATOM_SYMBOL) {
-        const char *name = atom_name_cstr(atom);
-        if (mode == PARSER_SYNTAX_PRINT_EXPANDED && name[0] == '&' && name[1]) {
-            fprintf(out, "(%s %s)",
+
+render_node:
+    if (!atom || depth <= 0)
+        goto done;
+    {
+        ParserRenderFrame frame = {.mode = mode, .depth = depth, .close = ""};
+        bool compact = mode == PARSER_SYNTAX_PRINT_COMPACT &&
+                       g_universal_name_syntax_enabled;
+        if (atom->kind == ATOM_GROUNDED) {
+            if (!parser_render_grounded(out, atom))
+                goto done;
+            goto unwind;
+        }
+        if (atom->kind == ATOM_SYMBOL) {
+            const char *name = atom_name_cstr(atom);
+            if (mode == PARSER_SYNTAX_PRINT_EXPANDED && name[0] == '&' && name[1])
+                fprintf(out, "(%s %s)",
                     parser_syntax_form(PARSER_SYNTAX_REF)->expanded, name + 1u);
-        } else {
-            fputs(name, out);
+            else
+                fputs(name, out);
+            goto unwind;
         }
-        return true;
-    }
-
-    if (atom_is_list_form(atom)) {
-        CettaExprLen len = atom->expr.len - 1u;
-        bool open = atom_is_list_rest(atom);
-        fputc('[', out);
-        for (CettaExprIndex i = 0; i < len; i++) {
-            if (i > 0u)
-                fputs(open && i + 1u == len ? " | " : " ", out);
-            if (!parser_render_form(out, ctx, atom->expr.elems[i + 1u], mode,
-                                    depth - 1)) {
-                return false;
-            }
-        }
-        fputc(']', out);
-        return true;
-    }
-
-    /* T[...] and T{...}, touching, as the atom printer writes them. */
-    if (atom_is_prime_meta(atom))
-        return parser_render_form(out, ctx, atom->expr.elems[1], mode,
-                                  depth - 1) &&
-               parser_render_form(out, ctx, atom->expr.elems[2], mode,
-                                  depth - 1);
-
-    /* {x y}, and an own list as its names ($y ...), as the atom printer
-     * writes them. */
-    if (atom_is_prime_braces(atom) || atom_is_prime_own_list(atom)) {
-        bool braces = atom_is_prime_braces(atom);
-        CettaExprIndex first = braces ? 1u : 2u;
-        fputc(braces ? '{' : '(', out);
-        for (CettaExprIndex i = first; i < atom->expr.len; i++) {
-            if (i > first)
-                fputc(' ', out);
-            if (!parser_render_form(out, ctx, atom->expr.elems[i], mode,
-                                    depth - 1))
-                return false;
-        }
-        fputc(braces ? '}' : ')', out);
-        return true;
-    }
-
-    Atom *head = atom->expr.len > 0u ? atom->expr.elems[0] : NULL;
-    SymbolId head_id = head && head->kind == ATOM_SYMBOL
-        ? head->sym_id : SYMBOL_ID_NONE;
-    Atom *payload = atom->expr.len == 2u ? atom->expr.elems[1] : NULL;
-    bool compact = mode == PARSER_SYNTAX_PRINT_COMPACT &&
-                   g_universal_name_syntax_enabled;
-    if (payload && head && atom_is_symbol(head, "resolve-name")) {
-        Atom *key = NULL;
-        if (parser_quote_payload(payload, &key)) {
+        if (atom->kind == ATOM_VAR) {
+            ParserRenderVar *entry = parser_render_var_find(ctx, atom->var_id);
+            if (!entry)
+                goto done;
+            Atom *key = entry->fresh_key ? entry->fresh_key : entry->key;
+            const ParserSyntaxFormSpec *var = parser_syntax_form(PARSER_SYNTAX_VAR);
+            const ParserSyntaxFormSpec *quote = parser_syntax_form(PARSER_SYNTAX_QUOTE);
             if (compact) {
-                fputs(parser_syntax_form(PARSER_SYNTAX_REF)->compact, out);
-                fputs(parser_syntax_form(PARSER_SYNTAX_QUOTE)->compact, out);
-                return parser_render_form(out, ctx, key, mode, depth - 1);
+                fputs(var->compact, out);
+                if (!key) {
+                    fputs(symbol_bytes(g_symbols, entry->spelling), out);
+                    goto unwind;
+                }
+                fputs(quote->compact, out);
+            } else {
+                fprintf(out, "(%s ", var->expanded);
+                if (!key) {
+                    fprintf(out, "%s)", symbol_bytes(g_symbols, entry->spelling));
+                    goto unwind;
+                }
+                fprintf(out, "(%s ", quote->expanded);
+                frame.mode = PARSER_SYNTAX_PRINT_EXPANDED;
+                frame.close = "))";
             }
-            fprintf(out, "(%s (%s ",
-                    parser_syntax_form(PARSER_SYNTAX_REF)->expanded,
-                    parser_syntax_form(PARSER_SYNTAX_QUOTE)->expanded);
-            if (!parser_render_form(out, ctx, key,
-                                    PARSER_SYNTAX_PRINT_EXPANDED, depth - 1)) {
-                return false;
+            frame.single = key;
+        } else if (atom_is_prime_meta(atom)) {
+            frame.source = atom;
+            frame.start = frame.next = 1u;
+            frame.end = 3u;
+            frame.touching = true;
+        } else if (atom_is_prime_braces(atom) || atom_is_prime_own_list(atom)) {
+            bool braces = atom_is_prime_braces(atom);
+            fputc(braces ? '{' : '(', out);
+            frame.source = atom;
+            frame.start = frame.next = braces ? 1u : 2u;
+            frame.end = atom->expr.len;
+            frame.close = braces ? "}" : ")";
+        } else if (atom_is_list_form(atom)) {
+            fputc('[', out);
+            frame.source = atom;
+            frame.start = frame.next = 1u;
+            frame.end = atom->expr.len;
+            frame.close = "]";
+            frame.list = true;
+            frame.open = atom_is_list_rest(atom);
+        } else {
+            Atom *head = atom->expr.len ? atom->expr.elems[0] : NULL;
+            SymbolId head_id = head && head->kind == ATOM_SYMBOL
+                ? atom_symbol_current_id(head) : SYMBOL_ID_NONE;
+            Atom *payload = atom->expr.len == 2u ? atom->expr.elems[1] : NULL;
+            Atom *key = NULL;
+            if (payload && head && atom_is_symbol(head, "resolve-name") &&
+                parser_quote_payload(payload, &key)) {
+                const ParserSyntaxFormSpec *ref = parser_syntax_form(PARSER_SYNTAX_REF);
+                const ParserSyntaxFormSpec *quote = parser_syntax_form(PARSER_SYNTAX_QUOTE);
+                if (compact) {
+                    fputs(ref->compact, out);
+                    fputs(quote->compact, out);
+                } else {
+                    fprintf(out, "(%s (%s ", ref->expanded, quote->expanded);
+                    frame.mode = PARSER_SYNTAX_PRINT_EXPANDED;
+                    frame.close = "))";
+                }
+                frame.single = key;
+            } else if (payload && (head_id == g_builtin_syms.quote ||
+                                   atom_is_symbol(head, "unquote"))) {
+                const ParserSyntaxFormSpec *spec = parser_syntax_form(
+                    head_id == g_builtin_syms.quote ? PARSER_SYNTAX_QUOTE : PARSER_SYNTAX_UNQUOTE);
+                if (compact) fputs(spec->compact, out);
+                else {
+                    fprintf(out, "(%s ", spec->expanded);
+                    frame.mode = PARSER_SYNTAX_PRINT_EXPANDED;
+                    frame.close = ")";
+                }
+                frame.single = payload;
+            } else if (payload && parser_symbol_is_syntax_form(head_id, PARSER_SYNTAX_EXEC)) {
+                const ParserSyntaxFormSpec *spec = parser_syntax_form(PARSER_SYNTAX_EXEC);
+                if (mode == PARSER_SYNTAX_PRINT_COMPACT) fputs(spec->compact, out);
+                else {
+                    fprintf(out, "(%s ", spec->expanded);
+                    frame.mode = PARSER_SYNTAX_PRINT_EXPANDED;
+                    frame.close = ")";
+                }
+                frame.single = payload;
+            } else {
+                fputc('(', out);
+                frame.source = atom;
+                frame.end = atom_authored_len(atom);
+                frame.close = ")";
             }
-            fputs("))", out);
-            return true;
         }
-    }
-    if (payload && (head_id == g_builtin_syms.quote ||
-                    atom_is_symbol(head, "unquote"))) {
-        ParserSyntaxFormKind kind = head_id == g_builtin_syms.quote
-            ? PARSER_SYNTAX_QUOTE : PARSER_SYNTAX_UNQUOTE;
-        const ParserSyntaxFormSpec *spec = parser_syntax_form(kind);
-        if (compact) {
-            fputs(spec->compact, out);
-            return parser_render_form(out, ctx, payload, mode, depth - 1);
+        if (frame.single && !*frame.close) {
+            atom = frame.single;
+            mode = frame.mode;
+            depth--;
+            goto render_node;
         }
-        fprintf(out, "(%s ", spec->expanded);
-        if (!parser_render_form(out, ctx, payload,
-                                PARSER_SYNTAX_PRINT_EXPANDED, depth - 1)) {
-            return false;
+        if (len == cap) {
+            if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
+                goto done;
+            size_t next_cap = cap * 2u;
+            ParserRenderFrame *next = frames == inline_frames
+                ? malloc(sizeof(*next) * next_cap)
+                : realloc(frames, sizeof(*next) * next_cap);
+            if (!next)
+                goto done;
+            if (frames == inline_frames)
+                memcpy(next, inline_frames, sizeof(*next) * len);
+            frames = next;
+            cap = next_cap;
         }
-        fputc(')', out);
-        return true;
-    }
-    if (payload &&
-        parser_symbol_is_syntax_form(head_id, PARSER_SYNTAX_EXEC)) {
-        const ParserSyntaxFormSpec *spec =
-            parser_syntax_form(PARSER_SYNTAX_EXEC);
-        if (mode == PARSER_SYNTAX_PRINT_COMPACT) {
-            fputs(spec->compact, out);
-            return parser_render_form(out, ctx, payload, mode, depth - 1);
-        }
-        fprintf(out, "(%s ", spec->expanded);
-        if (!parser_render_form(out, ctx, payload,
-                                PARSER_SYNTAX_PRINT_EXPANDED, depth - 1)) {
-            return false;
-        }
-        fputc(')', out);
-        return true;
+        frames[len++] = frame;
     }
 
-    /* An elaborated template's own list with no names carries only its
-     * record and prints nothing. */
-    CettaExprLen shown = atom->expr.len;
-    if (atom_prime_template_own_hidden(atom))
-        shown--;
-    fputc('(', out);
-    for (CettaExprIndex i = 0; i < shown; i++) {
-        if (i > 0u) fputc(' ', out);
-        if (!parser_render_form(out, ctx, atom->expr.elems[i], mode,
-                                depth - 1)) {
-            return false;
+unwind:
+    while (len) {
+        ParserRenderFrame *frame = &frames[len - 1u];
+        if (frame->single) {
+            atom = frame->single;
+            frame->single = NULL;
+            mode = frame->mode;
+            depth = frame->depth - 1;
+            goto render_node;
         }
+        if (frame->next < frame->end) {
+            if (frame->next > frame->start && !frame->touching)
+                fputs(frame->list && frame->open && frame->next + 1u == frame->end
+                    ? " | " : " ", out);
+            atom = frame->source->expr.elems[frame->next++];
+            mode = frame->mode;
+            depth = frame->depth - 1;
+            goto render_node;
+        }
+        fputs(frame->close, out);
+        len--;
     }
-    fputc(')', out);
-    return true;
+    ok = true;
+
+done:
+    if (frames != inline_frames)
+        free(frames);
+    return ok;
 }
 
 static char *parser_render_syntax_text(Arena *a, Atom *atom,
@@ -2326,4 +2350,53 @@ int parse_metta_file_ids(const char *filename, TermUniverse *universe,
                          AtomId **out_ids) {
     return parse_metta_file_ids_diagnostic(
         filename, universe, out_ids, NULL, 0u);
+}
+
+int parse_metta_file_prefix_ids(
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size) {
+    if (out_ids)
+        *out_ids = NULL;
+    if (!out_ids || !complete_count)
+        return -1;
+    *complete_count = 0;
+    if (g_document_ids_backend.parse_file_prefix_ids &&
+        !g_document_ids_backend_active) {
+        g_document_ids_backend_active = true;
+        int result = g_document_ids_backend.parse_file_prefix_ids(
+            g_document_ids_backend.context, filename, universe, out_ids,
+            complete_count, error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
+    int result = parse_metta_file_ids_diagnostic(
+        filename, universe, out_ids, error_buf, error_buf_size);
+    if (result >= 0)
+        *complete_count = result;
+    return result;
+}
+
+int parse_metta_bytes_prefix_ids(
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    int *complete_count, char *error_buf, size_t error_buf_size) {
+    if (out_ids)
+        *out_ids = NULL;
+    if (!out_ids || !complete_count || !bytes)
+        return -1;
+    *complete_count = 0;
+    if (error_buf && error_buf_size)
+        error_buf[0] = '\0';
+    if (g_document_ids_backend.parse_bytes_prefix_ids &&
+        !g_document_ids_backend_active) {
+        g_document_ids_backend_active = true;
+        int result = g_document_ids_backend.parse_bytes_prefix_ids(
+            g_document_ids_backend.context, bytes, length, universe, out_ids,
+            complete_count, error_buf, error_buf_size);
+        g_document_ids_backend_active = false;
+        return result;
+    }
+    int result = parse_metta_buffer_ids((const char *)bytes, length, universe, out_ids);
+    if (result >= 0)
+        *complete_count = result;
+    return result;
 }

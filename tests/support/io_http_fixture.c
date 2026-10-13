@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -226,8 +227,16 @@ static void fixture_static(int fd, const char *root, const char *path) {
     free(filename);
 }
 
+static atomic_uint counted_requests;
+
 static void fixture_get(int fd, const char *root, const char *path) {
-    if (strcmp(path, "/slow") == 0) {
+    if (strcmp(path, "/counted") == 0 || strcmp(path, "/counted-total") == 0) {
+        unsigned value = strcmp(path, "/counted") == 0
+            ? atomic_fetch_add(&counted_requests, 1) + 1 : atomic_load(&counted_requests);
+        char body[32];
+        int size = snprintf(body, sizeof(body), "%u", value);
+        fixture_response(fd, 200, "OK", "text/plain", body, (size_t)size, NULL);
+    } else if (strcmp(path, "/slow") == 0) {
         struct timespec pause = {.tv_sec = 0, .tv_nsec = 200000000L};
         (void)nanosleep(&pause, NULL);
         fixture_response(fd, 200, "OK", "text/plain", "slow", 4u, NULL);
@@ -299,6 +308,13 @@ static void *fixture_client_main(void *opaque) {
         fixture_response(fd, 400, "Bad Request", "text/plain", "bad request",
                          11u, NULL);
     } else if (strcmp(request.method, "GET") == 0) {
+        fixture_get(fd, root, request.path);
+    } else if (strcmp(request.method, "POST") == 0 &&
+               strcmp(request.path, "/redirect-counted") == 0) {
+        fixture_response(fd, 307, "Temporary Redirect", "text/plain", "", 0u,
+                         "Location: /counted\r\n");
+    } else if (strcmp(request.method, "POST") == 0 &&
+               strcmp(request.path, "/counted") == 0) {
         fixture_get(fd, root, request.path);
     } else if (strcmp(request.method, "POST") == 0 &&
                strcmp(request.path, "/echo") == 0) {

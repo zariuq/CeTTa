@@ -1,0 +1,112 @@
+{
+  "ski": {
+    "he": [
+      "a",
+      "a",
+      "((S K) $v0)",
+      "(answer selected K)"
+    ],
+    "petta": [
+      "I",
+      "a",
+      "()",
+      "(answer selected K)"
+    ]
+  },
+  "retrieval": {
+    "he": [
+      "()",
+      "(b b b)",
+      "((destination b) (destination b))",
+      "((covered (edge $v0 b)) (covered (edge a b)) (covered (edge a b)))",
+      "((destination b) (destination b))",
+      "((retrieved (pat:occurrence s0 r0 o0) (edge $v0 b) (edge a b) (edge a b)) (retrieved (pat:occurrence s0 r0 o1) (edge a b) (edge a b) (edge a b)) (retrieved (pat:occurrence s0 r0 o2) (edge a b) (edge a b) (edge a b)))",
+      "((edge $v0 b))"
+    ],
+    "petta": [
+      "true",
+      "(b b b)",
+      "((destination b) (destination b))",
+      "((covered (edge $v0 b)) (covered (edge a b)) (covered (edge a b)))",
+      "((destination b) (destination b))",
+      "((retrieved (pat:occurrence s0 r0 o0) (edge $v0 b) (edge a b) (edge a b)) (retrieved (pat:occurrence s0 r0 o1) (edge a b) (edge a b) (edge a b)) (retrieved (pat:occurrence s0 r0 o2) (edge a b) (edge a b) (edge a b)))",
+      "((edge $v0 b))"
+    ]
+  },
+  "clause_retrieval": {
+    "he": [
+      "()",
+      "((cover (pat:occurrence s0 r0 o0) broad ((pos (P $v0))) ((pos (P a)))) (cover (pat:occurrence s0 r0 o1) linked ((pos (P $v1)) (pos (Q $v1))) ((pos (P a)) (pos (Q a)))) (cover (pat:occurrence s0 r0 o2) linked ((pos (P $v2)) (pos (Q $v2))) ((pos (P a)) (pos (Q a)))))",
+      "((cover (pat:occurrence s0 r0 o0) broad ((pos (P $v0))) ((pos (P $v0)))) (cover (pat:occurrence s0 r0 o1) linked ((pos (P $v1)) (pos (Q $v1))) ((pos (P $v1)))) (cover (pat:occurrence s0 r0 o2) linked ((pos (P $v2)) (pos (Q $v2))) ((pos (P $v2)))) (cover (pat:occurrence s0 r0 o3) crossed ((pos (P a)) (pos (Q b))) ((pos (P a)))))",
+      "((covered a a))",
+      "()",
+      "(broad linked linked crossed negative)"
+    ],
+    "petta": [
+      "true",
+      "((cover (pat:occurrence s0 r0 o0) broad ((pos (P $v0))) ((pos (P a)))) (cover (pat:occurrence s0 r0 o1) linked ((pos (P $v1)) (pos (Q $v1))) ((pos (P a)) (pos (Q a)))) (cover (pat:occurrence s0 r0 o2) linked ((pos (P $v2)) (pos (Q $v2))) ((pos (P a)) (pos (Q a)))))",
+      "((cover (pat:occurrence s0 r0 o0) broad ((pos (P $v0))) ((pos (P $v0)))) (cover (pat:occurrence s0 r0 o1) linked ((pos (P $v1)) (pos (Q $v1))) ((pos (P $v1)))) (cover (pat:occurrence s0 r0 o2) linked ((pos (P $v2)) (pos (Q $v2))) ((pos (P $v2)))) (cover (pat:occurrence s0 r0 o3) crossed ((pos (P a)) (pos (Q b))) ((pos (P a)))))",
+      "((covered a a))",
+      "()",
+      "(broad linked linked crossed negative)"
+    ]
+  },
+  "nil_coverage": {
+    "he": [
+      "()",
+      "((: (transitive ab bc) (Grandparent alice carol)) (: (transitive ab bc) (Grandparent alice carol)))",
+      "(covered a)",
+      "()",
+      "()"
+    ],
+    "petta": [
+      "true",
+      "((: (transitive ab bc) (Grandparent alice carol)) (: (transitive ab bc) (Grandparent alice carol)))",
+      "(covered a)",
+      "()",
+      "()"
+    ]
+  },
+  "policy_forms": {
+    "he": [
+      "()",
+      "((destination b) (destination b))",
+      "((destination b) (destination b))",
+      "((edge $v0 b) (edge a b) (edge a b))",
+      "((edge a b) (edge a b) (edge a b))",
+      "(covered a)",
+      "(covered a)",
+      "()",
+      "()"
+    ],
+    "petta": [
+      "true",
+      "((destination b) (destination b))",
+      "((destination b) (destination b))",
+      "((edge $v0 b) (edge a b) (edge a b))",
+      "((edge a b) (edge a b) (edge a b))",
+      "(covered a)",
+      "(covered a)",
+      "()",
+      "()"
+    ]
+  },
+  "pln_selection": {
+    "he": [
+      "()",
+      "()",
+      "((inference induction (Inheritance A B) (evidence (ca cb)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.5 0.1578947368421053)) (inference induction (Inheritance A B) (evidence (ca cb)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.5 0.1578947368421053)))",
+      "((inference abduction (Inheritance A B) (evidence (ac bc)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.6666666666666666 0.1578947368421053)))",
+      "()",
+      "(ca ca cb ac bc open)"
+    ],
+    "petta": [
+      "true",
+      "()",
+      "((inference induction (Inheritance A B) (evidence (ca cb)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.5 0.3333333333333333)) (inference induction (Inheritance A B) (evidence (ca cb)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.5 0.3333333333333333)))",
+      "((inference abduction (Inheritance A B) (evidence (ac bc)) (inputs ((stv 0.5 0.1) (stv 0.75 0.2) (stv 0.5 0.3)) ((stv 0.5 0.5) (stv 0.5 0.75))) (stv 0.6666666666666666 0.3333333333333333)))",
+      "()",
+      "(ca ca cb ac bc open)"
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "grounded.h"
+#include "tensor.h"
+#include "effect_policy.h"
 #include "abt.h"
 #include "eval.h"
 #include "he_typing.h"
@@ -275,7 +277,7 @@ static bool petta_repra_render(
         switch (atom->kind) {
         case ATOM_SYMBOL:
             petta_repra_append_symbol(
-                output, symbol_bytes(g_symbols, atom->sym_id));
+                output, atom_symbol_bytes(atom));
             break;
         case ATOM_VAR: {
             char variable[64];
@@ -316,6 +318,7 @@ static bool petta_repra_render(
             case GV_STATE:
             case GV_CAPTURE:
             case GV_BINDINGS:
+            case GV_TENSOR:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
             case GV_PRIME_NEED_CAPABILITY:
@@ -364,7 +367,7 @@ static bool petta_repra_render(
                 }
                 if (tail->kind != ATOM_EXPR) {
                     petta_repra_append_symbol(
-                        output, symbol_bytes(g_symbols, tail->sym_id));
+                        output, atom_symbol_bytes(tail));
                     break;
                 }
                 atom = tail;
@@ -373,8 +376,7 @@ static bool petta_repra_render(
                 CettaExprLen length = compound->expr.len;
                 petta_repra_append_symbol(
                     output,
-                    symbol_bytes(
-                        g_symbols, compound->expr.elems[0]->sym_id));
+                    atom_symbol_bytes(compound->expr.elems[0]));
                 if (length == 1u)
                     break;
                 sb_append_char(output, '(');
@@ -652,6 +654,8 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
+    if (grounded_op_is_pattern(id))
+        return eval_current_pattern_head && eval_current_pattern_head(id) != SYMBOL_ID_NONE;
     /* These appended opcodes require an explicit extended profile. Keep
      * the decision outside the symbol cache so a session/profile handoff
      * cannot reuse another profile's permission. */
@@ -751,13 +755,13 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
     if (a->kind == ATOM_SYMBOL &&
         eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        (symbol_eq_cstr(g_symbols, a->sym_id, "inf") ||
-         symbol_eq_cstr(g_symbols, a->sym_id, "-inf") ||
-         symbol_eq_cstr(g_symbols, a->sym_id, "nan"))) {
-        bool nan_value = symbol_eq_cstr(g_symbols, a->sym_id, "nan");
+        (atom_symbol_equals_cstr(a, "inf") ||
+         atom_symbol_equals_cstr(a, "-inf") ||
+         atom_symbol_equals_cstr(a, "nan"))) {
+        bool nan_value = atom_symbol_equals_cstr(a, "nan");
         out->val = nan_value
             ? NAN
-            : (symbol_eq_cstr(g_symbols, a->sym_id, "-inf")
+            : (atom_symbol_equals_cstr(a, "-inf")
                    ? -INFINITY : INFINITY);
         out->ival = 0;
         out->bigint = NULL;
@@ -1390,7 +1394,7 @@ static bool grounded_petta_prefers_rationals(void) {
 static Atom *grounded_division_by_zero(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head && head->kind == ATOM_SYMBOL) {
         Atom *prolog = grounded_petta_prolog_operation(
-            a, head->sym_id, args, nargs);
+            a, atom_symbol_current_id(head), args, nargs);
         if (prolog)
             return prolog;
     }
@@ -1679,9 +1683,9 @@ bool grounded_is_plain_scalar_tree_operator(
      * records only source spelling and arity; the exact evaluators below
      * repeat guest-precedence admission at the execution boundary. */
     return grounded_is_plain_scalar_truth_operator(
-               head->sym_id, nargs) ||
+               atom_symbol_current_id(head), nargs) ||
         grounded_is_plain_scalar_arithmetic_operator(
-            head->sym_id, nargs);
+            atom_symbol_current_id(head), nargs);
 }
 
 static bool grounded_plain_scalar_truth_common(
@@ -1759,7 +1763,7 @@ bool grounded_try_plain_scalar_truth(
         Atom *head, Atom **args, uint32_t nargs, bool *truth_out) {
     if (!head || head->kind != ATOM_SYMBOL || !truth_out)
         return false;
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     /* grounded_dispatch gives guest operators first refusal.  Mirror that
      * precedence and decline whenever a dialect owns this spelling. */
     if (grounded_spelling_has_guest_owner(head_id) ||
@@ -1777,10 +1781,10 @@ bool grounded_try_plain_scalar_arithmetic(
         *value_out = NULL;
     if (!arena || !head || head->kind != ATOM_SYMBOL || !args ||
         !value_out || nargs != 2u ||
-        grounded_spelling_has_guest_owner(head->sym_id)) {
+        grounded_spelling_has_guest_owner(atom_symbol_current_id(head))) {
         return false;
     }
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
     if (!grounded_is_plain_scalar_arithmetic_operator(
             head_id, nargs) ||
         !grounded_is_plain_number(args[0]) ||
@@ -1798,10 +1802,10 @@ bool grounded_try_plain_scalar_operation(
         Atom *head, const CettaPlainScalar *arguments, uint32_t nargs,
         CettaPlainScalar *value_out) {
     if (!head || head->kind != ATOM_SYMBOL || !arguments || !value_out ||
-        grounded_spelling_has_guest_owner(head->sym_id)) {
+        grounded_spelling_has_guest_owner(atom_symbol_current_id(head))) {
         return false;
     }
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
 
     if (grounded_is_plain_scalar_arithmetic_operator(head_id, nargs)) {
         if (nargs != 2u ||
@@ -2536,7 +2540,7 @@ static Atom *grounded_repra(
     StringBuf rendered;
     sb_init(&rendered);
     bool exact = petta_repra_render(a, args[0], &rendered);
-    Atom *result = atom_symbol(
+    Atom *result = atom_symbol_data(
         a, exact && rendered.buf
             ? rendered.buf
             : (eval_current_language_id &&
@@ -2613,7 +2617,7 @@ static Atom *grounded_petta_sread(Arena *a, Atom *argument) {
     Atom *parsed = NULL;
     size_t pos = 0;
     if (parser_text_well_formed_n(text, text_len)) {
-        parsed = parse_sexpr_n(a, text, text_len, &pos);
+        parsed = parse_data_sexpr_n(a, text, text_len, &pos);
         if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
             parsed = NULL;
     }
@@ -2673,7 +2677,7 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
     }
 
     size_t pos = 0;
-    Atom *parsed = parse_sexpr_n(a, args[0]->ground.sval, args[0]->ground.slen,
+    Atom *parsed = parse_data_sexpr_n(a, args[0]->ground.sval, args[0]->ground.slen,
                                  &pos);
     parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed)
@@ -2721,7 +2725,10 @@ static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    return atom_bool(a, space_contains_exact((Space *)args[0]->ground.ptr, args[1]));
+    Space *space = (Space *)args[0]->ground.ptr;
+    if (eval_resolve_space_read)
+        space = eval_resolve_space_read(space);
+    return atom_bool(a, space_contains_exact(space, args[1]));
 }
 
 static Atom *grounded_space_revision(Arena *a, Atom *head,
@@ -2731,7 +2738,10 @@ static Atom *grounded_space_revision(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    uint64_t revision = space_revision((Space *)args[0]->ground.ptr);
+    Space *space = (Space *)args[0]->ground.ptr;
+    if (eval_resolve_space_read)
+        space = eval_resolve_space_read(space);
+    uint64_t revision = space_revision(space);
     if (revision > (uint64_t)INT64_MAX)
         return grounded_string_error(a, head, args, nargs,
                                      "space revision exceeds Number range");
@@ -3311,7 +3321,7 @@ static uint32_t grounded_written_arguments(SymbolId head_id, uint32_t nargs) {
  * structure the node's unfolding has at that level. */
 static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
                                         uint32_t nargs) {
-    uint32_t written = grounded_written_arguments(head->sym_id, nargs);
+    uint32_t written = grounded_written_arguments(atom_symbol_current_id(head), nargs);
     for (uint32_t i = 0u; i < written; i++) {
         if (atom_structural_has_rational(args[i]) &&
             grounded_current_language_is_petta()) {
@@ -3330,6 +3340,8 @@ static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    if (cetta_speculative_active() && !cetta_speculative_op_allowed(atom_symbol_current_id(head)))
+        return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
     for (uint32_t i = 0u; i < nargs; i++) {
         if (atom_structural_has_rational(args[i]))
             return grounded_dispatch_rational(a, head, args, nargs);
@@ -3339,6 +3351,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
 static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                                     uint32_t nargs) {
+    Atom *tensor = cetta_tensor_dispatch(a, head, args, nargs);
+    if (tensor) return tensor;
     {
         Atom *abt = abt_grounded_dispatch(a, head, args, nargs);
         if (abt) return abt;
@@ -3353,7 +3367,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             ? he_typing_dispatch(a, head, args, nargs) : NULL;
         if (he) return he;
     }
-    SymbolId head_id = head->sym_id;
+    SymbolId head_id = atom_symbol_current_id(head);
 
     /* A Prolog compound is no list (the reference's non_list/1): index-atom
      * has no answer for it, and the total observers min-atom, max-atom,
@@ -3849,7 +3863,10 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (head_id == g_builtin_syms.size &&
             args[0]->kind == ATOM_GROUNDED &&
             args[0]->ground.gkind == GV_SPACE) {
-            return atom_int(a, (int64_t)space_length64((Space *)args[0]->ground.ptr));
+            Space *space = (Space *)args[0]->ground.ptr;
+            if (eval_resolve_space_read)
+                space = eval_resolve_space_read(space);
+            return atom_int(a, (int64_t)space_length64(space));
         }
         if (head_id == g_builtin_syms.size_atom &&
             eval_current_language_id &&

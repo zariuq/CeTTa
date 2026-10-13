@@ -389,6 +389,94 @@ static void test_repeated_churn_is_amortized(
     space_free(&space);
 }
 
+static void assert_trie_matches_ground_rows(
+        DiscNode *trie, Atom *const *rows, CettaIndex len,
+        Atom *const *queries, CettaIndex query_count) {
+    for (CettaIndex q = 0u; q < query_count; q++) {
+        CettaIndex *actual = NULL, count = 0u, capacity = 0u;
+        disc_lookup(trie, queries[q], &actual, &count, &capacity);
+        CettaIndex found = 0u;
+        for (CettaIndex i = 0u; i < len; i++) {
+            if (!atom_eq(rows[i], queries[q]))
+                continue;
+            assert(found < count && actual[found] == i);
+            found++;
+        }
+        assert(found == count);
+        CettaIndex counted = UINT64_MAX;
+        assert(disc_count_rigid_exact_path(trie, queries[q], &counted));
+        assert(counted == found);
+        free(actual);
+    }
+}
+
+static void test_leaf_registry_against_ground_rows(Arena *scratch) {
+    enum { QUERY_COUNT = 128, ROW_CAPACITY = 256 };
+    Atom *queries[QUERY_COUNT];
+    for (unsigned i = 0u; i < QUERY_COUNT; i++) {
+        if (i % 4u == 0u) {
+            queries[i] = atom_int(scratch, (int64_t)i);
+        } else if (i % 4u == 1u) {
+            char name[64];
+            snprintf(name, sizeof(name), "coordinate-registry-symbol-%u", i);
+            queries[i] = atom_symbol(scratch, name);
+        } else {
+            Atom *items[8];
+            unsigned arity = i % 4u == 2u ? 2u : 1u + (i / 4u) % 7u;
+            items[0] = atom_int(scratch, (int64_t)i);
+            for (unsigned j = 1u; j < arity; j++)
+                items[j] = atom_int(scratch, (int64_t)(i + j));
+            queries[i] = atom_expr(scratch, items, arity);
+        }
+    }
+    for (unsigned initially_empty = 0u; initially_empty < 2u; initially_empty++) {
+        DiscNode *trie = disc_node_new();
+        if (initially_empty)
+            assert(disc_transport_stable_coordinates(trie, NULL, 0u) == 0u);
+        Atom *rows[ROW_CAPACITY];
+        CettaIndex len = 0u;
+        for (unsigned i = 0u; i < 110u; i++) {
+            rows[len] = queries[i < 104u ? i : 0u];
+            disc_insert(trie, rows[len], len);
+            len++;
+        }
+        for (unsigned round = 0u; round < 16u; round++) {
+            CettaIndex coordinates[ROW_CAPACITY], target = 0u;
+            Atom *erased = queries[(round * 7u) % QUERY_COUNT];
+            for (CettaIndex i = 0u; i < len; i++) {
+                if ((i + round) % 5u == 0u || atom_eq(rows[i], erased)) {
+                    coordinates[i] = SPACE_OCCURRENCE_COORDINATE_REMOVED;
+                } else {
+                    coordinates[i] = target;
+                    rows[target++] = rows[i];
+                }
+            }
+            assert(disc_transport_stable_coordinates(trie, coordinates, len)
+                   == len - target);
+            len = target;
+            assert_trie_matches_ground_rows(trie, rows, len, queries, QUERY_COUNT);
+
+            /* Reuse both inline and array leaves after their last occurrence
+             * disappears, and create fresh branches after cache preparation. */
+            Atom *inserted[] = {erased, erased, queries[104u + round]};
+            for (unsigned i = 0u; i < 3u; i++) {
+                assert(len < ROW_CAPACITY);
+                rows[len] = inserted[i];
+                disc_insert(trie, rows[len], len);
+                len++;
+            }
+            assert_trie_matches_ground_rows(trie, rows, len, queries, QUERY_COUNT);
+        }
+        CettaIndex remove_all[ROW_CAPACITY];
+        for (CettaIndex i = 0u; i < len; i++)
+            remove_all[i] = SPACE_OCCURRENCE_COORDINATE_REMOVED;
+        assert(disc_transport_stable_coordinates(trie, remove_all, len) == len);
+        assert_trie_matches_ground_rows(trie, rows, 0u, queries, QUERY_COUNT);
+        disc_node_free(trie);
+    }
+    puts("PASS: leaf registry preserves 8448 ground lookup/count observations through lazy preparation, erasure, reuse and new branches");
+}
+
 static void test_occurrence_cursor_exact_clone(
         TermUniverse *universe, Arena *scratch) {
     Space space;
@@ -1717,8 +1805,9 @@ static int64_t query_test_integer(const Atom *value) {
 
 static bool query_test_boolean(const Atom *value) {
     assert(value && value->kind==ATOM_SYMBOL &&
-           (value->sym_id==g_builtin_syms.true_text || value->sym_id==g_builtin_syms.false_text));
-    return value->sym_id==g_builtin_syms.true_text;
+           (atom_symbol_current_id(value)==g_builtin_syms.true_text ||
+            atom_symbol_current_id(value)==g_builtin_syms.false_text));
+    return atom_symbol_current_id(value)==g_builtin_syms.true_text;
 }
 
 static Atom *query_authority_parse(Arena *arena, const char *text) {
@@ -1767,8 +1856,11 @@ static void test_overlay_query_control_handoff(void) {
         snprintf(source,sizeof(source),"(select 7 (search-policy (control FIFO (workers %u) "
             "(budget 200))) (match &view (Edge $x) $x))",width);
         ResultSet first;result_set_init(&first);
+        Atom *query=query_authority_parse(&persistent,source);
+        if(hosts[host].language==CETTA_LANGUAGE_HE)
+            query=eval_read_registry_words(&registry,&persistent,query);
         eval_top_with_registry(&main_space,&arena,&persistent,&registry,
-            query_authority_parse(&persistent,source),&first);
+            query,&first);
         assert(first.len==1u);
         Atom *observation=first.items[0];
         assert(observation->kind==ATOM_EXPR && observation->expr.len==7u &&
@@ -1884,7 +1976,7 @@ static QueryObservation query_fallback_observe(const char *source,
     actual.satisfied=query_test_boolean(observation->expr.elems[2]->expr.elems[1]);
     actual.closed=query_test_boolean(observation->expr.elems[3]->expr.elems[1]);
     actual.work=(uint64_t)query_test_integer(observation->expr.elems[5]->expr.elems[1]);
-    actual.status=observation->expr.elems[6]->expr.elems[1]->sym_id;
+    actual.status=atom_symbol_current_id(observation->expr.elems[6]->expr.elems[1]);
     if(fallback_query_calls!=expected_calls)
         fprintf(stderr,"fallback calls %u expected %u: %s\n",
             fallback_query_calls,expected_calls,source);
@@ -3010,6 +3102,490 @@ static void test_reset_releases_storage_after_readers(
     }
 }
 
+static void test_lazy_merge_and_independent_clones(
+        TermUniverse *universe, Arena *scratch) {
+    enum { ROWS = 257, KEYS = 7, PREFIX = 3 };
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    SymbolId edge = symbol_intern_cstr(g_symbols, "merge-edge");
+    AtomId rows[ROWS];
+    for (CettaIndex row = 0u; row < ROWS; row++) {
+        int64_t key = (int64_t)((row * 5u) % KEYS);
+        rows[row] = store_atom(universe, edge_value(scratch, edge, key));
+    }
+    assert(space_add_atom_ids_batch(&space, rows, ROWS));
+    /* Leave one unrelated occurrence outside the selected frontier, so this
+     * test exercises the lazy branch merge rather than full coverage. */
+    space_add_atom_id(&space, store_atom(universe, atom_int(scratch, -1)));
+    space_match_native_ensure_trie(&space);
+    Atom *query = binary(scratch, edge, atom_var(scratch, "merge-x"),
+                         atom_var(scratch, "merge-y"));
+    SpaceOccurrenceCursor source, exact, rewind, scan, refused;
+    assert(space_occurrence_cursor_init(&space, query, &source));
+    assert(source.node_len == KEYS && source.heap_len == KEYS);
+    assert(source.heap && !source.flat_mode && !source.flat);
+    for (uint32_t node = 0u; node < source.node_len; node++)
+        assert(source.leaf_pos[node] == 0u);
+    for (CettaIndex expected = 0u; expected < PREFIX; expected++) {
+        CettaIndex index;
+        assert(space_occurrence_cursor_next(&source, &index) ==
+               SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == expected);
+    }
+    assert(!space_occurrence_cursor_clone(&source, &source));
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &source));
+    assert(source.pinned && source.heap);
+    assert(space_occurrence_cursor_clone(&source, &exact));
+    assert(space_occurrence_cursor_clone_unstarted(&source, &rewind));
+    assert(space_occurrence_cursor_clone(&source, &scan));
+    assert(exact.heap != source.heap && exact.leaf_pos != source.leaf_pos);
+    assert(exact.occurrences == source.occurrences);
+    /* The allocation-refusal route preserves the same retained positions. */
+    free(scan.heap);
+    scan.heap = NULL;
+    scan.heap_len = 0u;
+
+    space_add_atom_id(&space, rows[0]);
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &refused));
+    assert(space_remove_atom_id(&space, rows[0]));
+    assert(!space_occurrence_cursor_clone_unstarted(&source, &refused));
+    /* Detachment keeps the old trie and rows alive after the live space goes. */
+    space_free(&space);
+    CettaIndex next;
+    assert(space_occurrence_cursor_next(&source, &next) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(next == PREFIX);
+    space_occurrence_cursor_release(&source);
+
+    SpaceOccurrenceCursor *cursors[] = {&exact, &rewind, &scan};
+    for (size_t reader = 0u; reader < 3u; reader++) {
+        CettaIndex first = reader == 1u ? 0u : PREFIX;
+        for (CettaIndex expected = first; expected < ROWS; expected++) {
+            CettaIndex index;
+            assert(space_occurrence_cursor_next(cursors[reader], &index) ==
+                   SPACE_OCCURRENCE_CURSOR_ITEM);
+            assert(index == expected);
+            assert(atom_eq(space_occurrence_cursor_atom(cursors[reader], index),
+                           term_universe_get_atom(universe, rows[expected])));
+        }
+        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+               SPACE_OCCURRENCE_CURSOR_END);
+        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+               SPACE_OCCURRENCE_CURSOR_END);
+        space_occurrence_cursor_release(cursors[reader]);
+    }
+}
+
+static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) {
+    enum { ROWS = 33, PREFIX = 3 };
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    SymbolId edge = symbol_intern_cstr(g_symbols, "full-frontier-edge");
+    AtomId rows[ROWS];
+    for (CettaIndex row = 0u; row < ROWS - 2u; row++)
+        rows[row] = store_atom(universe, edge_value(scratch, edge, (int64_t)(row % 5u)));
+    Atom *stored = atom_var(scratch, "full-frontier-stored");
+    rows[ROWS - 2u] = store_atom(universe, binary(scratch, edge, stored, stored));
+    rows[ROWS - 1u] = store_atom(universe, atom_var(scratch, "full-frontier-whole"));
+    assert(space_add_atom_ids_batch(&space, rows, ROWS));
+    space_match_native_ensure_trie(&space);
+    Atom *query = binary(scratch, edge, atom_var(scratch, "full-frontier-x"),
+                         atom_var(scratch, "full-frontier-y"));
+    SpaceOccurrenceCursor source, exact, rewind, partial;
+    assert(space_occurrence_cursor_init(&space, query, &source));
+    assert(source.full_scan && source.node_len == 0u && !source.heap && !source.flat);
+    for (CettaIndex expected = 0u; expected < PREFIX; expected++) {
+        CettaIndex index;
+        assert(space_occurrence_cursor_next(&source, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == expected);
+    }
+    assert(space_occurrence_cursor_clone(&source, &exact));
+    assert(space_occurrence_cursor_clone_unstarted(&source, &rewind));
+    assert(exact.full_next == PREFIX && rewind.full_next == 0u);
+    assert(exact.occurrences == source.occurrences);
+
+    /* The new live frontier is partial. Old readers still own their exact
+     * ceiling, so the appended nonmatch is invisible to them. */
+    space_add_atom_id(&space, store_atom(universe, atom_int(scratch, -1)));
+    assert(space_occurrence_cursor_init(&space, query, &partial));
+    assert(!partial.full_scan && partial.node_len > 0u);
+    for (CettaIndex expected = 0u; expected < ROWS; expected++) {
+        CettaIndex index;
+        assert(space_occurrence_cursor_next(&partial, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(index == expected);
+    }
+    assert(space_occurrence_cursor_next(&partial, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&partial);
+    assert(space_remove_atom_id(&space, rows[0]));
+    space_occurrence_cursor_release(&source);
+    space_free(&space);
+    SpaceOccurrenceCursor *readers[] = {&exact, &rewind};
+    for (size_t reader = 0u; reader < 2u; reader++) {
+        for (CettaIndex expected = reader ? 0u : PREFIX; expected < ROWS; expected++) {
+            CettaIndex index;
+            assert(space_occurrence_cursor_next(readers[reader], &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+            assert(index == expected);
+            assert(atom_eq(space_occurrence_cursor_atom(readers[reader], index),
+                           term_universe_get_atom(universe, rows[expected])));
+        }
+        assert(space_occurrence_cursor_next(readers[reader], NULL) == SPACE_OCCURRENCE_CURSOR_END);
+        space_occurrence_cursor_release(readers[reader]);
+    }
+    puts("PASS: full frontier uses a pinned occurrence sequence; partial frontiers keep branch selection, clones preserve position and duplicate rows survive removal and cancellation");
+}
+
+static void assert_equations_match_rebuild(Space *space, Arena *scratch,
+                                           SymbolId head, Atom *query) {
+    Space reference;
+    space_init_with_universe(&reference, space->native.universe);
+    for (CettaIndex i = 0u; i < space_length64(space); i++)
+        space_add_atom_id(&reference, space_get_atom_id_at64(space, i));
+    /* Force the reference to derive its index from all surviving rows. */
+    space_mark_derived_state_dirty(&reference);
+    const unsigned forms[] = {CETTA_RULE_SYNTAX_ORDINARY,
+        CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL};
+    for (unsigned mode = 0u; mode < 2u; mode++) {
+        SpaceEquationCursor actual, expected;
+        assert(space_rule_cursor_init(space, head, forms[mode], &actual));
+        assert(space_rule_cursor_init(&reference, head, forms[mode], &expected));
+        for (;;) {
+            SpaceEquationOccurrenceId left, right;
+            SpaceEquationCursorStep step = space_equation_cursor_next(&actual, &left);
+            assert(step == space_equation_cursor_next(&expected, &right));
+            if (step == SPACE_EQUATION_CURSOR_END)
+                break;
+            assert(step == SPACE_EQUATION_CURSOR_ITEM);
+            assert(left.logical_index == right.logical_index);
+            assert(space_get_atom_id_at64(space, left.logical_index) ==
+                   space_get_atom_id_at64(&reference, right.logical_index));
+        }
+    }
+    QueryResults actual, expected;
+    query_results_init(&actual);
+    query_results_init(&expected);
+    query_equations(space, query, scratch, &actual);
+    query_equations(&reference, query, scratch, &expected);
+    assert(actual.len == expected.len && actual.len > 1u);
+    for (CettaIndex i = 0u; i < actual.len; i++)
+        assert(atom_eq(actual.items[i].result, expected.items[i].result));
+    query_results_free(&actual);
+    query_results_free(&expected);
+    space_free(&reference);
+}
+
+static void test_equation_coordinate_retention(void) {
+    for (unsigned format = 0u; format < 2u; format++) {
+        for (unsigned warm = 0u; warm < 2u; warm++) {
+            for (unsigned backend = 0u; backend < 2u; backend++) {
+                Arena persistent, scratch;
+                arena_init(&persistent);
+                arena_init(&scratch);
+                TermUniverse universe;
+                assert(term_universe_init_with_store_format(&universe, format
+                    ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+                    : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+                term_universe_set_persistent_arena(&universe, &persistent);
+                Space space;
+                space_init_with_universe(&space, &universe);
+                assert(space_match_backend_try_set(&space, backend
+                    ? SPACE_ENGINE_NATIVE_CANDIDATE_EXACT : SPACE_ENGINE_NATIVE));
+                SymbolId head = symbol_intern_cstr(g_symbols, "retained-eq-head");
+                Atom *query = binary(&scratch, head, atom_int(&scratch, 7),
+                                     atom_int(&scratch, 8));
+                Atom *equation = binary(&scratch, g_builtin_syms.equals,
+                                        query, atom_int(&scratch, 42));
+                for (CettaIndex i = 0u; i < 96u; i++) {
+                    Atom *row = i % 2u ? equation : atom_int(&scratch, (int64_t)i);
+                    if (i == 11u)
+                        row = binary(&scratch, g_builtin_syms.equals,
+                            atom_var(&scratch, "retained-open-lhs"), atom_int(&scratch, 91));
+                    if (i == 27u)
+                        row = binary(&scratch, g_builtin_syms.equals_percent,
+                                     query, atom_int(&scratch, 93));
+                    if (i == 43u)
+                        row = binary(&scratch, g_builtin_syms.equals,
+                            binary(&scratch, head, atom_int(&scratch, 99),
+                                   atom_int(&scratch, 8)), atom_int(&scratch, 94));
+                    space_add_atom_id(&space, store_atom(&universe, row));
+                }
+                assert_equations_match_rebuild(&space, &scratch, head, query);
+                if (!warm)
+                    space_mark_derived_state_dirty(&space);
+                for (unsigned phase = 0u; phase < 4u; phase++) {
+                    uint8_t mask[97] = {0};
+                    CettaCount len = space_length64(&space);
+                    bool selected = false;
+                    for (CettaIndex i = 0u; i < len; i++) {
+                        Atom *row = space_get_at64(&space, i);
+                        bool data = row->kind == ATOM_GROUNDED &&
+                            row->ground.gkind == GV_INT;
+                        bool ordinary = row->kind == ATOM_EXPR &&
+                            atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.equals);
+                        bool directional = row->kind == ATOM_EXPR &&
+                            atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.equals_percent);
+                        if (!selected && ((phase == 1u && ordinary) ||
+                            (phase == 2u && directional) ||
+                            ((phase == 0u || phase == 3u) && data))) {
+                            mask[i] = 1u;
+                            selected = true;
+                        }
+                    }
+                    assert(selected);
+                    bool was_dirty = space.native.eq_idx_dirty;
+                    uint64_t revision = space.equation_revision;
+                    CettaCount removed = 0u;
+                    assert(space_remove_occurrence_mask_stable(&space, mask, len, &removed));
+                    assert(removed == 1u);
+                    bool changed_equations = phase == 1u || phase == 2u;
+                    assert(space.native.eq_idx_dirty == (was_dirty || changed_equations));
+                    assert(space.equation_revision == revision + (changed_equations ? 1u : 0u));
+                    assert_equations_match_rebuild(&space, &scratch, head, query);
+                    if (phase == 2u)
+                        space_add_atom_id(&space, store_atom(&universe, equation));
+                }
+                space_free(&space);
+                term_universe_free(&universe);
+                arena_free(&scratch);
+                arena_free(&persistent);
+            }
+        }
+    }
+    puts("PASS: data-only contraction retains equation indexes; changed equations rebuild with exact order, duplicate and open-pattern results");
+}
+
+static bool row_has_form(Atom *row, SymbolId head) {
+    return row->kind == ATOM_EXPR && row->expr.len == 3u &&
+        atom_is_symbol_id(row->expr.elems[0], head);
+}
+
+static void test_single_erasure_equation_retention(void) {
+    const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_STACK, SPACE_KIND_QUEUE};
+    for (unsigned variant = 0u; variant < 48u; variant++) {
+        unsigned format = variant % 2u;
+        unsigned warm = variant / 2u % 2u;
+        unsigned backend = variant / 4u % 2u;
+        unsigned kind = variant / 8u % 3u;
+        unsigned atom_api = variant / 24u;
+        Arena persistent, scratch;
+        arena_init(&persistent);
+        arena_init(&scratch);
+        TermUniverse universe;
+        assert(term_universe_init_with_store_format(&universe, format
+            ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+            : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        space.kind = kinds[kind];
+        assert(space_match_backend_try_set(&space, backend
+            ? SPACE_ENGINE_NATIVE_CANDIDATE_EXACT : SPACE_ENGINE_NATIVE));
+        SymbolId head = symbol_intern_cstr(g_symbols, "single-erase-equation");
+        Atom *query = binary(&scratch, head, atom_int(&scratch, 7), atom_int(&scratch, 8));
+        Atom *equation = binary(&scratch, g_builtin_syms.equals, query, atom_int(&scratch, 42));
+        AtomId expected[100];
+        CettaCount len = 96u;
+        for (CettaIndex i = 0u; i < len; i++) {
+            Atom *row = i % 2u ? equation : atom_int(&scratch, (int64_t)i);
+            if (i == 11u)
+                row = binary(&scratch, g_builtin_syms.equals,
+                    atom_var(&scratch, "single-erase-open"), atom_int(&scratch, 91));
+            if (i == 27u)
+                row = binary(&scratch, g_builtin_syms.equals_percent, query, atom_int(&scratch, 93));
+            if (i == 42u)
+                row = binary(&scratch, g_builtin_syms.colon,
+                    atom_symbol(&scratch, "single-erase-subject"), atom_symbol(&scratch, "Type"));
+            expected[i] = store_atom(&universe, row);
+            space_add_atom_id(&space, expected[i]);
+        }
+        for (unsigned phase = 0u; phase < 8u; phase++) {
+            if (phase >= 5u) {
+                expected[len] = store_atom(&universe, phase == 5u
+                    ? equation : atom_int(&scratch, 1000 + (int64_t)phase));
+                space_add_atom_id(&space, expected[len++]);
+            }
+            assert_equations_match_rebuild(&space, &scratch, head, query);
+            if (!warm)
+                space_mark_derived_state_dirty(&space);
+            CettaIndex removed = len;
+            for (CettaIndex i = 0u; i < len; i++) {
+                Atom *row = term_universe_get_atom(&universe, expected[i]);
+                bool selected = phase == 2u ? row_has_form(row, g_builtin_syms.equals) :
+                    phase == 3u ? row_has_form(row, g_builtin_syms.equals_percent) :
+                    phase == 4u ? row_has_form(row, g_builtin_syms.colon) :
+                    phase == 7u ? i + 1u == len : row->kind == ATOM_GROUNDED;
+                if (selected) { removed = i; break; }
+            }
+            assert(removed < len);
+            Atom *removed_atom = term_universe_get_atom(&universe, expected[removed]);
+            Atom *tail = term_universe_get_atom(&universe, expected[len - 1u]);
+            bool moved_tail = kind == 0u && removed + 1u < len;
+            bool equation_change = row_has_form(removed_atom, g_builtin_syms.equals) ||
+                row_has_form(removed_atom, g_builtin_syms.equals_percent) ||
+                (moved_tail && (row_has_form(tail, g_builtin_syms.equals) ||
+                               row_has_form(tail, g_builtin_syms.equals_percent)));
+            uint64_t revision = space.equation_revision;
+            bool ok = atom_api ? space_remove(&space, removed_atom) :
+                                 space_remove_atom_id(&space, expected[removed]);
+            assert(ok);
+            if (kind == 0u)
+                expected[removed] = expected[len - 1u];
+            else
+                memmove(expected + removed, expected + removed + 1u,
+                        (size_t)(len - removed - 1u) * sizeof(*expected));
+            len--;
+            assert_atom_ids(&space, expected, len);
+            assert(space.native.eq_idx_dirty == (!warm || equation_change));
+            assert(space.equation_revision == revision + (equation_change ? 1u : 0u));
+            assert_equations_match_rebuild(&space, &scratch, head, query);
+        }
+        space_free(&space);
+        term_universe_free(&universe);
+        arena_free(&scratch);
+        arena_free(&persistent);
+    }
+    puts("PASS: 384 single erasures preserve or rebuild equations against independent ordered rows across APIs, store formats, backends and layouts");
+}
+
+static void assert_declarations_match_rows(Space *space, Arena *scratch,
+                                           Atom **subjects, size_t subject_count) {
+    Space rebuilt;
+    space_init_with_universe(&rebuilt, space->native.universe);
+    for (CettaIndex i = 0u; i < space_length64(space); i++)
+        space_add_atom_id(&rebuilt, space_get_atom_id_at64(space, i));
+    space_mark_derived_state_dirty(&rebuilt);
+    for (size_t subject = 0u; subject < subject_count; subject++) {
+        Atom **types = NULL, **reference = NULL;
+        uint32_t count = space_get_declared_types(space, scratch, subjects[subject], &types);
+        uint32_t rebuilt_count = space_get_declared_types(
+            &rebuilt, scratch, subjects[subject], &reference);
+        uint32_t found = 0u;
+        /* Independently scan the authored declarations in current row order. */
+        for (CettaIndex i = 0u; i < space_length64(space); i++) {
+            Atom *row = space_get_at64(space, i);
+            if (!row_has_form(row, g_builtin_syms.colon) ||
+                !atom_eq(row->expr.elems[1], subjects[subject]))
+                continue;
+            assert(found < count && found < rebuilt_count);
+            assert(atom_alpha_eq(types[found], row->expr.elems[2]));
+            assert(atom_alpha_eq(types[found], reference[found]));
+            found++;
+        }
+        assert(found == count && count == rebuilt_count);
+        free(reference);
+        free(types);
+    }
+    assert(space->native.ty_idx.has_open_rows == rebuilt.native.ty_idx.has_open_rows);
+    assert(space->native.ty_idx.has_non_symbol_subjects == rebuilt.native.ty_idx.has_non_symbol_subjects);
+    for (uint32_t i = 0u; i < EQ_INDEX_BUCKETS; i++) {
+        TypeAnnBucket *actual = &space->native.ty_idx.buckets[i];
+        TypeAnnBucket *reference = &rebuilt.native.ty_idx.buckets[i];
+        assert(actual->len == reference->len);
+        for (CettaIndex j = 0u; j < actual->len; j++) {
+            assert(actual->atom_indices[j] == reference->atom_indices[j]);
+            assert(actual->atom_ids[j] == reference->atom_ids[j]);
+        }
+    }
+    space_free(&rebuilt);
+}
+
+static void test_declaration_retention(void) {
+    const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_STACK, SPACE_KIND_QUEUE};
+    for (unsigned variant = 0u; variant < 72u; variant++) {
+        unsigned warm = variant / 2u % 2u, kind = variant / 8u % 3u;
+        unsigned api = variant / 24u;
+        Arena persistent, scratch;
+        arena_init(&persistent); arena_init(&scratch);
+        TermUniverse universe;
+        assert(term_universe_init_with_store_format(&universe, variant % 2u
+            ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1 : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        space.kind = kinds[kind];
+        assert(space_match_backend_try_set(&space, variant / 4u % 2u
+            ? SPACE_ENGINE_NATIVE_CANDIDATE_EXACT : SPACE_ENGINE_NATIVE));
+        Atom *subject = atom_symbol(&scratch, "retained-type-subject");
+        Atom *compound = binary(&scratch, symbol_intern_cstr(g_symbols, "retained-type-box"),
+                                atom_int(&scratch, 7), atom_int(&scratch, 8));
+        Atom *subjects[] = {subject, compound, atom_symbol(&scratch, "retained-type-absent")};
+        Atom *declaration = binary(&scratch, g_builtin_syms.colon,
+                                   subject, atom_symbol(&scratch, "RetainedBasic"));
+        AtomId expected[100];
+        CettaCount len = 96u;
+        for (CettaIndex i = 0u; i < len; i++) {
+            Atom *row = i % 2u ? declaration : atom_int(&scratch, (int64_t)i);
+            if (i == 11u)
+                row = binary(&scratch, g_builtin_syms.colon, subject,
+                             atom_symbol(&scratch, "RetainedOther"));
+            if (i == 27u) {
+                Atom *variable = atom_var(&scratch, "retained-type-parameter");
+                row = binary(&scratch, g_builtin_syms.colon, subject,
+                    binary(&scratch, symbol_intern_cstr(g_symbols, "RetainedParam"), variable, variable));
+            }
+            if (i == 41u)
+                row = binary(&scratch, g_builtin_syms.colon, compound,
+                             atom_symbol(&scratch, "RetainedCompound"));
+            if (i == 63u)
+                row = binary(&scratch, g_builtin_syms.equals,
+                             atom_symbol(&scratch, "retained-type-rule"), atom_int(&scratch, 19));
+            expected[i] = store_atom(&universe, row);
+            space_add_atom_id(&space, expected[i]);
+        }
+        for (unsigned phase = 0u; phase < 9u; phase++) {
+            if (phase == 3u || phase == 5u || phase == 7u) {
+                Atom *row = phase == 3u ? atom_var(&scratch, "retained-type-open-row") :
+                    phase == 5u ? declaration : atom_int(&scratch, 1007);
+                expected[len] = store_atom(&universe, row);
+                space_add_atom_id(&space, expected[len++]);
+            }
+            assert_declarations_match_rows(&space, &scratch, subjects, 3u);
+            bool had_open_rows = space.native.ty_idx.has_open_rows;
+            if (!warm) space_mark_derived_state_dirty(&space);
+            CettaIndex removed = len;
+            for (CettaIndex i = 0u; i < len; i++) {
+                Atom *row = term_universe_get_atom(&universe, expected[i]);
+                bool selected = phase == 2u ? row_has_form(row, g_builtin_syms.colon) :
+                    phase == 4u ? row->kind == ATOM_VAR :
+                    phase == 6u ? row_has_form(row, g_builtin_syms.colon) &&
+                                     atom_eq(row->expr.elems[1], compound) :
+                    phase == 8u ? row_has_form(row, g_builtin_syms.equals) :
+                    phase == 7u ? i + 1u == len : row->kind == ATOM_GROUNDED;
+                if (selected) { removed = i; break; }
+            }
+            assert(removed < len);
+            Atom *row = term_universe_get_atom(&universe, expected[removed]);
+            Atom *tail = term_universe_get_atom(&universe, expected[len - 1u]);
+            bool ordered = api == 2u || kind != 0u;
+            bool declaration_change = row_has_form(row, g_builtin_syms.colon) ||
+                (!ordered && removed + 1u < len && row_has_form(tail, g_builtin_syms.colon));
+            uint64_t revision = space.declaration_revision;
+            if (api == 2u) {
+                uint8_t mask[100] = {0}; mask[removed] = 1u;
+                CettaCount count = 0u;
+                assert(space_remove_occurrence_mask_stable(&space, mask, len, &count));
+                assert(count == 1u);
+            } else {
+                assert(api ? space_remove(&space, row) : space_remove_atom_id(&space, expected[removed]));
+            }
+            if (ordered)
+                memmove(expected + removed, expected + removed + 1u,
+                        (size_t)(len - removed - 1u) * sizeof(*expected));
+            else
+                expected[removed] = expected[len - 1u];
+            len--;
+            assert_atom_ids(&space, expected, len);
+            assert(space.native.ty_idx_dirty == (!warm || declaration_change || had_open_rows));
+            assert(space.declaration_revision == revision + (declaration_change ? 1u : 0u));
+            assert_declarations_match_rows(&space, &scratch, subjects, 3u);
+        }
+        space_free(&space); term_universe_free(&universe);
+        arena_free(&scratch); arena_free(&persistent);
+    }
+    puts("PASS: 648 declaration-index removals preserve ordered types, duplicate declarations, coordinates and open-row certificates against independent scans");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -3034,6 +3610,7 @@ int main(void) {
     test_bounded_graph_index(&universe, &scratch);
     test_queue_linearization(&universe, &scratch);
     test_repeated_churn_is_amortized(&universe, &scratch);
+    test_leaf_registry_against_ground_rows(&scratch);
     test_occurrence_cursor_exact_clone(&universe, &scratch);
     test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
     test_retained_query_rows(&universe, &scratch);
@@ -3063,6 +3640,11 @@ int main(void) {
     test_owned_receipt_factor_rollback();
     test_retained_list_match(&scratch);
     test_reset_releases_storage_after_readers(&universe, &scratch);
+    test_lazy_merge_and_independent_clones(&universe, &scratch);
+    test_full_frontier_sequence(&universe, &scratch);
+    test_equation_coordinate_retention();
+    test_single_erasure_equation_retention();
+    test_declaration_retention();
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

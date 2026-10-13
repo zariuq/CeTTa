@@ -223,7 +223,8 @@ static bool prime_ordinary_return_project(CettaPrimeObservationReturn *owned) {
     owned->ordinary_reified=owned->ordinary_projected=NULL;
     return true;
 }
-static bool prime_ordinary_stop_after_row(Arena *arena,Atom *value,const Bindings *env,void *raw) {
+static bool prime_ordinary_stop_after_row(Arena *arena,Atom *value,const Outcome *occurrence,void *raw) {
+    const Bindings *env = &occurrence->env;
     (void)arena;(void)value;(void)env;(void)raw;
     return false; /* Existing visitor contract: accept this row, then stop. */
 }

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Decoding proposition codes in a native proof package.  The family
 ; Holds : prop -> Sort 0 decodes all@A P to Pi A (Holds (P #0)).  That rule
@@ -10,7 +10,7 @@
 ; signature instead, which have no equation.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: Q (-> (u 0) prop))))
 (= (verdict-of $r)
    (unify $r (Established $e) Established
@@ -24,12 +24,12 @@
    (pf:fix X (pf:assume h h)))
 
 ; 1. The package over prop is checked by the kernel.
-!(let $r (try (set:native-proof &thy over-prop)) (verdict-of $r))
+!(let $r (try (hol:native-proof &thy over-prop)) (verdict-of $r))
 ; 2. The package over the universe is checked too, with the quantifier
 ;    introduced by its rule constant and no rule that changes the level of a
 ;    type.
-!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
-      (set:native-proof &thy over-universe)
+!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+      (hol:native-proof &thy over-universe)
    (let (App (App (DeclConst $intro) $predicate) $abstraction) $term
      (OverUniverse $intro)))
-!(let $r (try (set:native-proof &thy over-universe)) (verdict-of $r))
+!(let $r (try (hol:native-proof &thy over-universe)) (verdict-of $r))

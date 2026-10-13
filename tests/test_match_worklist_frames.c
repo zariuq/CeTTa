@@ -392,7 +392,7 @@ static void test_epoch_binding_keys(void) {
                 ? atom_expr2(&source, atom_symbol(&source, "key-name"),
                              atom_int(&source, 17)) : NULL;
             Atom *variable = atom_var_with_presentation(
-                &source, atom_symbol(&source, "epoch-key")->sym_id, name,
+                &source, atom_symbol_current_id(atom_symbol(&source, "epoch-key")), name,
                 UINT64_C(91001));
             VarId key = var_epoch_id(variable->var_id, 31u);
             Atom *expected_key = atom_var_like(&expected_arena, variable, key);
@@ -803,7 +803,7 @@ static void dense_contextual_values(Arena *a) {
           test_runtime_stats_counter(CETTA_RUNTIME_COUNTER_MATCH_OPEN_LINEAR_NODE_VISIT) > 0u,
           "compiled pattern walk queues the context of each sibling independently");
     uint32_t mark = bindings_builder_save(&builder);
-    CHECK(bindings_builder_add_id_fresh(&builder, var_epoch_id(u->var_id, 400u), u->sym_id, atom_int(a, 9)),
+    CHECK(bindings_builder_add_id_fresh(&builder, var_epoch_id(u->var_id, 400u), atom_symbol_current_id(u), atom_int(a, 9)),
           "append a live dense slot before rollback");
     bindings_builder_rollback(&builder, mark);
     CHECK(lookup_frame_value(&builder.current, qa->var_id, &value) &&
@@ -1402,9 +1402,9 @@ static void skeleton_plus_environment(void) {
           "observation forces the skeleton once, sharing interned children");
     bindings_builder_rollback(&bb, 0u);
     CHECK(bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(l->var_id, 31u), l->sym_id, spine_a) &&
+              &bb, var_epoch_id(l->var_id, 31u), atom_symbol_current_id(l), spine_a) &&
               bindings_builder_add_id_fresh(
-                  &bb, var_epoch_id(r->var_id, 31u), r->sym_id, spine_b),
+                  &bb, var_epoch_id(r->var_id, 31u), atom_symbol_current_id(r), spine_b),
           "epoch environment rebinds the interned spine under activation keys");
     before = arena_accounted_live_bytes(&interned);
     test_runtime_stats_reset_counters();
@@ -1423,9 +1423,9 @@ static void skeleton_plus_environment(void) {
           "epoch interned bound subterms still compare by identity");
     bindings_builder_rollback(&bb, 0u);
     CHECK(bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(l->var_id, 31u), l->sym_id, spine_a) &&
+              &bb, var_epoch_id(l->var_id, 31u), atom_symbol_current_id(l), spine_a) &&
               bindings_builder_add_id_fresh(
-                  &bb, var_epoch_id(r->var_id, 31u), r->sym_id, spine_b),
+                  &bb, var_epoch_id(r->var_id, 31u), atom_symbol_current_id(r), spine_b),
           "activation environment uses epoch keys for the skeleton holes");
     before = arena_accounted_live_bytes(&interned);
     CHECK(match_atoms_epoch_view_builder_rule_local(
@@ -1448,9 +1448,9 @@ static void skeleton_plus_environment(void) {
           "decoded worklist rejects interned spines of a different hash");
     bindings_builder_rollback(&bb, 0u);
     CHECK(bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(l->var_id, 31u), l->sym_id, spine_a) &&
+              &bb, var_epoch_id(l->var_id, 31u), atom_symbol_current_id(l), spine_a) &&
               bindings_builder_add_id_fresh(
-                  &bb, var_epoch_id(r->var_id, 31u), r->sym_id, other),
+                  &bb, var_epoch_id(r->var_id, 31u), atom_symbol_current_id(r), other),
           "epoch environment of unequal interned spines");
     CHECK(!match_atoms_epoch_view_builder_current(
               skeleton, 31u, 0u, head, &bb, &interned),
@@ -1487,9 +1487,9 @@ static void skeleton_plus_environment(void) {
           "structural consistency does not copy either local spine");
     bindings_builder_rollback(&bb, 0u);
     CHECK(bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(l->var_id, 31u), l->sym_id, spine_a) &&
+              &bb, var_epoch_id(l->var_id, 31u), atom_symbol_current_id(l), spine_a) &&
               bindings_builder_add_id_fresh(
-                  &bb, var_epoch_id(r->var_id, 31u), r->sym_id, spine_b),
+                  &bb, var_epoch_id(r->var_id, 31u), atom_symbol_current_id(r), spine_b),
           "epoch environment of equal-but-not-shared spines");
     before = arena_accounted_live_bytes(&local);
     CHECK(match_atoms_epoch_view_builder_current(
@@ -1526,9 +1526,9 @@ static void query_slot_nonoriginal(void) {
     CHECK(bindings_builder_register_contextual_frame(
               &bb, ids, 2u, 17u) &&
           bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(x->var_id, 17u), x->sym_id, y) &&
+              &bb, var_epoch_id(x->var_id, 17u), atom_symbol_current_id(x), y) &&
               bindings_builder_add_id_fresh(
-                  &bb, var_epoch_id(y->var_id, 17u), y->sym_id, u),
+                  &bb, var_epoch_id(y->var_id, 17u), atom_symbol_current_id(y), u),
           "x aliases y and y is bound to u in the attempt suffix");
     BindingsActivationView frame;
     bindings_activation_view_init(&frame);
@@ -1546,7 +1546,7 @@ static void query_slot_nonoriginal(void) {
     CHECK(bindings_builder_register_contextual_frame(
               &bb, ids, 2u, 17u) &&
           bindings_builder_add_id_fresh(
-              &bb, var_epoch_id(x->var_id, 17u), x->sym_id, z) &&
+              &bb, var_epoch_id(x->var_id, 17u), atom_symbol_current_id(x), z) &&
               bindings_builder_add_var_fresh(&bb, z, u),
           "x aliases a variable outside the attempt frame");
     bindings_activation_view_init(&frame);
@@ -1671,9 +1671,9 @@ static void contextual_stored_matching(Arena *a) {
         Bindings seed, branch;
         bindings_init(&seed);
         CHECK(bindings_add_var(&seed, p, seven) &&
-              bindings_add_id(&seed, var_epoch_id(x->var_id, 470u), x->sym_id, seven) &&
-              bindings_add_id(&seed, var_epoch_id(y->var_id, 470u), y->sym_id, eleven) &&
-              bindings_add_id(&seed, var_epoch_id(z->var_id, 471u), z->sym_id, seven) &&
+              bindings_add_id(&seed, var_epoch_id(x->var_id, 470u), atom_symbol_current_id(x), seven) &&
+              bindings_add_id(&seed, var_epoch_id(y->var_id, 470u), atom_symbol_current_id(y), eleven) &&
+              bindings_add_id(&seed, var_epoch_id(z->var_id, 471u), atom_symbol_current_id(z), seven) &&
               bindings_prepare_logical_write(&seed), "construct nested stored matcher contexts");
         seed.entries[0].value = binding_value_from_context(source, 470u);
         CHECK(bindings_rewrite_value_id(&seed, var_epoch_id(x->var_id, 470u),
@@ -1694,8 +1694,8 @@ static void contextual_stored_matching(Arena *a) {
         bindings_free(&branch);
 
         CHECK(bindings_clone(&branch, &seed) &&
-              bindings_add_id(&branch, var_epoch_id(r->var_id, 480u), r->sym_id, seven) &&
-              bindings_add_id(&branch, var_epoch_id(s->var_id, 480u), s->sym_id, eleven) &&
+              bindings_add_id(&branch, var_epoch_id(r->var_id, 480u), atom_symbol_current_id(r), seven) &&
+              bindings_add_id(&branch, var_epoch_id(s->var_id, 480u), atom_symbol_current_id(s), eleven) &&
               bindings_prepare_logical_write(&branch), "construct contextual right-side binding");
         CHECK(bindings_rewrite_value_id(&branch, var_epoch_id(r->var_id, 480u),
                   binding_value_from_context(nested, 471u)), "write stored right-side context");
@@ -1795,7 +1795,7 @@ static void contextual_observation_without_binding(Arena *a) {
     Bindings b, snapshot;
     bindings_init(&b);
     CHECK(bindings_add_var(&b, p, seven) &&
-          bindings_add_id(&b, qualified, x->sym_id, seven) &&
+          bindings_add_id(&b, qualified, atom_symbol_current_id(x), seven) &&
           bindings_prepare_logical_write(&b), "construct contextual observation branch");
     b.entries[0].value = binding_value_from_context(source, epoch);
     bindings_invalidate_after_key_rewrite(&b);
@@ -1916,7 +1916,7 @@ static void contextual_root_preview(Arena *a) {
     bindings_init(&b);
     CHECK(bindings_add_var(&b, p, seven) &&
           bindings_add_var(&b, q, seven) &&
-          bindings_add_id(&b, var_epoch_id(x->var_id, 490u), x->sym_id, seven) &&
+          bindings_add_id(&b, var_epoch_id(x->var_id, 490u), atom_symbol_current_id(x), seven) &&
           bindings_prepare_logical_write(&b), "construct contextual root preview");
     b.entries[0].value = binding_value_from_context(source, 490u);
     b.entries[1].value = binding_value_from_context(x, 490u);
@@ -2288,7 +2288,7 @@ static void exclusive_candidate_frame(Arena *a) {
     bindings_init(&observed_reference);
     CHECK(bindings_add_id(
               &observed_reference,
-              var_epoch_id(slot->var_id, 604u), slot->sym_id, seven) &&
+              var_epoch_id(slot->var_id, 604u), atom_symbol_current_id(slot), seven) &&
           atom_eq(bindings_to_atom(a, &builder.current),
                   bindings_to_atom(a, &observed_reference)),
           "ordered observation includes a frame-only authoritative value");
@@ -2338,7 +2338,7 @@ static void exclusive_candidate_frame(Arena *a) {
     CHECK(bindings_register_contextual_frame(
               &builder.current, initial_extension_ids, 1u, 606u) &&
           bindings_builder_add_id_fresh(
-              &builder, extension_value_id, slot->sym_id, eight) &&
+              &builder, extension_value_id, atom_symbol_current_id(slot), eight) &&
           bindings_register_contextual_frame(
               &builder.current, complete_extension_ids, 2u, 606u),
           "extending a live schema preserves the recorded slot write");
@@ -2360,7 +2360,7 @@ static void exclusive_candidate_frame(Arena *a) {
     CHECK(bindings_register_contextual_frame(
               &builder.current, initial_extension_ids, 1u, 607u) &&
           bindings_builder_add_id_fresh(
-              &builder, projection_value_id, slot->sym_id, seven),
+              &builder, projection_value_id, atom_symbol_current_id(slot), seven),
           "construct an authoritative framed write for projection");
     Atom *projection_root = atom_var_like(
         a, slot, projection_value_id);

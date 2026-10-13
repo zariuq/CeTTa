@@ -1,0 +1,11 @@
+Unmodified MM2 test fixtures from mm2-chainer.
+
+Source: https://github.com/rTreutlein/mm2-chainer
+Revision: 65ceae4609e93ae49dc1a4bdb50ed71ebaa6ac92
+Original directory: examples/
+License: Apache-2.0 (declared by the upstream workspace package).
+
+SHA-256:
+c393fcb43beccdf59875c87b5544b73b7b67984d1c78564ce6ea1b2790fec1fb  disjoint.mm2
+67c7920fdcbd8289858b8f8e9aba126ba89506e7d15c5d09b4dad4192b344768  revise_proofs_simple_sink.mm2
+a718384287c3a1ba7866e8cdfa502b5e28f8d2968c2cf8da921cb7969ca95ff7  revise_proofs_symbolic.mm2

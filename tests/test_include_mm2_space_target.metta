@@ -7,7 +7,12 @@
 !(assertEqualToResult
   (size &plain)
   (0))
-!(collapse (include &plain mm2_exec_basic.mm2))
+; Preserve the target's identity and all error fields without printing its address.
+!(collapse
+  (case (include &plain mm2_exec_basic.mm2)
+    (((Error (include $target $file) $reason)
+      (let $same (== $target &plain)
+        (quote (Mm2IncludeFailure $same $file $reason)))))))
 !(assertEqualToResult
   (get-type &plain)
   ((Space pathmap)))

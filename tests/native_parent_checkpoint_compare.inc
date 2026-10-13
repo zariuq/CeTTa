@@ -55,6 +55,7 @@ static bool copy_outcomes(CopyRelation *r,const OutcomeSet *s,const OutcomeSet *
     if(s->len!=d->len||s->cap!=d->cap)return r->valid=false;
     for(size_t i=0;i<s->len;i++){
         if(s->items[i].kind!=d->items[i].kind||
+           s->items[i].result_form!=d->items[i].result_form||
            (s->items[i].materialized_atom!=NULL)!=(d->items[i].materialized_atom!=NULL)||
            (s->items[i].delayed!=NULL)!=(d->items[i].delayed!=NULL)||
            !copy_bindings(r,&s->items[i].env,&d->items[i].env))return r->valid=false;
@@ -90,11 +91,34 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
     if(s->weight_environment_initialized)copy_bindings(r,&s->weight_environment,&d->weight_environment);
     copy_outcomes(r,&s->output,&d->output);
     const PrimeNativeAdvice *sa=s->advice_cells,*da=d->advice_cells;
-    for(;sa&&da;sa=sa->next,da=da->next)copy_bindings(r,&sa->environment,&da->environment);
+    for(;sa&&da;sa=sa->next,da=da->next) {
+        copy_identity(r,10,sa,da);
+        copy_identity(r,10,sa->inherited,da->inherited);
+        copy_identity(r,10,sa->follows,da->follows);
+        copy_bindings(r,&sa->environment,&da->environment);
+    }
     if(sa||da)r->valid=false;
     const PrimeEvalStackFrame *sf=s->frames,*df=d->frames;
     for(;sf&&df;sf=sf->control_next,df=df->control_next){
-        if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index)r->valid=false;
+        if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index||
+           sf->normalization_value_ready!=df->normalization_value_ready||
+           sf->normalization_return_value_ready!=df->normalization_return_value_ready||
+           sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
+        if(sf->control_return_advice_length!=df->control_return_advice_length ||
+           sf->control_return_advice_capacity!=df->control_return_advice_capacity ||
+           sf->control_return_advice_length>sf->control_return_advice_capacity ||
+           df->control_return_advice_length>df->control_return_advice_capacity ||
+           sf->control_return_advice_length>sf->child.len ||
+           df->control_return_advice_length>df->child.len) return r->valid=false;
+        copy_identity(r,11,sf->control_return_advice,df->control_return_advice);
+        copy_identity(r,10,sf->control_advice,df->control_advice);
+        for(size_t i=0u;i<sf->control_return_advice_length;i++) {
+            const PrimeNativeReturnAdvice *a=&sf->control_return_advice[i];
+            const PrimeNativeReturnAdvice *b=&df->control_return_advice[i];
+            if((a->key==NULL)!=(b->key==NULL)||(a->bound==NULL)!=(b->bound==NULL)||
+               (a->key&&!atom_eq(a->key,b->key))||(a->bound&&!atom_eq(a->bound,b->bound)))r->valid=false;
+            copy_identity(r,10,a->advice,b->advice);
+        }
         if(sf->env_initialized)copy_bindings(r,&sf->env,&df->env);
         if(sf->child_initialized)copy_outcomes(r,&sf->child,&df->child);
         copy_need(r,&sf->before,&df->before);copy_need(r,&sf->evaluating,&df->evaluating);

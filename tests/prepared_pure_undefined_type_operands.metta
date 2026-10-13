@@ -7,7 +7,6 @@
 (= (is-tag $x) (== $x Tag))
 (= (is-kind $x) (== $x Kinded))
 (: Kinded Kind)
-(= (is-token $x) (== $x &tok))
 (: seen (-> Atom %Undefined%))
 (= (seen $v) (case $v (((Error $a $b) (error $b)) ($x $x))))
 !(is-nil Nil)
@@ -25,5 +24,11 @@
 !(seen (is-tag Tag))
 !(seen (is-tag Other))
 !(bind! &tok 5)
+; HE captures registered words when the equation is read.
+(= (is-token $x) (== $x &tok))
 !(seen (is-token 5))
 !(seen (is-token "s"))
+
+; Direct value-entry calls also exercise the compiled type query.
+!(is-kind Other)
+!(is-kind 1)

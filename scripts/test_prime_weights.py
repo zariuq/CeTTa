@@ -29,6 +29,54 @@ def contribution(value):
     return [value[1], value[2], [f[3] for f in factors]]
 
 
+def provenance_packet(values):
+    """Compare independent runs modulo one factor/dependency identity bijection."""
+    identities = {}
+    def identity(value):
+        return identities.setdefault(value, len(identities))
+    def walk(value):
+        if not isinstance(value, list):
+            return value
+        if value and value[0] == 'Weighted':
+            contribution(value)
+            subject = walk(value[1])
+            factors = [[f[0], identity(f[1]), identity(f[2]), f[3]]
+                       for f in value[3][1]]
+            return [value[0], subject, value[2], ['provenance', factors]]
+        return [walk(item) for item in value]
+    return walk(values)
+
+
+def provenance_packet_controls(gate):
+    rows = [
+        ['Weighted', ['Factor', 10, 20, 'data'], 10,
+         ['provenance', [['Factor', 10, 20, 2], ['Factor', 30, 10, 3]]]],
+        ['Weighted', 'V', 10,
+         ['provenance', [['Factor', 10, 20, 2], ['Factor', 40, 10, 3]]]],
+    ]
+    renamed = json.loads(json.dumps(rows))
+    names = {10: 91, 20: 7, 30: 8, 40: 6}
+    for row in renamed:
+        for factor in row[3][1]:
+            factor[1:3] = [names[value] for value in factor[1:3]]
+    expected = provenance_packet(rows)
+    assert provenance_packet(renamed) == expected
+    assert expected[0][1:3] == rows[0][1:3]
+    gate.passed_case('cross-run factor renaming retains payloads, coefficients and one shared namespace')
+    # A single map spans every occurrence and both identity positions.
+    for row, factor, slot, changed in ((1, 1, 1, 30), (1, 0, 1, 50),
+                                       (1, 0, 2, 30), (1, 1, 2, 50)):
+        damaged = json.loads(json.dumps(rows))
+        damaged[row][3][1][factor][slot] = changed
+        assert provenance_packet(damaged) != expected, damaged
+    assert provenance_packet(rows[::-1]) != expected
+    assert provenance_packet(rows + rows[:1]) != expected
+    changed = json.loads(json.dumps(rows))
+    changed[0][3][1][0][3] = 9
+    assert provenance_packet(changed) != expected
+    gate.passed_case('packet comparison rejects alias merge/split, changed dependencies, order and factors')
+
+
 def read(body, algebra='(algebra 0 1 + *)'):
     return f'(weight:read {algebra} {body})'
 
@@ -272,11 +320,13 @@ def retained_query_owners(gate):
     source='!(bind! &kb (new-space)) '
     source+='!(add-atom &kb A) !(add-atom &kb B) !(add-atom &kb C) '
     extra='(workers 1) (costs native-events-v1)'
+    # A closed wrapper computes its empty source once. Separate authored
+    # alternatives still activate independently, including equal answers.
     cases=[
         ('direct complete-empty', '', '(match &kb Missing Hit)', [], 6, 0),
         ('matched but empty body', '', '(match &kb A (empty))', [], 12, 0),
         ('empty nested equation', '(= (wrapped) (match &kb Missing Hit)) ',
-         '(wrapped)', [], None, 4),
+         '(wrapped)', [], None, 1),
         ('empty and successful alternatives',
          '(= (wrapped) (match &kb Missing Hit)) (= (wrapped) Good) (= (wrapped) Good) ',
          '(wrapped)', [['Good',1,[]],['Good',1,[]]], None, 3),
@@ -669,15 +719,6 @@ def scoped_reads(gate):
             subject, coefficient, factors = contribution(value)
             return weighted(meaning(subject), coefficient, factors)
         return [meaning(item) for item in value]
-    def packet(values):
-        identities = {}
-        def walk(value):
-            if not isinstance(value, list):
-                return value
-            if value and value[0] == 'Factor':
-                return [value[0], *[identities.setdefault(x, len(identities)) for x in value[1:3]], value[3]]
-            return [walk(x) for x in value]
-        return walk(values)
     def nested(body):
         return f'(weight:read {algebra} {body})'
     cases = [
@@ -744,7 +785,7 @@ def scoped_reads(gate):
                     f'(Split $p $r (select 7 {control(2000-cut, extra=extra)} $r)))')
                 split = trees[-1][0]
                 values = split[1] + parts[-1]['values']
-                assert packet(values) == packet(final['values']), (name, width, cut, values, final)
+                assert provenance_packet(values) == provenance_packet(final['values']), (name, width, cut, values, final)
                 assert parts[-1]['residual'] == split[2], (name, width, cut, split, parts)
                 for field in ('work', 'closed', 'satisfied', 'status'):
                     assert parts[-1][field] == final[field], (name, width, cut, field, parts, final)

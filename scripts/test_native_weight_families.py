@@ -9,7 +9,7 @@ import json
 import re
 
 from test_prime_native_control import Gate, ROOT, bag, observations
-from test_prime_weights import authored_fixture, contribution, control, read, weight_observations, weight_order_record
+from test_prime_weights import authored_fixture, contribution, control, read, weight_observations, weight_order_record, provenance_packet, provenance_packet_controls
 
 def normalized(value):
     if isinstance(value,list):return [normalized(v) for v in value]
@@ -122,6 +122,7 @@ def tropical(g,library):
     g.check('native tropical read and min aggregation retain equal physical rows and infinity')
 
 def real_pending(g):
+    provenance_packet_controls(g.gate)
     prefix=PREFIX+REAL+'''
 (= (g1:strict $result) (if (== $result Less) True (if (or (== $result Greater) (== $result Equal)) False $result)))
 (= (g1:same $weight) (g1:strict (real:compare $weight (RealLog 2) 0)))
@@ -144,8 +145,10 @@ def real_pending(g):
         assert whole['status']==status and whole['closed']==('False' if status=='suspended' else 'True'),whole
         assert len(whole['values'])==effects and g.effects('G1-REAL-BODY')==effects,whole
         for cut in (0,17,113,997):
-            t,o=g.run(predicate+' split',source+f'!(let {P} (select 7 {control(cut)} {expr}) (Split $v (select 7 {control(30000-cut)} $r)))')
-            joined=t[-1][0][1]+o[-1]['values'];assert joined==whole['values'],(cut,joined,whole)
+            t,o=g.run(predicate+' split',source+f'!(let {P} (select 7 {control(cut)} {expr}) (Split $v $r (select 7 {control(30000-cut)} $r)))')
+            joined=t[-1][0][1]+o[-1]['values']
+            assert provenance_packet(joined)==provenance_packet(whole['values']),(cut,joined,whole)
+            assert o[-1]['residual']==t[-1][0][2],(cut,t,o)
             for field in ['work','closed','status','satisfied']:assert o[-1][field]==whole[field],(predicate,cut,field,o,whole)
             assert g.effects('G1-REAL-BODY')==effects
         if status=='suspended':
@@ -153,7 +156,7 @@ def real_pending(g):
             t,_=g.run('same real zero resume',source+f'!(let {P} (select 7 {control(30000)} {expr}) (Zeros {zero} {zero}))')
             expected=['Zero',[],whole['work'],'False','False','suspended'];assert t[-1][0]==['Zeros',expected,expected],t
             assert g.effects('G1-REAL-BODY')==0
-        g.check(predicate+' preserves exact result IDs, work, effects and pending/closed observation across splits')
+        g.check(predicate+' preserves result provenance, residual identity, work, effects and pending/closed observation across splits')
 
 def pln_projection(g):
     prefix=PREFIX+f'!(import! &self {ROOT}/lib/lib_wmpln_evidence.metta)\n'
@@ -218,7 +221,7 @@ def exercise(g,case,algebra,rows,expected,law=''):
         extra='(costs native-events-v1)' if costs else ''
         pol=lambda n:g.control(n,'WO','(order by-weight ascending) '+law+' '+extra)
         fifo=g.control(0,extra='(demand all) '+extra)
-        body=f'(Recovered {state(0,costs)} {state(1,costs)} {state(2,costs)} (select 0 {fifo} $r2))'
+        body=f'(Recovered {state(0,costs)} {state(1,costs)} {state(2,costs)} (ResumeHandles $r0 $r1 $r2) (select 0 {fifo} $r2))'
         for i in (2,1,0):
             value=expression if i==0 else f'$r{i-1}'
             body=f'(let {pattern(i,cost=costs)} (select 1 {pol(30000 if i==0 else 0)} {value}) {body})'
@@ -229,7 +232,8 @@ def exercise(g,case,algebra,rows,expected,law=''):
             assert s[1:4]==[[],'False','False'] and s[5]=='suspended',s
             assert s[6][0]=='weight-order' and next(v[1] for v in s[6][1:] if v[0]=='pruning')[0]=='Refused',s
         assert all(s[4]==saved[0][4] for s in saved),saved
-        assert final['values']==whole['values'],(final,whole)
+        assert provenance_packet(final['values'])==provenance_packet(whole['values']),(final,whole)
+        assert value[4]==['ResumeHandles',final['residual'],final['residual'],final['residual']],value
         assert final['work']==saved[0][4] and final['closed']=='True' and final['status']=='closed',final
         assert g.effects('G1-RECOVER-BODY')==effects
         ids=[v[3][1][0][1] for v in final['values']];assert len(ids)==len(set(ids))==len(expected),ids
@@ -244,14 +248,15 @@ def exercise(g,case,algebra,rows,expected,law=''):
                     delta=index if key=='cost-read' else len(expected) if key=='publish' and index==3 else 0
                     assert count==first[key]+delta,(case,index,key,count,first[key],delta)
             assert len({a['scope'] for a in acc})==1,acc
-        g.check(case+f' costs{costs}: completed coefficients, raw occurrence IDs, effects and paid work survive two zero resumes and FIFO')
+        g.check(case+f' costs{costs}: completed coefficients, distinct occurrence IDs, exact residuals, effects and paid work survive two zero resumes and FIFO')
     # Numeric-order entry at finite cuts uses the same source; later FIFO carries
     # the saved output together with whatever source continuation remains.
     for cut in (0,1,17,113):
         t,o=g.run(case+f' policy replacement cut{cut}',prefix+
             f'!(let {pattern(0)} (select 1 {g.control(cut,"WO","(order by-weight ascending) "+law)} {expression}) '
-            f'(Split $v0 (select 0 {g.control(30000,extra="(demand all)")} $r0)))')
-        assert t[-1][0][1]+o[-1]['values']==whole['values'],(cut,t,o,whole)
+            f'(Split $v0 $r0 (select 0 {g.control(30000,extra="(demand all)")} $r0)))')
+        assert provenance_packet(t[-1][0][1]+o[-1]['values'])==provenance_packet(whole['values']),(cut,t,o,whole)
+        assert o[-1]['residual']==t[-1][0][2],(cut,t,o)
         assert o[-1]['closed']=='True' and g.effects('G1-RECOVER-BODY')==effects,(cut,o)
     g.check(case+': FIFO replacement preserves all outputs through four incomplete-source cuts')
 
@@ -284,6 +289,34 @@ def nested(g):
     trees=g.gate.receipts[-1]['stdout']
     assert 'suspended' in trees and 'fault' not in trees and 'Weighted' in trees,trees
     g.check('ordinary implicit outer handler retains explicit suspended child as a weighted value')
+
+    # The receiver retains the chosen parent branch while servicing the child.
+    # Repeated equal choices remain separate occurrences of that same branch.
+    earned = (f'(let {pattern(0)} {inner} '
+              f'(let {pattern(1,order=False)} (select 7 {g.control(0)} $r0) (Earned $v1)))')
+    source = prefix + f'(= (g1:keep-world $x) (Returned $x {earned} $x))\n'
+    expression = '(g1:keep-world (superpose (2 2 5)))'
+    _, parts = g.run('nested recovery retains selected parent world', source +
+                    f'!(select 7 {g.control(30000)} {expression})')
+    whole = parts[-1]
+    assert whole['closed']=='True' and whole['status']=='closed',whole
+    assert [v[1] for v in whole['values']]==[2,2,5],whole
+    for value in whole['values']:
+        assert value[0]=='Returned' and value[3]==value[1],value
+        assert value[2][0]=='Earned' and len(value[2][1])==1,value
+        assert contribution(value[2][1][0])==['V',['TropicalFinite',2],[['TropicalFinite',2]]],value
+    assert g.effects('G1-RECOVER-BODY')==3
+    for cut in sorted({0,1,97,whole['work']//2}):
+        t,parts = g.run('nested parent world through paid split', source +
+            f'!(let {pattern(2,order=False)} (select 7 {g.control(cut)} {expression}) '
+            f'(WorldSplit $v2 $r2 (select 7 {g.control(30000-cut)} $r2)))')
+        split=t[-1][0]; final=parts[-1]
+        assert provenance_packet(split[1]+final['values'])==provenance_packet(whole['values']),(cut,split,whole)
+        assert final['residual']==split[2],(cut,split,final)
+        for field in ('work','closed','status','satisfied'):
+            assert final[field]==whole[field],(cut,field,final,whole)
+        assert g.effects('G1-RECOVER-BODY')==3
+    g.check('nested recovery preserves parent aliases, duplicate occurrences, one effect per child and exact paid splits')
 
 
 def numeric(g):

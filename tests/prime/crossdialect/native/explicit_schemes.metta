@@ -19,6 +19,8 @@
 !(type:check &s (SchemeWitness Nat) (SchemeP Nat))
 !(type:check &s (SchemeWitness Nat) (SchemeP Bool))
 ; Stored HE schemes cannot add an undeclared native universal binder.
+; Outside the native checking fragment, this remains undetermined;
+; a failed HE check cannot establish a Prime refutation.
 !(bind! &legacy (new-space))
 !(add-atom &legacy (: Nat (u 0)))
 !(add-atom &legacy (: SchemeP (-> (u 0) (u 0))))

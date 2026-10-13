@@ -1238,13 +1238,13 @@ Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
     if (!frame) {
         VarId first = 1u;
         BindingsFrameSchema *shared = bindings_manufacture_schema(
-            variable->sym_id);
+            atom_symbol_current_id(variable));
         BindingsFrameSchema *schema = shared;
         if (!schema) {
             schema = bindings_frame_schema_new(&first, 1u);
             if (!schema)
                 return NULL;
-            schema->spellings[0] = variable->sym_id;
+            schema->spellings[0] = atom_symbol_current_id(variable);
         }
         bool installed = bindings_builder_register_frame_kind(
             builder, &first, 1u, identity, false, schema, NULL);

@@ -331,7 +331,7 @@ static void *type_reader_main(void *raw) {
                 task->subject, &types, &count));
             task->checks++;
         } else {
-            assert(space_head_declares_type(task->space, task->subject->sym_id)
+            assert(space_head_declares_type(task->space, atom_symbol_current_id(task->subject))
                 == (task->expected_count != 0u));
             count = space_get_declared_types(task->space, &results,
                 task->subject, &types);
@@ -459,6 +459,121 @@ static void check_concurrent_declared_types(SymbolTable *symbols) {
         (unsigned long long)checks);
 }
 
+typedef struct {
+    Space *space;
+    Atom *present;
+    Atom *absent;
+    pthread_barrier_t *start;
+    unsigned mode;
+    uint64_t checks;
+} MembershipReaderTask;
+
+static bool membership_read(MembershipReaderTask *task, Atom *query) {
+    bool applicable = false;
+    bool found = false;
+    switch (task->mode) {
+    case 0u:
+        return space_contains_exact(task->space, query);
+    case 1u:
+        found = space_contains_exact_symbol_application(task->space,
+            atom_head_symbol_id(query), query->expr.elems + 1u,
+            query->expr.len - 1u, &applicable);
+        break;
+    case 2u:
+        found = space_match_exists_ground_exact_expression_coordinates(
+            task->space, query->expr.elems, query->expr.len, &applicable);
+        break;
+    case 3u:
+        found = space_contains_canonical(task->space, query, &applicable);
+        break;
+    default:
+        found = space_match_exists_ground_exact(task->space, query, &applicable);
+        break;
+    }
+    assert(applicable);
+    task->checks++;
+    return found;
+}
+
+static void *membership_reader_main(void *raw) {
+    MembershipReaderTask *task = raw;
+    cetta_shared_transition_scope_enter();
+    int started = pthread_barrier_wait(task->start);
+    assert(started == 0 || started == PTHREAD_BARRIER_SERIAL_THREAD);
+    for (unsigned round = 0u; round < 80u; round++) {
+        assert(membership_read(task, task->present));
+        assert(!membership_read(task, task->absent));
+        assert(!cetta_shared_transition_guard_held_by_current_thread());
+        task->checks += 3u;
+        if (round == 0u) {
+            CETTA_SCOPED_SHARED_TRANSITION(outer);
+            assert(membership_read(task, task->present));
+            assert(!membership_read(task, task->absent));
+            assert(cetta_shared_transition_guard_held_by_current_thread());
+            task->checks += 3u;
+        }
+        if ((round & 7u) == 0u) sched_yield();
+    }
+    assert(!cetta_shared_transition_guard_held_by_current_thread());
+    cetta_shared_transition_scope_leave();
+    assert(!cetta_shared_transition_scope_active());
+    task->checks += 2u;
+    return NULL;
+}
+
+static uint64_t membership_read_episode(Space *space, Atom *present, Atom *absent) {
+    enum { READERS = 10 };
+    pthread_barrier_t start;
+    pthread_t threads[READERS];
+    MembershipReaderTask tasks[READERS];
+    assert(pthread_barrier_init(&start, NULL, READERS) == 0);
+    for (unsigned i = 0u; i < READERS; i++) {
+        tasks[i] = (MembershipReaderTask){.space=space, .present=present,
+            .absent=absent, .start=&start, .mode=i%5u};
+        assert(pthread_create(&threads[i], NULL, membership_reader_main, &tasks[i]) == 0);
+    }
+    uint64_t checks = 0u;
+    for (unsigned i = 0u; i < READERS; i++) {
+        assert(pthread_join(threads[i], NULL) == 0);
+        checks += tasks[i].checks;
+    }
+    assert(pthread_barrier_destroy(&start) == 0);
+    return checks;
+}
+
+static void check_concurrent_membership(SymbolTable *symbols) {
+    Arena persistent, construction;
+    arena_init(&persistent); arena_init(&construction);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Space space; space_init_with_universe(&space, &universe);
+    SymbolId head = symbol_intern_cstr(symbols, "cold-membership-row");
+    AtomId last = CETTA_ATOM_ID_NONE;
+    for (unsigned i = 0u; i < 256u; i++) {
+        last = term_universe_store_atom_id(&universe, NULL, row(&construction, head, i));
+        assert(last != CETTA_ATOM_ID_NONE);
+        space_add_atom_id(&space, last);
+    }
+    assert(space.native.id_present_synced_len < space_length64(&space));
+    Atom *present = row(&construction, head, 255), *absent = row(&construction, head, 999);
+    SpaceReadToken before = space_read_token(&space);
+    uint64_t checks = membership_read_episode(&space, present, absent);
+    assert(space_read_token_is_current(before));
+    assert(space_remove_atom_id(&space, last));
+    space_add_atom_id(&space, term_universe_store_atom_id(&universe, NULL, absent));
+    assert(!space_read_token_is_current(before));
+    SpaceReadToken after = space_read_token(&space);
+    checks += membership_read_episode(&space, absent, present);
+    assert(space_read_token_is_current(after));
+    assert(space_contains_exact(&space, absent) && !space_contains_exact(&space, present));
+    assert(!cetta_shared_transition_scope_active());
+    space_free(&space); term_universe_free(&universe);
+    arena_free(&construction); arena_free(&persistent);
+    printf("PASS: cold concurrent membership, misses, revisions, nested guards (%llu checks)\n",
+        (unsigned long long)checks);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -560,6 +675,7 @@ int main(void) {
     arena_free(&persistent);
     bindings_thread_cache_free();
     check_concurrent_declared_types(&symbols);
+    check_concurrent_membership(&symbols);
     g_symbols = NULL;
     symbol_table_free(&symbols);
     puts("PASS: shared Space concurrent index snapshots");

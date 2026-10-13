@@ -26,7 +26,7 @@ import argparse, hashlib, json, os, resource, shlex, signal, subprocess, sys, th
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PETTA = ROOT.parent/'PeTTa'
+PETTA = Path(os.environ.get('PETTA_ROOT', ROOT.parent / 'PeTTa')).resolve()
 sys.path.insert(0,str(ROOT/'scripts'))
 from petta_corpus_manifest import alpha_canonicalize_atom_text
 
@@ -145,6 +145,11 @@ def paired_measure(cmd, cwd, env, stem, timeout, cpu, instructions):
     so=stem.with_suffix('.stdout')
     se=stem.with_suffix('.stderr')
     perf=stem.with_suffix('.perf')
+    timing=stem.with_suffix('.time')
+    timing.write_text('')
+    # wait4 on the Python-forked launcher includes its pre-exec memory floor.
+    # The inner time process measures the native job's own descendants.
+    cmd=['/usr/bin/time','-f','%e %U %S %M','-o',str(timing),'--',*cmd]
     if instructions:
         cmd=['perf','stat','-x',',','-e','instructions:u,cycles:u','-o',str(perf),'--',*cmd]
     def prepare():
@@ -169,8 +174,17 @@ def paired_measure(cmd, cwd, env, stem, timeout, cpu, instructions):
         for line in perf.read_text().splitlines():
             fields=line.split(',')
             if len(fields)>2 and fields[0].isdigit(): counts[fields[2]]=int(fields[0])
+    native_wall = native_user = native_system = native_rss = None
+    if timing.exists():
+        lines=timing.read_text().splitlines()
+        fields=lines[-1].split() if lines else []
+        if len(fields)==4:
+            native_wall,native_user,native_system=map(float,fields[:3])
+            native_rss=int(fields[3])
     return dict(rc=p.returncode,timed_out=bool(expired),wall=time.perf_counter()-started,
-                user=usage.ru_utime,system=usage.ru_stime,rss_kib=usage.ru_maxrss,
+                user=usage.ru_utime,system=usage.ru_stime,rss_kib=native_rss,
+                native_wall=native_wall,native_user=native_user,native_system=native_system,
+                time_file=str(timing),
                 instructions=counts.get('instructions:u'),cycles=counts.get('cycles:u'),
                 stdout_sha256=hashlib.sha256(so.read_bytes()).hexdigest(),
                 stdout_file=str(so),stderr_file=str(se),command=cmd)
@@ -221,7 +235,8 @@ def paired_main():
     if args.jetta_jar: identities['jetta']=sha_file(args.jetta_jar)
     if args.mork_bin: identities['mork']=sha_file(args.mork_bin)
     run_identity=dict(binaries=identities,engine_env=configured,cpu=args.cpu,
-                      trials=args.trials,timeout=args.timeout,instructions=args.instructions)
+                      trials=args.trials,timeout=args.timeout,instructions=args.instructions,
+                      measurement='wall includes launcher startup; peak RSS is the native job, before result readout')
     (out/'identity.json').write_text(json.dumps(run_identity,indent=2)+'\n')
     rows=[]
     failures=False
@@ -251,6 +266,7 @@ def paired_main():
                 if eng in {'cetta-he','cetta-petta','cetta-mork'}:
                     lang='petta' if eng=='cetta-petta' else 'he'
                     cmd=[str(args.cetta.resolve()),'--lang',lang]
+                    if 'profile' in variant: cmd+=['--profile',variant['profile']]
                     if eng=='cetta-mork': cmd+=['--quiet']
                     cmd+=[str(src)]
                 elif eng=='swi': cmd=['sh',str(args.petta_root.resolve()/'run.sh'),str(src),'--silent']
@@ -261,7 +277,10 @@ def paired_main():
                     if not args.mork_bin: ap.error('--mork-bin required for mork')
                     if m['contract']!='occurrence-bag' or not m['params'].get('projection_heads'):
                         raise ValueError('native MORK requires an explicit bag projection')
-                    cmd=[str(args.mork_bin.resolve()),'run',str(src),'--steps',str(len(m['params']['projection_heads'])),
+                    steps=variant.get('steps',len(m['params']['projection_heads']))
+                    if not isinstance(steps,int) or isinstance(steps,bool) or steps<1:
+                        raise ValueError('native MORK steps must be a positive integer')
+                    cmd=[str(args.mork_bin.resolve()),'run',str(src),'--steps',str(steps),
                          '--instrumentation','0','{store-output}']
                 elif eng=='jetta':
                     if not args.jetta_jar: ap.error('--jetta-jar required for jetta')
@@ -326,6 +345,7 @@ def paired_main():
                     if correct: status='pass'
                     record(dict(case=name,engine=eng,trial=trial,phase='run',status=status,
                                 correct=correct,answers=len(got),contract=contract,
+                                profile=variant.get('profile'),
                                 dependencies=dependencies,source_sha256=source_sha,
                                 oracle_sha256=oracle_sha,**rr))
                     print(f'{name:34s} {eng:12s} {status:14s} {rr["wall"]:.6f}s {rr["rss_kib"]}KiB',flush=True)

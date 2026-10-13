@@ -20,6 +20,86 @@ static Atom *nest(Arena *arena, Atom *head, Atom *leaf, size_t depth) {
     return leaf;
 }
 
+/* Rendered answers cannot expose an otherwise unreachable binding retained
+ * in a function's continuation. Check the actual environment boundary as well
+ * as the language-level closure examples in need_application.metta. */
+static bool function_projection(Arena *arena) {
+    Atom *caller = atom_var(arena, "caller");
+    Atom *capture = atom_var(arena, "capture");
+    Atom *private = atom_var(arena, "private");
+    Atom *seven = atom_int(arena, 7);
+    Atom *eleven = atom_int(arena, 11);
+    Atom *body = atom_expr2(arena, atom_symbol(arena, "input"), caller);
+    Atom *result = atom_expr2(arena, atom_symbol(arena, "closure"), capture);
+    Bindings full, projected;
+    bindings_init(&full);
+    assert(bindings_add_var(&full, caller, seven));
+    assert(bindings_add_var(&full, capture, eleven));
+    assert(bindings_add_var(&full, private, atom_int(arena, 13)));
+    assert(bindings_project_function_result(arena, body, result,
+                                           &full, &projected));
+    bool ok = atom_eq(bindings_apply(&projected, arena, caller), seven) &&
+        atom_eq(bindings_apply(&projected, arena, capture), eleven) &&
+        !bindings_lookup_value_id(&projected, private->var_id).skeleton;
+    bindings_free(&projected);
+    bindings_free(&full);
+    if (!ok)
+        fputs("FAIL: function projection retains caller and closure bindings only\n",
+              stderr);
+    return ok;
+}
+
+static bool cell_projection(Arena *arena) {
+    Atom *capture = atom_var(arena, "cell-capture");
+    Atom *private = atom_var(arena, "continuation-private");
+    Atom *seven = atom_int(arena, 7);
+    PrimeNeedCellView cell = {.origin = capture};
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    VarId captured_id = capture->var_id;
+    cell.capture_known = true;
+    cell.capture_var_ids = &captured_id;
+    cell.capture_var_count = 1u;
+#endif
+    Bindings caller, projected;
+    bindings_init(&caller);
+    assert(bindings_add_var(&caller, capture, seven));
+    assert(bindings_add_var(&caller, private, atom_int(arena, 13)));
+    assert(prime_need_project_cell_logical_env(arena, &cell, &caller, &projected));
+    bool ok = atom_eq(bindings_apply(&projected, arena, capture), seven) &&
+        !bindings_lookup_value_id(&projected, private->var_id).skeleton;
+    bindings_free(&projected);
+    bindings_free(&caller);
+    if (!ok)
+        fputs("FAIL: cell projection excludes unrelated continuation bindings\n",
+              stderr);
+    return ok;
+}
+
+static void full_demand_context(Arena *arena) {
+    Space local = {0}, foreign = {0};
+    Atom *body = atom_expr2(arena, atom_symbol(arena, "key"),
+                            atom_int(arena, 7));
+    Atom *parts[] = {atom_symbol(arena, "metta"), body,
+        atom_symbol(arena, "%Undefined%"), atom_space(arena, &local)};
+    Atom *request = atom_expr(arena, parts, 4u);
+    assert(prepared_full_demand_body(&local, arena, request, NULL) == body);
+
+    parts[3] = atom_space(arena, &foreign);
+    request = atom_expr(arena, parts, 4u);
+    assert(prepared_full_demand_body(&local, arena, request, NULL) == request);
+    Atom *current_context = atom_symbol(arena, "context-space");
+    parts[3] = atom_expr(arena, &current_context, 1u);
+    request = atom_expr(arena, parts, 4u);
+    assert(prepared_full_demand_body(&local, arena, request, NULL) == body);
+    parts[2] = atom_symbol(arena, "Number");
+    request = atom_expr(arena, parts, 4u);
+    assert(prepared_full_demand_body(&local, arena, request, NULL) == request);
+    parts[2] = atom_symbol(arena, "%Undefined%");
+    parts[3] = atom_expr2(arena, atom_symbol(arena, "context-space"), body);
+    request = atom_expr(arena, parts, 4u);
+    assert(prepared_full_demand_body(&local, arena, request, NULL) == request);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -38,6 +118,10 @@ int main(void) {
     eval_set_library_context(&context);
     prime_need_snapshot_init(&g_prime_need_active);
     assert(prime_need_snapshot_begin(&g_prime_need_active));
+
+    if (!function_projection(&arena) || !cell_projection(&arena))
+        return 1;
+    full_demand_context(&arena);
 
     Atom *x = atom_var(&arena, "x");
     Atom *y = atom_var(&arena, "y");

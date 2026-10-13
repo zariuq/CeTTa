@@ -32,10 +32,26 @@
 
 bool prime_scoped_judgment_is_head_id(SymbolId head);
 
+/* The engine's spelling of one of its `set:` words, or `Set` package
+ * names, in the `hol:` namespace when `hol` holds. */
+const char *prime_scoped_word(const char *word, bool hol);
+
+/* Whether the theory a space selects is a profile of the native logic. */
+bool prime_scoped_space_is_hol(Space *space);
+
 /* Returns NULL for an unowned head or an unselected set: interpretation. */
 Atom *prime_scoped_judgment_judge(
     Arena *arena, Space *space, Atom *judgment,
     bool steps_limited, uint64_t steps);
+
+/* The identity profile of a space, as the kernel's CETTA_PRIME_IDENTITY_*
+ * value.  A space selects one with `(id:profile NAME)`, NAME one of
+ * identity-j, identity-scoped, identity-uip and identity-univalence, read
+ * like `(set:profile NAME)`; a space that selects none has the run's profile
+ * (`--profile`).  An unknown name, or two different names, is a conflicting
+ * selection: -1, under which no profile-dependent declaration exists and the
+ * identity judgments stay unevaluated. */
+int prime_space_identity_policy(Space *space);
 
 /* Spellings of the declaration identities that proof packages generate.  No
  * program declares them: admission refuses them and declaration lookup does

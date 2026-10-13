@@ -299,7 +299,7 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
         adapter->boolean_value, adapter->construct_value,
         adapter->constructs_expression, adapter->opaque_value,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        source_view.role ? &source_view : NULL, true,
+        &source_view, true,
         active_composition_uses_total_structural_eq(),
         prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
     if (!answers->program)
@@ -360,6 +360,72 @@ static Atom *eval_owned_residual_import(void *context, Atom *value) {
     return atom_deep_copy_session_copy(context, value);
 }
 
+static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
+                                    void *context);
+
+/* A resumption consumes the same return packet as a terminal receiver.
+ * Its expression-shaped hole must not reactivate an earned value. */
+static bool eval_owned_residual_return(Outcome *outcome,
+                                       EvalOwnedResidual *residual) {
+    Atom *value = outcome_atom_materialize(residual->arena, outcome);
+    if (!value || atom_is_legacy_empty_sentinel(value))
+        return true;
+    if (!residual->resumption) {
+        CettaOwnedReturn returned = {
+            .outcome = outcome->delayed
+                ? cetta_call_suspended(value, outcome->delayed)
+                : cetta_call_completed_value(value),
+            .environment = &outcome->env,
+        };
+        returned.outcome.result_form = outcome->result_form;
+        residual->ok = residual->consume(residual->consumer, &returned);
+        return residual->ok;
+    }
+    /* This adapter has no delay service. A conditional row cannot run its
+     * caller as though its conditions were discharged, nor retry its source. */
+    if (outcome->delayed ||
+        (outcome->result_form != CETTA_CALL_RESULT_EXPRESSION &&
+         outcome->result_form != CETTA_CALL_RESULT_COMPLETED_VALUE)) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        residual->ok = false;
+        return false;
+    }
+    __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
+    EvalGcExternalOwnerGuard borrowed = {0};
+    eval_gc_external_owner_guard_enter(&borrowed);
+    Bindings selected;
+    if (!bindings_clone(&selected, &outcome->env)) {
+        residual->ok = false;
+        return false;
+    }
+    Atom *continuation = residual->resumption;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        continuation = prime_substitute_returned_value(
+            residual->arena, continuation, residual->hole, value,
+            &selected, outcome->result_form);
+        residual->ok = continuation != NULL;
+    } else {
+        /* This source adapter admits only inert completed values. A value
+         * outside that fragment must not be reinterpreted as source, and a
+         * refusal after production must not restart the producer. */
+        residual->ok = outcome->result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
+            atom_is_constructor_normal_form(
+                residual->answers->space, residual->arena, value, -1);
+        if (!residual->ok)
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        else
+            residual->ok = bindings_add_var(&selected, residual->hole, value);
+    }
+    if (residual->ok) {
+        EvalOwnedResidual caller = *residual;
+        caller.resumption = NULL;
+        caller.hole = NULL;
+        residual->ok = eval_owned_residual_body(continuation, &selected, &caller);
+    }
+    bindings_free(&selected);
+    return residual->ok;
+}
+
 /* The ordinary evaluator owns a declined equation body. Candidate matching
  * uses its existing single-occurrence primitive, including fresh variables;
  * the decoded continuation owns the already-selected caller values. */
@@ -370,38 +436,8 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
     outcome_set_init(&values);
     eval_for_caller(residual->answers->space, residual->arena,
                     NULL, body, -1, bindings, false, &values);
-    for (CettaCount index = 0u; residual->ok && index < values.len; index++) {
-        Outcome *outcome = &values.items[index];
-        Atom *value = outcome_atom_materialize(residual->arena, outcome);
-        if (!value || atom_is_legacy_empty_sentinel(value))
-            continue;
-        if (residual->resumption) {
-            BindingsBuilder selected;
-            if (!bindings_builder_init(&selected, &outcome->env)) {
-                residual->ok = false;
-                break;
-            }
-            residual->ok = bindings_builder_add_var_fresh(&selected,
-                residual->hole, value);
-            if (residual->ok) {
-                EvalOwnedResidual caller = *residual;
-                caller.resumption = NULL;
-                caller.hole = NULL;
-                (void)eval_owned_residual_body(residual->resumption,
-                    bindings_builder_bindings(&selected), &caller);
-                residual->ok = caller.ok;
-            }
-            bindings_builder_free(&selected);
-        } else {
-            CettaOwnedReturn returned = {
-                .outcome = outcome->delayed
-                    ? cetta_call_suspended(value, outcome->delayed)
-                    : cetta_call_completed_value(value),
-                .environment = &outcome->env,
-            };
-            residual->ok = residual->consume(residual->consumer, &returned);
-        }
-    }
+    for (CettaCount index = 0u; residual->ok && index < values.len; index++)
+        (void)eval_owned_residual_return(&values.items[index], residual);
     outcome_set_free(&values);
     return residual->ok && !eval_unwinding();
 }
@@ -647,7 +683,7 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
         adapter->boolean_value, adapter->construct_value,
         adapter->constructs_expression, adapter->opaque_value,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        source_view.role ? &source_view : NULL,
+        &source_view,
         active_composition_uses_total_structural_eq(),
         prepared_pure_match_decision_semantics(mode));
     if (!step) {

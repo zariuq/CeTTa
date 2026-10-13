@@ -1,0 +1,7 @@
+!(bind! &top-token 42)
+!(parse "&top-token")
+!(import! &self lexical_child)
+!(child-parses-local)
+!(child-reads-local)
+!(child-parses-top)
+!(parse "&child-token")

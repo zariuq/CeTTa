@@ -387,7 +387,7 @@ static Atom *str_to_symbol(Arena *a, Atom *const *args, CettaStrRefusal *r) {
         return str_refuses(r, "StrNulInSymbolV1", (size_t)(nul - text));
     if (!cetta_utf8_count(text, len, NULL, &bad))
         return str_refuses(r, "StrMalformedUtf8V1", bad);
-    return atom_symbol(a, text);
+    return atom_symbol_data(a, text);
 }
 
 static Atom *str_from_symbol(Arena *a, Atom *const *args, CettaStrRefusal *r) {
@@ -556,6 +556,69 @@ static Atom *str_sha256(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     return atom_string(a, digest);
 }
 
+/* ASCII letters in lower case; every other byte unchanged. */
+static Atom *str_lower(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    char *out = arena_alloc(a, len + 1u);
+    for (size_t i = 0u; i < len; i++)
+        out[i] = text[i] >= 'A' && text[i] <= 'Z' ? (char)(text[i] + 32) : text[i];
+    out[len] = '\0';
+    return atom_string_n(a, out, len);
+}
+
+/* The width of the character at text[i]: a well-formed UTF-8 sequence, or one
+ * byte for a byte that does not begin one.  Unlike the codepoint operations,
+ * the char operations take any bytes, so a cut never fails on stray input. */
+static size_t str_char_width(const char *text, size_t len, size_t i) {
+    unsigned char c = (unsigned char)text[i];
+    size_t width = c < 0x80u ? 1u : (c >> 5) == 6u ? 2u
+        : (c >> 4) == 14u ? 3u : (c >> 3) == 30u ? 4u : 1u;
+    for (size_t k = 1u; k < width; k++)
+        if (i + k >= len || (((unsigned char)text[i + k]) & 0xc0u) != 0x80u)
+            return 1u;
+    return width;
+}
+
+static Atom *str_char_length(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len, count = 0u;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    for (size_t i = 0u; i < len; i += str_char_width(text, len, i))
+        count++;
+    return atom_int(a, (int64_t)count);
+}
+
+/* Characters start up to end; offsets past the text are clamped to it. */
+static Atom *str_char_slice(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len, start, stop, count = 0u, from = 0u, to = 0u, i = 0u;
+    if (!str_text(args[0], &text, &len) || !str_offset(args[1], &start) ||
+        !str_offset(args[2], &stop))
+        return str_expects(r, "expected text, non-negative start, non-negative end");
+    if (stop < start)
+        stop = start;
+    from = to = len;
+    for (;;) {
+        if (count == start && from == len)
+            from = i;
+        if (count == stop) {
+            to = i;
+            break;
+        }
+        if (i >= len)
+            break;
+        i += str_char_width(text, len, i);
+        count++;
+    }
+    if (from > to)
+        from = to;
+    return atom_string_n(a, text + from, to - from);
+}
+
 static const CettaStrNative str_natives[] = {
     {"byte-length", 1u, 0u, str_byte_length, CETTA_STR_RESULT_ATOM},
     {"byte-slice", 3u, 0u, str_byte_slice, CETTA_STR_RESULT_ATOM},
@@ -587,6 +650,9 @@ static const CettaStrNative str_natives[] = {
     {"escape", 2u, 0u, str_escape, CETTA_STR_RESULT_ATOM},
     {"unescape", 2u, 0u, str_unescape, CETTA_STR_RESULT_ATOM},
     {"sha256", 1u, 0u, str_sha256, CETTA_STR_RESULT_ATOM},
+    {"lower", 1u, 0u, str_lower, CETTA_STR_RESULT_ATOM},
+    {"char-length", 1u, 0u, str_char_length, CETTA_STR_RESULT_ATOM},
+    {"char-slice", 3u, 0u, str_char_slice, CETTA_STR_RESULT_ATOM},
 };
 
 const CettaStrNative *cetta_str_native(const char *name) {

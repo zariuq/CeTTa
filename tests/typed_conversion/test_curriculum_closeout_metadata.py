@@ -18,12 +18,12 @@ WRAPPERS = (
 
 def check(binary: Path, evidence: Path) -> None:
     evidence.mkdir(parents=True, exist_ok=True)
-    source = ledger.CURRICULUM / "HOL/HOLLightProofClosure.ml"
+    source = ledger.CURRICULUM / "HOL/HOLLightSelfImpSmoke.ml"
     items = {name: statement for name, statement, _ in ledger.extract_items(source)}
     expected = "let self_imp = DISCH p (ASSUME p);;"
     assert items["self_imp"] == expected and expected in source.read_text()
     dependency = ledger.construct_feature(expected)
-    assert ledger.quote_claims(expected, dependency, "HOL/HOLLightProofClosure.ml")
+    assert ledger.quote_claims(expected, dependency, "HOL/HOLLightSelfImpSmoke.ml")
     assert not ledger.quote_claims("let self_imp =", "let self_imp = is outside the kernel")
     print("PASS curriculum complete ML source extraction")
     receipts = {}

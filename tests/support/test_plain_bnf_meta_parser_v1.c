@@ -797,6 +797,64 @@ static void source_loader_gate(TestCounts *counts) {
                 &out, &status, error, sizeof(error)) && out == NULL &&
                 status == CETTA_DETERMINISTIC_EQUATION_V1_UNSUPPORTED_RULE,
             "the same let-shaped input is invalid when explicitly executed");
+
+        Atom *open_name = atom_var(&arena, "open");
+        payload = atom_expr3(&arena, atom_symbol(&arena, "scoped"),
+                             open_name, open_name);
+        data_call = atom_expr2(&arena, atom_symbol(&arena, "duplicate"), payload);
+        expected = atom_expr3(&arena, atom_symbol(&arena, "pair"), payload, payload);
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "open input syntax passes through data application with its identities intact");
+        (void)expect(counts,
+            !cetta_deterministic_equation_plan_v1_run(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && out == NULL &&
+                status == CETTA_DETERMINISTIC_EQUATION_V1_NON_GROUND_TERM,
+            "ordinary execution does not reinterpret open input syntax as data");
+
+        const Atom *rule_left = NULL;
+        for (uint32_t r = 0u;
+             r < cetta_deterministic_equation_plan_v1_rule_count(plan); r++) {
+            const Atom *left = NULL;
+            if (cetta_deterministic_equation_plan_v1_rule_view(
+                    plan, r, NULL, &left, NULL) && left &&
+                left->kind == ATOM_EXPR && left->expr.len == 2u &&
+                atom_is_symbol(left->expr.elems[0], "duplicate")) {
+                rule_left = left;
+                break;
+            }
+        }
+        Atom *source_name = rule_left ? rule_left->expr.elems[1] : NULL;
+        data_call = source_name
+            ? atom_expr2(&arena, atom_symbol(&arena, "duplicate"), source_name)
+            : NULL;
+        expected = source_name
+            ? atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                         source_name, source_name) : NULL;
+        (void)expect(counts,
+            cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "an input identity equal to a rule metavariable is still opaque input data");
+
+        CettaFrameIdentityScope private_scope = {0};
+        Atom *private_name = atom_fresh_private_var(
+            &arena, &private_scope, open_name);
+        cetta_frame_identity_scope_clear(&private_scope);
+        data_call = private_name
+            ? atom_expr2(&arena, atom_symbol(&arena, "duplicate"), private_name)
+            : NULL;
+        expected = private_name
+            ? atom_expr3(&arena, atom_symbol(&arena, "pair"),
+                         private_name, private_name) : NULL;
+        (void)expect(counts,
+            private_name && cetta_deterministic_equation_plan_v1_apply(
+                plan, data_call, NULL, NULL, &arena, 128u, 10000u,
+                &out, &status, error, sizeof(error)) && atom_eq(out, expected),
+            "private input identities survive the authored equation interpretation");
         (void)expect(counts,
             !cetta_deterministic_equation_plan_v1_apply(
                 plan, value, NULL, NULL, &arena, 128u, 10000u,

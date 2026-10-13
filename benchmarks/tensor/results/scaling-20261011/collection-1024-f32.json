@@ -1,0 +1,446 @@
+{
+  "status": "passed",
+  "programme_complete": false,
+  "seed": 109107,
+  "sizes": [
+    {
+      "records": 5514,
+      "dimension": 1024,
+      "load_seconds_both_backends": 8.817378445994109,
+      "execution": {
+        "provider": "avx4",
+        "dtype": "f64",
+        "reduction": "lane4"
+      },
+      "first_native_query_ms": 270.79714997671545,
+      "first_native_query_after_write_ms": 3.737438004463911,
+      "scan_tier": "f32",
+      "eligible_rows": {
+        "all": 5514,
+        "group": 1379,
+        "one": 1,
+        "pct01": 55,
+        "pct10": 551,
+        "pct50": 2757,
+        "boolean": 1,
+        "empty": 0
+      },
+      "batches": {
+        "1": {
+          "samples": 12,
+          "p50_ms": 1.2746864813379943,
+          "p95_ms": 1.6810510423965752,
+          "p50_ms_per_query": 1.2746864813379943
+        },
+        "4": {
+          "samples": 12,
+          "p50_ms": 4.092663031769916,
+          "p95_ms": 5.077345005702227,
+          "p50_ms_per_query": 1.023165757942479
+        },
+        "16": {
+          "samples": 12,
+          "p50_ms": 15.219856024486944,
+          "p95_ms": 16.561822965741158,
+          "p50_ms_per_query": 0.951241001530434
+        }
+      },
+      "profile_p50": {
+        "all": {
+          "native_decode_ns": 20255.0,
+          "native_eval_ns": 1439958.5,
+          "permanent_bytes": 59123495.0,
+          "scratch_bytes": 21616.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 14195.5,
+          "transfer_and_worker_ns": 1529749.5,
+          "client_decode_ns": 75146.0,
+          "request_bytes": 8386.0,
+          "reply_bytes": 1003.0,
+          "revision_check_ns": 114981.5,
+          "queries": 1.0
+        },
+        "group": {
+          "native_decode_ns": 19345.5,
+          "native_eval_ns": 1001587.5,
+          "permanent_bytes": 59124835.0,
+          "scratch_bytes": 21848.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 15700.0,
+          "transfer_and_worker_ns": 1078183.5,
+          "client_decode_ns": 73876.0,
+          "request_bytes": 8409.0,
+          "reply_bytes": 1003.0,
+          "revision_check_ns": 111856.5,
+          "queries": 1.0
+        },
+        "pct01": {
+          "native_decode_ns": 13650.5,
+          "native_eval_ns": 292619.0,
+          "permanent_bytes": 59132217.0,
+          "scratch_bytes": 21848.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 13290.5,
+          "transfer_and_worker_ns": 337489.5,
+          "client_decode_ns": 65936.0,
+          "request_bytes": 8401.0,
+          "reply_bytes": 1003.0,
+          "revision_check_ns": 71410.5,
+          "queries": 1.0
+        },
+        "pct10": {
+          "native_decode_ns": 18356.0,
+          "native_eval_ns": 489801.5,
+          "permanent_bytes": 59134093.0,
+          "scratch_bytes": 21848.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 15115.0,
+          "transfer_and_worker_ns": 577942.5,
+          "client_decode_ns": 72356.0,
+          "request_bytes": 8401.0,
+          "reply_bytes": 1003.0,
+          "revision_check_ns": 107781.0,
+          "queries": 1.0
+        },
+        "pct50": {
+          "native_decode_ns": 17815.0,
+          "native_eval_ns": 833125.0,
+          "permanent_bytes": 59135165.0,
+          "scratch_bytes": 21848.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 14170.5,
+          "transfer_and_worker_ns": 906277.0,
+          "client_decode_ns": 67720.5,
+          "request_bytes": 8401.0,
+          "reply_bytes": 1003.0,
+          "revision_check_ns": 109691.5,
+          "queries": 1.0
+        },
+        "one": {
+          "native_decode_ns": 14535.0,
+          "native_eval_ns": 1710467.0,
+          "permanent_bytes": 59130877.0,
+          "scratch_bytes": 15160.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 12895.0,
+          "transfer_and_worker_ns": 1771223.5,
+          "client_decode_ns": 23350.0,
+          "request_bytes": 8408.0,
+          "reply_bytes": 323.0,
+          "revision_check_ns": 81716.0,
+          "queries": 1.0
+        },
+        "boolean": {
+          "native_decode_ns": 18755.0,
+          "native_eval_ns": 498746.5,
+          "permanent_bytes": 59135165.0,
+          "scratch_bytes": 16120.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 17595.0,
+          "transfer_and_worker_ns": 556812.5,
+          "client_decode_ns": 20656.0,
+          "request_bytes": 8505.0,
+          "reply_bytes": 323.0,
+          "revision_check_ns": 86891.5,
+          "queries": 1.0
+        },
+        "empty": {
+          "native_decode_ns": 14205.0,
+          "native_eval_ns": 214473.0,
+          "permanent_bytes": 59135165.0,
+          "scratch_bytes": 13432.0,
+          "data_symbols": 0.0,
+          "symbol_bytes": 2703044.0,
+          "client_encode_ns": 11975.0,
+          "transfer_and_worker_ns": 255808.0,
+          "client_decode_ns": 7925.0,
+          "request_bytes": 8409.0,
+          "reply_bytes": 153.0,
+          "revision_check_ns": 61100.5,
+          "queries": 1.0
+        }
+      },
+      "resident_metrics": [
+        {
+          "iteration": 0,
+          "native_decode_ns": 11910,
+          "native_eval_ns": 940662,
+          "permanent_bytes": 59425022,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 15040,
+          "transfer_and_worker_ns": 987893,
+          "client_decode_ns": 59271,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 82671,
+          "queries": 1
+        },
+        {
+          "iteration": 16,
+          "native_decode_ns": 8730,
+          "native_eval_ns": 835641,
+          "permanent_bytes": 59457718,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 14100,
+          "transfer_and_worker_ns": 876611,
+          "client_decode_ns": 90461,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 55300,
+          "queries": 1
+        },
+        {
+          "iteration": 32,
+          "native_decode_ns": 8740,
+          "native_eval_ns": 836701,
+          "permanent_bytes": 59490950,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 7610,
+          "transfer_and_worker_ns": 859571,
+          "client_decode_ns": 57201,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 32971,
+          "queries": 1
+        },
+        {
+          "iteration": 48,
+          "native_decode_ns": 8760,
+          "native_eval_ns": 836681,
+          "permanent_bytes": 59525254,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 15040,
+          "transfer_and_worker_ns": 871991,
+          "client_decode_ns": 98371,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 55461,
+          "queries": 1
+        },
+        {
+          "iteration": 64,
+          "native_decode_ns": 8870,
+          "native_eval_ns": 841901,
+          "permanent_bytes": 59563846,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 12030,
+          "transfer_and_worker_ns": 868682,
+          "client_decode_ns": 102181,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 41370,
+          "queries": 1
+        },
+        {
+          "iteration": 80,
+          "native_decode_ns": 8830,
+          "native_eval_ns": 848321,
+          "permanent_bytes": 59604046,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 8740,
+          "transfer_and_worker_ns": 884042,
+          "client_decode_ns": 82701,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 36350,
+          "queries": 1
+        },
+        {
+          "iteration": 96,
+          "native_decode_ns": 9850,
+          "native_eval_ns": 888892,
+          "permanent_bytes": 59644246,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 7720,
+          "transfer_and_worker_ns": 928222,
+          "client_decode_ns": 61541,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 38201,
+          "queries": 1
+        },
+        {
+          "iteration": 112,
+          "native_decode_ns": 8811,
+          "native_eval_ns": 838990,
+          "permanent_bytes": 59677478,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 6900,
+          "transfer_and_worker_ns": 872872,
+          "client_decode_ns": 63630,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 99591,
+          "queries": 1
+        },
+        {
+          "iteration": 127,
+          "native_decode_ns": 8691,
+          "native_eval_ns": 838030,
+          "permanent_bytes": 59713390,
+          "scratch_bytes": 21616,
+          "data_symbols": 0,
+          "symbol_bytes": 2703044,
+          "client_encode_ns": 7440,
+          "transfer_and_worker_ns": 860432,
+          "client_decode_ns": 56690,
+          "request_bytes": 8386,
+          "reply_bytes": 1003,
+          "revision_check_ns": 31990,
+          "queries": 1
+        }
+      ],
+      "latency": {
+        "all": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 1.8709785072132945,
+            "p95_ms": 2.182179014198482
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 1.82147350278683,
+            "p95_ms": 9.34820098336786
+          }
+        },
+        "group": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 1.3324570027180016,
+            "p95_ms": 2.9395580058917403
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 4.998574499040842,
+            "p95_ms": 11.113122978713363
+          }
+        },
+        "pct01": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 0.5436769861262292,
+            "p95_ms": 1.4025279670022428
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 4.1417784814257175,
+            "p95_ms": 5.727314040996134
+          }
+        },
+        "pct10": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 0.8887764706742018,
+            "p95_ms": 1.5724300174042583
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 4.812777013285086,
+            "p95_ms": 10.123351006768644
+          }
+        },
+        "pct50": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 1.2183204817119986,
+            "p95_ms": 5.739424028433859
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 6.786237034248188,
+            "p95_ms": 9.328479995019734
+          }
+        },
+        "one": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 1.9526550313457847,
+            "p95_ms": 3.01266903989017
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 3.0275494791567326,
+            "p95_ms": 3.9279810152947903
+          }
+        },
+        "boolean": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 0.7280039717443287,
+            "p95_ms": 2.891206997446716
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 4.714090493507683,
+            "p95_ms": 6.9165489985607564
+          }
+        },
+        "empty": {
+          "native": {
+            "samples": 12,
+            "p50_ms": 0.38118549855425954,
+            "p95_ms": 2.383430954068899
+          },
+          "chroma": {
+            "samples": 12,
+            "p50_ms": 0.5653569824062288,
+            "p95_ms": 0.8436509524472058
+          }
+        }
+      },
+      "chroma_recall": {
+        "samples": 82,
+        "mean": 0.975609756097561,
+        "min": 0.6
+      },
+      "temporary_store_bytes": 63427063,
+      "retained_dataset_bytes": 0,
+      "lifecycle": "passed"
+    }
+  ],
+  "scope": "resident cosine collection queries; no embeddings or model calls",
+  "python": "3.12.13",
+  "rejected_controls": 8,
+  "chroma": {
+    "version": "1.5.9",
+    "ef_search": 128,
+    "minimum_recall": 0
+  },
+  "hashes": {
+    "benchmarks/tensor/collection.py": "5af339f8cc6179b7476a4e99ef2f8eac243b29e344606b58ccc00d746b6aa772",
+    "lib/petta/lib_memory_collection.metta": "a2dc81dbf9243754669610775b7ec8694d3b7eef9cfc6114dc17354b99f87f80",
+    "lib/petta/lib_row_index.metta": "83456dee290675b8f247aa183e40a1de1cba40e223ed0e8189402a2acec0db08",
+    "lib/petta/lib_tensor.metta": "8f8b31ab1ca3a2d291a5fb253ea512377e50c2cf1cbabff3932c817e5fa6b5ec",
+    "tools/memory_collection.py": "e77cd994767ec1b27a1507c2e5a876e90c233120277c4299c7033bc7bc2934b8",
+    "tools/value_worker_client.py": "6e7d29073bcab44747f86db1217a872a96500405041afe9e19d0d2d10c22da3d",
+    "tools/space_service_client.py": "d55dcaab01ff4ddf214f10366878b691a054d036385c8d21bd317559e7fcdff3",
+    "src/tensor.c": "b2dc9e5c398b21a23dce41f4b266cedde3b9c679512b8f6daeaef4f153dea1ac",
+    "selected_module": "a2dc81dbf9243754669610775b7ec8694d3b7eef9cfc6114dc17354b99f87f80",
+    "server_binary": "64b0e1ab8b7c47c310b9f0119dcba4842190c002dc225643eef7b064a458f551",
+    "worker_binary": "4682d6486601ab8a0b71221e6bf742e5d36a024ff5ebf8d11f73fce2d419ab2b"
+  },
+  "artifacts_unchanged": true
+}

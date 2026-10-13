@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; The first theorem of the Isabelle tutorial, rev (rev xs) = xs, written the
 ; way it reads there: four lemmas by induction, each an equational chain.
@@ -8,18 +8,18 @@
 ; every other equality step is derived.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: list (u 0))
                   (: nil list) (: cons (-> elem list list))
                   (: append (-> list list list)) (: rev (-> list list))))
 !(pf:equality &thy list refl@list subst@list)
-!(set:axiom &thy append-nil (all list (lam ys (eq list (append nil ys) ys))))
-!(set:axiom &thy append-cons (all elem (lam x (all list (lam xs (all list (lam ys
+!(hol:axiom &thy append-nil (all list (lam ys (eq list (append nil ys) ys))))
+!(hol:axiom &thy append-cons (all elem (lam x (all list (lam xs (all list (lam ys
    (eq list (append (cons x xs) ys) (cons x (append xs ys))))))))))
-!(set:axiom &thy rev-nil (eq list (rev nil) nil))
-!(set:axiom &thy rev-cons (all elem (lam x (all list (lam xs
+!(hol:axiom &thy rev-nil (eq list (rev nil) nil))
+!(hol:axiom &thy rev-cons (all elem (lam x (all list (lam xs
    (eq list (rev (cons x xs)) (append (rev xs) (cons x nil))))))))
-!(set:axiom &thy list-ind (all (-> list prop) (lam P
+!(hol:axiom &thy list-ind (all (-> list prop) (lam P
    (imp (P nil)
         (imp (all elem (lam x (all list (lam xs (imp (P xs) (P (cons x xs)))))))
              (all list (lam xs (P xs))))))))
@@ -87,11 +87,11 @@
          (= (cons x xs)                                    (cong list (lam r (cons x r)) (append nil xs) xs (pf:by append-nil)))))))))
 
 ; What was recorded: the theorem, its origin, and what it depends on.
-!(match &thy (set:known rev-rev $p $origin $proof $depends $rev $sig)
+!(match &thy (hol:known rev-rev $p $origin $proof $depends $rev $sig)
    (let $first (car-atom $depends) (Depends (size-atom $depends) first (car-atom $first))))
 ; A use of the theorem at a symbolic list, and a wrong claim refuted.
 !(pf:theory &thy ((: ys list)))
-!(set:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
+!(hol:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))
 ; Who decided the conversions of that use: the kernel, or the structural fallback.
-!(let $r (try (set:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))) (let $e (index-atom $r 1) (index-atom $e 2)))
-!(set:proves &thy (pf:by rev-rev) (eq list (rev ys) ys))
+!(let $r (try (hol:proves &thy (pf:by rev-rev) (eq list (rev (rev ys)) ys))) (let $e (index-atom $r 1) (index-atom $e 2)))
+!(hol:proves &thy (pf:by rev-rev) (eq list (rev ys) ys))

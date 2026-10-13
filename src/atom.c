@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "tensor.h"
 #include "string_literal.h"
 #include "lang.h"
 #include "petta_numeric.h"
@@ -32,6 +33,16 @@ uint32_t term_graph_view_hash(Atom *atom,
 void term_graph_print(const CettaTermGraphRef *ref, FILE *out,
                       bool petta) __attribute__((weak));
 Atom *term_graph_open_value(Arena *arena, Atom *atom) __attribute__((weak));
+
+/* Standalone atom tests need not link the optional tensor operations. They
+ * cannot construct a tensor without its payload implementation. */
+void cetta_tensor_retain(void *tensor) __attribute__((weak));
+void cetta_tensor_release(void *tensor) __attribute__((weak));
+size_t cetta_tensor_retained_bytes(const CettaTensor *tensor) __attribute__((weak));
+bool cetta_tensor_equal(const CettaTensor *left, const CettaTensor *right)
+    __attribute__((weak));
+uint32_t cetta_tensor_hash(const CettaTensor *tensor) __attribute__((weak));
+void cetta_tensor_print(const CettaTensor *tensor, FILE *out) __attribute__((weak));
 
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
@@ -131,9 +142,6 @@ typedef struct {
     uintptr_t kept_end[ATOM_DEEP_COPY_REGION_KEPT_MAX];
 } AtomDeepCopyRegion;
 
-/* The arena id of an atom whose copy it records; never an arena's. */
-#define ATOM_ARENA_ID_FORWARDED UINT32_MAX
-
 typedef struct AtomDeepCopyMemo {
     AtomDeepCopyMemoSlot inline_slots[CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP];
     AtomDeepCopyMemoSlot *slots;
@@ -163,6 +171,10 @@ typedef struct {
     const void *source;
     void *image;
     size_t bytes;
+    AtomDeepCopyObjectLifetime retain, release;
+    const Arena *destination;
+    uint32_t destination_identity;
+    uint64_t destination_epoch;
 } AtomDeepCopyObjectSlot;
 
 struct AtomDeepCopySession {
@@ -639,6 +651,9 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
             provenance_check_ptr(root, site, allowed_owner, "grounded handle",
                                  current->ground.ptr);
             break;
+        case GV_TENSOR:
+            /* Native tensors own heap storage, with an arena-retained hold. */
+            break;
         case GV_TERM_GRAPH: {
             /* The arena retains the sealed graph; its node record and graph
              * are stable handles, not a recursively unfolded atom tree. */
@@ -781,6 +796,17 @@ static void arena_symbol_cache_free(Arena *a) {
         a->persistent_bytes = 0u;
 }
 
+static _Atomic uint64_t managed_symbol_count;
+static _Atomic uint64_t managed_symbol_bytes;
+static _Atomic uint64_t managed_symbol_allocated_bytes;
+
+void atom_managed_symbol_stats(AtomManagedSymbolStats *out) {
+    if (!out) return;
+    out->retained_count = atomic_load_explicit(&managed_symbol_count, memory_order_relaxed);
+    out->retained_bytes = atomic_load_explicit(&managed_symbol_bytes, memory_order_relaxed);
+    out->allocated_bytes = atomic_load_explicit(&managed_symbol_allocated_bytes, memory_order_relaxed);
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
@@ -788,6 +814,8 @@ void arena_init(Arena *a) {
     a->symbol_cache = NULL;
     a->persistent_bytes = 0u;
     a->live_bytes = 0;
+    a->managed_symbol_count = 0u;
+    a->managed_symbol_bytes = 0u;
     a->external_bytes = 0;
     a->reserved_bytes = 0;
     a->spare_bytes = 0;
@@ -1179,6 +1207,11 @@ static void arena_invalidate_allocations(
 void arena_free(Arena *a) {
     if (!a)
         return;
+#if CETTA_MANAGED_SYMBOLS
+    atomic_fetch_sub_explicit(&managed_symbol_count, a->managed_symbol_count, memory_order_relaxed);
+    atomic_fetch_sub_explicit(&managed_symbol_bytes, a->managed_symbol_bytes, memory_order_relaxed);
+    a->managed_symbol_count = a->managed_symbol_bytes = 0u;
+#endif
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_FREE);
     provenance_unregister_arena(a);
     arena_run_finalizers_until(a, NULL);
@@ -1263,6 +1296,8 @@ ArenaMark arena_mark(const Arena *a) {
     mark.head = a->head;
     mark.used = a->head ? a->head->used : 0;
     mark.live_bytes = a->live_bytes;
+    mark.managed_symbol_count = a->managed_symbol_count;
+    mark.managed_symbol_bytes = a->managed_symbol_bytes;
     mark.external_bytes = a->external_bytes;
     mark.persistent_bytes = a->persistent_bytes;
     mark.reserved_bytes = a->reserved_bytes;
@@ -1310,6 +1345,14 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
 
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
+#if CETTA_MANAGED_SYMBOLS
+    atomic_fetch_sub_explicit(&managed_symbol_count,
+        a->managed_symbol_count - mark.managed_symbol_count, memory_order_relaxed);
+    atomic_fetch_sub_explicit(&managed_symbol_bytes,
+        a->managed_symbol_bytes - mark.managed_symbol_bytes, memory_order_relaxed);
+    a->managed_symbol_count = mark.managed_symbol_count;
+    a->managed_symbol_bytes = mark.managed_symbol_bytes;
+#endif
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_RESET);
     arena_frame_identity_set_truncate(a, mark.frame_identity_len);
     arena_run_finalizers_until(a, mark.finalizers);
@@ -1334,7 +1377,11 @@ void arena_reset(Arena *a, ArenaMark mark) {
 
 _Thread_local HashConsTable *g_hashcons = NULL;
 
-static bool atom_is_hash_stable(const Atom *atom);
+typedef enum {
+    ATOM_COMPARE_STRUCTURAL,
+    ATOM_COMPARE_VALUE,
+    ATOM_COMPARE_INTERN
+} AtomCompareMode;
 
 static _Thread_local unsigned g_atom_hash_read_scope_depth;
 
@@ -1350,7 +1397,13 @@ void atom_hash_read_scope_leave(void) {
     g_atom_hash_read_scope_depth--;
 }
 
-static uint32_t atom_hash_compute(Atom *a) {
+static bool atom_compare_driver(Atom *left, Atom *right,
+                                AtomCompareMode mode, bool all_numbers);
+
+static bool atom_is_hash_stable(const Atom *atom);
+static uint32_t atom_number_value_hash(const Atom *atom);
+
+static uint32_t atom_hash_leaf_compute(Atom *a) {
     if (!a) return 0;
     /* A rational term hashes by its unfolding, as atom_eq compares it. */
     if (term_graph_view_hash && atom_structural_has_rational(a))
@@ -1359,7 +1412,7 @@ static uint32_t atom_hash_compute(Atom *a) {
     h = ((h << 5) + h) ^ (uint32_t)a->kind;
     switch (a->kind) {
     case ATOM_SYMBOL: {
-        uint64_t sh = symbol_hash_value(g_symbols, a->sym_id);
+        uint64_t sh = atom_symbol_spelling_hash(a);
         h = ((h << 5) + h) ^ (uint32_t)(sh & 0xFFFFFFFFu);
         h = ((h << 5) + h) ^ (uint32_t)(sh >> 32);
         break;
@@ -1391,6 +1444,9 @@ static uint32_t atom_hash_compute(Atom *a) {
                 h = ((h << 5) + h) ^ (uint32_t)*p;
             break;
         }
+        case GV_TENSOR:
+            h = ((h << 5) + h) ^ cetta_tensor_hash(a->ground.ptr);
+            break;
         case GV_SPACE:
         case GV_STATE:
         case GV_CAPTURE:
@@ -1406,13 +1462,138 @@ static uint32_t atom_hash_compute(Atom *a) {
         }
         break;
     case ATOM_EXPR:
-        h = ((h << 5) + h) ^ (uint32_t)(a->expr.len & 0xFFFFFFFFu);
-        h = ((h << 5) + h) ^ (uint32_t)(a->expr.len >> 32);
-        for (CettaExprIndex i = 0; i < a->expr.len; i++)
-            h = ((h << 5) + h) ^ atom_hash(a->expr.elems[i]);
         break;
     }
     return h;
+}
+
+typedef struct {
+    Atom *node;
+    CettaExprIndex next;
+    uint32_t hash;
+} AtomHashFrame;
+
+static uint32_t atom_hash_expr_seed(const Atom *atom, bool value_mode) {
+    uint32_t h = ((5381u << 5) + 5381u) ^ (uint32_t)ATOM_EXPR;
+    h = ((h << 5) + h) ^ (uint32_t)atom->expr.len;
+    if (!value_mode)
+        h = ((h << 5) + h) ^ (uint32_t)(atom->expr.len >> 32);
+    return h;
+}
+
+/* Return a result for a leaf or an already indexed expression.  The root of
+ * atom_hash_compute deliberately ignores its cache: closed-arena admission
+ * uses that recomputation to check that the cached hash is still truthful. */
+static inline __attribute__((always_inline)) bool atom_hash_resolved(
+    Atom *atom, bool value_mode, bool ignore_cache, uint32_t *result) {
+    if (!atom) {
+        *result = 0u;
+        return true;
+    }
+    if (value_mode) {
+        if (atom_is_number(atom)) {
+            *result = atom_number_value_hash(atom);
+            return true;
+        }
+        if (term_graph_view_hash && atom_structural_has_rational(atom)) {
+            *result = term_graph_view_hash(atom, atom_value_hash);
+            return true;
+        }
+        if (atom->kind != ATOM_EXPR) {
+            *result = atom_hash(atom);
+            return true;
+        }
+        return false;
+    }
+    if (!ignore_cache && (atom->flags & ATOM_FLAG_HASH_VALID) != 0u) {
+        *result = atom->hash_cache;
+        return true;
+    }
+    if (atom->kind == ATOM_EXPR &&
+        !(term_graph_view_hash && atom_structural_has_rational(atom)))
+        return false;
+    *result = atom_hash_leaf_compute(atom);
+    if (!ignore_cache && g_atom_hash_read_scope_depth == 0u &&
+        atom_is_hash_stable(atom)) {
+        atom->hash_cache = *result;
+        atom->flags |= ATOM_FLAG_HASH_VALID;
+    }
+    return true;
+}
+
+static uint32_t atom_hash_fold(Atom *root, bool value_mode,
+                               bool ignore_root_cache) {
+    uint32_t result = 0u;
+    if (atom_hash_resolved(root, value_mode, ignore_root_cache, &result))
+        return result;
+    AtomHashFrame inline_frames[32];
+    AtomHashFrame *frames = inline_frames;
+    size_t len = 1u, capacity = 32u;
+    frames[0] = (AtomHashFrame){root, 0u,
+                               atom_hash_expr_seed(root, value_mode)};
+    while (len) {
+        AtomHashFrame *frame = &frames[len - 1u];
+        if (frame->next < frame->node->expr.len) {
+            Atom *child = frame->node->expr.elems[frame->next];
+            if (atom_hash_resolved(child, value_mode, false, &result)) {
+                frame->hash = ((frame->hash << 5) + frame->hash) ^ result;
+                frame->next++;
+                continue;
+            }
+            if (len == capacity) {
+                size_t grown = capacity * 2u;
+                if (grown < capacity ||
+                    grown > SIZE_MAX / sizeof(*frames))
+                    cetta_oom(SIZE_MAX);
+                if (frames == inline_frames) {
+                    frames = cetta_malloc(grown * sizeof(*frames));
+                    memcpy(frames, inline_frames, len * sizeof(*frames));
+                } else {
+                    frames = cetta_realloc(frames, grown * sizeof(*frames));
+                }
+                capacity = grown;
+            }
+            frames[len++] = (AtomHashFrame){
+                child, 0u, atom_hash_expr_seed(child, value_mode)};
+            continue;
+        }
+        result = frame->hash;
+        if (!value_mode && len > 1u && g_atom_hash_read_scope_depth == 0u &&
+            atom_is_hash_stable(frame->node)) {
+            frame->node->hash_cache = result;
+            frame->node->flags |= ATOM_FLAG_HASH_VALID;
+        }
+        len--;
+        if (len) {
+            frame = &frames[len - 1u];
+            frame->hash = ((frame->hash << 5) + frame->hash) ^ result;
+            frame->next++;
+        }
+    }
+    if (frames != inline_frames)
+        free(frames);
+    return result;
+}
+
+static uint32_t atom_hash_compute(Atom *atom) {
+    if (!atom)
+        return 0u;
+    if (atom->kind != ATOM_EXPR &&
+        !(term_graph_view_hash && atom_structural_has_rational(atom)))
+        return atom_hash_leaf_compute(atom);
+    if (atom->kind == ATOM_EXPR &&
+        !(term_graph_view_hash && atom_structural_has_rational(atom))) {
+        uint32_t hash = atom_hash_expr_seed(atom, false);
+        for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+            uint32_t child_hash;
+            if (!atom_hash_resolved(atom->expr.elems[i], false, false,
+                                    &child_hash))
+                return atom_hash_fold(atom, false, true);
+            hash = ((hash << 5) + hash) ^ child_hash;
+        }
+        return hash;
+    }
+    return atom_hash_fold(atom, false, true);
 }
 
 uint32_t atom_hash(Atom *a) {
@@ -1523,6 +1704,14 @@ void hashcons_free(HashConsTable *hc) {
     hc->maximum_lookup_probe = 0;
 }
 
+uint64_t hashcons_index_reserved_bytes(const HashConsTable *hc) {
+    if (!hc)
+        return 0u;
+    return ((uint64_t)hc->size + (uint64_t)hc->symbol_cache_size +
+            (hc->small_int_cache ? HASHCONS_SMALL_INT_COUNT : 0u)) *
+           sizeof(Atom *);
+}
+
 static bool atom_is_hash_stable(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASH_STABLE) != 0;
 }
@@ -1556,7 +1745,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     uint32_t expected_structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
     switch (atom->kind) {
     case ATOM_SYMBOL:
-        expected = atom_flags_for_symbol_id(atom->sym_id);
+        expected = atom_flags_for_symbol_id(atom->symbol_number);
         break;
     case ATOM_VAR:
         if (atom->var_id == VAR_ID_NONE ||
@@ -1654,11 +1843,11 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     h = hashcons_index_mix(h, atom_hash(atom));
     switch (atom->kind) {
     case ATOM_SYMBOL:
-        h = hashcons_index_mix(h, atom->sym_id);
+        h = hashcons_index_mix(h, atom->symbol_number);
         break;
     case ATOM_VAR:
         h = hashcons_index_mix(h, atom->var_id);
-        h = hashcons_index_mix(h, atom->sym_id);
+        h = hashcons_index_mix(h, atom->symbol_number);
         h = hashcons_index_mix(
             h, (uint64_t)(uintptr_t)atom->name_key);
         break;
@@ -1699,6 +1888,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -1722,35 +1912,53 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
 
 /* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
  * stay two atoms, and never a numeric promotion across kinds; a variable by
- * its id, its spelling and its structural name, so each keeps its own name. */
-static bool atom_intern_identical(Atom *a, Atom *b) {
+ * its id, its spelling and its structural name, so each keeps its own name.
+ * Decide only comparisons that cannot invoke an opaque service: a flat
+ * expression may retry through the full driver without replaying a callback.
+ * Negative means the full comparison is needed. */
+static inline int atom_intern_leaf_compare(Atom *a, Atom *b) {
     if (a == b)
-        return true;
+        return 1;
     if (!a || !b || a->kind != b->kind)
-        return false;
-    if (a->kind == ATOM_VAR)
-        return a->var_id == b->var_id && a->sym_id == b->sym_id &&
+        return 0;
+    switch (a->kind) {
+    case ATOM_SYMBOL:
+        return atom_symbols_equal(a, b);
+    case ATOM_VAR:
+        return a->var_id == b->var_id &&
+               atom_symbol_current_id(a) == atom_symbol_current_id(b) &&
                a->name_key == b->name_key;
-    if (a->kind == ATOM_GROUNDED) {
+    case ATOM_GROUNDED:
         if (a->ground.gkind != b->ground.gkind)
-            return false;
+            return 0;
+        if (a->ground.gkind == GV_INT)
+            return a->ground.ival == b->ground.ival;
         if (a->ground.gkind == GV_FLOAT)
             return memcmp(&a->ground.fval, &b->ground.fval,
                           sizeof(a->ground.fval)) == 0;
+        break;
+    case ATOM_EXPR:
+        break;
+    }
+    return -1;
+}
+
+static bool atom_intern_identical(Atom *a, Atom *b) {
+    int leaf = atom_intern_leaf_compare(a, b);
+    if (leaf >= 0)
+        return leaf != 0;
+    if (a->kind != ATOM_EXPR)
         return atom_eq(a, b);
-    }
-    if (a->kind == ATOM_EXPR) {
-        if (a->expr.len != b->expr.len)
+    if (a->expr.len != b->expr.len)
+        return false;
+    for (CettaExprIndex i = 0u; i < a->expr.len; i++) {
+        leaf = atom_intern_leaf_compare(a->expr.elems[i], b->expr.elems[i]);
+        if (leaf < 0)
+            return atom_compare_driver(a, b, ATOM_COMPARE_INTERN, false);
+        if (!leaf)
             return false;
-        for (CettaExprIndex i = 0; i < a->expr.len; i++) {
-            Atom *left = a->expr.elems[i];
-            Atom *right = b->expr.elems[i];
-            if (left != right && !atom_intern_identical(left, right))
-                return false;
-        }
-        return true;
     }
-    return atom_eq(a, b);
+    return true;
 }
 
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
@@ -1779,8 +1987,8 @@ static Atom *hashcons_leaf_cache_get(HashConsTable *hc, const Atom *atom) {
     if (!hc || !atom)
         return NULL;
     if (atom->kind == ATOM_SYMBOL) {
-        if (atom->sym_id < hc->symbol_cache_size)
-            cached = hc->symbol_cache[atom->sym_id];
+        if (atom->symbol_number < hc->symbol_cache_size)
+            cached = hc->symbol_cache[atom->symbol_number];
     } else if (atom->kind == ATOM_GROUNDED) {
         if (atom->ground.gkind == GV_INT &&
             atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
@@ -1801,10 +2009,10 @@ static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
     if (!hc || !atom)
         return;
     if (atom->kind == ATOM_SYMBOL) {
-        if (atom->sym_id >= hc->symbol_cache_size) {
+        if (atom->symbol_number >= hc->symbol_cache_size) {
             uint32_t next = hc->symbol_cache_size
                 ? hc->symbol_cache_size : 64u;
-            while (next <= atom->sym_id) {
+            while (next <= atom->symbol_number) {
                 if (next > UINT32_MAX / 2u)
                     return;
                 next *= 2u;
@@ -1816,7 +2024,7 @@ static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
             hc->symbol_cache = grown;
             hc->symbol_cache_size = next;
         }
-        hc->symbol_cache[atom->sym_id] = atom;
+        hc->symbol_cache[atom->symbol_number] = atom;
     } else if (atom->kind == ATOM_GROUNDED) {
         if (atom->ground.gkind == GV_INT &&
             atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
@@ -1952,10 +2160,11 @@ VarInternTable *g_var_intern = NULL;
 #define VAR_INTERN_CHUNK_COUNT (1u << (32u - VAR_INTERN_CHUNK_BITS))
 
 /* Symbol ids of C string literals, per thread, keyed by the literal's
- * address.  A small direct-mapped level answers most lookups; the open
+ * address. A small two-way level answers most lookups; the open
  * addressing level behind it keeps every literal once interned, so two
  * literals the linker happens to place in one direct-mapped slot cost a
- * probe rather than repeated interning. */
+ * probe rather than repeated interning. Two alternating literals sharing
+ * a slot remain resident together rather than evicting each other. */
 #define SYMBOL_LITERAL_DIRECT_SIZE 64u
 
 typedef struct {
@@ -1966,7 +2175,7 @@ typedef struct {
 typedef struct {
     const SymbolTable *table;
     uint64_t instance_id;
-    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE];
+    SymbolLiteralCacheEntry direct[SYMBOL_LITERAL_DIRECT_SIZE][2];
     SymbolLiteralCacheEntry *entries;
     uint32_t cap;
     uint32_t len;
@@ -2199,12 +2408,17 @@ static SymbolId symbol_cached_literal_slow(const char *name);
 
 static inline SymbolId symbol_cached_literal(const char *name) {
     SymbolLiteralCache *cache = &g_symbol_literal_cache;
-    const SymbolLiteralCacheEntry *direct = &cache->direct[
-        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
-    if (direct->literal == name && name && cache->table == g_symbols &&
-        g_symbols &&
-        cache->instance_id == symbol_table_instance_id(g_symbols))
-        return direct->id;
+    /* Strings have byte alignment; their low address bits distinguish
+       nearby literals rather than unused pointer-alignment padding. */
+    const SymbolLiteralCacheEntry *direct = cache->direct[
+        (uintptr_t)name % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (name && cache->table == g_symbols && g_symbols &&
+        cache->instance_id == symbol_table_instance_id(g_symbols)) {
+        if (direct[0].literal == name)
+            return direct[0].id;
+        if (direct[1].literal == name)
+            return direct[1].id;
+    }
     return symbol_cached_literal_slow(name);
 }
 
@@ -2222,17 +2436,20 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
         cache->table = g_symbols;
         cache->instance_id = instance_id;
     }
-    SymbolLiteralCacheEntry *direct = &cache->direct[
-        ((uintptr_t)name >> 4) % SYMBOL_LITERAL_DIRECT_SIZE];
-    if (direct->literal == name)
-        return direct->id;
+    SymbolLiteralCacheEntry *direct = cache->direct[
+        (uintptr_t)name % SYMBOL_LITERAL_DIRECT_SIZE];
+    if (direct[0].literal == name)
+        return direct[0].id;
+    if (direct[1].literal == name)
+        return direct[1].id;
     if (cache->cap) {
         uint32_t mask = cache->cap - 1u;
         for (uint32_t slot = symbol_literal_cache_slot(name, mask);
              cache->entries[slot].literal; slot = (slot + 1u) & mask) {
             if (cache->entries[slot].literal == name) {
-                *direct = cache->entries[slot];
-                return direct->id;
+                direct[1] = direct[0];
+                direct[0] = cache->entries[slot];
+                return direct[0].id;
             }
         }
     }
@@ -2240,7 +2457,8 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
     SymbolId id = symbol_intern_cstr(g_symbols, name);
     if (id == SYMBOL_ID_NONE)
         return id;
-    *direct = (SymbolLiteralCacheEntry){name, id};
+    direct[1] = direct[0];
+    direct[0] = (SymbolLiteralCacheEntry){name, id};
     if ((cache->len + 1u) * 2u > cache->cap &&
         !symbol_literal_cache_grow(cache))
         return id;
@@ -2722,7 +2940,7 @@ static Atom *arena_symbol_cache_get(Arena *a, SymbolId sym_id) {
         (!a->scalar_cache && cache->epochs[slot] != a->reset_epoch))
         return NULL;
     Atom *atom = cache->atoms[slot];
-    if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != sym_id)
+    if (!atom || atom->kind != ATOM_SYMBOL || atom->symbol_number != sym_id)
         return NULL;
     return atom;
 }
@@ -2779,6 +2997,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
@@ -2878,6 +3097,12 @@ bool atom_graph_is_closed_for_arena(const Arena *arena,
             atom->arena_id == arena->identity);
 }
 
+bool atom_graph_is_owner_closed_for_arena(const Arena *arena,
+                                          const Atom *atom) {
+    return arena && atom_graph_has_owner_closure(atom) &&
+           (atom->arena_id == 0u || atom->arena_id == arena->identity);
+}
+
 /* The settled test for a copy's inner loop, where both are present and the
  * arena is initialized, so its identity is not zero. */
 static inline bool atom_settled_in(const Arena *arena, const Atom *atom) {
@@ -2918,7 +3143,7 @@ bool atom_graph_arena_id_bounds(const Atom *atom,
             if (node->arena_id > *max_id)
                 *max_id = node->arena_id;
         }
-        if ((node->flags & ATOM_FLAG_ARENA_CLOSED) != 0u)
+        if (atom_graph_has_owner_closure(node))
             continue;
         size_t additions = 0u;
         if (node->kind == ATOM_EXPR) {
@@ -3017,9 +3242,11 @@ static inline SymbolId atom_resolve_name_symbol(void) {
 
 /* Whether `head` adjusts the summary of the expression it heads. */
 static bool atom_summary_head_adjusts(Atom *head) {
-    return head && head->kind == ATOM_SYMBOL &&
-        (head->sym_id == atom_resolve_name_symbol() ||
-         head->sym_id == g_builtin_syms.native_handle);
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId resolve_name = atom_resolve_name_symbol();
+    SymbolId number = atom_symbol_current_id(head);
+    return number == resolve_name || number == g_builtin_syms.native_handle;
 }
 
 /* The summary `flags` of an expression headed by `head`: a name to resolve
@@ -3028,9 +3255,11 @@ static bool atom_summary_head_adjusts(Atom *head) {
 static uint32_t atom_summary_head_adjust(Atom *head, uint32_t flags) {
     if (!head || head->kind != ATOM_SYMBOL)
         return flags;
-    if (head->sym_id == atom_resolve_name_symbol())
+    SymbolId resolve_name = atom_resolve_name_symbol();
+    SymbolId number = atom_symbol_current_id(head);
+    if (number == resolve_name)
         flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
-    if (head->sym_id == g_builtin_syms.native_handle)
+    if (number == g_builtin_syms.native_handle)
         flags &= ~ATOM_FLAG_HASHCONS_ELIGIBLE;
     return flags;
 }
@@ -3047,6 +3276,7 @@ typedef struct {
     uint32_t arena_id;
     uint32_t older_id;
     bool closed;
+    bool owner_closed;
     bool generation_closed;
     bool missing;
 } AtomChildrenSummary;
@@ -3067,6 +3297,7 @@ static inline __attribute__((always_inline)) void atom_summary_begin_ids(
         .arena_id = arena_id,
         .older_id = older_id,
         .closed = true,
+        .owner_closed = true,
         /* The generation bit folds like the arena bit, over the arena and
          * its older generation. */
         .generation_closed = generational,
@@ -3088,6 +3319,9 @@ static inline __attribute__((always_inline)) void atom_summary_add_ids(
     if ((child_flags & ATOM_FLAG_ARENA_CLOSED) == 0u ||
         (child->arena_id != 0u && child->arena_id != summary->arena_id)) {
         summary->closed = false;
+        if (!atom_graph_has_owner_closure(child) ||
+            (child->arena_id != 0u && child->arena_id != summary->arena_id))
+            summary->owner_closed = false;
         /* A child closed in this arena is admitted by the generation bit
          * too, so only a child that fails the arena bit is asked. */
         if (generational && summary->generation_closed &&
@@ -3115,6 +3349,7 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
         ? ATOM_STRUCTURAL_FACTS_VALID |
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                      ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK))
         : 0u;
     bool generation_closed = summary->generation_closed;
@@ -3129,6 +3364,9 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
         (flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
         (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
         structural_facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
+    if (!summary->missing && !summary->closed && summary->owner_closed &&
+        (structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
+        structural_facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
     if (structural_facts_out)
         *structural_facts_out = structural_facts;
     return flags;
@@ -3217,7 +3455,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.kind = ATOM_SYMBOL;
     temp.flags = atom_flags_for_symbol_id(sym_id);
     temp.var_id = VAR_ID_NONE;
-    temp.sym_id = sym_id;
+    temp.symbol_number = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
     temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
@@ -3246,6 +3484,240 @@ Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
 }
 
+Atom *atom_symbol_data(Arena *a, const char *name) {
+    return atom_symbol_data_n(a, name, name ? (uint32_t)strlen(name) : 0u);
+}
+
+#if CETTA_MANAGED_SYMBOLS
+static Atom *atom_symbol_data_span_hashed(
+        Arena *a, const char *bytes, uint32_t len, uint64_t hash) {
+    SymbolId known = symbol_lookup_span_hashed(
+        g_symbols, (const uint8_t *)bytes, len, hash);
+    if (known != SYMBOL_ID_NONE)
+        return atom_symbol_id(a, known);
+    size_t size = sizeof(Atom) + sizeof(CettaSymbolSpelling) + (size_t)len + 1u;
+    Atom *atom = arena_alloc(a, size);
+    *atom = (Atom){.kind = ATOM_SYMBOL, .arena_id = a->identity,
+                  .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_ARENA_CLOSED,
+                  .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
+                                      ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
+                                      ATOM_STRUCTURAL_OWNER_CLOSED};
+    CettaSymbolSpelling *text = (CettaSymbolSpelling *)(atom + 1);
+    text->hash = hash;
+    text->len = len;
+    memcpy(text->bytes, bytes, len);
+    text->bytes[len] = '\0';
+    atom->spelling = text;
+    a->managed_symbol_count++;
+    a->managed_symbol_bytes += (uint64_t)len + 1u;
+    atomic_fetch_add_explicit(&managed_symbol_count, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&managed_symbol_bytes, (uint64_t)len + 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&managed_symbol_allocated_bytes, (uint64_t)len + 1u, memory_order_relaxed);
+    if (bytes[0] == '&') atom->flags |= ATOM_FLAG_HAS_REGISTRY_REFS;
+    return atom;
+}
+#endif
+
+/* Copying a symbol owns its bytes in the receiving arena. It neither
+ * registers a callable name nor inserts an index entry. */
+Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len) {
+#if CETTA_MANAGED_SYMBOLS
+    if (!bytes || !len)
+        return atom_symbol_id(a, SYMBOL_ID_NONE);
+    return atom_symbol_data_span_hashed(
+        a, bytes, len, symbol_hash_span((const uint8_t *)bytes, len));
+#else
+    return atom_symbol_id(a, symbol_intern_data_bytes(
+        g_symbols, (const uint8_t *)bytes, len));
+#endif
+}
+
+static const Atom *atom_symbol_unforward(const Atom *atom) {
+    while (atom && atom->arena_id == ATOM_ARENA_ID_FORWARDED)
+        atom = atom->name_key;
+    return atom;
+}
+
+Atom *atom_symbol_copy(Arena *owner, const Atom *source) {
+    source = atom_symbol_unforward(source);
+    if (!source || source->kind != ATOM_SYMBOL) return NULL;
+#if CETTA_MANAGED_SYMBOLS
+    if (atom_symbol_is_spelled(source))
+        return atom_symbol_data_span_hashed(
+            owner, source->spelling->bytes, source->spelling->len,
+            source->spelling->hash);
+#endif
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_mark_copy(g_symbols, source->symbol_number);
+#endif
+    return atom_symbol_id(owner, source->symbol_number);
+}
+
+bool atom_symbol_is_spelled(const Atom *atom) {
+#if CETTA_MANAGED_SYMBOLS
+    atom = atom_symbol_unforward(atom);
+    return atom && atom->kind == ATOM_SYMBOL &&
+           atom->symbol_number == SYMBOL_ID_NONE && atom->spelling != NULL;
+#else
+    (void)atom;
+    return false;
+#endif
+}
+
+const char *atom_symbol_bytes(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->bytes
+        : symbol_bytes(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+uint32_t atom_symbol_length(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->len
+        : symbol_len(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+uint64_t atom_symbol_spelling_hash(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    return atom_symbol_is_spelled(atom) ? atom->spelling->hash
+        : symbol_hash_value(g_symbols, atom ? atom->symbol_number : SYMBOL_ID_NONE);
+}
+
+SymbolId atom_symbol_lookup_spelling_id(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    if (!atom_symbol_is_spelled(atom))
+        return atom ? atom->symbol_number : SYMBOL_ID_NONE;
+    return symbol_lookup_span_hashed(g_symbols,
+        (const uint8_t *)atom->spelling->bytes, atom->spelling->len,
+        atom->spelling->hash);
+}
+
+SymbolId atom_symbol_register_id(const Atom *atom) {
+    atom = atom_symbol_unforward(atom);
+    if (!atom_symbol_is_spelled(atom))
+        return atom ? atom->symbol_number : SYMBOL_ID_NONE;
+    return symbol_intern_span_hashed(g_symbols,
+        (const uint8_t *)atom->spelling->bytes, atom->spelling->len,
+        atom->spelling->hash);
+}
+
+bool atom_symbols_equal(const Atom *left, const Atom *right) {
+    left = atom_symbol_unforward(left);
+    right = atom_symbol_unforward(right);
+    if (!left || !right) return left == right;
+    if (!atom_symbol_is_spelled(left) && !atom_symbol_is_spelled(right))
+        return left->symbol_number == right->symbol_number;
+    uint32_t len = atom_symbol_length(left);
+    return len == atom_symbol_length(right) &&
+        atom_symbol_spelling_hash(left) == atom_symbol_spelling_hash(right) &&
+        memcmp(atom_symbol_bytes(left), atom_symbol_bytes(right), len) == 0;
+}
+
+bool atom_symbol_equals_cstr(const Atom *atom, const char *text) {
+    if (!atom || !text) return false;
+    if (!atom_symbol_is_spelled(atom))
+        return symbol_eq_cstr(g_symbols, atom_symbol_current_id(atom), text);
+    size_t len = strlen(text);
+    return len == atom_symbol_length(atom) &&
+           memcmp(atom_symbol_bytes(atom), text, len) == 0;
+}
+
+static size_t syntax_pointer_slot(const Atom *atom, size_t capacity) {
+    uintptr_t bits = (uintptr_t)atom >> 4u;
+    bits ^= bits >> 17u;
+    bits *= (uintptr_t)UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(bits ^ (bits >> 29u)) & (capacity - 1u);
+}
+
+static bool atom_visit_syntax_symbols_impl(const Atom *root,
+        AtomSymbolVisitor visit, void *context, bool register_names) {
+    if (!root)
+        return true;
+    if (!visit)
+        return false;
+    size_t length = 1u, stack_cap = 64u, seen_cap = 64u, seen_len = 0u;
+    const Atom **stack = cetta_malloc(stack_cap * sizeof(*stack));
+    const Atom **seen = cetta_malloc(seen_cap * sizeof(*seen));
+    memset(seen, 0, seen_cap * sizeof(*seen));
+    stack[0] = root;
+    bool ok = true;
+    while (ok && length) {
+        const Atom *node = stack[--length];
+        if (!node)
+            continue;
+        if (seen_len >= seen_cap / 2u) {
+            if (seen_cap > SIZE_MAX / 2u / sizeof(*seen))
+                cetta_oom(SIZE_MAX);
+            size_t cap = seen_cap * 2u;
+            const Atom **grown = cetta_malloc(cap * sizeof(*grown));
+            memset(grown, 0, cap * sizeof(*grown));
+            for (size_t i = 0u; i < seen_cap; i++) {
+                if (!seen[i])
+                    continue;
+                size_t at = syntax_pointer_slot(seen[i], cap);
+                while (grown[at])
+                    at = (at + 1u) & (cap - 1u);
+                grown[at] = seen[i];
+            }
+            free(seen);
+            seen = grown;
+            seen_cap = cap;
+        }
+        size_t at = syntax_pointer_slot(node, seen_cap);
+        while (seen[at] && seen[at] != node)
+            at = (at + 1u) & (seen_cap - 1u);
+        if (seen[at])
+            continue;
+        seen[at] = node;
+        seen_len++;
+        if (node->kind == ATOM_SYMBOL || node->kind == ATOM_VAR) {
+            SymbolId id = register_names && node->kind == ATOM_SYMBOL
+                ? atom_symbol_register_id(node) : atom_symbol_current_id(node);
+            if (id != SYMBOL_ID_NONE)
+                ok = visit(id, context);
+        }
+        size_t children = node->kind == ATOM_EXPR ? node->expr.len
+            : node->kind == ATOM_VAR && node->name_key ? 1u : 0u;
+        if (children > SIZE_MAX - length)
+            cetta_oom(SIZE_MAX);
+        while (stack_cap < length + children) {
+            if (stack_cap > SIZE_MAX / 2u / sizeof(*stack))
+                cetta_oom(SIZE_MAX);
+            stack_cap *= 2u;
+            stack = cetta_realloc(stack, stack_cap * sizeof(*stack));
+        }
+        if (node->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = 0u; i < node->expr.len; i++)
+                stack[length++] = node->expr.elems[i];
+        } else if (children) {
+            stack[length++] = node->name_key;
+        }
+    }
+    free(seen);
+    free(stack);
+    return ok;
+}
+
+bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
+                               void *context) {
+    return atom_visit_syntax_symbols_impl(root, visit, context, false);
+}
+
+static bool atom_pin_syntax_symbol(SymbolId id, void *context) {
+    SymbolTable *table = context;
+    if (symbol_flags(table, id) & CETTA_SYMBOL_FLAG_RUNTIME_DATA)
+        (void)symbol_pin(table, id);
+    return true;
+}
+
+void atom_pin_syntax_symbols(const Atom *root) {
+    (void)atom_visit_syntax_symbols_impl(
+        root, atom_pin_syntax_symbol, g_symbols, true);
+}
+
+Atom *atom_symbol_literal(Arena *a, const char *name) {
+    return atom_symbol_id(a, symbol_cached_literal(name));
+}
+
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     Atom temp = {0};
     temp.kind = ATOM_VAR;
@@ -3255,7 +3727,7 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
                  (atom_var_id_is_private_variant(temp.var_id)
                       ? ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR
                       : 0u);
-    temp.sym_id = spelling;
+    temp.symbol_number = spelling;
     temp.arena_id = a->identity;
     temp.name_key = NULL;
     temp.hash_cache = 0;
@@ -3281,7 +3753,7 @@ static Atom *atom_var_with_spelling_and_name_key(
                       : 0u);
     if (!atom_graph_is_closed_for_arena(a, name_key))
         temp.flags &= ~ATOM_FLAG_ARENA_CLOSED;
-    temp.sym_id = spelling;
+    temp.symbol_number = spelling;
     temp.arena_id = a->identity;
     temp.name_key = name_key;
     temp.hash_cache = 0;
@@ -3311,10 +3783,20 @@ Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
         : NULL;
 }
 
+Atom *atom_fresh_private_var(Arena *a, CettaFrameIdentityScope *scope,
+                             Atom *source) {
+    if (!a || !scope || !source || source->kind != ATOM_VAR) return NULL;
+    CettaFrameIdentity frame;
+    VarId base;
+    if (!cetta_frame_identity_scope_try(scope, &frame) ||
+        !fresh_var_id_try(&base)) return NULL;
+    return atom_var_like(a, source, var_epoch_id(base, frame));
+}
+
 Atom *atom_var_like(Arena *a, Atom *source, VarId id) {
     if (!source || source->kind != ATOM_VAR) return NULL;
     return atom_var_with_presentation(
-        a, source->sym_id, source->name_key, id);
+        a, source->symbol_number, source->name_key, id);
 }
 
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id) {
@@ -3377,7 +3859,8 @@ static Atom *atom_native_handle_identifier_with_lifetime(Arena *a, int64_t id,
                      ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE,
             .arena_id = a->identity,
             .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
-                                ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID,
+                                ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+                                ATOM_STRUCTURAL_OWNER_CLOSED,
             .ground = {.gkind = GV_INT, .ival = id},
         },
         .owner = owner,
@@ -3474,7 +3957,7 @@ Atom *atom_bigint(Arena *a, const char *val) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
@@ -3560,7 +4043,7 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3587,7 +4070,7 @@ Atom *atom_bigint_take_mpz(Arena *a, mpz_t value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3689,7 +4172,7 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
@@ -3712,7 +4195,7 @@ Atom *atom_space(Arena *a, void *space_ptr) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_SPACE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3728,7 +4211,7 @@ Atom *atom_state(Arena *a, StateCell *cell) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_STATE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3744,7 +4227,7 @@ Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_CAPTURE);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
@@ -3772,13 +4255,35 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_FOREIGN);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts =
         atom_structural_facts_for_grounded_kind(GV_FOREIGN);
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
+    return at;
+}
+
+Atom *atom_tensor(Arena *a, CettaTensor *value) {
+    if (!a || !value || !cetta_tensor_retain || !cetta_tensor_release ||
+        !cetta_tensor_retained_bytes)
+        return NULL;
+    cetta_tensor_retain(value);
+    arena_register_finalizer(a, cetta_tensor_release, value);
+    /* Charge each retained view conservatively so allocation pressure cannot
+     * hide in external buffers. Shared views may overcount the same storage. */
+    arena_account_external_bytes(a, cetta_tensor_retained_bytes(value));
+    Atom *at = arena_alloc(a, sizeof(*at));
+    *at = (Atom){
+        .kind = ATOM_GROUNDED,
+        /* The native term store retains this immutable payload through its
+         * existing fallback. Do not claim admission to its compact encoding. */
+        .flags = ATOM_FLAG_ARENA_CLOSED,
+        .arena_id = a->identity,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .ground = {.gkind = GV_TENSOR, .ptr = value},
+    };
     return at;
 }
 
@@ -3790,7 +4295,11 @@ Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
     Atom *atom = arena_alloc(arena, sizeof(*atom));
     *atom = (Atom){
         .kind = ATOM_GROUNDED,
-        .flags = atom_flags_for_grounded_kind(GV_BINDINGS),
+        /* This opaque leaf retains its independent syntax owner above.
+         * Copying it therefore closes the destination's syntax graph; it
+         * does not borrow an Atom from the source arena. This says nothing
+         * about hash stability or permission to share effects/workers. */
+        .flags = atom_flags_for_grounded_kind(GV_BINDINGS) | ATOM_FLAG_ARENA_CLOSED,
         .arena_id = arena->identity,
         .structural_facts = atom_structural_facts_for_grounded_kind(GV_BINDINGS),
         .ground = {.gkind = GV_BINDINGS, .ptr = value},
@@ -3810,7 +4319,7 @@ Atom *atom_term_graph(Arena *arena, CettaTermGraph *graph, uint32_t node) {
         .kind = ATOM_GROUNDED,
         .flags = atom_flags_for_grounded_kind(GV_TERM_GRAPH),
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = arena->identity,
         .structural_facts =
             atom_structural_facts_for_grounded_kind(GV_TERM_GRAPH),
@@ -3845,7 +4354,7 @@ Atom *atom_rational_open(Arena *arena, Atom *atom) {
         .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |     \
                  ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,            \
         .var_id = VAR_ID_NONE,                                             \
-        .sym_id = SYMBOL_ID_NONE,                                          \
+        .symbol_number = SYMBOL_ID_NONE,                                          \
         .arena_id = 0u,                                                    \
         .name_key = NULL,                                                  \
         .hash_cache = ATOM_LIST_TAG_HASH(tag),                             \
@@ -3874,7 +4383,7 @@ static Atom g_atom_empty_list = {
     .flags = ATOM_FLAG_HASH_STABLE | ATOM_FLAG_HASHCONS_ELIGIBLE |
              ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID,
     .var_id = VAR_ID_NONE,
-    .sym_id = SYMBOL_ID_NONE,
+    .symbol_number = SYMBOL_ID_NONE,
     .arena_id = 0u,
     .name_key = NULL,
     .hash_cache = ATOM_LIST_TAG_HASH_STEP(
@@ -3904,7 +4413,7 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag) {
     at->kind = ATOM_GROUNDED;
     at->flags = atom_flags_for_grounded_kind(GV_INTERNAL_TAG);
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -4041,9 +4550,11 @@ bool atom_prolog_compound_body(Atom *atom, Atom **body) {
         *body = NULL;
     if (!atom || !body || atom->kind != ATOM_EXPR ||
         atom->expr.len != 2u ||
-        atom->expr.elems[0]->kind != ATOM_SYMBOL ||
-        atom->expr.elems[0]->sym_id == SYMBOL_ID_NONE ||
-        atom->expr.elems[0]->sym_id != atom_prolog_compound_symbol()) {
+        atom->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    SymbolId compound = atom_prolog_compound_symbol();
+    if (atom_symbol_current_id(atom->expr.elems[0]) != compound) {
         return false;
     }
     *body = atom->expr.elems[1];
@@ -4228,7 +4739,7 @@ Atom *atom_prime_need_capability_with_rights(
                 ATOM_FLAG_HAS_REGISTRY_REFS |
                 ATOM_FLAG_ARENA_CLOSED;
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -4267,7 +4778,7 @@ static Atom *atom_prime_context_wrap(Arena *a,
                   ATOM_FLAG_HAS_IDENTITY_GROUNDED |
                   ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE));
     at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0u;
@@ -4328,22 +4839,6 @@ Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key) {
 
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context) {
     return context ? context->depth : 0u;
-}
-
-static bool atom_prime_context_equal(const CettaPrimeContext *left,
-                                     const CettaPrimeContext *right) {
-    if (left == right)
-        return true;
-    if (!left || !right || left->depth != right->depth)
-        return false;
-    while (left && right) {
-        if (!atom_eq(left->key, right->key) ||
-            !atom_eq(left->value, right->value))
-            return false;
-        left = left->parent;
-        right = right->parent;
-    }
-    return left == right;
 }
 
 static Atom *atom_prime_context_deep_copy(
@@ -4489,12 +4984,13 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->hash_cache = 0;
     at->structural_facts = temp.structural_facts;
     at->ground.gkind = temp.ground.gkind;
     at->ground.slen = temp.ground.slen;
+    at->name_key = NULL;
     char *copy = arena_alloc(a, len + 1u);
     if (len)
         memcpy(copy, bytes, len);
@@ -4539,7 +5035,7 @@ static inline __attribute__((always_inline)) Atom *atom_expr_build(
         .kind = ATOM_EXPR,
         .flags = flags,
         .var_id = var_id,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .structural_facts = structural_facts,
         .expr = {
@@ -4567,7 +5063,7 @@ static inline __attribute__((always_inline)) Atom *atom_expr_small(
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_fold(
         a->identity, 0u, false, elems, len, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
@@ -4598,13 +5094,18 @@ static inline __attribute__((always_inline)) Atom *atom_expr_headed_small(
         .all_facts = head->structural_facts,
         .arena_id = a->identity,
         .closed = !open,
+        .owner_closed = !open ||
+            ((head->arena_id == 0u || head->arena_id == a->identity) &&
+             (head->structural_facts & (ATOM_STRUCTURAL_FACTS_VALID |
+                                       ATOM_STRUCTURAL_OWNER_CLOSED)) ==
+                 (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_OWNER_CLOSED)),
     };
     for (CettaExprIndex i = 1u; i < len; i++)
         atom_summary_add_ids(&summary, false, elems[i]);
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_summary_finish(
         &summary, false, NULL, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     return atom_expr_build(a, elems, len, flags, structural_facts, var_id);
@@ -4678,7 +5179,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     uint32_t structural_facts = 0u;
     uint32_t flags = atom_flags_from_children(
         a->identity, a->older_identity, elems, len, &structural_facts);
-    if (atom_list_rest_parts_splice(elems, len, structural_facts))
+    if (len >= 2u && atom_list_rest_parts_splice(elems, len, structural_facts))
         return atom_list_with_rest(a, elems + 1, len - 2u, elems[len - 1u]);
     VarId var_id = atom_single_variable_id_of(flags, elems, len);
     /* An arena that interns nothing takes the expression as built:
@@ -4705,7 +5206,7 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     at->kind = temp.kind;
     at->flags = temp.flags;
     at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    at->symbol_number = SYMBOL_ID_NONE;
     at->arena_id = a->identity;
     at->name_key = NULL;
     at->hash_cache = 0;
@@ -4727,6 +5228,17 @@ static bool atom_summary_closed_child(const Atom *child, uint32_t arena_id) {
         (child->arena_id == 0u || child->arena_id == arena_id);
 }
 
+/* Whether an expression's element vector is storage of the expression's own
+ * arena: global storage, a vector allocated with its header, or a buffer
+ * with front slack, which only its arena's constructors allocate.  A suffix
+ * view shares its list's vector wherever that lives, so a view's header
+ * arena says nothing about its vector. */
+static bool atom_expr_vector_in_own_arena(const Atom *expression) {
+    return expression->arena_id == 0u ||
+           expression->expr.elems == (Atom **)(expression + 1) ||
+           (expression->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK) != 0u;
+}
+
 Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     if (!a || !expression || expression->kind != ATOM_EXPR ||
         offset > expression->expr.len)
@@ -4745,7 +5257,7 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     *suffix = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems,
@@ -4766,7 +5278,10 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     uint32_t departed_lacks = 0u;
     uint32_t departed_facts = 0u;
     bool departed_known = true;
-    bool closure_inherits = true;
+    /* A list in the older generation is closed for that arena, not this
+     * one, so the view's closure is folded afresh for this arena. */
+    bool closure_inherits =
+        expression->arena_id == a->identity || expression->arena_id == 0u;
     bool generation_inherits = true;
     for (CettaExprIndex index = 0u; index < offset; index++) {
         Atom *departed = expression->expr.elems[index];
@@ -4784,13 +5299,17 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     }
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                 ATOM_STRUCTURAL_OWNER_CLOSED |
                                  ATOM_STRUCTURAL_FRONT_SLACK);
+    const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
+                                    ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
         !atom_summary_head_adjusts(expression->expr.elems[0]) &&
         (expression->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
         uint32_t flags = expression->flags & ~ATOM_FLAG_HASH_VALID;
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                           ATOM_STRUCTURAL_OWNER_CLOSED |
                            ATOM_STRUCTURAL_FRONT_SLACK);
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
@@ -4845,6 +5364,28 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
             if (generation)
                 facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
         }
+        /* The view shares its list's element vector, which may belong to
+         * the older generation even when the list's header is here: a view
+         * of a view keeps borrowing it, and dropping children never moves
+         * it.  So the evidence is inherited from a list in this arena and
+         * recomputed from the remaining children only when the list's
+         * vector is its own arena's storage. */
+        if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            (expression->arena_id == 0u || expression->arena_id == a->identity)) {
+            bool owner_closed =
+                (expression->structural_facts & owner_evidence) == owner_evidence;
+            if (!owner_closed && atom_expr_vector_in_own_arena(expression)) {
+                owner_closed = true;
+                for (CettaExprIndex index = 0u; index < len; index++) {
+                    if (!atom_graph_is_owner_closed_for_arena(a, elems[index])) {
+                        owner_closed = false;
+                        break;
+                    }
+                }
+            }
+            if (owner_closed)
+                facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
+        }
         suffix->flags = flags;
         suffix->structural_facts = facts;
         /* The suffix's variables are among the list's: the list's single
@@ -4883,6 +5424,14 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         suffix->flags = atom_flags_from_children(
             a->identity, a->older_identity, elems, len,
             &suffix->structural_facts);
+        /* The fold sees the children, not the vector they sit in: the
+         * evidence stands only where the list vouches for that vector, as
+         * in the inherited summary above. */
+        if ((expression->arena_id != 0u &&
+             expression->arena_id != a->identity) ||
+            ((expression->structural_facts & owner_evidence) != owner_evidence &&
+             !atom_expr_vector_in_own_arena(expression)))
+            suffix->structural_facts &= ~ATOM_STRUCTURAL_OWNER_CLOSED;
         suffix->var_id = atom_single_variable_id_of(
             suffix->flags, elems, len);
     }
@@ -4898,13 +5447,16 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         return NULL;
     *header = (Atom){
         .kind = ATOM_EXPR,
-        .flags = view->flags & ~ATOM_FLAG_ARENA_CLOSED,
-        .var_id = view->var_id,
-        .sym_id = SYMBOL_ID_NONE,
+        /* Relocated storage may contain renamed cells. Keep variable
+         * support unknown and do not inherit a hash of the old identities. */
+        .flags = view->flags & ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASH_VALID),
+        .var_id = VAR_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .hash_cache = view->hash_cache,
         .structural_facts = view->structural_facts &
-            ~(ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_FRONT_SLACK),
+            ~(ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_OWNER_CLOSED |
+              ATOM_STRUCTURAL_FRONT_SLACK),
         .expr = {
             .elems = elems,
             .len = view->expr.len,
@@ -4979,7 +5531,7 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
     *at = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems,
@@ -5005,10 +5557,16 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         flags = atom_summary_head_adjust(head, flags);
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_OWNER_CLOSED |
                                         ATOM_STRUCTURAL_FRONT_SLACK)) |
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
+                                        ATOM_STRUCTURAL_OWNER_CLOSED |
                                         ATOM_STRUCTURAL_FRONT_SLACK));
+        if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
+            atom_graph_is_owner_closed_for_arena(a, list) &&
+            atom_graph_is_owner_closed_for_arena(a, head))
+            facts |= ATOM_STRUCTURAL_OWNER_CLOSED;
         /* Every child is admitted by the generations when the list's are,
          * which its closure or its own generation bit says, and the head is
          * too. */
@@ -5044,7 +5602,7 @@ Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len) {
     *draft = (Atom){
         .kind = ATOM_EXPR,
         .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
         .arena_id = a->identity,
         .expr = {
             .elems = elems_bytes ? (Atom **)(draft + 1) : NULL,
@@ -5104,6 +5662,18 @@ Atom *atom_expression_type(Arena *a){ return atom_symbol_id(a, g_builtin_syms.ex
 Atom *atom_grounded_type(Arena *a)  { return atom_symbol_id(a, g_builtin_syms.grounded); }
 Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.list_type); }
 
+SymbolId atom_meta_type_id(const Atom *atom) {
+    switch (atom->kind) {
+    case ATOM_SYMBOL:   return g_builtin_syms.symbol;
+    case ATOM_VAR:      return g_builtin_syms.variable;
+    case ATOM_GROUNDED: return g_builtin_syms.grounded;
+    case ATOM_EXPR:
+        return atom_is_list(atom) || atom_is_list_rest(atom)
+                   ? g_builtin_syms.list_type : g_builtin_syms.expression;
+    }
+    return g_builtin_syms.undefined_type;
+}
+
 Atom *get_meta_type(Arena *a, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:   return atom_symbol_type(a);
@@ -5149,8 +5719,8 @@ bool atom_is_symbol(Atom *a, const char *name) {
 
 bool atom_is_symbol_named(Atom *a, const char *name) {
     if (!a || a->kind != ATOM_SYMBOL || !name || !g_symbols) return false;
-    const char *spelling = symbol_bytes(g_symbols, a->sym_id);
-    uint32_t length = symbol_len(g_symbols, a->sym_id);
+    const char *spelling = atom_symbol_bytes(a);
+    uint32_t length = atom_symbol_length(a);
     return spelling && strlen(name) == length &&
            memcmp(spelling, name, length) == 0;
 }
@@ -5172,23 +5742,24 @@ bool atom_is_var(Atom *a)  { return a->kind == ATOM_VAR; }
 bool atom_is_expr(Atom *a) { return a->kind == ATOM_EXPR; }
 
 bool atom_is_symbol_id(Atom *a, SymbolId id) {
-    return a && a->kind == ATOM_SYMBOL && a->sym_id == id;
+    return a && a->kind == ATOM_SYMBOL && atom_symbol_current_id(a) == id &&
+           (id != SYMBOL_ID_NONE || !atom_symbol_is_spelled(a));
 }
 
 const char *atom_name_cstr(Atom *a) {
     if (!a) return "";
     if (a->kind == ATOM_SYMBOL ||
         (a->kind == ATOM_VAR && !a->name_key))
-        return symbol_bytes(g_symbols, a->sym_id);
+        return atom_symbol_bytes(a);
     return "";
 }
 
 SymbolId atom_head_symbol_id(const Atom *a) {
     if (!a) return SYMBOL_ID_NONE;
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -5431,43 +6002,8 @@ static void state_cell_pairs_key_create(void) {
         abort();
 }
 
-static bool atom_state_cells_eq(const StateCell *left,
-                                const StateCell *right) {
-    if (left == right &&
-        (!left || !atom_structural_may_have_nan(left->value) ||
-         !atom_he_exact_semantics()))
-        return true;
-    if (!left || !right)
-        return false;
-    for (uint32_t i = 0u; i < g_state_cell_pairs_len; i++) {
-        if (g_state_cell_pairs[i].left == left &&
-            g_state_cell_pairs[i].right == right)
-            return true;
-    }
-    if (g_state_cell_pairs_len == g_state_cell_pairs_cap) {
-        /* The scratch owns its buffer, not the cells visited by a comparison.
-         * Retain it for reuse until the current thread retires. */
-        if (g_state_cell_pairs_cap == 0u) {
-            pthread_once(&g_state_cell_pairs_key_once,
-                         state_cell_pairs_key_create);
-            if (pthread_setspecific(g_state_cell_pairs_key,
-                                    &g_state_cell_pairs) != 0)
-                abort();
-        }
-        uint32_t cap = g_state_cell_pairs_cap
-            ? g_state_cell_pairs_cap * 2u : 8u;
-        g_state_cell_pairs = cetta_realloc(
-            g_state_cell_pairs, sizeof(*g_state_cell_pairs) * cap);
-        g_state_cell_pairs_cap = cap;
-    }
-    g_state_cell_pairs[g_state_cell_pairs_len++] =
-        (StateCellPair){left, right};
-    bool equal = atom_eq(left->value, right->value);
-    g_state_cell_pairs_len--;
-    return equal;
-}
-
-static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk);
+static bool atom_numbers_value_eq(Atom *a, Atom *b);
+static bool atom_petta_leaf_eq(Atom *a, Atom *b);
 
 /* PeTTa compares floats as Prolog terms, so 0.0 and -0.0 differ and a NaN is
  * itself; HE compares their IEEE values.  The two rules agree except on the
@@ -5501,7 +6037,7 @@ static inline __attribute__((always_inline)) bool atom_eq_decided(
     }
     switch (a->kind) {
     case ATOM_SYMBOL:
-        *equal = a->sym_id == b->sym_id;
+        *equal = atom_symbols_equal(a, b);
         return true;
     case ATOM_VAR:
         *equal = a->var_id == b->var_id;
@@ -5522,11 +6058,92 @@ static inline __attribute__((always_inline)) bool atom_eq_decided(
     return false;
 }
 
-/* The walk keeps its state on the stack, so it lives apart from the fast
- * path, which then needs no frame of its own. */
+/* Most comparisons visit only symbols, variables, integers and a few
+ * expression levels. Try those with a fixed, bounded stack; unusual leaves,
+ * rational views and deeper terms go through the complete heap-framed
+ * driver. The trial cannot make a speculative equality decision. */
+static int atom_eq_small_tree(Atom *left, Atom *right) {
+    typedef struct {
+        Atom *left;
+        Atom *right;
+        CettaExprIndex next;
+    } Frame;
+    Frame frames[16];
+    Frame *top = frames;
+    for (;;) {
+        if (left != right || atom_structural_may_have_nan(left)) {
+            if (left->kind != right->kind) {
+                if (atom_structural_has_rational(left) ||
+                    atom_structural_has_rational(right))
+                    return -1;
+                return 0;
+            }
+            switch (left->kind) {
+            case ATOM_SYMBOL:
+                if (!atom_symbols_equal(left, right))
+                    return 0;
+                break;
+            case ATOM_VAR:
+                if (left->var_id != right->var_id)
+                    return 0;
+                break;
+            case ATOM_GROUNDED:
+                if (left->ground.gkind != GV_INT || right->ground.gkind != GV_INT)
+                    return -1;
+                if (left->ground.ival != right->ground.ival)
+                    return 0;
+                break;
+            case ATOM_EXPR:
+                if (atom_structural_has_rational(left) ||
+                    atom_structural_has_rational(right))
+                    return -1;
+                if (left->expr.len != right->expr.len)
+                    return 0;
+                if (top == frames + 16u)
+                    return -1;
+                *top++ = (Frame){left, right, 0u};
+                break;
+            }
+        }
+        while (top != frames && top[-1].next == top[-1].left->expr.len)
+            top--;
+        if (top == frames)
+            return 1;
+        Frame *frame = top - 1;
+        CettaExprIndex index = frame->next++;
+        left = frame->left->expr.elems[index];
+        right = frame->right->expr.elems[index];
+    }
+}
+
+/* An expression with decidable immediate children needs no saved parent.
+ * Declining at a compound or unfamiliar child leaves the full walk authoritative. */
+static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
+    if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+        atom_structural_has_rational(left) ||
+        atom_structural_has_rational(right))
+        return -1;
+    if (left->expr.len != right->expr.len)
+        return 0;
+    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
+        bool equal = false;
+        if (!atom_eq_decided(left->expr.elems[index], right->expr.elems[index], &equal))
+            return -1;
+        if (!equal)
+            return 0;
+    }
+    return 1;
+}
+
+/* The ordinary pointer/leaf fast path needs no frame of its own. */
 static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
-    AtomEqWalk walk = {0};
-    return atom_eq_in(a, b, &walk);
+    int small = atom_eq_flat_tree(a, b);
+    if (small >= 0)
+        return small != 0;
+    small = atom_eq_small_tree(a, b);
+    if (small >= 0)
+        return small != 0;
+    return atom_compare_driver(a, b, ATOM_COMPARE_STRUCTURAL, false);
 }
 
 bool atom_eq(Atom *a, Atom *b) {
@@ -5542,156 +6159,358 @@ static bool atom_eq_leaf(Atom *a, Atom *b) {
     return atom_eq(a, b);
 }
 
-/* What comparing one pair of atoms tells: they differ, they are equal, or
- * they are expressions of one length whose children are compared next. */
 typedef enum {
-    ATOM_EQ_DIFFERENT = 0,
-    ATOM_EQ_EQUAL,
-    ATOM_EQ_DESCEND,
-} AtomEqNode;
+    ATOM_COMPARE_PAIR,
+    ATOM_COMPARE_EXPR,
+    ATOM_COMPARE_CONTEXT,
+    ATOM_COMPARE_STATE_END
+} AtomCompareTask;
 
-/* Two atoms of which neither is an expression, compared. */
-static bool atom_eq_atomic(Atom *a, Atom *b) {
-    switch (a->kind) {
-    case ATOM_SYMBOL:
-        return a->sym_id == b->sym_id;
-    case ATOM_VAR:
-        return a->var_id == b->var_id;
-    case ATOM_GROUNDED:
-        if (a->ground.gkind != b->ground.gkind)
-            return cetta_he_promoted_numbers_equal(a, b);
-        switch (a->ground.gkind) {
-        case GV_INT:    return a->ground.ival == b->ground.ival;
-        case GV_FLOAT:
-            return atom_float_eq(a->ground.fval, b->ground.fval);
-        case GV_BOOL:   return a->ground.bval == b->ground.bval;
-        case GV_STRING:
-            return a->ground.slen == b->ground.slen &&
-                   memcmp(a->ground.sval, b->ground.sval,
-                          a->ground.slen) == 0;
-        case GV_BIGINT:
-            return cetta_bigint_compare_cstr(atom_bigint_cstr(a),
-                                            atom_bigint_cstr(b)) == 0;
-        case GV_RATIONAL:
-            return cetta_rational_compare_cstr(atom_rational_cstr(a),
-                                               atom_rational_cstr(b)) == 0;
-        case GV_SPACE:  return a->ground.ptr == b->ground.ptr;
-        case GV_CAPTURE: return a->ground.ptr == b->ground.ptr;
-        case GV_BINDINGS: {
-            const CettaBindingsValue *left = a->ground.ptr;
-            const CettaBindingsValue *right = b->ground.ptr;
-            return left == right || (left && right && left->equal &&
-                                    left->equal(left, right));
-        }
-        case GV_FOREIGN: return a->ground.ptr == b->ground.ptr;
-        case GV_TERM_GRAPH: return a->ground.ptr == b->ground.ptr;
-        case GV_INTERNAL_TAG:
-            return a->ground.ival == b->ground.ival;
-        case GV_PRIME_NEED_CAPABILITY: {
-            const CettaPrimeNeedCapability *ca =
-                a->ground.prime_need_capability;
-            const CettaPrimeNeedCapability *cb =
-                b->ground.prime_need_capability;
-            return ca && cb && ca->session_id == cb->session_id &&
-                   ca->thunk_id == cb->thunk_id &&
-                   ca->authority_id == cb->authority_id &&
-                   ca->rights == cb->rights;
-        }
-        case GV_PRIME_CONTEXT:
-            return atom_prime_context_equal(a->ground.prime_context,
-                                            b->ground.prime_context);
-        case GV_STATE:
-            return atom_state_cells_eq((StateCell *)a->ground.ptr,
-                                       (StateCell *)b->ground.ptr);
-        }
-        return false;
-    case ATOM_EXPR:
-        break;
-    }
-    return false;
-}
-
-static AtomEqNode atom_eq_node(Atom *a, Atom *b, AtomEqWalk *walk) {
-    /* In the HE lane a NaN equals nothing, not even itself, so an atom that
-     * may hold one is compared even against itself. */
-    if (a == b &&
-        (!atom_structural_may_have_nan(a) || !eval_current_language_id ||
-         eval_current_language_id() != CETTA_LANGUAGE_HE))
-        return ATOM_EQ_EQUAL;
-    /* A term that is not a finite tree is its unfolding: two atoms are equal
-     * when their unfoldings are, however much of either is open
-     * (RationalTermGraph.Bisimilar). */
-    if (term_graph_value_eq &&
-        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
-        return term_graph_value_eq(a, b, atom_eq_leaf)
-            ? ATOM_EQ_EQUAL : ATOM_EQ_DIFFERENT;
-    if (a->kind != b->kind) return ATOM_EQ_DIFFERENT;
-    if (a->kind != ATOM_EXPR)
-        return atom_eq_atomic(a, b) ? ATOM_EQ_EQUAL : ATOM_EQ_DIFFERENT;
-    if (a->expr.len != b->expr.len) return ATOM_EQ_DIFFERENT;
-    if (atom_eq_memo_met(walk, a, b)) return ATOM_EQ_EQUAL;
-    return ATOM_EQ_DESCEND;
-}
-
-/* The walk keeps the pairs of expressions it is inside on a stack of its
- * own, so the depth of the atoms costs no depth of calls.  Children are
- * compared from the first on and the walk ends at the first difference. */
 typedef struct {
-    Atom *a;
-    Atom *b;
+    Atom *left;
+    Atom *right;
+    const CettaPrimeContext *context_left;
+    const CettaPrimeContext *context_right;
     CettaExprIndex next;
-} AtomEqFrame;
+    size_t scope;
+    AtomCompareMode mode;
+    AtomCompareTask task;
+    unsigned stage;
+    bool owns_scope;
+} AtomCompareFrame;
 
-enum { ATOM_EQ_INLINE_FRAMES = 32u };
+typedef struct {
+    AtomCompareFrame inline_frames[16];
+    AtomCompareFrame *frames;
+    size_t len;
+    size_t capacity;
+    AtomEqWalk inline_scopes[16];
+    AtomEqWalk *scopes;
+    size_t scope_len;
+    size_t scope_capacity;
+} AtomCompareStack;
 
-static bool atom_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
-    AtomEqNode node = atom_eq_node(a, b, walk);
-    if (node != ATOM_EQ_DESCEND)
-        return node == ATOM_EQ_EQUAL;
-    AtomEqFrame inline_frames[ATOM_EQ_INLINE_FRAMES];
-    AtomEqFrame *frames = inline_frames;
-    size_t len = 0u, cap = ATOM_EQ_INLINE_FRAMES;
-    bool equal = true;
-    frames[len++] = (AtomEqFrame){a, b, 0u};
-    while (len > 0u) {
-        AtomEqFrame *top = &frames[len - 1u];
-        if (top->next == top->a->expr.len) {
-            len--;
+static inline __attribute__((always_inline)) void atom_compare_push(
+                              AtomCompareStack *work, Atom *left, Atom *right,
+                              AtomCompareMode mode, size_t scope,
+                              bool fresh_scope) {
+    if (fresh_scope) {
+        if (work->scope_len == work->scope_capacity) {
+            size_t grown = work->scope_capacity * 2u;
+            if (grown < work->scope_capacity ||
+                grown > SIZE_MAX / sizeof(*work->scopes))
+                cetta_oom(SIZE_MAX);
+            if (work->scopes == work->inline_scopes) {
+                work->scopes = cetta_malloc(grown * sizeof(*work->scopes));
+                memcpy(work->scopes, work->inline_scopes,
+                       work->scope_len * sizeof(*work->scopes));
+            } else {
+                work->scopes = cetta_realloc(
+                    work->scopes, grown * sizeof(*work->scopes));
+            }
+            work->scope_capacity = grown;
+        }
+        scope = work->scope_len++;
+        work->scopes[scope] = (AtomEqWalk){0};
+    }
+    if (work->len == work->capacity) {
+        size_t grown = work->capacity * 2u;
+        if (grown < work->capacity ||
+            grown > SIZE_MAX / sizeof(*work->frames))
+            cetta_oom(SIZE_MAX);
+        if (work->frames == work->inline_frames) {
+            work->frames = cetta_malloc(grown * sizeof(*work->frames));
+            memcpy(work->frames, work->inline_frames,
+                   work->len * sizeof(*work->frames));
+        } else {
+            work->frames = cetta_realloc(
+                work->frames, grown * sizeof(*work->frames));
+        }
+        work->capacity = grown;
+    }
+    work->frames[work->len++] = (AtomCompareFrame){
+        .left = left, .right = right, .scope = scope, .mode = mode,
+        .task = ATOM_COMPARE_PAIR, .owns_scope = fresh_scope};
+}
+
+/* Comparisons and context/state returns share one explicit continuation
+ * stack.  A nested state value or context key gets the fresh equality-memo
+ * scope that its former atom_eq call had.  Active state pairs remain visible
+ * to reentrant grounded callbacks, but are unwound at this call's border. */
+static bool atom_compare_driver(Atom *left, Atom *right,
+                                AtomCompareMode mode, bool all_numbers) {
+    AtomCompareStack work;
+    work.frames = work.inline_frames;
+    work.len = 0u;
+    work.capacity = 16u;
+    work.scopes = work.inline_scopes;
+    work.scope_capacity = 16u;
+    work.scope_len = 1u;
+    work.scopes[0] = (AtomEqWalk){.all_numbers = all_numbers};
+    uint32_t state_base = g_state_cell_pairs_len;
+    atom_compare_push(&work, left, right, mode, 0u, false);
+    while (work.len) {
+        AtomCompareFrame *frame = &work.frames[work.len - 1u];
+        Atom *a = frame->left, *b = frame->right;
+        if (frame->task == ATOM_COMPARE_EXPR) {
+            if (frame->next == a->expr.len)
+                goto completed;
+            CettaExprIndex index = frame->next++;
+            atom_compare_push(&work, a->expr.elems[index],
+                              b->expr.elems[index], frame->mode,
+                              frame->scope, false);
             continue;
         }
-        Atom *left = top->a->expr.elems[top->next];
-        Atom *right = top->b->expr.elems[top->next];
-        top->next++;
-        bool decided = false;
-        if (atom_eq_decided(left, right, &decided)) {
-            if (!decided) {
-                equal = false;
+        if (frame->task == ATOM_COMPARE_CONTEXT) {
+            const CettaPrimeContext *ca = frame->context_left;
+            const CettaPrimeContext *cb = frame->context_right;
+            if (!ca || !cb) {
+                if (ca != cb)
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (frame->stage == 0u) {
+                frame->stage = 1u;
+                atom_compare_push(&work, ca->key, cb->key,
+                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                continue;
+            }
+            if (frame->stage == 1u) {
+                frame->stage = 2u;
+                atom_compare_push(&work, ca->value, cb->value,
+                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                continue;
+            }
+            frame->context_left = ca->parent;
+            frame->context_right = cb->parent;
+            frame->stage = 0u;
+            continue;
+        }
+        if (frame->task == ATOM_COMPARE_STATE_END)
+            goto completed;
+
+        if (frame->mode == ATOM_COMPARE_INTERN) {
+            int leaf = atom_intern_leaf_compare(a, b);
+            if (leaf >= 0) {
+                if (!leaf)
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (a->kind != ATOM_EXPR) {
+                if (!atom_eq(a, b))
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (a->expr.len != b->expr.len)
+                goto comparison_failed;
+            frame->task = ATOM_COMPARE_EXPR;
+            continue;
+        }
+
+        if (frame->mode == ATOM_COMPARE_VALUE) {
+            if (atom_is_number(a) && atom_is_number(b)) {
+                bool equal;
+                if (a->ground.gkind == GV_FLOAT &&
+                    b->ground.gkind == GV_FLOAT)
+                    equal = a->ground.fval == b->ground.fval ||
+                            (all_numbers && isnan(a->ground.fval) &&
+                             isnan(b->ground.fval));
+                else
+                    equal = all_numbers ? atom_numbers_value_eq(a, b)
+                                        : atom_eq(a, b);
+                if (!equal)
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (term_graph_value_eq &&
+                (atom_structural_has_rational(a) ||
+                 atom_structural_has_rational(b))) {
+                if (!term_graph_value_eq(a, b, all_numbers
+                        ? atom_petta_leaf_eq : atom_eq_leaf))
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (a->kind != ATOM_EXPR || b->kind != ATOM_EXPR) {
+                if (!atom_eq(a, b))
+                    goto comparison_failed;
+                goto completed;
+            }
+            if (a->expr.len != b->expr.len)
+                goto comparison_failed;
+            if (a == b &&
+                (all_numbers || !atom_structural_may_have_nan(a)))
+                goto completed;
+            if (atom_eq_memo_met(&work.scopes[frame->scope], a, b))
+                goto completed;
+            frame->task = ATOM_COMPARE_EXPR;
+            continue;
+        }
+
+        bool equal = false;
+        if (atom_eq_decided(a, b, &equal)) {
+            if (!equal)
+                goto comparison_failed;
+            goto completed;
+        }
+        if (a == b &&
+            (!atom_structural_may_have_nan(a) || !eval_current_language_id ||
+             eval_current_language_id() != CETTA_LANGUAGE_HE))
+            goto completed;
+        if (term_graph_value_eq &&
+            (atom_structural_has_rational(a) ||
+             atom_structural_has_rational(b))) {
+            if (!term_graph_value_eq(a, b, atom_eq_leaf))
+                goto comparison_failed;
+            goto completed;
+        }
+        if (a->kind != b->kind)
+            goto comparison_failed;
+        switch (a->kind) {
+        case ATOM_SYMBOL:
+            equal = atom_symbols_equal(a, b);
+            break;
+        case ATOM_VAR:
+            equal = a->var_id == b->var_id;
+            break;
+        case ATOM_EXPR:
+            if (a->expr.len != b->expr.len)
+                goto comparison_failed;
+            if (atom_eq_memo_met(&work.scopes[frame->scope], a, b))
+                goto completed;
+            frame->task = ATOM_COMPARE_EXPR;
+            continue;
+        case ATOM_GROUNDED:
+            if (a->ground.gkind != b->ground.gkind) {
+                equal = cetta_he_promoted_numbers_equal(a, b);
                 break;
             }
-            continue;
-        }
-        node = atom_eq_node(left, right, walk);
-        if (node == ATOM_EQ_EQUAL)
-            continue;
-        if (node == ATOM_EQ_DIFFERENT) {
-            equal = false;
+            switch (a->ground.gkind) {
+            case GV_INT: equal = a->ground.ival == b->ground.ival; break;
+            case GV_FLOAT:
+                equal = atom_float_eq(a->ground.fval, b->ground.fval);
+                break;
+            case GV_BOOL: equal = a->ground.bval == b->ground.bval; break;
+            case GV_STRING:
+                equal = a->ground.slen == b->ground.slen &&
+                        memcmp(a->ground.sval, b->ground.sval,
+                               a->ground.slen) == 0;
+                break;
+            case GV_BIGINT:
+                equal = cetta_bigint_compare_cstr(atom_bigint_cstr(a),
+                                                 atom_bigint_cstr(b)) == 0;
+                break;
+            case GV_RATIONAL:
+                equal = cetta_rational_compare_cstr(atom_rational_cstr(a),
+                                                    atom_rational_cstr(b)) == 0;
+                break;
+            case GV_TENSOR:
+                equal = cetta_tensor_equal(a->ground.ptr, b->ground.ptr);
+                break;
+            case GV_SPACE:
+            case GV_CAPTURE:
+            case GV_FOREIGN:
+            case GV_TERM_GRAPH:
+                equal = a->ground.ptr == b->ground.ptr;
+                break;
+            case GV_BINDINGS: {
+                const CettaBindingsValue *va = a->ground.ptr;
+                const CettaBindingsValue *vb = b->ground.ptr;
+                equal = va == vb || (va && vb && va->equal &&
+                                     va->equal(va, vb));
+                break;
+            }
+            case GV_INTERNAL_TAG:
+                equal = a->ground.ival == b->ground.ival;
+                break;
+            case GV_PRIME_NEED_CAPABILITY: {
+                const CettaPrimeNeedCapability *ca =
+                    a->ground.prime_need_capability;
+                const CettaPrimeNeedCapability *cb =
+                    b->ground.prime_need_capability;
+                equal = ca && cb && ca->session_id == cb->session_id &&
+                        ca->thunk_id == cb->thunk_id &&
+                        ca->authority_id == cb->authority_id &&
+                        ca->rights == cb->rights;
+                break;
+            }
+            case GV_PRIME_CONTEXT: {
+                const CettaPrimeContext *ca = a->ground.prime_context;
+                const CettaPrimeContext *cb = b->ground.prime_context;
+                if (ca == cb)
+                    goto completed;
+                if (!ca || !cb || ca->depth != cb->depth)
+                    goto comparison_failed;
+                frame->context_left = ca;
+                frame->context_right = cb;
+                frame->stage = 0u;
+                frame->task = ATOM_COMPARE_CONTEXT;
+                continue;
+            }
+            case GV_STATE: {
+                const StateCell *ca = a->ground.ptr;
+                const StateCell *cb = b->ground.ptr;
+                if (ca == cb &&
+                    (!ca || !atom_structural_may_have_nan(ca->value) ||
+                     !atom_he_exact_semantics()))
+                    goto completed;
+                if (!ca || !cb)
+                    goto comparison_failed;
+                for (uint32_t i = 0u; i < g_state_cell_pairs_len; i++) {
+                    if (g_state_cell_pairs[i].left == ca &&
+                        g_state_cell_pairs[i].right == cb)
+                        goto completed;
+                }
+                if (g_state_cell_pairs_len == g_state_cell_pairs_cap) {
+                    if (g_state_cell_pairs_cap == 0u) {
+                        pthread_once(&g_state_cell_pairs_key_once,
+                                     state_cell_pairs_key_create);
+                        if (pthread_setspecific(g_state_cell_pairs_key,
+                                                &g_state_cell_pairs) != 0)
+                            abort();
+                    }
+                    uint32_t cap = g_state_cell_pairs_cap
+                        ? g_state_cell_pairs_cap * 2u : 8u;
+                    if (cap < g_state_cell_pairs_cap ||
+                        cap > SIZE_MAX / sizeof(*g_state_cell_pairs))
+                        cetta_oom(SIZE_MAX);
+                    g_state_cell_pairs = cetta_realloc(
+                        g_state_cell_pairs,
+                        sizeof(*g_state_cell_pairs) * cap);
+                    g_state_cell_pairs_cap = cap;
+                }
+                g_state_cell_pairs[g_state_cell_pairs_len++] =
+                    (StateCellPair){ca, cb};
+                frame->task = ATOM_COMPARE_STATE_END;
+                atom_compare_push(&work, ca->value, cb->value,
+                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                continue;
+            }
+            }
             break;
         }
-        if (len == cap) {
-            size_t next_cap = cap * 2u;
-            AtomEqFrame *grown = frames == inline_frames
-                ? cetta_malloc(sizeof(*frames) * next_cap)
-                : cetta_realloc(frames, sizeof(*frames) * next_cap);
-            if (frames == inline_frames)
-                memcpy(grown, inline_frames, sizeof(*frames) * len);
-            frames = grown;
-            cap = next_cap;
-        }
-        frames[len++] = (AtomEqFrame){left, right, 0u};
+        if (!equal)
+            goto comparison_failed;
+completed:
+        if (frame->task == ATOM_COMPARE_STATE_END)
+            g_state_cell_pairs_len--;
+        if (frame->owns_scope)
+            work.scope_len--;
+        work.len--;
     }
-    if (frames != inline_frames)
-        free(frames);
-    return equal;
+    g_state_cell_pairs_len = state_base;
+    if (work.frames != work.inline_frames)
+        free(work.frames);
+    if (work.scopes != work.inline_scopes)
+        free(work.scopes);
+    return true;
+
+comparison_failed:
+    g_state_cell_pairs_len = state_base;
+    if (work.frames != work.inline_frames)
+        free(work.frames);
+    if (work.scopes != work.inline_scopes)
+        free(work.scopes);
+    return false;
 }
 
 bool atom_is_number(const Atom *atom) {
@@ -5778,35 +6597,6 @@ static bool atom_petta_leaf_eq(Atom *a, Atom *b) {
  * and every NaN equals every NaN and nothing else (PeTTaLeafEquality).
  * Otherwise numbers compare as the HE lane's atoms do (atom_eq), except that
  * a NaN is never equal to itself. */
-static bool atom_value_eq_in(Atom *a, Atom *b, AtomEqWalk *walk) {
-    if (atom_is_number(a) && atom_is_number(b)) {
-        if (a->ground.gkind == GV_FLOAT && b->ground.gkind == GV_FLOAT)
-            return a->ground.fval == b->ground.fval ||
-                   (walk->all_numbers && isnan(a->ground.fval) &&
-                    isnan(b->ground.fval));
-        return walk->all_numbers ? atom_numbers_value_eq(a, b)
-                                 : atom_eq(a, b);
-    }
-    /* A rational term compares by its unfolding (RationalTermGraph.PeTTaEq),
-     * however much of either side is open. */
-    if (term_graph_value_eq &&
-        (atom_structural_has_rational(a) || atom_structural_has_rational(b)))
-        return term_graph_value_eq(
-            a, b, walk->all_numbers ? atom_petta_leaf_eq : atom_eq_leaf);
-    if (a->kind != ATOM_EXPR || b->kind != ATOM_EXPR)
-        return atom_eq(a, b);
-    if (a->expr.len != b->expr.len)
-        return false;
-    if (a == b && (walk->all_numbers || !atom_structural_may_have_nan(a)))
-        return true;
-    if (atom_eq_memo_met(walk, a, b))
-        return true;
-    for (CettaExprIndex i = 0; i < a->expr.len; i++)
-        if (!atom_value_eq_in(a->expr.elems[i], b->expr.elems[i], walk))
-            return false;
-    return true;
-}
-
 static uint32_t value_hash_mix(uint32_t h, uint32_t v) {
     return ((h << 5) + h) ^ v;
 }
@@ -5885,26 +6675,12 @@ char *cetta_he_float_exact_key_text(double value) {
 }
 
 uint32_t atom_value_hash(Atom *a) {
-    if (!a)
-        return 0u;
-    if (atom_is_number(a))
-        return atom_number_value_hash(a);
-    /* As == reads it: a rational term by its unfolding. */
-    if (term_graph_view_hash && atom_structural_has_rational(a))
-        return term_graph_view_hash(a, atom_value_hash);
-    if (a->kind != ATOM_EXPR)
-        return atom_hash(a);
-    uint32_t h = value_hash_mix(5381u, (uint32_t)ATOM_EXPR);
-    h = value_hash_mix(h, (uint32_t)a->expr.len);
-    for (CettaExprIndex i = 0; i < a->expr.len; i++)
-        h = value_hash_mix(h, atom_value_hash(a->expr.elems[i]));
-    return h;
+    return atom_hash_fold(a, true, false);
 }
 
 static __attribute__((noinline)) bool atom_value_eq_walk(
     Atom *a, Atom *b, bool all_numbers) {
-    AtomEqWalk walk = {.all_numbers = all_numbers};
-    return atom_value_eq_in(a, b, &walk);
+    return atom_compare_driver(a, b, ATOM_COMPARE_VALUE, all_numbers);
 }
 
 bool atom_value_eq(Atom *a, Atom *b) {
@@ -6387,7 +7163,7 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
 
     switch (src->kind) {
     case ATOM_SYMBOL:
-        out = atom_symbol_id(dst, src->sym_id);
+        out = atom_symbol_copy(dst, src);
         break;
     case ATOM_VAR:
         out = atom_var_like(dst, src, src->var_id);
@@ -6435,6 +7211,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
+        case GV_TENSOR:
+            out = atom_tensor(dst, src->ground.ptr);
             break;
         case GV_TERM_GRAPH: {
             /* The graph is immutable: the copy shares it. */
@@ -6786,7 +7565,7 @@ static Atom *atom_deep_copy_impl(
         if (frame->src->kind == ATOM_VAR) {
             result = memo->global_nodes && home->hashcons
                 ? atom_deep_copy_private_variable(home,frame->src,frame->elems[0])
-                : atom_var_with_spelling_and_name_key(home, frame->src->sym_id,
+                : atom_var_with_spelling_and_name_key(home, atom_symbol_current_id(frame->src),
                     frame->elems[0], frame->src->var_id);
         } else if ((memo->arenas || memo->snapshot)) {
             /* The reserved backing was filled in place, so a nested suffix
@@ -6862,6 +7641,17 @@ Atom *atom_deep_copy(Arena *dst, Atom *src) {
         dst, src, false, &memo, NULL, NULL, NULL, NULL, NULL, NULL);
     atom_deep_copy_memo_free(&memo);
     return out;
+}
+
+Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
+    if (!dst || !src)
+        return NULL;
+    if (atom_settled_for_arena(dst, src)) {
+        cetta_provenance_assert_not_transient_except(
+            src, "atom_deep_copy_single.destination-closed", dst);
+        return src;
+    }
+    return atom_deep_copy(dst, src);
 }
 
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
@@ -7280,14 +8070,35 @@ static size_t atom_deep_copy_object_slot(const AtomDeepCopyObjectSlot *slots,
     return slot;
 }
 
+static bool atom_deep_copy_object_current(const AtomDeepCopyObjectSlot *entry) {
+    return !entry->retain || (entry->destination &&
+        entry->destination->identity == entry->destination_identity &&
+        entry->destination->reset_epoch == entry->destination_epoch);
+}
+
+bool atom_deep_copy_session_object_current(const AtomDeepCopySession *session,
+    const void *kind, const void *object) {
+    if (!session || !kind || !object ||
+        !atom_deep_copy_arena_map_current(session)) return false;
+    if (!session->object_capacity) return true;
+    size_t slot = atom_deep_copy_object_slot(session->objects_by_source,
+        session->object_capacity, kind, object, false);
+    if (!atom_deep_copy_object_current(&session->objects_by_source[slot]))
+        return false;
+    slot = atom_deep_copy_object_slot(session->objects_by_image,
+        session->object_capacity, kind, object, true);
+    return atom_deep_copy_object_current(&session->objects_by_image[slot]);
+}
+
 void *atom_deep_copy_session_object_forwarded(const AtomDeepCopySession *session,
     const void *kind, const void *source, size_t bytes) {
     if (!session || !kind || !source || !session->object_capacity ||
         !atom_deep_copy_arena_map_current(session)) return NULL;
     size_t slot = atom_deep_copy_object_slot(session->objects_by_source,
         session->object_capacity, kind, source, false);
-    return session->objects_by_source[slot].bytes == bytes
-        ? session->objects_by_source[slot].image : NULL;
+    const AtomDeepCopyObjectSlot *entry = &session->objects_by_source[slot];
+    return entry->bytes == bytes && atom_deep_copy_object_current(entry)
+        ? entry->image : NULL;
 }
 
 const void *atom_deep_copy_session_object_original(const AtomDeepCopySession *session,
@@ -7296,20 +8107,26 @@ const void *atom_deep_copy_session_object_original(const AtomDeepCopySession *se
         !atom_deep_copy_arena_map_current(session)) return NULL;
     size_t slot = atom_deep_copy_object_slot(session->objects_by_image,
         session->object_capacity, kind, image, true);
-    return session->objects_by_image[slot].bytes == bytes
-        ? session->objects_by_image[slot].source : NULL;
+    const AtomDeepCopyObjectSlot *entry = &session->objects_by_image[slot];
+    return entry->bytes == bytes && atom_deep_copy_object_current(entry)
+        ? entry->source : NULL;
 }
 
-bool atom_deep_copy_session_object_record(AtomDeepCopySession *session,
-    const void *kind, const void *source, void *image, size_t bytes) {
+static bool atom_deep_copy_session_object_record_impl(AtomDeepCopySession *session,
+    const void *kind, const void *source, void *image, size_t bytes,
+    AtomDeepCopyObjectLifetime retain, AtomDeepCopyObjectLifetime release) {
     if (!session || !kind || !source || !image || !bytes ||
+        (retain && !session->dst) ||
         !atom_deep_copy_arena_map_current(session)) return false;
     if (session->object_capacity) {
         size_t slot = atom_deep_copy_object_slot(session->objects_by_source,
             session->object_capacity, kind, source, false);
         if (session->objects_by_source[slot].source)
             return session->objects_by_source[slot].image == image &&
-                   session->objects_by_source[slot].bytes == bytes;
+                   session->objects_by_source[slot].bytes == bytes &&
+                   session->objects_by_source[slot].retain == retain &&
+                   session->objects_by_source[slot].release == release &&
+                   atom_deep_copy_object_current(&session->objects_by_source[slot]);
         slot = atom_deep_copy_object_slot(session->objects_by_image,
             session->object_capacity, kind, image, true);
         if (session->objects_by_image[slot].source) return false;
@@ -7336,7 +8153,17 @@ bool atom_deep_copy_session_object_record(AtomDeepCopySession *session,
         session->objects_by_source = sources; session->objects_by_image = images;
         session->object_capacity = capacity;
     }
-    AtomDeepCopyObjectSlot entry = {kind, source, image, bytes};
+    AtomDeepCopyObjectSlot entry = {
+        .kind = kind, .source = source, .image = image, .bytes = bytes,
+        .retain = retain, .release = release,
+        .destination = retain ? session->dst : NULL,
+        .destination_identity = retain ? session->dst->identity : 0u,
+        .destination_epoch = retain ? session->dst->reset_epoch : 0u,
+    };
+    if (retain) {
+        retain(source);
+        retain(image);
+    }
     size_t slot = atom_deep_copy_object_slot(session->objects_by_source,
         session->object_capacity, kind, source, false);
     session->objects_by_source[slot] = entry;
@@ -7345,6 +8172,19 @@ bool atom_deep_copy_session_object_record(AtomDeepCopySession *session,
     session->objects_by_image[slot] = entry;
     session->object_count++;
     return true;
+}
+
+bool atom_deep_copy_session_object_record(AtomDeepCopySession *session,
+    const void *kind, const void *source, void *image, size_t bytes) {
+    return atom_deep_copy_session_object_record_impl(
+        session, kind, source, image, bytes, NULL, NULL);
+}
+
+bool atom_deep_copy_session_object_record_retained(AtomDeepCopySession *session,
+    const void *kind, const void *source, void *image, size_t bytes,
+    AtomDeepCopyObjectLifetime retain, AtomDeepCopyObjectLifetime release) {
+    return retain && release && atom_deep_copy_session_object_record_impl(
+        session, kind, source, image, bytes, retain, release);
 }
 
 bool atom_deep_copy_session_destination_for_owner(
@@ -7671,6 +8511,13 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
     if (!session)
         return;
     assert(!session->destination_scope);
+    for (size_t i = 0u; i < session->object_capacity; i++) {
+        const AtomDeepCopyObjectSlot *entry = &session->objects_by_source[i];
+        if (entry->source && entry->release) {
+            entry->release(entry->source);
+            entry->release(entry->image);
+        }
+    }
     free(session->objects_by_source);
     free(session->objects_by_image);
     atom_deep_copy_memo_free(&session->memo);
@@ -8131,8 +8978,8 @@ static void atom_print_mode(
                    a->name_key->ground.gkind == GV_INTERNAL_TAG &&
                    a->name_key->ground.ival ==
                        (int64_t)CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT) {
-            fprintf(out, "$%s", a->sym_id == SYMBOL_ID_NONE
-                ? "__prime_let" : symbol_bytes(g_symbols, a->sym_id));
+            fprintf(out, "$%s", a->symbol_number == SYMBOL_ID_NONE
+                ? "__prime_let" : symbol_bytes(g_symbols, a->symbol_number));
         } else if (a->name_key) {
             fputs("$@", out);
             atom_print_stack_push_atom(&stack, a->name_key);
@@ -8210,6 +9057,9 @@ static void atom_print_mode(
         case GV_TERM_GRAPH:
             if (term_graph_print)
                 term_graph_print(a->ground.ptr, out, petta);
+            break;
+        case GV_TENSOR:
+            cetta_tensor_print(a->ground.ptr, out);
             break;
         case GV_FOREIGN: {
             const CettaForeignHold *hold = a->ground.ptr;

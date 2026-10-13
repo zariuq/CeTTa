@@ -9,6 +9,7 @@
 #include "symbol.h"
 #include "term_universe.h"
 
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -626,9 +627,19 @@ static bool he_repeated_import_contract(void) {
     cetta_library_context_set_script_path(
         ctx, "tests/he/module_import_v1/main.metta");
     cetta_library_set_top_module_space(ctx, &top);
+    cetta_library_set_top_module_registry(ctx, &registry);
+    uint64_t top_identity = space_instance_id(&top);
+    Space *resolved_space = NULL;
+    Registry *resolved_registry = NULL;
+    bool context_ok = cetta_library_module_context(
+        ctx, top_identity, &resolved_space, &resolved_registry) &&
+        resolved_space == &top && resolved_registry == &registry;
+    context_ok = context_ok && !cetta_library_module_context(
+        ctx, UINT64_MAX, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry;
     Atom *error = NULL;
     Space *module = NULL;
-    bool ok = cetta_library_import_module(
+    bool ok = context_ok && cetta_library_import_module(
         ctx, "mi_dmod", &top, false, &scratch, &persistent, &registry,
         1000, NULL, &error);
     /* Rollback bookkeeping is allocated before module code can expose its
@@ -637,8 +648,12 @@ static bool he_repeated_import_contract(void) {
         ctx->retired_module_len + ctx->loaded_module_len;
     if (ok && space_dependency_count(&top) == 1u) {
         module = space_dependency_at(&top, 0u);
+        ok = cetta_library_module_context(ctx, space_instance_id(module),
+                                          &resolved_space, &resolved_registry) &&
+            resolved_space == module && resolved_registry &&
+            registry_lookup_id(resolved_registry, g_builtin_syms.self);
         space_add(&later, module_atom(&scratch, "(reimport-fact later)"));
-        ok = space_add_dependency(module, &later);
+        ok = ok && space_add_dependency(module, &later);
     } else {
         ok = false;
     }
@@ -655,6 +670,11 @@ static bool he_repeated_import_contract(void) {
             module_match_answers(&top, &scratch, "(reimport-fact $x)", "");
     }
     for (uint32_t attempt = 0u; ok && attempt < 12u; attempt++) {
+        /* Each failed compatibility import retries its initializer, including
+           two attempts inside one host request. Both abandoned spaces stay
+           retired until the context ends, so exposed identities remain valid. */
+        CettaHEModuleRunScope request = {0};
+        cetta_library_he_run_begin(ctx, &request);
         uint32_t retired = ctx->retired_module_len;
         uint32_t loaded = ctx->loaded_module_len;
         error = NULL;
@@ -670,14 +690,100 @@ static bool he_repeated_import_contract(void) {
             Space *failed = ctx->retired_modules[retired].space;
             ok = failed && ctx->retired_modules[retired].module_name &&
                 space_length64(failed) == 0u &&
-                space_dependency_count(failed) == 0u;
+                space_dependency_count(failed) == 0u &&
+                cetta_library_module_context(ctx, space_instance_id(failed),
+                                             &resolved_space, &resolved_registry) &&
+                resolved_space == failed && resolved_registry;
         }
+        if (ok) {
+            error = NULL;
+            ok = !cetta_library_import_module(
+                ctx, "mi_badparse", &top, false, &scratch, &persistent,
+                &registry, 1000, NULL, &error) && error &&
+                ctx->retired_module_len == retired + 2u &&
+                ctx->loaded_module_len == loaded &&
+                ctx->retired_module_cap >=
+                    ctx->retired_module_len + ctx->loaded_module_len &&
+                space_dependency_count(&top) == 1u;
+            if (ok) {
+                Space *first = ctx->retired_modules[retired].space;
+                Space *second = ctx->retired_modules[retired + 1u].space;
+                ok = second && first != second &&
+                    space_instance_id(first) != space_instance_id(second) &&
+                    space_length64(second) == 0u &&
+                    space_dependency_count(second) == 0u &&
+                    cetta_library_module_context(ctx, space_instance_id(first),
+                                                 &resolved_space, &resolved_registry) &&
+                    resolved_space == first && resolved_registry &&
+                    cetta_library_module_context(ctx, space_instance_id(second),
+                                                 &resolved_space, &resolved_registry) &&
+                    resolved_space == second && resolved_registry;
+            }
+        }
+        cetta_library_he_run_end(&request);
+    }
+    uint64_t module_identity = module ? space_instance_id(module) : 0u;
+    cetta_library_context_free(ctx);
+    ok = ok && !cetta_library_module_context(
+        ctx, top_identity, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry &&
+        !cetta_library_module_context(
+            ctx, module_identity, &resolved_space, &resolved_registry) &&
+        !resolved_space && !resolved_registry;
+    free(ctx);
+    registry_free(&registry);
+    space_free(&top);
+    space_free(&later);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    return ok;
+}
+
+static bool he_default_failed_import_is_remembered(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Registry registry;
+    Space top;
+    CettaLibraryContext *ctx = calloc(1u, sizeof(*ctx));
+    if (!ctx)
+        return false;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    registry_init(&registry);
+    space_init_with_universe(&top, &universe);
+    registry_bind_id(&registry, g_builtin_syms.self,
+                     atom_space(&persistent, &top));
+    cetta_library_context_init_for_language_profile(
+        ctx, CETTA_LANGUAGE_HE, cetta_profile_he_formal());
+    cetta_library_context_set_script_path(ctx, "tests/he/module_import_v1/main.metta");
+    cetta_library_set_top_module_space(ctx, &top);
+    cetta_library_set_top_module_registry(ctx, &registry);
+    Atom *error = NULL;
+    bool ok = !cetta_library_import_module(
+        ctx, "mi_badparse", &top, false, &scratch, &persistent,
+        &registry, 1000, NULL, &error) && error &&
+        ctx->retired_module_len == 1u && ctx->loaded_module_len == 0u &&
+        space_dependency_count(&top) == 0u;
+    for (unsigned attempt = 0u; ok && attempt < 12u; attempt++) {
+        CettaHEModuleRunScope request = {0};
+        cetta_library_he_run_begin(ctx, &request);
+        SpaceReadToken before = space_read_token(&top);
+        error = NULL;
+        ok = !cetta_library_import_module(
+            ctx, "mi_badparse", &top, false, &scratch, &persistent,
+            &registry, 1000, NULL, &error) && error &&
+            ctx->retired_module_len == 1u && ctx->loaded_module_len == 0u &&
+            space_dependency_count(&top) == 0u && space_read_token_is_current(before);
+        cetta_library_he_run_end(&request);
     }
     cetta_library_context_free(ctx);
     free(ctx);
     registry_free(&registry);
     space_free(&top);
-    space_free(&later);
     term_universe_free(&universe);
     arena_free(&scratch);
     arena_free(&persistent);
@@ -1091,6 +1197,161 @@ static bool execution_owner_callback_contract(void) {
     return ok;
 }
 
+static bool registry_read_id_contract(void) {
+    const struct { const char *source; const char *expected; } cases[] = {
+        {"&reader-value", "7"},
+        {"(reader-holder &reader-value)", "(reader-holder 7)"},
+        {"(reader-holder (nested &reader-value))", "(reader-holder (nested 7))"},
+        {"(reader-holder \"&reader-value\" $reader-value &unknown)",
+         "(reader-holder \"&reader-value\" $reader-value &unknown)"},
+    };
+    for (unsigned wide = 0u; wide < 2u; wide++) {
+        Arena persistent, scratch;
+        arena_init(&persistent);
+        arena_init(&scratch);
+        TermUniverse universe;
+        if (!term_universe_init_with_store_format(&universe, wide
+                ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+                : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1))
+            abort();
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Registry registry;
+        registry_init(&registry);
+        registry_bind(&registry, "&reader-value", atom_int(&scratch, 7));
+        bool ok = true;
+        for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            Atom *source = module_atom(&scratch, cases[i].source);
+            Atom *expected = module_atom(&scratch, cases[i].expected);
+            AtomId written = term_universe_store_atom_id(&universe, NULL, source);
+            AtomId read = eval_read_registry_words_id(&registry, &universe,
+                &scratch, &persistent, written);
+            Atom *actual = term_universe_get_atom(&universe, read);
+            ok = ok && actual && atom_alpha_eq(expected, actual);
+        }
+        /* A registered replacement is already a value. Reading the original
+         * word beside it must not also read inside the replacement. */
+        registry_bind(&registry, "&reader-value", atom_symbol(&scratch, "reader-word"));
+        registry_bind(&registry, "reader-word", atom_int(&scratch, 9));
+        Atom *source = module_atom(&scratch,
+            "(reader-holder &reader-value reader-word)");
+        Atom *expected = module_atom(&scratch, "(reader-holder reader-word 9)");
+        AtomId written = term_universe_store_atom_id(&universe, NULL, source);
+        AtomId read = eval_read_registry_words_id(&registry, &universe,
+            &scratch, &persistent, written);
+        Atom *actual = term_universe_get_atom(&universe, read);
+        ok = ok && actual && atom_alpha_eq(expected, actual);
+        registry_free(&registry);
+        term_universe_free(&universe);
+        arena_free(&scratch);
+        arena_free(&persistent);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+/* Removal keeps the complement of a full canonical-matcher scan. The
+ * reference does not inspect candidate coordinates or the removal mask. */
+static void test_petta_removal_candidates(void) {
+    static const char *patterns[] = {
+        "(row $x 7)", "(row 2 7)", "(row $same $same)",
+        "(row 2 7.0)", "(row $x (nested 7))", "((key nested) 7)",
+        "(row \"seven\" $x)", "($a $b $c)", "(absent 123)",
+        "(row 1000 1001)", "(= (removal-definition $x) $rhs)",
+        "(: removal-definition $type)"
+    };
+    static const char *extra[] = {
+        "(row 2 7)", "(row 2 7)", "(row $same $same)",
+        "(row 2 $free)", "$whole", "(row 2 7.0)",
+        "(row 2 7 extra)", "(row 2 (nested 7))", "((key nested) 7)",
+        "(row \"seven\" 7)", "(row True 7)", "(other 2 7)",
+        "(row 1000 1001)", "(= (removal-definition $x) (value $x))",
+        "(: removal-definition (-> Atom Atom))"
+    };
+    for (unsigned format = 0u; format < 2u; format++) {
+        for (unsigned warm = 0u; warm < 2u; warm++) {
+            for (size_t query = 0u; query < sizeof(patterns) / sizeof(*patterns); query++) {
+                CettaLibraryContext *context = calloc(1u, sizeof(*context));
+                assert(context);
+                cetta_eval_session_init(&context->session, CETTA_LANGUAGE_PETTA,
+                                        cetta_profile_petta_extended());
+                eval_set_library_context(context);
+                Arena persistent, scratch, receiver;
+                arena_init(&persistent);
+                arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+                arena_init(&scratch);
+                arena_init(&receiver);
+                TermUniverse universe;
+                assert(term_universe_init_with_store_format(&universe, format
+                    ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+                    : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+                term_universe_set_persistent_arena(&universe, &persistent);
+                Space space;
+                space_init_with_universe(&space, &universe);
+                Registry registry;
+                registry_init(&registry);
+                registry_bind_id(&registry, g_builtin_syms.self,
+                                 atom_space(&persistent, &space));
+                for (int index = 0; index < 32; index++) {
+                    Atom *parts[] = {atom_symbol(&persistent, "row"),
+                        atom_int(&persistent, index), atom_int(&persistent, index % 5)};
+                    space_add(&space, atom_expr(&persistent, parts, 3u));
+                }
+                for (size_t index = 0u; index < sizeof(extra) / sizeof(*extra); index++)
+                    space_add(&space, module_atom(&persistent, extra[index]));
+                if (warm)
+                    space_match_native_ensure_trie(&space);
+                Atom *pattern = module_atom(&persistent, patterns[query]);
+                /* Repeat after contraction, then after an append: a retired
+                 * candidate index must never conceal a new matching row. */
+                for (unsigned phase = 0u; phase < 3u; phase++) {
+                    if (phase == 2u)
+                        space_add(&space, module_atom(&persistent, "(row 2 7)"));
+                    AtomId retained[64];
+                    CettaCount count = 0u;
+                    CettaCount original = space_length64(&space);
+                    ArenaMark mark = arena_mark(&scratch);
+                    for (CettaIndex index = 0u; index < original; index++) {
+                        CETTA_FRAME_IDENTITY_SCOPE(identities);
+                        CettaFrameIdentity epoch;
+                        assert(cetta_frame_identity_scope_try(&identities, &epoch));
+                        AtomId id = space_get_atom_id_at64(&space, index);
+                        Bindings bindings;
+                        bindings_init(&bindings);
+                        bool matched = match_atoms_atom_id_epoch(
+                            pattern, &universe, id, &bindings, &scratch, epoch);
+                        bindings_free(&bindings);
+                        arena_reset(&scratch, mark);
+                        if (!matched)
+                            retained[count++] = id;
+                    }
+                    Atom *call_parts[] = {atom_symbol(&persistent, "remove-atom"),
+                        atom_space(&persistent, &space), pattern};
+                    ResultSet results;
+                    result_set_init(&results);
+                    eval_top_with_registry(&space, &receiver, &persistent, &registry,
+                        atom_expr(&persistent, call_parts, 3u), &results);
+                    assert(results.len == 1u);
+                    assert(space_length64(&space) == count);
+                    for (CettaIndex index = 0u; index < count; index++)
+                        assert(space_get_atom_id_at64(&space, index) == retained[index]);
+                    result_set_free(&results);
+                }
+                eval_release_temporary_spaces();
+                registry_free(&registry);
+                space_free(&space);
+                term_universe_free(&universe);
+                arena_free(&receiver);
+                arena_free(&scratch);
+                arena_free(&persistent);
+                cetta_library_context_free(context);
+                eval_set_library_context(NULL);
+                free(context);
+            }
+        }
+    }
+}
+
 int main(void) {
     int rc = 1;
     Arena arena;
@@ -1116,6 +1377,11 @@ int main(void) {
     g_var_intern = &var_intern;
     eval_set_library_context(NULL);
 
+    test_petta_removal_candidates();
+    if (!registry_read_id_contract()) {
+        fprintf(stderr, "stored registry reader contract failure\n");
+        goto cleanup;
+    }
     if (!grounded_profile_contract()) {
         fprintf(stderr, "grounded operator profile contract failure\n");
         goto cleanup;
@@ -1134,6 +1400,10 @@ int main(void) {
     }
     if (!he_repeated_import_contract()) {
         fprintf(stderr, "HE repeated import contract failure\n");
+        goto cleanup;
+    }
+    if (!he_default_failed_import_is_remembered()) {
+        fprintf(stderr, "HE default failed import cache contract failure\n");
         goto cleanup;
     }
     if (!execution_owner_nesting_contract()) {

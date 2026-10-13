@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Readable steps compile natively, in the hol profile as in any other.  A
 ; local lemma (pf:have) is a redex: the lemma's proof given to a function of
@@ -8,13 +8,13 @@
 ; antecedent.  The package's proof is the proof as compiled, written in the
 ; rules of the logic, and the checker accepts it in its own right.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: P (-> set prop)) (: Q (-> set prop)) (: R (-> set prop)) (: c set)
                   (: All (-> (-> set prop) prop))))
-!(set:axiom &thy p-to-q (all set (lam x (imp (P x) (Q x)))))
-!(set:axiom &thy q-to-r (all set (lam x (imp (Q x) (R x)))))
-!(set:axiom &thy p-c (P c))
-!(set:axiom &thy all-intro (all (-> set prop) (lam F (imp (all set (lam z (F z))) (All F)))))
+!(hol:axiom &thy p-to-q (all set (lam x (imp (P x) (Q x)))))
+!(hol:axiom &thy q-to-r (all set (lam x (imp (Q x) (R x)))))
+!(hol:axiom &thy p-c (P c))
+!(hol:axiom &thy all-intro (all (-> set prop) (lam F (imp (all set (lam z (F z))) (All F)))))
 
 ; A stated lemma proved by pf:by, then pf:by with the lemma as its premise.
 !(pf:theorem &thy r-c (R c)
@@ -47,10 +47,10 @@
          (let $rest (cdr-atom $t)
            (if (mentions $h $s) True (mentions-any $rest $s))){$rest}){$h}))
 (= (compiled $name)
-   (let (quote (SetNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest))
-        (lift (set:native-proof &thy $name))
+   (let (quote (HolNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest))
+        (lift (hol:native-proof &thy $name))
      (Compiled $name $proof (mentions $proof pf:by) (mentions $proof pf:have)
-               (set:proves &thy (quote $proof) (quote $prop)))))
+               (hol:proves &thy (quote $proof) (quote $prop)))))
 !(compiled r-c)
 !(compiled p-to-r)
 !(compiled all-keeps)
@@ -59,8 +59,8 @@
 
 ; The lemma of r-c is a redex in its term: a function of the lemma's name
 ; applied to the lemma's proof.
-!(let (SetNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
-      (set:native-proof &thy r-c)
+!(let (HolNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
+      (hol:native-proof &thy r-c)
    (unify $term (App (Lam $domain $body) $lemma) LemmaIsARedex NotARedex))
 
 ; Read as data, a lemma is its proof: a consumer of the proof that uses a
@@ -68,22 +68,22 @@
 !(pf:theorem &thy self-imp (all prop (lam p (imp p p))) (pf:fix p (pf:assume h h)))
 !(pf:theorem &thy self-imp-lemma (all prop (lam p (imp p p)))
    (pf:fix p (pf:assume h (pf:have k h k))))
-!(let $with (set:native-proof &thy self-imp-lemma)
- (let $without (set:native-proof &thy self-imp)
-  (unify $with (SetNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
+!(let $with (hol:native-proof &thy self-imp-lemma)
+ (let $without (hol:native-proof &thy self-imp)
+  (unify $with (HolNativeProofV1 $n $prop $proof $term $type $context $rules $rows $digest)
    (let $consumer (Lam $type (App (idx 0) (DeclConst Falsum)))
-     (let (SetNativeNormalFormV1 $c1 $b1 $application $normal $s1 $r1)
-          (set:native-normalize &thy $with $consumer)
-       (let (SetNativeNormalFormV1 $c2 $b2 $a2 $normal2 $s2 $r2)
-            (set:native-normalize &thy $without $consumer)
+     (let (HolNativeNormalFormV1 $c1 $b1 $application $normal $s1 $r1)
+          (hol:native-normalize &thy $with $consumer)
+       (let (HolNativeNormalFormV1 $c2 $b2 $a2 $normal2 $s2 $r2)
+            (hol:native-normalize &thy $without $consumer)
          (SameValue (== $normal $normal2) (== $r1 $r2))){$c2 $b2 $a2 $normal2 $s2 $r2}){$c1 $b1 $application $normal $s1 $r1}){$consumer}
    NotAPackage)))
 
 ; A step that proves nothing publishes nothing, so nothing has a package of
 ; it: the fact does not give the goal, or the lemma does not hold.
-!(let ($verdict $why) (try (set:theorem &thy wrong-by (quote (R c)) (quote (pf:by p-to-q (pf:known p-c)))))
+!(let ($verdict $why) (try (hol:theorem &thy wrong-by (quote (R c)) (quote (pf:by p-to-q (pf:known p-c)))))
    (WrongBy $verdict))
-!(let ($verdict $why) (try (set:theorem &thy wrong-lemma (quote (R c))
+!(let ($verdict $why) (try (hol:theorem &thy wrong-lemma (quote (R c))
                                 (quote (pf:have r (R c) (pf:known p-c) r))))
    (WrongLemma $verdict))
-!(let $r (try (set:native-proof &thy wrong-by)) (car-atom $r))
+!(let $r (try (hol:native-proof &thy wrong-by)) (car-atom $r))

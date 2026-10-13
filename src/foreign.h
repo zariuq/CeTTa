@@ -33,6 +33,37 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
                                Arena *persistent_arena,
                                Atom **error_out);
 
+/* A Python module providing an HE module. Executing the file and running its
+ * register functions are separate events: upstream executes the file when it
+ * finds the module and again when it loads it, runs the register functions
+ * once for the module itself and once more for every importer. */
+typedef struct CettaForeignHEModule CettaForeignHEModule;
+
+/* One exported name with the atom a reader gives for it. */
+typedef struct {
+    char *name;
+    Atom *atom;
+} CettaForeignHEExport;
+
+/* Execute the module file once. With `source`, these bytes are executed as
+ * the file's content; without, Python's own import machinery reads the file.
+ * `out` may be NULL when only the execution matters. */
+bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
+                                     const char *canonical_path,
+                                     const uint8_t *source, size_t length,
+                                     Arena *arena,
+                                     CettaForeignHEModule **out,
+                                     Atom **error_out);
+void cetta_foreign_he_module_release(CettaForeignHEModule *module);
+
+/* Run every register function of the module once, in name order. All or
+ * nothing: when one of them fails, no export is returned. Atoms are built in
+ * `arena`. A name that is a pattern rather than a word is not exported. */
+bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
+                                     CettaForeignHEExport **exports_out,
+                                     size_t *count_out, Atom **error_out);
+void cetta_foreign_he_exports_free(CettaForeignHEExport *exports, size_t count);
+
 bool cetta_foreign_is_callable_atom(Atom *atom);
 
 bool cetta_foreign_call(CettaForeignRuntime *rt,
@@ -70,5 +101,11 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
                                Atom **args,
                                uint32_t nargs,
                                CettaCallOutcome *out);
+
+/* The report of an uncaught Python error, as SWI-PeTTa gives it: the
+ * exception's type and message, then its Python stack, with credentials
+ * screened out.  NULL when `error` carries no Python exception; the caller
+ * frees the text. */
+char *cetta_foreign_python_error_report(Atom *error);
 
 #endif /* CETTA_FOREIGN_H */

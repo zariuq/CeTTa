@@ -1,0 +1,30 @@
+!(import! &self (library lib_retrieval))
+!(bind! &memory (new-space))
+!(let $v (tensor:from f64 (2) (1 0)) (add-atom &memory (Embedding first 1 model-v1 $v (tag a))))
+!(let $v (tensor:from f64 (2) (0 1)) (add-atom &memory (Embedding second 2 model-v1 $v (tag b))))
+!(let $v (tensor:from f64 (2) (2 0)) (add-atom &memory (Embedding third 3 model-v1 $v (tag c))))
+!(let $v (tensor:from f64 (2) (100 0)) (add-atom &memory (Embedding other 4 model-v2 $v (tag d))))
+!(retrieval:search-dot &memory model-v1 (tensor:from f64 (2) (1 0)) 2)
+!(retrieval:search-dot &memory model-v1 (tensor:from f64 (2) (1 0)) 1)
+; Validation preserves duplicate occurrences and the first failure, including
+; a failure outside the selected top-k and a request for zero results.
+!(retrieval:validate ())
+!(retrieval:validate ((1 a) (1 a) (2 b)))
+!(retrieval:validate ((1 a) (RetrievalFailure second bad) (3 c)))
+!(retrieval:validate ((1 a) (RetrievalFailure second bad) (RetrievalFailure third later)))
+!(retrieval:validate ((1 a) broken))
+!(let $good (tensor:from f64 (2) (1 0))
+   (let $bad (tensor:from f64 (3) (1 0 0))
+     (retrieval:exact-dot $good
+       ((Embedding good 1 profile $good tag) (Embedding bad 1 profile $bad tag)) 1)))
+!(let $good (tensor:from f64 (2) (1 0))
+   (let $bad (tensor:from f64 (3) (1 0 0))
+     (retrieval:exact-dot $good
+       ((Embedding good 1 profile $good tag) (Embedding bad 1 profile $bad tag)) 0)))
+!(retrieval:search-dot &memory unknown-profile (tensor:from f64 (2) (1 0)) 5)
+!(retrieval:search-dot &memory model-v1 (tensor:from f64 (2) (1 0)) 0)
+!(retrieval:search-dot &memory model-v1 (tensor:from f64 (3) (1 0 0)) 2)
+; Deleting the source record changes the next query, without a stale index.
+!(match &memory (Embedding third 3 model-v1 $v (tag c))
+   (remove-atom &memory (Embedding third 3 model-v1 $v (tag c))))
+!(retrieval:search-dot &memory model-v1 (tensor:from f64 (2) (1 0)) 1)

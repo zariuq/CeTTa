@@ -2,7 +2,9 @@
 #include <Python.h>
 
 #include "foreign.h"
+#include "effect_policy.h"
 #include "error_presentation.h"
+#include "library.h"
 
 #include "parser.h"
 #include <ctype.h>
@@ -256,12 +258,14 @@ static const char *PYTHON_BOOTSTRAP =
 "    return x\n"
 "\n"
 "class MeTTa:\n"
+"    def __init__(self, _context=0):\n"
+"        self._context = _context\n"
 "    def parse_single(self, text):\n"
 "        return CettaAtom(text)\n"
 "    def parse_all(self, text):\n"
 "        return [CettaAtom(piece) for piece in _split_top_level(text)]\n"
 "    def run(self, text):\n"
-"        return _cetta_bridge.run(text)\n"
+"        return _cetta_bridge.run(text, self._context)\n"
 "\n"
 "class RegisterType:\n"
 "    ATOM = 1\n"
@@ -286,7 +290,18 @@ static const char *PYTHON_BOOTSTRAP =
 "def register_tokens(*args, **kwargs):\n"
 "    return _mark_register_function(RegisterType.TOKEN, args, kwargs)\n"
 "\n"
-"def _cetta_load_module(unique_name, path):\n"
+"def grounded(arg):\n"
+"    def register(metta, func):\n"
+"        atom = OperationAtom(func.__name__, func, unwrap=True)\n"
+"        if metta is not None:\n"
+"            return metta.register_atom(func.__name__, atom)\n"
+"        return _mark_register_function(\n"
+"            RegisterType.ATOM, [lambda: {func.__name__: atom}], {})\n"
+"    if callable(arg):\n"
+"        return register(None, arg)\n"
+"    return lambda func: register(arg, func)\n"
+"\n"
+"def _cetta_load_module(unique_name, path, source=None):\n"
 "    path = os.path.realpath(path)\n"
 "    is_package = path.endswith('__init__.py')\n"
 "    if is_package:\n"
@@ -302,13 +317,33 @@ static const char *PYTHON_BOOTSTRAP =
 "        sys.path.append(import_root)\n"
 "    module = importlib.util.module_from_spec(spec)\n"
 "    sys.modules[unique_name] = module\n"
-"    spec.loader.exec_module(module)\n"
+"    if source is None:\n"
+"        spec.loader.exec_module(module)\n"
+"    else:\n"
+"        exec(compile(source, path, 'exec'), module.__dict__)\n"
 "    sys.modules.setdefault(public_name, module)\n"
 "    return module\n"
 "\n"
 "def _cetta_eval_literal(text):\n"
 "    ns = {'__builtins__': builtins.__dict__, 'hyperon': hyperon}\n"
 "    return eval(text, ns, ns)\n"
+"\n"
+"def _cetta_error_report(exc):\n"
+"    import re, traceback\n"
+"    lines = [\"Python '%s':\" % type(exc).__name__]\n"
+"    lines += ['  ' + line for line in (str(exc).splitlines() or [''])]\n"
+"    frames = traceback.format_tb(exc.__traceback__) if exc.__traceback__ else []\n"
+"    if frames:\n"
+"        lines.append('Python stack:')\n"
+"        for frame in frames:\n"
+"            lines += frame.rstrip('\\n').splitlines()\n"
+"    text = '\\n'.join(lines)\n"
+"    text = re.sub(r'\\b\\d{6,}:[A-Za-z0-9_-]{30,}', '<redacted>', text)\n"
+"    text = re.sub(r'(?i)\\b(bearer)\\s+[A-Za-z0-9._~+/=-]{8,}', r'\\1 <redacted>', text)\n"
+"    text = re.sub(r'\\bsk-[A-Za-z0-9_-]{16,}', '<redacted>', text)\n"
+"    text = re.sub(r'(?i)\\b((?:api[_-]?)?key|token|secret|password|passwd)"
+"([\\'\"]?\\s*[:=]\\s*[\\'\"]?)[^\\s\\'\"&,;)]{6,}', r'\\1\\2<redacted>', text)\n"
+"    return text\n"
 "\n"
 "def _cetta_resolve(path, base=None):\n"
 "    if base is not None:\n"
@@ -368,6 +403,10 @@ static const char *PYTHON_BOOTSTRAP =
 "\n"
 "hyperon_ext.register_atoms = register_atoms\n"
 "hyperon_ext.register_tokens = register_tokens\n"
+"hyperon_ext.grounded = grounded\n"
+"hyperon_ext.RegisterType = RegisterType\n"
+"hyperon_ext.mark_register_function = _mark_register_function\n"
+"hyperon_ext.OperationAtom = OperationAtom\n"
 "hyperon_base.Tokenizer = Tokenizer\n"
 "hyperon_base.SExprParser = SExprParser\n"
 "\n"
@@ -382,7 +421,8 @@ static const char *PYTHON_BOOTSTRAP =
 "_cetta_bridge.ValueAtom = ValueAtom\n"
 "_cetta_bridge.MeTTa = MeTTa\n"
 "_cetta_bridge._cetta_load_module = _cetta_load_module\n"
-"_cetta_bridge._cetta_resolve = _cetta_resolve\n";
+"_cetta_bridge._cetta_resolve = _cetta_resolve\n"
+"_cetta_bridge._cetta_error_report = _cetta_error_report\n";
 
 const char *cetta_module_format_name(CettaModuleFormatKind kind) {
     switch (kind) {
@@ -489,6 +529,10 @@ static bool python_execution_guard_enter(
     if (!guard)
         return false;
     guard->active = false;
+    if (cetta_speculative_active()) {
+        if (error_out) *error_out=cetta_effect_denied(error_arena);
+        return false;
+    }
     if (!python_prepare_interpreter(error_arena, error_out))
         return false;
     guard->state = PyGILState_Ensure();
@@ -718,11 +762,40 @@ void cetta_foreign_global_shutdown(void) {
     (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
 }
 
+typedef struct {
+    PyObject *rows;
+    Arena *arena;
+} PythonDocumentRows;
+
+static bool bridge_observe_document_row(void *context, const ResultSet *results) {
+    PythonDocumentRows *document = context;
+    PyObject *row = PyList_New(0);
+    if (!row)
+        return false;
+    for (CettaCount i = 0u; i < results->len; i++) {
+        char *text = atom_to_string(document->arena, results->items[i]);
+        PyObject *atom = text ? PyObject_CallFunction(g_bridge_cetta_atom_class, "s", text) : NULL;
+        if (!atom || PyList_Append(row, atom) != 0) {
+            Py_XDECREF(atom);
+            Py_DECREF(row);
+            return false;
+        }
+        Py_DECREF(atom);
+    }
+    bool ok = PyList_Append(document->rows, row) == 0;
+    Py_DECREF(row);
+    return ok;
+}
+
 static PyObject *bridge_run(PyObject *self, PyObject *args) {
     (void)self;
     const char *text = NULL;
-    if (!PyArg_ParseTuple(args, "s", &text)) return NULL;
-    if (!g_python_callback_space) {
+    unsigned long long context_instance = 0u;
+    if (!PyArg_ParseTuple(args, "s|K", &text, &context_instance)) return NULL;
+    CettaLibraryContext *context = eval_current_library_context();
+    if (!g_python_callback_space &&
+        (!context_instance || !context ||
+         context->session.language_id != CETTA_LANGUAGE_HE)) {
         PyErr_SetString(PyExc_RuntimeError, "MeTTa.run is unavailable outside a foreign call/import context");
         return NULL;
     }
@@ -731,8 +804,41 @@ static PyObject *bridge_run(PyObject *self, PyObject *args) {
         return NULL;
     }
 
+    __attribute__((cleanup(cetta_library_he_run_end)))
+    CettaHEModuleRunScope run_scope = {0};
+    cetta_library_he_run_begin(eval_current_library_context(), &run_scope);
+
     PyObject *outer = PyList_New(0);
     if (!outer) return NULL;
+
+    if (context && context->session.language_id == CETTA_LANGUAGE_HE) {
+        Space *space = g_python_callback_space;
+        Registry *registry = eval_current_registry();
+        if (context_instance && !cetta_library_module_context(
+                context, context_instance, &space, &registry)) {
+            Py_DECREF(outer);
+            PyErr_SetString(PyExc_RuntimeError, "retained MeTTa runner context is closed");
+            return NULL;
+        }
+        space = cetta_library_logical_module_space(context, space);
+        Arena arena;
+        arena_init(&arena);
+        PythonDocumentRows rows = {outer, &arena};
+        Atom *error = NULL;
+        bool ok = cetta_library_he_run_text(
+            context, space, registry, text, &arena, eval_current_persistent_arena(),
+            bridge_observe_document_row, &rows, &error);
+        if (!ok && !PyErr_Occurred()) {
+            char *detail = error ? atom_to_string(&arena, error) : NULL;
+            PyErr_SetString(PyExc_RuntimeError, detail ? detail : "MeTTa document failed");
+        }
+        arena_free(&arena);
+        if (!ok) {
+            Py_DECREF(outer);
+            return NULL;
+        }
+        return outer;
+    }
 
     Arena parse_arena;
     arena_init(&parse_arena);
@@ -862,6 +968,33 @@ static bool literal_token_name(const char *pattern) {
     return true;
 }
 
+/* The one text a token key matches, or NULL for a key that matches more than
+ * one text. A key is a regular expression: an escaped character stands for
+ * itself, so `np\.pi` is the word `np.pi`; an escaped letter or digit is a
+ * character class or an anchor. */
+static const char *literal_token_word(Arena *arena, const char *pattern) {
+    if (!pattern || !*pattern) return NULL;
+    char *word = arena_alloc(arena, strlen(pattern) + 1u);
+    size_t length = 0u;
+    for (const unsigned char *p = (const unsigned char *)pattern; *p; p++) {
+        switch (*p) {
+        case '[': case ']': case '(': case ')': case '{': case '}':
+        case '+': case '?': case '*': case '|': case '^': case '$':
+            return NULL;
+        case '\\':
+            if (!p[1] || isalnum(p[1]))
+                return NULL;
+            p++;
+            break;
+        default:
+            break;
+        }
+        word[length++] = (char)*p;
+    }
+    word[length] = '\0';
+    return length ? word : NULL;
+}
+
 static PyObject *call_python_load_module(const char *path, Arena *error_arena, Atom **error_out) {
     char unique_name[128];
     snprintf(unique_name, sizeof(unique_name), "cetta_ext_%llu",
@@ -880,7 +1013,13 @@ static PyObject *python_make_metta_bridge(Arena *error_arena, Atom **error_out) 
         if (error_out) *error_out = python_error_atom(NULL, error_arena, "failed to fetch bridge MeTTa class");
         return NULL;
     }
-    PyObject *instance = PyObject_CallObject(cls, NULL);
+    CettaLibraryContext *context = eval_current_library_context();
+    /* Export hooks receive the session runner, independently of the lexical
+       module receiving their tokens. Its retained identity, not an invoking
+       foreign caller, determines the context of MeTTa.run. */
+    uint64_t identity = context && context->session.language_id == CETTA_LANGUAGE_HE
+        ? space_instance_id(context->top_module_space) : 0u;
+    PyObject *instance = PyObject_CallFunction(cls, "K", (unsigned long long)identity);
     Py_DECREF(cls);
     if (!instance && error_out) {
         *error_out = python_error_atom(NULL, error_arena, "failed to construct bridge MeTTa");
@@ -1062,7 +1201,10 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         return true;
     }
     if (PyUnicode_Check(obj)) {
-        const char *text = PyUnicode_AsUTF8(obj);
+        Py_ssize_t length = 0;
+        const char *text = PyUnicode_AsUTF8AndSize(obj, &length);
+        if (!text || length < 0 || (uint64_t)length > UINT32_MAX)
+            return false;
         /*
          * SWI Janus maps a Python str returned by PeTTa's py-call to a
          * Prolog atom.  Preserve that language boundary: repr and sread can
@@ -1074,8 +1216,8 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
         result_set_add(
             rs, petta_text
-                ? atom_symbol(a, text ? text : "")
-                : atom_string(a, text ? text : ""));
+                ? atom_symbol_data_n(a, text, (uint32_t)length)
+                : atom_string_n(a, text, (uint32_t)length));
         return true;
     }
 
@@ -1142,7 +1284,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
         case GV_BOOL:
             return PyBool_FromLong(atom->ground.bval ? 1 : 0);
         case GV_STRING:
-            return PyUnicode_FromString(atom->ground.sval);
+            return PyUnicode_FromStringAndSize(atom->ground.sval, atom->ground.slen);
         case GV_BIGINT:
             return PyLong_FromString((char *)atom_bigint_cstr(atom), NULL, 10);
         case GV_RATIONAL:
@@ -1164,7 +1306,7 @@ static PyObject *python_from_atom(Arena *a, Atom *atom, bool unwrap) {
 
     if (atom->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr(atom);
-        return name ? PyUnicode_FromString(name) : NULL;
+        return name ? PyUnicode_FromStringAndSize(name, atom_symbol_length(atom)) : NULL;
     }
     if (atom->kind == ATOM_EXPR &&
         eval_current_language_id &&
@@ -1753,6 +1895,194 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
     return ok;
 }
 
+struct CettaForeignHEModule {
+    CettaForeignRuntime *runtime;
+    PyObject *module;
+};
+
+bool cetta_foreign_he_module_execute(CettaForeignRuntime *rt,
+                                     const char *canonical_path,
+                                     const uint8_t *source, size_t length,
+                                     Arena *arena,
+                                     CettaForeignHEModule **out,
+                                     Atom **error_out) {
+    if (out)
+        *out = NULL;
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (!python_execution_guard_enter(&python, arena, error_out))
+        return false;
+    if (!ensure_python_bridge(arena, error_out))
+        return false;
+    char unique_name[128];
+    snprintf(unique_name, sizeof(unique_name), "cetta_ext_%llu",
+             (unsigned long long)++g_bridge_module_counter);
+    PyObject *module = source
+        ? PyObject_CallFunction(g_bridge_load_module, "ssy#", unique_name,
+                                canonical_path, (const char *)source,
+                                (Py_ssize_t)length)
+        : PyObject_CallFunction(g_bridge_load_module, "ss", unique_name,
+                                canonical_path);
+    if (!module) {
+        if (error_out)
+            *error_out = python_error_atom(rt, arena, "python module load failed");
+        return false;
+    }
+    if (!out) {
+        Py_DECREF(module);
+        return true;
+    }
+    CettaForeignHEModule *loaded = cetta_malloc(sizeof(*loaded));
+    loaded->runtime = rt;
+    loaded->module = module;
+    *out = loaded;
+    return true;
+}
+
+void cetta_foreign_he_module_release(CettaForeignHEModule *module) {
+    if (!module)
+        return;
+    if (module->module && Py_IsInitialized()) {
+        PyGILState_STATE gil = PyGILState_Ensure();
+        Py_DECREF(module->module);
+        PyGILState_Release(gil);
+    }
+    free(module);
+}
+
+void cetta_foreign_he_exports_free(CettaForeignHEExport *exports, size_t count) {
+    for (size_t i = 0u; exports && i < count; i++)
+        free(exports[i].name);
+    free(exports);
+}
+
+/* The atom a reader gives for one registered value. A token's value is its
+ * constructor; for a word the matched text is the word itself. */
+static Atom *he_export_atom(CettaForeignRuntime *rt, Arena *arena,
+                            const char *name, PyObject *value, bool token,
+                            Atom **error_out) {
+    PyObject *constructed = token ? PyObject_CallFunction(value, "s", name) : NULL;
+    if (token && !constructed) {
+        if (error_out)
+            *error_out = python_error_atom(rt, arena, "python token constructor failed");
+        return NULL;
+    }
+    PyObject *object = token ? constructed : value;
+    Atom *atom = NULL;
+    if (g_bridge_operation_atom_class &&
+        PyObject_IsInstance(object, g_bridge_operation_atom_class) == 1) {
+        PyObject *callable = PyObject_GetAttrString(object, "callable");
+        PyObject *unwrap = PyObject_GetAttrString(object, "unwrap");
+        if (callable)
+            atom = atom_foreign(arena, foreign_new_python_value(
+                rt, callable, true, !unwrap || PyObject_IsTrue(unwrap)));
+        else if (error_out)
+            *error_out = python_error_atom(rt, arena, "failed to read OperationAtom.callable");
+        PyErr_Clear();
+        Py_XDECREF(unwrap);
+        Py_XDECREF(callable);
+    } else if (PyCallable_Check(object)) {
+        atom = atom_foreign(arena, foreign_new_python_value(rt, object, true, true));
+    } else {
+        ResultSet rs;
+        result_set_init(&rs);
+        if (python_emit_single(rt, arena, object, &rs, error_out) && rs.len == 1)
+            atom = rs.items[0];
+        result_set_free(&rs);
+    }
+    Py_XDECREF(constructed);
+    return atom;
+}
+
+bool cetta_foreign_he_module_exports(CettaForeignHEModule *module, Arena *arena,
+                                     CettaForeignHEExport **exports_out,
+                                     size_t *count_out, Atom **error_out) {
+    *exports_out = NULL;
+    *count_out = 0u;
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (!module || !python_execution_guard_enter(&python, arena, error_out))
+        return false;
+    CettaForeignRuntime *rt = module->runtime;
+    PyObject *names = PyObject_Dir(module->module);
+    if (!names) {
+        if (error_out)
+            *error_out = python_error_atom(rt, arena, "failed to enumerate python module exports");
+        return false;
+    }
+    CettaForeignHEExport *exports = NULL;
+    size_t count = 0u, capacity = 0u;
+    bool ok = true;
+    for (Py_ssize_t i = 0; ok && i < PyList_Size(names); i++) {
+        PyObject *attr = PyObject_GetAttr(module->module, PyList_GetItem(names, i));
+        if (!attr) {
+            ok = false;
+            break;
+        }
+        PyObject *kind = PyObject_GetAttrString(attr, "metta_type");
+        if (!kind) {
+            PyErr_Clear();
+            Py_DECREF(attr);
+            continue;
+        }
+        bool token = PyLong_Check(kind) && PyLong_AsLong(kind) == 2;
+        Py_DECREF(kind);
+        PyObject *pass = PyObject_GetAttrString(attr, "metta_pass_metta");
+        bool pass_metta = pass && PyObject_IsTrue(pass);
+        PyErr_Clear();
+        Py_XDECREF(pass);
+        PyObject *runner = pass_metta ? python_make_metta_bridge(arena, error_out) : NULL;
+        PyObject *mapping = pass_metta
+            ? (runner ? PyObject_CallFunctionObjArgs(attr, runner, NULL) : NULL)
+            : PyObject_CallFunctionObjArgs(attr, NULL);
+        Py_XDECREF(runner);
+        Py_DECREF(attr);
+        PyObject *items = mapping && PyMapping_Check(mapping)
+            ? PyMapping_Items(mapping) : NULL;
+        ok = mapping != NULL && (items != NULL || !PyMapping_Check(mapping));
+        for (Py_ssize_t j = 0; ok && items && j < PyList_Size(items); j++) {
+            PyObject *pair = PyList_GetItem(items, j);
+            PyObject *key = PyTuple_GetItem(pair, 0);
+            const char *pattern = key && PyUnicode_Check(key) ? PyUnicode_AsUTF8(key) : NULL;
+            const char *word = literal_token_word(arena, pattern);
+            if (!word) {
+                PyErr_Clear();
+                continue;
+            }
+            /* A constructor receives the text as written; the word is bound
+               in the reader's spelling of it. */
+            const char *name = parser_canonicalize_namespace_token(arena, word);
+            Atom *atom = he_export_atom(rt, arena, word, PyTuple_GetItem(pair, 1),
+                                        token, error_out);
+            if (!atom) {
+                ok = false;
+                break;
+            }
+            if (count == capacity) {
+                capacity = capacity ? capacity * 2u : 8u;
+                exports = cetta_realloc(exports, capacity * sizeof(*exports));
+            }
+            size_t size = strlen(name) + 1u;
+            exports[count].name = cetta_malloc(size);
+            memcpy(exports[count].name, name, size);
+            exports[count++].atom = atom;
+        }
+        Py_XDECREF(items);
+        Py_XDECREF(mapping);
+    }
+    Py_DECREF(names);
+    if (!ok) {
+        if (error_out && !*error_out)
+            *error_out = python_error_atom(rt, arena, "python register function failed");
+        PyErr_Clear();
+        cetta_foreign_he_exports_free(exports, count);
+        return false;
+    }
+    *exports_out = exports;
+    *count_out = count;
+    return true;
+}
+
 bool cetta_foreign_is_callable_atom(Atom *atom) {
     return atom &&
            atom->kind == ATOM_GROUNDED &&
@@ -2141,6 +2471,56 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
         : cetta_call_value(result_set_collapse_for_native(a, &results));
     result_set_free(&results);
     return out->kind == CETTA_CALL_RAISED || out->term != NULL;
+}
+
+/* The Python exception an uncaught (Error (python_error Type Value) _)
+ * carries, NULL for any other error. */
+static PyObject *python_error_exception(Atom *error) {
+    if (!error || !atom_is_error(error) || error->kind != ATOM_EXPR ||
+        error->expr.len < 2u)
+        return NULL;
+    Atom *formal = error->expr.elems[1];
+    if (!formal || formal->kind != ATOM_EXPR || formal->expr.len != 3u)
+        return NULL;
+    Atom *head = formal->expr.elems[0];
+    const char *name = head && head->kind == ATOM_SYMBOL
+        ? atom_name_cstr(head) : NULL;
+    Atom *object = formal->expr.elems[2];
+    if (!name || strcmp(name, "python_error") != 0 || !object ||
+        object->kind != ATOM_GROUNDED ||
+        object->ground.gkind != GV_FOREIGN)
+        return NULL;
+    CettaForeignValue *value = (CettaForeignValue *)object->ground.ptr;
+    if (!value || value->backend != CETTA_FOREIGN_BACKEND_PYTHON ||
+        !value->obj)
+        return NULL;
+    return value->obj;
+}
+
+char *cetta_foreign_python_error_report(Atom *error) {
+    PyObject *exception = python_error_exception(error);
+    if (!exception || !Py_IsInitialized() || !g_bridge_module)
+        return NULL;
+    Arena scratch;
+    arena_init(&scratch);
+    char *report = NULL;
+    {
+        __attribute__((cleanup(python_execution_guard_leave)))
+        PythonExecutionGuard python = {0};
+        Atom *ignored = NULL;
+        if (python_execution_guard_enter(&python, &scratch, &ignored) &&
+            PyExceptionInstance_Check(exception)) {
+            PyObject *text = PyObject_CallMethod(
+                g_bridge_module, "_cetta_error_report", "O", exception);
+            const char *utf8 = text ? PyUnicode_AsUTF8(text) : NULL;
+            if (utf8)
+                report = strdup(utf8);
+            Py_XDECREF(text);
+            PyErr_Clear();
+        }
+    }
+    arena_free(&scratch);
+    return report;
 }
 
 /* A borrowed native exception is projected without invoking Python formatting

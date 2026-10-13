@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "library_io.h"
+#include "http_worker.h"
 
 #include "symbol.h"
 
@@ -21,7 +22,7 @@
 
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
 #include <curl/curl.h>
-#include <pthread.h>
+#include <time.h>
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
 #include <emscripten/fetch.h>
 #include <emscripten/eventloop.h>
@@ -30,6 +31,7 @@
 typedef struct CettaIoHeader {
     char *key;
     char *value;
+    char *credential_secret; /* host bytes only; never an evaluator Atom */
     struct CettaIoHeader *next;
 } CettaIoHeader;
 
@@ -40,7 +42,9 @@ typedef struct CettaIoRequest {
     CettaIoHeader *headers;
     char *body;
     int64_t timeout_ms;
+    uint32_t connect_timeout_ms, first_byte_timeout_ms, idle_timeout_ms;
     size_t max_bytes;
+    bool follow_redirects;
     char *response;
     size_t response_len;
     size_t response_cap;
@@ -48,14 +52,11 @@ typedef struct CettaIoRequest {
     int transport_code;
     char transport_message[256];
     bool response_too_large;
+    bool response_budget_exceeded;
     bool response_has_nul;
     bool ready;
     struct CettaIoRuntime *runtime;
-#if CETTA_BUILD_HTTP_PROVIDER_CURL
-    CURL *easy;
-    struct curl_slist *curl_headers;
-    bool in_multi;
-#elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
+#if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
     emscripten_fetch_t *fetch;
     const char **fetch_headers;
     bool provider_closing;
@@ -72,7 +73,8 @@ struct CettaIoRuntime {
     CettaIoRequest *ready_head;
     CettaIoRequest *ready_tail;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    CURLM *multi;
+    CettaHttpWorker *worker;
+    uint64_t generation;
 #endif
 };
 
@@ -108,28 +110,28 @@ static bool io_zero_arg_ok(Atom **args, uint32_t nargs) {
 
 static Atom *io_public_head(Arena *arena, Atom *head) {
     if (!head || head->kind != ATOM_SYMBOL) return head;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     if (id == g_builtin_syms.lib_io_capabilities)
         return atom_symbol(arena, "io:capabilities");
     if (id == g_builtin_syms.lib_io_submit)
         return atom_symbol(arena, "io:submit");
     if (id == g_builtin_syms.lib_io_poll)
         return atom_symbol(arena, "io:poll");
+    if (id == g_builtin_syms.lib_io_status)
+        return atom_symbol(arena, "io:status");
+    if (id == g_builtin_syms.lib_io_wait)
+        return atom_symbol(arena, "io:wait");
     if (id == g_builtin_syms.lib_io_cancel)
         return atom_symbol(arena, "io:cancel");
     return head;
 }
 
-static Atom *io_call(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
-    Atom **items = arena_alloc(arena, sizeof(Atom *) * (nargs + 1u));
-    items[0] = io_public_head(arena, head);
-    for (uint32_t i = 0u; i < nargs; i++) items[i + 1u] = args[i];
-    return atom_expr(arena, items, nargs + 1u);
-}
-
 static Atom *io_error(Arena *arena, Atom *head, Atom **args,
                       uint32_t nargs, const char *message) {
-    return atom_error(arena, io_call(arena, head, args, nargs),
+    /* Arguments can contain credentials, including tokens embedded in URLs. */
+    (void)args; (void)nargs;
+    Atom *operation = io_public_head(arena, head);
+    return atom_error(arena, atom_expr(arena, &operation, 1u),
                       atom_string(arena, message));
 }
 
@@ -137,7 +139,18 @@ static void io_header_list_free(CettaIoHeader *header) {
     while (header) {
         CettaIoHeader *next = header->next;
         free(header->key);
+        if (header->value) {
+            volatile char *p = header->value;
+            size_t n = strlen(header->value);
+            while (n--) *p++ = 0;
+        }
         free(header->value);
+        if (header->credential_secret) {
+            volatile char *p = header->credential_secret;
+            size_t n = strlen(header->credential_secret);
+            while (n--) *p++ = 0;
+            free(header->credential_secret);
+        }
         free(header);
         header = next;
     }
@@ -146,12 +159,8 @@ static void io_header_list_free(CettaIoHeader *header) {
 static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     if (!request) return;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (request->easy) {
-        if (runtime && runtime->multi && request->in_multi)
-            (void)curl_multi_remove_handle(runtime->multi, request->easy);
-        curl_easy_cleanup(request->easy);
-    }
-    curl_slist_free_all(request->curl_headers);
+    if (runtime && runtime->worker && request->id)
+        cetta_http_worker_abandon(runtime->worker, request->id);
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
     if (request->abort_scheduled) {
         emscripten_clear_immediate(request->abort_immediate);
@@ -243,35 +252,107 @@ static bool io_http_url(const char *url) {
             strncasecmp(url, "https://", 8u) == 0);
 }
 
-static bool io_parse_headers(Atom *atom, CettaIoHeader **headers_out,
-                             char *error, size_t error_size) {
+/* Host configuration authorizes a credential reference for one URL prefix.
+ * Guest code selects an alias, never an environment variable or a token.
+ * Prefixes include the complete authority and a trailing '/'; requests with
+ * credentials never follow redirects. No secret reaches an Atom or error. */
+static bool io_credential_header(const char *alias, const char *url,
+                                 bool follow, CettaIoHeader *copy) {
+    if (!alias || !*alias || strlen(alias) > 48u || follow) return false;
+    for (const unsigned char *p = (const unsigned char *)alias; *p; ++p)
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) return false;
+    char name[128];
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_URL_PREFIX", alias);
+    const char *scope = getenv(name);
+    if (!scope || !*scope) return false;
+    size_t length = strlen(scope);
+    const char *authority = strstr(scope, "://");
+    if (!authority || (strncmp(scope, "https://", 8) && strncmp(scope, "http://", 7)) ||
+        scope[length - 1] != '/' || strchr(authority + 3, '@') ||
+        strncmp(url, scope, length) || strlen(url) <= length ||
+        strstr(url, "/../") || strstr(url, "/./") || strchr(url, '\\')) return false;
+    /* Do not let URL normalization escape a path-scoped credential. Encoded
+     * dot/slash/backslash components have the same ambiguity at a server. */
+    for (const char *p = url; *p; p++) {
+        if (*p == '%' && p[1] && p[2] &&
+            ((p[1] == '2' && (p[2] == 'e' || p[2] == 'E' || p[2] == 'f' || p[2] == 'F')) ||
+             (p[1] == '5' && (p[2] == 'c' || p[2] == 'C')))) return false;
+    }
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_HEADER", alias);
+    const char *key = getenv(name);
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_ENV", alias);
+    const char *variable = getenv(name);
+    if (!key || !io_valid_header_key(key) || !variable || !*variable) return false;
+    const char *secret = getenv(variable);
+    snprintf(name, sizeof(name), "CETTA_IO_AUTH_%s_PREFIX", alias);
+    const char *prefix = getenv(name);
+    if (!prefix) prefix = "";
+    if (!secret || !*secret || !io_valid_header_value(secret) || !io_valid_header_value(prefix) ||
+        strlen(key) + strlen(prefix) + strlen(secret) + 2u > 8192u) return false;
+    copy->key = io_strdup(key);
+    copy->credential_secret = io_strdup(secret);
+    copy->value = cetta_malloc(strlen(prefix) + strlen(secret) + 1u);
+    strcpy(copy->value, prefix);
+    strcat(copy->value, secret);
+    return true;
+}
+
+static bool io_parse_headers(Atom *atom, const char *url, bool follow,
+                             CettaIoHeader **headers_out, char *error, size_t error_size) {
     CettaIoHeader *head = NULL;
     CettaIoHeader *tail = NULL;
-    if (!atom || atom->kind != ATOM_EXPR) {
-        snprintf(error, error_size, "expected an expression of http:header values");
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len > 256u) {
+        snprintf(error, error_size, "expected at most 256 http:header values");
         return false;
     }
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
         Atom *item = atom->expr.elems[i];
+        if (item && item->kind == ATOM_EXPR && item->expr.len == 2u &&
+            atom_is_symbol(item->expr.elems[0], "http:credential")) {
+            CettaIoHeader *copy = cetta_malloc(sizeof(*copy));
+            memset(copy, 0, sizeof(*copy));
+            if (!io_credential_header(io_text_arg(item->expr.elems[1]), url, follow, copy)) {
+                io_header_list_free(copy);
+                io_header_list_free(head);
+                snprintf(error, error_size, "credential reference is unavailable or outside its host scope");
+                return false;
+            }
+            if (tail) tail->next = copy;
+            else head = copy;
+            tail = copy;
+            continue;
+        }
         const char *key;
         const char *value;
         if (!item || item->kind != ATOM_EXPR || item->expr.len != 3u ||
             !atom_is_symbol(item->expr.elems[0], "http:header") ||
             !(key = io_text_arg(item->expr.elems[1])) ||
             !(value = io_text_arg(item->expr.elems[2])) ||
-            !io_valid_header_key(key) || !io_valid_header_value(value)) {
+            !io_valid_header_key(key) || !io_valid_header_value(value) ||
+            strlen(key) + strlen(value) + 2u > 8192u) {
             io_header_list_free(head);
             snprintf(error, error_size,
                      "expected (http:header key value) entries without control characters");
             return false;
         }
         CettaIoHeader *copy = cetta_malloc(sizeof(*copy));
+        memset(copy, 0, sizeof(*copy));
         copy->key = io_strdup(key);
         copy->value = io_strdup(value);
         copy->next = NULL;
         if (tail) tail->next = copy;
         else head = copy;
         tail = copy;
+    }
+    for (CettaIoHeader *a = head; a; a = a->next) {
+        for (CettaIoHeader *b = a->next; b; b = b->next) {
+            if ((a->credential_secret || b->credential_secret) &&
+                strcasecmp(a->key, b->key) == 0) {
+                io_header_list_free(head);
+                snprintf(error, error_size, "credential headers must not be overridden or duplicated");
+                return false;
+            }
+        }
     }
     *headers_out = head;
     return true;
@@ -284,7 +365,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     const char *body;
     int64_t timeout_ms;
     int64_t max_bytes;
-    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 7u ||
+    if (!atom || atom->kind != ATOM_EXPR || (atom->expr.len < 7u || atom->expr.len > 9u) ||
         !atom_is_symbol(atom->expr.elems[0], "http:request") ||
         !(method = io_text_arg(atom->expr.elems[1])) ||
         !(url = io_text_arg(atom->expr.elems[2])) ||
@@ -298,12 +379,31 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
                  "expected (http:request method url headers body nonnegative-timeout-ms nonnegative-max-bytes)");
         return NULL;
     }
+    bool follow_redirects=false;
+    if (atom->expr.len>=8u) {
+        Atom *follow=atom->expr.elems[7];
+        if (follow && follow->kind==ATOM_GROUNDED && follow->ground.gkind==GV_BOOL)
+            follow_redirects=follow->ground.bval;
+        else if (atom_is_symbol(follow,"True") || atom_is_symbol(follow,"true"))
+            follow_redirects=true;
+        else if (atom_is_symbol(follow,"False") || atom_is_symbol(follow,"false"))
+            follow_redirects=false;
+        else {
+            snprintf(error, error_size, "follow-redirects must be Bool");
+            return NULL;
+        }
+    }
     if (!io_valid_http_method(method)) {
         snprintf(error, error_size, "invalid HTTP method");
         return NULL;
     }
     if (!io_http_url(url)) {
         snprintf(error, error_size, "only http and https URLs are supported");
+        return NULL;
+    }
+    if (strlen(url) > 8192u || strlen(body) > 8u * 1024u * 1024u ||
+        timeout_ms > INT_MAX || max_bytes >= INT_MAX) {
+        snprintf(error, error_size, "HTTP request exceeds admission limits");
         return NULL;
     }
     CettaIoRequest *request = cetta_malloc(sizeof(*request));
@@ -313,7 +413,29 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     request->body = io_strdup(body);
     request->timeout_ms = timeout_ms;
     request->max_bytes = (size_t)max_bytes;
-    if (!io_parse_headers(atom->expr.elems[3], &request->headers,
+    request->follow_redirects = follow_redirects;
+    if (atom->expr.len==9u) {
+        Atom *options=atom->expr.elems[8]; int64_t connect, first, idle;
+        if (!options || options->kind!=ATOM_EXPR || options->expr.len!=4u ||
+            !atom_is_symbol(options->expr.elems[0],"http:timeouts") ||
+            !io_nonnegative_int_arg(options->expr.elems[1],&connect) ||
+            !io_nonnegative_int_arg(options->expr.elems[2],&first) ||
+            !io_nonnegative_int_arg(options->expr.elems[3],&idle) ||
+            connect>INT_MAX || first>INT_MAX || idle>INT_MAX) {
+            snprintf(error,error_size,"expected (http:timeouts connect-ms first-byte-ms idle-ms)");
+            io_request_free(NULL,request); return NULL;
+        }
+#if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
+        if (connect || first || idle) {
+            snprintf(error,error_size,"independent HTTP timeouts require the native provider");
+            io_request_free(NULL,request); return NULL;
+        }
+#endif
+        request->connect_timeout_ms=(uint32_t)connect;
+        request->first_byte_timeout_ms=(uint32_t)first;
+        request->idle_timeout_ms=(uint32_t)idle;
+    }
+    if (!io_parse_headers(atom->expr.elems[3], url, follow_redirects, &request->headers,
                           error, error_size)) {
         io_request_free(NULL, request);
         return NULL;
@@ -322,31 +444,11 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
 }
 
 static Atom *io_http_source(Arena *arena, const CettaIoRequest *request) {
-    uint32_t count = 0u;
-    for (const CettaIoHeader *header = request->headers; header;
-         header = header->next)
-        count++;
-    Atom **headers = arena_alloc(arena, sizeof(Atom *) * (count ? count : 1u));
-    uint32_t index = 0u;
-    for (const CettaIoHeader *header = request->headers; header;
-         header = header->next) {
-        headers[index++] = atom_expr3(
-            arena, atom_symbol(arena, "http:header"),
-            atom_string(arena, header->key), atom_string(arena, header->value));
-    }
-    Atom *items[7] = {
-        atom_symbol(arena, "http:request"),
-        atom_string(arena, request->method),
-        atom_string(arena, request->url),
-        atom_expr(arena, headers, count),
-        atom_string(arena, request->body),
-        atom_int(arena, request->timeout_ms),
-        atom_int(arena, (int64_t)request->max_bytes),
-    };
-    return atom_expr(arena, items, 7u);
+    return atom_expr2(arena, atom_symbol(arena, "io:request"),
+                      atom_int(arena, (int64_t)request->id));
 }
 
-#if CETTA_BUILD_WITH_HTTP
+#if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
 static bool io_response_append(CettaIoRequest *request,
                                const char *data, size_t total) {
     if (total > 0u && memchr(data, '\0', total)) {
@@ -381,139 +483,69 @@ static bool io_response_append(CettaIoRequest *request,
 
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
 
-static pthread_once_t io_curl_once = PTHREAD_ONCE_INIT;
-static bool io_curl_ready = false;
-
-static void io_curl_global_init_once(void) {
-    io_curl_ready = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
-}
-
-static size_t io_http_write(char *data, size_t size, size_t count,
-                            void *userdata) {
-    CettaIoRequest *request = userdata;
-    if (size != 0u && count > SIZE_MAX / size) return 0u;
-    size_t total = size * count;
-    return io_response_append(request, data, total) ? total : 0u;
-}
-
-static bool io_curl_header_list(CettaIoRequest *request) {
-    for (CettaIoHeader *header = request->headers; header;
-         header = header->next) {
-        size_t key_len = strlen(header->key);
-        size_t value_len = strlen(header->value);
-        char *line = cetta_malloc(key_len + value_len + 3u);
-        memcpy(line, header->key, key_len);
-        line[key_len] = ':';
-        line[key_len + 1u] = ' ';
-        memcpy(line + key_len + 2u, header->value, value_len + 1u);
-        struct curl_slist *next =
-            curl_slist_append(request->curl_headers, line);
-        free(line);
-        if (!next) return false;
-        request->curl_headers = next;
-    }
-    return true;
-}
-
-static bool io_curl_setopt(CettaIoRequest *request, char *error,
-                           size_t error_size) {
-#define IO_CURL_SET(option, value)                                             \
-    do {                                                                       \
-        CURLcode code = curl_easy_setopt(request->easy, option, value);         \
-        if (code != CURLE_OK) {                                                 \
-            snprintf(error, error_size, "curl option failed: %s",              \
-                     curl_easy_strerror(code));                                 \
-            return false;                                                      \
-        }                                                                      \
-    } while (0)
-    IO_CURL_SET(CURLOPT_URL, request->url);
-    IO_CURL_SET(CURLOPT_WRITEFUNCTION, io_http_write);
-    IO_CURL_SET(CURLOPT_WRITEDATA, request);
-    IO_CURL_SET(CURLOPT_PRIVATE, request);
-    IO_CURL_SET(CURLOPT_NOSIGNAL, 1L);
-    IO_CURL_SET(CURLOPT_FOLLOWLOCATION, 1L);
-    IO_CURL_SET(CURLOPT_MAXREDIRS, 8L);
-    IO_CURL_SET(CURLOPT_PROTOCOLS_STR, "http,https");
-    IO_CURL_SET(CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-    IO_CURL_SET(CURLOPT_ACCEPT_ENCODING, "");
-    if (request->timeout_ms > 0) {
-        IO_CURL_SET(CURLOPT_TIMEOUT_MS, (long)request->timeout_ms);
-        IO_CURL_SET(CURLOPT_CONNECTTIMEOUT_MS, (long)request->timeout_ms);
-    }
-    if (request->curl_headers)
-        IO_CURL_SET(CURLOPT_HTTPHEADER, request->curl_headers);
-    if (strcmp(request->method, "GET") == 0) {
-        IO_CURL_SET(CURLOPT_HTTPGET, 1L);
-    } else {
-        IO_CURL_SET(CURLOPT_CUSTOMREQUEST, request->method);
-        if (request->body[0]) {
-            IO_CURL_SET(CURLOPT_POSTFIELDS, request->body);
-            IO_CURL_SET(CURLOPT_POSTFIELDSIZE, (long)strlen(request->body));
-        }
-    }
-#undef IO_CURL_SET
-    return true;
-}
-
 static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
                           char *error, size_t error_size) {
-    if (!runtime || !runtime->multi) {
+    if (!runtime || !runtime->worker) {
         snprintf(error, error_size, "HTTP provider is unavailable");
         return false;
     }
-    request->easy = curl_easy_init();
-    if (!request->easy) {
-        snprintf(error, error_size, "curl_easy_init failed");
+    size_t count = 0;
+    for (CettaIoHeader *h = request->headers; h; h = h->next) ++count;
+    char **headers = cetta_malloc((count + 1) * sizeof(*headers));
+    size_t i = 0;
+    for (CettaIoHeader *h = request->headers; h; h = h->next) {
+        size_t n = strlen(h->key) + strlen(h->value) + 3;
+        headers[i] = cetta_malloc(n);
+        snprintf(headers[i++], n, "%s: %s", h->key, h->value);
+    }
+    CettaHttpRequest input = {
+        .id=request->id, .method=request->method, .url=request->url,
+        .headers=(const char *const *)headers, .header_count=count,
+        .body=request->body, .body_size=strlen(request->body),
+        .timeout_ms=(uint32_t)request->timeout_ms,
+        .connect_timeout_ms=request->connect_timeout_ms,
+        .first_byte_timeout_ms=request->first_byte_timeout_ms,
+        .idle_timeout_ms=request->idle_timeout_ms,
+        .max_response_bytes=request->max_bytes, .follow_redirects=request->follow_redirects
+    };
+    CettaHttpWorkerStatus status = cetta_http_worker_submit(runtime->worker, &input);
+    for (i = 0; i < count; ++i) {
+        volatile char *p = headers[i];
+        size_t n = strlen(headers[i]);
+        while (n--) *p++ = 0;
+        free(headers[i]);
+    }
+    free(headers);
+    if (status != HTTP_WORKER_OK) {
+        snprintf(error, error_size, "%s", status == HTTP_WORKER_FULL
+            ? "HTTP queue capacity exceeded" : "HTTP request could not be admitted");
         return false;
     }
-    if (!io_curl_header_list(request) ||
-        !io_curl_setopt(request, error, error_size)) {
-        if (!error[0]) snprintf(error, error_size, "cannot allocate HTTP headers");
-        return false;
-    }
-    CURLMcode code = curl_multi_add_handle(runtime->multi, request->easy);
-    if (code != CURLM_OK) {
-        snprintf(error, error_size, "curl multi add failed: %s",
-                 curl_multi_strerror(code));
-        return false;
-    }
-    request->in_multi = true;
     return true;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
-    if (!runtime || !runtime->multi) return;
-    int running = 0;
-    CURLMcode multi_code;
-    do {
-        multi_code = curl_multi_perform(runtime->multi, &running);
-    } while (multi_code == CURLM_CALL_MULTI_PERFORM);
-    if (multi_code != CURLM_OK) return;
-    int remaining = 0;
-    CURLMsg *message;
-    while ((message = curl_multi_info_read(runtime->multi, &remaining))) {
-        if (message->msg != CURLMSG_DONE) continue;
-        CettaIoRequest *request = NULL;
-        (void)curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &request);
-        if (!request) {
-            (void)curl_multi_remove_handle(runtime->multi,
-                                           message->easy_handle);
-            curl_easy_cleanup(message->easy_handle);
-            continue;
-        }
-        request->transport_code = (int)message->data.result;
-        snprintf(request->transport_message,
-                 sizeof(request->transport_message), "%s",
-                 curl_easy_strerror(message->data.result));
-        (void)curl_easy_getinfo(message->easy_handle,
-                                CURLINFO_RESPONSE_CODE, &request->status);
-        (void)curl_multi_remove_handle(runtime->multi, request->easy);
-        request->in_multi = false;
-        curl_easy_cleanup(request->easy);
-        request->easy = NULL;
-        curl_slist_free_all(request->curl_headers);
-        request->curl_headers = NULL;
-        if (!request->ready) io_ready_append(runtime, request);
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
+    if (!runtime || !runtime->worker || (!selected_id && runtime->ready_head)) return;
+    CettaIoRequest *selected = selected_id ? io_request_find(runtime, selected_id) : NULL;
+    if (selected_id && (!selected || selected->ready)) return;
+    CettaHttpResult result;
+    /* Transfer only the completion consumed by this poll. Unconsumed bodies
+     * remain charged to the worker's aggregate budget. */
+    while (selected_id ? cetta_http_worker_take_id(runtime->worker, selected_id, &result)
+                       : cetta_http_worker_take(runtime->worker, &result)) {
+        CettaIoRequest *request = io_request_find(runtime, result.id);
+        if (!request) { cetta_http_result_free(&result); continue; }
+        request->transport_code = result.transport_code;
+        snprintf(request->transport_message, sizeof(request->transport_message),
+                 "%s", curl_easy_strerror((CURLcode)result.transport_code));
+        request->status = result.status;
+        request->response_too_large = result.response_too_large;
+        request->response_budget_exceeded = result.response_budget_exceeded;
+        request->response_has_nul = result.body_size && memchr(result.body, 0, result.body_size);
+        request->response = (char *)result.body;
+        request->response_len = result.body_size;
+        io_ready_append(runtime, request);
+        return;
     }
 }
 
@@ -571,8 +603,7 @@ static void io_fetch_finish(emscripten_fetch_t *fetch, bool failed) {
         request->transport_code = 1;
         snprintf(request->transport_message,
                  sizeof(request->transport_message), "%s",
-                 fetch->statusText[0] ? fetch->statusText
-                                      : "browser fetch failed");
+                 "browser fetch failed");
     }
     request->fetch = NULL;
     (void)emscripten_fetch_close(fetch);
@@ -606,6 +637,12 @@ static bool io_fetch_header_array(CettaIoRequest *request) {
 
 static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
                           char *error, size_t error_size) {
+    /* Emscripten's XHR backend cannot suppress redirects. Refuse before any
+     * networking unless the caller has explicitly opted into following. */
+    if (!request->follow_redirects) {
+        snprintf(error, error_size, "browser HTTP requires explicit follow-redirects=true");
+        return false;
+    }
     if (!runtime) {
         snprintf(error, error_size, "HTTP provider is unavailable");
         return false;
@@ -639,8 +676,9 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
     return true;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     (void)runtime;
+    (void)selected_id;
 }
 
 #else
@@ -654,8 +692,9 @@ static bool io_http_start(CettaIoRuntime *runtime, CettaIoRequest *request,
     return false;
 }
 
-static void io_http_pump(CettaIoRuntime *runtime) {
+static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     (void)runtime;
+    (void)selected_id;
 }
 
 #endif
@@ -665,8 +704,7 @@ CettaIoRuntime *cetta_io_runtime_new(void) {
     memset(runtime, 0, sizeof(*runtime));
     runtime->next_id = 1u;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    (void)pthread_once(&io_curl_once, io_curl_global_init_once);
-    if (io_curl_ready) runtime->multi = curl_multi_init();
+    (void)cetta_http_worker_new(NULL, NULL, &runtime->worker);
 #endif
     return runtime;
 }
@@ -680,7 +718,7 @@ void cetta_io_runtime_free(CettaIoRuntime *runtime) {
         request = next;
     }
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (runtime->multi) curl_multi_cleanup(runtime->multi);
+    cetta_http_worker_free(runtime->worker);
 #endif
     free(runtime);
 }
@@ -691,7 +729,7 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
         return io_error(arena, head, args, nargs,
                         "expected: (io:capabilities)");
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (runtime && runtime->multi) {
+    if (runtime && runtime->worker) {
         Atom *http = atom_symbol(arena, "http");
         return atom_expr(arena, &http, 1u);
     }
@@ -712,6 +750,10 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     if (nargs != 1u)
         return io_error(arena, head, args, nargs,
                         "expected: (io:submit request)");
+    size_t pending = 0;
+    for (CettaIoRequest *r = runtime ? runtime->requests : NULL; r; r = r->next) ++pending;
+    if (pending >= cetta_http_worker_default_limits().jobs)
+        return io_error(arena, head, args, nargs, "HTTP queue capacity exceeded");
     CettaIoRequest *request =
         io_parse_http_request(args[0], error, sizeof(error));
     if (!request)
@@ -743,6 +785,17 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
 }
 
 static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
+    for (CettaIoHeader *h = request->headers; h; h = h->next) {
+        if (h->credential_secret && request->response &&
+            strstr(request->response, h->credential_secret))
+            return atom_error(arena, io_http_source(arena, request),
+                atom_expr2(arena, atom_symbol(arena, "http:error"),
+                           atom_symbol(arena, "credential-in-response")));
+    }
+    if (request->response_budget_exceeded)
+        return atom_error(arena, io_http_source(arena, request),
+            atom_expr2(arena, atom_symbol(arena, "http:error"),
+                       atom_symbol(arena, "response-budget-exceeded")));
     if (request->response_too_large) {
         Atom *reason = atom_expr3(
             arena, atom_symbol(arena, "http:error"),
@@ -774,10 +827,20 @@ static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
 
 static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
-    if (!io_zero_arg_ok(args, nargs))
-        return io_error(arena, head, args, nargs, "expected: (io:poll)");
-    io_http_pump(runtime);
-    CettaIoRequest *request = runtime ? runtime->ready_head : NULL;
+    int64_t selected_id = 0;
+    bool selected = !io_zero_arg_ok(args, nargs);
+    if (selected && (nargs != 1u ||
+        !io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0))
+        return io_error(arena, head, args, nargs,
+                        "expected: (io:poll) or (io:poll positive-id)");
+    io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
+    CettaIoRequest *request = selected
+        ? io_request_find(runtime, (uint64_t)selected_id)
+        : runtime ? runtime->ready_head : NULL;
+    if (selected && !request)
+        return atom_expr2(arena, atom_symbol(arena, "io:unknown"),
+                          atom_int(arena, selected_id));
+    if (request && !request->ready) request = NULL;
     if (!request) {
         Atom *idle = atom_symbol(arena, "io:idle");
         return atom_expr(arena, &idle, 1u);
@@ -796,6 +859,64 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     io_ready_append(runtime, request);
 #endif
     return event;
+}
+
+static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
+                       Atom *head, Atom **args, uint32_t nargs) {
+    int64_t id;
+    if (nargs!=1u || !io_nonnegative_int_arg(args[0],&id) || !id)
+        return io_error(arena,head,args,nargs,"expected (io:status positive-id)");
+    CettaIoRequest *request=io_request_find(runtime,(uint64_t)id);
+    if (!request) return atom_expr2(arena,atom_symbol(arena,"io:unknown"),atom_int(arena,id));
+    CettaHttpProgress progress={0};
+    bool available=false;
+#if CETTA_BUILD_HTTP_PROVIDER_CURL
+    available=cetta_http_worker_progress(runtime->worker,(uint64_t)id,&progress);
+#endif
+    if (!available && !request->ready)
+        return io_error(arena,head,args,nargs,"HTTP progress is unavailable");
+    return atom_expr(arena,(Atom *[]){atom_symbol(arena,"io:progress"),atom_int(arena,id),
+        atom_symbol(arena,request->ready || progress.terminal?"ready":"waiting"),
+        atom_int(arena,(int64_t)progress.elapsed_ms),
+        atom_int(arena,(int64_t)(request->ready?request->response_len:progress.response_bytes)),
+        atom_int(arena,(int64_t)progress.quiet_ms)},6u);
+}
+
+static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
+                     Atom *head, Atom **args, uint32_t nargs) {
+    int64_t timeout, selected_id = 0;
+    bool selected = nargs == 2u;
+    if ((nargs != 1u && nargs != 2u) ||
+        !io_nonnegative_int_arg(args[selected ? 1u : 0u], &timeout) ||
+        timeout > INT_MAX || (selected &&
+        (!io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0)))
+        return io_error(arena, head, args, nargs, "expected a nonnegative timeout in milliseconds");
+#if CETTA_BUILD_HTTP_PROVIDER_CURL
+    if (!runtime || !runtime->worker)
+        return io_error(arena, head, args, nargs, "HTTP provider is unavailable");
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t deadline = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u + timeout;
+    for (;;) {
+        io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
+        CettaIoRequest *request = selected
+            ? io_request_find(runtime, (uint64_t)selected_id)
+            : runtime->ready_head;
+        if ((selected && !request) || (request && request->ready))
+            return io_poll(runtime, arena, head, selected ? args : NULL,
+                           selected ? 1u : 0u);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        uint64_t current = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+        if (current >= deadline)
+            return io_poll(runtime, arena, head, selected ? args : NULL,
+                           selected ? 1u : 0u);
+        runtime->generation = cetta_http_worker_wait(runtime->worker,
+            runtime->generation, (uint32_t)(deadline-current));
+    }
+#else
+    (void)runtime;
+    return io_error(arena, head, args, nargs, "blocking I/O wait requires the native HTTP provider");
+#endif
 }
 
 static Atom *io_cancel(CettaIoRuntime *runtime, Arena *arena,
@@ -819,13 +940,17 @@ static Atom *io_cancel(CettaIoRuntime *runtime, Arena *arena,
 Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
                         Atom *head, Atom **args, uint32_t nargs) {
     if (!arena || !head || head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     if (id == g_builtin_syms.lib_io_capabilities)
         return io_capabilities(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_submit)
         return io_submit(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_poll)
         return io_poll(runtime, arena, head, args, nargs);
+    if (id == g_builtin_syms.lib_io_status)
+        return io_status(runtime, arena, head, args, nargs);
+    if (id == g_builtin_syms.lib_io_wait)
+        return io_wait(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_cancel)
         return io_cancel(runtime, arena, head, args, nargs);
     return NULL;

@@ -161,9 +161,13 @@ static Atom *rho_cost_purse(Arena *arena, Atom *location, Atom *stack) {
 }
 
 static bool rho_expr_head_named(Atom *atom, const char *name) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0 &&
-           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           strcmp(atom_name_cstr(atom->expr.elems[0]), name) == 0;
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0 ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const char *head = atom_name_cstr(atom->expr.elems[0]);
+    /* Most expression heads are outside the rho namespace. Reject a
+       different first byte without a full string comparison. */
+    return head[0] == name[0] && strcmp(head, name) == 0;
 }
 
 static bool rhocalc_is_domain_proc_atom(Atom *atom);
@@ -1065,7 +1069,7 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
     if (!atom) return NULL;
     switch (atom->kind) {
     case ATOM_VAR: {
-        Atom *bound = rho_elab_lookup(elab, atom->sym_id, atom->var_id);
+        Atom *bound = rho_elab_lookup(elab, atom_symbol_current_id(atom), atom->var_id);
         return bound ? bound : atom;
     }
     case ATOM_EXPR:
@@ -1103,9 +1107,9 @@ static Atom *rho_elab_atom(RhoElaborator *elab, Atom *atom) {
             if (elems[2]->kind == ATOM_VAR) {
                 VarId source_var_id = elems[2]->var_id;
                 elems[2] = atom_var_with_spelling(elab->arena,
-                                                  elems[2]->sym_id,
+                                                  atom_symbol_current_id(elems[2]),
                                                   fresh_var_id());
-                if (!rho_elab_push(elab, elems[2]->sym_id,
+                if (!rho_elab_push(elab, atom_symbol_current_id(elems[2]),
                                    source_var_id, elems[2])) {
                     return atom;
                 }
@@ -1302,7 +1306,7 @@ static void rho_print_collect_free(RhoPrintCtx *ctx, Atom *atom,
     if (!atom || ctx->failed) return;
     if (atom->kind == ATOM_VAR) {
         if (!rho_id_stack_contains(bound, atom->var_id)) {
-            rho_print_free_add(ctx, atom->sym_id);
+            rho_print_free_add(ctx, atom_symbol_current_id(atom));
         }
         return;
     }

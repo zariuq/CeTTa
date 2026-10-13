@@ -338,6 +338,8 @@ static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
             return atom_symbol(arena, "Number");
         case GV_STRING:
             return atom_symbol(arena, "String");
+        case GV_TENSOR:
+            return atom_symbol(arena, "Tensor");
         default:
             break;
         }
@@ -839,7 +841,7 @@ static bool petta_type_append_matching(
          * Structured targets keep the full refining match below. */
         if (target->kind == ATOM_VAR ||
             (target->kind == ATOM_SYMBOL && candidate->kind == ATOM_SYMBOL &&
-             target->sym_id == candidate->sym_id)) {
+             atom_symbols_equal(target, candidate))) {
             if (!petta_type_list_push(out, candidate))
                 return false;
             continue;

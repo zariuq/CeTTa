@@ -42,6 +42,7 @@ static bool prime_replay_projection_span(PrimeReplayComparison *c,const Atom *a,
                 (size_t)a->expr.len*sizeof(*a->expr.elems),right)))
             return prime_replay_compare_refuse(c,"projection.children","UnheldProjectionArray");
     }
+    if(a->kind==ATOM_SYMBOL&&!prime_replay_read_symbol_payload(c,a,right))return false;
     if(a->kind==ATOM_GROUNDED&&!atom_checkpoint_payload_admitted(a,owner,global,&c->read,right))
         return prime_replay_compare_refuse(c,"projection.payload","UnheldProjectionPayload");
     return !c->refusal;
@@ -104,10 +105,12 @@ static bool prime_replay_projection_fields(PrimeReplayProjection *p,const Atom *
             !prime_replay_projection_span(c,x->expr.elems[0],false)||
             !prime_replay_projection_span(c,y->expr.elems[0],true)||
             x->expr.elems[0]->kind!=ATOM_SYMBOL||y->expr.elems[0]->kind!=ATOM_SYMBOL||
-            x->expr.elems[0]->sym_id!=y->expr.elems[0]->sym_id)return false;
+            !prime_replay_read_symbol(c,x->expr.elems[0],y->expr.elems[0]))return false;
         for(CettaExprIndex j=first;j<i;j++) {
             if(!prime_replay_compare_tick(c,"projection.unique_label",1u,true))return false;
-            if(a->expr.elems[j]->expr.elems[0]->sym_id==x->expr.elems[0]->sym_id)return false;
+            bool equal=false;
+            if(!prime_replay_symbols_equal(c,a->expr.elems[j]->expr.elems[0],
+                x->expr.elems[0],&equal)||equal)return false;
         }
     }
     return true;
@@ -148,7 +151,7 @@ static bool prime_replay_projection_step(PrimeReplayProjection *p,PrimeReplayPro
     }
     if(n.kind==PRIME_REPLAY_SYMBOL)
         return a->kind==ATOM_SYMBOL&&b->kind==ATOM_SYMBOL&&
-            prime_replay_read_scalar(c,"projection.symbol",a->sym_id,b->sym_id);
+            prime_replay_read_symbol(c,a,b);
     if(n.kind==PRIME_REPLAY_AGENDA)return prime_replay_projection_agenda(p,a,b);
     if(n.kind==PRIME_REPLAY_QUOTED_DATA||n.kind==PRIME_REPLAY_WAITING) {
         if(!prime_replay_projection_expr(p,a,b,"quote",2u))return false;
@@ -188,7 +191,7 @@ static bool prime_replay_projection_step(PrimeReplayProjection *p,PrimeReplayPro
     if(n.kind==PRIME_REPLAY_NODES)return prime_replay_projection_sequence(p,a,b,PRIME_REPLAY_NODE);
     if(n.kind==PRIME_REPLAY_META) {
         if(!prime_replay_read_scalar(c,"projection.kind",a->kind,b->kind))return false;
-        if(a->kind==ATOM_SYMBOL)return prime_replay_read_scalar(c,"projection.symbol",a->sym_id,b->sym_id);
+        if(a->kind==ATOM_SYMBOL)return prime_replay_read_symbol(c,a,b);
         if(a->kind==ATOM_GROUNDED) {
             if(a->ground.gkind!=b->ground.gkind)return false;
             if(a->ground.gkind==GV_INT)return prime_replay_read_scalar(c,"projection.integer",a->ground.ival,b->ground.ival);

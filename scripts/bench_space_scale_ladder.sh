@@ -11,7 +11,7 @@ CASE_TIMEOUT_S="${CETTA_SCALE_CASE_TIMEOUT_S:-140}"
 GENERATOR_FACT_COUNT="${CETTA_GENERATOR_LITMUS_FACT_COUNT:-1000000}"
 
 # Observational calibration, not a portable CeTTa expectation.  Recorded on
-# 2026-08-12 on oruzi-home-MS-7E56 (AMD Ryzen 7 9800X3D, Linux x86_64), with
+# 2026-08-12 on an AMD Ryzen 7 9800X3D workstation (Linux x86_64), with
 # result printing suppressed: PeTTa 43705f5d9ff8958ffe7f0aa6777fb8477f2401f2,
 # with local run.sh changes limited to quoting and Python-library discovery,
 # took 0.90 s for one million streamed facts and three scans.  CeTTa

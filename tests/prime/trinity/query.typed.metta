@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A query with several answers, typed.  A space holds four edges between
 ; three nodes, one edge twice.  Run, `hop a` gives the targets of the edges
@@ -12,14 +12,14 @@
 ; content (edge@a@b, edge@a@c, edge@b@a, and edge@a@b#2 for the second copy
 ; of the first), and the source and the target of an occurrence are
 ; edge@arg1 and edge@arg2, with one equation for each stored atom.  These are
-; declarations of the space for every `type:` and `set:` judgment on it.  The
+; declarations of the space for every `type:` and `hol:` judgment on it.  The
 ; answers of `hop x` are an occurrence with the evidence that its source is x,
 ;
 ;     (sigma (o : edge@occurrence) (id node (app edge@arg1 o) x))
 ;
 ; and an answer returns the target of its occurrence.  An edge stored twice is
 ; two occurrences, so two answers that return one value.
-!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &kb (: node (u 0)))
 !(add-atom &kb (: a node))
 !(add-atom &kb (: b node))
@@ -66,7 +66,7 @@
 ; ---- A key that is no node is no query of this relation; a stored atom of
 ; the wrong type makes the declaration false, and the judgment is refuted.
 !(try (type:of (match &kb (edge d $y) $y){$y}))
-!(bind! &bad (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &bad (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &bad (: node (u 0)))
 !(add-atom &bad (: a node))
 !(add-atom &bad (type:stored (edge node node)))
@@ -75,7 +75,7 @@
 
 ; ---- Negative control: in a space that declares nothing, the same query
 ; has only a dynamic type, as before.
-!(bind! &plain (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &plain (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &plain (edge a b))
 !(add-atom &plain (edge a b))
 !(collapse (match &plain (edge a $y) $y))
@@ -99,7 +99,7 @@
                   (sigma (o : edge@occurrence) (id node (edge@arg1 o) a))))
 !(try (type:check &kb (pair edge@a@b (refl b))
                   (sigma (o : edge@occurrence) (id node (edge@arg1 o) a))))
-!(set:check &kb edge@b@a edge@occurrence)
+!(hol:check &kb edge@b@a edge@occurrence)
 
 ; ---- Names follow content: removing the edge from a to c renames no other
 ; occurrence, and that one is gone.

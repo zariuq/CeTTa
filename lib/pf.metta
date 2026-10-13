@@ -1,10 +1,13 @@
-; Proof verbs for the set: proof language.
+; Proof verbs for the proof language of the scoped judgments.  A space whose
+; theory is a profile of the native higher-order logic is judged with hol:,
+; any other space with set:.
 ;
 ; The checker owns names, hypotheses and lemma instantiation:
 ;   (pf:fix x body)        (pf:assume h body)        (pf:have h proof body)
 ;   (pf:by name p1 ... pk) a known fact or hypothesis, instantiated by
 ;                          matching its conclusion against the goal
-; and, in a theory whose space declares (set:rule eq-subst), the rule of
+; and, in a theory whose space adopts eq-subst ((hol:rule eq-subst) or
+; (set:rule eq-subst)), the rule of
 ; substitution:
 ;   (pf:eq-subst P e h)    P b from e : eq A a b and h : P a, at any carrier
 ; The verbs below are ordinary programs that return core proof terms;
@@ -47,6 +50,7 @@
        (let $h (car-atom $list)
          (if (== $h $x) True
              (let $rest (cdr-atom $list) (pf:member $x $rest))))))
+(: pf:verb-head (-> (Data Atom) Bool))
 (= (pf:verb-head $t)
    (let $h (car-atom $t)
      (if (== (get-metatype $h) Symbol)
@@ -66,6 +70,7 @@
              (let $et (pf:expand-tail $rest)
                (cons-atom $eh $et)))))))
 
+(: pf:expand (-> (Data Atom) (Data Atom)))
 (= (pf:expand $t)
    (if (== (get-metatype $t) Expression)
        (if (== $t ()) ()
@@ -88,25 +93,38 @@
                    (let $out (pf:calc-from $A $t0 $steps)
                      (pf:expand $out)))))))
                    (if (pf:verb-head $node)
-                       (let $out $node (if (== $out $node) $node (pf:expand $out)))
+                       (let $out (eval $node) (if (== $out $node) $node (pf:expand $out)))
                        $node))))))
        $t))
 
 ; Syntax is handed to a judgment quoted: the evaluator then leaves it
 ; alone even where a constant shares its name with a builtin.
+; The namespace a space is judged in.
+(: pf:namespace (-> Atom Atom))
+(= (pf:namespace $space)
+   (if (== (collapse (match $space (hol:profile $p) $p)) ()) set hol))
 (: pf:theorem (-> Atom Atom Atom Atom %Undefined%))
 (= (pf:theorem $space $name $prop $proof)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
        (let $qprop (cons-atom quote ($prop))
-         (set:theorem $space $name $qprop $qp)))))
+         (if (== (pf:namespace $space) hol)
+             (hol:theorem $space $name $qprop $qp)
+             (set:theorem $space $name $qprop $qp))))))
 (: pf:proves (-> Atom Atom Atom %Undefined%))
 (= (pf:proves $space $proof $prop)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
        (let $qprop (cons-atom quote ($prop))
-         (set:proves $space $qp $qprop)))))
+         (if (== (pf:namespace $space) hol)
+             (hol:proves $space $qp $qprop)
+             (set:proves $space $qp $qprop))))))
 
+(: pf:axiom (-> Atom Atom Atom %Undefined%))
+(= (pf:axiom $space $name $statement)
+   (if (== (pf:namespace $space) hol)
+       (hol:axiom $space $name $statement)
+       (set:axiom $space $name $statement)))
 ; The binders of the two axioms are chosen apart from the carrier, so that a
 ; carrier that mentions a binder's name (a type named P, or a) is not
 ; captured by it: each is the first of base, base1, base2, ... that the
@@ -119,9 +137,9 @@
    (let $x (pf:binder-apart a $A)
    (let $y (pf:binder-apart b $A)
    (let $refl-statement (pf:all $A $x (eq $A $x $x))
-   (let $r (set:axiom $space $refl $refl-statement)
+   (let $r (pf:axiom $space $refl $refl-statement)
    (let $subst-statement (pf:substitution-statement $A $P $x $y)
-     (let $s (set:axiom $space $subst $subst-statement)
+     (let $s (pf:axiom $space $subst $subst-statement)
        (let $t (add-atom &self (pf:equality-of $A $refl $subst))
          ($r $s))))))))))
 ; A carrier whose reflexivity the theory proves, as extensionality proves it
@@ -134,7 +152,7 @@
    (let $refl-statement (pf:all $A $x (eq $A $x $x))
    (let $r (pf:theorem $space $refl $refl-statement $refl-proof)
    (let $subst-statement (pf:substitution-statement $A $P $x $y)
-     (let $s (set:axiom $space $subst $subst-statement)
+     (let $s (pf:axiom $space $subst $subst-statement)
        (let $t (add-atom &self (pf:equality-of $A $refl $subst))
          ($r $s))))))))))
 ; (all A (lam x body)) with the name x as its binder.
@@ -283,6 +301,14 @@
 ; theorem it reaches that has no package gives no answer.
 (= (pf:rests-on $space $name)
    (let $todo (cons-atom $name ()) (pf:rests-on-walk $space $todo () ())))
+; The native package of a theorem, in the space's namespace; nothing when
+; the theorem has none.
+(= (pf:native-proof $space $name)
+   (if (== (pf:namespace $space) hol)
+       (let $package (hol:native-proof $space $name)
+         (if (== (car-atom $package) HolNativeProofV1) $package (empty)))
+       (let $package (set:native-proof $space $name)
+         (if (== (car-atom $package) SetNativeProofV1) $package (empty)))))
 (: pf:rests-on-walk (-> Atom (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
 (= (pf:rests-on-walk $space $todo $seen $found)
    (if (== $todo ()) $found
@@ -290,8 +316,8 @@
          (let $rest (cdr-atom $todo)
            (if (pf:member $name $seen)
                (pf:rests-on-walk $space $rest $seen $found)
-               (let (SetNativeProofV1 $n $p $proof $term $type $context $rules $rows $digest)
-                    (set:native-proof $space $name)
+               (let ($kind $n $p $proof $term $type $context $rules $rows $digest)
+                    (pf:native-proof $space $name)
                  (let $cited (map-atom $rows $row (car-atom $row))
                    (let $seen1 (cons-atom $name $seen)
                      (if (pf:member $name $cited)

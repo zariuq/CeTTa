@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Only inside a universe (u ...) are omega, its Greek letter, +, * and ^ level
 ; syntax.  Everywhere else they are what they were before: ordinary symbols
@@ -26,8 +26,8 @@
 !(plus-one 41)
 
 ; Declared constants named omega: the space's names, not levels.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: omega num))
 !(add-atom &s (: ω num))
 !(type:of &s omega)

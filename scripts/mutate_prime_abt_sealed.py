@@ -5,10 +5,8 @@ from pathlib import Path
 import sys
 
 
-MARKER = """if (var_id_set_contains(listed, atom->var_id) !=
-                rename_listed) {"""
-MUTATION = """if (false && var_id_set_contains(listed, atom->var_id) !=
-                rename_listed) {"""
+MARKER = """if (var_id_set_contains(policy->listed, atom->var_id) != policy->rename_listed)"""
+MUTATION = """if (false && var_id_set_contains(policy->listed, atom->var_id) != policy->rename_listed)"""
 
 
 def main() -> int:

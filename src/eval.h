@@ -2,6 +2,7 @@
 #define CETTA_EVAL_H
 
 #include "answer_bank.h"
+#include "call_outcome.h"
 #include "atom.h"
 #include "eval_completion.h"
 #include "search_machine.h"
@@ -44,6 +45,9 @@ typedef struct {
 
 typedef struct Outcome {
     CettaOutcomeKind kind;
+    /* The producer's return demand, independent of Atom spelling. A failed
+     * interpretation returns EXPRESSION; an earned value stays completed. */
+    CettaCallResultForm result_form;
     Atom *atom;
     Atom *materialized_atom;
     Bindings env;
@@ -134,6 +138,60 @@ void cetta_prime_checkpoint_copy_free(CettaPrimeCheckpointCopy *copy);
 bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
                                Arena *owner, AtomDeepCopySession *session);
 
+/* A retained execution of the existing HE canonical frames. Structural
+ * input and logical bindings are copied; source spaces, registry, library
+ * context, namespace overrides, cancellation flags, observer hooks and their
+ * contexts, and identity-bearing foreign resources are borrowed and must
+ * remain live until destruction. This requirement is a
+ * caller contract, not an ownership check supplied by this interface.
+ *
+ * Operations belong to the creating thread. Native callbacks are atomic at
+ * this boundary. Advancing may commit their effects; inspection cannot.
+ * Source queries retain their existing current-revision semantics.
+ *
+ * Construction and activation require an ordinary HE caller outside an
+ * active transactional payload, including its redirect setup and promotion.
+ * On a temporary caller conflict, begin returns NULL, advance returns BUSY,
+ * and destroy returns false. They leave the caller's transaction and the
+ * retained execution unchanged; the execution can resume after payload
+ * cleanup. No cross-region publication permission is supplied here. */
+typedef struct CettaHeExecution CettaHeExecution;
+typedef enum {
+    CETTA_HE_ENTRY_BIND = 0,
+    CETTA_HE_ENTRY_EVALUATE,
+    CETTA_HE_ENTRY_CALL,
+} CettaHeEntry;
+typedef enum {
+    CETTA_HE_ADVANCED = 0,
+    CETTA_HE_CLOSED,
+    CETTA_HE_INTERRUPTED,
+    CETTA_HE_BUSY,
+} CettaHeAdvance;
+typedef struct {
+    /* Borrowed, exact ordered occurrences; valid until advance or destroy. */
+    const OutcomeSet *outcomes;
+    size_t frames;
+    unsigned top_phase;
+    uint64_t advances;
+    uint64_t collections;
+    CettaEvalCompletion completion;
+    bool closed;
+    bool interrupted;
+} CettaHeExecutionView;
+
+CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
+    CettaHeEntry entry, Atom *atom, Atom *type, int fuel,
+    const Bindings *bindings, bool preserve_bindings, bool typed);
+CettaHeAdvance eval_he_owned_advance(CettaHeExecution *execution);
+/* Stop pending work; already committed effects are retained. */
+bool eval_he_owned_cancel(CettaHeExecution *execution);
+/* Inert inspection neither evaluates nor consumes an occurrence. */
+bool eval_he_owned_inspect(const CettaHeExecution *execution,
+                          CettaHeExecutionView *view);
+/* False for an active owner, another thread, or a payload conflict; no
+ * resource is released. */
+bool eval_he_owned_destroy(CettaHeExecution *execution);
+
 /* ── ResultSet: public API for top-level results (atoms only) ──────────── */
 /* This is the user-facing result type. Internally, the evaluator works
    with OutcomeSet; ResultSet is produced by dropping bindings at the end. */
@@ -161,6 +219,7 @@ typedef struct EvalOutcome {
     uint64_t budget_initial;
     uint64_t budget_remaining;
     uint64_t steps_spent;
+    uint64_t effect_denials;
     /* PeTTa: whether the evaluator knows which of the directive's Error
        answers were raised and not caught, and whether any was. */
     bool petta_raise_known;
@@ -275,6 +334,18 @@ void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,
     void *observer_context);
+
+/* Evaluate a proposal in a host-owned HE context. Load trusted program modules
+ * before calling; registry/query spaces must be fresh in-memory projections of
+ * the exact observation being validated. No live handles or cached state may
+ * be supplied. Context must not be concurrently used by another caller.
+ * Nested rho evaluation inherits the policy and budget. fuel_limit must be
+ * positive. The host must reject any incomplete outcome or effect_denials > 0,
+ * then validate closed output before committing a selected proposal. This API
+ * performs no durable commitment. Supply an initialized, empty outcome. */
+void eval_top_speculative(CettaLibraryContext *context, Space *space,
+    Arena *arena, Arena *persistent, Registry *registry, Atom *expression,
+    int fuel_limit, EvalOutcome *outcome);
 /* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
 bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
 /* Reclaim completed top-level temporaries. During a callback into an active
@@ -300,6 +371,10 @@ int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
 bool eval_current_uses_rust_he_compat_semantics(void);
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
+bool eval_current_pattern_module_enabled(void) __attribute__((weak));
+uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
+SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
+Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
@@ -317,6 +392,11 @@ uint32_t eval_get_atom_types_profiled_transient(
    and its dialect gives it no intrinsic type.  An inference budget can only
    truncate that answer to no types. */
 bool eval_symbol_type_undefined(Space *s, Atom *atom);
+/* The space an operand denotes, through the registry; NULL otherwise. */
+Space *prime_public_space_argument(Arena *arena, Atom *atom);
+/* Add a record a scoped judgment published to its theory space, and
+ * admit it there. */
+bool eval_admit_scoped_record(Space *space, Arena *arena, Atom *record);
 /* In Prime, why `name` is a name Prime interprets itself (a grounded
    operation, a builtin of its profile, a judgment, or a form of the
    evaluator), so that a program may not define or declare it; NULL for any
@@ -341,6 +421,23 @@ uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
+
+/* A Prime typing judgment, or Prime's `get-type`, is in progress.  An entry
+ * to HE's type engine made inside one is counted for the census.  Evaluation
+ * that a judgment asks for is not part of it: suspend clears the mark and
+ * returns it, resume restores it. */
+void eval_prime_judgment_enter(void);
+void eval_prime_judgment_leave(void);
+uint32_t eval_prime_judgment_suspend(void);
+void eval_prime_judgment_resume(uint32_t depth);
+void eval_prime_judgment_note_he_engine(void);
+
+/* Evaluate one closed request of the hosted HOL Light checker's own
+ * operations in its private space.  False, with a reason, when the checker
+ * cannot be loaded, is already running, or gives no single answer. */
+bool eval_prime_hol_guest_evaluate(Arena *a, Atom *request,
+                                   Atom **answer_out, Atom **reason_out);
+bool eval_prime_hol_guest_running(void);
 
 /* Rhometta deferred payload mode: each payload evaluates against a
  * sibling-isolated transactional snapshot.  The flag marks that context; the
@@ -387,6 +484,27 @@ Space *eval_space_snapshot_clone(Space *src, Arena *a);
    module's own `&self` and the tokens its code has bound so far.  `atom`
    itself when nothing is bound. */
 Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom);
+/* Put the HE whole-word tokens, including &-names, into a newly read form.
+ * Inserted values are not traversed or interpreted as further source text.
+ * Returns `atom` itself when nothing in it is bound. */
+Atom *eval_read_registry_words(Registry *registry, Arena *a, Atom *atom);
+
+/* Nonexecuting Prime judgment view in the active owned world. Inspection
+ * follows only permitted immutable origins; explicit promises stay values.
+ * A refused traversal leaves the operand opaque. Protocol consumers must
+ * validate the resulting shape, and retain the original stored artifact as
+ * their admission identity. The caller retains its payload/world lifetime. */
+Atom *prime_public_operand_syntax(Arena *arena, Atom *atom);
+/* Copy a top-level HE form into its evaluation arena while reading its names.
+ * Inserted values are copied without applying the reader to their contents. */
+Atom *eval_copy_read_registry_form(Registry *registry, TermUniverse *universe,
+                                    Arena *a, AtomId form);
+/* The same for a stored form: the id of the form as read, which is `form`
+ * itself when nothing in it is bound, without decoding unchanged forms.
+ * Changed forms use the existing value ownership/admission path through
+ * `storage`. Admission failure returns NONE. */
+AtomId eval_read_registry_words_id(Registry *registry, TermUniverse *universe,
+                                   Arena *scratch, Arena *storage, AtomId form);
 
 /* Visit each distinct free variable of an executable expression in lexical
  * occurrence order.  Binder policy is shared with evaluator closure/env

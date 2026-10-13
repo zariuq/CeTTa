@@ -213,6 +213,19 @@ struct PettaPlanNode {
 /* Retain the authored roles and control boundaries in an owned arena. The
  * optional source-pointer-specific compiled realizations are not copied. */
 const PettaPlanNode *petta_plan_copy_semantics(Arena *owner, const PettaPlanNode *source);
+typedef struct {
+    uint64_t hash;
+    const PettaPlanNode *plan;
+} PettaPlanSnapshotEntry;
+
+/* Copy a descriptor-free plan into `owner`, sharing identical copies by
+ * content in the caller's bounded cache. No source pointer survives. NULL
+ * declines (descriptor, node/cache capacity or allocation failure); callers
+ * must retain the original owner instead. Entries live until owner resets. */
+const PettaPlanNode *petta_plan_plain_snapshot(
+    Arena *owner, const PettaPlanNode *source,
+    PettaPlanSnapshotEntry *cache, size_t *cache_len, size_t cache_capacity,
+    size_t node_limit);
 
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
 typedef struct PettaEquationTemplate PettaEquationTemplate;
@@ -220,6 +233,7 @@ typedef struct PettaEquationTemplate PettaEquationTemplate;
 typedef struct {
     Atom *lhs;
     Atom *rhs;
+    CettaRuleBindingPolicy binding;
     uint32_t static_variable_count;
     /* An invalid derived fact is unknown and requires exact recomputation. */
     bool lhs_contains_cons_constraint_valid;
@@ -334,6 +348,12 @@ typedef struct {
     uint64_t candidates_emitted;
 } PettaCandidateSnapshotStats;
 
+/* Evaluator-neutral logical-update snapshot using the same occurrence and
+ * syntax owners as program-qualified candidate leases. NONE selects all
+ * heads. No executable plan is borrowed in this source-only projection. */
+bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_forms,
+    PettaCandidateSnapshotLease *lease);
+
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
@@ -364,11 +384,16 @@ PettaProgram *petta_program_new(void);
 /* Set once at program construction for the owning dialect/profile. */
 void petta_program_enable_graded_equations(PettaProgram *program);
 bool petta_program_interprets_graded_equations(const PettaProgram *program);
-bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
 /* A fixed language-owned host vocabulary, installed before any plans exist.
  * Such occurrences are calls, not inert data or user relation slots. */
 PettaProgram *petta_program_new_with_host_intrinsics(
     bool (*is_host_intrinsic)(SymbolId head));
+/* Declaration admission is fixed for this owned program and retained by its
+ * revision views. The ordinary constructor admits only base equations. */
+PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
+PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted_forms,
+    bool (*is_host_intrinsic)(SymbolId head));
+bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
 void petta_program_free(PettaProgram *program);
 /* The complete source/Atom backing region is independently held and the
  * program is quiescent. This counts owned allocations, not borrowed worlds. */

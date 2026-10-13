@@ -222,6 +222,41 @@ int main(int argc, char **argv) {
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
           "consumed completions cannot replay");
 
+    char owned_slow_url[512];
+    make_url(owned_slow_url, sizeof(owned_slow_url), argv[1], "/slow");
+    Atom *foreign_request = http_request(&arena, one_url, 64);
+    Atom *owned_request = http_request(&arena, owned_slow_url, 64);
+    int64_t foreign_id = 0, owned_id = 0;
+    CHECK(pending_id(dispatch(runtime, &arena, "__cetta_lib_io_submit",
+                             &foreign_request, 1u), &foreign_id),
+          "foreign completion candidate is admitted");
+    CHECK(pending_id(dispatch(runtime, &arena, "__cetta_lib_io_submit",
+                             &owned_request, 1u), &owned_id),
+          "owned completion candidate is admitted");
+    Atom *owned_wait_args[] = {atom_int(&arena, owned_id), atom_int(&arena, 5000)};
+    Atom *owned_event = dispatch(runtime, &arena, "__cetta_lib_io_wait", owned_wait_args, 2u);
+    int64_t owned_observed_id = 0;
+    Atom *owned_result = NULL;
+    CHECK(event_parts(owned_event, &owned_observed_id, &owned_result) &&
+          owned_observed_id == owned_id && http_response(owned_result, 200, "slow"),
+          "owned wait selects its request despite an earlier foreign completion");
+    Atom *foreign_arg = atom_int(&arena, foreign_id);
+    Atom *foreign_event = dispatch(runtime, &arena, "__cetta_lib_io_poll", &foreign_arg, 1u);
+    int64_t foreign_observed_id = 0;
+    Atom *foreign_result = NULL;
+    CHECK(event_parts(foreign_event, &foreign_observed_id, &foreign_result) &&
+          foreign_observed_id == foreign_id && http_response(foreign_result, 200, "one"),
+          "owned wait leaves the foreign completion available to its owner");
+    Atom *retired = dispatch(runtime, &arena, "__cetta_lib_io_poll", &foreign_arg, 1u);
+    CHECK(retired && retired->kind == ATOM_EXPR && retired->expr.len == 2u &&
+          atom_is_symbol(retired->expr.elems[0], "io:unknown"),
+          "an already consumed owned handle is distinguishable from idle");
+    Atom *invalid_id = atom_int(&arena, 0);
+    Atom *invalid_poll = dispatch(runtime, &arena, "__cetta_lib_io_poll", &invalid_id, 1u);
+    CHECK(invalid_poll && invalid_poll->kind == ATOM_EXPR &&
+          atom_is_symbol(invalid_poll->expr.elems[0], "Error"),
+          "owned poll rejects a zero handle");
+
     char slow_url[512];
     make_url(slow_url, sizeof(slow_url), argv[1], "/slow");
     Atom *slow_arg = http_request(&arena, slow_url, 64);
@@ -258,6 +293,12 @@ int main(int argc, char **argv) {
           "bounded failure retains its correlation ID");
     CHECK(response_too_large(large_result, 4),
           "response bound fails explicitly instead of truncating");
+    CHECK(atom_is_error(large_result) &&
+              large_result->expr.elems[1]->kind == ATOM_EXPR &&
+              large_result->expr.elems[1]->expr.len == 2u &&
+              atom_is_symbol(large_result->expr.elems[1]->expr.elems[0], "io:request") &&
+              large_result->expr.elems[1]->expr.elems[1]->ground.ival == large_id,
+          "asynchronous errors expose only the correlation ID");
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
           "bounded failure is also consumed at most once");
 
@@ -294,8 +335,15 @@ int main(int argc, char **argv) {
     Atom *redirect_result = submit_and_poll(runtime, &arena,
                                              redirect_request, &redirect_id);
     CHECK(redirect_id > status_id &&
-              http_response(redirect_result, 200, "one"),
-          "bounded redirect chain reaches its final response");
+              http_response(redirect_result, 302, ""),
+          "redirects are not followed by default");
+    Atom *follow_items[8];
+    memcpy(follow_items, redirect_request->expr.elems, 7 * sizeof(Atom *));
+    follow_items[7] = atom_bool(&arena, true);
+    redirect_request = atom_expr(&arena, follow_items, 8);
+    redirect_result = submit_and_poll(runtime, &arena, redirect_request, &redirect_id);
+    CHECK(http_response(redirect_result, 200, "one"),
+          "explicit redirect opt-in reaches the final response");
 
     char json_url[512];
     make_url(json_url, sizeof(json_url), argv[1], "/json");
@@ -320,6 +368,29 @@ int main(int argc, char **argv) {
 
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
           "conformance completions leave the queue empty");
+
+    Atom *secret = http_request_full(&arena, "POST", "file:///FAKE-TOKEN",
+                                     "FAKE-BODY", 1000, 64);
+    Atom *refused = dispatch(runtime, &arena, "__cetta_lib_io_submit", &secret, 1u);
+    CHECK(atom_is_error(refused) && refused->expr.elems[1]->kind == ATOM_EXPR &&
+              refused->expr.elems[1]->expr.len == 1u &&
+              atom_is_symbol(refused->expr.elems[1]->expr.elems[0], "io:submit"),
+          "validation errors omit token-bearing arguments");
+
+    Atom *wait_request = http_request(&arena, slow_url, 64);
+    int64_t wait_id = 0;
+    CHECK(pending_id(dispatch(runtime, &arena, "__cetta_lib_io_submit", &wait_request, 1u), &wait_id),
+          "blocking wait candidate is admitted");
+    Atom *timeout = atom_int(&arena, 5000);
+    Atom *wait_event = dispatch(runtime, &arena, "__cetta_lib_io_wait", &timeout, 1u);
+    Atom *wait_result = NULL;
+    int64_t event_id = 0;
+    CHECK(event_parts(wait_event, &event_id, &wait_result) && event_id == wait_id &&
+              http_response(wait_result, 200, "slow"),
+          "blocking wait consumes the independent owner's completion");
+    timeout = atom_int(&arena, 0);
+    CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_wait", &timeout, 1u)),
+          "zero-time wait consumes nothing after completion");
 
     printf("(IoRuntimeSummary %u %u %u)\n",
            checks, checks - failures, failures);

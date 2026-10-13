@@ -43,7 +43,7 @@ typedef struct PrimeNativeExecutionSlice {
 
 static bool prime_native_acquired_prepare_row(PrimeNativeAcquiredOperation *operation);
 static bool prime_native_acquired_accept(Arena *arena, Atom *value,
-    const Bindings *environment, void *payload);
+    const Outcome *occurrence, void *payload);
 static uint64_t prime_native_acquired_produce(PrimeNativeAcquiredOperation *operation,
     PrimeNativeControl *control, uint64_t granted);
 static bool prime_native_owned_cost_policy(const CettaSearchPolicySpec *policy);

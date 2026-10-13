@@ -1508,17 +1508,23 @@ static bool regular_written_principal(PrimeRegularKernelInfer result) {
  * whose hypothesis is that the algorithm is complete for the package
  * (`AlgorithmicComplete`), and the printed reason names it.  Lean proves that
  * completeness for the bare tower (Normalization.TowerModel.complete,
- * Instances/TowerDecidability.lean:34) and for the object package, given its
- * facts about weak-head forms and its lifting of spines
- * (object_algorithmicComplete, PrimeCandidates/DeclarationBased/
- * CertifiedTransformProgram/ExecutableModel/ObjectAlgorithmic.lean:605); not
- * yet for packages with declared datatypes, recursion, or rules admitted by a
- * bound or a set solution.  There the refutation rests on the algorithm being
- * complete for them, as Abel, Öhman and Vezzosi (2018) show for a type
- * theory with such rules, and on the rules being confluent and terminating,
- * which Lean does not state yet; the printed reason then says which kinds
- * of declaration it assumes completeness for
- * (prime_scoped_judgment_completeness_assumed). */
+ * Instances/TowerDecidability.lean:34); for the object package, given its
+ * facts about the weak-head forms of its types
+ * (object_algorithmicComplete_of_facts, PrimeCandidates/DeclarationBased/
+ * CertifiedTransformProgram/ExecutableModel/ObjectSpineLift.lean:365); for
+ * the object package with one admissible declared datatype whose fields are
+ * the datatype itself or closed types and whose names avoid the model's own
+ * (dataRules_algorithmicComplete, ExecutableModel/DataAlgorithmic.lean:438);
+ * and for the lists at a closed element type (listAt_algorithmicComplete,
+ * ExecutableModel/ParameterizedLists.lean:274).  It does not state it for
+ * several datatypes, for datatypes with parameters in general, for families,
+ * recursion, or rules admitted by a bound or a set solution.  There the
+ * refutation rests on the algorithm being complete for them, as Abel, Öhman
+ * and Vezzosi (2018) show for a type theory with such rules, and on the
+ * rules being confluent and terminating, which Lean does not state yet; the
+ * printed reason then says which kinds of declaration it assumes
+ * completeness for (prime_scoped_judgment_completeness_assumed).  It names
+ * declared datatypes even where the one-datatype theorem applies. */
 static bool regular_unrelated_refuted(PrimeRegularKernelInfer left,
                                       PrimeRegularKernelInfer right) {
     return regular_written_principal(left) || regular_written_principal(right);
@@ -1531,6 +1537,8 @@ static _Thread_local Atom *g_regular_rules;
  * rules.  Set with the list. */
 static _Thread_local bool g_regular_rules_guarded = false;
 static _Thread_local bool g_regular_rules_observed = false;
+/* Whether the rules set for this call declare any family irrelevant. */
+static _Thread_local bool g_regular_rules_irrelevant = false;
 
 /* Rule firings, counted for the runtime's account of a call. */
 static _Thread_local uint64_t g_regular_rule_firings = 0u;
@@ -2526,9 +2534,12 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules) {
     g_regular_rules = rules;
     g_regular_rules_guarded = false;
     g_regular_rules_observed = false;
+    g_regular_rules_irrelevant = false;
     for (Atom *r = rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
         Atom *rule = r->expr.elems[1];
         if (!regular_expr(rule, "PrimeRule", 5u)) continue;
+        if (regular_symbol(rule->expr.elems[2], "Irrelevant"))
+            g_regular_rules_irrelevant = true;
         bool observed = false;
         if (regular_rule_arity(rule->expr.elems[2], NULL, &observed) && observed)
             g_regular_rules_guarded = g_regular_rules_observed = true;
@@ -2542,6 +2553,29 @@ void cetta_prime_regular_kernel_rules_set(Atom *rules) {
 
 Atom *cetta_prime_regular_kernel_rules_get(void) {
     return g_regular_rules;
+}
+
+/* Whether the space whose rules are set declares the family at the head of
+ * `type` definitionally proof-irrelevant: a rule `(PrimeRule (Irrelevant F)
+ * Irrelevant () J)`, which the admission of `set:irrelevant` publishes only
+ * once J proves, propositionally, that any two inhabitants of every instance
+ * of F are identical.  The rule has no constant at its head and no numeric
+ * arity, so it never rewrites; typed conversion alone reads it. */
+static bool regular_type_irrelevant(Atom *type) {
+    if (!g_regular_rules || !g_regular_rules_irrelevant) return false;
+    Atom *head = type;
+    while (regular_expr(head, "App", 3u)) head = head->expr.elems[1];
+    Atom *name = NULL;
+    if (!regular_decl_const_shape(head, &name, NULL)) return false;
+    for (Atom *r = g_regular_rules; regular_expr(r, "LCons", 3u); r = r->expr.elems[2]) {
+        Atom *rule = r->expr.elems[1];
+        if (regular_expr(rule, "PrimeRule", 5u) &&
+            regular_expr(rule->expr.elems[1], "Irrelevant", 2u) &&
+            atom_eq(rule->expr.elems[1]->expr.elems[1], name) &&
+            regular_symbol(rule->expr.elems[2], "Irrelevant"))
+            return true;
+    }
+    return false;
 }
 
 /* The computation rules of the language-owned identity package, in the same
@@ -2940,8 +2974,12 @@ static PrimeRegularKernelNormal regular_normalize(
 /* inspects.  Otherwise it reduces in the function position of an             */
 /* application or under a projection, and stops.  It never reduces under a    */
 /* binder or in an argument the rules do not inspect.  This is the reduction  */
-/* of the normalization model, deterministic, and every typed term reaches    */
-/* its weak-head normal form; conversion needs nothing more.                  */
+/* of the normalization model, and it is deterministic.  Every typed term     */
+/* reaches its weak-head normal form in the packages whose strong             */
+/* normalization Lean states (objectRules_sn, objectRulesInstances_sn and     */
+/* dataRules_sn, PrimeCandidates/DeclarationBased/CertifiedTransformProgram/  */
+/* ExecutableModel); elsewhere that is not a theorem, and the budget bounds   */
+/* the reduction.  Conversion needs nothing more than this reduction.         */
 /* ------------------------------------------------------------------------ */
 
 static PrimeRegularKernelNormal regular_whnf(
@@ -3772,7 +3810,9 @@ static PrimeRegularKernelInfer regular_infer(
 /* argument, at the types the head's type assigns.  Terms and types are      */
 /* brought to weak-head normal form only where the comparison inspects them,  */
 /* never under a binder and never by eta, so on typed inputs the comparison   */
-/* follows the derivation of each side's equality with itself and ends.       */
+/* follows the derivation of each side's equality with itself.  It ends       */
+/* where the package's reduction terminates (see the weak-head normal forms   */
+/* above); elsewhere the budget ends it.                                      */
 /* All inputs are terms the kernel has already typed.                         */
 /* ------------------------------------------------------------------------ */
 
@@ -4112,6 +4152,12 @@ static CettaPrimeRegularKernelStatus regular_conv_at(
         return type_normal.status;
     }
     Atom *normal_type = type_normal.term;
+    /* In a space that carves out proof irrelevance for this family, any two
+     * of its inhabitants are one; elsewhere they are compared as below. */
+    if (regular_type_irrelevant(normal_type)) {
+        *equal_out = true;
+        return CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED;
+    }
     if (regular_expr(normal_type, "Pi", 3u)) {
         bool ok = true;
         Atom *shifted_left = regular_shift(arena, left, 1, 0u, &ok, budget);

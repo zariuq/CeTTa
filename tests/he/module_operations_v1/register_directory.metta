@@ -1,0 +1,5 @@
+!(register-module! ../module_compatibility_v1/registered_root)
+!(== (mod-space! registered_root) (mod-space! top:registered_root))
+!(collapse (match (mod-space! registered_root) (root-member $x) $x))
+!(import! &self registered_root)
+!(case (register-module! ../module_compatibility_v1/registered_root) (((Error $call $why) refused) ($ok registered)))

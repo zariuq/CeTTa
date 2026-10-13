@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Two reversals of a list, run.  Over the lists of numbers and their append,
 ;   rev nil                  = nil
@@ -9,12 +9,12 @@
 ; different programs and they cost differently.  A firing is one call
 ; rewritten by one equation; on a list of n numbers rev takes
 ; (n + 1)(n + 2) / 2 firings, and the reversal onto an accumulator n + 1.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
-!(set:define &self rev (-> list list)
+!(hol:define &self rev (-> list list)
    (= (rev nil) nil)
    (= (rev (cons $a $as)) (append (rev $as) (cons $a nil))))
 ; rev-onto recurses on its second argument.  It is admitted as written by way
@@ -22,16 +22,16 @@
 ; passes its two arguments to it (reverse.intensional shows the record).  It
 ; runs as written: passing the arguments is part of the step of the equation
 ; that then applies, and the result reads as rev-onto again.
-!(set:define &self rev-onto (-> list list list)
+!(hol:define &self rev-onto (-> list list list)
    (= (rev-onto $acc nil) $acc)
    (= (rev-onto $acc (cons $x $xs)) (rev-onto (cons $x $acc) $xs)))
 ; The same reversal written with the list first.
-!(set:define &self rev-onto-list-first (-> list list list)
+!(hol:define &self rev-onto-list-first (-> list list list)
    (= (rev-onto-list-first nil $acc) $acc)
    (= (rev-onto-list-first (cons $x $xs) $acc)
       (rev-onto-list-first $xs (cons $x $acc))))
 ; A wrong reversal: it puts each number back in front.
-!(set:define &self wrong-rev (-> list list)
+!(hol:define &self wrong-rev (-> list list)
    (= (wrong-rev nil) nil)
    (= (wrong-rev (cons $a $as)) (append (cons $a nil) (wrong-rev $as))))
 

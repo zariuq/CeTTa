@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Proof reuse across a rewrite, inside the extensional layer.  A property
 ; established of the unfused program is carried to the fused program by the
@@ -6,16 +6,16 @@
 ; optimized output; the derived record keeps its dependencies, and the
 ; original proof stays inspectable on request.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: f (-> elem elem)) (: g (-> elem elem))))
-!(set:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
+!(hol:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(pf:equality &thy list refl@list subst@list)
 !(pf:equality &thy nat refl@nat subst@nat)
-!(set:define &thy mapf (-> (-> elem elem) list list)
+!(hol:define &thy mapf (-> (-> elem elem) list list)
    (= (mapf $h nil) nil)
    (= (mapf $h (cons $x $xs)) (cons ($h $x) (mapf $h $xs))))
-!(set:define &thy length (-> list nat)
+!(hol:define &thy length (-> list nat)
    (= (length nil) zero)
    (= (length (cons $x $xs)) (succ (length $xs))))
 ; the fusion theorem, by induction
@@ -45,9 +45,9 @@
    (pf:fix P (pf:fix xs (pf:assume w (pf:subst-with list P (mapf f (mapf g xs)) (mapf (lam y (f (g y))) xs) (pf:by map-fusion) w)))))
 ; the derived record depends on the theorem it reused, and its original
 ; proof is retained for inspection
-!(match &thy (set:known length-fused $p $o $proof $depends $r $s)
+!(match &thy (hol:known length-fused $p $o $proof $depends $r $s)
    (let $names (map-atom $depends $d (car-atom $d)) $names))
-!(let $p (set:known-proof &thy length-fused) (car-atom $p))
+!(let $p (hol:known-proof &thy length-fused) (car-atom $p))
 ; the reverse direction is not obtained by the same substitution: the
 ; equation runs the other way, and the checker says so
 !(pf:proves &thy

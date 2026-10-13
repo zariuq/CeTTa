@@ -504,7 +504,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-regular-kernel-synthesis-interior-check",
     "prime-regular-kernel-synthesis-cache-hit",
     "prime-regular-kernel-synthesis-cache-miss",
-    "prime-legacy-he-synthesis",
+    "prime-he-fragment-synthesis",
     "prime-regular-kernel-checking-admission-attempt",
     "prime-regular-kernel-checking-admission-check",
     "prime-regular-kernel-checking-admission-accepted",
@@ -516,10 +516,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-regular-kernel-checking-interior-check",
     "prime-regular-kernel-checking-cache-hit",
     "prime-regular-kernel-checking-cache-miss",
-    "prime-legacy-he-checking",
+    "prime-he-fragment-checking",
     "prime-regular-kernel-formation-execution",
     "prime-legacy-formation",
-    "prime-legacy-he-refinement",
+    "prime-he-fragment-refinement",
     "prime-regular-kernel-conversion-admission-engine-failure",
     "prime-regular-kernel-synthesis-admission-engine-failure",
     "prime-regular-kernel-checking-admission-engine-failure",
@@ -528,7 +528,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-checking-route-declared-regular",
     "prime-checking-route-closed-regular",
     "prime-checking-route-ambient-formation",
-    "prime-legacy-he-typed-applicability",
+    "prime-he-declaration-applicability",
     "prime-declared-regular-conversion-execution",
     "prime-level-normalization-step",
     "prime-declaration-polymorphic-lookup",
@@ -970,6 +970,21 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "owned-execution-fold-step",
     "owned-execution-storage-peak",
     "owned-execution-copy-bytes",
+    "symbol-owned-count",
+    "symbol-data-count",
+    "symbol-retired-count",
+    "symbol-owned-bytes",
+    "symbol-data-bytes",
+    "symbol-metadata-bytes",
+    "symbol-peak-payload-bytes",
+    "symbol-peak-metadata-bytes",
+    "symbol-data-allocated-bytes",
+    "symbol-promotions",
+    "managed-symbol-retained-count",
+    "managed-symbol-retained-bytes",
+    "managed-symbol-allocated-bytes",
+    "hashcons-thread-entries",
+    "hashcons-thread-index-bytes",
     "atom-transport-node",
     "atom-transport-edge-visit",
     "atom-transport-metadata-alloc-bytes",
@@ -982,6 +997,31 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "term-order-frontier-peak",
     "term-order-product-pair",
     "term-order-product-edge",
+    "term-match-subject-view",
+    "term-match-pair-visit",
+    "match-path-count-admission",
+    "petta-conjunction-count-fold",
+    "match-relational-count-admission",
+    "match-relational-prepare-rows",
+    "match-relational-key-seeks",
+    "match-relational-prefixes",
+    "match-position-index-build",
+    "match-position-index-build-row",
+    "match-position-index-lookup",
+    "match-position-index-key-probe",
+    "match-position-index-candidate",
+    "match-position-index-broad-decline",
+    "match-position-index-append-row",
+    "match-position-index-alloc-bytes",
+    "match-position-index-free-bytes",
+    "prepared-capsule-step",
+    "prepared-capsule-publication",
+    "prime-judgment-he-engine-entry",
+    "prime-hol-guest-request",
+    "prime-hol-guest-accepted",
+    "prime-hol-guest-refused",
+    "prime-hol-guest-unavailable",
+    "prime-he-fragment-get-type",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -1101,6 +1141,32 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     pthread_mutex_lock(&g_runtime_stats_mutex);
     memcpy(out->counters, g_runtime_counters, sizeof(g_runtime_counters));
     pthread_mutex_unlock(&g_runtime_stats_mutex);
+    SymbolTableStats symbols;
+    symbol_table_stats_snapshot(g_symbols, &symbols);
+#define SYMBOL_GAUGE(counter, field) \
+    out->counters[CETTA_RUNTIME_COUNTER_SYMBOL_##counter] = symbols.field
+    SYMBOL_GAUGE(OWNED_COUNT, owned_count);
+    SYMBOL_GAUGE(DATA_COUNT, data_count);
+    SYMBOL_GAUGE(RETIRED_COUNT, retired_count);
+    SYMBOL_GAUGE(OWNED_BYTES, owned_bytes);
+    SYMBOL_GAUGE(DATA_BYTES, data_bytes);
+    SYMBOL_GAUGE(METADATA_BYTES, metadata_bytes);
+    SYMBOL_GAUGE(PEAK_PAYLOAD_BYTES, peak_payload_bytes);
+    SYMBOL_GAUGE(PEAK_METADATA_BYTES, peak_metadata_bytes);
+    SYMBOL_GAUGE(DATA_ALLOCATED_BYTES, data_allocated_bytes);
+    SYMBOL_GAUGE(PROMOTIONS, promotions);
+#undef SYMBOL_GAUGE
+    AtomManagedSymbolStats managed;
+    atom_managed_symbol_stats(&managed);
+    out->counters[CETTA_RUNTIME_COUNTER_MANAGED_SYMBOL_RETAINED_COUNT] = managed.retained_count;
+    out->counters[CETTA_RUNTIME_COUNTER_MANAGED_SYMBOL_RETAINED_BYTES] = managed.retained_bytes;
+    out->counters[CETTA_RUNTIME_COUNTER_MANAGED_SYMBOL_ALLOCATED_BYTES] = managed.allocated_bytes;
+    /* This worker's indexes, rather than an aggregate over other workers.
+     * Canonical atom payloads and allocator overhead are separate storage. */
+    out->counters[CETTA_RUNTIME_COUNTER_HASHCONS_THREAD_ENTRIES] =
+        g_hashcons ? g_hashcons->used : 0u;
+    out->counters[CETTA_RUNTIME_COUNTER_HASHCONS_THREAD_INDEX_BYTES] =
+        hashcons_index_reserved_bytes(g_hashcons);
 }
 
 uint64_t cetta_runtime_stats_survivor_role_total(

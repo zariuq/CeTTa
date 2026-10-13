@@ -11,3 +11,4 @@
 (= (fs:try-canonical-from-file $base-file $requested-path) (__cetta_lib_fs_try_canonical_from_file $base-file $requested-path))
 (= (fs:try-canonical-under $directory $requested-path) (__cetta_lib_fs_try_canonical_under $directory $requested-path))
 (= (fs:read-lines $path) (__cetta_lib_fs_read_lines $path))
+(= (fs:read-lines-between $path $start $end) (__cetta_lib_fs_read_lines_between $path $start $end))

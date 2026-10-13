@@ -1,0 +1,65 @@
+!(import! &self ../../lib/hol_light/data.metta)
+!(import! &self ../../lib/hol_light/syntax.metta)
+!(import! &self ../../lib/hol_light/kernel.metta)
+!(import! &self ../../lib/hol_light/definitions.metta)
+!(import! &self ../../lib/hol_light/derived.metta)
+!(import! &self ../../lib/hol_light/profile.metta)
+!(import! &self ../../lib/hol_light/receive.metta)
+
+(= (declaration-history:p) (Var "p" (hol-light:bool)))
+(= (declaration-history:before)
+  (case (hol-light:step (hol-light:initial
+          (HOL:Cons (HOL:Entry "selected" (declaration-history:p)) HOL:Nil))
+          "axiom-before" (AXIOM "selected" (declaration-history:p)))
+    (((Some $world)
+      (case (hol-light:step $world "refl-before" (REFL (declaration-history:p)))
+        (((Some $proved) $proved) ($other malformed-reflexivity))))
+     ($other malformed-axiom))))
+(= (declaration-history:declaration $world $key $name $schema)
+  (hol-light:step $world $key (DECLARE_CONSTANT $name $schema)))
+(= (declaration-history:after)
+  (case (declaration-history:declaration (declaration-history:before)
+          "declaration" "new" (Tyvar "A"))
+    (((Some $world) $world) ($other malformed-declaration))))
+(= (declaration-history:has-state $result)
+  (case $result (((Some (HOL:State $op $c $a $cache $receipts)) True) ($other False))))
+(= (declaration-history:reuse)
+  (hol-light:step (declaration-history:after) "reused" (EQ_MP "refl-before" "axiom-before")))
+(= (declaration-history:retained)
+  (and (== (hol-light:known (declaration-history:before) "axiom-before")
+           (hol-light:known (declaration-history:after) "axiom-before"))
+       (== (hol-light:known (declaration-history:before) "refl-before")
+           (hol-light:known (declaration-history:after) "refl-before"))))
+(= (declaration-history:payload)
+  (case (declaration-history:reuse)
+    (((Some $world)
+      (== (hol-light:known $world "reused")
+        (Some (HOL:Thm HOL:Nil (HOL:Free "p" (hol-light:bool))
+          (HOL:Cons (HOL:AxiomDependency "selected" (HOL:Free "p" (hol-light:bool))) HOL:Nil)
+          (HOL:Origin "reused" (EQ_MP "refl-before" "axiom-before"))))))
+     ($other False))))
+(= (declaration-history:receipt)
+  (case (declaration-history:after)
+    (((HOL:State $op $c $a $cache $receipts)
+      (case $receipts
+        (((HOL:Cons (HOL:Receipt "declaration" (DECLARE_CONSTANT "new" (Tyvar "A")) HOL:Nil) $rest)
+          (== (hol-light:length $rest) 2)) ($other False)))))))
+
+!(DeclarationHistoryControl accepted
+  (== (declaration-history:has-state
+        (declaration-history:declaration (declaration-history:before) "declaration" "new" (Tyvar "A"))) True))
+!(DeclarationHistoryControl old-evidence (== (declaration-history:retained) True))
+!(DeclarationHistoryControl reuse (== (declaration-history:has-state (declaration-history:reuse)) True))
+!(DeclarationHistoryControl dependency-and-origin (== (declaration-history:payload) True))
+!(DeclarationHistoryControl receipt (== (declaration-history:receipt) True))
+!(DeclarationHistoryControl new-constant
+  (== (declaration-history:has-state
+        (hol-light:step (declaration-history:after) "new-reflexivity" (REFL (Const "new" (Tyvar "A"))))) True))
+!(DeclarationHistoryControl duplicate-name
+  (== (declaration-history:declaration (declaration-history:after) "collision" "new" (hol-light:bool)) None))
+!(DeclarationHistoryControl wrong-arity
+  (== (declaration-history:declaration (declaration-history:before) "bad" "broken" (Tyapp "fun" HOL:Nil)) None))
+!(DeclarationHistoryControl duplicate-event
+  (== (declaration-history:declaration (declaration-history:after) "declaration" "other" (Tyvar "A")) None))
+!(DeclarationHistoryControl declaration-is-not-axiom
+  (== (hol-light:step (declaration-history:after) "unauthorized" (AXIOM "new" (declaration-history:p))) None))

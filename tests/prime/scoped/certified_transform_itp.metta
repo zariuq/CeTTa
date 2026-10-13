@@ -1,19 +1,19 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Retained proof of zero-addition. The theorem is hosted by the kernel
 ; proof package. The same predicate is the family the iterator consumes.
 ; Reflexivity proves the closed numeral by computation and does not prove
 ; the open equation. The iterator's successor step uses the supplied evidence.
 !(import! &self pf)
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
 !(pf:equality &self num refl@num subst@num)
-!(set:known-proposition &self num-ind)
-!(set:define &self add (-> num num num)
+!(hol:known-proposition &self num-ind)
+!(hol:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $m)) (suc (add $n $m))))
-!(set:define &self eqAt (-> num (u 0))
+!(hol:define &self eqAt (-> num (u 0))
    (= (eqAt $n) (id num (add zero $n) $n)))
-!(set:define &self sucMove
+!(hol:define &self sucMove
    (-> (n : num) (e : (eqAt n)) (eqAt (suc n)))
    (= (sucMove $n $e)
       (id:eliminate num (add zero $n)
@@ -21,7 +21,7 @@
          (refl (suc (add zero $n)))
          $n $e)))
 !(import! &self ./certified_transform_lib.metta)
-!(set:define &self sucStep
+!(hol:define &self sucStep
    (-> (x : num) (e : (eqAt x)) (sigma (y : num) (eqAt y)))
    (= (sucStep $x $e) (transportCert num eqAt suc sucMove $x $e)))
 !(pf:theorem &self zero-add (all num (lam k (eq num (add zero k) k)))
@@ -50,18 +50,18 @@
  (let $at (type:check &self
      (snd (iterCert (suc (suc zero)) num eqAt sucStep zero (refl zero)))
      (eqAt (suc (suc zero))))
-  (let $package (set:native-proof zero-add)
-   (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+  (let $package (hol:native-proof zero-add)
+   (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
         $package
-    (let (SetNativeUseV1 $checked $consumer $result $result-type)
-         (set:native-use $package (Lam $type (idx 0)))
+    (let (HolNativeUseV1 $checked $consumer $result $result-type)
+         (hol:native-use $package (Lam $type (idx 0)))
      (HostedIteration $iter $at (== $checked $package)
        (== $prop (all num (lam k (eq num (add zero k) k))))
        (size-atom $assumptions)))))))
-!(let $package (set:native-proof zero-add)
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+!(let $package (hol:native-proof zero-add)
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
       $package
-  (let $bad (SetNativeProofV1 $name $prop $proof (Refl $term) $type
+  (let $bad (HolNativeProofV1 $name $prop $proof (Refl $term) $type
              $context $rules $assumptions $digest)
-   (let $result (try (set:native-use $bad (Lam $type (idx 0))))
+   (let $result (try (hol:native-use $bad (Lam $type (idx 0))))
     (ForgedHosted (car-atom $result))))))

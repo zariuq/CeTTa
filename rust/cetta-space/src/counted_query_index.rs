@@ -3,7 +3,8 @@ use crate::{
     stable_bridge_expr_bytes, stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, unify};
+use mork_expr::{Expr, ExprEnv};
+use crate::bridge_unify as unify;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;

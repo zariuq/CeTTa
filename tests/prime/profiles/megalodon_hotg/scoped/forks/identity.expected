@@ -11,4 +11,4 @@
 [((membership-implication (imp (In Empty Empty) (In Empty (Power Empty)))) (live-assumption (In Empty Empty)))]
 [()]
 [True]
-[(set:proves (pf:known via-implication) (In Empty (Power Empty)))]
+[(hol:proves (pf:known via-implication) (In Empty (Power Empty)))]

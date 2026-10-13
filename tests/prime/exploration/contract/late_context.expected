@@ -1,0 +1,6 @@
+[(1 1)]
+[(1 1)]
+[(Pair (1) (Pair (1) closed))]
+[(Pair (1) (Pair (1) closed))]
+[(Pair (1) (Pair () invalidated))]
+[(Pair (2) (Pair () invalidated))]

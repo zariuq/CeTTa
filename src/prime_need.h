@@ -48,6 +48,14 @@ typedef enum {
     PRIME_NEED_CACHE_STABLE_FAULT,
 } PrimeNeedCacheState;
 
+/* A completed demand may still require structural observation. A ready
+ * value protects returned syntax from execution; embedded Need references
+ * remain demands. EMPTY/EVALUATING cells have no completed value role. */
+typedef enum {
+    PRIME_NEED_VALUE_DEMAND_RESULT = 0,
+    PRIME_NEED_VALUE_READY,
+} PrimeNeedValueRole;
+
 typedef struct PrimeNeedFrame PrimeNeedFrame;
 typedef struct PrimeNeedArenaAudit PrimeNeedArenaAudit;
 #if CETTA_PRIME_NEED_HEAP_INDEX
@@ -59,7 +67,9 @@ typedef struct {
     uint64_t session_id;
     uint64_t max_storage_key;
     /* Arena containing `top`; `closure_owner` is non-NULL exactly when the
-     * complete reachable frame path and its owned payloads share one arena.
+     * complete reachable frame path and its Atom payloads share one arena.
+     * Native-handle leaves may retain independently managed control cells;
+     * their arena owns the holders, not a shallow-copy licence for resources.
      * A NULL closure owner denotes an intentionally mixed-lifetime path: a
      * reclaimable suffix may reference a longer-lived immutable prefix. */
     Arena *owner;
@@ -72,6 +82,12 @@ typedef struct {
 
 typedef struct {
     PrimeNeedCacheState cache_state;
+    PrimeNeedValueRole value_role;
+    /* Optional direct producer of this VALUE update, in the same session.
+     * Both identities are zero for ordinary results. The update identity
+     * distinguishes sibling completions of the same producer cell. */
+    uint64_t value_producer_thunk;
+    uint64_t value_producer_update;
     Atom *origin;
     Atom *cached;
     uint64_t authority_id;
@@ -317,6 +333,23 @@ bool prime_need_snapshot_start_evaluation(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, PrimeNeedSnapshot *out);
 bool prime_need_snapshot_resolve_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
+/* Complete the consumer with a value returned directly by an already
+ * completed producer. The caller supplies the returned value (possibly an
+ * owned transport of it); this operation records, and later validates, the
+ * producer's exact immutable update and preserves its return role. It does
+ * not infer provenance by Atom equality or change embedded child roles. */
+bool prime_need_snapshot_resolve_forwarded_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, uint64_t producer_thunk_id,
+    PrimeNeedSnapshot *out);
+bool prime_need_snapshot_forwarded_value_source(
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
+    PrimeNeedCellView *source);
+/* The same owner-checked completion, for an already produced value whose
+ * callable-looking syntax must stay data during structural observation. */
+bool prime_need_snapshot_resolve_ready_value(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
 bool prime_need_snapshot_resolve_stable_fault(

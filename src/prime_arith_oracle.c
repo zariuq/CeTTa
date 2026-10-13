@@ -15,6 +15,12 @@
 #include "prime_scoped_judgments.h"
 #include "prime_semantics.h"
 
+/* The namespace of the space being served: its records and reasons are
+ * `hol:` words in a space whose theory is a profile of the native logic,
+ * `set:` words otherwise. */
+static _Thread_local bool t_oracle_hol;
+#define PS(word) prime_scoped_word(word, t_oracle_hol)
+
 /* A test build plants a backend that adds wrongly at large values; the
  * audit, the residue check and the differential test must catch it. */
 #ifndef CETTA_PRIME_ORACLE_PLANTED_FAULT
@@ -186,14 +192,14 @@ typedef struct {
 
 static bool fits_known(Atom *atom, void *raw) {
     KnownQuery *query = raw;
-    return is_expr_head(atom, "set:known", 8u) &&
+    return is_expr_head(atom, PS("set:known"), 8u) &&
            atom_eq(atom->expr.elems[1], query->name) &&
            atom_is_symbol_named(atom->expr.elems[3], query->origin);
 }
 
 /* The admitted `set:known` record of `name` with origin `origin`. */
 static Atom *known_record(Arena *a, Space *space, Atom *name, const char *origin) {
-    Atom *items[8] = {sym(a, "set:known"), name, atom_var(a, "p"), sym(a, origin),
+    Atom *items[8] = {sym(a, PS("set:known")), name, atom_var(a, "p"), sym(a, origin),
                       atom_var(a, "f"), atom_var(a, "d"), atom_var(a, "r"),
                       atom_var(a, "s")};
     KnownQuery query = {name, origin};
@@ -208,7 +214,7 @@ static bool fits_head_name(Atom *atom, void *raw) {
 
 /* The admitted reading record of `type`: (set:numerals-of type reading parts). */
 static Atom *reading_record(Arena *a, Space *space, Atom *type) {
-    Atom *head = sym(a, "set:numerals-of");
+    Atom *head = sym(a, PS("set:numerals-of"));
     Atom *items[4] = {head, type, atom_var(a, "r"), atom_var(a, "p")};
     Atom *want[2] = {head, type};
     return admitted_record(a, space, atom_expr(a, items, 4u), fits_head_name, want);
@@ -217,7 +223,7 @@ static Atom *reading_record(Arena *a, Space *space, Atom *type) {
 /* The admitted oracle record of `op`:
  * (set:oracle-of op spec backend signature (spec-agreement ...)). */
 static Atom *oracle_record(Arena *a, Space *space, Atom *op) {
-    Atom *head = sym(a, "set:oracle-of");
+    Atom *head = sym(a, PS("set:oracle-of"));
     Atom *items[6] = {head, op, atom_var(a, "e"), atom_var(a, "b"), atom_var(a, "s"),
                       atom_var(a, "l")};
     Atom *want[2] = {head, op};
@@ -280,52 +286,52 @@ static const char *reading_shape(const Readings *known, Atom *type, ReadingKind 
                                  Atom **names, size_t name_count, Atom **ctors,
                                  size_t ctor_count, int part[2]) {
     part[0] = part[1] = -1;
-    if (ctor_count != name_count) return "set:numerals-constructor-count";
+    if (ctor_count != name_count) return PS("set:numerals-constructor-count");
     for (size_t i = 0u; i < ctor_count; i++) {
         Atom *c = ctors[i];
         if (!is_expr_head(c, ":", 3u) || !atom_eq(c->expr.elems[1], names[i]))
-            return "set:numerals-constructor-names";
+            return PS("set:numerals-constructor-names");
     }
     Atom *fields[4];
     size_t count = 0u;
     switch (kind) {
     case READ_POSITIVE:
-        if (!atom_eq(ctors[0]->expr.elems[2], type)) return "set:numerals-constructor-type";
+        if (!atom_eq(ctors[0]->expr.elems[2], type)) return PS("set:numerals-constructor-type");
         for (size_t i = 1u; i < 3u; i++)
             if (!arrow_parts(ctors[i]->expr.elems[2], fields, 4u, &count) || count != 2u ||
                 !atom_eq(fields[0], type) || !atom_eq(fields[1], type))
-                return "set:numerals-constructor-type";
+                return PS("set:numerals-constructor-type");
         return NULL;
     case READ_ORDERING:
         for (size_t i = 0u; i < 3u; i++)
-            if (!atom_eq(ctors[i]->expr.elems[2], type)) return "set:numerals-constructor-type";
+            if (!atom_eq(ctors[i]->expr.elems[2], type)) return PS("set:numerals-constructor-type");
         return NULL;
     case READ_NATURAL:
     case READ_INTEGER: {
-        if (!atom_eq(ctors[0]->expr.elems[2], type)) return "set:numerals-constructor-type";
+        if (!atom_eq(ctors[0]->expr.elems[2], type)) return PS("set:numerals-constructor-type");
         Atom *positive = NULL;
         for (size_t i = 1u; i < ctor_count; i++) {
             if (!arrow_parts(ctors[i]->expr.elems[2], fields, 4u, &count) || count != 2u ||
                 !atom_eq(fields[1], type))
-                return "set:numerals-constructor-type";
-            if (positive && !atom_eq(positive, fields[0])) return "set:numerals-constructor-type";
+                return PS("set:numerals-constructor-type");
+            if (positive && !atom_eq(positive, fields[0])) return PS("set:numerals-constructor-type");
             positive = fields[0];
         }
         int p = readings_find(known, positive);
-        if (p < 0 || known->items[p].kind != READ_POSITIVE) return "set:numerals-part-unread";
+        if (p < 0 || known->items[p].kind != READ_POSITIVE) return PS("set:numerals-part-unread");
         part[0] = p;
         return NULL;
     }
     case READ_FRACTION: {
         if (!arrow_parts(ctors[0]->expr.elems[2], fields, 4u, &count) || count != 3u ||
             !atom_eq(fields[2], type))
-            return "set:numerals-constructor-type";
+            return PS("set:numerals-constructor-type");
         int z = readings_find(known, fields[0]);
         int d = readings_find(known, fields[1]);
         if (z < 0 || known->items[z].kind != READ_INTEGER || d < 0 ||
             known->items[d].kind != READ_POSITIVE ||
             known->items[z].part[0] != d)
-            return "set:numerals-part-unread";
+            return PS("set:numerals-part-unread");
         part[0] = z;
         part[1] = d;
         return NULL;
@@ -333,14 +339,14 @@ static const char *reading_shape(const Readings *known, Atom *type, ReadingKind 
     case READ_QUOTREM: {
         if (!arrow_parts(ctors[0]->expr.elems[2], fields, 4u, &count) || count != 3u ||
             !atom_eq(fields[2], type) || !atom_eq(fields[0], fields[1]))
-            return "set:numerals-constructor-type";
+            return PS("set:numerals-constructor-type");
         int n = readings_find(known, fields[0]);
-        if (n < 0 || known->items[n].kind != READ_NATURAL) return "set:numerals-part-unread";
+        if (n < 0 || known->items[n].kind != READ_NATURAL) return PS("set:numerals-part-unread");
         part[0] = n;
         return NULL;
     }
     default:
-        return "set:numerals-kind";
+        return PS("set:numerals-kind");
     }
 }
 
@@ -360,7 +366,7 @@ static bool readings_push(Readings *readings, Reading reading) {
  * declaration.  A reading names the readings of its parts by type, and
  * those are admitted first, so one pass in dependency order finds them. */
 static void readings_collect(Arena *a, Space *space, Readings *out) {
-    Atom *items[4] = {sym(a, "set:numerals-of"), atom_var(a, "t"), atom_var(a, "r"),
+    Atom *items[4] = {sym(a, PS("set:numerals-of")), atom_var(a, "t"), atom_var(a, "r"),
                       atom_var(a, "p")};
     Atom *pattern = atom_expr(a, items, 4u);
     CettaIndex *candidates = NULL;
@@ -376,7 +382,7 @@ static void readings_collect(Arena *a, Space *space, Readings *out) {
         for (CettaIndex i = 0u; i < count; i++) {
             if (taken[i]) continue;
             Atom *record = space_match_candidate_at64(space, candidates[i]);
-            if (!is_expr_head(record, "set:numerals-of", 4u) ||
+            if (!is_expr_head(record, PS("set:numerals-of"), 4u) ||
                 !is_sym(record->expr.elems[1]) ||
                 readings_find(out, record->expr.elems[1]) >= 0)
                 continue;
@@ -1162,7 +1168,7 @@ static bool native_named(Atom *name, NativeOp *out) {
  * admitted, and its backend has the signature of the operation. */
 static bool oracle_from_record(Arena *a, Space *space, const Readings *rs, Atom *record,
                                Oracle *out) {
-    if (!is_expr_head(record, "set:oracle-of", 6u)) return false;
+    if (!is_expr_head(record, PS("set:oracle-of"), 6u)) return false;
     Atom *op = record->expr.elems[1];
     Atom *spec = record->expr.elems[2];
     Atom *backend = record->expr.elems[3];
@@ -1218,7 +1224,7 @@ static void cache_rebuild(OracleCache *cache, Space *space) {
     uint64_t revision = space_revision(space);
     uint64_t admission = prime_scoped_judgment_admission_epoch();
     readings_collect(a, space, &cache->readings);
-    Atom *items[6] = {sym(a, "set:oracle-of"), atom_var(a, "o"), atom_var(a, "e"),
+    Atom *items[6] = {sym(a, PS("set:oracle-of")), atom_var(a, "o"), atom_var(a, "e"),
                       atom_var(a, "b"), atom_var(a, "s"), atom_var(a, "l")};
     CettaIndex *candidates = NULL;
     CettaIndex count = space_match_candidates64(space, atom_expr(a, items, 6u), &candidates);
@@ -1457,7 +1463,7 @@ static bool residues_agree(const Readings *rs, const Oracle *o, Atom **args, Ato
 /* The oracle at a covered call                                              */
 /* ------------------------------------------------------------------------ */
 
-Atom *prime_arith_oracle_answer(Arena *arena, Space *space, Atom *call) {
+static Atom *oracle_answer(Arena *arena, Space *space, Atom *call) {
     if (atomic_load_explicit(&g_oracles_published, memory_order_relaxed) == 0u ||
         !arena || !space || !call || space->overlay_base || !is_expr(call, 3u) ||
         !is_sym(call->expr.elems[0]))
@@ -1502,26 +1508,26 @@ Atom *prime_arith_oracle_answer(Arena *arena, Space *space, Atom *call) {
 /* Admission                                                                 */
 /* ------------------------------------------------------------------------ */
 
-Atom *prime_arith_oracle_judge_numerals(Arena *a, Space *space, Atom *judgment) {
+static Atom *oracle_judge_numerals(Arena *a, Space *space, Atom *judgment) {
     if (!is_expr(judgment, 3u))
-        return refuted(a, judgment, "set:numerals-arity", NULL);
+        return refuted(a, judgment, PS("set:numerals-arity"), NULL);
     Atom *type = judgment->expr.elems[1];
     Atom *spec = judgment->expr.elems[2];
-    if (!is_sym(type)) return refuted(a, judgment, "set:numerals-type", type);
+    if (!is_sym(type)) return refuted(a, judgment, PS("set:numerals-type"), type);
     size_t want = 0u;
     ReadingKind kind = spec && spec->kind == ATOM_EXPR && spec->expr.len >= 2u
         ? reading_kind_named(spec->expr.elems[0], &want) : READ_NONE;
-    if (kind == READ_NONE) return refuted(a, judgment, "set:numerals-kind", spec);
+    if (kind == READ_NONE) return refuted(a, judgment, PS("set:numerals-kind"), spec);
     if (spec->expr.len - 1u != want)
-        return refuted(a, judgment, "set:numerals-constructor-count", spec);
+        return refuted(a, judgment, PS("set:numerals-constructor-count"), spec);
     for (size_t i = 0u; i < want; i++)
         if (!is_sym(spec->expr.elems[1u + i]))
-            return refuted(a, judgment, "set:numerals-constructor-names", spec);
+            return refuted(a, judgment, PS("set:numerals-constructor-names"), spec);
     Atom **ctors = NULL;
     size_t ctor_count = inductive_ctors(a, space, type, &ctors);
-    if (ctor_count == 0u) return refuted(a, judgment, "set:numerals-not-inductive", type);
+    if (ctor_count == 0u) return refuted(a, judgment, PS("set:numerals-not-inductive"), type);
     if (reading_record(a, space, type))
-        return refuted(a, judgment, "set:numerals-already-read", type);
+        return refuted(a, judgment, PS("set:numerals-already-read"), type);
     Readings known = {0};
     readings_collect(a, space, &known);
     int part[2];
@@ -1537,9 +1543,9 @@ Atom *prime_arith_oracle_judge_numerals(Arena *a, Space *space, Atom *judgment) 
     }
     free(known.items);
     if (reason) return refuted(a, judgment, reason, type);
-    Atom *record_items[4] = {sym(a, "set:numerals-of"), type, spec, parts};
+    Atom *record_items[4] = {sym(a, PS("set:numerals-of")), type, spec, parts};
     Atom *record = atom_expr(a, record_items, 4u);
-    return verdict(a, "Established", judgment, atom_expr2(a, sym(a, "SetPublish"), record));
+    return verdict(a, "Established", judgment, atom_expr2(a, sym(a, PS("SetPublish")), record));
 }
 
 /* Small sample values of a reading, as numerals. */
@@ -1564,40 +1570,40 @@ static size_t samples(Arena *a, const Readings *rs, int index, Atom **out) {
     return ORACLE_SAMPLE_VALUES;
 }
 
-Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgment) {
-    if (!is_expr(judgment, 4u)) return refuted(a, judgment, "set:oracle-arity", NULL);
+static Atom *oracle_judge_declaration(Arena *a, Space *space, Atom *judgment) {
+    if (!is_expr(judgment, 4u)) return refuted(a, judgment, PS("set:oracle-arity"), NULL);
     Atom *op = judgment->expr.elems[1];
     Atom *spec = judgment->expr.elems[2];
     Atom *backend = judgment->expr.elems[3];
-    if (!is_sym(op)) return refuted(a, judgment, "set:oracle-operation", op);
+    if (!is_sym(op)) return refuted(a, judgment, PS("set:oracle-operation"), op);
     if (!is_expr_head(spec, "equations", 2u))
-        return refuted(a, judgment, "set:oracle-specification", spec);
+        return refuted(a, judgment, PS("set:oracle-specification"), spec);
     if (!atom_eq(spec->expr.elems[1], op))
-        return refuted(a, judgment, "set:oracle-equations-of-another-operation",
+        return refuted(a, judgment, PS("set:oracle-equations-of-another-operation"),
                        spec->expr.elems[1]);
     if (!is_expr_head(backend, "backend", 3u))
-        return refuted(a, judgment, "set:oracle-backend", backend);
+        return refuted(a, judgment, PS("set:oracle-backend"), backend);
     Oracle o = {.op = op};
     if (!native_named(backend->expr.elems[2], &o.native))
-        return refuted(a, judgment, "set:oracle-unknown-native", backend->expr.elems[2]);
+        return refuted(a, judgment, PS("set:oracle-unknown-native"), backend->expr.elems[2]);
     if (!backend_named(backend->expr.elems[1], &o.backend)) {
         if (atom_is_symbol_named(backend->expr.elems[1], "gmp-mpz"))
-            return undetermined(a, judgment, "set:oracle-backend-not-built",
+            return undetermined(a, judgment, PS("set:oracle-backend-not-built"),
                                 backend->expr.elems[1]);
-        return refuted(a, judgment, "set:oracle-unknown-backend", backend->expr.elems[1]);
+        return refuted(a, judgment, PS("set:oracle-unknown-backend"), backend->expr.elems[1]);
     }
     if (oracle_record(a, space, op))
-        return refuted(a, judgment, "set:oracle-already-declared", op);
+        return refuted(a, judgment, PS("set:oracle-already-declared"), op);
     Cone cone;
     char digest[65];
     if (!specification(a, space, op, &cone, digest))
-        return refuted(a, judgment, "set:oracle-not-an-admitted-definition", op);
+        return refuted(a, judgment, PS("set:oracle-not-an-admitted-definition"), op);
     Atom *prop = cone.props[0];
     Atom *types[3];
     size_t count = 0u;
     if (!arrow_parts(prop->expr.elems[1], types, 3u, &count) || count != 3u) {
         cone_free(&cone);
-        return refuted(a, judgment, "set:oracle-signature", prop->expr.elems[1]);
+        return refuted(a, judgment, PS("set:oracle-signature"), prop->expr.elems[1]);
     }
     Readings rs = {0};
     readings_collect(a, space, &rs);
@@ -1610,13 +1616,13 @@ Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgmen
         if (index < 0) {
             free(rs.items);
             cone_free(&cone);
-            return refuted(a, judgment, "set:oracle-type-without-numerals", types[i]);
+            return refuted(a, judgment, PS("set:oracle-type-without-numerals"), types[i]);
         }
     }
     if (!signature_fits(&rs, o.native, o.argc, o.arg, o.result)) {
         free(rs.items);
         cone_free(&cone);
-        return refuted(a, judgment, "set:oracle-signature-mismatch",
+        return refuted(a, judgment, PS("set:oracle-signature-mismatch"),
                        atom_expr2(a, backend->expr.elems[2], prop->expr.elems[1]));
     }
     /* The backend against the equations, on small calls. */
@@ -1626,7 +1632,7 @@ Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgmen
         samples(a, &rs, o.arg[1], ys) != ORACLE_SAMPLE_VALUES) {
         free(rs.items);
         cone_free(&cone);
-        return undetermined(a, judgment, "set:oracle-no-samples", op);
+        return undetermined(a, judgment, PS("set:oracle-no-samples"), op);
     }
     Atom *failure = NULL;
     bool undecided = false;
@@ -1653,8 +1659,8 @@ Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgmen
         free(rs.items);
         cone_free(&cone);
         return undecided
-            ? undetermined(a, judgment, "set:oracle-sample-without-normal-form", failure)
-            : refuted(a, judgment, "set:oracle-disagrees-with-equations", failure);
+            ? undetermined(a, judgment, PS("set:oracle-sample-without-normal-form"), failure)
+            : refuted(a, judgment, PS("set:oracle-disagrees-with-equations"), failure);
     }
     /* The agreement of the native operation with the equations: proved, or
      * tested by the calls above. */
@@ -1679,11 +1685,38 @@ Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgmen
     Atom *equations[4] = {sym(a, "equations"), op, atom_int(a, (int64_t)cone.count),
                           atom_string(a, digest)};
     Atom *signature[4] = {sym(a, "signature"), types[0], types[1], types[2]};
-    Atom *record_items[6] = {sym(a, "set:oracle-of"), op, atom_expr(a, equations, 4u),
+    Atom *record_items[6] = {sym(a, PS("set:oracle-of")), op, atom_expr(a, equations, 4u),
                              backend, atom_expr(a, signature, 4u), agreement_atom};
     Atom *record = atom_expr(a, record_items, 6u);
     free(rs.items);
     cone_free(&cone);
     atomic_fetch_add(&g_oracles_published, 1u);
-    return verdict(a, "Established", judgment, atom_expr2(a, sym(a, "SetPublish"), record));
+    return verdict(a, "Established", judgment, atom_expr2(a, sym(a, PS("SetPublish")), record));
+}
+
+/* The public entries read the namespace of their space first. */
+Atom *prime_arith_oracle_answer(Arena *arena, Space *space, Atom *call) {
+    if (atomic_load_explicit(&g_oracles_published, memory_order_relaxed) == 0u || !space)
+        return NULL;
+    bool saved = t_oracle_hol;
+    t_oracle_hol = prime_scoped_space_is_hol(space);
+    Atom *answer = oracle_answer(arena, space, call);
+    t_oracle_hol = saved;
+    return answer;
+}
+
+Atom *prime_arith_oracle_judge_numerals(Arena *a, Space *space, Atom *judgment) {
+    bool saved = t_oracle_hol;
+    t_oracle_hol = prime_scoped_space_is_hol(space);
+    Atom *verdict = oracle_judge_numerals(a, space, judgment);
+    t_oracle_hol = saved;
+    return verdict;
+}
+
+Atom *prime_arith_oracle_judge_declaration(Arena *a, Space *space, Atom *judgment) {
+    bool saved = t_oracle_hol;
+    t_oracle_hol = prime_scoped_space_is_hol(space);
+    Atom *verdict = oracle_judge_declaration(a, space, judgment);
+    t_oracle_hol = saved;
+    return verdict;
 }

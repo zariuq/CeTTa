@@ -42,6 +42,16 @@ def check_cost(result):
     return fields
 
 def fixed(gate):
+    # Keep this ordinary entry isolated: other declarations change preparation.
+    source = '(= (co:id $x) $x)\n!(co:id (Pair (superpose (1 2)) (superpose (3 4))))\n'
+    expected = [[['Pair', 1, 3], ['Pair', 1, 4], ['Pair', 2, 3], ['Pair', 2, 4]]]
+    for workers in (1, 2, 4):
+        trees, _ = gate.run(f'ordinary retained read service workers={workers}', source,
+                            arguments=('--num-threads', str(workers)))
+        assert trees == expected, (workers, trees)
+        assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
+        gate.passed_case(f'ordinary retained read service workers={workers}')
+
     cases = [
         ('independent', SUM + '(= (p) (sum 20)) (= (p) (sum 21))', '(p)', [210, 231]),
         ('duplicate occurrences', SUM + '(= (p) (sum 15)) (= (p) (sum 15))', '(p)', [120, 120]),

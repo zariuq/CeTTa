@@ -227,6 +227,24 @@ typedef struct {
     uint64_t work_item_len;
 } RSDFAV1CursorScanResult;
 
+/* Byte-alphabet scanning is distinct from Unicode-scalar scanning. Its
+ * positions refer to the original bytes, including bytes above 127 and
+ * zero; no UTF-8 decoding or token-priority selection is performed. */
+typedef struct {
+    uint32_t tag;
+    uint32_t start_byte;
+    uint32_t end_byte;
+} RSDFAV1ByteToken;
+
+typedef struct {
+    RSDFAV1CursorScanOutcome outcome;
+    uint32_t start_byte;
+    uint32_t stop_byte;
+    uint32_t accept_len;
+    bool reached_eof;
+    uint64_t work_item_len;
+} RSDFAV1ByteCursorScanResult;
+
 /*
  * Parser-facing ownership wrapper for a scan result's complete tag/span
  * relation.  A full-source lattice borrows codepoints and byte_offsets from
@@ -335,6 +353,17 @@ bool rsdfa_v1_program_tag_inclusion(
     RSDFAV1InclusionResult *out,
     char *error_buf,
     size_t error_buf_size);
+
+/* Build L(left,left_tag) minus L(right,right_tag) by the existing reachable
+ * interval-product traversal. Operands are ordinary regular languages: a
+ * tag whose acceptance depends on the external EOF assertion is refused.
+ * A bounded outcome leaves out unchanged; a completed result has tag 0. */
+bool rsdfa_v1_program_tag_difference(
+    const RSDFAV1Program *left, uint32_t left_tag,
+    const RSDFAV1Program *right, uint32_t right_tag,
+    uint32_t state_limit, uint32_t transition_limit,
+    RSDFAV1Program *out, RSDFAV1BuildOutcome *outcome,
+    char *error_buf, size_t error_buf_size);
 
 void rsdfa_v1_functionality_result_init(
     RSDFAV1FunctionalityResult *result);
@@ -505,6 +534,34 @@ bool rsdfa_v1_program_scan_cursor_longest(
     RSDFAV1Token *tokens,
     uint32_t token_capacity,
     RSDFAV1CursorScanResult *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* The same tagged longest-prefix relation over the alphabet {0,...,255}.
+ * The checked entry validates the program. The prevalidated entry borrows
+ * a program checked and left immutable since that validation. In either
+ * case tokens has capacity for at least program->tag_len entries. */
+bool rsdfa_v1_program_scan_byte_cursor_longest(
+    const RSDFAV1Program *program,
+    const uint8_t *bytes,
+    uint32_t byte_len,
+    uint32_t start_byte,
+    uint64_t work_limit,
+    RSDFAV1ByteToken *tokens,
+    uint32_t token_capacity,
+    RSDFAV1ByteCursorScanResult *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+    const RSDFAV1Program *program,
+    const uint8_t *bytes,
+    uint32_t byte_len,
+    uint32_t start_byte,
+    uint64_t work_limit,
+    RSDFAV1ByteToken *tokens,
+    uint32_t token_capacity,
+    RSDFAV1ByteCursorScanResult *out,
     char *error_buf,
     size_t error_buf_size);
 

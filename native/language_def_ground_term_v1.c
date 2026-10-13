@@ -749,7 +749,7 @@ static bool ground_term_admit_iterative(
                 }
                 head = frame->term->expr.elems[0];
                 frame->selected = ground_term_select_rule(
-                    context, frame->expected_type, head->sym_id,
+                    context, frame->expected_type, atom_symbol_current_id(head),
                     (uint32_t)(frame->term->expr.len - 1u),
                     frame->depth);
                 if (!frame->selected)
@@ -916,7 +916,7 @@ static bool ground_term_to_pattern_at(
         head = term->expr.elems[0];
         argument_len = (uint32_t)(term->expr.len - 1u);
         selected = ground_term_select_rule(
-            context, expected_type, head->sym_id, argument_len, depth);
+            context, expected_type, atom_symbol_current_id(head), argument_len, depth);
         if (!selected)
             return false;
         result.kind = CETTA_LD_PATTERN_APPLY_V1;

@@ -145,9 +145,9 @@ for width in (1, 2):
         a = before(trees)
         checks.append(dict(case=f'zero-w{width}-c{cut}', passed=bool(a and obs) and a[1] == obs[-1]['work'] and (a[2] == obs[-1]['history'])))
     for cut in (19, 31, 60, 91):
-        obs = run(f'late-w{width}-c{cut}', f'!(let {plain} (select 0 {policy(width, cut, False)} {body}) (Split $v (select 0 {policy(width, 2000 - cut)} $r)))')
-        pair = tagged(parse((d / f'late-w{width}-c{cut}.stdout').read_text()), 'Split')
-        checks.append(dict(case=f'late-w{width}-c{cut}', passed=bool(obs and pair) and pair[1] + obs[-1]['values'] == expected['values'] and (obs[-1]['work'] == expected['work']) and (['start-work', cut] in obs[-1]['history'])))
+        obs = run(f'late-w{width}-c{cut}', f'!(let {plain} (select 0 {policy(width, cut, False)} {body}) (Late $w $v (select 0 {policy(width, 2000 - cut)} $r)))')
+        pair = tagged(parse((d / f'late-w{width}-c{cut}.stdout').read_text()), 'Late')
+        checks.append(dict(case=f'late-w{width}-c{cut}', passed=bool(obs and pair) and pair[2] + obs[-1]['values'] == expected['values'] and (obs[-1]['work'] == expected['work']) and (['start-work', pair[1]] in obs[-1]['history']), requested=cut, prefix_work=pair[1] if pair else None))
 
 def walk(x):
     if isinstance(x, list):
@@ -158,15 +158,125 @@ def walk(x):
 
 def fields(history):
     return {x[0]: x[1] for x in history[1:] if isinstance(x, list) and len(x) == 2}
+def history_nodes(record, seen=None):
+    """Yield each immutable receipt node once under its session identity."""
+    if seen is None:
+        seen = {}
+    for graph in (item for item in walk(record) if item[0] == 'NeedGraph'):
+        for node in graph[4]:
+            identity = graph[1], node[1]
+            if identity in seen:
+                if seen[identity] != node:
+                    raise ValueError('conflicting history node identity')
+                continue
+            seen[identity] = node
+            yield identity, node
+
+
+def production_delivery_cut(record):
+    """Propose a cut from the full trace, before inspecting late capture.
+
+    Selection-local charges exclude separately paid worker preparation. The
+    proposed cut is therefore checked against an actual recorded prefix below.
+    """
+    summary = fields(record)
+    if summary.get('status') != 'Complete':
+        return None
+    paid = summary['start-work']
+    seen = {}
+    productions = {}
+    deliveries = []
+    for selection in summary['selections']:
+        paid += selection[4]
+        for _, node in history_nodes(selection, seen):
+            event = node[4]
+            if not isinstance(event, list) or event[0] != 'NeedEvent':
+                continue
+            producer = event[2], event[3], event[7]
+            if event[8] == 'True':
+                productions[producer] = paid
+            elif event[1] == 0 and event[7]:
+                deliveries.append((paid, producer))
+    if not productions:
+        return None
+    cut = max(productions.values())
+    later = [(stamp, producer) for stamp, producer in deliveries
+             if stamp > cut and producer in productions]
+    if not later:
+        return None
+    return dict(cut=cut, selected_spent=paid,
+                production_stamps=sorted(productions.values()),
+                later_delivery_stamps=[stamp for stamp, _ in later])
+
+
+def production_phase_prefix(prefix, productions, deliveries, cut):
+    """Check producer completion independently of the later recording test."""
+    if not prefix or prefix['work'] != cut or prefix['closed'] != 'False':
+        return False
+    if fields(prefix['history']).get('status') != 'Complete':
+        return False
+    events = [node[4] for _, node in history_nodes(prefix['history'])
+              if isinstance(node[4], list) and node[4][0] == 'NeedEvent']
+    produced = [event for event in events if event[8] == 'True']
+    delivered = [event for event in events if event[1] == 0 and event[8] == 'False']
+    return len(delivered) < len(deliveries) and normalize([produced, delivered]) == \
+        normalize([productions, deliveries[:len(delivered)]])
+
+
 def same_observation(left, right):
     return all(left[key] == right[key] for key in
                ('values', 'work', 'closed', 'satisfied', 'status'))
 
 
 def admission_events(record):
-    nodes = {node[1]: node for node in walk(record) if node[0] == 'NeedNode'}
+    nodes = dict(history_nodes(record))
     return [node[4] for node in nodes.values() if isinstance(node[4], list)
             and node[4][0] == 'NeedEvent' and node[4][1] in (6, 7, 8)]
+
+
+def history_phase_controls():
+    produced = ['NeedEvent', 1, 11, 7, 0, 0, 0, 19, 'True']
+    delivered = ['NeedEvent', 0, 11, 7, 0, 0, 0, 19, 'False']
+    def graph(session, event):
+        return ['NeedGraph', session, 1, 'Complete',
+                [['NeedNode', 1, 0, 0, event]]]
+    first, later = graph(3, produced), graph(4, delivered)
+    nodes = list(history_nodes([first, first, later]))
+    checks.append(dict(case='history-node-session-identity', passed=
+        len(nodes) == 2 and nodes[0][0] == (3, 1) and nodes[1][0] == (4, 1)))
+    conflict = graph(3, delivered)
+    refused = False
+    try:
+        list(history_nodes([first, conflict]))
+    except ValueError:
+        refused = True
+    checks.append(dict(case='history-node-conflict-refused', passed=refused))
+    # Selection indices deliberately differ from cumulative paid work.
+    def record(second=later, status='Complete'):
+        return ['History', ['status', status], ['start-work', 10],
+                ['selections', [['Selection', 99, 1, 'test', 2, first],
+                                ['Selection', 100, 2, 'test', 3, second]]]]
+    witness = production_delivery_cut(record())
+    checks.append(dict(case='history-phase-uses-selection-charge-candidate', passed=
+        witness == dict(cut=12, selected_spent=15, production_stamps=[12],
+                        later_delivery_stamps=[15])))
+    wrong = list(delivered)
+    wrong[3] = 8
+    checks.append(dict(case='history-phase-needs-later-same-producer', passed=
+        production_delivery_cut(record(first)) is None and
+        production_delivery_cut(record(graph(4, wrong))) is None and
+        production_delivery_cut(record(status='Incomplete')) is None))
+    prefix = dict(work=12, closed='False', history=['History',
+        ['status', 'Complete'], ['selections', [first]]])
+    checks.append(dict(case='history-phase-validates-actual-prefix', passed=
+        production_phase_prefix(prefix, [produced], [delivered], 12) and
+        not production_phase_prefix(dict(prefix, work=11), [produced], [delivered], 12) and
+        not production_phase_prefix(dict(prefix, closed='True'), [produced], [delivered], 12) and
+        not production_phase_prefix(prefix, [produced, produced], [delivered], 12) and
+        not production_phase_prefix(prefix, [produced], [], 12)))
+
+
+history_phase_controls()
 
 
 admission_source = ('(= (history-verdict $w) Maybe)\n'
@@ -220,7 +330,7 @@ for language in ('prime', 'he', 'petta'):
                     ('work', 'closed', 'satisfied', 'status'))
             checks.append(dict(case=name, passed=same))
 
-for verdict, kind, attempts in (('True', 6, 1), ('False', 7, 2), ('Maybe', 8, 1)):
+for verdict, kind, attempts in (('True', 6, 1), ('False', 7, 1), ('Maybe', 8, 1)):
     definition = (f'(= (history-verdict $w) {verdict})\n'
         '(=w (history-guarded) (println! "HISTORY-GUARDED-BODY") 2 (admit history-verdict))\n')
     name = 'admission-effect-' + verdict
@@ -229,13 +339,32 @@ for verdict, kind, attempts in (('True', 6, 1), ('False', 7, 2), ('Maybe', 8, 1)
     events = admission_events(on[-1]['history']) if on else []
     lines = (d / (name + '.stdout')).read_text().splitlines()
     printed = sum(line.strip() in ('HISTORY-GUARDED-BODY', '"HISTORY-GUARDED-BODY"') for line in lines)
-    # The retained source8 control independently has two predicate uses for
-    # the false-only call. Keep both actual examinations, not one synthetic
-    # event inferred from the final empty result.
+    # A closed source is examined once, including a completed rejection.
+    # History records the actual admission attempt; an empty frontier does
+    # not cause a second call or a synthetic admission event.
     checks.append(dict(case=name, passed=bool(off and on) and same_observation(off[-1], on[-1]) and
         len(events) == attempts and all(event[1] == kind for event in events) and
         printed == (1 if verdict == 'True' else 0) and
         on[-1]['closed'] == ('False' if verdict == 'Maybe' else 'True')))
+
+# Equal authored rules are separate occurrences even when both reject.
+for verdict, kind in (('True', 6), ('False', 7), ('Maybe', 8)):
+    rule = '(=w (history-guarded) (println! "HISTORY-GUARDED-BODY") 2 (admit history-verdict))\n'
+    definition = f'(= (history-verdict $w) {verdict})\n' + rule + rule
+    name = 'admission-duplicate-' + verdict
+    off = run(name + '-off', f'!(select 0 {policy(1, 1000, False)} (history-guarded))', definition)
+    on = run(name, f'!(select 0 {policy(1, 1000)} (history-guarded))', definition)
+    events = admission_events(on[-1]['history']) if on else []
+    lines = (d / (name + '.stdout')).read_text().splitlines()
+    printed = sum(line.strip() in ('HISTORY-GUARDED-BODY', '"HISTORY-GUARDED-BODY"') for line in lines)
+    checks.append(dict(case=name, passed=bool(off and on) and same_observation(off[-1], on[-1]) and
+        len(events) == 2 and len({event[4] for event in events}) == 2 and
+        all(event[1] == kind and event[7] == 0 and event[8] == 'False' and
+            event[10:] == [['quote', 2], ['quote', verdict]] for event in events) and
+        printed == (2 if verdict == 'True' else 0) and
+        on[-1]['values'] == ([[], []] if verdict == 'True' else []) and
+        on[-1]['closed'] == ('False' if verdict == 'Maybe' else 'True') and
+        on[-1]['status'] == ('suspended' if verdict == 'Maybe' else 'closed')))
 
 unexamined = run('admission-unexamined', f'!(select 0 {policy(1, 0)} {admission_body})', admission_source)
 checks.append(dict(case='admission-unexamined', passed=bool(unexamined) and
@@ -253,15 +382,32 @@ for language in ('prime', 'he', 'petta'):
         checks.append(dict(case=f'erasure-{language}-w{width}', passed=semantic and 'history' not in off[-1] and (z.get('status') == 'Incomplete') and (z.get('selections') == []) and (z.get('omitted-selections', 0) > 0) and (z.get('nodes') == 0)))
 for width in (1, 2):
     whole = next((r['observations'][-1] for r in runs if r['name'] == f'whole-w{width}'))
-    nodes = {x[1]: x for x in walk(whole['history']) if x[0] == 'NeedNode'}
+    nodes = dict(history_nodes(whole['history']))
     events = [x[-1] for x in nodes.values() if isinstance(x[-1], list) and x[-1][0] == 'NeedEvent']
     productions = [x for x in events if x[8] == 'True']
     deliveries = [x for x in events if x[1] == 0 and x[8] == 'False']
-    checks.append(dict(case=f'production-delivery-w{width}', passed=len(productions) == 3 and len({x[7] for x in productions}) == 3 and (len(deliveries) == 3) and all((x[7] in {y[7] for y in productions} for x in deliveries))))
-    late = next((r['observations'][-1] for r in runs if r['name'] == f'late-w{width}-c31'))
-    nodes = {x[1]: x for x in walk(late['history']) if x[0] == 'NeedNode'}
+    producer_ids = {(event[2], event[3], event[7]) for event in productions}
+    checks.append(dict(case=f'production-delivery-w{width}', passed=len(productions) == 3 and len({x[7] for x in productions}) == 3 and len(producer_ids) == 3 and (len(deliveries) == 3) and all((event[2], event[3], event[7]) in producer_ids for event in deliveries)))
+    witness = production_delivery_cut(whole['history'])
+    cut = witness['cut'] if witness else 0
+    prefix_rows = run(f'phase-prefix-w{width}',
+        f'!(select 0 {policy(width, cut)} {body})')
+    prefix = prefix_rows[-1] if prefix_rows else None
+    phase_verified = production_phase_prefix(prefix, productions, deliveries, cut)
+    name = f'late-after-production-w{width}'
+    observed = run(name, f'!(let {plain} (select 0 {policy(width, cut, False)} {body}) (Late $w $v (select 0 {policy(width, 2000 - cut)} $r)))')
+    pair = tagged(parse((d / (name + '.stdout')).read_text()), 'Late')
+    late = observed[-1] if observed else None
+    nodes = dict(history_nodes(late['history'])) if late else {}
     events = [x[-1] for x in nodes.values() if isinstance(x[-1], list) and x[-1][0] == 'NeedEvent']
-    checks.append(dict(case=f'late-external-production-w{width}', passed=any((['producer', 'External'] in e for e in events)) and (not any((e[8] == 'True' for e in events)))))
+    checks.append(dict(case=f'late-external-production-w{width}', passed=
+        bool(witness and pair and late) and phase_verified and
+        pair[1] == cut and ['start-work', pair[1]] in late['history'] and
+        pair[2] + late['values'] == whole['values'] and
+        all(late[key] == whole[key] for key in ('work', 'closed', 'satisfied', 'status')) and
+        any(['producer', 'External'] in event for event in events) and
+        not any(event[8] == 'True' for event in events), phase_witness=witness,
+        phase_verified=phase_verified, prefix_work=prefix['work'] if prefix else None))
     tiny = policy(width, 2000).replace('(selections 512)', '(selections 2)').replace('(bytes 65536)', '(bytes 1)').replace('(owners 10000)', '(owners 0)')
     o = run(f'tiny-w{width}', f'!(select 0 {tiny} {body})')
     h = fields(o[-1]['history']) if o else {}
@@ -458,7 +604,7 @@ for variant in ('ordinary', 'inert', 'omitted'):
                     views[i]['recording'][0] == 'Incomplete' for i in (0, 1, 2))
             else:
                 ok = ok and roles == [['Accepted'],
-                    ['Rejected'] * (2 if language == 'prime' else 1), ['Pending'], []]
+                    ['Rejected'], ['Pending'], []]
         checks.append(dict(case=name, passed=ok, roles=roles, effects=effects,
                            reports=len(reports),
                            library_sha256=hashlib.sha256(debug_library.read_bytes()).hexdigest()))

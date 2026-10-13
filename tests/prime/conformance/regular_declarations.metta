@@ -1,10 +1,10 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Exact closed declarations are native Prime assumptions.  The source space
 ; remains authoritative; the derived declaration context is only a
 ; revision-current realization used during one judgment.
 
-!(bind! &decl-exact (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-exact (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-exact (: a (-> u0 u0)))
 !(add-atom &decl-exact (: ab (-> (-> u0 u0) (-> u0 (-> u0 u0)))))
 
@@ -21,7 +21,7 @@
 ; A declaration type may depend on earlier small values when the resulting
 ; context is already admitted by the sealed calculus.  Synthesis quotes the
 ; intrinsic indices back to the authored declaration names.
-!(bind! &decl-dependent (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-dependent (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-dependent (: p u0))
 !(add-atom &decl-dependent (: h (id u0 p p)))
 !(add-atom &decl-dependent (: q u0))
@@ -40,16 +40,16 @@
 
 ; Variables-as-types and unresolved declaration dependencies are not silently
 ; promoted into this class.  They retain the ambient MeTTa interpretation.
-!(bind! &decl-tower (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-tower (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-tower (: Ty u1))
 !(add-atom &decl-tower (: x Ty))
 !(type:of &decl-tower x)
 
-!(bind! &decl-unresolved (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-unresolved (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-unresolved (: broken (id u0 missing missing)))
 !(type:of &decl-unresolved broken)
 
-!(bind! &decl-cycle (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-cycle (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-cycle
   (: cycle-left (id u0 cycle-right cycle-right)))
 !(add-atom &decl-cycle
@@ -57,13 +57,13 @@
 !(type:of &decl-cycle cycle-left)
 
 ; Conflicts and HE-style open schemes never mint native declaration evidence.
-!(bind! &decl-conflict (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-conflict (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-conflict (: c u0))
 !(add-atom &decl-conflict (: c (-> u0 u0)))
 !(type:of &decl-conflict c)
 !(type:eq &decl-conflict c c)
 
-!(bind! &decl-open (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-open (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-open (: poly (-> $t $t)))
 ; Fresh identities may change with allocation; sharing of the type variable
 ; must not. Check the alpha-class, including its repeated-variable structure.
@@ -84,7 +84,7 @@
 ; A variable scoped only by `(u $level)` in a declaration signature is a
 ; universe-schema parameter.  Each native judgment chooses a closed tower
 ; instance, then the ordinary intrinsic kernel replays the chosen instance.
-!(bind! &decl-level-poly (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-level-poly (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-level-poly
   (: poly-id (-> (A : (u $level)) (-> A A))))
 !(type:of &decl-level-poly (poly-id u0))
@@ -109,7 +109,7 @@
 ; dependent application constructs their indexed judgments.  `sort-code`
 ; inhabits an explicit tower universe: legacy `u0` is a ground type and is
 ; deliberately not confused with the tower's `(u 0)`.
-!(bind! &decl-hyp (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &decl-hyp (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &decl-hyp
   (: hyp
     (-> (sorts : (u $sort-level))
@@ -190,18 +190,18 @@
 
 ; Named definition admission shares the declaration-aware checker. Two uses
 ; of one schema in a single body must choose independent universe instances.
-!(bind! &admission-poly (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &admission-poly (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &admission-poly (: Nat (u 0)))
 !(add-atom &admission-poly (: z Nat))
 !(add-atom &admission-poly
   (: choose (-> (A : (u $level)) (value : A) A)))
-!(set:define &admission-poly mixed (sigma (_ : Nat) (u 0))
+!(hol:define &admission-poly mixed (sigma (_ : Nat) (u 0))
   (= mixed (pair (choose Nat z) (choose (u 0) Nat))))
 !(type:check &admission-poly (fst mixed) Nat)
 !(type:check &admission-poly (snd mixed) (u 0))
 ; The second component is a type, not a natural. Rejection must not publish
 ; the requested name or any equation: a later valid definition can use it.
-!(set:define &admission-poly rejected (sigma (_ : Nat) Nat)
+!(hol:define &admission-poly rejected (sigma (_ : Nat) Nat)
   (= rejected (pair (choose Nat z) (choose (u 0) Nat))))
-!(set:define &admission-poly rejected Nat (= rejected z))
+!(hol:define &admission-poly rejected Nat (= rejected z))
 !(type:eq &admission-poly rejected z)

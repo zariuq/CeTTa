@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A symbol the program defines is produced only when something demands it.
 ; A cyclic symbol handed to a function that never uses that argument is never
@@ -16,7 +16,7 @@
 ! a
 ; With an admitted constant the unfolding is counted as a firing: none for
 ; the argument k discards, one for the argument it returns.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self two nat (= two (succ (succ zero))))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self two nat (= two (succ (succ zero))))
 !(cost:firings (k zero two))
 !(cost:firings (k two zero))

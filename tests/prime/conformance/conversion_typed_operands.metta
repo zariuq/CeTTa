@@ -1,7 +1,7 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Conversion verdicts need operands that the declarations type.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
 
 ; An undeclared head is not a typed term, so no verdict is minted.
 !(type:eq &self (undeclaredF zero) (undeclaredF zero))
@@ -14,14 +14,14 @@
 !(type:eq &self (dbl (succ zero)) (succ (succ zero)))
 
 ; A definition that is only tried is not published.
-!(let $tried (try (set:define &self twice (-> nat nat)
+!(let $tried (try (hol:define &self twice (-> nat nat)
      (= (twice zero) zero)
      (= (twice (succ $n)) (succ (succ (twice $n))))))
    (car-atom $tried))
 !(try (type:eq &self (twice (succ zero)) (succ (succ zero))))
 
 ; Once published, the definition decides both ways.
-!(set:define &self twice (-> nat nat)
+!(hol:define &self twice (-> nat nat)
    (= (twice zero) zero)
    (= (twice (succ $n)) (succ (succ (twice $n)))))
 !(type:eq &self (twice (succ zero)) (succ (succ zero)))

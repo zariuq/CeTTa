@@ -22,3 +22,29 @@
 !((id1 (lam z (∧ z True))) False)
 ; Sealed code is never rewritten inside.
 !(id1 @(∧ (F z) (G z)))
+
+; A computed head is selected once with its bindings and shared choices.
+; Reusing that head keeps the selected function; separate head occurrences
+; choose independently. A lambda body runs at application, and a quotation
+; or unknown head remains data. Ignored and pruned computations stay silent.
+(= (head-apply $f) ($f 3))
+(= (head-apply-twice $f) (Pair ($f 1) ($f 2)))
+(= (head-ignore $f) ignored)
+(= (head-omega) (head-omega))
+(= (head-choice) (lam x (+ x 1)))
+(= (head-choice) (lam x (+ x 2)))
+(= (head-choice) (lam x (+ x 1)))
+(= (head-paid) (chain (println! head-production) $_ (head-choice)))
+!(head-apply-twice (head-choice))
+!(Pair (head-apply (head-choice)) (head-apply (head-choice)))
+!(head-apply-twice (head-paid))
+!(head-ignore (head-omega))
+!(head-ignore (chain (println! forbidden-head) $_ (lam x x)))
+!(head-ignore (lam x (println! forbidden-body)))
+!(head-apply-twice (chain (println! lambda-production) $_ (lam x (chain (println! lambda-application) $_ x))))
+!(head-apply (superpose ((quote (+ 1 2)) (lam x (+ x 1)) inert (lam x (+ x 1)))))
+!(head-apply (let $a 9 (lam x (+ x $a))))
+!(head-apply (head-ignore (head-omega)))
+!(once (head-apply (superpose ((lam x (+ x 1)) (lam x (chain (println! forbidden-pruned) $_ x))))))
+!(head-apply (Pair (lam x (println! forbidden-field-body)) held))
+!(head-apply-twice (superpose ((lam x (Pair x x)) inert)))

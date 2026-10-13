@@ -1,6 +1,6 @@
-(set:profile hol)
+(hol:profile core)
 
-; Higher-order mathematics in the set: proof language: list-map fusion,
+; Higher-order mathematics in the hol: proof language: list-map fusion,
 ;   forall xs. mapf f (mapf g xs) = mapf (comp f g) xs
 ; for symbolic functions f and g, proved once by the predicate-quantified
 ; induction principle of an authored list theory, with equational reasoning
@@ -17,25 +17,25 @@
 (: f (-> elem elem))
 (: g (-> elem elem))
 
-!(set:axiom map-nil (all (-> elem elem) (lam h (eq list (mapf h nil) nil))))
-!(set:axiom map-cons (all (-> elem elem) (lam h (all elem (lam x (all list (lam xs
+!(hol:axiom map-nil (all (-> elem elem) (lam h (eq list (mapf h nil) nil))))
+!(hol:axiom map-cons (all (-> elem elem) (lam h (all elem (lam x (all list (lam xs
    (eq list (mapf h (cons x xs)) (cons (h x) (mapf h xs))))))))))
-!(set:axiom comp-apply (all elem (lam x (eq elem (comp f g x) (f (g x))))))
-!(set:axiom eq-trans (all list (lam a (all list (lam b (all list (lam c
+!(hol:axiom comp-apply (all elem (lam x (eq elem (comp f g x) (f (g x))))))
+!(hol:axiom eq-trans (all list (lam a (all list (lam b (all list (lam c
    (imp (eq list a b) (imp (eq list b c) (eq list a c))))))))))
-!(set:axiom eq-sym (all list (lam a (all list (lam b (imp (eq list a b) (eq list b a)))))))
-!(set:axiom eq-sym-elem (all elem (lam a (all elem (lam b (imp (eq elem a b) (eq elem b a)))))))
-!(set:axiom map-cong (all (-> elem elem) (lam h (all list (lam xs (all list (lam ys
+!(hol:axiom eq-sym (all list (lam a (all list (lam b (imp (eq list a b) (eq list b a)))))))
+!(hol:axiom eq-sym-elem (all elem (lam a (all elem (lam b (imp (eq elem a b) (eq elem b a)))))))
+!(hol:axiom map-cong (all (-> elem elem) (lam h (all list (lam xs (all list (lam ys
    (imp (eq list xs ys) (eq list (mapf h xs) (mapf h ys))))))))))
-!(set:axiom cons-cong (all elem (lam x (all elem (lam y (all list (lam xs (all list (lam ys
+!(hol:axiom cons-cong (all elem (lam x (all elem (lam y (all list (lam xs (all list (lam ys
    (imp (eq elem x y) (imp (eq list xs ys) (eq list (cons x xs) (cons y ys)))))))))))))
-!(set:axiom list-ind (all (-> list prop) (lam P
+!(hol:axiom list-ind (all (-> list prop) (lam P
    (imp (P nil)
         (imp (all elem (lam x (all list (lam xs (imp (P xs) (P (cons x xs)))))))
              (all list (lam xs (P xs))))))))
 
 ; The theorem, proved by induction with the predicate supplied once.
-!(set:theorem map-fusion
+!(hol:theorem map-fusion
    (all list (lam xs (eq list (mapf f (mapf g xs)) (mapf (comp f g) xs))))
    (pf:imp-elim
      (pf:imp-elim
@@ -103,18 +103,18 @@
 ; The retained derivation crosses the dependent proof-family boundary.  The
 ; package is accepted only after the regular kernel checks the compiled term;
 ; its nine mathematical axioms remain explicit assumptions.
-!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
-      (set:native-proof map-fusion)
+!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+      (hol:native-proof map-fusion)
       (NativeProof $name (size-atom $assumptions)))
 
 ; Ordinary application: instantiate the theorem at a symbolic list.
 (: ys list)
-!(set:proves (pf:all-elim (pf:known map-fusion) ys)
+!(hol:proves (pf:all-elim (pf:known map-fusion) ys)
              (eq list (mapf f (mapf g ys)) (mapf (comp f g) ys)))
 ; Retained proof inspection: the induction is visible, not an assumed axiom.
-!(let $p (set:known-proof map-fusion) (car-atom $p))
-!(match &self (set:known map-fusion $p $origin $proof $depends $rev $sig) (Origin $origin))
-!(match &self (set:known map-fusion $p $origin $proof $depends $rev $sig)
+!(let $p (hol:known-proof map-fusion) (car-atom $p))
+!(match &self (hol:known map-fusion $p $origin $proof $depends $rev $sig) (Origin $origin))
+!(match &self (hol:known map-fusion $p $origin $proof $depends $rev $sig)
    (let $first (car-atom $depends) (Depends (size-atom $depends) first (car-atom $first))))
 
 ; Negative control, pinned independently: reversing the composition passes
@@ -137,6 +137,6 @@
 !(map-comp not-b not-b (True . ()))             ; reversed passes the diagonal sample
 ; The reversed statement is not provable by the same argument: the proof's
 ; final step needs comp g f x = f (g x), which no axiom supplies.
-!(let $r (try (set:proves
+!(let $r (try (hol:proves
    (pf:all-elim (pf:known map-fusion) ys)
    (eq list (mapf f (mapf g ys)) (mapf (comp g f) ys)))) (car-atom $r))

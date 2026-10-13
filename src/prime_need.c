@@ -45,6 +45,12 @@ struct PrimeNeedFrame {
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
     PrimeNeedCacheState cache_state;
+    PrimeNeedValueRole value_role;
+    /* Optional direct producer of this VALUE update, in the same session.
+     * Both identities are zero for ordinary results. The update identity
+     * distinguishes sibling completions of the same producer cell. */
+    uint64_t value_producer_thunk;
+    uint64_t value_producer_update;
     Atom *origin;
     Atom *cached;
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -378,12 +384,20 @@ static bool prime_need_arena_range_excludes(
             forbidden->identity > max_id);
 }
 
+/* The arena summaries read atom closure facts, which describe an atom's
+ * children, not the element vector a suffix view shares.  In an arena with
+ * an older generation a view may share that generation's vector, so such an
+ * arena owns no Need storage; no evaluator arena that does has one. */
+static bool prime_need_owner_admissible(const Arena *owner) {
+    return owner && owner->older_identity == 0u;
+}
+
 static bool prime_need_atom_extend_arena_bloom(
     const Atom *atom, uint64_t *bloom,
     uint32_t *min_id, uint32_t *max_id) {
     if (!atom)
         return true;
-    if (!bloom || (atom->flags & ATOM_FLAG_ARENA_CLOSED) == 0u)
+    if (!bloom || !atom_graph_has_owner_closure(atom))
         return false;
     *bloom |= prime_need_arena_id_bloom_mask(atom->arena_id);
     prime_need_arena_range_extend(atom->arena_id, min_id, max_id);
@@ -468,9 +482,9 @@ static void prime_need_receipt_refresh_arena_summary(
         (!right || right->arena_range_complete);
     const bool payload_owner_closed =
         !frame->has_event ||
-        ((!frame->event.before || atom_graph_is_closed_for_arena(
+        ((!frame->event.before || atom_graph_is_owner_closed_for_arena(
              frame->owner, frame->event.before)) &&
-         (!frame->event.after || atom_graph_is_closed_for_arena(
+         (!frame->event.after || atom_graph_is_owner_closed_for_arena(
              frame->owner, frame->event.after)) &&
          !frame->event.state_cell);
     frame->closure_owner =
@@ -1140,8 +1154,8 @@ static void prime_need_frame_summarize(PrimeNeedFrame *frame, Arena *owner,
             cached, &payload_range_min_id,
             &payload_range_max_id);
     const bool payload_owner_closed =
-        atom_graph_is_closed_for_arena(owner, origin) &&
-        (!cached || atom_graph_is_closed_for_arena(owner, cached));
+        atom_graph_is_owner_closed_for_arena(owner, origin) &&
+        (!cached || atom_graph_is_owner_closed_for_arena(owner, cached));
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     const bool capture_closed =
         !capture_var_ids || arena_owns_ptr(owner, capture_var_ids);
@@ -1201,6 +1215,9 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      uint64_t source_occurrence_id,
                                      uint64_t source_argument_index,
                                      PrimeNeedCacheState cache_state,
+                                     PrimeNeedValueRole value_role,
+                                     uint64_t value_producer_thunk,
+                                     uint64_t value_producer_update,
                                      Atom *origin,
                                      Atom *cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -1209,8 +1226,16 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      size_t capture_var_count,
 #endif
                                      PrimeNeedSnapshot *out) {
-    if (!owner || !base || !out || !prime_need_snapshot_present(base) ||
-        thunk_id == 0u || authority_id == 0u || !origin)
+    if (!prime_need_owner_admissible(owner) || !base || !out ||
+        !prime_need_snapshot_present(base) ||
+        thunk_id == 0u || authority_id == 0u || !origin ||
+        ((value_producer_thunk == 0u) != (value_producer_update == 0u)) ||
+        (value_producer_thunk && (cache_state != PRIME_NEED_CACHE_VALUE ||
+            value_producer_thunk == thunk_id)) ||
+        (value_role != PRIME_NEED_VALUE_DEMAND_RESULT &&
+         value_role != PRIME_NEED_VALUE_READY) ||
+        (value_role == PRIME_NEED_VALUE_READY &&
+         cache_state != PRIME_NEED_CACHE_VALUE))
         return false;
     /* Refused serial admission precedes allocation and the HEAP_UPDATE. */
     if (serial == 0u) {
@@ -1248,6 +1273,9 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->source_occurrence_id = source_occurrence_id;
     frame->source_argument_index = source_argument_index;
     frame->cache_state = cache_state;
+    frame->value_role = value_role;
+    frame->value_producer_thunk = value_producer_thunk;
+    frame->value_producer_update = value_producer_update;
     frame->origin = origin;
     frame->cached = cached;
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -1290,6 +1318,9 @@ static bool prime_need_snapshot_push(Arena *owner,
 static void prime_need_cell_view_from_frame(
     const PrimeNeedFrame *frame, PrimeNeedCellView *out) {
     out->cache_state = frame->cache_state;
+    out->value_role = frame->value_role;
+    out->value_producer_thunk = frame->value_producer_thunk;
+    out->value_producer_update = frame->value_producer_update;
     out->origin = frame->origin;
     out->cached = frame->cached;
     out->authority_id = frame->authority_id;
@@ -1348,6 +1379,8 @@ static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_fra
             if (frame->session_id == snapshot->session_id &&
                 frame->thunk_id == thunk_id) {
                 prime_need_cell_view_from_frame(frame, out);
+                if (frame_out)
+                    *frame_out = frame;
                 return true;
             }
         }
@@ -1508,7 +1541,7 @@ static bool prime_need_snapshot_allocate_with_storage_key(
     if (!prime_need_snapshot_push(
             owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
             import_key, source_occurrence_id, source_argument_index,
-            PRIME_NEED_CACHE_EMPTY, term, NULL,
+            PRIME_NEED_CACHE_EMPTY, PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, term, NULL,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
             capture_known, owned_capture_ids, owned_capture_count,
 #endif
@@ -1588,7 +1621,7 @@ bool prime_need_snapshot_allocate_named(
         return false;
     return prime_need_snapshot_push(
         owner, base, 0u, thunk_id, authority_id, 0u, 0u, 0u, 0u, 0u,
-        PRIME_NEED_CACHE_EMPTY, term, NULL,
+        PRIME_NEED_CACHE_EMPTY, PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, term, NULL,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         /* The term is closed: it captures no variable. */
         true, NULL, 0u,
@@ -1635,7 +1668,9 @@ bool prime_need_snapshot_allocate_persisted_closure(
 static bool prime_need_snapshot_transition(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     PrimeNeedCacheState expected, PrimeNeedCacheState next,
-    uint64_t evaluator_id, Atom *cached, PrimeNeedSnapshot *out) {
+    uint64_t evaluator_id, Atom *cached, PrimeNeedValueRole value_role,
+    uint64_t value_producer_thunk, uint64_t value_producer_update,
+    PrimeNeedSnapshot *out) {
     PrimeNeedCellView previous;
     if (!owner || !base || !out ||
         !prime_need_snapshot_lookup(base, thunk_id, &previous))
@@ -1661,7 +1696,8 @@ static bool prime_need_snapshot_transition(
         next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
         previous.storage_key, previous.import_key,
         previous.source_occurrence_id, previous.source_argument_index,
-        next, previous.origin, cached,
+        next, value_role, value_producer_thunk, value_producer_update,
+        previous.origin, cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         previous.capture_known, previous.capture_var_ids,
         previous.capture_var_count,
@@ -1674,7 +1710,8 @@ bool prime_need_snapshot_start_evaluation(
     uint64_t evaluator_id, PrimeNeedSnapshot *out) {
     return prime_need_snapshot_transition(
         owner, base, thunk_id, PRIME_NEED_CACHE_EMPTY,
-        PRIME_NEED_CACHE_EVALUATING, evaluator_id, NULL, out);
+        PRIME_NEED_CACHE_EVALUATING, evaluator_id, NULL,
+        PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, out);
 }
 
 bool prime_need_snapshot_resolve_value(
@@ -1682,7 +1719,55 @@ bool prime_need_snapshot_resolve_value(
     uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out) {
     return prime_need_snapshot_transition(
         owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
-        PRIME_NEED_CACHE_VALUE, evaluator_id, value, out);
+        PRIME_NEED_CACHE_VALUE, evaluator_id, value,
+        PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, out);
+}
+
+bool prime_need_snapshot_resolve_forwarded_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, uint64_t producer_thunk_id,
+    PrimeNeedSnapshot *out) {
+    PrimeNeedCellView producer;
+    const PrimeNeedFrame *update = NULL;
+    if (!producer_thunk_id || producer_thunk_id == thunk_id ||
+        !prime_need_snapshot_lookup_frame(
+            base, producer_thunk_id, &producer, &update) ||
+        producer.cache_state != PRIME_NEED_CACHE_VALUE ||
+        (producer.value_role != PRIME_NEED_VALUE_DEMAND_RESULT &&
+         producer.value_role != PRIME_NEED_VALUE_READY))
+        return false;
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_VALUE, evaluator_id, value,
+        producer.value_role, producer_thunk_id, update->serial, out);
+}
+
+bool prime_need_snapshot_forwarded_value_source(
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
+    PrimeNeedCellView *source) {
+    PrimeNeedCellView consumer, producer;
+    const PrimeNeedFrame *consumer_update = NULL, *producer_update = NULL;
+    if (!source || !prime_need_snapshot_lookup_frame(
+            snapshot, thunk_id, &consumer, &consumer_update) ||
+        consumer.cache_state != PRIME_NEED_CACHE_VALUE ||
+        !consumer.value_producer_thunk ||
+        !prime_need_snapshot_lookup_frame(snapshot, consumer.value_producer_thunk,
+            &producer, &producer_update) ||
+        producer.cache_state != PRIME_NEED_CACHE_VALUE ||
+        producer_update->serial != consumer.value_producer_update ||
+        producer_update->serial >= consumer_update->serial)
+        return false;
+    *source = producer;
+    return true;
+}
+
+bool prime_need_snapshot_resolve_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out) {
+    return prime_need_snapshot_transition(
+        owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_VALUE, evaluator_id, value,
+        PRIME_NEED_VALUE_READY, 0u, 0u, out);
 }
 
 bool prime_need_snapshot_resolve_stable_fault(
@@ -1695,7 +1780,8 @@ bool prime_need_snapshot_resolve_stable_fault(
 #else
     return prime_need_snapshot_transition(
         owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
-        PRIME_NEED_CACHE_STABLE_FAULT, evaluator_id, fault, out);
+        PRIME_NEED_CACHE_STABLE_FAULT, evaluator_id, fault,
+        PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, out);
 #endif
 }
 
@@ -1704,7 +1790,8 @@ bool prime_need_snapshot_retry_evaluation(
     uint64_t evaluator_id, PrimeNeedSnapshot *out) {
     return prime_need_snapshot_transition(
         owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
-        PRIME_NEED_CACHE_EMPTY, evaluator_id, NULL, out);
+        PRIME_NEED_CACHE_EMPTY, evaluator_id, NULL,
+        PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, out);
 }
 
 bool prime_need_snapshot_promote(Arena *dst,
@@ -1800,7 +1887,9 @@ bool prime_need_snapshot_promote_with_session(
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
                 path[i]->source_argument_index,
-                path[i]->cache_state, origin, cached,
+                path[i]->cache_state, path[i]->value_role,
+                path[i]->value_producer_thunk, path[i]->value_producer_update,
+                origin, cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
                 path[i]->capture_known, capture_var_ids,
                 capture_var_count,
@@ -2151,7 +2240,9 @@ bool prime_need_snapshot_promote_suffix_with_session(
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
                 path[i]->source_argument_index,
-                path[i]->cache_state, origin, cached,
+                path[i]->cache_state, path[i]->value_role,
+                path[i]->value_producer_thunk, path[i]->value_producer_update,
+                origin, cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
                 path[i]->capture_known, capture_var_ids,
                 capture_var_count,
@@ -2579,7 +2670,7 @@ void prime_need_branch_state_init(PrimeNeedBranchState *receipt) {
 
 static bool prime_need_carrier_begin(
     Arena *owner, PrimeNeedBranchState *receipt) {
-    if (!owner || !receipt)
+    if (!prime_need_owner_admissible(owner) || !receipt)
         return false;
     if (prime_need_branch_state_present(receipt))
         return receipt->owner == owner;
@@ -2739,8 +2830,8 @@ bool prime_need_branch_state_compatible(
 }
 
 static PrimeNeedReceiptFrame *prime_need_receipt_alloc_frame(Arena *owner) {
-    PrimeNeedReceiptFrame *frame =
-        owner ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
+    PrimeNeedReceiptFrame *frame = prime_need_owner_admissible(owner)
+        ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
     if (frame) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_FRAME_ALLOC);
@@ -5047,6 +5138,9 @@ bool prime_need_snapshot_compare(const PrimeNeedSnapshot *left,
         PN_ID("need.source_occurrence",CETTA_CHECKPOINT_SOURCE_OCCURRENCE,a->source_occurrence_id,b->source_occurrence_id);
         PN_SCALAR("need.source_argument",a->source_argument_index,b->source_argument_index);
         PN_SCALAR("need.cache_state",a->cache_state,b->cache_state);
+        PN_SCALAR("need.value_role",a->value_role,b->value_role);
+        PN_ID("need.value_producer",CETTA_CHECKPOINT_NEED_THUNK,a->value_producer_thunk,b->value_producer_thunk);
+        PN_ID("need.value_producer_update",CETTA_CHECKPOINT_NEED_SERIAL,a->value_producer_update,b->value_producer_update);
         PN_ATOM("need.origin",a->origin,b->origin);PN_ATOM("need.cached",a->cached,b->cached);
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         PN_SCALAR("need.capture_known",a->capture_known,b->capture_known);

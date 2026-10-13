@@ -1,4 +1,12 @@
+!(assertEqualToResult (== (quote math.min) (quote math:min)) (False))
+!(assertEqualToResult (== (quote unrelated.math) (quote unrelated:math)) (False))
 !(import! &self math)
+!(assertEqualToResult (== (quote math.min) (quote math:min)) (True))
+!(assertEqualToResult (== (quote unrelated.math) (quote unrelated:math)) (False))
+!(import! &self support:he_reader_math_unimported)
+!(assertEqualToResult (== (reader-unimported-math) math:min) (False))
+!(import! &self support:he_reader_math_imported)
+!(assertEqualToResult (reader-imported-math) (2))
 
 !(math.pow 2 3)
 !(math.log 10 100)

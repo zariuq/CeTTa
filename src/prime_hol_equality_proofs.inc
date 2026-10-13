@@ -26,12 +26,12 @@ static SjHolEqualityKind sj_hol_equality_kind(Atom *proof) {
 }
 
 static bool sj_hol_equality_adopted(SjProofState *st) {
-    if (sj_space_declares(st->arena, st->user_space, "set:rule", "hol-equality")) {
-        Atom *declaration = sj_expr2(st->arena, "set:rule", sj_sym(st->arena, "hol-equality"));
+    if (sj_space_declares(st->arena, st->user_space, SJ_S("set:rule"), "hol-equality")) {
+        Atom *declaration = sj_expr2(st->arena, SJ_S("set:rule"), sj_sym(st->arena, "hol-equality"));
         sj_note_dependency(st, declaration, declaration);
         return true;
     }
-    sj_fail(st, false, sj_expr2(st->arena, "set:rule-not-adopted", sj_sym(st->arena, "hol-equality")));
+    sj_fail(st, false, sj_expr2(st->arena, SJ_S("set:rule-not-adopted"), sj_sym(st->arena, "hol-equality")));
     return false;
 }
 
@@ -48,7 +48,7 @@ static bool sj_hol_equation_parts(SjProofState *st, Atom *equation,
     if (!normal) { sj_fail_fuel(st, equation); return false; }
     Atom *head = NULL, *args[4] = {0};
     if (sj_spine(normal, &head, args, 4u) != 3u || !sj_constant_named(head, "eq")) {
-        sj_fail(st, true, sj_expr2(st->arena, "set:equality-needs-equation", normal));
+        sj_fail(st, true, sj_expr2(st->arena, SJ_S("set:equality-needs-equation"), normal));
         return false;
     }
     *carrier = args[0]; *left = args[1]; *right = args[2];
@@ -71,7 +71,7 @@ static bool sj_hol_equality_parts(SjProofState *st, Atom *proof, SjHolEqualityPa
     size_t required = parts->kind == SJ_HOL_EQ_REFL || parts->kind == SJ_HOL_EQ_TRANS ? 3u
         : parts->kind == SJ_HOL_EQ_BETA || parts->kind == SJ_HOL_EQ_APP || parts->kind == SJ_HOL_EQ_ARG ? 5u : 2u;
     if ((size_t)proof->expr.len != required) {
-        sj_fail(st, true, sj_expr2(a, "set:equality-proof-arity", proof));
+        sj_fail(st, true, sj_expr2(a, SJ_S("set:equality-proof-arity"), proof));
         return false;
     }
     if (parts->kind == SJ_HOL_EQ_REFL) {
@@ -82,7 +82,7 @@ static bool sj_hol_equality_parts(SjProofState *st, Atom *proof, SjHolEqualityPa
         parts->domain = sj_open_domain(st, proof->expr.elems[1]);
         parts->codomain = sj_open_domain(st, proof->expr.elems[2]);
         if (!parts->domain || !parts->codomain) {
-            sj_fail(st, true, sj_expr2(a, "set:equality-carrier", proof));
+            sj_fail(st, true, sj_expr2(a, SJ_S("set:equality-carrier"), proof));
             return false;
         }
         Atom *function_type = sj_expr3(a, "Pi", parts->domain, parts->codomain);
@@ -91,7 +91,7 @@ static bool sj_hol_equality_parts(SjProofState *st, Atom *proof, SjHolEqualityPa
             parts->function = sj_hol_checked_witness(st, proof->expr.elems[4], function_type);
             Atom *body = parts->function ? sj_lambda_body(parts->function) : NULL;
             if (!body) {
-                if (!st->failure) sj_fail(st, true, sj_expr2(a, "set:beta-needs-abstraction", proof));
+                if (!st->failure) sj_fail(st, true, sj_expr2(a, SJ_S("set:beta-needs-abstraction"), proof));
                 return false;
             }
             parts->carrier = parts->codomain;
@@ -136,7 +136,7 @@ static bool sj_hol_equality_parts(SjProofState *st, Atom *proof, SjHolEqualityPa
         return parts->conclusion != NULL;
     }
     if (!parts->carrier || !parts->left || !parts->right) {
-        if (!st->failure) sj_fail(st, true, sj_expr2(a, "set:equality-witness", proof));
+        if (!st->failure) sj_fail(st, true, sj_expr2(a, SJ_S("set:equality-witness"), proof));
         return false;
     }
     parts->conclusion = sj_hol_equation(st, parts->carrier, parts->left, parts->right);

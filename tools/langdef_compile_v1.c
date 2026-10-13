@@ -1245,7 +1245,7 @@ static bool langdef_semantic_q_list_next_v1(
 static bool langdef_semantic_render_q_term_v1(
     LangDefByteBufferV1 *buffer, const Atom *term, uint32_t depth,
     char *error, size_t error_size) {
-    const Atom *head_symbol;
+    const Atom *head_symbol = NULL;
     const Atom *arguments;
     const Atom *argument;
     bool done;
@@ -1330,7 +1330,7 @@ static int langdef_semantic_rule_compare_v1(
 static bool langdef_semantic_rule_build_v1(
     const Atom *quoted_rule, LangDefSemanticRuleV1 *rule,
     char *error, size_t error_size) {
-    const Atom *id_symbol;
+    const Atom *id_symbol = NULL;
     const Atom *body;
     const Atom *premise;
     LangDefByteBufferV1 output = {0};
@@ -1440,7 +1440,7 @@ static bool langdef_operator_collect(
             size_t name_len = 0u;
             LangDefOperatorV1 *next;
             size_t next_cap;
-            SymbolId symbol_id = term->expr.elems[0]->sym_id;
+            SymbolId symbol_id = atom_symbol_current_id(term->expr.elems[0]);
             CettaExprLen arity = term->expr.len - 1u;
             bool already_collected = false;
             for (size_t index = 0u; index < *operator_len; index++) {
@@ -1520,8 +1520,8 @@ static bool atom_digest_symbol(const Atom *term, char out[65]) {
     uint32_t len;
     if (!term || term->kind != ATOM_SYMBOL)
         return false;
-    bytes = symbol_bytes(g_symbols, term->sym_id);
-    len = symbol_len(g_symbols, term->sym_id);
+    bytes = atom_symbol_bytes(term);
+    len = atom_symbol_length(term);
     if (!bytes || len != 64u)
         return false;
     for (uint32_t index = 0u; index < 64u; index++) {
@@ -2350,7 +2350,7 @@ static bool compile_semantic_gslt_presentation_v1(
         }
         if (atom_is_symbol(record->expr.elems[0], "source-operator")) {
             const Atom *quoted_name;
-            const Atom *name;
+            const Atom *name = NULL;
             uint32_t arity;
             if (record->expr.len != 4u) {
                 set_error(

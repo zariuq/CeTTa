@@ -688,6 +688,39 @@ typedef struct {
     uint64_t inline_occupied;
 } FreshenEpochMemo;
 
+static Atom g_rename_walk_active;
+static Atom g_rename_walk_complete;
+
+typedef enum {
+    RENAME_WALK_ENTER,
+    RENAME_WALK_LEAVE,
+} RenameWalkKind;
+
+typedef struct {
+    RenameWalkKind kind;
+    Atom *atom;
+} RenameWalkTask;
+
+typedef struct {
+    RenameWalkTask inline_tasks[64];
+    RenameWalkTask *tasks;
+    size_t len;
+    size_t cap;
+} RenameWalkStack;
+
+
+static void rename_walk_stack_init(RenameWalkStack *stack);
+static void rename_walk_stack_free(RenameWalkStack *stack);
+static bool rename_walk_stack_push(RenameWalkStack *stack,
+                                   RenameWalkTask task);
+static void freshen_epoch_memo_init(FreshenEpochMemo *memo);
+static void freshen_epoch_memo_free(FreshenEpochMemo *memo);
+static Atom *freshen_epoch_memo_lookup(FreshenEpochMemo *memo,
+                                       const Atom *src);
+static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
+                                     const Atom *src, Atom *dst);
+
+
 _Static_assert(FRESHEN_EPOCH_MEMO_INLINE_CAP == 64u,
                "inline memo occupancy mask must cover every slot");
 
@@ -1349,10 +1382,10 @@ static bool bindings_value_collect_frame_ids(
         }
         return true;
     }
-    Atom *inline_items[32];
-    Atom **items = inline_items;
-    size_t item_len = 1u;
-    size_t item_cap = sizeof(inline_items) / sizeof(inline_items[0]);
+    RenameWalkStack stack;
+    FreshenEpochMemo states;
+    rename_walk_stack_init(&stack);
+    freshen_epoch_memo_init(&states);
     VarId *ids = inline_ids;
     size_t id_len = 0u;
     size_t id_cap = inline_cap;
@@ -1362,9 +1395,12 @@ static bool bindings_value_collect_frame_ids(
     enum { FRAME_ID_SCAN_LIMIT = 16u };
     VarId *known_set = NULL;
     size_t known_mask = 0u;
-    items[0] = value.skeleton;
-    while (item_len > 0u) {
-        Atom *atom = items[--item_len];
+    if (!rename_walk_stack_push(
+            &stack, (RenameWalkTask){RENAME_WALK_ENTER, value.skeleton}))
+        goto fail;
+    while (stack.len > 0u) {
+        RenameWalkTask task = stack.tasks[--stack.len];
+        Atom *atom = task.atom;
         if (!atom || !atom_has_vars(atom))
             continue;
         if (atom->kind == ATOM_VAR) {
@@ -1434,42 +1470,43 @@ static bool bindings_value_collect_frame_ids(
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
             continue;
-        if ((size_t)atom->expr.len > SIZE_MAX - item_len)
-            goto fail;
-        size_t needed = item_len + (size_t)atom->expr.len;
-        if (needed > item_cap) {
-            size_t next = item_cap;
-            while (next < needed) {
-                if (next > SIZE_MAX / 2u) {
-                    next = needed;
-                    break;
-                }
-                next *= 2u;
-            }
-            if (next > SIZE_MAX / sizeof(*items))
+        if (task.kind == RENAME_WALK_LEAVE) {
+            if (!freshen_epoch_memo_store(
+                    &states, atom, &g_rename_walk_complete))
                 goto fail;
-            Atom **grown = cetta_malloc(next * sizeof(*grown));
-            memcpy(grown, items, item_len * sizeof(*grown));
-            if (items != inline_items)
-                free(items);
-            items = grown;
-            item_cap = next;
+            continue;
         }
+        Atom *state = freshen_epoch_memo_lookup(&states, atom);
+        if (state == &g_rename_walk_active)
+            goto fail;
+        if (state == &g_rename_walk_complete)
+            continue;
+        if (!freshen_epoch_memo_store(
+                &states, atom, &g_rename_walk_active) ||
+            !rename_walk_stack_push(
+                &stack, (RenameWalkTask){RENAME_WALK_LEAVE, atom}))
+            goto fail;
+        /* Keep the former right-to-left first-discovery order, visiting
+         * a shared expression once in this fixed lexical context. The
+         * enter/leave states also reject a malformed raw back edge. */
         for (CettaExprIndex child = 0u;
              child < atom->expr.len; child++) {
-            items[item_len++] = atom->expr.elems[child];
+            if (!rename_walk_stack_push(
+                    &stack, (RenameWalkTask){RENAME_WALK_ENTER,
+                                             atom->expr.elems[child]}))
+                goto fail;
         }
     }
-    if (items != inline_items)
-        free(items);
+    freshen_epoch_memo_free(&states);
+    rename_walk_stack_free(&stack);
     free(known_set);
     *ids_out = ids;
     *len_out = id_len;
     return true;
 
 fail:
-    if (items != inline_items)
-        free(items);
+    freshen_epoch_memo_free(&states);
+    rename_walk_stack_free(&stack);
     if (ids != inline_ids)
         free(ids);
     free(known_set);
@@ -4215,7 +4252,7 @@ bool bindings_add_var(Bindings *b, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
         return false;
     return bindings_add_internal(
-        b, var->var_id, var->sym_id, var->name_key, binding_value_from_atom(val), true);
+        b, var->var_id, atom_symbol_current_id(var), var->name_key, binding_value_from_atom(val), true);
 }
 
 bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val) {
@@ -4223,13 +4260,14 @@ bool bindings_add_var_owned(Bindings *b, Atom *var, Atom *val) {
         return false;
     if (var && var->kind == ATOM_VAR &&
         bindings_add_inplace_internal(
-            b, var->var_id, var->sym_id, var->name_key,
+            b, var->var_id, atom_symbol_current_id(var), var->name_key,
             binding_value_from_atom(val), true)) {
         return true;
     }
     bindings_free(b);
     return false;
 }
+
 
 bool bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
@@ -4238,7 +4276,7 @@ bool bindings_add_var_acyclic(Bindings *b, Atom *var, Atom *val) {
     if (!bindings_clone(&next, b))
         return false;
     if (!bindings_add_inplace_internal(
-            &next, var->var_id, var->sym_id, var->name_key,
+            &next, var->var_id, atom_symbol_current_id(var), var->name_key,
             binding_value_from_atom(val), true)) {
         bindings_free(&next);
         return false;
@@ -4260,13 +4298,13 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, BindingValue l
     }
     if (lhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, binding_value_variable_id(lhs), lhs.skeleton->sym_id, lhs.skeleton->name_key,
+                b, binding_value_variable_id(lhs), atom_symbol_current_id(lhs.skeleton), lhs.skeleton->name_key,
                 rhs, false)) {
             return false;
         }
     } else if (rhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_add_inplace_internal(
-                b, binding_value_variable_id(rhs), rhs.skeleton->sym_id, rhs.skeleton->name_key,
+                b, binding_value_variable_id(rhs), atom_symbol_current_id(rhs.skeleton), rhs.skeleton->name_key,
                 lhs, false)) {
             return false;
         }
@@ -4717,12 +4755,95 @@ typedef struct {
     bool resolve_outer;
 } BindingsApplyScope;
 
+/* A graph observation distinguishes a source node's lexical readings. The
+ * same skeleton can occur in several rule frames, so a pointer alone is not
+ * a substitution-cache key. Quotation depth also determines how the language's
+ * structure hooks read and form an image. Completed images retain that full
+ * context; the active-source table uses only source and lexical scope, so a
+ * malformed raw cycle cannot evade detection by adding quotation depth.
+ * Both tables belong to one immutable environment observation and are never
+ * retained across a binding mutation. */
+typedef struct {
+    Atom *source;
+    Atom *image;
+    uint32_t epoch;
+    BindingValueKind kind;
+    uint32_t code_depth;
+    bool active;
+} BindingApplyGraphEntry;
+
+typedef struct BindingApplyGraph {
+    BindingApplyGraphEntry *entries;
+    size_t len, cap;
+    struct BindingApplyGraph *active_path;
+} BindingApplyGraph;
+
+static size_t bindings_apply_graph_hash(Atom *source, uint32_t epoch,
+                                        BindingValueKind kind,
+                                        uint32_t code_depth) {
+    uint64_t hash = (uint64_t)(uintptr_t)source;
+    hash ^= (uint64_t)epoch * UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= (uint64_t)kind * UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= (uint64_t)code_depth * UINT64_C(0x94d049bb133111eb);
+    hash ^= hash >> 30u;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    return (size_t)(hash ^ (hash >> 27u));
+}
+
+static BindingApplyGraphEntry *bindings_apply_graph_slot(
+        BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope,
+        uint32_t code_depth) {
+    size_t slot = bindings_apply_graph_hash(
+        source, scope.epoch, scope.kind, code_depth) &
+        (graph->cap - 1u);
+    while (graph->entries[slot].source &&
+           (graph->entries[slot].source != source ||
+            graph->entries[slot].epoch != scope.epoch ||
+            graph->entries[slot].kind != scope.kind ||
+            graph->entries[slot].code_depth != code_depth))
+        slot = (slot + 1u) & (graph->cap - 1u);
+    return &graph->entries[slot];
+}
+
+static BindingApplyGraphEntry *bindings_apply_graph_enter(
+        BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope,
+        uint32_t code_depth, bool *created) {
+    if (graph->cap && (graph->len + 1u) <= graph->cap / 2u) {
+        BindingApplyGraphEntry *entry = bindings_apply_graph_slot(
+            graph, source, scope, code_depth);
+        *created = !entry->source;
+        if (*created) {
+            *entry = (BindingApplyGraphEntry){.source = source,
+                .epoch = scope.epoch, .kind = scope.kind,
+                .code_depth = code_depth};
+            ++graph->len;
+        }
+        return entry;
+    }
+    size_t capacity = graph->cap ? graph->cap * 2u : 32u;
+    if (capacity < graph->cap || capacity > SIZE_MAX / sizeof(*graph->entries))
+        return NULL;
+    BindingApplyGraph grown = {.cap = capacity, .len = graph->len,
+                               .active_path = graph->active_path};
+    grown.entries = calloc(capacity, sizeof(*grown.entries));
+    if (!grown.entries) return NULL;
+    for (size_t i = 0u; i < graph->cap; ++i) {
+        BindingApplyGraphEntry entry = graph->entries[i];
+        if (entry.source)
+            *bindings_apply_graph_slot(&grown, entry.source,
+                (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind},
+                entry.code_depth) = entry;
+    }
+    free(graph->entries);
+    *graph = grown;
+    return bindings_apply_graph_enter(graph, source, scope, code_depth, created);
+}
+
 typedef struct {
     Bindings *b;
     Arena *a;
     BindingApplySeen *seen;
     bool track_cycles;
-    bool epoch_fold;
     /* The rewrite fold's memo and hook. */
     BindingApplyMemo *memo;
     BindingsRewriteVarFn rewrite_var;
@@ -4736,10 +4857,15 @@ typedef struct {
 
 static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
                                  BindingsApplyScope scope, uint32_t seen_len);
+static Atom *bindings_apply_shared_fold(BindingsApplyFold *fold,
+    BindingApplyGraph *graph, Atom *atom, BindingsApplyScope scope, uint32_t seen_len);
 
-static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingValue value,
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingValue value,
                                   BindingsRewriteVarFn rewrite_var,
-                                  void *rewrite_ctx) {
+                                  void *rewrite_ctx, bool shared_graph) {
     Atom *atom = value.skeleton;
     if (!b || !a || !atom)
         return NULL;
@@ -4771,6 +4897,11 @@ static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingVal
      * cyclic environments retain the independent general guard below. */
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC;
+    BindingApplyGraph active_path = {0};
+    BindingApplyGraph graph;
+    if (shared_graph && !track_cycles)
+        graph = (BindingApplyGraph){.active_path =
+            bindings_structure_hooks() ? &active_path : NULL};
     BindingsApplyFold fold = {
         .b = b,
         .a = a,
@@ -4780,23 +4911,36 @@ static Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, BindingVal
         .rewrite_var = rewrite_var,
         .rewrite_ctx = rewrite_ctx,
     };
-    Atom *result = bindings_apply_fold(
-        &fold, value.skeleton,
-        (BindingsApplyScope){.epoch = value.epoch, .kind = value.kind}, 0u);
+    BindingsApplyScope scope = {.epoch = value.epoch, .kind = value.kind};
+    /* Graph observation owns its extra state. Ordinary substitution keeps
+     * its original frame, without an unused graph field on each call.
+     * Cyclic images still depend on the active variable path. */
+    Atom *result = shared_graph && !track_cycles
+        ? bindings_apply_shared_fold(&fold, &graph, value.skeleton, scope, 0u)
+        : bindings_apply_fold(&fold, value.skeleton, scope, 0u);
     bindings_apply_memo_release(&memo);
     bindings_apply_seen_release(&seen);
+    if (shared_graph && !track_cycles) {
+        free(graph.entries);
+        free(active_path.entries);
+    }
     return result;
 }
 
 Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                   BindingsRewriteVarFn rewrite_var, void *rewrite_ctx) {
     return bindings_apply_value_rewrite_vars(
-        b, a, binding_value_from_atom(atom), rewrite_var, rewrite_ctx);
+        b, a, binding_value_from_atom(atom), rewrite_var, rewrite_ctx, false);
+}
+
+Atom *bindings_apply_graph(Bindings *b, Arena *a, Atom *atom) {
+    return bindings_apply_value_rewrite_vars(
+        b, a, binding_value_from_atom(atom), NULL, NULL, true);
 }
 
 Atom *bindings_apply_value(const Bindings *b, Arena *a, BindingValue value) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
-    return bindings_apply_value_rewrite_vars((Bindings *)b, a, value, NULL, NULL);
+    return bindings_apply_value_rewrite_vars((Bindings *)b, a, value, NULL, NULL, false);
 }
 
 Atom *bindings_apply_value_without_id(
@@ -5094,7 +5238,10 @@ typedef enum {
 /* A variable read in its value's own context: its memoised image, its unbound
  * reading (passed through the hook), or its bound value.  Without `memo` the
  * image is neither read from nor stored in the memo. */
-static BindingsApplyVarStep bindings_apply_rewrite_var_step(
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline BindingsApplyVarStep bindings_apply_rewrite_var_step(
         BindingsApplyFold *fold, Atom *atom, const BindingsApplyScope *scope,
         uint32_t seen_len, bool memo, VarId *id_out, Atom **image_out,
         BindingValue *bound_out) {
@@ -5189,9 +5336,9 @@ static BindingsApplyVarStep bindings_apply_epoch_var_step(
 
 /* The scope a bound value is read in. */
 static BindingsApplyScope bindings_apply_bound_scope(
-        const BindingsApplyFold *fold, const BindingsApplyScope *scope,
+        bool epoch_fold, const BindingsApplyScope *scope,
         BindingValue bound) {
-    if (!fold->epoch_fold)
+    if (!epoch_fold)
         return (BindingsApplyScope){.epoch = bound.epoch, .kind = bound.kind};
     if (!binding_value_is_contextual(bound)) {
         /* Stored syntax: its variables are read on the stored side. */
@@ -5208,8 +5355,14 @@ static BindingsApplyScope bindings_apply_bound_scope(
     };
 }
 
-static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
-                                 BindingsApplyScope scope, uint32_t seen_len) {
+/* Specialize this one traversal at its entry points. Ordinary substitution
+ * retains its established loop; only graph observation maintains node images. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom,
+        BindingsApplyScope scope, uint32_t seen_len, bool epoch_fold,
+        BindingApplyGraph *graph) {
     BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
     BindingsApplyFrames frames = {
         .items = inline_items,
@@ -5227,7 +5380,7 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
         result = NULL;
         if (!atom_has_vars(atom)) {
             result = atom;
-        } else if (fold->epoch_fold) {
+        } else if (epoch_fold) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EPOCH_NODE_VISIT);
             if (fold->node_visits && *fold->node_visits != UINT64_MAX)
@@ -5236,12 +5389,32 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_REWRITE_NODE_VISIT);
         }
+        if (graph && !result && atom->kind == ATOM_EXPR) {
+            bool created = false;
+            BindingApplyGraphEntry *active = graph->active_path
+                ? bindings_apply_graph_enter(
+                      graph->active_path, atom, scope, 0u, &created)
+                : NULL;
+            if (graph->active_path && (!active || active->active))
+                goto failed;
+            BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
+                graph, atom, scope, depth, &created);
+            if (!entry) goto failed;
+            if (!created) {
+                /* Native syntax must be a DAG. Rational terms use their
+                 * explicit graph carrier, not a recursive Atom pointer. */
+                if (!entry->image) goto failed;
+                result = entry->image;
+            }
+            if (!result && active)
+                active->active = true;
+        }
         if (!result && atom->kind == ATOM_VAR) {
             bool use_memo = !hooks || depth == 0u;
             BindingApplyMemo *memo = use_memo ? fold->memo : NULL;
             VarId id = VAR_ID_NONE;
             BindingValue bound = binding_value_from_atom(NULL);
-            BindingsApplyVarStep step = fold->epoch_fold
+            BindingsApplyVarStep step = epoch_fold
                 ? bindings_apply_epoch_var_step(
                       fold, atom, &scope, seen_len, use_memo, &memo, &id,
                       &result, &bound)
@@ -5262,7 +5435,7 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
                         (BindingsApplyFrame){.memo = memo, .id = id,
                                              .code_depth = depth}))
                     goto failed;
-                scope = bindings_apply_bound_scope(fold, &scope, bound);
+                scope = bindings_apply_bound_scope(epoch_fold, &scope, bound);
                 atom = bound.skeleton;
                 continue;
             }
@@ -5338,6 +5511,13 @@ static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
             else if (result && top->draft && hooks && hooks->own_list &&
                      atom_sequence_is_own_list(top->atom))
                 result = hooks->own_list(fold->a, result);
+            if (graph) {
+                bindings_apply_graph_slot(
+                    graph, top->atom, top->scope, top->code_depth)->image = result;
+                if (graph->active_path)
+                    bindings_apply_graph_slot(
+                        graph->active_path, top->atom, top->scope, 0u)->active = false;
+            }
             frames.len--;
             if (!result)
                 goto failed;
@@ -5352,6 +5532,21 @@ failed:
     if (frames.heap)
         free(frames.items);
     return NULL;
+}
+
+static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
+                                 BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, false, NULL);
+}
+
+static Atom *bindings_apply_shared_fold(BindingsApplyFold *fold,
+    BindingApplyGraph *graph, Atom *atom, BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, false, graph);
+}
+
+static Atom *bindings_apply_epoch_fold(BindingsApplyFold *fold, Atom *atom,
+        BindingsApplyScope scope, uint32_t seen_len) {
+    return bindings_apply_fold_impl(fold, atom, scope, seen_len, true, NULL);
 }
 
 static Atom *bindings_apply_epoch_from(
@@ -5403,12 +5598,11 @@ static Atom *bindings_apply_epoch_from(
         .a = a,
         .seen = &seen,
         .track_cycles = track_cycles,
-        .epoch_fold = true,
         .local_memo = &local_memo,
         .outer_memo = &outer_memo,
         .node_visits = node_visits,
     };
-    Atom *result = bindings_apply_fold(
+    Atom *result = bindings_apply_epoch_fold(
         &fold, atom,
         (BindingsApplyScope){
             .fast = fast,
@@ -5627,12 +5821,18 @@ static bool freshen_epoch_memo_grow(FreshenEpochMemo *memo) {
     if (!memo)
         return false;
     size_t old_cap = memo->cap;
+    if (old_cap > SIZE_MAX / 2u)
+        return false;
     size_t new_cap = old_cap ? old_cap * 2u : FRESHEN_EPOCH_MEMO_INLINE_CAP;
+    if (new_cap > SIZE_MAX / sizeof(FreshenEpochMemoSlot))
+        return false;
     FreshenEpochMemoSlot *old_slots = memo->slots;
     bool old_inline = old_slots == memo->inline_slots;
     uint64_t old_inline_occupied = memo->inline_occupied;
     FreshenEpochMemoSlot *new_slots =
-        cetta_malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
+        malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
+    if (!new_slots)
+        return false;
     freshen_epoch_memo_clear(new_slots, new_cap);
     memo->slots = new_slots;
     memo->cap = new_cap;
@@ -5664,7 +5864,7 @@ static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
                                      const Atom *src, Atom *dst) {
     if (!memo || !src || !dst)
         return true;
-    if ((memo->used + 1u) * 4u >= memo->cap * 3u &&
+    if (memo->used + 1u >= memo->cap - memo->cap / 4u &&
         !freshen_epoch_memo_grow(memo)) {
         return false;
     }
@@ -5687,59 +5887,117 @@ static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
     }
 }
 
-static Atom *atom_freshen_epoch_impl(Arena *a, Atom *atom, uint32_t epoch,
-                                     FreshenEpochMemo *memo) {
-    if (!a || !atom)
-        return NULL;
-    if (!atom_has_vars(atom))
-        return atom;
-    Atom *memoized = freshen_epoch_memo_lookup(memo, atom);
-    if (memoized)
-        return memoized;
-    Atom *out = NULL;
-    switch (atom->kind) {
-    case ATOM_VAR:
-        out = epoch_var_atom(a, atom, epoch);
-        break;
-    case ATOM_EXPR: {
-        Atom *draft = NULL;
-        Atom **new_elems = NULL;
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            Atom *child = atom->expr.elems[i];
-            Atom *next = atom_has_vars(child)
-                ? atom_freshen_epoch_impl(a, child, epoch, memo)
-                : child;
-            if (!next)
-                return NULL;
-            if (!new_elems && next != atom->expr.elems[i]) {
-                draft = atom_expr_builder_begin(a, atom->expr.len);
-                if (!draft)
-                    return NULL;
-                new_elems = draft->expr.elems;
-                for (CettaExprIndex j = 0; j < i; j++)
-                    new_elems[j] = atom->expr.elems[j];
-            }
-            if (new_elems)
-                new_elems[i] = next;
-        }
-        out = new_elems ? atom_expr_builder_finish(a, draft) : atom;
-        break;
-    }
-    default:
-        out = atom;
-        break;
-    }
-    if (!freshen_epoch_memo_store(memo, atom, out))
-        return NULL;
-    return out;
-}
+typedef Atom *(*RenameVariable)(Arena *, Atom *, void *);
 
-Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+typedef struct {
+    Atom *source;
+    Atom *draft;
+    CettaExprIndex next;
+} RenameVarsFrame;
+
+/* All variable-renaming policies share one postorder traversal.  Only a
+ * variable is interpreted by the policy; grounded values retain their own
+ * context.  A draft is allocated only after a child changes, and the memo
+ * preserves source sharing without accepting a recurrence on the active path. */
+static Atom *rename_vars_walk(Arena *a, Atom *root, RenameVariable rename,
+                              void *context, bool count_visits) {
+    if (!a || !root || !rename)
+        return NULL;
+    RenameVarsFrame inline_frames[32];
+    RenameVarsFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
     FreshenEpochMemo memo;
     freshen_epoch_memo_init(&memo);
-    Atom *out = atom_freshen_epoch_impl(a, atom, epoch, &memo);
+    Atom *current = root;
+    Atom *result = NULL;
+    for (;;) {
+        if (count_visits)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
+        if (!current)
+            goto fail;
+        if (!atom_has_vars(current)) {
+            result = current;
+        } else {
+            result = freshen_epoch_memo_lookup(&memo, current);
+            if (result == &g_rename_walk_active)
+                goto fail;
+            if (!result) {
+                if (current->kind == ATOM_VAR) {
+                    result = rename(a, current, context);
+                } else if (current->kind == ATOM_EXPR && current->expr.len) {
+                    if (!freshen_epoch_memo_store(
+                            &memo, current, &g_rename_walk_active))
+                        goto fail;
+                    if (len == cap) {
+                        if (cap > SIZE_MAX / 2u ||
+                            cap * 2u > SIZE_MAX / sizeof(*frames))
+                            goto fail;
+                        size_t next_cap = cap * 2u;
+                        RenameVarsFrame *next = frames == inline_frames
+                            ? malloc(sizeof(*next) * next_cap)
+                            : realloc(frames, sizeof(*next) * next_cap);
+                        if (!next)
+                            goto fail;
+                        if (frames == inline_frames)
+                            memcpy(next, inline_frames, sizeof(*next) * len);
+                        frames = next;
+                        cap = next_cap;
+                    }
+                    frames[len++] = (RenameVarsFrame){current, NULL, 0u};
+                    current = current->expr.elems[0];
+                    continue;
+                } else {
+                    result = current;
+                }
+                if (!result || !freshen_epoch_memo_store(&memo, current, result))
+                    goto fail;
+            }
+        }
+        while (len) {
+            RenameVarsFrame *frame = &frames[len - 1u];
+            Atom *source = frame->source;
+            if (!frame->draft && result != source->expr.elems[frame->next]) {
+                frame->draft = atom_expr_builder_begin(a, source->expr.len);
+                if (!frame->draft)
+                    goto fail;
+                for (CettaExprIndex i = 0; i < frame->next; i++)
+                    frame->draft->expr.elems[i] = source->expr.elems[i];
+            }
+            if (frame->draft)
+                frame->draft->expr.elems[frame->next] = result;
+            if (++frame->next < source->expr.len) {
+                current = source->expr.elems[frame->next];
+                break;
+            }
+            result = frame->draft
+                ? atom_expr_builder_finish(a, frame->draft) : source;
+            if (!result || !freshen_epoch_memo_store(&memo, source, result))
+                goto fail;
+            len--;
+        }
+        if (!len)
+            break;
+    }
     freshen_epoch_memo_free(&memo);
-    return out;
+    if (frames != inline_frames)
+        free(frames);
+    return result;
+
+fail:
+    freshen_epoch_memo_free(&memo);
+    if (frames != inline_frames)
+        free(frames);
+    return NULL;
+}
+
+static Atom *rename_epoch_variable(Arena *a, Atom *atom, void *context) {
+    return epoch_var_atom(a, atom, *(const uint32_t *)context);
+}
+
+/* Keep the address-taken epoch and walk frame out of materialized reads. */
+__attribute__((noinline))
+Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+    return rename_vars_walk(a, atom, rename_epoch_variable, &epoch, false);
 }
 
 Atom *binding_value_materialize(Arena *a, BindingValue value) {
@@ -6907,7 +7165,7 @@ bool bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var, Atom *val) {
     if (!var || var->kind != ATOM_VAR)
         return false;
     return bindings_builder_add_id_internal(
-        bb, var->var_id, var->sym_id, var->name_key, binding_value_from_atom(val));
+        bb, var->var_id, atom_symbol_current_id(var), var->name_key, binding_value_from_atom(val));
 }
 
 typedef enum {
@@ -7074,7 +7332,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         frame_region, bb, arena, transport,
         MATCH_BIND_CONTEXT_ACTIVATION_SOURCE,
         var_epoch_id(source_var->var_id, epoch),
-        source_var->sym_id, source_var->name_key, value,
+        atom_symbol_current_id(source_var), source_var->name_key, value,
         authoritative_value_out, &handled);
     if (handled)
         return stored;
@@ -7087,7 +7345,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
             NULL, bb, arena, transport,
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
             var_epoch_id(source_var->var_id, epoch),
-            source_var->sym_id, source_var->name_key, value,
+            atom_symbol_current_id(source_var), source_var->name_key, value,
             BINDINGS_REACHABILITY_UNKNOWN, authoritative_value_out);
         if (added) {
             cetta_runtime_stats_inc(
@@ -7100,7 +7358,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         bindings_match_store_value(
             NULL, bb, arena, transport,
             MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
-            materialized->var_id, materialized->sym_id,
+            materialized->var_id, atom_symbol_current_id(materialized),
             materialized->name_key, value, BINDINGS_REACHABILITY_UNKNOWN,
             authoritative_value_out);
     if (added && authoritative_value_out) {
@@ -7182,13 +7440,13 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
         return true;
     if (lhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(
-                bb, binding_value_variable_id(lhs), lhs.skeleton->sym_id,
+                bb, binding_value_variable_id(lhs), atom_symbol_current_id(lhs.skeleton),
                 lhs.skeleton->name_key, rhs)) {
             return false;
         }
     } else if (rhs.skeleton->kind == ATOM_VAR) {
         if (!bindings_builder_add_id_internal(
-                bb, binding_value_variable_id(rhs), rhs.skeleton->sym_id,
+                bb, binding_value_variable_id(rhs), atom_symbol_current_id(rhs.skeleton),
                 rhs.skeleton->name_key, lhs)) {
             return false;
         }
@@ -7493,22 +7751,6 @@ static bool var_id_set_add(VarIdSet *set, VarId id) {
     return true;
 }
 
-typedef enum {
-    RENAME_WALK_ENTER,
-    RENAME_WALK_LEAVE,
-} RenameWalkKind;
-
-typedef struct {
-    RenameWalkKind kind;
-    Atom *atom;
-} RenameWalkTask;
-
-typedef struct {
-    RenameWalkTask inline_tasks[64];
-    RenameWalkTask *tasks;
-    size_t len;
-    size_t cap;
-} RenameWalkStack;
 
 static void rename_walk_stack_init(RenameWalkStack *stack) {
     stack->tasks = stack->inline_tasks;
@@ -7544,9 +7786,6 @@ static bool rename_walk_stack_push(RenameWalkStack *stack,
     return true;
 }
 
-/* These addresses are private traversal states, never runtime atoms. */
-static Atom g_rename_walk_active;
-static Atom g_rename_walk_complete;
 
 /* Hash-stable atoms are immutable published graphs assembled only from
  * hash-stable children. They cannot acquire a back edge after publication,
@@ -7627,6 +7866,14 @@ static bool collect_value_var_ids_roots(BindingValue value,
             goto fail;
         if (!atom_has_vars(atom))
             continue;
+        /* A variable is a support leaf even when its spelling is structured
+         * or it has not been hash-consed. The VarId set already merges repeated
+         * leaves; only expressions need an active/complete graph memo. */
+        if (atom->kind == ATOM_VAR) {
+            if (!var_id_set_add(set, binding_value_qualify_id(value, atom->var_id)))
+                goto fail;
+            continue;
+        }
         if (task.kind == RENAME_WALK_LEAVE) {
             if (!freshen_epoch_memo_store(
                     &states, atom, &g_rename_walk_complete))
@@ -7649,13 +7896,6 @@ static bool collect_value_var_ids_roots(BindingValue value,
         if (!freshen_epoch_memo_store(
                 &states, atom, &g_rename_walk_active))
             goto fail;
-        if (atom->kind == ATOM_VAR) {
-            if (!var_id_set_add(set, binding_value_qualify_id(value, atom->var_id)) ||
-                !freshen_epoch_memo_store(
-                    &states, atom, &g_rename_walk_complete))
-                goto fail;
-            continue;
-        }
         if (atom->kind != ATOM_EXPR) {
             if (!freshen_epoch_memo_store(
                     &states, atom, &g_rename_walk_complete))
@@ -7774,6 +8014,7 @@ bool bindings_collect_support(const Bindings *bindings,
     *ids = NULL;
     *count = 0u;
     BindingsSupportCollector collector = {.need = bindings_need_view(bindings)};
+    BindingApplyGraph visited = {0};
     var_id_set_init(&collector.ids);
     var_id_set_init(&collector.visited_thunks);
     bool ok = false;
@@ -7791,9 +8032,21 @@ bool bindings_collect_support(const Bindings *bindings,
     }
     while (collector.len) {
         collector.value = collector.pending[--collector.len];
-        if (atom_tree_any(collector.value.skeleton,
-                          bindings_support_collect_atom, &collector))
+        Atom *atom = collector.value.skeleton;
+        bool created = false;
+        if (!bindings_apply_graph_enter(&visited, atom,
+                (BindingsApplyScope){.epoch = collector.value.epoch,
+                                     .kind = collector.value.kind}, 0u, &created))
             goto done;
+        if (!created) continue;
+        if (bindings_support_collect_atom(atom, &collector)) goto done;
+        if (atom->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
+                BindingValue child = collector.value;
+                child.skeleton = atom->expr.elems[i - 1u];
+                if (!bindings_support_push(&collector, child)) goto done;
+            }
+        }
     }
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
@@ -7802,6 +8055,7 @@ bool bindings_collect_support(const Bindings *bindings,
     *count = collector.ids.len;
     ok = true;
 done:
+    free(visited.entries);
     free(collector.pending);
     var_id_set_free(&collector.visited_thunks);
     var_id_set_free(&collector.ids);
@@ -7982,7 +8236,7 @@ bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
     for (uint32_t i = 0u; i < count; i++) {
         Atom *var = variables[i];
         if (!bindings_add_inplace_internal(
-                &builder.current, var->var_id, var->sym_id, var->name_key,
+                &builder.current, var->var_id, atom_symbol_current_id(var), var->name_key,
                 binding_value_from_atom(values[i]), true)) {
             bindings_builder_free(&builder);
             return false;
@@ -10123,181 +10377,30 @@ static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     return fresh;
 }
 
-typedef enum {
-    RENAME_VARS_VISIT,
-    RENAME_VARS_BUILD,
-} RenameVarsTaskKind;
-
 typedef struct {
-    RenameVarsTaskKind kind;
-    Atom *source;
-    Atom **destination;
-    Atom **children;
-} RenameVarsTask;
+    const VarIdSet *listed;
+    RenameVarMap *map;
+    bool rename_listed;
+} ListedVariableRename;
 
-typedef struct {
-    RenameVarsTask inline_tasks[64];
-    RenameVarsTask *tasks;
-    size_t len;
-    size_t cap;
-} RenameVarsTaskStack;
-
-static void rename_vars_task_stack_init(RenameVarsTaskStack *stack) {
-    stack->tasks = stack->inline_tasks;
-    stack->len = 0u;
-    stack->cap = sizeof(stack->inline_tasks) / sizeof(stack->inline_tasks[0]);
-}
-
-static void rename_vars_task_stack_free(RenameVarsTaskStack *stack) {
-    if (stack->tasks != stack->inline_tasks)
-        free(stack->tasks);
-}
-
-static bool rename_vars_task_stack_push(RenameVarsTaskStack *stack,
-                                        RenameVarsTask task) {
-    if (stack->len == stack->cap) {
-        if (stack->cap > SIZE_MAX / 2u ||
-            stack->cap * 2u > SIZE_MAX / sizeof(*stack->tasks))
-            return false;
-        size_t next_cap = stack->cap * 2u;
-        if (stack->tasks == stack->inline_tasks) {
-            RenameVarsTask *next = cetta_malloc(
-                sizeof(*next) * next_cap);
-            memcpy(next, stack->inline_tasks,
-                   sizeof(*next) * stack->len);
-            stack->tasks = next;
-        } else {
-            stack->tasks = cetta_realloc(
-                stack->tasks, sizeof(*stack->tasks) * next_cap);
-        }
-        stack->cap = next_cap;
-    }
-    stack->tasks[stack->len++] = task;
-    return true;
+static Atom *rename_listed_variable(Arena *a, Atom *atom, void *context) {
+    ListedVariableRename *policy = context;
+    if (var_id_set_contains(policy->listed, atom->var_id) != policy->rename_listed)
+        return atom;
+    Atom *renamed = rename_var_map_lookup(policy->map, atom->var_id);
+    return renamed ? renamed : rename_var_map_add_fresh(policy->map, a, atom);
 }
 
 static Atom *rename_vars_listed_iterative(Arena *a, Atom *root,
                                           const VarIdSet *listed,
                                           RenameVarMap *map,
                                           bool rename_listed) {
-    Atom *result = NULL;
-    RenameVarsTaskStack stack;
-    FreshenEpochMemo memo;
-    rename_vars_task_stack_init(&stack);
-    freshen_epoch_memo_init(&memo);
-    if (!rename_vars_task_stack_push(
-            &stack,
-            (RenameVarsTask){RENAME_VARS_VISIT, root, &result, NULL}))
-        goto fail;
-    while (stack.len > 0u) {
-        RenameVarsTask task = stack.tasks[--stack.len];
-        Atom *atom = task.source;
-        if (!atom || !task.destination)
-            goto fail;
-        if (task.kind == RENAME_VARS_BUILD) {
-            bool unchanged = true;
-            for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-                if (!task.children[i])
-                    goto fail;
-                if (task.children[i] != atom->expr.elems[i])
-                    unchanged = false;
-            }
-            Atom *built = unchanged
-                ? atom
-                : atom_expr(a, task.children, atom->expr.len);
-            *task.destination = built;
-            if (!freshen_epoch_memo_store(&memo, atom, built))
-                goto fail;
-            continue;
-        }
-        if (!atom_has_vars(atom)) {
-            *task.destination = atom;
-            continue;
-        }
-        Atom *memoized = freshen_epoch_memo_lookup(&memo, atom);
-        if (memoized == &g_rename_walk_active)
-            goto fail;
-        if (memoized) {
-            *task.destination = memoized;
-            continue;
-        }
-        if (atom->kind == ATOM_VAR) {
-            Atom *renamed = NULL;
-            if (var_id_set_contains(listed, atom->var_id) !=
-                rename_listed) {
-                renamed = atom;
-            } else {
-                renamed = rename_var_map_lookup(map, atom->var_id);
-                if (!renamed)
-                    renamed = rename_var_map_add_fresh(map, a, atom);
-            }
-            if (!renamed ||
-                !freshen_epoch_memo_store(&memo, atom, renamed))
-                goto fail;
-            *task.destination = renamed;
-            continue;
-        }
-        if (atom->kind != ATOM_EXPR) {
-            *task.destination = atom;
-            if (!freshen_epoch_memo_store(&memo, atom, atom))
-                goto fail;
-            continue;
-        }
-        if (!cetta_expr_len_mul_fits_size(
-                atom->expr.len, sizeof(Atom *)) ||
-            !freshen_epoch_memo_store(
-                &memo, atom, &g_rename_walk_active))
-            goto fail;
-        Atom **children = atom->expr.len
-            ? arena_alloc(a, sizeof(*children) * (size_t)atom->expr.len)
-            : NULL;
-        if (!rename_vars_task_stack_push(
-                &stack,
-                (RenameVarsTask){RENAME_VARS_BUILD, atom,
-                                 task.destination, children}))
-            goto fail;
-        for (CettaExprIndex i = atom->expr.len; i > 0u; i--)
-            if (!rename_vars_task_stack_push(
-                    &stack,
-                    (RenameVarsTask){RENAME_VARS_VISIT,
-                                     atom->expr.elems[i - 1u],
-                                     &children[i - 1u], NULL}))
-                goto fail;
-    }
-    freshen_epoch_memo_free(&memo);
-    rename_vars_task_stack_free(&stack);
-    return result;
-
-fail:
-    freshen_epoch_memo_free(&memo);
-    rename_vars_task_stack_free(&stack);
-    return NULL;
+    ListedVariableRename policy = {listed, map, rename_listed};
+    return rename_vars_walk(a, root, rename_listed_variable, &policy, false);
 }
 
 Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RENAME_VARS);
-    switch (atom->kind) {
-    case ATOM_VAR: {
-        return atom_var_like(a, atom, var_epoch_id(atom->var_id, suffix));
-    }
-    case ATOM_EXPR: {
-        Atom **new_elems = NULL;
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            Atom *next = rename_vars(a, atom->expr.elems[i], suffix);
-            if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-                for (CettaExprIndex j = 0; j < i; j++)
-                    new_elems[j] = atom->expr.elems[j];
-            }
-            if (new_elems)
-                new_elems[i] = next;
-        }
-        if (!new_elems) return atom;
-        return atom_expr(a, new_elems, atom->expr.len);
-    }
-    default:
-        return atom;
-    }
+    return rename_vars_walk(a, atom, rename_epoch_variable, &suffix, true);
 }
 
 Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec) {
@@ -10476,167 +10579,30 @@ static BindingValue match_list_derived_value(BindingValue side, Atom *derived) {
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
 
-bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
-    /* Variable in pattern binds to target */
-    if (pattern->kind == ATOM_VAR) {
-        return bindings_add_var(b, pattern, target);
-    }
+typedef struct {
+    const uint32_t *left_epochs, *right_epochs;
+    size_t left_count, right_count;
+} AlphaFrameScope;
 
-    /* Same kind required */
-    if (pattern->kind != target->kind) return false;
-
-    switch (pattern->kind) {
-    case ATOM_SYMBOL:
-        return pattern->sym_id == target->sym_id;
-
-    case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind)
-            return cetta_he_promoted_numbers_equal(pattern, target);
-        switch (pattern->ground.gkind) {
-        case GV_INT:    return pattern->ground.ival == target->ground.ival;
-        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
-        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return atom_string_equal(pattern, target);
-        case GV_BIGINT:
-            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
-                                            atom_bigint_cstr(target)) == 0;
-        case GV_RATIONAL:
-            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
-                                               atom_rational_cstr(target)) == 0;
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return pattern->ground.ptr == target->ground.ptr;
-        /* A rational term is equal to any node with its unfolding. */
-        case GV_TERM_GRAPH:
-        case GV_BINDINGS:
-            return atom_eq(pattern, target);
-        case GV_PRIME_NEED_CAPABILITY:
-        case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
-            return atom_eq(pattern, target);
-        }
-        return false;
-
-    case ATOM_EXPR: {
-        if (!atom_petta_decomposition_compatible(pattern, target))
-            return false;
-        MatchListMeeting meet;
-        switch (match_list_meet(a, pattern, target, &meet)) {
-        case MATCH_LIST_MISMATCH:
-        case MATCH_LIST_INCOMPLETE:
-            return false;
-        case MATCH_LIST_ELEMENTS:
-            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
-                if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
-                    return false;
-            }
-            return !meet.left_rest ||
-                   simple_match(meet.left_rest, meet.right_rest, b, a);
-        case MATCH_LIST_EXPRESSIONS:
-            break;
-        }
-        /* Patterns see the authored term: an elaborated template's own
-         * list is inferred metadata (atom_authored_len). */
-        CettaExprLen len = atom_authored_len(pattern);
-        if (len != atom_authored_len(target)) return false;
-        for (CettaExprIndex i = 0; i < len; i++) {
-            if (!simple_match(pattern->expr.elems[i], target->expr.elems[i], b, a))
-                return false;
-        }
-        return true;
-    }
-
-    case ATOM_VAR:
-        /* Already handled above */
-        return false;
-    }
+static bool alpha_frame_local(VarId id, const uint32_t *epochs, size_t count) {
+    uint32_t epoch = var_epoch_suffix(id);
+    if (!epoch) return false;
+    for (size_t i = 0u; i < count; i++)
+        if (epochs[i] == epoch) return true;
     return false;
 }
 
-static bool simple_match_builder_rec(Atom *pattern, Atom *target,
-                                     BindingsBuilder *bb, Arena *a) {
-    if (pattern->kind == ATOM_VAR)
-        return bindings_builder_add_var_fresh(bb, pattern, target);
+static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+                            BindingsBuilder *builder, Arena *arena, bool alpha,
+                            const AlphaFrameScope *scope);
 
-    if (pattern->kind != target->kind)
-        return false;
-
-    switch (pattern->kind) {
-    case ATOM_SYMBOL:
-        return pattern->sym_id == target->sym_id;
-
-    case ATOM_GROUNDED:
-        if (pattern->ground.gkind != target->ground.gkind)
-            return cetta_he_promoted_numbers_equal(pattern, target);
-        switch (pattern->ground.gkind) {
-        case GV_INT:    return pattern->ground.ival == target->ground.ival;
-        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
-        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
-        case GV_STRING: return atom_string_equal(pattern, target);
-        case GV_BIGINT:
-            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
-                                            atom_bigint_cstr(target)) == 0;
-        case GV_RATIONAL:
-            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
-                                               atom_rational_cstr(target)) == 0;
-        case GV_SPACE:
-        case GV_STATE:
-        case GV_CAPTURE:
-        case GV_FOREIGN:
-            return pattern->ground.ptr == target->ground.ptr;
-        /* A rational term is equal to any node with its unfolding. */
-        case GV_TERM_GRAPH:
-        case GV_BINDINGS:
-            return atom_eq(pattern, target);
-        case GV_PRIME_NEED_CAPABILITY:
-        case GV_PRIME_CONTEXT:
-        case GV_INTERNAL_TAG:
-            return atom_eq(pattern, target);
-        }
-        return false;
-
-    case ATOM_EXPR: {
-        if (!atom_petta_decomposition_compatible(pattern, target))
-            return false;
-        MatchListMeeting meet;
-        switch (match_list_meet(a, pattern, target, &meet)) {
-        case MATCH_LIST_MISMATCH:
-        case MATCH_LIST_INCOMPLETE:
-            return false;
-        case MATCH_LIST_ELEMENTS:
-            for (CettaExprIndex i = 1; i <= meet.prefix; i++) {
-                if (!simple_match_builder_rec(pattern->expr.elems[i],
-                                              target->expr.elems[i], bb, a))
-                    return false;
-            }
-            return !meet.left_rest ||
-                   simple_match_builder_rec(meet.left_rest, meet.right_rest, bb, a);
-        case MATCH_LIST_EXPRESSIONS:
-            break;
-        }
-        CettaExprLen len = atom_authored_len(pattern);
-        if (len != atom_authored_len(target))
-            return false;
-        for (CettaExprIndex i = 0; i < len; i++) {
-            if (!simple_match_builder_rec(pattern->expr.elems[i],
-                                          target->expr.elems[i], bb, a)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    case ATOM_VAR:
-        return false;
-    }
-    return false;
+bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
+    return atom_pair_walk(pattern, target, b, NULL, a, false, NULL);
 }
 
 bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
                           Arena *a) {
-    return simple_match_builder_rec(pattern, target, bb, a);
+    return atom_pair_walk(pattern, target, NULL, bb, a, false, NULL);
 }
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
@@ -10952,8 +10918,10 @@ static bool match_path_reserve_entries(MatchPathSet *path) {
     size_t new_cap = path->entry_cap * 2u;
     if (new_cap > SIZE_MAX / sizeof(*path->entries))
         return false;
-    MatchPathEntry *next = cetta_malloc(
+    MatchPathEntry *next = malloc(
         sizeof(*next) * new_cap);
+    if (!next)
+        return false;
     memcpy(next, path->entries,
            sizeof(*next) * path->len);
     if (path->entries != path->inline_entries)
@@ -10972,7 +10940,9 @@ static bool match_path_grow_buckets(MatchPathSet *path) {
     if (new_cap > SIZE_MAX / sizeof(*path->buckets) ||
         path->len > UINT32_MAX)
         return false;
-    uint32_t *next = cetta_malloc(sizeof(*next) * new_cap);
+    uint32_t *next = malloc(sizeof(*next) * new_cap);
+    if (!next)
+        return false;
     memset(next, 0, sizeof(*next) * new_cap);
     size_t mask = new_cap - 1u;
     for (size_t i = 0u; i < path->len; i++) {
@@ -11062,6 +11032,255 @@ static void match_path_leave(MatchPathSet *path, MatchTerm left, MatchTerm right
     assert(path->buckets[bucket] == (uint32_t)index + 1u);
     path->buckets[bucket] = entry->previous;
     path->len = index;
+}
+
+typedef struct {
+    VarId left;
+    VarId right;
+} AlphaPair;
+
+typedef struct {
+    AlphaPair *items;
+    uint32_t len;
+    uint32_t cap;
+} AlphaPairSet;
+
+static void alpha_pair_set_init(AlphaPairSet *pairs) {
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static void alpha_pair_set_free(AlphaPairSet *pairs) {
+    free(pairs->items);
+    pairs->items = NULL;
+    pairs->len = 0;
+    pairs->cap = 0;
+}
+
+static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        if (pairs->items[i].left == left)
+            return pairs->items[i].right;
+    }
+    return VAR_ID_NONE;
+}
+
+static VarId alpha_lookup_right(const AlphaPairSet *pairs, VarId right) {
+    for (uint32_t i = 0; i < pairs->len; i++) {
+        if (pairs->items[i].right == right)
+            return pairs->items[i].left;
+    }
+    return VAR_ID_NONE;
+}
+
+static bool alpha_add_pair(AlphaPairSet *pairs, VarId left, VarId right) {
+    if (pairs->len >= pairs->cap) {
+        if (pairs->cap > UINT32_MAX / 2u)
+            return false;
+        uint32_t next_cap = pairs->cap ? pairs->cap * 2u : 8u;
+        if (!cetta_expr_len_mul_fits_size(next_cap, sizeof(*pairs->items)))
+            return false;
+        AlphaPair *next = realloc(pairs->items, sizeof(*next) * next_cap);
+        if (!next)
+            return false;
+        pairs->items = next;
+        pairs->cap = next_cap;
+    }
+    pairs->items[pairs->len].left = left;
+    pairs->items[pairs->len].right = right;
+    pairs->len++;
+    return true;
+}
+
+static bool simple_match_leaf(Atom *pattern, Atom *target) {
+    switch (pattern->kind) {
+    case ATOM_SYMBOL:
+        return atom_symbols_equal(pattern, target);
+
+    case ATOM_GROUNDED:
+        if (pattern->ground.gkind != target->ground.gkind)
+            return cetta_he_promoted_numbers_equal(pattern, target);
+        switch (pattern->ground.gkind) {
+        case GV_INT:    return pattern->ground.ival == target->ground.ival;
+        case GV_FLOAT:  return pattern->ground.fval == target->ground.fval;
+        case GV_BOOL:   return pattern->ground.bval == target->ground.bval;
+        case GV_STRING: return atom_string_equal(pattern, target);
+        case GV_BIGINT:
+            return cetta_bigint_compare_cstr(atom_bigint_cstr(pattern),
+                                            atom_bigint_cstr(target)) == 0;
+        case GV_RATIONAL:
+            return cetta_rational_compare_cstr(atom_rational_cstr(pattern),
+                                               atom_rational_cstr(target)) == 0;
+        case GV_TENSOR:
+            return atom_eq(pattern, target);
+        case GV_SPACE:
+        case GV_STATE:
+        case GV_CAPTURE:
+        case GV_FOREIGN:
+            return pattern->ground.ptr == target->ground.ptr;
+        /* A rational term is equal to any node with its unfolding. */
+        case GV_TERM_GRAPH:
+        case GV_BINDINGS:
+            return atom_eq(pattern, target);
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+        case GV_INTERNAL_TAG:
+            return atom_eq(pattern, target);
+        }
+        return false;
+
+    case ATOM_EXPR:
+    case ATOM_VAR:
+        return false;
+    }
+    return false;
+}
+
+/* A comparison frame retains only its next child and optional list rest.
+ * Traversal is ordered: a failure leaves the same earlier bindings in place.
+ * Active pairs detect malformed raw cycles; completed siblings may be visited
+ * again because control representation does not license answer sharing. */
+typedef struct {
+    Atom *left;
+    Atom *right;
+    CettaExprIndex next;
+    CettaExprIndex end;
+    Atom *left_rest;
+    Atom *right_rest;
+} AtomPairFrame;
+
+static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+                            BindingsBuilder *builder, Arena *arena, bool alpha,
+                            const AlphaFrameScope *scope) {
+    AtomPairFrame inline_frames[16];
+    AtomPairFrame *frames = inline_frames;
+    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
+    MatchPathSet path;
+    match_path_init(&path);
+    AlphaPairSet pairs;
+    alpha_pair_set_init(&pairs);
+    bool ok = false;
+    if (!alpha && !bindings && !builder)
+        goto done;
+    for (;;) {
+        if (!left || !right) {
+            if (alpha && left == right)
+                goto advance_pair;
+            goto done;
+        }
+        if (alpha && (left->kind == ATOM_VAR || right->kind == ATOM_VAR)) {
+            if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
+                goto done;
+            if (scope) {
+                bool local_left = alpha_frame_local(left->var_id, scope->left_epochs, scope->left_count);
+                bool local_right = alpha_frame_local(right->var_id, scope->right_epochs, scope->right_count);
+                if (local_left != local_right)
+                    goto done;
+                if (!local_left) {
+                    if (left->var_id != right->var_id)
+                        goto done;
+                    goto advance_pair;
+                }
+            }
+            VarId mapped_right = alpha_lookup_left(&pairs, left->var_id);
+            VarId mapped_left = alpha_lookup_right(&pairs, right->var_id);
+            if (mapped_right || mapped_left) {
+                if (mapped_right != right->var_id || mapped_left != left->var_id)
+                    goto done;
+            } else if (!alpha_add_pair(&pairs, left->var_id, right->var_id)) {
+                goto done;
+            }
+        } else if (!alpha && left->kind == ATOM_VAR) {
+            if (!(builder ? bindings_builder_add_var_fresh(builder, left, right)
+                          : bindings_add_var(bindings, left, right)))
+                goto done;
+        } else {
+            if (left->kind != right->kind)
+                goto done;
+            if (left->kind != ATOM_EXPR) {
+                if (!(alpha ? atom_eq(left, right) : simple_match_leaf(left, right)))
+                    goto done;
+            } else {
+                AtomPairFrame frame = {.left = left, .right = right};
+                if (alpha) {
+                    if (atom_authored_len(left) != atom_authored_len(right))
+                        goto done;
+                    frame.end = atom_authored_len(left);
+                } else {
+                    if (!atom_petta_decomposition_compatible(left, right))
+                        goto done;
+                    MatchListMeeting meet;
+                    MatchListOutcome outcome = match_list_meet(arena, left, right, &meet);
+                    if (outcome == MATCH_LIST_MISMATCH || outcome == MATCH_LIST_INCOMPLETE)
+                        goto done;
+                    if (outcome == MATCH_LIST_ELEMENTS) {
+                        frame.next = 1u;
+                        frame.end = 1u + meet.prefix;
+                        frame.left_rest = meet.left_rest;
+                        frame.right_rest = meet.right_rest;
+                    } else {
+                        if (atom_authored_len(left) != atom_authored_len(right))
+                            goto done;
+                        frame.end = atom_authored_len(left);
+                    }
+                }
+                if (frame.next < frame.end || frame.left_rest) {
+                    MatchTerm l = {.value = binding_value_from_atom(left)};
+                    MatchTerm r = {.value = binding_value_from_atom(right)};
+                    if (!match_path_enter(&path, l, r))
+                        goto done;
+                    if (len == cap) {
+                        if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
+                            goto done;
+                        size_t next_cap = cap * 2u;
+                        AtomPairFrame *next = frames == inline_frames
+                            ? malloc(sizeof(*next) * next_cap)
+                            : realloc(frames, sizeof(*next) * next_cap);
+                        if (!next)
+                            goto done;
+                        if (frames == inline_frames)
+                            memcpy(next, inline_frames, sizeof(*next) * len);
+                        frames = next;
+                        cap = next_cap;
+                    }
+                    frames[len++] = frame;
+                }
+            }
+        }
+advance_pair:
+        while (len) {
+            AtomPairFrame *frame = &frames[len - 1u];
+            if (frame->next < frame->end) {
+                CettaExprIndex child = frame->next++;
+                left = frame->left->expr.elems[child];
+                right = frame->right->expr.elems[child];
+                break;
+            }
+            if (frame->left_rest) {
+                left = frame->left_rest;
+                right = frame->right_rest;
+                frame->left_rest = NULL;
+                frame->right_rest = NULL;
+                break;
+            }
+            match_path_leave(&path,
+                (MatchTerm){.value = binding_value_from_atom(frame->left)},
+                (MatchTerm){.value = binding_value_from_atom(frame->right)});
+            len--;
+        }
+        if (!len) {
+            ok = true;
+            break;
+        }
+    }
+
+done:
+    alpha_pair_set_free(&pairs);
+    match_path_free(&path);
+    if (frames != inline_frames)
+        free(frames);
+    return ok;
 }
 
 typedef enum {
@@ -11416,9 +11635,9 @@ retry_pair:
             bool added = builder
                 ? bindings_builder_add_id_internal(
                       builder, binding_value_variable_id(left_value),
-                      left->sym_id, left->name_key, right_value)
+                      atom_symbol_current_id(left), left->name_key, right_value)
                 : bindings_add_internal(bindings, binding_value_variable_id(left_value),
-                      left->sym_id, left->name_key, right_value, true);
+                      atom_symbol_current_id(left), left->name_key, right_value, true);
             if (!added) {
                 goto fail;
             }
@@ -11441,16 +11660,16 @@ retry_pair:
             bool added = builder
                 ? bindings_builder_add_id_internal(
                       builder, binding_value_variable_id(right_value),
-                      right->sym_id, right->name_key, left_value)
+                      atom_symbol_current_id(right), right->name_key, left_value)
                 : bindings_add_internal(bindings, binding_value_variable_id(right_value),
-                      right->sym_id, right->name_key, left_value, true);
+                      atom_symbol_current_id(right), right->name_key, left_value, true);
             if (!added) {
                 goto fail;
             }
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id) {
+            if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto fail;
@@ -11737,7 +11956,7 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
-        lh->sym_id != qh->sym_id)
+        !atom_symbols_equal(lh, qh))
         return false;
     /* Pre-check the whole shape AND linearity before binding anything, so a
      * refusal never leaves a partial binding.  A repeated epoched var here means
@@ -11790,7 +12009,7 @@ bool match_atoms_epoch_positional_linear_builder(
     Atom *lh = lhs->expr.elems[0];
     Atom *qh = query->expr.elems[0];
     if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
-        lh->sym_id != qh->sym_id)
+        !atom_symbols_equal(lh, qh))
         return false;
 
     /* This realization is deliberately narrower than head-linearity alone.
@@ -11977,120 +12196,47 @@ bool match_binding_value_atom_id_epoch(
     return match_atoms_atom_id_epoch_worklist(left, candidate_universe, right_id, b, a, epoch);
 }
 
-typedef struct {
-    VarId left;
-    VarId right;
-} AlphaPair;
-
-typedef struct {
-    AlphaPair *items;
-    uint32_t len;
-    uint32_t cap;
-} AlphaPairSet;
-
-static void alpha_pair_set_init(AlphaPairSet *pairs) {
-    pairs->items = NULL;
-    pairs->len = 0;
-    pairs->cap = 0;
-}
-
-static void alpha_pair_set_free(AlphaPairSet *pairs) {
-    free(pairs->items);
-    pairs->items = NULL;
-    pairs->len = 0;
-    pairs->cap = 0;
-}
-
-static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
-    for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].left == left)
-            return pairs->items[i].right;
-    }
-    return VAR_ID_NONE;
-}
-
-static VarId alpha_lookup_right(const AlphaPairSet *pairs, VarId right) {
-    for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].right == right)
-            return pairs->items[i].left;
-    }
-    return VAR_ID_NONE;
-}
-
-static bool alpha_add_pair(AlphaPairSet *pairs, VarId left, VarId right) {
-    if (pairs->len >= pairs->cap) {
-        pairs->cap = pairs->cap ? pairs->cap * 2 : 8;
-        pairs->items = cetta_realloc(pairs->items, sizeof(AlphaPair) * pairs->cap);
-    }
-    pairs->items[pairs->len].left = left;
-    pairs->items[pairs->len].right = right;
-    pairs->len++;
-    return true;
-}
-
-typedef struct {
-    const uint32_t *left_epochs, *right_epochs;
-    size_t left_count, right_count;
-} AlphaFrameScope;
-
-static bool alpha_frame_local(VarId id, const uint32_t *epochs, size_t count) {
-    uint32_t epoch = var_epoch_suffix(id);
-    if (!epoch) return false;
-    for (size_t i = 0u; i < count; i++)
-        if (epochs[i] == epoch) return true;
-    return false;
-}
-
-static bool atom_alpha_eq_rec(Atom *left, Atom *right, AlphaPairSet *pairs,
-                             const AlphaFrameScope *scope) {
-    if (!left || !right) return left == right;
-    if (left->kind == ATOM_VAR || right->kind == ATOM_VAR) {
-        if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
-            return false;
-        if (scope) {
-            bool ll = alpha_frame_local(left->var_id, scope->left_epochs, scope->left_count);
-            bool rl = alpha_frame_local(right->var_id, scope->right_epochs, scope->right_count);
-            if (ll != rl) return false;
-            if (!ll) return left->var_id == right->var_id;
-        }
-        VarId mapped_right = alpha_lookup_left(pairs, left->var_id);
-        VarId mapped_left = alpha_lookup_right(pairs, right->var_id);
-        if (mapped_right || mapped_left) {
-            return mapped_right == right->var_id && mapped_left == left->var_id;
-        }
-        return alpha_add_pair(pairs, left->var_id, right->var_id);
-    }
-
-    if (left->kind != right->kind)
+static bool alpha_scalar_leaf(const Atom *atom) {
+    if (!atom)
         return false;
-
-    switch (left->kind) {
-    case ATOM_SYMBOL:
-        return left->sym_id == right->sym_id;
-    case ATOM_GROUNDED:
-        return atom_eq(left, right);
-    case ATOM_EXPR: {
-        CettaExprLen len = atom_authored_len(left);
-        if (len != atom_authored_len(right))
-            return false;
-        for (CettaExprIndex i = 0; i < len; i++) {
-            if (!atom_alpha_eq_rec(left->expr.elems[i], right->expr.elems[i], pairs, scope))
-                return false;
-        }
+    if (atom->kind == ATOM_SYMBOL)
         return true;
-    }
-    case ATOM_VAR:
+    if (atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BOOL:
+    case GV_STRING:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+    case GV_INTERNAL_TAG:
+        return true;
+    default:
         return false;
     }
-    return false;
 }
 
 bool atom_alpha_eq(Atom *left, Atom *right) {
-    AlphaPairSet pairs;
-    alpha_pair_set_init(&pairs);
-    bool ok = atom_alpha_eq_rec(left, right, &pairs, NULL);
-    alpha_pair_set_free(&pairs);
-    return ok;
+    if (!left || !right || left->kind != right->kind)
+        return false;
+    if (left->kind != ATOM_EXPR)
+        return left->kind == ATOM_VAR || atom_eq(left, right);
+    if (atom_authored_len(left) != atom_authored_len(right))
+        return false;
+    /* Ground flat terms need no renaming environment or comparison frames.
+     * Classify the entire pair before comparing: an opaque equality service
+     * must never run once here and again after a later child causes fallback. */
+    for (CettaExprIndex i = 0u; i < atom_authored_len(left); i++) {
+        if (!alpha_scalar_leaf(left->expr.elems[i]) ||
+            !alpha_scalar_leaf(right->expr.elems[i]))
+            return atom_pair_walk(left, right, NULL, NULL, NULL, true, NULL);
+    }
+    for (CettaExprIndex i = 0u; i < atom_authored_len(left); i++) {
+        if (!atom_eq(left->expr.elems[i], right->expr.elems[i]))
+            return false;
+    }
+    return true;
 }
 
 bool atom_alpha_eq_scoped(Atom *left, Atom *right,
@@ -12098,11 +12244,7 @@ bool atom_alpha_eq_scoped(Atom *left, Atom *right,
         const uint32_t *right_epochs, size_t right_count) {
     if ((!left_epochs && left_count) || (!right_epochs && right_count)) return false;
     AlphaFrameScope scope = {left_epochs, right_epochs, left_count, right_count};
-    AlphaPairSet pairs;
-    alpha_pair_set_init(&pairs);
-    bool ok = atom_alpha_eq_rec(left, right, &pairs, &scope);
-    alpha_pair_set_free(&pairs);
-    return ok;
+    return atom_pair_walk(left, right, NULL, NULL, NULL, true, &scope);
 }
 
 /* One pending comparison.  An entry with child_count > 0 stands for the
@@ -12496,7 +12638,7 @@ static bool match_query_child_rigid_impossible(
         return true;
     if (query->kind == ATOM_SYMBOL)
         return child->source && child->source->kind == ATOM_SYMBOL &&
-            query->sym_id != child->source->sym_id;
+            !atom_symbols_equal(query, child->source);
     if (query->kind == ATOM_EXPR)
         return query->expr.len != child->child_count;
     if (query->kind == ATOM_GROUNDED)
@@ -12562,7 +12704,7 @@ static bool match_plan_fails_before_bind(
                 break;
             if (qi->kind != qj->kind)
                 return true;
-            if (qi->kind == ATOM_SYMBOL && qi->sym_id != qj->sym_id)
+            if (qi->kind == ATOM_SYMBOL && !atom_symbols_equal(qi, qj))
                 return true;
             break;
         }
@@ -12978,7 +13120,7 @@ retry_pair:
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
                 if (!added) goto fail;
                 continue;
@@ -13009,14 +13151,14 @@ retry_pair:
                         right_frame_region,
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                        left_id, left->sym_id,
+                        left_id, atom_symbol_current_id(left),
                         left->name_key, value, cycle_evidence, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added) goto fail;
@@ -13058,14 +13200,14 @@ retry_pair:
                     right_frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, right_original,
-                    right_id, right->sym_id,
+                    right_id, atom_symbol_current_id(right),
                     right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added) goto fail;
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id) {
+            if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto mismatch;
@@ -13752,7 +13894,7 @@ retry_pair:
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
                 if (!added)
                     goto fail;
@@ -13785,14 +13927,14 @@ retry_pair:
                         &frame_region,
                         NULL, builder, a, &transport,
                         MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                        left_id, left->sym_id,
+                        left_id, atom_symbol_current_id(left),
                         left->name_key, value, cycle_evidence, NULL);
             } else {
                 added = bindings_match_store_value_in_rule_region(
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_STORED_EQUATION, left_original,
-                    left_id, left->sym_id,
+                    left_id, atom_symbol_current_id(left),
                     left->name_key, value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added)
@@ -13834,7 +13976,7 @@ retry_pair:
                     &frame_region,
                     bindings, builder, a, &transport,
                     MATCH_BIND_CONTEXT_ACTIVATION_SOURCE, true,
-                    right_id, right->sym_id,
+                    right_id, atom_symbol_current_id(right),
                     right->name_key, binding_value, BINDINGS_REACHABILITY_UNKNOWN, NULL);
             }
             if (!added)
@@ -13842,7 +13984,7 @@ retry_pair:
             continue;
         }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
-            if (left->sym_id != right->sym_id)
+            if (!atom_symbols_equal(left, right))
                 goto fail;
             continue;
         }
@@ -14371,6 +14513,7 @@ static bool stored_grounded_equal(Atom *left,
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
@@ -14447,7 +14590,8 @@ static bool match_atoms_atom_id_epoch_worklist(
 
 retry_pair:
         left = left_value.skeleton;
-        if (!tu_hdr(candidate_universe, right_id)) {
+        const CettaTermHdr *right_header = tu_hdr(candidate_universe, right_id);
+        if (!right_header) {
             Atom *right = term_universe_get_atom(
                 (TermUniverse *)candidate_universe, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
@@ -14458,7 +14602,7 @@ retry_pair:
                 goto fail;
             continue;
         }
-        AtomKind right_kind = tu_kind(candidate_universe, right_id);
+        AtomKind right_kind = (AtomKind)right_header->tag;
         if (left->kind == ATOM_VAR) {
             BindingValue existing = bindings_lookup_value(b, left_value);
             if (existing.skeleton) {
@@ -14487,7 +14631,7 @@ retry_pair:
                 if (!term_universe_match_binding_value(
                         candidate_universe, a, right_id, epoch, &value) ||
                     !bindings_add_internal(
-                        b, binding_value_variable_id(left_value), left->sym_id,
+                        b, binding_value_variable_id(left_value), atom_symbol_current_id(left),
                         left->name_key, value, true)) goto fail;
                 continue;
             }
@@ -14495,7 +14639,7 @@ retry_pair:
             if (!term_universe_match_binding_value(
                     candidate_universe, a, right_id, epoch, &value) ||
                 !bindings_add_internal(
-                        b, binding_value_variable_id(left_value), left->sym_id,
+                        b, binding_value_variable_id(left_value), atom_symbol_current_id(left),
                         left->name_key, value, true)) goto fail;
             continue;
         }
@@ -14521,7 +14665,7 @@ retry_pair:
                 binding_var.skeleton->kind != ATOM_VAR ||
                 !bindings_add_internal(
                     b, binding_value_variable_id(binding_var),
-                    binding_var.skeleton->sym_id,
+                    atom_symbol_current_id(binding_var.skeleton),
                     binding_var.skeleton->name_key,
                     left_value, true))
                 goto fail;
@@ -14530,7 +14674,7 @@ retry_pair:
         switch (left->kind) {
         case ATOM_SYMBOL:
             if (right_kind != ATOM_SYMBOL ||
-                left->sym_id != tu_sym(candidate_universe, right_id))
+                atom_symbol_current_id(left) != right_header->sym_or_head)
                 goto fail;
             break;
         case ATOM_VAR:
@@ -14545,10 +14689,10 @@ retry_pair:
                 goto fail;
             if (right_kind == ATOM_EXPR &&
                 (match_expr_is_list(left) ||
-                 (tu_arity(candidate_universe, right_id) > 0u &&
+                 ((right_header->aux32 & CETTA_TERM_HDR_DATA_MASK) > 0u &&
                   cetta_internal_tag_is_list(tu_internal_tag(
                       candidate_universe,
-                      tu_child(candidate_universe, right_id, 0u)))))) {
+                      tu_child_from_header(candidate_universe, right_header, 0u)))))) {
                 /* Lists meet in the contextual matcher, which builds the
                  * rest a list pattern is bound to. */
                 Atom *right = term_universe_get_atom(
@@ -14592,7 +14736,7 @@ retry_pair:
                 child_value.skeleton = left->expr.elems[child];
                 if (!stored_match_push(
                         &work, child_value,
-                        tu_child(candidate_universe, right_id, child)))
+                        tu_child_from_header(candidate_universe, right_header, child)))
                     goto fail;
             }
             break;

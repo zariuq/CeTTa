@@ -20,7 +20,7 @@
 [(Refuted (not-convertible Presentation.TypedEquality.Normalization.not_equal_of_unrelated (assumes-completeness declared-constants declared-datatypes)))]
 [(Refuted (not-convertible Presentation.TypedEquality.Normalization.not_equal_of_unrelated (assumes-completeness declared-constants declared-datatypes)))]
 [(Refuted (reflexivity-endpoint-mismatch))]
-[(Refuted (set:define-already-declared id:eliminate))]
+[(Refuted (hol:define-already-declared id:eliminate))]
 [(id:eliminate num zero (lam y (lam p num)) (suc zero) (suc zero) (refl zero))]
 [(suc zero)]
 [False]

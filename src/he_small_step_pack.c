@@ -17,14 +17,16 @@
 
 static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
-        /* rule-sound: Lean theorem mettaCall_absorbs_grounded_dispatch
+        /* rule-sound-on-fragment: Lean theorem mettaCall_absorbs_grounded_dispatch
          * (Mettapedia/Languages/MeTTa/HE/SmallStepSound.lean) — the coarse
-         * step is absorbed by the official declarative MettaCall. */
+         * pure dispatch step is absorbed by declarative MettaCall. Frozen
+         * service requests are inspection data, covered by native controls;
+         * this theorem does not establish their execution or resumption. */
         .name = "HES_GroundedDispatch",
         .rule_id = CETTA_HES_RULE_GROUNDED_DISPATCH,
         .profiles = "he extended",
         .provenance = "M_Expression IE_FuncType IF_* MC_Grounded",
-        .claim = "rule-sound",
+        .claim = "rule-sound-on-fragment",
         .live = true,
     },
     {

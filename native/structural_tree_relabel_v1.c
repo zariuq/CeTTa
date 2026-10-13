@@ -106,7 +106,7 @@ static bool atom_head_id_is(const Atom *atom, SymbolId head,
     return atom && atom->kind == ATOM_EXPR &&
         atom->expr.len == arguments + 1u && atom->expr.elems &&
         atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-        atom->expr.elems[0]->sym_id == head;
+        atom_symbol_current_id(atom->expr.elems[0]) == head;
 }
 
 static bool nullary_from_atom(const Atom *atom, TreeRelabelNullary *out) {
@@ -115,7 +115,7 @@ static bool nullary_from_atom(const Atom *atom, TreeRelabelNullary *out) {
     if (atom->kind == ATOM_SYMBOL) {
         *out = (TreeRelabelNullary){
             .expression = false,
-            .head = atom->sym_id,
+            .head = atom_symbol_current_id(atom),
         };
         return true;
     }
@@ -124,7 +124,7 @@ static bool nullary_from_atom(const Atom *atom, TreeRelabelNullary *out) {
         atom->expr.elems[0]->kind == ATOM_SYMBOL) {
         *out = (TreeRelabelNullary){
             .expression = true,
-            .head = atom->expr.elems[0]->sym_id,
+            .head = atom_symbol_current_id(atom->expr.elems[0]),
         };
         return true;
     }
@@ -262,14 +262,14 @@ static bool append_rule(
     memset(&candidate, 0, sizeof(candidate));
     if (source_pattern->kind == ATOM_SYMBOL) {
         candidate.source_expression = false;
-        candidate.source_head = source_pattern->sym_id;
+        candidate.source_head = atom_symbol_current_id(source_pattern);
         candidate.source_arity = 0u;
     } else if (source_pattern->kind == ATOM_EXPR &&
                source_pattern->expr.len >= 1u &&
                source_pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         CettaExprIndex left;
         candidate.source_expression = true;
-        candidate.source_head = source_pattern->expr.elems[0]->sym_id;
+        candidate.source_head = atom_symbol_current_id(source_pattern->expr.elems[0]);
         candidate.source_arity =
             (uint32_t)(source_pattern->expr.len - 1u);
         for (left = 1u; left < source_pattern->expr.len; left++) {
@@ -306,7 +306,7 @@ static bool append_rule(
     if (target_pattern->kind == ATOM_SYMBOL) {
         candidate.target = (TreeRelabelNullary){
             .expression = false,
-            .head = target_pattern->sym_id,
+            .head = atom_symbol_current_id(target_pattern),
         };
     } else if (target_pattern->kind == ATOM_EXPR &&
                target_pattern->expr.len >= 1u &&
@@ -314,7 +314,7 @@ static bool append_rule(
         CettaExprIndex child;
         candidate.target = (TreeRelabelNullary){
             .expression = true,
-            .head = target_pattern->expr.elems[0]->sym_id,
+            .head = atom_symbol_current_id(target_pattern->expr.elems[0]),
         };
         candidate.action_len =
             (uint32_t)(target_pattern->expr.len - 1u);
@@ -552,12 +552,12 @@ static const TreeRelabelRule *find_rule(
         return NULL;
     if (source->kind == ATOM_SYMBOL) {
         expression = false;
-        head = source->sym_id;
+        head = atom_symbol_current_id(source);
         arity = 0u;
     } else if (source->kind == ATOM_EXPR && source->expr.len >= 1u &&
                source->expr.elems[0]->kind == ATOM_SYMBOL) {
         expression = true;
-        head = source->expr.elems[0]->sym_id;
+        head = atom_symbol_current_id(source->expr.elems[0]);
         arity = (uint32_t)(source->expr.len - 1u);
     } else {
         return NULL;

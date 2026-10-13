@@ -42,11 +42,12 @@
 (= (prime-need:same $x $y) any)
 !(prime-need:same (superpose (A B)) A)
 
-; Nested structure demands only the path inspected by the pattern.  The B
-; alternative remains an inert residual and its unrelated empty argument is
-; never forced.
+; Matching demands only the inspected path. At the answer boundary the B
+; residual's ordinary argument is observed as a value, so empty contributes
+; no answer. Explicit delay instead retains that argument as code.
 (= (prime-need:box (Box A) $unused) boxed-a)
 !(prime-need:box (Box (superpose (A B))) (empty))
+!(prime-need:box (Box (superpose (A B))) (delay (empty)))
 
 ; A code boundary never exposes a private heap reference.  A quotation is
 ; sealed, so a quoted parameter stays the literal variable (observed by its

@@ -198,10 +198,7 @@ static bool prime_native_parallel_support_admitted(const PrimeNeedSnapshot *snap
     bool safe = prime_eval_stack_support_buffer_push(&scan, expression);
     for (size_t i = 0u; safe && i < scan.len; i++) {
         Atom *atom = scan.items[i];
-        bool known = false;
-        for (size_t j = 0u; j < seen.len; j++)
-            known = known || seen.items[j].skeleton == atom;
-        if (known) continue;
+        if (outcome_preview_seen_contains(&seen, atom)) continue;
         if (!atom || !outcome_preview_seen_add(&seen, atom)) { safe = false; break; }
         if (atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
             safe = false; break;
@@ -338,7 +335,8 @@ static bool prime_native_parallel_read_service_admitted(PrimeNativeControl *chil
     if(!parallel || parallel->child!=child || parallel->resource_owner_pinned ||
         !parallel->world.prepared || g_prime_native_parallel_current!=parallel ||
         g_prime_eval_stack_driver!=&child->driver || child->driver.control!=child ||
-        !child->driver.ordinary_ordered || !child->driver.ordinary_shared_source ||
+        (!child->driver.ordinary_ordered && !child->driver.capsule_stack) ||
+        !child->driver.ordinary_shared_source ||
         child->driver.arena!=arena || space!=parallel->world.space ||
         child->source_read.space!=space || g_registry!=&parallel->world.registry ||
         child->failed || child->invalidated || child->driver.capacity_blocked ||
@@ -351,9 +349,28 @@ static bool prime_native_parallel_read_service_admitted(PrimeNativeControl *chil
         (!child->worker_execution && !cetta_shared_transition_guard_held_by_current_thread()) ||
         !prime_native_actual_call_allowed(space,arena,call))return false;
     RegistryReadView registry=child->registry_read;
-    return registry_read_view_validate(&registry,g_registry) &&
-        petta_program_classify_resolved_call(g_library_context->petta_program,
-            space,call)==PETTA_RESOLVED_CALL_MACHINE_LOCAL;
+    if (!registry_read_view_validate(&registry,g_registry)) return false;
+    PettaResolvedCallClass kind = petta_program_classify_resolved_call(
+        g_library_context->petta_program,space,call);
+    /* The admitted ordinary closure already retains this relation's source
+     * and private world. Only its checked optional type service adds a
+     * coordinator dependency; subsequent calls still cross actual authority
+     * and persistent-effect guards. An arbitrary relation is not a service. */
+    return kind == PETTA_RESOLVED_CALL_MACHINE_LOCAL ||
+        (kind == PETTA_RESOLVED_CALL_RELATION &&
+         prime_native_guest_call(space,arena,call) == PRIME_NATIVE_GUEST_REQUIRED);
+}
+
+/* The optional checker is owned by the already borrowed library context.
+ * Its exact space and revision remain a read dependency; no child arena owns
+ * it, and no unrelated external space obtains a borrowed lifetime here. */
+static bool prime_native_parallel_borrowed_query_current(
+        const PrimeNativeParallel *parallel, SpaceReadToken read) {
+    if (!prime_native_parallel_borrowed_current(parallel,g_library_context))
+        return false;
+    const PrimeHolGuest *guest = parallel->borrowed_library->prime_hol_guest;
+    return guest && guest->context_ready && !guest->failed &&
+        read.space == &guest->space && space_read_token_is_current(read);
 }
 
 static bool prime_native_parallel_validate(PrimeNativeControl *,PrimeNativeParallel *);
@@ -459,10 +476,27 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     g_hashcons = &parallel->world.hashcons;
     /* Only preparation/ownership is reused here. Hyperpose's eager branch
      * execution and result observer are not involved. */
+    SpaceEquationToken source_equations = space_equation_token(task->space);
+    PrimeSymbolWorld symbol_source = prime_symbol_world(task->space, SYMBOL_ID_NONE);
     bool prepared = hyperpose_prepare_thread_branch(&parallel->world, 0u,
         task->space, &owner->registry_read.initial, expression, NULL,
         NULL, shared_source, true, need, NULL);
-    if (!prepared) { prime_native_parallel_destroy(parallel); return false; }
+    if (!prepared ||
+        !space_equation_token_matches_live_space(source_equations, task->space) ||
+        symbol_source.admission != prime_scoped_judgment_admission_epoch()) {
+        prime_native_parallel_destroy(parallel); return false;
+    }
+    /* This successful preparation actually copied (or retained) task->space.
+     * Keep its logical source coordinates, including a prior worker copy's
+     * coordinates. The copied Need heap already uses those cell identities.
+     * Later source revalidation is still the owning controller's obligation;
+     * it must not rename this captured world into a later live source. */
+    parallel->context.symbol_source = (PrimeSymbolSourceProjection){
+        .target = space_equation_token(parallel->world.space),
+        .instance = symbol_source.instance,
+        .equations = symbol_source.equations,
+        .admission = symbol_source.admission,
+    };
     for (CettaCount i = 0u; i < parallel->world.owned_spaces.len; i++)
         parallel->world.owned_spaces.items[i].petta_program = g_library_context->petta_program;
     Bindings captured;
@@ -646,7 +680,8 @@ static bool prime_native_parallel_force_barrier(
 }
 
 static bool prime_native_parallel_ignore(Arena *arena, Atom *value,
-        const Bindings *environment, void *context) {
+        const Outcome *occurrence, void *context) {
+    const Bindings *environment = &occurrence->env;
     (void)arena; (void)value; (void)environment; (void)context;
     return true;
 }
@@ -900,17 +935,21 @@ static bool prime_native_parallel_publish(PrimeNativeControl *owner,
         owner->failed = true;
         return false;
     }
-    /* The initial profile has one non-overlay source and no external query
-     * owner. Unexpected dependencies remain a refused pending operation;
-     * they never retain a capsule with a dangling borrowed Space. */
-    if(parallel->borrowed_source.root.space && parallel->child->query_read_count) {
-        owner->driver.capacity_blocked=true;return false;
+    /* Ordinary source borrowing also retains the library service context.
+     * Only that context's exact checker space has a known external owner.
+     * Keep every read token; unrelated dependencies remain pending refusals. */
+    if (parallel->borrowed_source.root.space) {
+        for (size_t i=0u;i<parallel->child->query_read_count;i++)
+            if (!prime_native_parallel_borrowed_query_current(
+                    parallel,parallel->child->query_reads[i])) {
+                owner->driver.capacity_blocked=true;return false;
+            }
     }
     if (parallel->child->query_read_count) {
-        /* A read may refer to a private resource created in this executor.
-         * The containing residual retains that resource owner alongside
-         * the imported source token. */
-        if (!arena_retain_owner_with_storage(owner->driver.arena,parallel,
+        /* Owned executor resources need the child retained with the token.
+         * The borrowed checker instead lives in the enclosing library owner. */
+        if (!parallel->borrowed_source.root.space &&
+            !arena_retain_owner_with_storage(owner->driver.arena,parallel,
                 prime_native_parallel_retain,prime_native_parallel_release,
                 prime_native_parallel_owner_storage)) {
             owner->driver.capacity_blocked=true;return false;

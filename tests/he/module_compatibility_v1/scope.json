@@ -1,0 +1,22 @@
+{
+  "module_probes": ["P5", "P6", "P7", "P8", "P9", "P14", "P18"],
+  "deferred_probes": {
+    "P1": "Kernel built-in operation values",
+    "P2": "Constructed operation authority",
+    "P3": "Constructed arithmetic authority",
+    "P4": "Constructed operation equations",
+    "P10": "Kernel operation values across profiles",
+    "P11": "Native-library lexical authority",
+    "P13": "Intrinsic types of operation values",
+    "P15": "eval of the kernel operation value; direct argument refusal is tested by module_operations_v1/own_storage_invalid.metta",
+    "P16": "Closed operation-value equation heads",
+    "P17": "Operation-value result fields"
+  },
+  "deferred_observations": {
+    "P14": [
+      {"query": 0, "source": "!(get-metatype module-space-no-deps)", "reason": "Kernel operation-value representation"},
+      {"query": 23, "source": "!(eval (module-space-no-deps))", "reason": "eval of the kernel operation value; direct arity refusal is tested by module_operations_v1/own_storage_invalid.metta"}
+    ],
+    "P12": "Malformed regex syntax is separate; publication after a failing export is covered by module_failure_v1"
+  }
+}

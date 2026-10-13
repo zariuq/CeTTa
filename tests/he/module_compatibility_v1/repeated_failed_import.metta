@@ -1,0 +1,8 @@
+!(import! &store failure_store)
+!(case (import! &self failure_after_effect) (((Error $a $b) caught) ($other unexpected)))
+!(collapse (match &store (escaped-write) yes))
+!(case (import! &self failure_after_effect) (((Error $a $b) caught) ($other unexpected)))
+!(collapse (match &store (escaped-write) yes))
+!(case (import! &self failure_after_effect) (((Error $a $b) caught) ($other unexpected)))
+!(collapse (match &store (escaped-write) yes))
+!(collapse (match &self (unpublished-fact $x) $x))

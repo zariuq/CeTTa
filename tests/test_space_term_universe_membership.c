@@ -946,6 +946,116 @@ static void test_space_imported_prefix(void) {
            "removal, truncation, copies and overlays\n");
 }
 
+static void test_runtime_symbol_membership(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Space space;
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+
+    Atom *head = atom_symbol(&scratch, "runtime-membership-head");
+    space.kind = SPACE_KIND_STACK;
+    const char bytes[] = {'r', 0, (char)0xff, 'a'};
+    const char different[] = {'r', 0, (char)0xff, 'b'};
+    Atom *value = atom_symbol_data_n(&scratch, bytes, sizeof(bytes));
+    Atom *fact = atom_expr2(&scratch, head, value);
+    Atom *other = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, different, sizeof(different)));
+    space_add(&space, fact);
+    space_add(&space, other);
+    space_add(&space, atom_deep_copy(&scratch, fact));
+    Atom *query = atom_deep_copy(&scratch, fact);
+    Atom *prefix_query = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, bytes, 1u));
+    assert(query != space_get_at64(&space, 0u));
+
+    SymbolTableStats before, after;
+    symbol_table_stats_snapshot(g_symbols, &before);
+    CettaIndex *matches = NULL;
+    assert(space_exact_match_indices64(&space, query, &matches) == 2u);
+    assert(matches[0] == 0u && matches[1] == 2u);
+    free(matches);
+    assert(space_contains_exact(&space, query));
+    assert(space_contains_for_add_nodup(&space, query));
+    assert(!space_contains_exact(&space, prefix_query));
+    bool applicable = false;
+    assert(space_match_exists_ground_exact(&space, query, &applicable));
+    assert(applicable);
+    symbol_table_stats_snapshot(g_symbols, &after);
+    assert(before.owned_count == after.owned_count &&
+           before.data_count == after.data_count);
+
+    /* A spelling retained before registration still matches numbered values.
+       Duplicate rows may use both representations, in authored order. */
+    SymbolId registered = atom_symbol_register_id(value);
+    Atom *numbered = atom_expr2(&scratch, head,
+        atom_symbol_id(&scratch, registered));
+    assert(space_contains_exact(&space, numbered));
+    assert(space_contains_for_add_nodup(&space, numbered));
+    bool canonical_applicable = false;
+    bool canonical_found = space_contains_canonical(
+        &space, numbered, &canonical_applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!canonical_found && !canonical_applicable);
+    assert(space.native.id_present_incomplete);
+#else
+    assert(canonical_found && canonical_applicable);
+#endif
+    space_add(&space, numbered);
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+    assert(space_exact_match_indices64(&space, query, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+
+    /* Numeric-only coordinate accelerators must decline an incomplete view. */
+    Atom *arguments[] = {numbered->expr.elems[1]};
+    bool coordinate_found = space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+    coordinate_found = space_match_exists_ground_exact_expression_coordinates(
+        &space, numbered->expr.elems, numbered->expr.len, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+
+    /* Content equality also composes through nested expressions and overlays. */
+    Atom *nested = atom_expr2(&scratch, head, query);
+    space_add(&space, nested);
+    assert_exact_match_one(&space, atom_deep_copy(&scratch, nested), 4u);
+    Space overlay;
+    space_init_overlay(&overlay, &space);
+    assert(space_contains_exact(&overlay, atom_deep_copy(&scratch, nested)));
+    space_free(&overlay);
+
+    assert(space_remove(&space, numbered));
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 2u);
+    assert(matches[0] == 1u && matches[1] == 2u);
+    free(matches);
+    assert(space_truncate64(&space, 0u));
+    assert(!space_contains_exact(&space, numbered));
+    assert(!space.native.id_present_incomplete);
+    space_add(&space, numbered);
+    assert(space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable));
+    assert(applicable);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: runtime spelling membership, mixed keys, duplicates and mutation");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -959,6 +1069,7 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_runtime_symbol_membership();
     test_space_imported_prefix();
     test_space_equation_projection_tokens();
     test_space_program_projection_tokens();
@@ -2328,6 +2439,228 @@ int main(void) {
             atom_symbol(&scratch_d, "OpenTagType")));
         assert(space_type_annotation_may_match_subject(&declarations, head));
         space_free(&declarations);
+    }
+
+    /* An own-storage view is live, keeps occurrence multiplicity and owns
+     * neither the module nor its dependencies. Existing revision tokens
+     * must notice mutations through either alias. */
+    {
+        Space owner, dependency, own;
+        space_init_with_universe(&owner, &universe);
+        space_init_with_universe(&dependency, &universe);
+        Atom *prefix = atom_int(&scratch_d, 100);
+        assert(!atom_is_symbol(NULL, "rho:nil"));
+        assert(!atom_is_symbol(prefix, "rho:nil"));
+        assert(!atom_is_symbol(atom_string(&scratch_d, "rho:nil"), "rho:nil"));
+        assert(atom_is_symbol(atom_symbol(&scratch_d, "rho:nil"), "rho:nil"));
+        assert(!atom_is_symbol(atom_symbol(&scratch_d, "rho:cost:nil"), "rho:nil"));
+        _Alignas(16) static const char nearby_literals[] = "view-a\0view-b";
+        Atom *literal_a = atom_symbol(&scratch_d, nearby_literals);
+        Atom *literal_b = atom_symbol(&scratch_d, nearby_literals + 7u);
+        for (uint32_t i = 0u; i < 20u; i++) {
+            assert(atom_is_symbol(literal_a, nearby_literals));
+            assert(atom_is_symbol(literal_b, nearby_literals + 7u));
+            assert(!atom_is_symbol(literal_a, nearby_literals + 7u));
+        }
+        Atom *first = atom_int(&scratch_d, 17);
+        Atom *second = atom_int(&scratch_d, 19);
+        Atom *added = atom_int(&scratch_d, 13);
+        space_add(&owner, prefix);
+        assert(space_mark_imported_prefix(&owner));
+        space_add(&owner, first);
+        space_add(&owner, first);
+        space_add(&owner, second);
+        space_add(&dependency, atom_int(&scratch_d, 97));
+        assert(space_add_dependency(&owner, &dependency));
+        assert(space_init_module_own_view(&own, &owner));
+        assert(space_view_length64(&owner) == 5u);
+        assert(space_length64(&own) == 3u);
+        assert(space_view_length64(&own) == 3u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_imported_length(&own) == 0u);
+        assert(atom_eq(space_get_at64(&own, 0u), first));
+        assert(atom_eq(space_get_at64(&own, 1u), first));
+        assert(!space_add_dependency(&own, &dependency));
+        SpaceReadToken read = space_read_token(&own);
+        SpaceProgramToken program = space_program_token(&own);
+        space_add(&owner, added);
+        assert(space_length64(&own) == 4u);
+        assert(!space_read_token_is_current(read));
+        assert(space_read_token_prefix_intact(read));
+        space_add(&own, atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon),
+            atom_symbol(&scratch_d, "own-view-subject"),
+            atom_symbol(&scratch_d, "OwnViewType")));
+        assert(!space_program_token_is_current(program));
+        assert(space_length64(&owner) == 6u);
+        Space *outer_work = space_heap_clone_shallow(&owner);
+        assert(outer_work);
+        assert(space_module_own_view_select(&own, outer_work));
+        space_add(&own, atom_int(&scratch_d, 23));
+        assert(space_length64(&owner) == 6u);
+        assert(space_length64(&own) == 6u);
+        Space *inner_work = space_heap_clone_shallow(outer_work);
+        assert(inner_work);
+        assert(space_module_own_view_select(&own, inner_work));
+        read = space_read_token(&own);
+        space_add(&own, atom_int(&scratch_d, 29));
+        assert(!space_read_token_is_current(read));
+        assert(space_length64(&own) == 7u);
+        assert(space_module_own_view_select(&own, outer_work));
+        space_module_own_view_release(&own, inner_work);
+        space_free(inner_work);
+        free(inner_work);
+        assert(space_length64(&own) == 6u);
+        assert(space_module_own_view_select(&own, &owner));
+        space_module_own_view_release(&own, outer_work);
+        space_free(outer_work);
+        free(outer_work);
+        assert(space_length64(&own) == 5u);
+        assert(space_dependency_count(&own) == 0u);
+        /* Lifetime cleanup must also unwind a selected temporary storage
+           without exposing the remaining observation links as imports. */
+        outer_work = space_heap_clone_shallow(&owner);
+        assert(outer_work && space_module_own_view_select(&own, outer_work));
+        space_add(&own, atom_int(&scratch_d, 23));
+        inner_work = space_heap_clone_shallow(outer_work);
+        assert(inner_work && space_module_own_view_select(&own, inner_work));
+        space_add(&own, atom_int(&scratch_d, 29));
+        read = space_read_token(&own);
+        space_free(inner_work);
+        free(inner_work);
+        assert(!space_read_token_is_current(read));
+        assert(own.overlay_base == outer_work);
+        assert(space_length64(&own) == 6u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_dependency_at(&own, 0u) == NULL);
+        space_free(outer_work);
+        free(outer_work);
+        assert(own.overlay_base == &owner);
+        assert(space_length64(&own) == 5u);
+        assert(space_dependency_count(&own) == 0u);
+        assert(space_remove(&own, first));
+        assert(space_length64(&own) == 4u);
+        uint32_t first_count = 0u, second_count = 0u;
+        uint8_t mask[4] = {0};
+        for (CettaIndex i = 0u; i < space_length64(&own); i++) {
+            Atom *row = space_get_at64(&own, i);
+            first_count += atom_eq(row, first);
+            if (atom_eq(row, second)) {
+                second_count++;
+                mask[i] = 1u;
+            }
+        }
+        assert(first_count == 1u && second_count == 1u);
+        assert(!space_remove(&own, prefix));
+        CettaCount removed = 0u;
+        assert(space_remove_occurrence_mask_stable(
+            &own, mask, sizeof(mask), &removed));
+        assert(removed == 1u && space_length64(&own) == 3u);
+        assert(atom_eq(space_get_at64(&owner, 0u), prefix));
+        Atom *retained = space_get_at64(&own, 0u);
+        assert(space_truncate64(&own, 1u));
+        assert(space_length64(&own) == 1u);
+        assert(space_length64(&owner) == 2u);
+        Atom *popped = NULL;
+        assert(space_pop(&own, &popped) && atom_eq(popped, retained));
+        assert(!space_pop(&own, &popped));
+        assert(space_length64(&owner) == 1u);
+        space_free(&owner);
+        assert(own.overlay_base == NULL);
+        assert(space_length64(&own) == 0u);
+        assert(!space_admit_atom(&own, &scratch_d, added));
+        space_add(&own, added);
+        assert(space_length64(&own) == 0u);
+        space_free(&own);
+        space_free(&dependency);
+    }
+
+    /* A nullary arrow supplies the source call's result type without
+     * evaluating its body, just as a non-nullary signature does. */
+    {
+        Space declarations;
+        space_init_with_universe(&declarations, &universe);
+        Atom *subject = atom_symbol(&scratch_d, "own-view-zero");
+        Atom *number = atom_symbol(&scratch_d, "Number");
+        space_add(&declarations, atom_expr3(&scratch_d,
+            atom_symbol_id(&scratch_d, g_builtin_syms.colon), subject,
+            atom_expr2(&scratch_d,
+                atom_symbol_id(&scratch_d, g_builtin_syms.arrow), number)));
+        Atom **types = NULL;
+        uint32_t count = get_atom_types(&declarations, &scratch_d,
+            atom_expr(&scratch_d, &subject, 1u), &types);
+        assert(count == 1u && atom_eq(types[0], number));
+        free(types);
+        space_free(&declarations);
+    }
+
+    /* Fixed grounded types retain the original values while their literal
+     * spellings reuse the symbol cache. Mutable state content is not cached. */
+    {
+        const struct { GroundedKind kind; const char *name; } scalars[] = {
+            {GV_INT, "Number"}, {GV_BIGINT, "Number"},
+            {GV_RATIONAL, "Number"}, {GV_FLOAT, "Number"},
+            {GV_BOOL, "Bool"}, {GV_STRING, "String"},
+            {GV_BINDINGS, "Bindings"}, {GV_FOREIGN, "Foreign"},
+            {GV_TERM_GRAPH, "Expression"},
+            {GV_PRIME_NEED_CAPABILITY, "PrimeNeedCapability"},
+            {GV_PRIME_CONTEXT, "context"},
+        };
+        for (size_t i = 0u; i < sizeof(scalars) / sizeof(scalars[0]); i++) {
+            Atom value = {.kind = ATOM_GROUNDED};
+            value.ground.gkind = scalars[i].kind;
+            Atom *expected = atom_symbol(&scratch_d, scalars[i].name);
+            assert(atom_eq(get_grounded_type(&scratch_d, &value), expected));
+            assert(atom_eq(get_grounded_type(&scratch_d, &value), expected));
+        }
+        assert(!atom_eq(get_grounded_type(&scratch_d, atom_int(&scratch_d, 3)),
+                        get_grounded_type(&scratch_d, atom_bool(&scratch_d, true))));
+        StateCell state = {.content_type = atom_undefined_type(&scratch_d)};
+        Atom *state_value = atom_state(&scratch_d, &state);
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+                       atom_symbol(&scratch_d, "State")));
+        state.content_type = atom_symbol(&scratch_d, "Number");
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "StateMonad"),
+                       state.content_type)));
+        state.content_type = atom_symbol(&scratch_d, "Bool");
+        assert(atom_eq(get_grounded_type(&scratch_d, state_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "StateMonad"),
+                       state.content_type)));
+        Space typed_space;
+        space_init_with_universe(&typed_space, &universe);
+        Atom *space_value = atom_space(&scratch_d, &typed_space);
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "atom"))));
+        const struct { SpaceKind kind; const char *name; } kinds[] = {
+            {SPACE_KIND_STACK, "stack"}, {SPACE_KIND_QUEUE, "queue"},
+            {SPACE_KIND_HASH, "hash"},
+        };
+        for (size_t i = 0u; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+            typed_space.kind = kinds[i].kind;
+            assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+                atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                           atom_symbol(&scratch_d, kinds[i].name))));
+        }
+        typed_space.kind = SPACE_KIND_ATOM;
+        typed_space.match_backend.kind = SPACE_ENGINE_PATHMAP;
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "pathmap"))));
+        typed_space.match_backend.kind = SPACE_ENGINE_MORK;
+        assert(atom_eq(get_grounded_type(&scratch_d, space_value),
+            atom_expr2(&scratch_d, atom_symbol(&scratch_d, "Space"),
+                       atom_symbol(&scratch_d, "pathmap"))));
+        typed_space.match_backend.kind = SPACE_ENGINE_NATIVE;
+        space_free(&typed_space);
+        assert(atom_eq(get_grounded_type(&scratch_d,
+                                         atom_capture(&scratch_d, NULL)),
+            atom_expr3(&scratch_d, atom_symbol(&scratch_d, "->"),
+                       atom_atom_type(&scratch_d), atom_atom_type(&scratch_d))));
+        assert(atom_eq(get_grounded_type(&scratch_d,
+                                        atom_symbol(&scratch_d, "not-grounded")),
+                       atom_undefined_type(&scratch_d)));
     }
 
     space_free(&right);

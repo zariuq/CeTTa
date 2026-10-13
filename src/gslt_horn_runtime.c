@@ -479,7 +479,7 @@ static bool horn_program_add_quoted_rule(
             &program->arena, clause_items,
             (CettaExprLen)(body_count + 2u)),
         .name = name_copy,
-        .head = head->expr.elems[0]->sym_id,
+        .head = atom_symbol_current_id(head->expr.elems[0]),
         .arity = (CettaExprLen)(head->expr.len - 1u),
     };
     GsltHornBucket *bucket = horn_bucket(
@@ -636,7 +636,7 @@ static const GsltHornBucket *horn_find_bucket(
     if (!goal || goal->kind != ATOM_EXPR || goal->expr.len == 0u ||
         goal->expr.elems[0]->kind != ATOM_SYMBOL)
         return NULL;
-    SymbolId head = goal->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(goal->expr.elems[0]);
     CettaExprLen arity = (CettaExprLen)(goal->expr.len - 1u);
     for (uint32_t index = 0u; index < program->bucket_count; index++) {
         const GsltHornBucket *bucket = &program->buckets[index];
@@ -827,8 +827,7 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
             if (!provider || !answer || answer->kind != ATOM_EXPR ||
                 answer->expr.len != frame->goal->expr.len ||
                 answer->expr.elems[0]->kind != ATOM_SYMBOL ||
-                answer->expr.elems[0]->sym_id !=
-                    frame->goal->expr.elems[0]->sym_id) {
+                !atom_symbols_equal(answer->expr.elems[0], frame->goal->expr.elems[0])) {
                 if (provider) {
                     (void)horn_error(
                         run->error, run->error_size,

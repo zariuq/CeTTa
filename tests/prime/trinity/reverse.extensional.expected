@@ -16,7 +16,7 @@
 [True]
 [True]
 [True]
-[(set:proves &self (quote (pf:by rev-is-rev-onto)) (quote (eq list (rev (cons zero (cons (suc zero) nil))) (rev-onto nil (cons (suc zero) (cons zero nil))))))]
+[(hol:proves &self (quote (pf:by rev-is-rev-onto)) (quote (eq list (rev (cons zero (cons (suc zero) nil))) (rev-onto nil (cons (suc zero) (cons zero nil))))))]
 [False]
 [False]
 [wrong-rev-identity]

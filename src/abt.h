@@ -55,6 +55,7 @@ typedef enum {
     ABT_NAME_SYMBOL_INITIAL,
     ABT_NAME_SYMBOL_PREFIX,
     ABT_NAME_STRING_INITIAL,
+    ABT_NAME_LOGICAL_VARIABLE,
 } AbtNameClassKind;
 
 typedef struct {
@@ -85,6 +86,11 @@ typedef struct {
 
 void abt_signature_init(AbtSignature *signature);
 void abt_signature_free(AbtSignature *signature);
+
+/* The canonical declared-scope reading used by named alpha equality, with
+ * an explicit newest-first ambient frame. Leaves free names unresolved. */
+Atom *abt_contextual_canonical(const AbtSignature *signature, Arena *arena,
+                               Atom *context, Atom *term);
 /* A fixed entry: field i of `head` applied to `arity` fields crosses
    depths[i] binders.  Refuses a head and arity already declared. */
 bool abt_signature_add_fixed(AbtSignature *signature, SymbolId head,
@@ -147,14 +153,18 @@ const AbtSignatureEntry *abt_signature_lookup(const AbtSignature *signature,
      (SymbolInitial "A" "Z")  symbols whose first byte is in that range
      (SymbolPrefix "?")       symbols that begin with the text
      (StringInitial "A" "Z")  strings whose first byte is in that range
+     Variables               identity-bearing logical variable atoms
 
-   A binder's name is a symbol, a string, or an expression of symbols that
-   ends in one string, such as (var "X").  A fresh name keeps that shape
-   and replaces the text's trailing digits by a number.
+   A binder's name is a logical variable, a symbol, a string, or an expression
+   of symbols ending in one string, such as (var "X"). Fresh logical variables
+   retain their presentation and receive private identities. Fresh nominal
+   names keep their shape and replace trailing digits by a number.
 
-   Named operations take terms in which binders carry their names.  They
-   are defined for signatures whose binding entries are all of these two
-   kinds. */
+   Named operations take terms in which binders carry their names. They are
+   defined for signatures whose binding entries are all of these two kinds.
+   Undeclared constructors are structural data with no introduced names; a
+   declared binding constructor at an undeclared arity is malformed. Complete
+   language admission belongs to the caller's language definition. */
 bool abt_is_name(const AbtSignature *signature, const Atom *atom);
 
 /* The distinct free variable names of term, in first-occurrence order, as
@@ -164,8 +174,8 @@ Atom *abt_free_names(const AbtSignature *signature, Arena *arena, Atom *term);
 /* Simultaneous capture-avoiding substitution of free names.  bindings is
    an expression of (NAME VALUE) pairs with distinct names.  A binder is
    renamed only when its name occurs free in a value that is substituted
-   inside its scope; the new name is the old one with a numeric suffix and
-   occurs nowhere in the term or the values. */
+   inside its scope. Its private identity or fresh nominal spelling occurs
+   nowhere in the term or the values. */
 Atom *abt_substitute(const AbtSignature *signature, Arena *arena,
                      Atom *bindings, Atom *term);
 
@@ -175,6 +185,17 @@ Atom *abt_substitute(const AbtSignature *signature, Arena *arena,
    name of term, and none of avoid. */
 Atom *abt_rename_bound(const AbtSignature *signature, Arena *arena,
                        Atom *avoid, Atom *term);
+
+/* Instantiate a declared binding term as data. Each logical-variable binder
+   gets a private identity from the same allocator as Prime's `new`. Nominal
+   binders are renamed away from all input and avoid names, retaining their
+   presentation. Free names are unchanged; each binding occurrence has its own
+   receipt, including repeated source names in separate scopes. The result is
+   (AbtInstance TERM (AbtBindings (AbtBinding ordinal source target) ...)).
+   Nominal freshness is relative to term and avoid; separate nominal instances
+   must include earlier names in avoid when disjoint spellings are required. */
+Atom *abt_instantiate(const AbtSignature *signature, Arena *arena,
+                      Atom *avoid, Atom *term);
 
 /* Equality up to the names of binders.  Sets *equal; false when either
    term or the signature is malformed. */

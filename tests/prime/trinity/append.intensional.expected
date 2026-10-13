@@ -35,7 +35,7 @@
 [True]
 [(Refuted (reflexivity-endpoint-mismatch))]
 [False]
-[(Refuted (set:declaration-check (Lam num (Lam list (App wrong-step (idx 0)))) (type-mismatch)))]
+[(Refuted (hol:declaration-check (Lam num (Lam list (App wrong-step (idx 0)))) (type-mismatch)))]
 [Refuted]
 [Refuted]
 [False]

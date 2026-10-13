@@ -96,7 +96,7 @@ BindingsFrameSchema *bindings_frame_schema_new_presented(
             bindings_frame_schema_release(schema);
             return NULL;
         }
-        schema->spellings[slot] = variable->sym_id;
+        schema->spellings[slot] = atom_symbol_current_id(variable);
         schema->name_keys[slot] = variable->name_key;
     }
     return schema;
@@ -166,24 +166,41 @@ BindingsFrameSchema *bindings_frame_schema_clone(
 
 static const char bindings_frame_schema_copy_kind;
 
+static void bindings_frame_schema_copy_retain(const void *schema) {
+    bindings_frame_schema_retain((BindingsFrameSchema *)schema);
+}
+
+static void bindings_frame_schema_copy_release(const void *schema) {
+    bindings_frame_schema_release((BindingsFrameSchema *)schema);
+}
+
 BindingsFrameSchema *bindings_frame_schema_copy_lookup(
     const BindingsFrameSchema *source, const AtomDeepCopySession *atoms) {
-    if (!source || !atoms || source->len > source->cap ||
+    if (!source || !atoms ||
+        !atom_deep_copy_session_object_current(atoms, &bindings_frame_schema_copy_kind, source) ||
+        source->len > source->cap ||
         (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
         return NULL;
     size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
-    return atom_deep_copy_session_object_forwarded(
-        atoms,&bindings_frame_schema_copy_kind,source,bytes);
+    BindingsFrameSchema *known = atom_deep_copy_session_object_forwarded(
+        atoms, &bindings_frame_schema_copy_kind, source, bytes);
+    if (known) return known;
+    /* An image encountered by another root is already in this graph.
+     * Inverse lookup validates the same destination/map epoch. */
+    return atom_deep_copy_session_object_original(
+        atoms, &bindings_frame_schema_copy_kind, source, bytes)
+        ? (BindingsFrameSchema *)source : NULL;
 }
 
 BindingsFrameSchema *bindings_frame_schema_copy_with_session(
     const BindingsFrameSchema *source, AtomDeepCopySession *atoms) {
-    if (!source || !atoms || source->len > source->cap ||
+    if (!source || !atoms ||
+        !atom_deep_copy_session_object_current(atoms, &bindings_frame_schema_copy_kind, source) ||
+        source->len > source->cap ||
         (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
         return NULL;
     size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
-    BindingsFrameSchema *known=atom_deep_copy_session_object_forwarded(
-        atoms,&bindings_frame_schema_copy_kind,source,bytes);
+    BindingsFrameSchema *known=bindings_frame_schema_copy_lookup(source,atoms);
     if(known){bindings_frame_schema_retain(known);return known;}
     BindingsFrameSchema *image=bindings_frame_schema_clone(source);
     if(!image)return NULL;
@@ -192,8 +209,9 @@ BindingsFrameSchema *bindings_frame_schema_copy_with_session(
         image->name_keys[i]=atom_deep_copy_session_copy(atoms,source->name_keys[i]);
         if(!image->name_keys[i])goto fail;
     }
-    if(!atom_deep_copy_session_object_record(atoms,&bindings_frame_schema_copy_kind,
-            source,image,bytes))goto fail;
+    if(!atom_deep_copy_session_object_record_retained(atoms,&bindings_frame_schema_copy_kind,
+            source,image,bytes,bindings_frame_schema_copy_retain,
+            bindings_frame_schema_copy_release))goto fail;
     return image;
 fail:
     bindings_frame_schema_release(image);

@@ -65,6 +65,11 @@ static bool prime_replay_compare_outcomes(const OutcomeSet *a,const OutcomeSet *
     for(CettaCount i=0u;i<a->len;i++) {
         const Outcome *x=&a->items[i],*y=&b->items[i];
         RC_S("outcomes.index",i,i);RC_S("outcome.kind",x->kind,y->kind);
+        RC_S("outcome.result_form",x->result_form,y->result_form);
+        if ((x->result_form != CETTA_CALL_RESULT_EXPRESSION &&
+             x->result_form != CETTA_CALL_RESULT_COMPLETED_VALUE) ||
+            (y->result_form != CETTA_CALL_RESULT_EXPRESSION &&
+             y->result_form != CETTA_CALL_RESULT_COMPLETED_VALUE)) return false;
         RC_A("outcome.atom",x->atom,y->atom);RC_A("outcome.materialized",x->materialized_atom,y->materialized_atom);
         RC_A("outcome.delayed",x->delayed,y->delayed);
         /* Answer-bank references have a separate mutable provider. The pure
@@ -97,6 +102,9 @@ static bool prime_replay_compare_task(const PrimeEvalStackTask *a,const PrimeEva
 static bool prime_replay_compare_cell(const PrimeNeedCellView *a,const PrimeNeedCellView *b,
     const CettaCheckpointCompare *read) {
     RC_S("cell.state",a->cache_state,b->cache_state);RC_A("cell.origin",a->origin,b->origin);
+    RC_S("cell.value_role",a->value_role,b->value_role);
+    RC_I("cell.value_producer",CETTA_CHECKPOINT_NEED_THUNK,a->value_producer_thunk,b->value_producer_thunk);
+    RC_I("cell.value_producer_update",CETTA_CHECKPOINT_NEED_SERIAL,a->value_producer_update,b->value_producer_update);
     RC_A("cell.cached",a->cached,b->cached);
     RC_I("cell.authority",CETTA_CHECKPOINT_NEED_AUTHORITY,a->authority_id,b->authority_id);
     RC_I("cell.evaluator",CETTA_CHECKPOINT_NEED_EVALUATOR,a->evaluator_id,b->evaluator_id);
@@ -178,6 +186,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RF(control_generation);RF(dialect_source_success);RF(dialect_source_is_call);RF(dialect_error_index);
     RF(kind);RF(pure_authority);RF(state);RF(fuel);RF(preserve_bindings);RF(env_initialized);RF(child_initialized);
     RF(index);RF(branch_index);RF(variable_branches_active);RF(normalization_child_index);RF(tuple_bind);
+    RF(normalization_value_ready);RF(normalization_return_value_ready);RF(normalization_result_form);
     RF(strict_argument);RF(strict_mode);RF(strict_error_is_data);RF(weight_index);RF(weight_ownership_parked);
     RF(source_argument_universal_demand);RF(stream_forwarded);
 #undef RF
@@ -191,6 +200,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RC_I("frame.nested_handle",CETTA_CHECKPOINT_NATIVE_HANDLE,a->control_nested_handle,b->control_nested_handle);
     RC_I("frame.weight_dependency",CETTA_CHECKPOINT_SOURCE_OCCURRENCE,a->weight_dependency,b->weight_dependency);
     RC_I("frame.thunk",CETTA_CHECKPOINT_NEED_THUNK,a->thunk_id,b->thunk_id);
+    RC_I("frame.value_producer",CETTA_CHECKPOINT_NEED_THUNK,a->value_producer_thunk,b->value_producer_thunk);
     RC_I("frame.previous_evaluator",CETTA_CHECKPOINT_NEED_EVALUATOR,a->previous_evaluator_id,b->previous_evaluator_id);
     RC_I("frame.evaluator",CETTA_CHECKPOINT_NEED_EVALUATOR,a->evaluator_id,b->evaluator_id);
     if(a->control_retired!=b->control_retired)return false;
@@ -205,7 +215,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
             !a->normalization_children&&!b->normalization_children;
     }
     if(a->space!=b->space||a->control_nested||b->control_nested||a->match_rows||b->match_rows||
-        a->dialect_source||b->dialect_source||a->dialect_return_advice_length||b->dialect_return_advice_length)
+        a->dialect_source||b->dialect_source||a->control_return_advice_length||b->control_return_advice_length)
         return false;
     if(a->control_child_bound_length>a->control_child_bound_capacity||
         b->control_child_bound_length>b->control_child_bound_capacity||
@@ -214,7 +224,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RC_P("frame.space",a->space,b->space);if(!read->arena(read->context,"frame.arena",a->arena,b->arena))return false;
     RC_P("frame.target",a->target,b->target);if(!read->arena(read->context,"frame.heap_owner",a->heap_owner,b->heap_owner))return false;
     RC_P("frame.advice",a->control_advice,b->control_advice);
-    RC_F("frame.dialect_advice_capacity",a->dialect_return_advice_capacity,b->dialect_return_advice_capacity);
+    RC_F("frame.dialect_advice_capacity",a->control_return_advice_capacity,b->control_return_advice_capacity);
 #define FA(f) RC_A("frame."#f,a->f,b->f)
     FA(control_key);FA(control_bound);FA(atom);FA(etype);FA(strict_source);FA(then_branch);FA(else_branch);
     FA(weight_subject);FA(weight_algebra);FA(weight_trace);FA(ref);
@@ -529,7 +539,7 @@ static bool prime_replay_compare_driver(const PrimeEvalStackDriver *a,
 #define DD(f) RC_FIELDS("driver",a,b,f)
     DD(task_ready);DD(raw_call_depth);DD(bind_depth);DD(poison_depth);DD(running_bind_task);
     DD(pure_authority);DD(running_task);DD(heap_phase);DD(collection_admitted);DD(failed);DD(capacity_blocked);
-    DD(ownership_parked);DD(first_answer);DD(nested);DD(root_call_running);DD(frame_depth);
+    DD(ownership_parked);DD(streaming);DD(answer_limit);DD(nested);DD(root_call_running);DD(frame_depth);
     DD(gc_survivor_floor_bytes);DD(continuation_generation);
 #undef DD
     if(a->task_ready!=b->task_ready)return false;

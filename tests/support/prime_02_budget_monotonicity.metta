@@ -12,9 +12,9 @@
 (= (only) Z)
 
 (= (delayed-value $n)
-   (if (== $n 0) Truth (delayed-value (- $n 1))))
+   (if (== $n 0) (Sort (LevelConst 1)) (delayed-value (- $n 1))))
 (= (delayed-answer)
-   (superpose (Z (delayed-value 600))))
+   (superpose ((Sort (LevelConst 0)) (delayed-value 600))))
 
 ; Each label is sampled at increasing caller-declared producer budgets. The
 ; checker below observes the public three-way contract: True and False are
@@ -103,14 +103,16 @@
    (BudgetObservation ConvertBinders 256 $result))
 
 ; This family refines from an inert resource-bound result to a witnessed
-; counterexample as the explicit producer budget increases.
-!(let $result (type:must (delayed-answer) Nat 100)
+; counterexample as the explicit producer budget increases. The regular kernel
+; checks Sort 0 : Sort 1 and refutes Sort 1 : Sort 1; a legacy HE type
+; mismatch alone does not authorize a Prime refutation.
+!(let $result (type:must (delayed-answer) (Sort (LevelConst 1)) 100)
    (BudgetObservation DelayedCounterexample 100 $result))
-!(let $result (type:must (delayed-answer) Nat 520)
+!(let $result (type:must (delayed-answer) (Sort (LevelConst 1)) 520)
    (BudgetObservation DelayedCounterexample 520 $result))
-!(let $result (type:must (delayed-answer) Nat 2000)
+!(let $result (type:must (delayed-answer) (Sort (LevelConst 1)) 2000)
    (BudgetObservation DelayedCounterexample 2000 $result))
-!(let $result (type:must (delayed-answer) Nat 20000)
+!(let $result (type:must (delayed-answer) (Sort (LevelConst 1)) 20000)
    (BudgetObservation DelayedCounterexample 20000 $result))
 
 ; Cumulative subtyping spends the same producer budget: a family into Sort 0

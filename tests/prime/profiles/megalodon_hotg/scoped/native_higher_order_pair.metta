@@ -1,4 +1,4 @@
-(set:profile megalodon-hotg)
+(hol:profile megalodon-hotg)
 
 ; A higher-order pair update composed inside a retained-proof consumer.
 ; The set-valued pair is computed, while the other component retains an
@@ -7,7 +7,7 @@
 ; this exercises checking, not reconstruction of a dependent pair type.
 ; In the kernel's spelling the sort of all sets, `set`, is
 ; (Sort (LevelAbove 0)), and its sort, `class`, is (Sort (LevelAbove 1)).
-!(set:theorem pair-consumer-law (all prop (lam p (imp p p)))
+!(hol:theorem pair-consumer-law (all prop (lam p (imp p p)))
   (pf:all-intro (pf:imp-intro (pf:hyp 0))))
 
 (= (update-first)
@@ -20,16 +20,16 @@
    (let $update (update-first) (App (App $update $function) $pair)))
 
 (= (checked-pair-update $theorem $function)
- (let $package (set:native-proof $theorem)
-  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+ (let $package (hol:native-proof $theorem)
+  (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
     (let $pair (Pair (DeclConst Empty) (App (DeclConst Power) (DeclConst Empty)))
       (let $updated (update-pair $function $pair)
         (let $consumer (Lam $type
           (App (Lam (Sigma (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
                           (Id $type (idx 1) (idx 1))) (idx 0))
                (Pair $updated (Refl (idx 0)))))
-          (let (SetNativeNormalFormV1 $checked $body $application $normal $original-type $result-type)
-               (set:native-normalize $package $consumer)
+          (let (HolNativeNormalFormV1 $checked $body $application $normal $original-type $result-type)
+               (hol:native-normalize $package $consumer)
             (let (Pair $values $witness) $normal
               (let (Sigma $pair-type (Id $proof-type $left $right)) $result-type
               (NativeHigherOrderPair $name
@@ -44,11 +44,11 @@
 ; A function over proofs is not a set transformer, even if its erased
 ; lambda body is the same identity term.
 (= (wrong-pair-update $theorem)
- (let $package (set:native-proof $theorem)
-  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+ (let $package (hol:native-proof $theorem)
+  (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
     (let $pair (Pair (DeclConst Empty) (App (DeclConst Power) (DeclConst Empty)))
       (let $updated (update-pair (Lam $type (idx 0)) $pair)
-        (let $bad (try (set:native-normalize $package
+        (let $bad (try (hol:native-normalize $package
                       (Lam $type
                         (App (Lam (Sigma (Sigma (Sort (LevelAbove 0)) (Sort (LevelAbove 0)))
                                         (Id $type (idx 1) (idx 1))) (idx 0))
@@ -72,11 +72,11 @@
       (TypeFamilySpecialization $result))))
 
 ; A function returning an identity proof is not a family of types.
-!(let $package (set:native-proof pair-consumer-law)
-  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof pair-consumer-law)
+  (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
     (let $specializer (family-identity (DeclConst Empty))
       (let $not-a-type-family (Lam (Sort (LevelAbove 0)) (Refl (DeclConst Empty)))
-        (let $bad (try (set:native-use $package
+        (let $bad (try (hol:native-use $package
           (Lam $type (App (App $specializer $not-a-type-family) (DeclConst Empty)))))
           (TypeFamilyRejection (car-atom $bad)))))))
 
@@ -93,14 +93,14 @@
             (Refl (idx 0)))))))
 
 (= (checked-universe-domain-pair $theorem)
- (let $package (set:native-proof $theorem)
-  (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+ (let $package (hol:native-proof $theorem)
+  (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
    (let $lower (universe-pair-consumer $type (Sort (LevelConst 0)) (DeclConst prop))
     (let $upper (universe-pair-consumer $type (Sort (LevelConst 1)) (DeclConst prop))
-     (let (SetNativeNormalFormV1 $checked-l $body-l $app-l $normal-l $source-l $type-l)
-          (set:native-normalize $package $lower)
-      (let (SetNativeNormalFormV1 $checked-r $body-r $app-r $normal-r $source-r $type-r)
-           (set:native-normalize $package $upper)
+     (let (HolNativeNormalFormV1 $checked-l $body-l $app-l $normal-l $source-l $type-l)
+          (hol:native-normalize $package $lower)
+      (let (HolNativeNormalFormV1 $checked-r $body-r $app-r $normal-r $source-r $type-r)
+           (hol:native-normalize $package $upper)
        (UniverseDomainPair $name
          (== $checked-l $package) (== $checked-r $package)
          (== $normal-l $normal-r) (== $type-l $type-r)
@@ -111,8 +111,8 @@
 
 ; A universe is not an element of itself. The smaller-domain program must
 ; reject this input even though erasing the types would leave a beta redex.
-!(let $package (set:native-proof pair-consumer-law)
- (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
+!(let $package (hol:native-proof pair-consumer-law)
+ (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest) $package
   (let $invalid (universe-pair-consumer $type (Sort (LevelConst 0)) (Sort (LevelConst 0)))
-   (let $bad (try (set:native-normalize $package $invalid))
+   (let $bad (try (hol:native-normalize $package $invalid))
     (UniverseDomainRejection (car-atom $bad))))))

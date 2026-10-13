@@ -280,7 +280,7 @@ bool he_library_names_subject(const Atom *subject) {
         return false;
     for (size_t i = 0u; i < sizeof g_he_library_undeclared /
                             sizeof g_he_library_undeclared[0]; i++) {
-        if (subject->sym_id == g_he_library_undeclared[i])
+        if (atom_symbol_current_id(subject) == g_he_library_undeclared[i])
             return true;
     }
     return false;
@@ -310,6 +310,7 @@ bool he_library_declares_arity(const Atom *subject, CettaExprLen arity) {
     return false;
 }
 
+SymbolId g_he_module_space_no_deps_symbol = SYMBOL_ID_NONE;
 static bool g_he_tables_loaded;
 static pthread_once_t g_he_tables_once = PTHREAD_ONCE_INIT;
 
@@ -342,7 +343,9 @@ static void he_library_tables_build(void) {
                              HE_GROUNDED_EXTENSION_TYPES[i].type, true))
             return;
     }
-    g_he_tables_loaded = true;
+    g_he_module_space_no_deps_symbol =
+        symbol_lookup_cstr(g_symbols, "module-space-no-deps");
+    g_he_tables_loaded = g_he_module_space_no_deps_symbol != SYMBOL_ID_NONE;
 }
 
 bool he_library_tables_init(void) {
@@ -363,19 +366,35 @@ uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
     return count;
 }
 
-HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
-                            Atom *metatype) {
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
-        atom_eq(expected, metatype) ||
+static HeTypeDemand he_type_demand_after_atom(
+    const Atom *subject, Atom *expected, bool same_metatype, bool variable) {
+    if (same_metatype ||
         (atom_is_symbol_id(expected, g_builtin_syms.expression) &&
-         atom_is_list(subject)) ||
-        atom_is_symbol_id(metatype, g_builtin_syms.variable))
+         atom_is_list(subject)) || variable)
         return HE_TYPE_KEEP;
     if (subject->kind == ATOM_SYMBOL || subject->kind == ATOM_GROUNDED ||
         (subject->kind == ATOM_EXPR && subject->expr.len == 0u) ||
         atom_is_list_form(subject))
         return HE_TYPE_CAST;
     return HE_TYPE_INTERPRET;
+}
+
+HeTypeDemand he_type_demand(const Atom *subject, Atom *expected,
+                            Atom *metatype) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom))
+        return HE_TYPE_KEEP;
+    return he_type_demand_after_atom(subject, expected,
+        atom_eq(expected, metatype),
+        atom_is_symbol_id(metatype, g_builtin_syms.variable));
+}
+
+HeTypeDemand he_type_source_demand(const Atom *subject, Atom *expected) {
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom))
+        return HE_TYPE_KEEP;
+    SymbolId metatype = atom_meta_type_id(subject);
+    return he_type_demand_after_atom(subject, expected,
+        atom_is_symbol_id(expected, metatype),
+        metatype == g_builtin_syms.variable);
 }
 
 bool he_type_call_open(Atom *signature, HeTypeCall *call) {
@@ -417,15 +436,15 @@ Atom *he_type_result_demand(Arena *arena, Atom *codomain) {
 
 bool he_type_is_wildcard(const Atom *type) {
     return type && type->kind == ATOM_SYMBOL &&
-           (type->sym_id == g_builtin_syms.atom ||
-            type->sym_id == g_builtin_syms.undefined_type);
+           (atom_symbol_current_id(type) == g_builtin_syms.atom ||
+            atom_symbol_current_id(type) == g_builtin_syms.undefined_type);
 }
 
 /* An identical rigid type symbol cannot learn a substitution. Keep the
  * common monomorphic case out of the general structural matcher. */
 static bool he_type_same_symbol(const Atom *actual, const Atom *expected) {
     return actual && expected && actual->kind == ATOM_SYMBOL &&
-           expected->kind == ATOM_SYMBOL && actual->sym_id == expected->sym_id;
+           expected->kind == ATOM_SYMBOL && atom_symbols_equal(actual, expected);
 }
 
 bool he_type_refine(Atom *actual, Atom *expected, Bindings *bindings,
@@ -684,7 +703,9 @@ HeTypeApplicability he_type_call_applicable(
             SearchContext trial;
             search_context_init_owned(&trial, &paths.items[p], NULL);
             for (uint32_t t = 0u; t < count; t++) {
-                if (services->refuted && services->refuted(services->context, actual[t], expected)) continue;
+                if (services->refuted &&
+                    services->refuted(services->context, argument, actual[t],
+                                      expected)) continue;
                 ChoicePoint point = search_context_save(&trial);
                 bool matched = apply_refine(services, actual[t], expected, search_context_builder(&trial), arena);
                 if (!matched && services->equivalent) {

@@ -147,7 +147,7 @@ static bool rule_left_view(
         left->expr.elems[0]->kind != ATOM_SYMBOL ||
         left->expr.len - 1u > UINT32_MAX)
         return false;
-    *head = left->expr.elems[0]->sym_id;
+    *head = atom_symbol_current_id(left->expr.elems[0]);
     *arity = (uint32_t)(left->expr.len - 1u);
     return true;
 }
@@ -1243,10 +1243,10 @@ static Atom *evaluate_term(
         if (!root || root->kind != ATOM_EXPR || root->expr.len == 0u ||
             root->expr.len - 1u > UINT32_MAX ||
             !root->expr.elems[0] ||
-            root->expr.elems[0]->kind != ATOM_SYMBOL || atom_has_vars(root)) {
+            root->expr.elems[0]->kind != ATOM_SYMBOL) {
             (void)equation_fail(context,
                 CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
-                "deterministic data application expects a ground symbol-headed call");
+                "deterministic data application expects a symbol-headed call");
             goto fail;
         }
         if (!equation_take_work(context, 0u))
@@ -1274,7 +1274,7 @@ static Atom *evaluate_term(
         DeterministicEquationEnvironmentV1 *next_environment = NULL;
         DeterministicEquationCallOutcomeV1 outcome = equation_complete_call(
             context, &stack, root, arguments, arity,
-            root->expr.elems[0]->sym_id, reusable,
+            atom_symbol_current_id(root->expr.elems[0]), reusable,
             &value, &next_term, &next_environment);
         if (outcome == EQUATION_CALL_FAILED)
             goto fail;
@@ -1354,8 +1354,7 @@ static Atom *evaluate_term(
                         "metta-nullary expects one literal constructor symbol");
                     goto fail;
                 }
-                head = atom_symbol_id(
-                    context->arena, term->expr.elems[1]->sym_id);
+                head = atom_symbol_copy(context->arena, term->expr.elems[1]);
                 value = atom_expr(context->arena, &head, 1u);
                 have_value = true;
                 continue;
@@ -1418,7 +1417,7 @@ static Atom *evaluate_term(
                     goto fail;
                 }
                 arity = (uint32_t)(term->expr.len - 1u);
-                head = term->expr.elems[0]->sym_id;
+                head = atom_symbol_current_id(term->expr.elems[0]);
                 if (arity > 0u) {
                     DeterministicEquationFrameV1 frame;
                     arguments = calloc(arity, sizeof(*arguments));
@@ -1674,7 +1673,7 @@ static bool deterministic_equation_execute(
             *status = context.status;
         return false;
     }
-    if (atom_has_vars(*out)) {
+    if (!entry_arguments_are_values && atom_has_vars(*out)) {
         arena_reset(arena, mark);
         *out = NULL;
         if (status)

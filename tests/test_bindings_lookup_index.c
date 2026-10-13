@@ -282,7 +282,7 @@ static void test_borrowed_root_identity(Arena *arena) {
     uint32_t mark = bindings_builder_save(&builder);
     ready = ready && bindings_builder_add_var_fresh(&builder, second, value);
     CHECK(ready && first->var_id != second->var_id &&
-              first->sym_id == second->sym_id &&
+              atom_symbols_equal(first, second) &&
               !first->name_key && !second->name_key,
           "borrowed-root fixture separates logical identity from spelling");
 
@@ -1459,6 +1459,40 @@ static void test_frame_registration_undo_promotion(void) {
     arena_free(&owner);
 }
 
+static void test_frame_schema_transport_lifetime(void) {
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    VarId id = UINT64_C(88929);
+    Atom *key = atom_expr2(&source, atom_symbol(&source, "TransportName"),
+                          atom_int(&source, 7));
+    Atom *variable = atom_var_with_name_key(&source, key, id);
+    BindingsFrameSchema *schema = bindings_frame_schema_new_presented(&id, &variable, 1u);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    BindingsFrameSchema *image = bindings_frame_schema_copy_with_session(schema, session);
+    CHECK(image && image != schema &&
+          bindings_frame_schema_copy_lookup(schema, session) == image &&
+          bindings_frame_schema_copy_lookup(image, session) == image,
+          "schema transport reuses source mappings and image fixed points");
+    BindingsFrameSchema *again = bindings_frame_schema_copy_with_session(image, session);
+    CHECK(again == image && !atom_deep_copy_session_clone(session),
+          "schema image reuse retains one reference and refuses session cloning");
+    bindings_frame_schema_release(again);
+    bindings_frame_schema_release(schema);
+    bindings_frame_schema_release(image);
+    BindingsFrameSchema *held = bindings_frame_schema_copy_with_session(schema, session);
+    CHECK(held == image && bindings_frame_schema_len(held) == 1u &&
+          bindings_frame_schema_source_ids(held)[0] == id,
+          "session holds both endpoints after outside schema references retire");
+    atom_deep_copy_session_free(session);
+    arena_free(&source);
+    CHECK(bindings_frame_schema_len(held) == 1u &&
+          bindings_frame_schema_source_ids(held)[0] == id,
+          "the returned owned schema survives session and source retirement");
+    bindings_frame_schema_release(held);
+    arena_free(&destination);
+}
+
 static void test_prepared_frame_schema_lifetime(Arena *arena) {
     VarId ids[] = {UINT64_C(88931), UINT64_C(88933)};
     VarId first = ids[0], second = ids[1];
@@ -1976,7 +2010,7 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
         &shared_arena, SYMBOL_ID_NONE, shown_id);
     Atom *named = atom_var_with_id(&shared_arena, "retained", shown_id);
     CHECK(unnamed != named && atom_eq(unnamed, named) &&
-              named->sym_id == symbol_intern_cstr(g_symbols, "retained"),
+              atom_symbol_current_id(named) == symbol_intern_cstr(g_symbols, "retained"),
           "hash-consing preserves names without changing variable identity");
     CHECK(atom_var_with_id(&shared_arena, "retained", shown_id) == named,
           "hash-consing still shares an identical named variable");
@@ -2019,7 +2053,7 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
                  ATOM_FLAG_HASHCONS_ELIGIBLE |
                  ATOM_FLAG_ARENA_CLOSED,
         .var_id = test_id(7990u),
-        .sym_id = head->sym_id,
+        .symbol_number = atom_symbol_current_id(head),
         .arena_id = ordinary_arena->identity,
     };
     CHECK(hashcons_get(&hashcons, &malformed_var) == &malformed_var,
@@ -2316,7 +2350,7 @@ static void test_arena_symbol_cache_is_bounded(void) {
             ? symbol_intern_cstr(g_symbols, name) : SYMBOL_ID_NONE;
         Atom *atom = id != SYMBOL_ID_NONE
             ? atom_symbol_id(&arena, id) : NULL;
-        if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != id) {
+        if (!atom || atom->kind != ATOM_SYMBOL || atom_symbol_current_id(atom) != id) {
             exact_after_churn = false;
             break;
         }
@@ -2324,7 +2358,7 @@ static void test_arena_symbol_cache_is_bounded(void) {
     Atom *first_after_churn = atom_symbol_id(&arena, first_id);
     CHECK(exact_after_churn && first_after_churn &&
               first_after_churn->kind == ATOM_SYMBOL &&
-              first_after_churn->sym_id == first_id &&
+              first_after_churn->symbol_number == first_id &&
               arena.persistent_bytes == cache_bytes,
           "arena symbol cache remains bounded and collisions are exact misses");
 
@@ -2973,6 +3007,7 @@ int main(void) {
     test_variable_inventory(&arena);
     test_unframed_context_import(&arena);
     test_frame_registration_undo_promotion();
+    test_frame_schema_transport_lifetime();
     test_prepared_frame_schema_lifetime(&arena);
     test_presented_manufacture_frame_grows_until_closed(&arena);
     test_complete_contextual_frame_is_closed(&arena);
@@ -3022,7 +3057,7 @@ int main(void) {
               (modern_result =
                    bindings_apply(&modern, &arena, modern_unbound)) ==
                   modern_unbound &&
-              modern_result->sym_id == modern_spelling,
+              modern_result->symbol_number == modern_spelling,
           "modern bindings never capture a different VarId by spelling");
 
     Atom *scoped_x = atom_var_with_id(&arena, "scoped-x", test_id(6001u));
@@ -3910,10 +3945,10 @@ int main(void) {
             atom_int(&arena, -1)) &&
         bindings_add_id(
             &epoch_environment, epoch_local_id,
-            epoch_local->sym_id, epoch_outer) &&
+            atom_symbol_current_id(epoch_local), epoch_outer) &&
         bindings_add_id(
             &epoch_environment, epoch_outer->var_id,
-            epoch_outer->sym_id, atom_int(&arena, 77)) &&
+            atom_symbol_current_id(epoch_outer), atom_int(&arena, 77)) &&
         bindings_add_id(
             &epoch_environment, test_id(7202u), SYMBOL_ID_NONE,
             atom_int(&arena, -2));
@@ -3979,10 +4014,10 @@ int main(void) {
             SYMBOL_ID_NONE, atom_int(&arena, -1)) &&
         bindings_add_id(
             &canonical_epoch_environment, canonical_epoch_id,
-            canonical_epoch_local->sym_id, epoch_outer) &&
+            atom_symbol_current_id(canonical_epoch_local), epoch_outer) &&
         bindings_add_id(
             &canonical_epoch_environment, epoch_outer->var_id,
-            epoch_outer->sym_id, atom_int(&arena, 77)) &&
+            atom_symbol_current_id(epoch_outer), atom_int(&arena, 77)) &&
         bindings_add_id(
             &canonical_epoch_environment, test_id(7202u),
             SYMBOL_ID_NONE, atom_int(&arena, -2));
@@ -4069,14 +4104,14 @@ int main(void) {
         CHECK(bindings_builder_init(&activation, NULL) &&
               bindings_builder_add_var_fresh(&activation, outer, value) &&
               bindings_builder_add_id_fresh(&activation, var_epoch_id(prefix->var_id, 29u),
-                  prefix->sym_id, value), "activation prefix fixture");
+                  atom_symbol_current_id(prefix), value), "activation prefix fixture");
         VarId ids[] = {source->var_id, prefix->var_id};
         Atom *variables[] = {source, prefix};
         BindingsActivationView view;
         bindings_activation_view_init(&view);
         CHECK(bindings_activation_view_prepare(&view, &activation, ids, variables, 2u, 29u, 1u) &&
               bindings_builder_add_id_fresh(&activation, var_epoch_id(source->var_id, 29u),
-                  source->sym_id, outer), "activation writes use versioned slots");
+                  atom_symbol_current_id(source), outer), "activation writes use versioned slots");
         Atom *local = bindings_apply_epoch_since(&activation.current, &arena, source, 29u, 1u);
         Atom *full = bindings_apply_activation_view_then_all(&activation.current, &arena, source, &view);
         CHECK(local == outer && full == value,
@@ -4218,11 +4253,11 @@ int main(void) {
         bindings_builder_add_id_fresh(
             &dense_frame_builder,
             var_epoch_id(dense_left->var_id, 67u),
-            dense_left->sym_id, dense_outer) &&
+            atom_symbol_current_id(dense_left), dense_outer) &&
         bindings_builder_add_id_fresh(
             &dense_frame_builder,
             var_epoch_id(dense_right->var_id, 67u),
-            dense_right->sym_id, dense_value);
+            atom_symbol_current_id(dense_right), dense_value);
     dense_prepared = dense_frame_ready &&
         bindings_activation_view_prepare(
             &dense_frame, &dense_frame_builder,
@@ -4415,7 +4450,7 @@ int main(void) {
         bindings_builder_add_id_fresh(
             &dense_frame_builder,
             var_epoch_id(dense_open->var_id, 67u),
-            dense_open->sym_id, dense_open_value) &&
+            atom_symbol_current_id(dense_open), dense_open_value) &&
         bindings_activation_view_available(
             &dense_frame, &dense_frame_builder.current);
     Atom *dense_refreshed_slot = dense_refreshed &&
@@ -4439,7 +4474,7 @@ int main(void) {
         bindings_builder_add_id_fresh(
             &dense_frame_builder,
             var_epoch_id(dense_open->var_id, 67u),
-            dense_open->sym_id, dense_replacement_value) &&
+            atom_symbol_current_id(dense_open), dense_replacement_value) &&
         bindings_activation_view_available(&dense_frame, &dense_frame_builder.current);
     Atom *dense_stale_consumer = dense_replaced_same_length
         ? bindings_resolve_activation_view_slot_root(
@@ -4638,7 +4673,7 @@ int main(void) {
         view_first_entry);
     view_fixture = view_fixture && bindings_builder_add_id_fresh(
         &view_seed_builder, var_epoch_id(view_local->var_id, 37u),
-        view_local->sym_id, view_outer);
+        atom_symbol_current_id(view_local), view_outer);
     view_fixture = view_fixture && bindings_clone(
         &view_base, &view_seed_builder.current);
     bindings_activation_view_free(&view_seed_frame);
@@ -4733,7 +4768,7 @@ int main(void) {
         bindings_builder_add_id_fresh(
             &view_open_seed,
             var_epoch_id(view_local->var_id, 43u),
-            view_local->sym_id, view_outer) &&
+            atom_symbol_current_id(view_local), view_outer) &&
         bindings_clone(&view_open_base, &view_open_seed.current);
     bindings_activation_view_free(&view_open_seed_frame);
     bindings_builder_free(&view_open_seed);

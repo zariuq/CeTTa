@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Lists over any set and their append, run.  The lists are declared once,
 ; with a parameter: the set their elements come from,
@@ -13,21 +13,21 @@
 ; leave them out, as MeTTa programs write lists, `(cons zero nil)`.  A use
 ; without them is elaborated to the use with them before it runs, so both
 ; run alike, and a value is written with its parameters.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self (List (: A set)) set
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self (List (: A set)) set
    (: nil (List A))
    (: cons (-> A (List A) (List A))))
-!(set:define &self append (-> (A : set) (l m : (List A)) (List A))
+!(hol:define &self append (-> (A : set) (l m : (List A)) (List A))
    (= (append $A (nil $A) $m) $m)
    (= (append $A (cons $A $a $l) $m) (cons $A $a (append $A $l $m))))
 ; Why running ends: append was admitted as recursion on argument 1, a list
 ; at the parameter A; the nil equation has no recursive call and the cons
 ; equation recurses on field 1 of cons, the tail.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self append))
    (quote $termination))
 ; The record names the Lean theorem of structural recursion, and says what
 ; it covers: a function of one argument, on a datatype without parameters.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self append))
    (quote $lean))
 ; In the rules that run append, the parameter of the constructor in the
 ; pattern is matched by a variable of its own, (PVar 2) and (PVar 4): a call
@@ -65,7 +65,7 @@
 ; A definition written as MeTTa programs write it: no parameter in its
 ; patterns or on its right sides.  It is admitted as the definition with
 ; them, and runs.
-!(set:define &self snoc (-> (A : set) (l : (List A)) (a : A) (List A))
+!(hol:define &self snoc (-> (A : set) (l : (List A)) (a : A) (List A))
    (= (snoc $A nil $a) (cons $a nil))
    (= (snoc $A (cons $b $l) $a) (cons $b (snoc $A $l $a))))
 !(snoc num (cons zero nil) (suc zero))
@@ -73,9 +73,9 @@
 
 ; Equality of sets in &self accepts the value that running reached, in both
 ; spellings.
-!(set:eq &self (append num (cons num zero (nil num)) (cons num (suc zero) (nil num)))
+!(hol:eq &self (append num (cons num zero (nil num)) (cons num (suc zero) (nil num)))
                (cons num zero (cons num (suc zero) (nil num))))
-!(set:eq &self (append num (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
+!(hol:eq &self (append num (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
 
 ; ---- Refused with a type error, not run.
 ; A number is not a set, so it is no parameter of append;

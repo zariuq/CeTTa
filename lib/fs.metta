@@ -49,3 +49,10 @@
    (function
      (case (__cetta_lib_fs_read_lines $path)
        (($result (return $result))))))
+
+; The complete lines within bytes [start, end) of a file (end -1: its end).
+; A range starting inside the file begins at the next line.
+(= (fs:read-lines-between $path $start $end)
+   (function
+     (case (__cetta_lib_fs_read_lines_between $path $start $end)
+       (($result (return $result))))))

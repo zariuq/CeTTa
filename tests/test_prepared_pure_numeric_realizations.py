@@ -8,7 +8,7 @@ import tempfile
 
 
 def run(binary, source, language, reference, prefer_rationals=False,
-        expected_error=None):
+        expected_error=None, environment=None):
     command = [str(binary), "--lang", language, "--emit-runtime-stats"]
     if language == "he":
         command += ["--profile", "extended"]
@@ -18,7 +18,8 @@ def run(binary, source, language, reference, prefer_rationals=False,
         # Logical step accounting excludes speculative compiled execution.
         command += ["--fuel", "1000000"]
     command.append(str(source))
-    process = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    process = subprocess.run(command, capture_output=True, text=True, timeout=60,
+                             env=environment)
     # PeTTa buffers answers until normal completion. An uncaught error
     # stops the file with status 2 and a diagnostic, not an Error answer.
     expected_status = 2 if expected_error else 0
@@ -90,6 +91,63 @@ def programs():
 """, 2, True
 
 
+def assert_no_compiled_execution(counters, label):
+    for counter in ("prepared-pure-call-commit", "prepared-capsule-step",
+                    "prepared-capsule-publication"):
+        assert counters[counter] == 0, (label, counter, counters[counter])
+
+
+def prime_capsule_accounting(binary, source):
+    duplicate = "(= (account-add $x) (+ $x 1))\n!(account-add 2)\n!(account-add 2)\n"
+    cases = [
+        ("exceptional-values", """(= (account-float $x $y) (Results (+ $x $y) (* $x $y) (< $x $y)))
+!(account-float 1.0e999 0.0)
+!(account-float -1.0e999 1.0)
+""", "[(Results inf NaN False)]\n[(Results -inf -inf True)]\n", 2),
+        ("exceptional-body", """(= (account-float-body) (Results (/ 1.0 0.0) (/ 0.0 0.0)))
+!(account-float-body)
+""", "[(Results inf NaN)]\n", 1),
+        ("no-query", "(= (account-add $x) (+ $x 1))\n", "", 0),
+        ("quantum-one", "!(pragma! prepared-node-quantum 1)\n" + duplicate,
+         "[()]\n[3]\n[3]\n", 2),
+        ("quantum-sixty-four", "!(pragma! prepared-node-quantum 64)\n" + duplicate,
+         "[()]\n[3]\n[3]\n", 2),
+        ("quantum-zero", "!(pragma! prepared-node-quantum 0)\n" + duplicate,
+         "[()]\n[3]\n[3]\n", 0),
+        ("quantum-negative", "!(pragma! prepared-node-quantum -1)\n" + duplicate,
+         "[()]\n[3]\n[3]\n", 0),
+        ("quantum-invalid", "!(pragma! prepared-node-quantum invalid)\n" + duplicate,
+         "[()]\n[3]\n[3]\n", 0),
+        ("effect-refused", """(= (account-effect $x) (chain (println! NumericEffectOnce) $unused (+ $x 1)))
+!(account-effect 2)
+""", "NumericEffectOnce\n[3]\n", 0),
+        ("reference-request", duplicate, "[3]\n[3]\n", 0),
+    ]
+    accounts = {}
+    for name, program, expected, publications in cases:
+        source.write_text(program)
+        environment = None
+        if name == "reference-request":
+            environment = dict(os.environ, CETTA_PREPARED_PURE_REFERENCE="1")
+        value, counters, status, diagnostics = run(
+            binary, source, "prime", False, environment=environment)
+        reference, reference_counters, reference_status, reference_diagnostics = run(
+            binary, source, "prime", True, environment=environment)
+        assert value == reference == expected, (name, value, reference, expected)
+        assert (status, diagnostics) == (reference_status, reference_diagnostics), name
+        assert_no_compiled_execution(reference_counters, name)
+        assert counters["prepared-pure-call-commit"] == 0, name
+        if publications:
+            assert counters["prepared-capsule-step"] > 0, name
+            assert counters["prepared-capsule-publication"] == publications, name
+        else:
+            assert_no_compiled_execution(counters, name)
+        accounts[name] = (counters["prepared-capsule-step"],
+                          counters["prepared-capsule-publication"])
+    assert accounts["quantum-one"] == accounts["quantum-sixty-four"], accounts
+    return len(cases)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
@@ -127,15 +185,34 @@ def main():
                     if isinstance(outputs, dict) else outputs
                 assert len(candidate.splitlines()) == expected_lines, \
                     (label, candidate)
-                assert reference_counters["prepared-pure-call-commit"] == 0, label
-                if compiled is True or (compiled and language in compiled):
+                assert_no_compiled_execution(reference_counters, label)
+                if language == "prime":
+                    # Prime's Atom-only prepared ABI cannot carry the returned
+                    # world. Its retained capsule reports executed instructions
+                    # separately from acknowledged answer publications.
+                    assert counters["prepared-pure-call-commit"] == 0, label
+                    if name == "exceptional-floats":
+                        # Source operands remain with the canonical receiver;
+                        # the value/body controls below retain compiled coverage.
+                        assert_no_compiled_execution(counters, label)
+                    else:
+                        assert counters["prepared-capsule-step"] > 0, label
+                        assert counters["prepared-capsule-publication"] == expected_lines, label
+                        assert counters["prepared-pure-call-decline"] == 0, label
+                    if name == "unsupported":
+                        assert candidate == "[(+ datum 1)]\n", (label, candidate)
+                    elif name != "exceptional-floats":
+                        assert "Error" not in candidate, (label, candidate)
+                elif compiled is True or (compiled and language in compiled):
                     assert "Error" not in candidate, (label, candidate)
                     assert counters["prepared-pure-call-commit"] > 0, label
                     assert counters["prepared-pure-call-decline"] == 0, (label, counters)
                 else:
                     assert counters["prepared-pure-call-decline"] > 0, label
                 checks += 1
-    print(f"PASS: prepared numeric realizations ({checks} semantic/coverage cases)")
+        capsule_checks = prime_capsule_accounting(binary, source)
+    print(f"PASS: prepared numeric realizations ({checks} semantic/coverage cases; "
+          f"{capsule_checks} retained accounting controls)")
 
 
 if __name__ == "__main__":

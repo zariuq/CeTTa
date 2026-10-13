@@ -1,15 +1,15 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Native dependent PLN evidence search, using exact positive/total counts.
 ; The four inference constructors are explicit hypotheses of this theory.
 ; This tests recursive evidence aggregation and retained search prefixes;
 ; it does not import the HE floating-point truth-value evaluator.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))
-!(set:inductive &thy Bool (u 0) (: yes Bool) (: no Bool))
-!(set:inductive &thy Evidence (u 0) (: ENil Evidence) (: ECons (-> Nat Evidence Evidence)))
-!(set:define &thy flagCount (-> Bool Nat) (= (flagCount yes) (S Z)) (= (flagCount no) Z))
-!(set:define &thy addEvidence (-> Bool Nat Nat) (= (addEvidence yes $pos) (S $pos)) (= (addEvidence no $pos) $pos))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))
+!(hol:inductive &thy Bool (u 0) (: yes Bool) (: no Bool))
+!(hol:inductive &thy Evidence (u 0) (: ENil Evidence) (: ECons (-> Nat Evidence Evidence)))
+!(hol:define &thy flagCount (-> Bool Nat) (= (flagCount yes) (S Z)) (= (flagCount no) Z))
+!(hol:define &thy addEvidence (-> Bool Nat Nat) (= (addEvidence yes $pos) (S $pos)) (= (addEvidence no $pos) $pos))
 !(add-atom &thy (: Event (u 0)))
 !(add-atom &thy (: P Event))
 !(add-atom &thy (: Q Event))
@@ -77,7 +77,7 @@
 
 ; The admitted identity gives arbitrarily many evidence histories. A larger
 ; exploration must retain checked answers when its finite budget runs out.
-!(set:define &thy retain
+!(hol:define &thy retain
    (-> (p q : Event) (es : Evidence) (positive total : Nat)
        (w : (Inferred p q es positive total))
        (Inferred p q es positive total))

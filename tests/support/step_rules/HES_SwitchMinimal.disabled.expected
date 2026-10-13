@@ -1,3 +1,2 @@
 [()]
-[(quote (switch-minimal 3 (((+ $a $b) (got $a $b)))))]
-[False]
+[True]

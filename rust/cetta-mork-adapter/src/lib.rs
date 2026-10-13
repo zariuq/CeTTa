@@ -1,5 +1,5 @@
-use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, apply_e, item_sink};
+use cetta_space::bridge_query_multi;
+use mork_expr::{Bindings, Expr, ExprEnv, VecSink, apply_e};
 use pathmap::PathMap;
 use std::collections::BTreeMap;
 
@@ -11,51 +11,34 @@ pub use support_transform::{
     SupportTransformRun, SupportTransformStats, run_support_transform_packet,
 };
 
-type ExprVar = (u8, u8);
-
-fn instantiate_factor(factor: ExprEnv, bindings: &BTreeMap<ExprVar, ExprEnv>) -> Vec<u8> {
+fn instantiate_factor(factor: ExprEnv, bindings: &Bindings) -> Vec<u8> {
     let mut encoded = Vec::new();
-    {
-        let sink = item_sink(&mut encoded);
-        let mut sink = std::pin::pin!(sink);
-        apply_e(
-            factor.n,
-            factor.v,
-            0,
-            factor.subsexpr(),
-            bindings,
-            &mut sink,
-            &mut BTreeMap::new(),
-            &mut Vec::new(),
-            &mut Vec::new(),
-        );
-    }
+    apply_e(
+        factor.n,
+        factor.v,
+        0,
+        factor.subsexpr(),
+        bindings,
+        &mut VecSink(&mut encoded),
+        &mut BTreeMap::new(),
+        &mut Vec::new(),
+        &mut Vec::new(),
+    );
     encoded
 }
 
-fn query_bindings_from_references(primary: Expr, references: &[u32]) -> BTreeMap<ExprVar, ExprEnv> {
-    references
-        .iter()
-        .enumerate()
-        .map(|(variable, &offset)| {
-            (
-                (
-                    0,
-                    u8::try_from(variable)
-                        .expect("MORK query variables are represented by eight-bit indices"),
-                ),
-                ExprEnv {
-                    n: 254,
-                    v: 0,
-                    offset,
-                    base: primary,
-                },
-            )
-        })
-        .collect()
+fn query_bindings_from_references(primary: Expr, references: &[u32]) -> Bindings {
+    let mut bindings = Bindings::new();
+    for (variable, &offset) in references.iter().enumerate() {
+        let variable = u8::try_from(variable)
+            .expect("MORK query variables are represented by eight-bit indices");
+        bindings.insert((0, variable), ExprEnv::new(254, primary).offset(offset));
+    }
+    bindings
 }
 
-pub fn query_multi_with_factor_exprs<F: FnMut(BTreeMap<(u8, u8), ExprEnv>, &[Expr]) -> bool>(
+/// Bindings and instantiated factor bytes are valid only during the callback.
+pub fn query_multi_with_factor_exprs<F: FnMut(&Bindings, &[Expr]) -> bool>(
     btm: &PathMap<()>,
     pat_expr: Expr,
     mut effect: F,
@@ -64,14 +47,18 @@ pub fn query_multi_with_factor_exprs<F: FnMut(BTreeMap<(u8, u8), ExprEnv>, &[Exp
     ExprEnv::new(0, pat_expr).args(&mut query_arguments);
     let factors = query_arguments.get(1..).unwrap_or_default().to_vec();
 
-    Space::query_multi(btm, pat_expr, |references_or_bindings, primary| {
+    bridge_query_multi(btm, pat_expr, |references_or_bindings, primary| {
+        let reference_bindings;
         let bindings = match references_or_bindings {
-            Ok(references) => query_bindings_from_references(primary, references),
+            Ok(references) => {
+                reference_bindings = query_bindings_from_references(primary, references);
+                &reference_bindings
+            }
             Err(bindings) => bindings,
         };
         let encoded_factors = factors
             .iter()
-            .map(|factor| instantiate_factor(*factor, &bindings))
+            .map(|factor| instantiate_factor(*factor, bindings))
             .collect::<Vec<_>>();
         let factor_exprs = encoded_factors
             .iter()
@@ -86,6 +73,7 @@ pub fn query_multi_with_factor_exprs<F: FnMut(BTreeMap<(u8, u8), ExprEnv>, &[Exp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mork::space::Space;
 
     fn parse(space: &mut Space, text: &[u8]) -> Vec<u8> {
         let mut encoded = vec![0; 256];

@@ -1,11 +1,11 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A type query on a term whose implicit parameters are not all determined
 ; answers that it is undetermined, as `try` shows it, rather than standing
 ; as written: (cons nil nil) is a list of lists of some element type, and
 ; nothing in the term fixes which.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self (List (: A set)) set (: nil (List A)) (: cons (-> A (List A) (List A))))
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self (List (: A set)) set (: nil (List A)) (: cons (-> A (List A) (List A))))
 !(type:of (cons nil nil))
 !(try (type:of (cons nil nil)))
 ; Determined, the answer is the list type at that parameter.

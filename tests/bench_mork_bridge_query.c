@@ -701,6 +701,8 @@ int main(int argc, char **argv) {
     char exact_hit_query[64];
     char exact_miss_query[64];
     QueryScenario scenarios[3];
+    const char *mode = argc >= 4 ? argv[3] : "all";
+    const char *scenario = argc >= 5 ? argv[4] : "all";
 
     if (argc >= 2) {
         char *end = NULL;
@@ -719,6 +721,17 @@ int main(int argc, char **argv) {
             return 2;
         }
         repeat = (int)parsed;
+    }
+
+    if (argc > 5 ||
+        (strcmp(mode, "all") && strcmp(mode, "v1-text-packet") &&
+         strcmp(mode, "v2-packet-only") && strcmp(mode, "v2-scan") &&
+         strcmp(mode, "v2-decode")) ||
+        (strcmp(scenario, "all") && strcmp(scenario, "exact-hit") &&
+         strcmp(scenario, "exact-miss") && strcmp(scenario, "full-scan"))) {
+        fprintf(stderr, "usage: %s [count>42] [repeat] [mode|all] [scenario|all]\n",
+                argv[0]);
+        return 2;
     }
 
     init_symbols(&symbols);
@@ -761,47 +774,57 @@ int main(int argc, char **argv) {
            "----------", "----------");
 
     for (size_t i = 0; i < sizeof(scenarios) / sizeof(scenarios[0]); i++) {
+        if (strcmp(scenario, "all") && strcmp(scenario, scenarios[i].name))
+            continue;
         size_t packet_len = 0;
         QueryPacketSummary summary = {0};
         double avg = 0.0;
 
-        avg = run_v1_packet_only(space, &scenarios[i], repeat, &packet_len);
-        printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
-               "v1-text-packet",
-               scenarios[i].name,
-               scenarios[i].expected_rows,
-               scenarios[i].expected_bindings,
-               packet_len,
-               avg);
+        if (!strcmp(mode, "all") || !strcmp(mode, "v1-text-packet")) {
+            avg = run_v1_packet_only(space, &scenarios[i], repeat, &packet_len);
+            printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
+                   "v1-text-packet",
+                   scenarios[i].name,
+                   scenarios[i].expected_rows,
+                   scenarios[i].expected_bindings,
+                   packet_len,
+                   avg);
+        }
 
-        avg = run_v2_packet_only(space, &scenarios[i], repeat, &packet_len);
-        printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
-               "v2-packet-only",
-               scenarios[i].name,
-               scenarios[i].expected_rows,
-               scenarios[i].expected_bindings,
-               packet_len,
-               avg);
+        if (!strcmp(mode, "all") || !strcmp(mode, "v2-packet-only")) {
+            avg = run_v2_packet_only(space, &scenarios[i], repeat, &packet_len);
+            printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
+                   "v2-packet-only",
+                   scenarios[i].name,
+                   scenarios[i].expected_rows,
+                   scenarios[i].expected_bindings,
+                   packet_len,
+                   avg);
+        }
 
-        avg = run_v2_scan_mode(space, &scenarios[i], repeat, false,
-                               &packet_len, &summary);
-        printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
-               "v2-scan",
-               scenarios[i].name,
-               scenarios[i].expected_rows,
-               scenarios[i].expected_bindings,
-               packet_len,
-               avg);
+        if (!strcmp(mode, "all") || !strcmp(mode, "v2-scan")) {
+            avg = run_v2_scan_mode(space, &scenarios[i], repeat, false,
+                                   &packet_len, &summary);
+            printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
+                   "v2-scan",
+                   scenarios[i].name,
+                   scenarios[i].expected_rows,
+                   scenarios[i].expected_bindings,
+                   packet_len,
+                   avg);
+        }
 
-        avg = run_v2_scan_mode(space, &scenarios[i], repeat, true,
-                               &packet_len, &summary);
-        printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
-               "v2-decode",
-               scenarios[i].name,
-               summary.rows,
-               summary.bindings,
-               packet_len,
-               avg);
+        if (!strcmp(mode, "all") || !strcmp(mode, "v2-decode")) {
+            avg = run_v2_scan_mode(space, &scenarios[i], repeat, true,
+                                   &packet_len, &summary);
+            printf("%-20s %-12s %8" PRIu64 " %10" PRIu64 " %10zu %10.6f\n",
+                   "v2-decode",
+                   scenarios[i].name,
+                   summary.rows,
+                   summary.bindings,
+                   packet_len,
+                   avg);
+        }
     }
 
     cetta_mork_bridge_space_free(space);

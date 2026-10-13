@@ -5,6 +5,7 @@
 (= (json:capabilities) (__cetta_lib_json_capabilities_v1 ()))
 (= (json:parse $text) (__cetta_lib_json_parse_v1 $text))
 (= (json:stringify $value) (__cetta_lib_json_stringify_v1 $value))
+(= (json:to-legacy $value) (__cetta_lib_json_to_legacy_v1 $value))
 (= (json:members $object) (__cetta_lib_json_members_v1 $object))
 (= (json:get-all $object $key) (__cetta_lib_json_get_all_v1 $object $key))
 (= (json:get-first $object $key) (__cetta_lib_json_get_first_v1 $object $key))

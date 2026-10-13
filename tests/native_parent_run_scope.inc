@@ -1,7 +1,7 @@
 /* Captured run scopes under unrelated callers, including valid empty and
  * explicitly cleared worlds. Caller payloads outlive each resumed control. */
-static bool checkpoint_first_seen(Arena *arena,Atom *value,const Bindings *env,void *raw) {
-    (void)seen(arena,value,env,raw);
+static bool checkpoint_first_seen(Arena *arena,Atom *value,const Outcome *occurrence,void *raw) {
+    (void)seen(arena,value,occurrence,raw);
     return false;
 }
 static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Result *result,
@@ -55,12 +55,12 @@ static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Res
     if(mode==3u)sealed=prime_need_active_enter_captured(&empty);
     PrimeEvalStackDriver caller_driver={.arena=caller_arena,.nested=true};
     PrimeEvalStackDriver *old_driver=g_prime_eval_stack_driver;
-    Atom *old_first=g_prime_first_answer_root;
+    PrimePrefixDemand old_prefix=g_prime_prefix_demand;
     Arena *old_owner=g_prime_need_owner,*old_episode=g_prime_need_episode_owner;
     Arena *old_branch=g_prime_need_region_branch_owner;
     g_prime_eval_stack_driver=&caller_driver;
     Atom *caller_root=atom_int(caller_arena,41);
-    g_prime_first_answer_root=caller_root;
+    g_prime_prefix_demand=(PrimePrefixDemand){.root=caller_root,.limit=3u};
     g_prime_need_owner=caller_arena;g_prime_need_episode_owner=caller_arena;
     g_prime_need_region_branch_owner=caller_arena;
     EvalGcRootFrame root={0};
@@ -109,12 +109,12 @@ static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Res
     }
     prime_native_control_run(control,budget,seen,result);
     assert(g_eval_gc.roots==roots&&caller_root->kind==ATOM_GROUNDED&&caller_root->ground.ival==41);
-    assert(g_prime_eval_stack_driver==&caller_driver&&g_prime_first_answer_root==caller_root);
+    assert(g_prime_eval_stack_driver==&caller_driver&&g_prime_prefix_demand.root==caller_root&&g_prime_prefix_demand.limit==3u);
     assert(g_prime_need_owner==caller_arena&&g_prime_need_episode_owner==caller_arena);
     assert(g_prime_need_region_branch_owner==caller_arena);
     registry_read_view_leave(previous);registry_read_view_free(&view);
     eval_gc_root_frame_leave(&root);
-    g_prime_eval_stack_driver=old_driver;g_prime_first_answer_root=old_first;
+    g_prime_eval_stack_driver=old_driver;g_prime_prefix_demand=old_prefix;
     g_prime_need_owner=old_owner;g_prime_need_episode_owner=old_episode;
     g_prime_need_region_branch_owner=old_branch;
     if(mode==3u)prime_need_active_leave(&sealed);

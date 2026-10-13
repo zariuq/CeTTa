@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Map fusion as a computing dependent proof.  The list type is declared by
 ; its constructors; the declaration derives the induction principle and the
@@ -7,16 +7,16 @@
 ; by conversion on constructors and the step case is one application of the
 ; identity eliminator to the hypothesis.  The proof is a term of the
 ; declared type, checked by the type: language against the theory space.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: elem (u 0)))
 !(add-atom &thy (: f (-> elem elem)))
 !(add-atom &thy (: g (-> elem elem)))
 !(add-atom &thy (: a elem))
-!(set:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
-!(set:define &thy mapf (-> (-> elem elem) list list)
+!(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
+!(hol:define &thy mapf (-> (-> elem elem) list list)
    (= (mapf $h nil) nil)
    (= (mapf $h (cons $x $xs)) (cons ($h $x) (mapf $h $xs))))
-!(set:define &thy comp (-> (-> elem elem) (-> elem elem) elem elem)
+!(hol:define &thy comp (-> (-> elem elem) (-> elem elem) elem elem)
    (= (comp $p $q $x) ($p ($q $x))))
 ; what the declaration derived
 !(collapse (match &thy (type:rule $h $n $p $r) $h))
@@ -62,11 +62,11 @@
    (-> (xs : list) (id list (mapf f (mapf g xs)) (mapf (comp f g) xs))))
 ; the computation rules are facts of the theory space: with the same
 ; constants declared but no equations, the base case no longer converts
-!(bind! &bare (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &bare (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &bare (: elem (u 0)))
 !(add-atom &bare (: f (-> elem elem)))
 !(add-atom &bare (: g (-> elem elem)))
-!(set:inductive &bare list (u 0) (: nil list) (: cons (-> elem list list)))
+!(hol:inductive &bare list (u 0) (: nil list) (: cons (-> elem list list)))
 !(add-atom &bare (: mapf (-> (-> elem elem) list list)))
 !(add-atom &bare (: comp (-> (-> elem elem) (-> elem elem) elem elem)))
 !(type:check &bare (refl nil) (id list (mapf f (mapf g nil)) (mapf (comp f g) nil)))

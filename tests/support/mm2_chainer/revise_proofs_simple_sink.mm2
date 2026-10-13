@@ -1,0 +1,33 @@
+; Native counterpart to revise_proofs_symbolic.mm2.
+;
+; Both files use the same input relations and produce the same public output:
+;   (proved TYPE GOAL PROOF-ID STV)
+;   (revised TYPE GOAL MERGED-STV MERGED-PROOF)
+;   (revised-evidence TYPE GOAL EVIDENCE-ID)
+;
+; This executor sends only the proof declarations to the sink.  The sink reads
+; the matching proof-evidence facts from the same space.
+(exec 0
+  (, (open-proof $type $goal $proof $stv))
+  (O
+    (revise-proofs-simple
+      $type $goal $proof $stv)))
+
+; ---------------------------------------------------------------------------
+; Demo data
+;
+; Keep this synchronized with revise_proofs_symbolic.mm2.
+(open-proof bird tweety p1 stv1)
+(proof-evidence bird tweety p1 e1)
+
+(open-proof bird tweety p2 stv2)
+(proof-evidence bird tweety p2 e2)
+
+(open-proof bird tweety p3 stv3)
+(proof-evidence bird tweety p3 e1)
+
+(open-proof bird polly p4 stv4)
+(proof-evidence bird polly p4 e4)
+
+(open-proof fish tweety p5 stv5)
+(proof-evidence fish tweety p5 e5)

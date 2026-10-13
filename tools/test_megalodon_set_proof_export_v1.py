@@ -148,7 +148,7 @@ class SetProofExportTests(unittest.TestCase):
         tree = self.known(POWER_IN_UNIVERSE,
                           ["power-in-universe-term"]).theorems["power-in-universe-term"].proof
         answer, = export.run_queries(self.cetta, POWER_IN_UNIVERSE,
-                                     [f"!(set:proves {sx.render(tree)} {sx.render(converse)})"])
+                                     [f"!(hol:proves {sx.render(tree)} {sx.render(converse)})"])
         self.assertNotEqual(answer, sx.Symbol("True"))
 
     def test_second_rule_form_theorem_power_self(self):
@@ -237,7 +237,7 @@ class SetProofExportTests(unittest.TestCase):
         # C refuses the same proof.
         answer, = export.run_queries(
             self.cetta, CANTOR_READABLE,
-            [f"!(set:proves &thy {sx.render(altered)} "
+            [f"!(hol:proves &thy {sx.render(altered)} "
              f"{sx.render(known.theorems['cantor-core-readable'].proposition)})"])
         self.assertNotEqual(answer, sx.Symbol("True"))
 
@@ -302,7 +302,7 @@ class SetProofExportTests(unittest.TestCase):
         tree = self.known(NAPROCHE, naproche_theorems(),
                           "&thy").theorems["kpair-inj-first"].proof
         answer, = export.run_queries(self.cetta, NAPROCHE,
-                                     [f"!(set:proves &thy {sx.render(tree)} {sx.render(other)})"])
+                                     [f"!(hol:proves &thy {sx.render(tree)} {sx.render(other)})"])
         self.assertNotEqual(answer, sx.Symbol("True"))
 
     def test_naproche_eq_curriculum_every_theorem(self):
@@ -344,7 +344,7 @@ class SetProofExportTests(unittest.TestCase):
         tree = self.known(NAPROCHE_EQ, naproche_theorems(NAPROCHE_EQ),
                           "&thy").theorems["eq-in-empty"].proof
         answer, = export.run_queries(self.cetta, NAPROCHE_EQ,
-                                     [f"!(set:proves &thy {sx.render(tree)} {sx.render(back)})"])
+                                     [f"!(hol:proves &thy {sx.render(tree)} {sx.render(back)})"])
         self.assertNotEqual(answer, sx.Symbol("True"))
 
     def test_naproche_theorems_live_in_their_space(self):

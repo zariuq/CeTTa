@@ -236,6 +236,10 @@ typedef struct {
     CettaPreparedPureSourceRoleFn role;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
+    /* Decline a named executable occurrence whose admitted rule semantics
+     * this compiler cannot realize. Checked during compilation, including
+     * callees, and at runtime-created application boundaries. */
+    bool (*head_admitted)(void *context, Space *space, SymbolId head);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -483,6 +487,13 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
  * enumeration and the cursor must not be advanced again. */
 CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     CettaPreparedPureAnswerCursor *cursor, Atom **answer_out);
+
+/* Whether detach can release entry-argument borrows into a private arena.
+ * Caller-arena cursors and programs with unsupported continuation locals
+ * are not admitted. This query does not mutate the cursor or allocate; a
+ * subsequent detach can still fail on allocation. */
+bool cetta_prepared_pure_answer_cursor_can_detach(
+    const CettaPreparedPureAnswerCursor *cursor);
 
 /* Copy every value the frontier holds into the cursor's own arena, so that
  * nothing it holds borrows storage its caller may move or free.  An answer

@@ -11,7 +11,7 @@ static bool cetta_gslt_peano_add_application_v1(
         !(head = term->expr.elems[0]) || head->kind != ATOM_SYMBOL)
         return false;
     if (head_out)
-        *head_out = head->sym_id;
+        *head_out = atom_symbol_current_id(head);
     return true;
 }
 
@@ -65,7 +65,7 @@ static bool cetta_gslt_peano_add_zero_rule_v1(
         return false;
     *zero_out = (CettaGsltPeanoAddZeroRuleV1){
         .relation = relation,
-        .zero = zero->sym_id,
+        .zero = atom_symbol_current_id(zero),
         .step_index = rule->step_index,
     };
     return true;
@@ -219,7 +219,7 @@ CettaGsltPeanoAddResultV1 cetta_gslt_peano_add_evaluate_v1(
         SymbolId constructor;
         const Atom *argument;
 
-        if (cursor->kind == ATOM_SYMBOL && cursor->sym_id == plan->zero)
+        if (cursor->kind == ATOM_SYMBOL && atom_symbol_current_id(cursor) == plan->zero)
             break;
         if (!cetta_gslt_peano_add_unary_v1(
                 cursor, &constructor, &argument) ||

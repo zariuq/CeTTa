@@ -2,9 +2,11 @@
 #include "native_cost.h"
 #include <time.h>
 #include "space.h"
+#include "space_path_index.h"
 #include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
+#include "rule_binding.h"
 #include "stats.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -271,6 +273,8 @@ typedef struct {
         CettaIndex *many;
     } payload;
     CettaIndex count;
+    /* Zero means never populated; one is the inline slot, even after its
+     * occurrence is removed.  Larger capacities own an array. */
     CettaIndex capacity;
 } DiscLeafStore;
 
@@ -314,10 +318,20 @@ _Static_assert(sizeof(DiscBlock) % 16u == 0u,
                "trie blocks keep 16-byte alignment");
 
 typedef struct {
+    DiscNode **nodes;
+    size_t len;
+    size_t capacity;
+} DiscNodeVector;
+
+typedef struct {
     DiscChunk *chunks;
     DiscBlock **blocks;
     size_t block_len;
     size_t block_cap;
+    /* Materialized only by coordinate transport.  Each populated node is
+     * registered once, and stays registered when its leaf becomes empty. */
+    DiscNodeVector coordinate_leaves;
+    bool coordinate_leaves_ready;
     bool approximate;
 } DiscPool;
 
@@ -444,6 +458,7 @@ void disc_node_free(DiscNode *n) {
     for (size_t i = 0u; i < pool->block_len; i++)
         free(pool->blocks[i]);
     free(pool->blocks);
+    free(pool->coordinate_leaves.nodes);
     DiscChunk *chunk = pool->chunks;
     while (chunk) {
         DiscChunk *next = chunk->next;
@@ -454,88 +469,88 @@ void disc_node_free(DiscNode *n) {
 }
 
 static CettaIndex disc_leaf_at(const DiscNode *node, CettaIndex index) {
-    return node->leaves.capacity > 0u
+    return node->leaves.capacity > 1u
         ? node->leaves.payload.many[index]
         : node->leaves.payload.one;
 }
 
 static void disc_leaf_set(
         DiscNode *node, CettaIndex index, CettaIndex value) {
-    if (node->leaves.capacity > 0u)
+    if (node->leaves.capacity > 1u)
         node->leaves.payload.many[index] = value;
     else
         node->leaves.payload.one = value;
 }
 
-static CettaCount disc_node_transport_stable_coordinates(
-        DiscNode *node, const CettaIndex *source_to_target,
-        CettaCount source_len) {
+static void disc_node_vector_push(DiscNodeVector *vector, DiscNode *node) {
     if (!node)
-        return 0u;
-
-    CettaIndex write = 0u;
-    CettaCount removed = 0u;
-    for (CettaIndex read = 0u; read < node->leaves.count; read++) {
-        CettaIndex source = disc_leaf_at(node, read);
-        if (source >= source_len) {
-            fputs("CeTTa: clean discrimination index contains an invalid "
-                  "occurrence coordinate\n", stderr);
+        return;
+    if (vector->len == vector->capacity) {
+        size_t limit = SIZE_MAX / sizeof(*vector->nodes);
+        if (vector->capacity == limit) {
+            fputs("CeTTa: discrimination leaf registry capacity exhausted\n",
+                  stderr);
             abort();
         }
-        CettaIndex target = source_to_target[source];
-        if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED) {
-            removed++;
+        size_t capacity = vector->capacity ?
+            (vector->capacity > limit / 2u ? limit : vector->capacity * 2u) : 16u;
+        vector->nodes = cetta_realloc(vector->nodes,
+                                     capacity * sizeof(*vector->nodes));
+        vector->capacity = capacity;
+    }
+    vector->nodes[vector->len++] = node;
+}
+
+/* Build once with an explicit worklist.  Later transports touch only leaf
+ * stores; neither term depth nor unused hash slots enter their visit count.
+ * New leaves join this registry in disc_add_leaf.  The owning pool releases
+ * it together with the trie, including detached snapshot tries. */
+static void disc_prepare_coordinate_leaves(DiscPool *pool, DiscNode *root) {
+    DiscNodeVector pending = {0};
+    disc_node_vector_push(&pending, root);
+    while (pending.len) {
+        DiscNode *node = pending.nodes[--pending.len];
+        if (node->leaves.capacity != 0u)
+            disc_node_vector_push(&pool->coordinate_leaves, node);
+        if (node->edges.kind != DISC_EDGE_MANY) {
+            if (node->edges.kind != DISC_EDGE_EMPTY)
+                disc_node_vector_push(&pending, node->edges.payload.one.child);
             continue;
         }
-        disc_leaf_set(node, write++, target);
-    }
-    node->leaves.count = write;
-
-    if (node->edges.kind == DISC_EDGE_MANY) {
         DiscBranchSet *branches = node->edges.payload.many;
         if (branches->sym_hashed) {
             uint32_t cap = branches->sym_ht.mask + 1u;
             for (uint32_t i = 0u; i < cap; i++) {
                 if (branches->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
-                    removed += disc_node_transport_stable_coordinates(
-                        branches->sym_ht.entries[i].child,
-                        source_to_target, source_len);
+                    disc_node_vector_push(&pending,
+                        branches->sym_ht.entries[i].child);
                 }
             }
         } else {
             for (uint32_t i = 0u; i < branches->nsym; i++) {
-                removed += disc_node_transport_stable_coordinates(
-                    branches->sym[i].child, source_to_target,
-                    source_len);
+                disc_node_vector_push(&pending, branches->sym[i].child);
             }
         }
-        removed += disc_node_transport_stable_coordinates(
-            branches->var_child, source_to_target, source_len);
+        disc_node_vector_push(&pending, branches->var_child);
         for (uint32_t i = 0u; i < branches->nexpr; i++) {
-            removed += disc_node_transport_stable_coordinates(
-                branches->expr[i].child, source_to_target, source_len);
+            disc_node_vector_push(&pending, branches->expr[i].child);
         }
         if (branches->ints_hashed) {
             uint32_t cap = branches->int_ht.mask + 1u;
             for (uint32_t i = 0u; i < cap; i++) {
                 if (branches->int_ht.entries[i].child) {
-                    removed += disc_node_transport_stable_coordinates(
-                        branches->int_ht.entries[i].child,
-                        source_to_target, source_len);
+                    disc_node_vector_push(&pending,
+                        branches->int_ht.entries[i].child);
                 }
             }
         } else {
             for (uint32_t i = 0u; i < branches->nints; i++) {
-                removed += disc_node_transport_stable_coordinates(
-                    branches->ints[i].child, source_to_target,
-                    source_len);
+                disc_node_vector_push(&pending, branches->ints[i].child);
             }
         }
-    } else if (node->edges.kind != DISC_EDGE_EMPTY) {
-        removed += disc_node_transport_stable_coordinates(
-            node->edges.payload.one.child, source_to_target, source_len);
     }
-    return removed;
+    free(pending.nodes);
+    pool->coordinate_leaves_ready = true;
 }
 
 CettaCount disc_transport_stable_coordinates(
@@ -543,17 +558,44 @@ CettaCount disc_transport_stable_coordinates(
         CettaCount source_len) {
     if (!root || (!source_to_target && source_len != 0u))
         return 0u;
-    return disc_node_transport_stable_coordinates(
-        root, source_to_target, source_len);
+    DiscPool *pool = disc_root_pool(root);
+    if (!pool->coordinate_leaves_ready)
+        disc_prepare_coordinate_leaves(pool, root);
+    CettaCount removed = 0u;
+    for (size_t i = 0u; i < pool->coordinate_leaves.len; i++) {
+        DiscNode *node = pool->coordinate_leaves.nodes[i];
+        CettaIndex write = 0u;
+        for (CettaIndex read = 0u; read < node->leaves.count; read++) {
+            CettaIndex source = disc_leaf_at(node, read);
+            if (source >= source_len) {
+                fputs("CeTTa: clean discrimination index contains an invalid "
+                      "occurrence coordinate\n", stderr);
+                abort();
+            }
+            CettaIndex target = source_to_target[source];
+            if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED) {
+                removed++;
+                continue;
+            }
+            disc_leaf_set(node, write++, target);
+        }
+        node->leaves.count = write;
+    }
+    return removed;
 }
 
 static void disc_add_leaf(DiscPool *pool, DiscNode *n, CettaIndex idx) {
-    if (n->leaves.count == 0u && n->leaves.capacity == 0u) {
+    if (n->leaves.capacity == 0u) {
+        if (pool->coordinate_leaves_ready)
+            disc_node_vector_push(&pool->coordinate_leaves, n);
+        n->leaves.capacity = 1u;
+    }
+    if (n->leaves.count == 0u && n->leaves.capacity == 1u) {
         n->leaves.payload.one = idx;
         n->leaves.count = 1u;
         return;
     }
-    if (n->leaves.capacity == 0u) {
+    if (n->leaves.capacity == 1u) {
         CettaIndex first = n->leaves.payload.one;
         n->leaves.capacity = 4u;
         n->leaves.payload.many = disc_pool_alloc(
@@ -897,7 +939,9 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
         }
     }
     switch (a->kind) {
-    case ATOM_SYMBOL: return disc_get_sym(pool, node, a->sym_id);
+    case ATOM_SYMBOL:
+        return atom_symbol_is_spelled(a) ? disc_get_var(pool, node)
+            : disc_get_sym(pool, node, atom_symbol_current_id(a));
     case ATOM_VAR:    return disc_get_var(pool, node);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT)
@@ -1081,12 +1125,15 @@ typedef struct {
 static void dns_init(DiscNodeSet *s) { s->nodes = NULL; s->n = 0; s->c = 0; }
 static void dns_free(DiscNodeSet *s) { free(s->nodes); s->nodes = NULL; s->n = 0; s->c = 0; }
 
-static void dns_push(DiscNodeSet *s, DiscNode *node) {
+static __attribute__((noinline)) void dns_grow(DiscNodeSet *s) {
+    s->c = s->c ? s->c * 2 : 8;
+    s->nodes = cetta_realloc(s->nodes, sizeof(DiscNode *) * s->c);
+}
+
+static inline __attribute__((always_inline)) void dns_push(DiscNodeSet *s, DiscNode *node) {
     if (!node) return;
-    if (s->n >= s->c) {
-        s->c = s->c ? s->c * 2 : 8;
-        s->nodes = cetta_realloc(s->nodes, sizeof(DiscNode *) * s->c);
-    }
+    if (s->n >= s->c)
+        dns_grow(s);
     s->nodes[s->n++] = node;
 }
 
@@ -1256,7 +1303,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     if (!node) return;
     switch (q->kind) {
     case ATOM_SYMBOL:
-        dns_push(next, disc_find_symbol_branch(node, q->sym_id));
+        dns_push(next, disc_find_symbol_branch(node, atom_symbol_current_id(q)));
         /* A variable in the indexed LHS matches any query symbol */
         dns_push(next, disc_find_variable_branch(node));
         break;
@@ -1422,149 +1469,137 @@ void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
         memset(cursor, 0, sizeof(*cursor));
 }
 
-typedef struct {
-    uint32_t node;
-    CettaIndex leaf;
-} SpaceOccurrenceCursorHead;
-
-static bool space_occurrence_cursor_head_before(
-        SpaceOccurrenceCursorHead left, SpaceOccurrenceCursorHead right) {
-    return left.leaf < right.leaf;
+static CettaIndex space_occurrence_cursor_head(
+        const SpaceOccurrenceCursor *cursor, uint32_t node, CettaIndex leaf) {
+    return (leaf << cursor->heap_node_bits) | node;
 }
 
 static void space_occurrence_cursor_heap_push(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len,
-        SpaceOccurrenceCursorHead item) {
-    uint32_t index = (*len)++;
+        SpaceOccurrenceCursor *cursor, CettaIndex head) {
+    uint32_t index = cursor->heap_len++;
     while (index > 0u) {
         uint32_t parent = (index - 1u) / 2u;
-        if (!space_occurrence_cursor_head_before(item, heap[parent]))
+        if (head >= cursor->heap[parent])
             break;
-        heap[index] = heap[parent];
+        cursor->heap[index] = cursor->heap[parent];
         index = parent;
     }
-    heap[index] = item;
+    cursor->heap[index] = head;
 }
 
-static SpaceOccurrenceCursorHead space_occurrence_cursor_heap_pop(
-        SpaceOccurrenceCursorHead *heap, uint32_t *len) {
-    SpaceOccurrenceCursorHead top = heap[0];
-    uint32_t count = --(*len);
-    if (count == 0u)
-        return top;
-    SpaceOccurrenceCursorHead last = heap[count];
-    uint32_t index = 0u;
-    for (;;) {
+static void space_occurrence_cursor_heap_sift(
+        SpaceOccurrenceCursor *cursor, uint32_t index, CettaIndex head) {
+    while (index < cursor->heap_len / 2u) {
         uint32_t left = index * 2u + 1u;
-        uint32_t right;
-        uint32_t child;
-        if (left >= count)
-            break;
-        right = left + 1u;
-        child = (right < count &&
-                 space_occurrence_cursor_head_before(heap[right], heap[left]))
+        uint32_t right = left + 1u;
+        uint32_t child = (right < cursor->heap_len &&
+                          cursor->heap[right] < cursor->heap[left])
             ? right : left;
-        if (!space_occurrence_cursor_head_before(heap[child], last))
+        if (cursor->heap[child] >= head)
             break;
-        heap[index] = heap[child];
+        cursor->heap[index] = cursor->heap[child];
         index = child;
     }
-    heap[index] = last;
+    cursor->heap[index] = head;
+}
+
+static CettaIndex space_occurrence_cursor_heap_pop(SpaceOccurrenceCursor *cursor) {
+    CettaIndex top = cursor->heap[0];
+    if (--cursor->heap_len > 0u)
+        space_occurrence_cursor_heap_sift(
+            cursor, 0u, cursor->heap[cursor->heap_len]);
     return top;
 }
 
-/* One declaration-order pass over a frontier that would otherwise be
- * re-scanned at every answer. A single node is already a constant step.
- * Allocation failure leaves the node scan in place. */
-static void space_occurrence_cursor_flatten(SpaceOccurrenceCursor *cursor) {
-    CettaCount total = 0u;
-    CettaCount view_len;
-    CettaIndex *flat = NULL;
-    SpaceOccurrenceCursorHead *heap = NULL;
-    SpaceOccurrenceCursorHead *deferred = NULL;
-    uint32_t heap_len = 0u;
-    CettaIndex written = 0u;
-    if (!cursor || cursor->full_scan || cursor->node_len <= 1u ||
-        !cursor->nodes || !cursor->leaf_pos || !cursor->occurrences)
+/* Build a frontier from current positions in linear time. Pulling reads only
+ * the least heads; a cancelled prefix never visits the remaining leaf bag.
+ * Allocation failure retains the same declaration-order node scan. */
+static void space_occurrence_cursor_prepare_heap(SpaceOccurrenceCursor *cursor) {
+    size_t bytes;
+    if (cursor->full_scan || cursor->flat_mode || cursor->node_len <= 1u ||
+        __builtin_mul_overflow((size_t)cursor->node_len,
+                              sizeof(*cursor->heap), &bytes))
         return;
+    uint32_t bits = 0u;
+    for (uint32_t top = cursor->node_len - 1u; top > 0u; top >>= 1u)
+        bits++;
+    /* Integer comparison orders occurrences first and branch ordinals second.
+     * Wider coordinate ranges retain the position-preserving node scan. */
+    if (cursor->ceiling > 0u &&
+        cursor->ceiling - 1u > (UINT64_MAX >> bits))
+        return;
+    cursor->heap = cetta_malloc(bytes);
+    if (!cursor->heap)
+        return;
+    cursor->heap_node_bits = bits;
     for (uint32_t index = 0u; index < cursor->node_len; index++) {
         DiscNode *node = cursor->nodes[index];
-        if (!node)
+        CettaIndex position = cursor->leaf_pos[index];
+        if (!node || position >= node->leaves.count)
             continue;
-        if (node->leaves.count > UINT64_MAX - total)
-            return;
-        total += node->leaves.count;
-    }
-    if (total == 0u) {
-        cursor->flat_mode = true;
-        return;
-    }
-    if (total > SIZE_MAX / sizeof(*flat))
-        return;
-    flat = cetta_malloc(sizeof(*flat) * (size_t)total);
-    heap = cetta_malloc(sizeof(*heap) * cursor->node_len);
-    deferred = cetta_malloc(sizeof(*deferred) * cursor->node_len);
-    if (!flat || !heap || !deferred) {
-        free(flat);
-        free(heap);
-        free(deferred);
-        return;
-    }
-    view_len = space_pinned_occurrences_len(cursor->occurrences);
-    for (uint32_t index = 0u; index < cursor->node_len; index++) {
-        DiscNode *node = cursor->nodes[index];
-        CettaIndex leaf;
-        if (!node || node->leaves.count == 0u)
-            continue;
-        leaf = disc_leaf_at(node, 0u);
-        if (leaf >= cursor->ceiling) {
+        if (disc_leaf_at(node, position) >= cursor->ceiling) {
             cursor->leaf_pos[index] = node->leaves.count;
             continue;
         }
-        space_occurrence_cursor_heap_push(
-            heap, &heap_len,
-            (SpaceOccurrenceCursorHead){.node = index, .leaf = leaf});
+        cursor->heap[cursor->heap_len++] = space_occurrence_cursor_head(
+            cursor, index, disc_leaf_at(node, position));
     }
-    while (heap_len > 0u) {
-        CettaIndex best = heap[0].leaf;
+    for (uint32_t index = cursor->heap_len / 2u; index > 0u; index--)
+        space_occurrence_cursor_heap_sift(cursor, index - 1u,
+                                         cursor->heap[index - 1u]);
+}
+
+static bool space_occurrence_cursor_heap_next(
+        SpaceOccurrenceCursor *cursor, CettaCount view_len, CettaIndex *out) {
+    CettaIndex mask = (UINT64_C(1) << cursor->heap_node_bits) - 1u;
+    while (cursor->heap_len > 0u) {
+        CettaIndex best = cursor->heap[0] >> cursor->heap_node_bits;
         uint32_t deferred_len = 0u;
-        while (heap_len > 0u && heap[0].leaf == best) {
-            SpaceOccurrenceCursorHead head =
-                space_occurrence_cursor_heap_pop(heap, &heap_len);
-            DiscNode *node = cursor->nodes[head.node];
-            CettaIndex position = ++cursor->leaf_pos[head.node];
-            CettaIndex next;
-            if (!node || position >= node->leaves.count)
+        while (cursor->heap_len > 0u &&
+                (cursor->heap[0] >> cursor->heap_node_bits) == best) {
+            uint32_t head = (uint32_t)(space_occurrence_cursor_heap_pop(cursor) & mask);
+            DiscNode *node = cursor->nodes[head];
+            CettaIndex position = ++cursor->leaf_pos[head];
+            if (position >= node->leaves.count)
                 continue;
-            next = disc_leaf_at(node, position);
-            if (next >= cursor->ceiling) {
-                cursor->leaf_pos[head.node] = node->leaves.count;
+            if (disc_leaf_at(node, position) >= cursor->ceiling) {
+                cursor->leaf_pos[head] = node->leaves.count;
                 continue;
             }
-            deferred[deferred_len++] = (SpaceOccurrenceCursorHead){
-                .node = head.node,
-                .leaf = next,
-            };
+            /* Popping frees at least one slot. Queue successor heads at the
+             * high end, then insert from low to high so no unread head moves. */
+            cursor->heap[cursor->node_len - ++deferred_len] =
+                space_occurrence_cursor_head(
+                    cursor, head, disc_leaf_at(node, position));
         }
-        for (uint32_t index = 0u; index < deferred_len; index++)
-            space_occurrence_cursor_heap_push(
-                heap, &heap_len, deferred[index]);
-        if (best < view_len)
-            flat[written++] = best;
+        for (uint32_t index = cursor->node_len - deferred_len;
+             index < cursor->node_len; index++)
+            space_occurrence_cursor_heap_push(cursor, cursor->heap[index]);
+        if (best < view_len) {
+            *out = best;
+            return true;
+        }
     }
-    free(heap);
-    free(deferred);
-    memset(cursor->leaf_pos, 0,
-           sizeof(*cursor->leaf_pos) * cursor->node_len);
-    if (written == 0u) {
-        free(flat);
-        flat = NULL;
+    return false;
+}
+
+/* A clean native index stores each source occurrence in exactly one leaf.
+ * After deduplicating selected leaf nodes, their lengths therefore certify
+ * full coverage without reading or copying the occurrence bag. Stale leaf
+ * coordinates do not carry that certificate. */
+static bool space_occurrence_cursor_frontier_is_full(
+        const Space *space, const DiscNodeSet *frontier, uint32_t length) {
+    const SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->match_trie_dirty || state->match_trie_stale_occurrences != 0u)
+        return false;
+    CettaCount selected = 0u;
+    for (uint32_t index = 0u; index < length; index++) {
+        CettaCount count = frontier->nodes[index]->leaves.count;
+        if (count > space->native.len - selected)
+            return false;
+        selected += count;
     }
-    cursor->flat = flat;
-    cursor->flat_capacity = flat ? total : 0u;
-    cursor->flat_len = written;
-    cursor->flat_next = 0u;
-    cursor->flat_mode = true;
+    return selected == space->native.len;
 }
 
 static bool space_occurrence_cursor_capture(Space *s,
@@ -1624,7 +1659,10 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         return space_read_token_prefix_intact(cursor->read);
     }
     if (space_match_native_try_cold_candidates(
-            s, pattern, &cursor->flat, &cursor->flat_len,&cursor->flat_capacity)) {
+            s, pattern, &cursor->flat, &cursor->flat_len, &cursor->flat_capacity) ||
+        (space_path_index_may_select(pattern) &&
+         space_path_index_candidates(s, pattern, &cursor->flat,
+                                     &cursor->flat_len, &cursor->flat_capacity))) {
         cursor->flat_mode = true;
         cursor->pinned = true;
         cursor->occurrences = space_pinned_occurrences_acquire(s);
@@ -1648,6 +1686,13 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
             continue;
         final.nodes[unique++] = final.nodes[i];
     }
+    if (space_occurrence_cursor_frontier_is_full(s, &final, unique)) {
+        dns_free(&final);
+        cursor->full_scan = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return true;
+    }
     cursor->node_len = unique;
     if (unique > 0u) {
         cursor->nodes = cetta_malloc(sizeof(*cursor->nodes) * unique);
@@ -1665,15 +1710,20 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     dns_free(&final);
     cursor->pinned = true;
     cursor->occurrences = space_pinned_occurrences_acquire(s);
-    space_occurrence_cursor_flatten(cursor);
+    space_occurrence_cursor_prepare_heap(cursor);
     return true;
 }
 
-bool space_occurrence_cursor_clone_unstarted(
-        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
-    if (!src || !dst || src == dst) return false;
+/* Both clone modes own their traversal arrays and share only the pinned rows.
+ * Rewinding is permitted only while that view is still the whole live prefix. */
+static bool space_occurrence_cursor_copy(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst,
+        bool rewind) {
+    if (!dst || src == dst)
+        return false;
     space_occurrence_cursor_init_empty(dst);
+    if (!src)
+        return false;
     if (src->logical_scan) {
         if (!space_read_view_clone(&src->logical_reads, &dst->logical_reads))
             return false;
@@ -1683,128 +1733,86 @@ bool space_occurrence_cursor_clone_unstarted(
         dst->ceiling = src->ceiling;
         dst->full_scan = true;
         dst->logical_scan = true;
+        dst->full_next = rewind ? 0u : src->full_next;
         return true;
     }
-    if (!src->pinned || !src->space || !src->occurrences ||
-        !src->occurrences->space)
+    if (!src->pinned || !src->space || !src->occurrences)
         return false;
-    Space *s = src->space;
-    if (src->read.instance_id != space_instance_id(s) ||
-        src->prefix_epoch != s->prefix_epoch ||
-        src->ceiling != s->native.len) {
+    Space *live = src->occurrences->space;
+    if ((live &&
+         (src->read.instance_id != space_instance_id(live) ||
+          src->prefix_epoch != live->prefix_epoch)) ||
+        (rewind && (!live || src->ceiling != live->native.len)) ||
+        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
+        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
+        (src->flat_mode && src->flat_len > 0u && !src->flat) ||
+        src->heap_len > src->node_len) {
         return false;
     }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = 0u;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = 0u;
+
+    *dst = *src;
+    dst->nodes = NULL;
+    dst->leaf_pos = NULL;
+    dst->flat = NULL;
+    dst->flat_capacity = 0u;
+    dst->heap = NULL;
+    dst->heap_len = 0u;
+    dst->occurrences = NULL;
+    dst->pinned = false;
+    if (rewind) {
+        dst->full_next = 0u;
+        dst->flat_next = 0u;
+    }
     if (src->flat_mode && src->flat_len > 0u) {
-        if (!src->flat)
-            return false;
         dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        dst->flat_capacity=src->flat_len;
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
+        if (!dst->flat)
+            goto failed;
+        dst->flat_capacity = src->flat_len;
         memcpy(dst->flat, src->flat,
                sizeof(*dst->flat) * (size_t)src->flat_len);
     }
     if (src->node_len > 0u) {
-        if (!src->nodes) {
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memset(dst->leaf_pos, 0,
-               sizeof(*dst->leaf_pos) * src->node_len);
+        dst->nodes = cetta_malloc(sizeof(*dst->nodes) * src->node_len);
+        dst->leaf_pos = cetta_malloc(sizeof(*dst->leaf_pos) * src->node_len);
+        if (!dst->nodes || !dst->leaf_pos)
+            goto failed;
+        memcpy(dst->nodes, src->nodes, sizeof(*dst->nodes) * src->node_len);
+        if (rewind)
+            memset(dst->leaf_pos, 0, sizeof(*dst->leaf_pos) * src->node_len);
+        else
+            memcpy(dst->leaf_pos, src->leaf_pos,
+                   sizeof(*dst->leaf_pos) * src->node_len);
     }
-    dst->pinned = true;
+    if (rewind) {
+        space_occurrence_cursor_prepare_heap(dst);
+    } else if (src->heap) {
+        dst->heap = cetta_malloc(sizeof(*dst->heap) * (size_t)src->node_len);
+        if (dst->heap) {
+            dst->heap_len = src->heap_len;
+            memcpy(dst->heap, src->heap, sizeof(*dst->heap) * src->heap_len);
+        }
+        /* Without the optional heap, the position-preserving scan has the
+         * same next occurrence and terminal result. */
+    }
     dst->occurrences = space_pinned_occurrences_share(src->occurrences);
+    dst->pinned = true;
     return true;
+
+failed:
+    space_occurrence_cursor_release(dst);
+    return false;
+}
+
+bool space_occurrence_cursor_clone_unstarted(
+        const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    return space_occurrence_cursor_copy(src, dst, true);
 }
 
 bool space_occurrence_cursor_clone(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
-    if (!src || !dst || src == dst) return false;
-    space_occurrence_cursor_init_empty(dst);
-    if (src->logical_scan) {
-        if (!space_occurrence_cursor_clone_unstarted(src, dst)) return false;
-        dst->full_next = src->full_next;
-        return true;
-    }
-    if (!src->pinned || !src->space ||
-        !src->occurrences)
-        return false;
-    Space *s = src->space;
-    if ((src->occurrences->space &&
-         (src->read.instance_id != space_instance_id(s) ||
-          src->prefix_epoch != s->prefix_epoch)) ||
-        src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
-        (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
-        (src->flat_mode && src->flat_len > 0u && !src->flat)) {
-        return false;
-    }
-    dst->read = src->read;
-    dst->prefix_epoch = src->prefix_epoch;
-    dst->ceiling = src->ceiling;
-    dst->space = s;
-    dst->full_scan = src->full_scan;
-    dst->full_next = src->full_next;
-    dst->node_len = src->node_len;
-    dst->flat_mode = src->flat_mode;
-    dst->flat_len = src->flat_len;
-    dst->flat_next = src->flat_next;
-    if (src->flat_mode && src->flat_len > 0u) {
-        dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
-        dst->flat_capacity=src->flat_len;
-        if (!dst->flat) {
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->flat, src->flat,
-               sizeof(*dst->flat) * (size_t)src->flat_len);
-    }
-    if (src->node_len > 0u) {
-        dst->nodes = cetta_malloc(
-            sizeof(*dst->nodes) * src->node_len);
-        dst->leaf_pos = cetta_malloc(
-            sizeof(*dst->leaf_pos) * src->node_len);
-        if (!dst->nodes || !dst->leaf_pos) {
-            free(dst->nodes);
-            free(dst->leaf_pos);
-            free(dst->flat);
-            space_occurrence_cursor_init_empty(dst);
-            return false;
-        }
-        memcpy(dst->nodes, src->nodes,
-               sizeof(*dst->nodes) * src->node_len);
-        memcpy(dst->leaf_pos, src->leaf_pos,
-               sizeof(*dst->leaf_pos) * src->node_len);
-    }
-    dst->pinned = true;
-    dst->occurrences = space_pinned_occurrences_share(src->occurrences);
-    return true;
+    return space_occurrence_cursor_copy(src, dst, false);
 }
 
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
@@ -1848,6 +1856,14 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
             return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
         return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    if (cursor->heap) {
+        CettaIndex index;
+        if (!space_occurrence_cursor_heap_next(cursor, len, &index))
+            return SPACE_OCCURRENCE_CURSOR_END;
+        if (logical_index_out)
+            *logical_index_out = index;
+        return SPACE_OCCURRENCE_CURSOR_ITEM;
     }
     for (;;) {
         CettaIndex best = UINT64_MAX;
@@ -1922,6 +1938,7 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     free(cursor->nodes);
     free(cursor->leaf_pos);
     free(cursor->flat);
+    free(cursor->heap);
     space_occurrence_cursor_init_empty(cursor);
 }
 
@@ -1988,7 +2005,7 @@ static bool disc_follow_rigid_exact_path(
     switch (query->kind) {
     case ATOM_SYMBOL:
         *out_continuation = disc_find_symbol_branch(
-            node, query->sym_id);
+            node, atom_symbol_current_id(query));
         return true;
     case ATOM_VAR:
         return false;
@@ -2027,66 +2044,114 @@ bool disc_count_rigid_exact_expression_coordinates(
     return true;
 }
 
+typedef struct {
+    const DiscNode *node;
+    CettaExprLen steps;
+    uint64_t sym_index, int_index;
+    bool variable_done;
+} DiscWildcardFoldFrame;
+
+static const DiscNode *disc_wildcard_fold_next(
+        DiscWildcardFoldFrame *frame, const DiscBranchSet *branches) {
+    uint64_t sym_cap = branches->sym_hashed
+        ? (uint64_t)branches->sym_ht.mask + 1u : branches->nsym;
+    while (frame->sym_index < sym_cap) {
+        uint64_t index = frame->sym_index++;
+        if (branches->sym_hashed) {
+            if (branches->sym_ht.entries[index].key != SYMBOL_ID_NONE)
+                return branches->sym_ht.entries[index].child;
+        } else {
+            return branches->sym[index].child;
+        }
+    }
+    if (!frame->variable_done) {
+        frame->variable_done = true;
+        if (branches->var_child)
+            return branches->var_child;
+    }
+    uint64_t int_cap = branches->ints_hashed
+        ? (uint64_t)branches->int_ht.mask + 1u : branches->nints;
+    while (frame->int_index < int_cap) {
+        uint64_t index = frame->int_index++;
+        const DiscNode *child = branches->ints_hashed
+            ? branches->int_ht.entries[index].child
+            : branches->ints[index].child;
+        if (child)
+            return child;
+    }
+    return NULL;
+}
+
+/* The count observer needs multiplicities, not candidate coordinates. Keep
+ * only the unfinished branch walks; a singleton path advances in place. */
 static bool disc_sum_wildcard_leaves(
-    const DiscNode *node, unsigned steps, uint64_t *sum) {
+        const DiscNode *node, CettaExprLen steps, uint64_t *sum) {
     if (!node || !sum)
         return false;
-    if (steps == 0u) {
-        if (*sum > UINT64_MAX - (uint64_t)node->leaves.count)
-            return false;
-        *sum += (uint64_t)node->leaves.count;
-        return true;
-    }
-    if (node->edges.kind == DISC_EDGE_EMPTY)
-        return true;
-    if (node->edges.kind == DISC_EDGE_EXPRESSION)
-        return false;
-    if (node->edges.kind != DISC_EDGE_MANY) {
-        return disc_sum_wildcard_leaves(
-            node->edges.payload.one.child, steps - 1u, sum);
-    }
-    const DiscBranchSet *branches = node->edges.payload.many;
-    if (!branches || branches->nexpr != 0u)
-        return false;
-    if (branches->sym_hashed) {
-        uint32_t cap = branches->sym_ht.mask + 1u;
-        for (uint32_t index = 0u; index < cap; index++) {
-            if (branches->sym_ht.entries[index].key == SYMBOL_ID_NONE)
-                continue;
-            if (!disc_sum_wildcard_leaves(
-                    branches->sym_ht.entries[index].child,
-                    steps - 1u, sum))
-                return false;
+    DiscWildcardFoldFrame inline_frames[8];
+    DiscWildcardFoldFrame *frames = inline_frames;
+    size_t len = 1u, capacity = 8u;
+    frames[0] = (DiscWildcardFoldFrame){.node = node, .steps = steps};
+    bool supported = true;
+    while (len) {
+        DiscWildcardFoldFrame *frame = &frames[len - 1u];
+        node = frame->node;
+        if (!node) {
+            supported = false;
+            break;
         }
-    } else {
-        for (uint32_t index = 0u; index < branches->nsym; index++) {
-            if (!disc_sum_wildcard_leaves(
-                    branches->sym[index].child, steps - 1u, sum))
-                return false;
+        if (!frame->steps) {
+            if (*sum > UINT64_MAX - node->leaves.count) {
+                supported = false;
+                break;
+            }
+            *sum += node->leaves.count;
+            len--;
+            continue;
         }
+        if (node->edges.kind == DISC_EDGE_EMPTY) {
+            len--;
+            continue;
+        }
+        if (node->edges.kind == DISC_EDGE_EXPRESSION) {
+            supported = false;
+            break;
+        }
+        if (node->edges.kind != DISC_EDGE_MANY) {
+            frame->node = node->edges.payload.one.child;
+            frame->steps--;
+            continue;
+        }
+        const DiscBranchSet *branches = node->edges.payload.many;
+        if (!branches || branches->nexpr) {
+            supported = false;
+            break;
+        }
+        const DiscNode *child = disc_wildcard_fold_next(frame, branches);
+        if (!child) {
+            len--;
+            continue;
+        }
+        CettaExprLen child_steps = frame->steps - 1u;
+        if (len == capacity) {
+            if (capacity > SIZE_MAX / sizeof(*frames) / 2u) {
+                supported = false;
+                break;
+            }
+            capacity *= 2u;
+            if (frames == inline_frames) {
+                frames = cetta_malloc(capacity * sizeof(*frames));
+                memcpy(frames, inline_frames, len * sizeof(*frames));
+            } else {
+                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+            }
+        }
+        frames[len++] = (DiscWildcardFoldFrame){
+            .node = child, .steps = child_steps};
     }
-    if (branches->var_child &&
-        !disc_sum_wildcard_leaves(
-            branches->var_child, steps - 1u, sum))
-        return false;
-    if (branches->ints_hashed) {
-        uint32_t cap = branches->int_ht.mask + 1u;
-        for (uint32_t index = 0u; index < cap; index++) {
-            if (!branches->int_ht.entries[index].child)
-                continue;
-            if (!disc_sum_wildcard_leaves(
-                    branches->int_ht.entries[index].child,
-                    steps - 1u, sum))
-                return false;
-        }
-    } else {
-        for (uint32_t index = 0u; index < branches->nints; index++) {
-            if (!disc_sum_wildcard_leaves(
-                    branches->ints[index].child, steps - 1u, sum))
-                return false;
-        }
-    }
-    return true;
+    if (frames != inline_frames)
+        free(frames);
+    return supported;
 }
 
 /* A free tail is a run of distinct variables.  A repeated variable is an
@@ -2265,7 +2330,7 @@ bool disc_project_flat_bound_column(
         if (disc_find_variable_branch(node))
             return false;
         if (ground->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, ground->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(ground));
         else if (ground->kind == ATOM_GROUNDED &&
                  ground->ground.gkind == GV_INT)
             node = disc_find_integer_branch(node, ground->ground.ival);
@@ -2288,7 +2353,8 @@ bool disc_count_flat_bound_vars(
         *out_count = 0u;
     if (!root || !pattern || !out_count ||
         pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
-        (bind_len > 0u && (!bind_ids || !bind_values)))
+        (bind_len > 0u && (!bind_ids || !bind_values)) ||
+        disc_find_variable_branch(root))
         return false;
     const DiscNode *node = disc_find_expression_branch(
         root, pattern->expr.len);
@@ -2315,7 +2381,7 @@ bool disc_count_flat_bound_vars(
             uint64_t sum = 0u;
             if (!disc_sum_wildcard_leaves(
                     node,
-                    (unsigned)(pattern->expr.len - index), &sum))
+                    pattern->expr.len - index, &sum))
                 return false;
             *out_count = (CettaIndex)sum;
             return true;
@@ -2323,7 +2389,7 @@ bool disc_count_flat_bound_vars(
         if (disc_find_variable_branch(node))
             return false;
         if (ground->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, ground->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(ground));
         else if (ground->kind == ATOM_GROUNDED &&
                  ground->ground.gkind == GV_INT)
             node = disc_find_integer_branch(node, ground->ground.ival);
@@ -2338,16 +2404,28 @@ bool disc_count_flat_bound_vars(
 
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count) {
+    if (!pattern || pattern->kind != ATOM_EXPR) {
+        if (out_count)
+            *out_count = 0u;
+        return false;
+    }
+    return disc_count_flat_expression_coordinates(
+        root, pattern->expr.elems, pattern->expr.len, out_count);
+}
+
+bool disc_count_flat_expression_coordinates(
+        const DiscNode *root, Atom *const *coordinates,
+        CettaExprLen coordinate_count, CettaIndex *out_count) {
     if (root && disc_root_pool((DiscNode *)root)->approximate)
         return false;
     if (out_count)
         *out_count = 0u;
-    if (!root || !pattern || !out_count ||
-        pattern->kind != ATOM_EXPR || pattern->expr.len == 0u)
+    if (!root || !coordinates || !out_count || coordinate_count == 0u ||
+        disc_find_variable_branch(root))
         return false;
-    CettaExprIndex first_var = pattern->expr.len;
-    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
-        const Atom *item = pattern->expr.elems[index];
+    CettaExprIndex first_var = coordinate_count;
+    for (CettaExprIndex index = 0u; index < coordinate_count; index++) {
+        const Atom *item = coordinates[index];
         if (!item)
             return false;
         if (item->kind == ATOM_VAR) {
@@ -2362,28 +2440,31 @@ bool disc_count_flat_trailing_wildcards(
         return false;
     }
     for (CettaExprIndex index = first_var;
-         index < pattern->expr.len; index++) {
-        if (!pattern->expr.elems[index] ||
-            pattern->expr.elems[index]->kind != ATOM_VAR)
+         index < coordinate_count; index++) {
+        if (!coordinates[index] || coordinates[index]->kind != ATOM_VAR)
             return false;
+        for (CettaExprIndex earlier = first_var; earlier < index; earlier++) {
+            if (coordinates[earlier]->var_id == coordinates[index]->var_id)
+                return false;
+        }
     }
     const DiscNode *node = disc_find_expression_branch(
-        root, pattern->expr.len);
+        root, coordinate_count);
     if (!node)
         return true;
     for (CettaExprIndex index = 0u; index < first_var; index++) {
         if (disc_find_variable_branch(node))
             return false;
-        const Atom *item = pattern->expr.elems[index];
+        const Atom *item = coordinates[index];
         if (item->kind == ATOM_SYMBOL)
-            node = disc_find_symbol_branch(node, item->sym_id);
+            node = disc_find_symbol_branch(node, atom_symbol_current_id(item));
         else
             node = disc_find_integer_branch(node, item->ground.ival);
         if (!node)
             return true;
     }
     uint64_t sum = 0u;
-    unsigned wildcards = (unsigned)(pattern->expr.len - first_var);
+    CettaExprLen wildcards = coordinate_count - first_var;
     if (!disc_sum_wildcard_leaves(node, wildcards, &sum))
         return false;
     *out_count = (CettaIndex)sum;
@@ -2590,10 +2671,10 @@ static bool atom_id_is_eq_subst_safe(const Space *s, AtomId atom_id) {
 /* Get the head symbol of an equation LHS for indexing.
    Returns NULL if the head is not a symbol (variable, complex expr). */
 static SymbolId eq_head_symbol(Atom *lhs) {
-    if (lhs->kind == ATOM_SYMBOL) return lhs->sym_id;
+    if (lhs->kind == ATOM_SYMBOL) return atom_symbol_current_id(lhs);
     if (lhs->kind == ATOM_EXPR && lhs->expr.len > 0 &&
         lhs->expr.elems[0]->kind == ATOM_SYMBOL)
-        return lhs->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(lhs->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -2711,6 +2792,9 @@ static void eq_index_init(EqIndex *idx) {
         eq_bucket_init(&idx->buckets[i]);
     eq_bucket_init(&idx->wildcard);
     eq_head_set_init(&idx->heads);
+    eq_head_set_init(&idx->directional_heads);
+    idx->directional_wildcard = false;
+    idx->directional_present = false;
 }
 
 static void eq_index_free(EqIndex *idx) {
@@ -2718,6 +2802,27 @@ static void eq_index_free(EqIndex *idx) {
         eq_bucket_free(&idx->buckets[i]);
     eq_bucket_free(&idx->wildcard);
     eq_head_set_free(&idx->heads);
+    eq_head_set_free(&idx->directional_heads);
+}
+
+static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
+                                          AtomId atom_id) {
+    const TermUniverse *universe = s->native.universe;
+    if (!universe || atom_id == CETTA_ATOM_ID_NONE) return;
+    if (tu_hdr(universe, atom_id) &&
+        (tu_kind(universe, atom_id) != ATOM_EXPR ||
+         tu_arity(universe, atom_id) != 3u ||
+         tu_head_sym(universe, atom_id) != g_builtin_syms.equals_percent))
+        return;
+    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(atom, CETTA_RULE_SYNTAX_DIRECTIONAL, &rule)) return;
+    idx->directional_present = true;
+    SymbolId head = eq_head_symbol(rule.head);
+    if (head != SYMBOL_ID_NONE)
+        eq_head_set_add(&idx->directional_heads, head);
+    else
+        idx->directional_wildcard = true;
 }
 
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
@@ -2775,9 +2880,9 @@ static void ty_ann_bucket_free(TypeAnnBucket *b) {
 
 static uint32_t atom_hash_for_index(Atom *a) {
     /* Hash by name for symbols, or by first element for expressions */
-    if (a->kind == ATOM_SYMBOL) return symbol_hash(a->sym_id);
+    if (a->kind == ATOM_SYMBOL) return symbol_hash(atom_symbol_current_id(a));
     if (a->kind == ATOM_EXPR && a->expr.len > 0 && a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return symbol_hash(a->expr.elems[0]->sym_id);
+        return symbol_hash(atom_symbol_current_id(a->expr.elems[0]));
     return 0;
 }
 
@@ -2851,11 +2956,14 @@ static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
     if (idx->has_open_rows)
         return;
     const TermUniverse *universe = s->native.universe;
-    if (tu_hdr(universe, row_id)) {
-        AtomKind kind = tu_kind(universe, row_id);
+    const CettaTermHdr *header = tu_hdr(universe, row_id);
+    if (header) {
+        /* These structural tests share the already validated record header. */
+        AtomKind kind = (AtomKind)header->tag;
         if (kind == ATOM_VAR ||
-            (kind == ATOM_EXPR && tu_arity(universe, row_id) != 0u &&
-             (tu_head_sym(universe, row_id) == SYMBOL_ID_NONE ||
+            (kind == ATOM_EXPR &&
+             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
+             (header->sym_or_head == SYMBOL_ID_NONE ||
               tu_petta_value_representation(universe, row_id) !=
                   PETTA_VALUE_ORDINARY)))
             idx->has_open_rows = true;
@@ -2938,6 +3046,7 @@ static bool id_present_set(SpaceNativeStorage *ns, AtomId id) {
 static void id_present_clear(SpaceNativeStorage *ns) {
     if (ns->id_present)
         memset(ns->id_present, 0, (size_t)(ns->id_present_bits >> 3));
+    ns->id_present_incomplete = false;
 }
 
 static void id_present_free(SpaceNativeStorage *ns) {
@@ -3064,6 +3173,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -3111,6 +3221,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -3476,6 +3587,9 @@ static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
 static CettaCount space_overlay_visible_base_count(const Space *s) {
     if (!space_has_overlay_base(s))
         return 0;
+    if (s->module_own_view)
+        return space_length64(s->overlay_base) -
+               space_imported_length(s->overlay_base);
     return s->overlay_base_visible_len - s->overlay_removed_base_len;
 }
 
@@ -3487,6 +3601,10 @@ static bool space_overlay_visible_base_raw_index(const Space *s,
     CettaCount visible_count = space_overlay_visible_base_count(s);
     if (visible_index >= visible_count)
         return false;
+    if (s->module_own_view) {
+        *out_raw = space_imported_length(s->overlay_base) + visible_index;
+        return true;
+    }
     CettaCount target = visible_index + 1u;
     CettaIndex lo = 0;
     CettaIndex hi = s->overlay_base_visible_len;
@@ -3854,7 +3972,7 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
                 tu_arity(s->native.universe, atom_id) == 3u) {
                 SymbolId head = tu_head_sym(s->native.universe, atom_id);
-                if (head == g_builtin_syms.equals)
+                if (head == g_builtin_syms.equals || head == g_builtin_syms.equals_percent)
                     return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
                 if (head == g_builtin_syms.colon)
                     return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
@@ -3867,7 +3985,8 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             atom = term_universe_get_atom(s->native.universe, atom_id);
     }
     if (atom) {
-        if (space_equation_view(atom, true, NULL, NULL, NULL))
+        if (space_equation_view(atom, true, NULL, NULL, NULL) ||
+            space_atom_form_is(atom, g_builtin_syms.equals_percent, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
         if (space_atom_form_is(atom, g_builtin_syms.colon, 3u))
             return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
@@ -3900,6 +4019,80 @@ space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx) {
     return result;
 }
 
+typedef struct {
+    bool equations;
+    bool declarations;
+} SpaceDispatchRetention;
+
+static bool space_transport_dispatch_bucket(
+        CettaIndex *positions, CettaCount count,
+        CettaCount source_len, CettaCount target_len,
+        const CettaIndex *source_to_target, CettaIndex erased) {
+    for (CettaIndex i = 0u; i < count; i++) {
+        CettaIndex source = positions[i];
+        if (source >= source_len || (!source_to_target && source == erased))
+            return false;
+        CettaIndex target = source_to_target ? source_to_target[source]
+            : source - (source > erased);
+        if (target >= target_len)
+            return false;
+        positions[i] = target;
+    }
+    return true;
+}
+
+/* Each index is retained only when its own row projection is unchanged. For a
+ * single unordered erasure the classification includes the relocated tail.
+ * Type exclusion also needs the absence of open rows; deletion preserves that
+ * negative certificate, but a positive flag requires a rebuild to update it.
+ * Only logical coordinates move. Bucket-local trie positions, ordered
+ * payloads and declaration-subject metadata remain unchanged. */
+static SpaceDispatchRetention space_transport_dispatch_coordinates(
+        Space *s, SpaceMutationEquationProjection projection,
+        const SpaceStableOccurrenceTransport *transport, CettaIndex erased) {
+    SpaceDispatchRetention retained = {0};
+    if (space_has_dependencies(s) || space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return retained;
+    retained.equations = !s->native.eq_idx_dirty &&
+        !(projection & (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+                        SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE));
+    retained.declarations = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
+        !(projection & (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                        SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE));
+    if ((!retained.equations && !retained.declarations) ||
+        (!transport && !space_is_ordered(s)))
+        return retained;
+    CettaCount source_len = transport ? transport->source_len : s->native.len;
+    CettaCount target_len = transport ? transport->target_len : source_len - 1u;
+    const CettaIndex *coordinates = transport ? transport->source_to_target : NULL;
+    if (retained.equations) {
+        for (uint32_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
+            EqBucket *bucket = i == EQ_INDEX_BUCKETS
+                ? &s->native.eq_idx.wildcard : &s->native.eq_idx.buckets[i];
+            if (!space_transport_dispatch_bucket(
+                    bucket->atom_indices, bucket->len, source_len, target_len,
+                    coordinates, erased)) {
+                retained.equations = false;
+                break;
+            }
+        }
+    }
+    if (retained.declarations) {
+        for (uint32_t i = 0u; i < EQ_INDEX_BUCKETS; i++) {
+            TypeAnnBucket *bucket = &s->native.ty_idx.buckets[i];
+            if (!space_transport_dispatch_bucket(
+                    bucket->atom_indices, bucket->len, source_len, target_len,
+                    coordinates, erased)) {
+                retained.declarations = false;
+                break;
+            }
+        }
+    }
+    return retained;
+}
+
 static SpaceMutationEquationProjection
 space_logical_removed_range_equation_projection(
         const Space *s, CettaIndex begin, CettaCount end) {
@@ -3928,6 +4121,8 @@ bool space_atom_id_requires_authored_order(const Space *s,
            space_atom_id_form_is(
                s, atom_id, atom, g_builtin_syms.equals, 3u) ||
            space_atom_id_form_is(
+               s, atom_id, atom, g_builtin_syms.equals_percent, 3u) ||
+           space_atom_id_form_is(
                s, atom_id, atom, g_builtin_syms.colon, 3u);
 }
 
@@ -3939,7 +4134,8 @@ static void space_mark_backend_primary_atom_mutation(
     if (!s)
         return;
     if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals, 3u) ||
-        space_atom_id_is_graded(s, atom_id, atom))
+        space_atom_id_is_graded(s, atom_id, atom) ||
+        space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals_percent, 3u))
         s->native.eq_idx_dirty = true;
     if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.colon, 3u))
         s->native.ty_idx_dirty = true;
@@ -4212,6 +4408,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_bits = 0;
     s->native.id_present_synced_len = 0;
     s->native.id_present_dirty = false;
+    s->native.id_present_incomplete = false;
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
     s->native.exact_idx_dirty = false;
@@ -4220,6 +4417,7 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.has_graded_equations = false;
     s->native.secondary_index_deferral_depth = 0;
     s->overlay_base = NULL;
+    s->module_own_view = false;
     s->overlay_base_visible_len = 0;
     s->overlay_removed_base_indices = NULL;
     s->overlay_removed_base_len = 0;
@@ -4231,6 +4429,7 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
         return;
     dst->native = src->native;
     dst->kind = src->kind;
+    dst->module_own_view = src->module_own_view;
     dst->match_backend = src->match_backend;
     dst->overlay_base = src->overlay_base;
     dst->overlay_base_visible_len = src->overlay_base_visible_len;
@@ -4354,7 +4553,7 @@ static void space_note_dependency_mutation(
         importer->equation_revision++;
 }
 
-bool space_add_dependency(Space *importer, Space *dependency) {
+static bool space_add_dependency_link(Space *importer, Space *dependency) {
     if (!importer || !dependency || importer == dependency)
         return false;
     for (uint32_t i = 0u; i < importer->dep_count; i++) {
@@ -4374,6 +4573,11 @@ bool space_add_dependency(Space *importer, Space *dependency) {
         importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     space_advance_global_mutation_epoch();
     return true;
+}
+
+bool space_add_dependency(Space *importer, Space *dependency) {
+    return importer && !importer->module_own_view &&
+           space_add_dependency_link(importer, dependency);
 }
 
 /* A dependency contributes its own atoms: those after its imported prefix. */
@@ -4442,7 +4646,15 @@ static void space_dependencies_unlink(Space *s) {
                                  &s->deps[i]->importer_count, s);
     for (uint32_t i = 0u; i < s->importer_count; i++) {
         Space *importer = s->importers[i];
+        bool selected = importer->module_own_view && importer->overlay_base == s;
         space_handle_list_remove(importer->deps, &importer->dep_count, s);
+        /* Watches are acquired in nested-storage order. A disappearing
+           selection falls back to the remaining enclosing storage, or
+           detaches when the final owner ends. Never expose watches as
+           query dependencies of a detached own-storage view. */
+        if (selected)
+            importer->overlay_base = importer->dep_count
+                ? importer->deps[importer->dep_count - 1u] : NULL;
         space_note_dependency_mutation(
             importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
     }
@@ -4464,8 +4676,11 @@ bool space_mark_imported_prefix(Space *s) {
 CettaIndex space_imported_length(const Space *s) {
     /* An overlay's logical prefix is its base's, down to the root space:
        no overlay can remove imported atoms from under it. */
-    while (s && s->overlay_base)
+    while (s && s->overlay_base) {
+        if (s->module_own_view)
+            return 0u;
         s = s->overlay_base;
+    }
     return s ? s->imported_len : 0u;
 }
 
@@ -4506,6 +4721,47 @@ void space_init_overlay(Space *s, const Space *base) {
 
 void space_init(Space *s) {
     space_init_with_universe(s, NULL);
+}
+
+bool space_init_module_own_view(Space *s, Space *module) {
+    if (!s || !module || s == module || module->module_own_view)
+        return false;
+    space_init_overlay(s, module);
+    /* The link is a lifetime/revision observation, hidden from queries.
+     * Existing reverse notifications carry storage mutations to the view. */
+    if (!space_add_dependency(s, module)) {
+        space_free(s);
+        return false;
+    }
+    s->module_own_view = true;
+    return true;
+}
+
+bool space_module_own_view_select(Space *view, Space *storage) {
+    if (!view || !view->module_own_view || !storage || storage->module_own_view ||
+        !space_add_dependency_link(view, storage))
+        return false;
+    if (view->overlay_base != storage) {
+        view->overlay_base = storage;
+        space_note_dependency_mutation(
+            view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+        space_advance_global_mutation_epoch();
+    }
+    return true;
+}
+
+void space_module_own_view_release(Space *view, Space *storage) {
+    if (!view || !view->module_own_view || !storage)
+        return;
+    bool selected = view->overlay_base == storage;
+    space_handle_list_remove(view->deps, &view->dep_count, storage);
+    space_handle_list_remove(storage->importers, &storage->importer_count, view);
+    if (selected)
+        view->overlay_base = view->dep_count
+            ? view->deps[view->dep_count - 1u] : NULL;
+    space_note_dependency_mutation(
+        view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+    space_advance_global_mutation_epoch();
 }
 
 void space_free(Space *s) {
@@ -4622,6 +4878,7 @@ void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
     cetta_storage_array(c,cursor->nodes,cursor->node_len,sizeof(*cursor->nodes),0u);
     cetta_storage_array(c,cursor->leaf_pos,cursor->node_len,sizeof(*cursor->leaf_pos),0u);
     cetta_storage_array(c,cursor->flat,cursor->flat_capacity,sizeof(*cursor->flat),0u);
+    cetta_storage_array(c,cursor->heap,cursor->node_len,sizeof(*cursor->heap),0u);
     if(cursor->logical_scan)space_read_view_storage_census(&cursor->logical_reads,c);
     const SpacePinnedOccurrences *view=cursor->occurrences;
     if(view && cetta_storage_object(c,view,sizeof(*view),CETTA_STORAGE_BLOCK) && !view->space) {
@@ -4639,10 +4896,10 @@ Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
 }
 
 static bool is_equation_atom(Atom *a, Atom **lhs_out, Atom **rhs_out) {
-    if (a->kind != ATOM_EXPR || a->expr.len != 3) return false;
-    if (!atom_is_symbol_id(a->expr.elems[0], g_builtin_syms.equals)) return false;
-    *lhs_out = a->expr.elems[1];
-    *rhs_out = a->expr.elems[2];
+    CettaRuleDescriptor rule;
+    if (!cetta_rule_view(a, CETTA_RULE_SYNTAX_ORDINARY, &rule)) return false;
+    *lhs_out = rule.head;
+    *rhs_out = rule.body;
     return true;
 }
 
@@ -4881,8 +5138,21 @@ static Atom *space_indexed_occurrence_atom(
         : NULL;
 }
 
-static inline __attribute__((always_inline)) bool space_equation_occurrence_resolve_view_unguarded(
-        SpaceEquationOccurrenceId id, bool include_graded,
+/* Rule syntax and graded execution are independently admitted by the owner. */
+static bool space_admitted_rule_view(Atom *atom, unsigned admitted_forms,
+        bool include_graded, CettaRuleDescriptor *rule) {
+    if (cetta_rule_view(atom, admitted_forms, rule))
+        return true;
+    Atom *lhs = NULL, *rhs = NULL;
+    if (!include_graded || !(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
+        !space_equation_view(atom, true, &lhs, &rhs, NULL))
+        return false;
+    *rule = (CettaRuleDescriptor){atom, lhs, rhs, CETTA_RULE_BIND_UNIFY};
+    return true;
+}
+
+static inline __attribute__((always_inline)) bool space_rule_occurrence_resolve_view_unguarded(
+        SpaceEquationOccurrenceId id, unsigned admitted_forms, bool include_graded,
         SpaceEquationOccurrence *out) {
     if (out)
         memset(out, 0, sizeof(*out));
@@ -4895,44 +5165,46 @@ static inline __attribute__((always_inline)) bool space_equation_occurrence_reso
         : (id.logical_index < space_length64(id.read.space)
                ? space_get_at64(id.read.space, id.logical_index)
                : NULL);
-    Atom *lhs = NULL;
-    Atom *rhs = NULL;
-    if (!equation || !(include_graded
-            ? space_equation_view(equation, true, &lhs, &rhs, NULL)
-            : is_equation_atom(equation, &lhs, &rhs)) ||
+    CettaRuleDescriptor rule;
+    if (!space_admitted_rule_view(equation, admitted_forms, include_graded, &rule) ||
         !space_read_token_prefix_intact(id.read)) {
         return false;
     }
     out->id = id;
     out->equation = equation;
-    out->lhs = lhs;
-    out->rhs = rhs;
+    out->lhs = rule.head;
+    out->rhs = rule.body;
     return true;
 }
 
-/* Equation cursors and their occurrences resolve atoms through the space's
- * term universe, which a concurrent branch may extend.  The guard is entered
- * only inside a concurrent-evaluation scope, in a separate frame, so an
- * ordinary lookup pays one thread-local test per call. */
-static __attribute__((noinline)) bool space_equation_occurrence_resolve_view_guarded(
-        SpaceEquationOccurrenceId id, bool include_graded,
+/* Resolving source atoms may touch the shared term-universe view. */
+static __attribute__((noinline)) bool space_rule_occurrence_resolve_view_guarded(
+        SpaceEquationOccurrenceId id, unsigned admitted_forms, bool include_graded,
         SpaceEquationOccurrence *out) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
-    return space_equation_occurrence_resolve_view_unguarded(id, include_graded, out);
+    return space_rule_occurrence_resolve_view_unguarded(id, admitted_forms, include_graded, out);
+}
+
+bool space_rule_occurrence_resolve_view(SpaceEquationOccurrenceId id,
+        unsigned admitted_forms, bool include_graded, SpaceEquationOccurrence *out) {
+    if (__builtin_expect(cetta_shared_transition_scope_active(), 0))
+        return space_rule_occurrence_resolve_view_guarded(id, admitted_forms, include_graded, out);
+    return space_rule_occurrence_resolve_view_unguarded(id, admitted_forms, include_graded, out);
+}
+
+bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
+        unsigned admitted_forms, SpaceEquationOccurrence *out) {
+    return space_rule_occurrence_resolve_view(id, admitted_forms, false, out);
 }
 
 bool space_equation_occurrence_resolve_view(SpaceEquationOccurrenceId id,
         bool include_graded, SpaceEquationOccurrence *out) {
-    if (__builtin_expect(cetta_shared_transition_scope_active(), 0))
-        return space_equation_occurrence_resolve_view_guarded(id, include_graded, out);
-    return space_equation_occurrence_resolve_view_unguarded(id, include_graded, out);
+    return space_rule_occurrence_resolve_view(id, CETTA_RULE_SYNTAX_ORDINARY, include_graded, out);
 }
 
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out) {
-    if (__builtin_expect(cetta_shared_transition_scope_active(), 0))
-        return space_equation_occurrence_resolve_view_guarded(id, false, out);
-    return space_equation_occurrence_resolve_view_unguarded(id, false, out);
+    return space_rule_occurrence_resolve(id, CETTA_RULE_SYNTAX_ORDINARY, out);
 }
 
 static bool space_equation_cursor_index_matches(
@@ -5015,7 +5287,10 @@ static bool space_equation_cursor_enter(SpaceEquationCursor *cursor,
             cursor->incomplete = true;
             return false;
         }
-        cursor->overlay = cursor->include_graded && s->native.has_graded_equations;
+        cursor->overlay = (cursor->include_graded && s->native.has_graded_equations) ||
+            (cursor->admitted_forms != CETTA_RULE_SYNTAX_ORDINARY &&
+             (!(cursor->admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
+              s->native.eq_idx.directional_present));
     }
     cursor->imported = space_imported_length(s);
     if (cursor->imported > cursor->ceiling)
@@ -5033,30 +5308,44 @@ static bool space_equation_cursor_enter(SpaceEquationCursor *cursor,
     return space_read_token_prefix_intact(cursor->member);
 }
 
-static inline __attribute__((always_inline)) bool space_equation_cursor_init_view_unguarded(
-        Space *s, SymbolId head, bool include_graded, SpaceEquationCursor *cursor) {
+static inline __attribute__((always_inline)) bool space_rule_cursor_init_view_unguarded(
+        Space *s, SymbolId head, unsigned admitted_forms, bool include_graded,
+        SpaceEquationCursor *cursor) {
     if (cursor)
         memset(cursor, 0, sizeof(*cursor));
-    if (!s || !cursor)
+    if (!s || !cursor || !admitted_forms ||
+        (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
         return false;
     cursor->read = space_read_token(s);
     cursor->head = head;
+    cursor->admitted_forms = admitted_forms;
     cursor->include_graded = include_graded;
     return space_equation_cursor_enter(cursor, s, false) &&
            space_read_token_prefix_intact(cursor->read);
 }
 
-static __attribute__((noinline)) bool space_equation_cursor_init_view_guarded(
-        Space *s, SymbolId head, bool include_graded, SpaceEquationCursor *cursor) {
+static __attribute__((noinline)) bool space_rule_cursor_init_view_guarded(
+        Space *s, SymbolId head, unsigned admitted_forms, bool include_graded,
+        SpaceEquationCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(observation);
-    return space_equation_cursor_init_view_unguarded(s, head, include_graded, cursor);
+    return space_rule_cursor_init_view_unguarded(s, head, admitted_forms, include_graded, cursor);
+}
+
+bool space_rule_cursor_init_view(Space *s, SymbolId head, unsigned admitted_forms,
+        bool include_graded, SpaceEquationCursor *cursor) {
+    if (__builtin_expect(cetta_shared_transition_scope_active(), 0))
+        return space_rule_cursor_init_view_guarded(s, head, admitted_forms, include_graded, cursor);
+    return space_rule_cursor_init_view_unguarded(s, head, admitted_forms, include_graded, cursor);
+}
+
+bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
+                            SpaceEquationCursor *cursor) {
+    return space_rule_cursor_init_view(s, head, admitted_forms, false, cursor);
 }
 
 bool space_equation_cursor_init_view(Space *s, SymbolId head,
         bool include_graded, SpaceEquationCursor *cursor) {
-    if (__builtin_expect(cetta_shared_transition_scope_active(), 0))
-        return space_equation_cursor_init_view_guarded(s, head, include_graded, cursor);
-    return space_equation_cursor_init_view_unguarded(s, head, include_graded, cursor);
+    return space_rule_cursor_init_view(s, head, CETTA_RULE_SYNTAX_ORDINARY, include_graded, cursor);
 }
 
 bool space_equation_cursor_init(Space *space, SymbolId head,
@@ -5090,16 +5379,15 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
             cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 1u);
             CettaIndex logical_index = cursor->overlay_position++;
             Atom *equation = space_get_at64(s, logical_index);
-            Atom *lhs = NULL;
-            Atom *rhs = NULL;
             if (!equation) {
                 cursor->incomplete = true;
                 return SPACE_EQUATION_CURSOR_INVALIDATED;
             }
-            if (!(cursor->include_graded
-                    ? space_equation_view(equation, true, &lhs, &rhs, NULL)
-                    : is_equation_atom(equation, &lhs, &rhs)))
+            CettaRuleDescriptor rule;
+            if (!space_admitted_rule_view(equation, cursor->admitted_forms,
+                    cursor->include_graded, &rule))
                 continue;
+            Atom *lhs = rule.head;
             if (cursor->head != SYMBOL_ID_NONE &&
                 !eq_lhs_may_match_known_head(lhs, cursor->head)) {
 #if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
@@ -5786,26 +6074,26 @@ static bool space_effect_scan_rhs(
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
         } else {
             has_control = space_generated_fold_control(
-                head->sym_id, authored_len - 1u, &control);
-            bool grounded = is_grounded_op(head->sym_id);
-            bool builtin = symbol_id_is_builtin(head->sym_id);
+                atom_symbol_current_id(head), authored_len - 1u, &control);
+            bool grounded = is_grounded_op(atom_symbol_current_id(head));
+            bool builtin = symbol_id_is_builtin(atom_symbol_current_id(head));
             bool defined = space_equations_may_match_known_head(
-                graph->space, head->sym_id);
+                graph->space, atom_symbol_current_id(head));
             CettaGsltQueryEffect direct =
-                space_generated_query_head_effect(head->sym_id);
+                space_generated_query_head_effect(atom_symbol_current_id(head));
             graph->nodes[node_index].base_effect =
                 cetta_gslt_query_effect_join(
                     graph->nodes[node_index].base_effect, direct);
             if (direct == CETTA_GSLT_QUERY_EFFECT_PURE &&
                 !grounded && defined &&
                 !space_effect_node_add_dependency(
-                    graph, node_index, head->sym_id)) {
+                    graph, node_index, atom_symbol_current_id(head))) {
                 if (stack != inline_stack)
                     free(stack);
                 return false;
             }
             if (cetta_gslt_query_effect_children_opaque(
-                    head->sym_id, &g_builtin_syms)) {
+                    atom_symbol_current_id(head), &g_builtin_syms)) {
                 continue;
             }
             if (CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE &&
@@ -6062,6 +6350,7 @@ static void eq_index_rebuild(Space *s) {
          * is queried separately, so local offsets must not address that
          * prefix when rebuilding after a local mutation. */
         AtomId atom_id = space_local_get_atom_id_at64(s, i);
+        eq_index_note_directional_row(&s->native.eq_idx, s, atom_id);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
         AtomId rhs_id = CETTA_ATOM_ID_NONE;
         if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
@@ -6128,11 +6417,13 @@ static bool id_present_sync(Space *s) {
         if (!tu_hdr(s->native.universe, stored_id)) {
             Atom *stored =
                 term_universe_get_atom(s->native.universe, stored_id);
-            /* Pointer-backed runtime values do not have lawful structural
-               intern keys.  Leave them to the exact/alpha scan; stable queries
-               can still use the projection built from the remaining rows. */
-            if (stored && !term_universe_atom_is_stable(stored))
+            /* Omitted rows can equal a later numbered query. A positive bit
+               remains evidence, but a miss is conclusive only when every row
+               has a canonical key. */
+            if (stored && !term_universe_atom_is_stable(stored)) {
+                s->native.id_present_incomplete = true;
                 continue;
+            }
         }
         AtomId cid = space_canonical_id_for_stored(s, stored_id);
         if (cid == CETTA_ATOM_ID_NONE ||
@@ -6275,6 +6566,22 @@ static bool space_defer_incremental_secondary_indices(const Space *s) {
 }
 
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
+#if CETTA_MANAGED_SYMBOLS
+    /* Equations and arrow declarations introduce callable identities. Ordinary
+     * facts only retain their values; they do not register their spellings. */
+    Atom *decl = backend_atom;
+    if (!decl && s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE)
+        decl = term_universe_get_atom(s->native.universe, atom_id);
+    if (decl && decl->kind == ATOM_EXPR && decl->expr.len == 3u &&
+        (atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.equals) ||
+         atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.colon))) {
+        Atom *subject = decl->expr.elems[1];
+        Atom *name = subject->kind == ATOM_EXPR && subject->expr.len
+            ? subject->expr.elems[0] : subject;
+        if (name && name->kind == ATOM_SYMBOL)
+            (void)atom_symbol_register_id(name);
+    }
+#endif
     bool queue_gap = space_is_queue(s) && s->native.start != 0;
     bool backend_needs_atom =
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
@@ -6324,6 +6631,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     } else {
         /* Index equations by head symbol */
         if (!s->native.eq_idx_dirty) {
+            eq_index_note_directional_row(&s->native.eq_idx, s, atom_id);
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
             AtomId rhs_id = CETTA_ATOM_ID_NONE;
             if (space_equation_child_ids_at_id(s, atom_id, &lhs_id, &rhs_id)) {
@@ -6369,6 +6677,7 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
 }
 
 void space_add_atom_id(Space *s, AtomId atom_id) {
+    s = space_mutation_target(s);
     bool transition_failed = false;
     if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
         return;
@@ -6389,6 +6698,8 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
     SpaceMutationEquationProjection equation_projection =
         SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     SpaceBackendBatchResult batch_result;
+
+    s = space_mutation_target(s);
 
     if (!s || (!atom_ids && atom_count != 0))
         return false;
@@ -6504,6 +6815,9 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
 }
 
 void space_add(Space *s, Atom *atom) {
+    s = space_mutation_target(s);
+    if (!s)
+        return;
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
     if (space_store_atom_via_backend_primary(
@@ -6537,6 +6851,7 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 
 static bool space_admit_atom_impl(Space *s, Arena *fallback,
                                   const Arena *source_arena, Atom *atom) {
+    s = space_mutation_target(s);
     bool transition_failed = false;
     if (!s || !atom)
         return false;
@@ -6905,7 +7220,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, Atom *var) {
     if (!query_visible_var_set_reserve(set, set->len + 1))
         return false;
     set->items[set->len].var_id = var->var_id;
-    set->items[set->len].spelling = var->sym_id;
+    set->items[set->len].spelling = atom_symbol_current_id(var);
     set->items[set->len].name_key = var->name_key;
     set->len++;
     return true;
@@ -7084,8 +7399,10 @@ static bool project_query_visible_bindings(Arena *a,
 void registry_init(Registry *r) {
     if (!r) return;
     r->states = NULL;
+    r->text_keys = NULL;
     r->entries = r->inline_entries;
     r->len = 0;
+    r->word_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = name_key_table_new(32u);
@@ -7100,6 +7417,12 @@ static void registry_states_free(struct RegistryStates *states);
 void registry_free(Registry *r) {
     if (!r) return;
     registry_states_free(r->states);
+    for (uint32_t i = 0; i < r->len; i++)
+        if (r->entries[i].text_key.hold.token &&
+            !registered_symbol_borrow_end(r->text_keys, &r->entries[i].text_key))
+            abort();
+    if (!registered_symbols_destroy(r->text_keys)) abort();
+    r->text_keys = NULL;
     r->states = NULL;
     if (r->entries && r->entries != r->inline_entries)
         free(r->entries);
@@ -7108,6 +7431,7 @@ void registry_free(Registry *r) {
     name_key_table_delete(r->name_keys);
     r->entries = r->inline_entries;
     r->len = 0;
+    r->word_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = NULL;
@@ -7117,10 +7441,11 @@ void registry_free(Registry *r) {
     memset(r->inline_index_slots, 0, sizeof(r->inline_index_slots));
 }
 
-static uint32_t registry_index_hash(SymbolId key, NameId name_id) {
+static uint32_t registry_index_hash(SymbolId key, NameId name_id, uint64_t text_token) {
     uint32_t x = key != SYMBOL_ID_NONE
         ? ((uint32_t)key ^ UINT32_C(0x243f6a88))
         : ((uint32_t)name_id ^ UINT32_C(0x9e3779b9));
+    if (text_token) x ^= (uint32_t)text_token ^ (uint32_t)(text_token >> 32);
     x ^= x >> 16;
     x *= UINT32_C(0x7feb352d);
     x ^= x >> 15;
@@ -7130,22 +7455,23 @@ static uint32_t registry_index_hash(SymbolId key, NameId name_id) {
 }
 
 static bool registry_entry_matches(const RegistryEntry *entry,
-                                   SymbolId key, NameId name_id) {
-    return entry && entry->key == key && entry->name_id == name_id;
+                                   SymbolId key, NameId name_id, uint64_t text_token) {
+    return entry && entry->key == key && entry->name_id == name_id &&
+           entry->text_key.hold.token == text_token;
 }
 
 static uint32_t registry_index_find(const Registry *r, SymbolId key,
-                                    NameId name_id) {
+                                    NameId name_id, uint64_t text_token) {
     if (!r || !r->index_slots || r->index_cap == 0u)
         return UINT32_MAX;
     uint32_t mask = r->index_cap - 1u;
-    uint32_t slot = registry_index_hash(key, name_id) & mask;
+    uint32_t slot = registry_index_hash(key, name_id, text_token) & mask;
     for (uint32_t probes = 0u; probes < r->index_cap; probes++) {
         uint32_t encoded = r->index_slots[slot];
         if (encoded == 0u) return UINT32_MAX;
         uint32_t index = encoded - 1u;
         if (index < r->len &&
-            registry_entry_matches(&r->entries[index], key, name_id))
+            registry_entry_matches(&r->entries[index], key, name_id, text_token))
             return index;
         slot = (slot + 1u) & mask;
     }
@@ -7155,7 +7481,7 @@ static uint32_t registry_index_find(const Registry *r, SymbolId key,
 static void registry_index_insert(Registry *r, uint32_t entry_index) {
     RegistryEntry *entry = &r->entries[entry_index];
     uint32_t mask = r->index_cap - 1u;
-    uint32_t slot = registry_index_hash(entry->key, entry->name_id) & mask;
+    uint32_t slot = registry_index_hash(entry->key, entry->name_id, entry->text_key.hold.token) & mask;
     while (r->index_slots[slot] != 0u)
         slot = (slot + 1u) & mask;
     r->index_slots[slot] = entry_index + 1u;
@@ -7214,12 +7540,43 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
     return true;
 }
 
+static uint32_t registry_text_index(const Registry *r,
+                                      const uint8_t *bytes, uint32_t length) {
+    if (!r || !r->text_keys) return UINT32_MAX;
+    RegisteredSymbol handle;
+    if (!registered_symbol_find(r->text_keys, bytes, length, &handle))
+        return UINT32_MAX;
+    uint32_t index = registry_index_find(r, SYMBOL_ID_NONE, NAME_ID_NONE, handle.token);
+    if (!registered_symbol_release(r->text_keys, &handle)) abort();
+    return index;
+}
+
+static uint32_t registry_id_index(const Registry *r, SymbolId key) {
+    if (!r || key == SYMBOL_ID_NONE) return UINT32_MAX;
+    uint32_t index = registry_index_find(r, key, NAME_ID_NONE, 0);
+    if (index == UINT32_MAX)
+        index = registry_text_index(r, (const uint8_t *)symbol_bytes(g_symbols, key),
+                                       symbol_len(g_symbols, key));
+    return index;
+}
+
+static uint32_t registry_symbol_index(const Registry *r, const Atom *name) {
+    if (!r || !name || name->kind != ATOM_SYMBOL) return UINT32_MAX;
+    SymbolId key = atom_symbol_current_id(name);
+    return key != SYMBOL_ID_NONE ? registry_id_index(r, key)
+        : registry_text_index(r, (const uint8_t *)atom_symbol_bytes(name),
+                                 atom_symbol_length(name));
+}
+
 static Atom *registry_read_intercept(Registry *source, SymbolId key,
-                                     Atom *name, Atom *actual);
+                                     Atom *name, bool symbolic, Atom *actual);
+static Atom *registry_read_intercept_text(Registry *source,
+    const char *bytes, uint32_t length, Atom *actual);
 
 bool registry_bind_id_checked(Registry *r, SymbolId key, Atom *value) {
     if (!r || key == SYMBOL_ID_NONE) return false;
-    uint32_t existing = registry_index_find(r, key, NAME_ID_NONE);
+    (void)symbol_pin(g_symbols, key);
+    uint32_t existing = registry_id_index(r, key);
     if (existing != UINT32_MAX) {
         r->entries[existing].value = value;
         return true;
@@ -7228,11 +7585,14 @@ bool registry_bind_id_checked(Registry *r, SymbolId key, Atom *value) {
         !registry_ensure_capacity(r, r->len + 1u) ||
         !registry_index_ensure_capacity(r, r->len + 1u))
         return false;
+    r->entries[r->len] = (RegistryEntry){0};
     r->entries[r->len].key = key;
     r->entries[r->len].name_id = NAME_ID_NONE;
     r->entries[r->len].value = value;
     registry_index_insert(r, r->len);
     r->len++;
+    if (symbol_bytes(g_symbols, key)[0] != '&')
+        r->word_len++;
     return true;
 }
 
@@ -7242,9 +7602,133 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
 
 Atom *registry_lookup_id(Registry *r, SymbolId key) {
     if (!r || key == SYMBOL_ID_NONE) return NULL;
-    uint32_t index = registry_index_find(r, key, NAME_ID_NONE);
+    uint32_t index = registry_id_index(r, key);
     Atom *actual = index == UINT32_MAX ? NULL : r->entries[index].value;
-    return registry_read_intercept(r, key, NULL, actual);
+    return registry_read_intercept(r, key, NULL, true, actual);
+}
+
+static bool registry_bind_text(Registry *r, const uint8_t *bytes,
+                               uint32_t length, Atom *value) {
+    uint32_t index = registry_text_index(r, bytes, length);
+    if (index != UINT32_MAX) {
+        r->entries[index].value = value;
+        return true;
+    }
+    if (r->len == UINT32_MAX || !registry_ensure_capacity(r, r->len + 1u) ||
+        !registry_index_ensure_capacity(r, r->len + 1u)) return false;
+    if (!r->text_keys) r->text_keys = registered_symbols_new();
+    if (!r->text_keys) return false;
+    RegisteredSymbol handle;
+    if (!registered_symbol_acquire(r->text_keys, bytes, length, &handle)) return false;
+    RegisteredSymbolBorrow borrow;
+    bool ok = registered_symbol_borrow(r->text_keys, handle, &borrow);
+    if (!registered_symbol_release(r->text_keys, &handle)) abort();
+    if (!ok) return false;
+    r->entries[r->len] = (RegistryEntry){.text_key = borrow, .value = value};
+    registry_index_insert(r, r->len++);
+    if (!length || bytes[0] != '&') r->word_len++;
+    return true;
+}
+
+bool registry_bind_symbol(Registry *r, const Atom *name, Atom *value) {
+    if (!r || !name || name->kind != ATOM_SYMBOL) return false;
+    uint32_t index = registry_symbol_index(r, name);
+    if (index != UINT32_MAX) {
+        r->entries[index].value = value;
+        return true;
+    }
+    SymbolId id = atom_symbol_current_id(name);
+    if (id != SYMBOL_ID_NONE)
+        return registry_bind_id_checked(r, id, value);
+    return registry_bind_text(r, (const uint8_t *)atom_symbol_bytes(name),
+                              atom_symbol_length(name), value);
+}
+
+Atom *registry_lookup_symbol(const Registry *r, const Atom *name) {
+    if (!r || !name || name->kind != ATOM_SYMBOL)
+        return NULL;
+    uint32_t index = registry_symbol_index(r, name);
+    Atom *actual = index == UINT32_MAX ? NULL : r->entries[index].value;
+    return registry_read_intercept((Registry *)r, atom_symbol_current_id(name),
+        (Atom *)name, true, actual);
+}
+
+static void registry_shrink_after_remove(Registry *r) {
+    const uint32_t min_entries = sizeof(r->inline_entries) / sizeof(*r->entries);
+    const uint32_t min_index = sizeof(r->inline_index_slots) / sizeof(*r->index_slots);
+    if (r->cap > min_entries && r->len <= r->cap / 4) {
+        uint32_t capacity = r->cap / 2;
+        if (capacity < min_entries) capacity = min_entries;
+        RegistryEntry *entries = capacity == min_entries ? r->inline_entries
+            : malloc((size_t)capacity * sizeof(*entries));
+        if (entries) {
+            memcpy(entries, r->entries, (size_t)r->len * sizeof(*entries));
+            free(r->entries);
+            r->entries = entries;
+            r->cap = capacity;
+        }
+    }
+    if (r->index_cap > min_index && r->len <= r->index_cap / 4) {
+        uint32_t capacity = r->index_cap / 2;
+        if (capacity < min_index) capacity = min_index;
+        uint32_t *slots = capacity == min_index ? r->inline_index_slots
+            : malloc((size_t)capacity * sizeof(*slots));
+        if (slots) {
+            free(r->index_slots);
+            r->index_slots = slots;
+            r->index_cap = capacity;
+        }
+    }
+    /* Rebuild after ordered deletion, including when optional shrinking
+       could not allocate. No indexed entry may refer to an old position. */
+    memset(r->index_slots, 0, (size_t)r->index_cap * sizeof(*r->index_slots));
+    for (uint32_t i = 0; i < r->len; i++) registry_index_insert(r, i);
+}
+
+bool registry_unbind_symbol(Registry *r, const Atom *name) {
+    uint32_t index = registry_symbol_index(r, name);
+    if (index == UINT32_MAX) return false;
+    const RegistryEntry *entry = &r->entries[index];
+    bool word = entry->text_key.hold.token
+        ? (!entry->text_key.length || entry->text_key.bytes[0] != '&')
+        : symbol_bytes(g_symbols, entry->key)[0] != '&';
+    if (word) { assert(r->word_len); r->word_len--; }
+    if (r->entries[index].text_key.hold.token &&
+        !registered_symbol_borrow_end(r->text_keys, &r->entries[index].text_key)) abort();
+    memmove(r->entries + index, r->entries + index + 1,
+            (size_t)(r->len - index - 1) * sizeof(*r->entries));
+    r->len--;
+    registry_shrink_after_remove(r);
+    return true;
+}
+
+Atom *registry_entry_symbol(const Registry *r, uint32_t index, Arena *owner) {
+    if (!r || index >= r->len || !owner) return NULL;
+    const RegistryEntry *entry = &r->entries[index];
+    if (entry->key != SYMBOL_ID_NONE) return atom_symbol_id(owner, entry->key);
+    return entry->text_key.hold.token
+        ? atom_symbol_data_n(owner, (const char *)entry->text_key.bytes, entry->text_key.length)
+        : NULL;
+}
+
+bool registry_copy_entry(Registry *dst, const Registry *src,
+                          uint32_t index, Atom *value) {
+    if (!dst || !src || index >= src->len) return false;
+    const RegistryEntry *entry = &src->entries[index];
+    if (entry->text_key.hold.token) {
+        /* Destination owns an independent hold; no source pointer escapes. */
+        SymbolId known = symbol_lookup_span_hashed(g_symbols, entry->text_key.bytes,
+                entry->text_key.length, symbol_hash_span(entry->text_key.bytes, entry->text_key.length));
+        if (known != SYMBOL_ID_NONE) {
+            return registry_bind_id_checked(dst, known, value);
+        }
+        return registry_bind_text(dst, entry->text_key.bytes, entry->text_key.length, value);
+    }
+    if (entry->key != SYMBOL_ID_NONE) {
+        return registry_bind_id_checked(dst, entry->key, value);
+    }
+    Atom *key = (Atom *)registry_entry_name_key(src, index);
+    return key && registry_bind_name(dst, key, value);
 }
 
 /* The states' names and current values, with the arena holding each value.
@@ -7302,17 +7786,19 @@ static void registry_states_free(struct RegistryStates *states) {
     free(states);
 }
 
-Atom *registry_state_lookup(const Registry *r, SymbolId key) {
-    if (!r || !r->states || key == SYMBOL_ID_NONE)
+Atom *registry_state_lookup_symbol(const Registry *r, const Atom *name) {
+    if (!r || !r->states || !name || name->kind != ATOM_SYMBOL)
         return NULL;
     uint32_t index =
-        registry_index_find(&r->states->names, key, NAME_ID_NONE);
+        registry_symbol_index(&r->states->names, name);
     return index == UINT32_MAX ? NULL
                                : r->states->names.entries[index].value;
 }
 
-bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
-    if (!r || key == SYMBOL_ID_NONE || !value)
+static bool registry_state_set_key(Registry *r, const Atom *name,
+                                    SymbolId key, Atom *value) {
+    if (!r || !value || (name ? name->kind != ATOM_SYMBOL
+                              : key == SYMBOL_ID_NONE))
         return false;
     struct RegistryStates *states = r->states;
     if (!states) {
@@ -7327,7 +7813,8 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
         registry_state_arena_give_back(states, arena);
         return false;
     }
-    uint32_t index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    uint32_t index = name ? registry_symbol_index(&states->names, name)
+                          : registry_id_index(&states->names, key);
     if (index != UINT32_MAX) {
         Arena *replaced = states->storage[index];
         states->names.entries[index].value = stored;
@@ -7341,8 +7828,16 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
             cetta_realloc(states->storage, sizeof(*states->storage) * cap);
         states->storage_cap = cap;
     }
-    registry_bind_id(&states->names, key, stored);
-    index = registry_index_find(&states->names, key, NAME_ID_NONE);
+    if (name) {
+        if (!registry_bind_symbol(&states->names, name, stored)) {
+            registry_state_arena_give_back(states, arena);
+            return false;
+        }
+    } else {
+        registry_bind_id(&states->names, key, stored);
+    }
+    index = name ? registry_symbol_index(&states->names, name)
+                 : registry_id_index(&states->names, key);
     if (index == UINT32_MAX || index >= states->storage_cap) {
         registry_state_arena_give_back(states, arena);
         return false;
@@ -7351,15 +7846,30 @@ bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
     return true;
 }
 
+bool registry_state_set_symbol(Registry *r, const Atom *name, Atom *value) {
+    return name && registry_state_set_key(r, name, SYMBOL_ID_NONE, value);
+}
+
+Atom *registry_state_lookup(const Registry *r, SymbolId key) {
+    if (!r || !r->states) return NULL;
+    uint32_t index = registry_id_index(&r->states->names, key);
+    return index == UINT32_MAX ? NULL : r->states->names.entries[index].value;
+}
+
+bool registry_state_set(Registry *r, SymbolId key, Atom *value) {
+    return registry_state_set_key(r, NULL, key, value);
+}
+
 uint32_t registry_state_count(const Registry *r) {
     return r && r->states ? r->states->names.len : 0u;
 }
 
-bool registry_state_entry(const Registry *r, uint32_t index,
-                          SymbolId *key_out, Atom **value_out) {
+bool registry_state_entry(const Registry *r, uint32_t index, Arena *owner,
+                          Atom **key_out, Atom **value_out) {
     if (!r || !r->states || index >= r->states->names.len)
         return false;
-    *key_out = r->states->names.entries[index].key;
+    *key_out = registry_entry_symbol(&r->states->names, index, owner);
+    if (!*key_out) return false;
     *value_out = r->states->names.entries[index].value;
     return true;
 }
@@ -7369,12 +7879,19 @@ void registry_bind(Registry *r, const char *name, Atom *value) {
 }
 
 Atom *registry_lookup(Registry *r, const char *name) {
-    return registry_lookup_id(r, symbol_intern_cstr(g_symbols, name));
+    if (!name) return NULL;
+    SymbolId known = symbol_lookup_cstr(g_symbols, name);
+    if (known != SYMBOL_ID_NONE) return registry_lookup_id(r, known);
+    size_t length = strlen(name);
+    if (length > UINT32_MAX) return NULL;
+    uint32_t index = registry_text_index(r, (const uint8_t *)name, (uint32_t)length);
+    Atom *actual = index == UINT32_MAX ? NULL : r->entries[index].value;
+    return registry_read_intercept_text(r, name, (uint32_t)length, actual);
 }
 
 static bool registry_bind_name_id(Registry *r, NameId id, Atom *value) {
     if (!r || id == NAME_ID_NONE) return false;
-    uint32_t existing = registry_index_find(r, SYMBOL_ID_NONE, id);
+    uint32_t existing = registry_index_find(r, SYMBOL_ID_NONE, id, 0);
     if (existing != UINT32_MAX) {
         r->entries[existing].value = value;
         return true;
@@ -7383,6 +7900,7 @@ static bool registry_bind_name_id(Registry *r, NameId id, Atom *value) {
         !registry_ensure_capacity(r, r->len + 1u) ||
         !registry_index_ensure_capacity(r, r->len + 1u))
         return false;
+    r->entries[r->len] = (RegistryEntry){0};
     r->entries[r->len].key = SYMBOL_ID_NONE;
     r->entries[r->len].name_id = id;
     r->entries[r->len].value = value;
@@ -7407,9 +7925,9 @@ Atom *registry_lookup_name(Registry *r, Atom *name_key) {
     if (!r || !name_key) return NULL;
     NameId id = r->name_keys ? name_key_find(r->name_keys, name_key) : NAME_ID_NONE;
     uint32_t index = id == NAME_ID_NONE ? UINT32_MAX
-        : registry_index_find(r, SYMBOL_ID_NONE, id);
+        : registry_index_find(r, SYMBOL_ID_NONE, id, 0);
     Atom *actual = index == UINT32_MAX ? NULL : r->entries[index].value;
-    return registry_read_intercept(r, SYMBOL_ID_NONE, name_key, actual);
+    return registry_read_intercept(r, SYMBOL_ID_NONE, name_key, false, actual);
 }
 
 const Atom *registry_entry_name_key(const Registry *r, uint32_t index) {
@@ -7439,7 +7957,7 @@ bool registry_ref_name_key(Atom *ref, Atom **name_key_out) {
 Atom *registry_lookup_ref(Registry *r, Atom *ref) {
     if (!r || !ref) return NULL;
     if (ref->kind == ATOM_SYMBOL)
-        return registry_lookup_id(r, ref->sym_id);
+        return registry_lookup_symbol(r, ref);
     Atom *name_key = NULL;
     return registry_ref_name_key(ref, &name_key)
         ? registry_lookup_name(r, name_key)
@@ -7448,9 +7966,15 @@ Atom *registry_lookup_ref(Registry *r, Atom *ref) {
 
 static _Thread_local RegistryReadView *g_registry_read_view;
 
-static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name) {
+static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name,
+                               bool symbolic) {
     if (!source)
         return NULL;
+    if (symbolic) {
+        uint32_t index = key != SYMBOL_ID_NONE
+            ? registry_id_index(source, key) : registry_symbol_index(source, name);
+        return index == UINT32_MAX ? NULL : source->entries[index].value;
+    }
     NameId id = NAME_ID_NONE;
     if (key == SYMBOL_ID_NONE) {
         if (!name || !source->name_keys)
@@ -7459,7 +7983,7 @@ static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name) {
         if (id == NAME_ID_NONE)
             return NULL;
     }
-    uint32_t index = registry_index_find(source, key, id);
+    uint32_t index = registry_index_find(source, key, id, 0);
     return index == UINT32_MAX ? NULL : source->entries[index].value;
 }
 
@@ -7490,26 +8014,42 @@ static void registry_read_stale(RegistryReadView *view, SymbolId key,
  * innermost admitted value.  Continuing this quantum cannot acquire the
  * replacement binding; its caller stops publication on the stale receipt. */
 static Atom *registry_read_intercept(Registry *source, SymbolId key,
-                                     Atom *name, Atom *actual) {
+                                     Atom *name, bool symbolic, Atom *actual) {
     Atom *result = actual;
     bool selected = false;
     for (RegistryReadView *view = g_registry_read_view; view;
          view = view->active_parent) {
         if (view->active_source != source)
             continue;
-        Atom *expected = registry_read_raw(&view->initial, key, name);
+        Atom *expected = registry_read_raw(&view->initial, key, name, symbolic);
         if (!selected) {
             result = expected;
             selected = true;
         }
         bool recorded = key != SYMBOL_ID_NONE
             ? registry_bind_id_checked(&view->consulted, key, expected)
-            : registry_bind_name(&view->consulted, name, expected);
+            : symbolic ? registry_bind_symbol(&view->consulted, name, expected)
+                       : registry_bind_name(&view->consulted, name, expected);
         if (!recorded)
             registry_read_refuse(view, "DependencyInsert");
         registry_read_stale(view, key, name, expected, actual);
     }
     return result;
+}
+
+static Atom *registry_read_intercept_text(Registry *source,
+    const char *bytes, uint32_t length, Atom *actual) {
+    for (RegistryReadView *view = g_registry_read_view; view; view = view->active_parent) {
+        if (view->active_source != source)
+            continue;
+        Atom *name = atom_symbol_data_n(view->arena, bytes, length);
+        if (!name) {
+            registry_read_refuse(view, "DependencyName");
+            return NULL;
+        }
+        return registry_read_intercept(source, SYMBOL_ID_NONE, name, true, actual);
+    }
+    return actual;
 }
 
 bool registry_read_view_init(RegistryReadView *view, Registry *source,
@@ -7540,14 +8080,8 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
         Atom *value = entry.value ? atom_deep_copy(arena, entry.value) : NULL;
         if (entry.value && !value)
             return registry_read_refuse(view, "ValueCopy");
-        if (entry.key != SYMBOL_ID_NONE) {
-            if (!registry_bind_id_checked(&view->initial, entry.key, value))
-                return registry_read_refuse(view, "InitialCapture");
-        } else {
-            const Atom *name = registry_entry_name_key(visible, i);
-            if (!name || !registry_bind_name(&view->initial, (Atom *)name, value))
-                return registry_read_refuse(view, "InitialCapture");
-        }
+        if (!registry_copy_entry(&view->initial, visible, i, value))
+            return registry_read_refuse(view, "InitialCapture");
     }
     return true;
 }
@@ -7565,8 +8099,13 @@ bool registry_read_view_validate(RegistryReadView *view, Registry *source) {
         return false;
     for (uint32_t i = 0u; i < view->consulted.len; i++) {
         RegistryEntry entry = view->consulted.entries[i];
-        Atom *name = (Atom *)registry_entry_name_key(&view->consulted, i);
-        Atom *actual = registry_read_raw(source, entry.key, name);
+        bool symbolic = entry.key != SYMBOL_ID_NONE || entry.text_key.hold.token;
+        Atom *name = entry.text_key.hold.token
+            ? registry_entry_symbol(&view->consulted, i, view->arena)
+            : (Atom *)registry_entry_name_key(&view->consulted, i);
+        if (entry.text_key.hold.token && !name)
+            return registry_read_refuse(view, "DependencyName");
+        Atom *actual = registry_read_raw(source, entry.key, name, symbolic);
         registry_read_stale(view, entry.key, name, entry.value, actual);
         if (view->stale)
             return false;
@@ -7601,6 +8140,7 @@ Space *resolve_space(Registry *r, Atom *ref) {
 }
 
 bool space_remove(Space *s, Atom *atom) {
+    s = space_mutation_target(s);
     if (!s)
         return false;
     if (space_has_overlay_base(s)) {
@@ -7733,6 +8273,8 @@ bool space_remove(Space *s, Atom *atom) {
 
     SpaceMutationEquationProjection equation_projection =
         space_local_removal_equation_projection(s, remove_idx);
+    SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+        s, equation_projection, NULL, remove_idx);
     space_pinned_occurrences_detach(s);
 
     if (space_is_ordered(s)) {
@@ -7751,6 +8293,8 @@ bool space_remove(Space *s, Atom *atom) {
             tail_id); /* swap with last */
     }
     space_mark_indexes_dirty(s);
+    s->native.eq_idx_dirty = !retained.equations;
+    s->native.ty_idx_dirty = !retained.declarations;
     space_match_backend_note_remove(s);
     space_publish_mutation(
         s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7770,6 +8314,7 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
 }
 
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
+    s = space_mutation_target(s);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
     if (space_has_overlay_base(s)) {
@@ -7811,6 +8356,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
             continue;
         SpaceMutationEquationProjection equation_projection =
             space_local_removal_equation_projection(s, i);
+        SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+            s, equation_projection, NULL, i);
         space_pinned_occurrences_detach(s);
         if (space_is_ordered(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
@@ -7828,6 +8375,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
                 tail_id);
         }
         space_mark_indexes_dirty(s);
+        s->native.eq_idx_dirty = !retained.equations;
+        s->native.ty_idx_dirty = !retained.declarations;
         space_match_backend_note_remove(s);
         space_publish_mutation(
             s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -7841,6 +8390,8 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount *out_removed) {
     uint64_t removed = 0;
     SpaceBackendBatchResult batch_result;
+
+    s = space_mutation_target(s);
 
     if (out_removed)
         *out_removed = 0;
@@ -7892,6 +8443,24 @@ bool space_remove_occurrence_mask_stable(
     CettaCount logical_len = space_length64(s);
     if (mask_len != logical_len)
         return false;
+    if (s->module_own_view) {
+        Space *owner = space_mutation_target(s);
+        if (!owner)
+            return false;
+        CettaCount owner_len = space_length64(owner);
+        if (owner_len > SIZE_MAX)
+            return false;
+        uint8_t *owner_mask = calloc((size_t)owner_len, 1u);
+        if (!owner_mask && owner_len)
+            return false;
+        if (mask_len)
+            memcpy(owner_mask + space_imported_length(owner),
+                   remove_mask, (size_t)mask_len);
+        bool ok = space_remove_occurrence_mask_stable(
+            owner, owner_mask, owner_len, out_removed);
+        free(owner_mask);
+        return ok;
+    }
     CettaIndex imported = space_imported_length(s);
     for (CettaIndex index = 0u; index < imported && index < mask_len; index++) {
         if (remove_mask[index] != 0u)
@@ -7983,6 +8552,8 @@ bool space_remove_occurrence_mask_stable(
             return false;
         }
         if (transport_result == SPACE_BACKEND_BATCH_APPLIED) {
+            SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+                s, equation_projection, &transport, SPACE_OCCURRENCE_COORDINATE_REMOVED);
             CettaCount moved = 0u;
             for (CettaIndex source_index = 0u;
                  source_index < logical_len; source_index++) {
@@ -8006,6 +8577,8 @@ bool space_remove_occurrence_mask_stable(
             s->native.len = target;
             s->native.start = 0u;
             space_mark_derived_state_dirty(s);
+            s->native.eq_idx_dirty = !retained.equations;
+            s->native.ty_idx_dirty = !retained.declarations;
             space_publish_mutation(
                 s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             cetta_runtime_stats_add(
@@ -8147,6 +8720,9 @@ bool space_pop(Space *s, Atom **out) {
     if (!s)
         return false;
     if (space_has_overlay_base(s)) {
+        if (s->module_own_view)
+            return space_length64(s) != 0u &&
+                   space_pop(space_mutation_target(s), out);
         CettaCount base_visible = space_overlay_visible_base_count(s);
         CettaCount local_len = space_local_length64(s);
         logical_len = base_visible + local_len;
@@ -8241,6 +8817,10 @@ bool space_truncate64(Space *s, CettaCount new_len) {
     if (!s || new_len < space_imported_length(s))
         return false;
     if (space_has_overlay_base(s)) {
+        if (s->module_own_view)
+            return new_len <= space_length64(s) &&
+                   space_truncate64(space_mutation_target(s), new_len +
+                       space_imported_length(s->overlay_base));
         CettaCount base_visible = space_overlay_visible_base_count(s);
         CettaCount local_len = space_local_length64(s);
         logical_len = base_visible + local_len;
@@ -8348,14 +8928,15 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     if (!s->native.universe)
         return 0;
     AtomId query_id = term_universe_lookup_atom_id(s->native.universe, atom);
-    if (query_id == CETTA_ATOM_ID_NONE)
-        return 0;
+    bool query_canonical = query_id != CETTA_ATOM_ID_NONE &&
+        tu_hdr(s->native.universe, query_id) != NULL;
 #ifndef NDEBUG
-    assert(term_universe_atom_id_eq(s->native.universe, query_id, atom));
+    assert(query_id == CETTA_ATOM_ID_NONE ||
+           term_universe_atom_id_eq(s->native.universe, query_id, atom));
 #endif
     ensure_exact_index(s);
     ExactAtomBucket *bucket =
-        &s->native.exact_idx.buckets[exact_atom_hash_id(s, query_id)];
+        &s->native.exact_idx.buckets[exact_atom_hash(atom)];
     if (bucket->len == 0)
         return 0;
     CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
@@ -8368,7 +8949,13 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
 #ifndef NDEBUG
         assert(candidate_id != CETTA_ATOM_ID_NONE);
 #endif
-        if (candidate_id == query_id)
+        /* Canonical ids are a complete equality test only for encoded terms.
+           Arena-owned spellings use the same content hash, followed by
+           structural equality; retaining them must not register their names. */
+        if (candidate_id == query_id ||
+            ((!query_canonical ||
+              !tu_hdr(s->native.universe, candidate_id)) &&
+             term_universe_atom_id_eq(s->native.universe, candidate_id, atom)))
             matches[n++] = idx;
     }
     if (n == 0) {
@@ -8416,6 +9003,7 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
 }
 
 bool space_contains_exact(Space *s, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     bool native_membership_authoritative =
         s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
               (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
@@ -8440,8 +9028,12 @@ bool space_contains_exact(Space *s, Atom *atom) {
             AtomId qid = s->native.universe
                 ? term_universe_lookup_atom_id(s->native.universe, atom)
                 : CETTA_ATOM_ID_NONE;
-            return qid != CETTA_ATOM_ID_NONE &&
-                   id_present_contains(&s->native, qid);
+            if (qid != CETTA_ATOM_ID_NONE &&
+                id_present_contains(&s->native, qid))
+                return true;
+            if (!s->native.id_present_incomplete &&
+                term_universe_atom_is_stable(atom))
+                return false;
         }
     }
     CettaIndex *matches = NULL;
@@ -8453,6 +9045,7 @@ bool space_contains_exact(Space *s, Atom *atom) {
 bool space_contains_exact_symbol_application(
         Space *s, SymbolId head, Atom *const *arguments,
         CettaExprLen argument_count, bool *out_applicable) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (out_applicable)
         *out_applicable = false;
     bool native_membership_authoritative =
@@ -8467,10 +9060,11 @@ bool space_contains_exact_symbol_application(
     }
     for (CettaExprIndex index = 0u;
          index < argument_count; index++) {
-        if (!atom_is_exact_indexable(arguments[index]))
+        if (!atom_is_exact_indexable(arguments[index]) ||
+            !term_universe_atom_is_stable(arguments[index]))
             return false;
     }
-    if (!id_present_sync(s))
+    if (!id_present_sync(s) || s->native.id_present_incomplete)
         return false;
     AtomId query_id = term_universe_lookup_symbol_application(
         s->native.universe, head, arguments, argument_count);
@@ -8482,6 +9076,7 @@ bool space_contains_exact_symbol_application(
 
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     bool found = false;
 
     if (out_applicable)
@@ -8519,6 +9114,7 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
 bool space_match_exists_ground_exact_expression_coordinates(
         Space *s, Atom *const *coordinates,
         CettaExprLen coordinate_count, bool *out_applicable) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (out_applicable)
         *out_applicable = false;
     if (!s || coordinate_count == 0u || !coordinates ||
@@ -8530,10 +9126,11 @@ bool space_match_exists_ground_exact_expression_coordinates(
     }
     for (CettaExprIndex index = 0u;
          index < coordinate_count; index++) {
-        if (!atom_is_exact_indexable(coordinates[index]))
+        if (!atom_is_exact_indexable(coordinates[index]) ||
+            !term_universe_atom_is_stable(coordinates[index]))
             return false;
     }
-    if (!id_present_sync(s))
+    if (!id_present_sync(s) || s->native.id_present_incomplete)
         return false;
     AtomId query_id = term_universe_lookup_expression_coordinates(
         s->native.universe, coordinates, coordinate_count);
@@ -8544,6 +9141,7 @@ bool space_match_exists_ground_exact_expression_coordinates(
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     bool native_membership_authoritative =
         s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
               (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
@@ -8567,10 +9165,12 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
        exact-index buckets each time (the O(N^2) source). */
     if (!id_present_sync(s))
         return false;
-    if (out_applicable)
-        *out_applicable = true;
     AtomId cid = space_canonical_id_for_query(s, atom);
-    return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
+    bool found = cid != CETTA_ATOM_ID_NONE &&
+        id_present_contains(&s->native, cid);
+    if (out_applicable)
+        *out_applicable = found || !s->native.id_present_incomplete;
+    return found;
 }
 
 bool space_contains_for_add_nodup(Space *s, Atom *atom) {
@@ -8644,7 +9244,7 @@ Atom *normalize_type_expr_head(Arena *a, Atom *norm) {
        capability stays un-dispatched (an inert expression in the type). */
     SymbolId op_id = SYMBOL_ID_NONE;
     if (norm->expr.elems[0]->kind == ATOM_SYMBOL)
-        op_id = norm->expr.elems[0]->sym_id;
+        op_id = atom_symbol_current_id(norm->expr.elems[0]);
     if (norm->expr.len >= 3 && op_id != SYMBOL_ID_NONE &&
         grounded_op_is_type_pure(op_id)) {
         Atom *result = grounded_dispatch(a, norm->expr.elems[0],
@@ -8735,12 +9335,12 @@ static Atom *get_native_handle_type(Arena *a, Atom *atom) {
 Atom *get_grounded_type(Arena *a, Atom *atom) {
     if (atom->kind != ATOM_GROUNDED) return atom_undefined_type(a);
     switch (atom->ground.gkind) {
-    case GV_INT:    return atom_symbol(a, "Number");
-    case GV_BIGINT: return atom_symbol(a, "Number");
-    case GV_RATIONAL: return atom_symbol(a, "Number");
-    case GV_FLOAT:  return atom_symbol(a, "Number");
-    case GV_BOOL:   return atom_symbol(a, "Bool");
-    case GV_STRING: return atom_symbol(a, "String");
+    case GV_INT:    return atom_symbol_literal(a, "Number");
+    case GV_BIGINT: return atom_symbol_literal(a, "Number");
+    case GV_RATIONAL: return atom_symbol_literal(a, "Number");
+    case GV_FLOAT:  return atom_symbol_literal(a, "Number");
+    case GV_BOOL:   return atom_symbol_literal(a, "Bool");
+    case GV_STRING: return atom_symbol_literal(a, "String");
     case GV_SPACE: {
         const Space *space = (const Space *)atom->ground.ptr;
         const char *space_type = "atom";
@@ -8757,29 +9357,32 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                 space_type = "pathmap";
             }
         }
-        return atom_expr2(a, atom_symbol(a, "Space"), atom_symbol(a, space_type));
+        return atom_expr2(a, atom_symbol_literal(a, "Space"),
+                          atom_symbol_literal(a, space_type));
     }
     case GV_BINDINGS:
-        return atom_symbol(a, "Bindings");
+        return atom_symbol_literal(a, "Bindings");
+    case GV_TENSOR:
+        return atom_symbol_literal(a, "Tensor");
     case GV_FOREIGN:
-        return atom_symbol(a, "Foreign");
+        return atom_symbol_literal(a, "Foreign");
     case GV_TERM_GRAPH:
         /* A rational term is a list or a compound term: an expression. */
-        return atom_symbol(a, "Expression");
+        return atom_symbol_literal(a, "Expression");
     case GV_CAPTURE:
-        return atom_expr3(a, atom_symbol(a, "->"),
+        return atom_expr3(a, atom_symbol_literal(a, "->"),
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
         if (cell->content_type &&
             !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
-            return atom_expr2(a, atom_symbol(a, "StateMonad"), cell->content_type);
-        return atom_symbol(a, "State");
+            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);
+        return atom_symbol_literal(a, "State");
     }
     case GV_PRIME_NEED_CAPABILITY:
-        return atom_symbol(a, "PrimeNeedCapability");
+        return atom_symbol_literal(a, "PrimeNeedCapability");
     case GV_PRIME_CONTEXT:
-        return atom_symbol(a, "context");
+        return atom_symbol_literal(a, "context");
     case GV_INTERNAL_TAG:
         return atom_undefined_type(a);
     }
@@ -8822,7 +9425,7 @@ bool space_type_annotation_may_match_subject(Space *s, const Atom *subject) {
          atom_petta_value_representation(subject) != PETTA_VALUE_ORDINARY ||
          atom_structural_has_rational(subject)))
         return true;
-    SymbolId head = subject->kind == ATOM_SYMBOL ? subject->sym_id :
+    SymbolId head = subject->kind == ATOM_SYMBOL ? atom_symbol_current_id(subject) :
         atom_head_symbol_id(subject);
     if (head == SYMBOL_ID_NONE)
         return true;
@@ -8922,6 +9525,8 @@ space_member_annotated_types(
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     uint32_t h = atom_hash_for_index(atom);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
+    if (bucket->len == 0u)
+        return true;
     CettaIndex imported = bucket->atom_indices ? s->imported_len : 0u;
     int passes = own_only || imported == 0u ? 1 : 2;
     /* The space's own declarations precede imported ones. */
@@ -9010,7 +9615,7 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     CETTA_SCOPED_SHARED_TRANSITION(observation);
     Atom *const *grounded = NULL;
     uint32_t grounded_count = atom && atom->kind == ATOM_SYMBOL
-        ? space_grounded_types(atom->sym_id, &grounded) : 0u;
+        ? space_grounded_types(atom_symbol_current_id(atom), &grounded) : 0u;
     if (grounded_count != 0u) {
         /* A grounded operation's type is its own. */
         Atom **types = cetta_malloc(sizeof(*types) * grounded_count);
@@ -9280,15 +9885,13 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     : 0;
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
-        if (count == 0 && atom->expr.len >= 2) {
+        if (count == 0 && atom->expr.len >= 1) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
             uint32_t nop = get_annotated_types(
                 s, a, op, &op_types, budget, NULL);
             Arena scratch;
-            arena_init(&scratch);
-            arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-            arena_set_hashcons(&scratch, NULL);
+            bool scratch_ready = false;
             /* Also try recursively inferred types for the operator */
             if (nop == 0 && op->kind == ATOM_EXPR) {
                 Atom **recur_types = NULL;
@@ -9318,6 +9921,14 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     tried_func_type = true;
                     /* Check arity match */
                     if (ft->expr.len - 2 != atom->expr.len - 1) continue;
+                    /* A non-function tuple needs no signature-instantiation
+                       storage, including the newly admitted nullary case. */
+                    if (!scratch_ready) {
+                        arena_init(&scratch);
+                        arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+                        arena_set_hashcons(&scratch, NULL);
+                        scratch_ready = true;
+                    }
                     /* Freshen type vars and try to unify args to get concrete ret type */
                     ArenaMark scratch_mark = arena_mark(&scratch);
                     Atom *fresh_ft = cetta_instantiate_frame_syntax(&scratch, ft);
@@ -9393,7 +10004,8 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                     arena_reset(&scratch, scratch_mark);
                 }
             }
-            arena_free(&scratch);
+            if (scratch_ready)
+                arena_free(&scratch);
             free(op_types);
             /* If we tried function types but none matched → type error (empty) */
             if (tried_func_type && count == 0 &&
@@ -10366,7 +10978,8 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
  * by the eligibility predicate and the revision-keyed view cache.  Cheap: one
  * hashed bucket read + a tiny linearity walk; the cache calls it once per
  * (head, revision), not per reduction. */
-static bool space_dependencies_may_match_known_head(const Space *s,
+static inline __attribute__((always_inline))
+bool space_dependencies_may_match_known_head(const Space *s,
                                                     SymbolId head);
 
 static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
@@ -10512,7 +11125,7 @@ static bool prepared_register_template_kind(
     Atom *head = atom->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL ||
         !prepared_register_head_kind(
-            head->sym_id, atom->expr.len - 1u, kind_out)) {
+            atom_symbol_current_id(head), atom->expr.len - 1u, kind_out)) {
         return false;
     }
     for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
@@ -10548,7 +11161,7 @@ static bool prepared_register_recursive_template_kind(
         atom->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
-    SymbolId head = atom->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(atom->expr.elems[0]);
     CettaExprLen nargs = atom->expr.len - 1u;
     if (head == g_builtin_syms.if_text) {
         if (nargs != 3u)
@@ -11076,7 +11689,7 @@ static Atom *prepared_register_execute_expression(
     CettaExprLen nargs = source->expr.len - 1u;
     CettaGsltRegisterResultKind result_kind;
     if (!head || head->kind != ATOM_SYMBOL ||
-        !prepared_register_head_kind(head->sym_id, nargs, &result_kind) ||
+        !prepared_register_head_kind(atom_symbol_current_id(head), nargs, &result_kind) ||
         nargs > CETTA_GSLT_PREPARED_EQUATION_MAX_REGISTERS) {
         return NULL;
     }
@@ -11278,7 +11891,7 @@ static bool prepared_mpz_eval_integer(
         return false;
     }
     CettaGsltRegisterResultKind result_kind;
-    SymbolId head = source->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(source->expr.elems[0]);
     if (!prepared_register_head_kind(head, 2u, &result_kind) ||
         result_kind != CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
         return false;
@@ -11317,7 +11930,7 @@ static bool prepared_mpz_eval_guard(
         !guard->expr.elems[0] || guard->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
     CettaGsltRegisterResultKind result_kind;
-    SymbolId head = guard->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(guard->expr.elems[0]);
     if (!prepared_register_head_kind(head, 2u, &result_kind) ||
         result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
         head != g_builtin_syms.op_eq) {
@@ -11778,7 +12391,7 @@ static bool prepared_recursive_run(
                 source->expr.elems[0]->kind != ATOM_SYMBOL) {
                 return false;
             }
-            frame->head = source->expr.elems[0]->sym_id;
+            frame->head = atom_symbol_current_id(source->expr.elems[0]);
             frame->argument_count = source->expr.len - 1u;
             frame->value_base = machine->value_len;
             if (frame->head == g_builtin_syms.if_text) {
@@ -12056,6 +12669,58 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
 #endif
 }
 
+CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
+    Atom *query, Arena *a, QueryResultVisitor visitor, void *ctx,
+    CettaCount *emitted) {
+    if (emitted) *emitted = 0u;
+    if (!rule || !query || !a || !visitor || !emitted)
+        return CETTA_TERM_MATCH_INVALID;
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    CettaFrameIdentity epoch;
+    if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
+        return CETTA_TERM_MATCH_NO_MEMORY;
+    Bindings environment;
+    bindings_init(&environment);
+    Atom *body = NULL;
+    CettaTermMatchStatus status = cetta_rule_prepare(rule, query, epoch, a,
+                                                     &environment, atom_eq, &body);
+    if (status == CETTA_TERM_MATCH_OK && rule->binding == CETTA_RULE_BIND_HEAD) {
+        /* A directional head writes only its fresh rule frame. The prepared
+         * body already contains the caller's unchanged identities; exporting
+         * private rule bindings or rewriting caller aliases would be wrong. */
+        Bindings empty;
+        bindings_init(&empty);
+        QueryResultSink sink;
+        query_result_sink_init_visit(&sink, visitor, ctx);
+        (void)query_result_sink_emit(&sink, body, &empty);
+        *emitted = sink.emitted;
+        bindings_free(&empty);
+    } else if (status == CETTA_TERM_MATCH_OK) {
+        QueryVisibleVarSet visible;
+        query_visible_var_set_init(&visible);
+        Bindings projected;
+        bindings_init(&projected);
+        if (!collect_query_visible_vars_rec(query, &visible) ||
+            !project_query_visible_bindings(a, &visible, &environment, &projected))
+            status = CETTA_TERM_MATCH_NO_MEMORY;
+        else {
+            body = rewrite_query_visible_aliases(a, body, &visible, &environment);
+            if (!body)
+                status = CETTA_TERM_MATCH_NO_MEMORY;
+            else {
+                QueryResultSink sink;
+                query_result_sink_init_visit(&sink, visitor, ctx);
+                (void)query_result_sink_emit(&sink, body, &projected);
+                *emitted = sink.emitted;
+            }
+        }
+        bindings_free(&projected);
+        query_visible_var_set_free(&visible);
+    }
+    bindings_free(&environment);
+    return status;
+}
+
 static CettaMatchCompletion query_equation_visit_status(
         Atom *equation, Atom *query, Arena *a,
         QueryResultVisitor visitor, void *ctx,
@@ -12166,10 +12831,37 @@ bool space_has_graded_equations(Space *space) {
 static bool space_member_equations_may_match_known_head(Space *s,
                                                         SymbolId head);
 
+static bool space_member_directional_rules_may_match(Space *s, SymbolId head) {
+    if (!s) return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount begin = space_overlay_visible_base_count(s);
+        CettaCount end = space_length64(s);
+        for (CettaIndex i = begin; i < end; ++i) {
+            CettaRuleDescriptor rule;
+            if (cetta_rule_view(space_get_at64(s, i), CETTA_RULE_SYNTAX_DIRECTIONAL, &rule) &&
+                (head == SYMBOL_ID_NONE || eq_lhs_may_match_known_head(rule.head, head))) return true;
+        }
+        return space_member_directional_rules_may_match((Space *)s->overlay_base, head);
+    }
+    ensure_eq_index(s);
+    if (head == SYMBOL_ID_NONE) return s->native.eq_idx.directional_present;
+    return s->native.eq_idx.directional_wildcard ||
+        eq_head_set_contains(&s->native.eq_idx.directional_heads, head);
+}
+
+bool space_directional_rules_may_match_general(Space *s, SymbolId head) {
+    if (space_member_directional_rules_may_match(s, head)) return true;
+    for (uint32_t i = 0u; i < space_dependency_count(s); ++i)
+        if (space_member_directional_rules_may_match(space_dependency_at(s, i), head))
+            return true;
+    return false;
+}
+
 /* Whether a module that `s` imports may define `head`.  A dependency's
  * imported atoms belong to the modules `s` reads anyway, so its whole space
  * is consulted. */
-static bool space_dependencies_may_match_known_head(const Space *s,
+static inline __attribute__((always_inline))
+bool space_dependencies_may_match_known_head(const Space *s,
                                                     SymbolId head) {
     uint32_t dependencies = space_dependency_count(s);
     for (uint32_t d = 0u; d < dependencies; d++) {
@@ -12337,6 +13029,45 @@ bool space_equation_head_arity_bounds_view(Space *space, SymbolId head,
     return found;
 }
 
+bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
+    CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
+    CettaExprLen query_arity, unsigned admitted_forms) {
+    if ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+         !space_directional_rules_may_match_known_head(s, head)))
+        return space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                                has_exact, query_arity);
+    if (minimum) *minimum = 0u;
+    if (maximum) *maximum = 0u;
+    if (has_exact) *has_exact = false;
+    if (!s || head == SYMBOL_ID_NONE || !minimum || !maximum || !has_exact)
+        return false;
+    bool found = (admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+        space_equation_head_arity_bounds(s, head, minimum, maximum,
+                                         has_exact, query_arity);
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) || !minimum ||
+        !maximum || !has_exact ||
+        !space_directional_rules_may_match_known_head(s, head)) return found;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(s, head, CETTA_RULE_SYNTAX_DIRECTIONAL, &cursor))
+        return found;
+    SpaceEquationOccurrenceId id;
+    while (space_equation_cursor_next(&cursor, &id) == SPACE_EQUATION_CURSOR_ITEM) {
+        SpaceEquationOccurrence occurrence;
+        CettaRuleDescriptor rule;
+        if (!space_rule_occurrence_resolve(id, CETTA_RULE_SYNTAX_DIRECTIONAL, &occurrence) ||
+            !cetta_rule_view(occurrence.equation, CETTA_RULE_SYNTAX_DIRECTIONAL, &rule) ||
+            rule.head->kind != ATOM_EXPR || !rule.head->expr.len ||
+            eq_head_symbol(rule.head) != head) continue;
+        CettaExprLen arity = rule.head->expr.len - 1u;
+        if (!found || arity < *minimum) *minimum = arity;
+        if (!found || arity > *maximum) *maximum = arity;
+        *has_exact = *has_exact || arity == query_arity;
+        found = true;
+    }
+    return found;
+}
+
 
 void registry_storage_census(const Registry *registry, CettaStorageCensus *census) {
     if (!registry) return;
@@ -12345,6 +13076,7 @@ void registry_storage_census(const Registry *registry, CettaStorageCensus *censu
     if (registry->index_slots != registry->inline_index_slots)
         cetta_storage_array(census, registry->index_slots, registry->index_cap, sizeof(*registry->index_slots), 0u);
     name_key_table_storage_census(registry->name_keys, census);
+    registered_symbols_storage_census(registry->text_keys, census);
     if (registry->states) cetta_storage_refuse(census, "OpaqueRegistryStates");
 }
 

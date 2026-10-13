@@ -372,6 +372,14 @@ bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
+/* Read ordinary symbol leaves while copying a form. The callback's meaning
+ * stays fixed for the copy. NULL means unchanged;
+ * a returned value stays live for the copy and is copied without reading its
+ * contents again. Variable name keys and opaque values are not source text. */
+typedef Atom *(*TermUniverseSymbolRead)(void *context, SymbolId symbol);
+Atom *term_universe_copy_atom_read_symbols(
+    const TermUniverse *universe, Arena *dst, AtomId id,
+    TermUniverseSymbolRead read, void *context);
 Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
                                     AtomId id, uint32_t epoch);
 char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
@@ -462,11 +470,16 @@ size_t tu_string_len(const TermUniverse *universe, AtomId id);
 const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id);
 const char *tu_rational_cstr(const TermUniverse *universe, AtomId id);
 /* The id of child `idx` of the expression `id`: its payload follows its
- * header, one id per child at the store format's width. */
-static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
-                              CettaExprIndex idx) {
-    const CettaTermHdr *hdr = tu_hdr(universe, id);
-    if (!hdr || hdr->tag != ATOM_EXPR ||
+ * header, one id per child at the store format's width. A borrowed header
+ * must come from this universe and remain valid: no universe mutation may
+ * occur between obtaining it and reading its child. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline AtomId tu_child_from_header(const TermUniverse *universe,
+                                          const CettaTermHdr *hdr,
+                                          CettaExprIndex idx) {
+    if (!universe || !hdr || hdr->tag != ATOM_EXPR ||
         idx >= (CettaExprIndex)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK))
         return CETTA_ATOM_ID_NONE;
     const uint8_t *payload = (const uint8_t *)(hdr + 1);
@@ -480,6 +493,14 @@ static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
     }
     return CETTA_ATOM_ID_NONE;
 }
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
+                              CettaExprIndex idx) {
+    return tu_child_from_header(universe, tu_hdr(universe, id), idx);
+}
+
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);

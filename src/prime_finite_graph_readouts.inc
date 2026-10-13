@@ -432,11 +432,11 @@ static Atom *sj_graph_value(Arena *arena, Atom *qualifier, const SjFiniteGraph *
 
 static Atom *sj_graph_failure(Arena *arena, Atom *judgment, SjGraphFailure failure) {
     if (failure == SJ_GRAPH_OPEN)
-        return sj_undetermined(arena, judgment, sj_expr1(arena, "set:open-finite-presentation"));
+        return sj_undetermined(arena, judgment, sj_expr1(arena, SJ_S("set:open-finite-presentation")));
     if (failure == SJ_GRAPH_INVALID)
-        return sj_refuted(arena, judgment, sj_expr1(arena, "set:invalid-finite-presentation"));
+        return sj_refuted(arena, judgment, sj_expr1(arena, SJ_S("set:invalid-finite-presentation")));
     return sj_incomplete(arena, judgment, sj_expr1(arena,
-        failure == SJ_GRAPH_BUDGET ? "set:finite-readout-budget" : "set:finite-readout-storage"));
+        failure == SJ_GRAPH_BUDGET ? SJ_S("set:finite-readout-budget") : SJ_S("set:finite-readout-storage")));
 }
 
 /* `(set:interpret finite-graph qualifier operation [steps])` is a
@@ -448,7 +448,7 @@ static Atom *sj_finite_graph_judgment(Arena *arena, Atom *judgment,
     CettaExprLen len = judgment->expr.len;
     if (len < 2u || !atom_is_symbol(judgment->expr.elems[1], "finite-graph")) return NULL;
     if (len != 4u && len != 5u)
-        return sj_refuted(arena, judgment, sj_expr1(arena, "set:finite-readout-arity"));
+        return sj_refuted(arena, judgment, sj_expr1(arena, SJ_S("set:finite-readout-arity")));
     Atom *qualifier = judgment->expr.elems[2], *operation = judgment->expr.elems[3];
     bool aczel = atom_is_symbol(qualifier, "aczel");
     bool unfolding = atom_is_symbol(qualifier, "raw-unfolding");
@@ -460,12 +460,12 @@ static Atom *sj_finite_graph_judgment(Arena *arena, Atom *judgment,
     if (len == 5u) {
         Atom *limit = judgment->expr.elems[4];
         if (limit && limit->kind == ATOM_VAR)
-            return sj_undetermined(arena, judgment, sj_expr1(arena, "set:open-finite-readout-budget"));
+            return sj_undetermined(arena, judgment, sj_expr1(arena, SJ_S("set:open-finite-readout-budget")));
         if (sj_graph_nat(limit) && limit->ground.gkind == GV_BIGINT)
-            return sj_incomplete(arena, judgment, sj_expr1(arena, "set:finite-readout-budget-storage"));
+            return sj_incomplete(arena, judgment, sj_expr1(arena, SJ_S("set:finite-readout-budget-storage")));
         if (!limit || limit->kind != ATOM_GROUNDED || limit->ground.gkind != GV_INT ||
             limit->ground.ival < 0)
-            return sj_refuted(arena, judgment, sj_expr1(arena, "set:finite-readout-budget-arity"));
+            return sj_refuted(arena, judgment, sj_expr1(arena, SJ_S("set:finite-readout-budget-arity")));
         uint64_t requested = (uint64_t)limit->ground.ival;
         if (!limited || requested < steps) steps = requested;
         limited = true;
@@ -487,7 +487,7 @@ static Atom *sj_finite_graph_judgment(Arena *arena, Atom *judgment,
         !outcome && !scope && !origins && !origin_count && !origin_at && !occurrence_count) return NULL;
     CettaExprLen expected = equal || member || origin_at ? 3u : 2u;
     if (!operation || operation->expr.len != expected)
-        return sj_refuted(arena, judgment, sj_expr1(arena, "set:finite-operation-arity"));
+        return sj_refuted(arena, judgment, sj_expr1(arena, SJ_S("set:finite-operation-arity")));
     if ((member || members) && !aczel && !foundation && !scott) return NULL;
     if (eligible && !foundation) return NULL;
     if ((outcome || scope || origins || origin_count || origin_at) && !observed) return NULL;
@@ -513,7 +513,7 @@ static Atom *sj_finite_graph_judgment(Arena *arena, Atom *judgment,
         if (foundation && (!sj_graph_eligible(&first, &work) ||
                            (expected == 3u && !sj_graph_eligible(&second, &work)))) {
             if (work.failure == SJ_GRAPH_OK)
-                result = sj_undetermined(arena, judgment, sj_expr1(arena, "set:outside-well-founded-domain"));
+                result = sj_undetermined(arena, judgment, sj_expr1(arena, SJ_S("set:outside-well-founded-domain")));
             goto finish;
         }
         if (value) result = observed ? sj_expr2(arena, "ObservedGraphValue", left)
@@ -525,9 +525,9 @@ static Atom *sj_finite_graph_judgment(Arena *arena, Atom *judgment,
         else if (origin_at) {
             size_t position;
             if (right && right->kind == ATOM_VAR)
-                result = sj_undetermined(arena, judgment, sj_expr1(arena, "set:open-origin-index"));
+                result = sj_undetermined(arena, judgment, sj_expr1(arena, SJ_S("set:open-origin-index")));
             else if (!sj_graph_index(right, (size_t)observed_first.origins->expr.len, &position))
-                result = sj_refuted(arena, judgment, sj_expr1(arena, "set:origin-index-outside-fibre"));
+                result = sj_refuted(arena, judgment, sj_expr1(arena, SJ_S("set:origin-index-outside-fibre")));
             else {
                 Atom *items[4] = {sj_sym(arena, "OriginReceipt"), left, right,
                     observed_first.origins->expr.elems[position]};

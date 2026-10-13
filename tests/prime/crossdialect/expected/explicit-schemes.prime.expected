@@ -14,4 +14,4 @@
 [()]
 [()]
 [()]
-[(he-reject (no-inhabitant-at-depth))]
+[(he-unknown (native-proof-check-undetermined))]

@@ -169,6 +169,7 @@ int he_compiled_reader_v1_parse_bytes_ids(
         .expression = he_compiled_reader_v1_expression,
         .list = he_compiled_reader_v1_list,
     };
+    parser_host_projection_v1_set_namespace_sugar(projection_context, false);
     memset(&direct_receipt, 0, sizeof(direct_receipt));
     result = gslt_direct_reader_v1_parse_bytes_ids(
         reader->plan, input, input_len, &projection, out_ids,
@@ -289,6 +290,89 @@ int he_compiled_reader_v1_parse_file_ids(
     }
     result = he_compiled_reader_v1_parse_bytes_ids(
         reader, bytes, len, universe, out_ids, receipt,
+        error_buf, error_buf_size);
+    free(bytes);
+    return result;
+}
+
+typedef struct {
+    AtomId **forms;
+    int *count;
+} HECompletePrefixV1;
+
+static bool he_compiled_reader_v1_retain_prefix(
+    void *context, AtomId *forms, uint32_t count) {
+    if (count > (uint32_t)INT_MAX)
+        return false;
+    HECompletePrefixV1 *prefix = context;
+    *prefix->forms = forms;
+    *prefix->count = (int)count;
+    return true;
+}
+
+int he_compiled_reader_v1_parse_bytes_prefix_ids(
+    HECompiledReaderV1 *reader, const uint8_t *input, size_t input_len,
+    TermUniverse *universe, AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    if (error_buf && error_buf_size)
+        error_buf[0] = '\0';
+    if (out_ids)
+        *out_ids = NULL;
+    if (complete_count)
+        *complete_count = 0;
+    if (!reader || !reader->ready || reader->owner_symbols != g_symbols ||
+        reader->owner_symbols_instance_id != symbol_table_instance_id(g_symbols) ||
+        !universe || !out_ids || !complete_count ||
+        input_len > UINT32_MAX || (input_len && !input)) {
+        he_compiled_reader_v1_set_error(error_buf, error_buf_size,
+                                        "invalid compiled HE parse");
+        return -1;
+    }
+    ParserHostProjectionV1 *context = parser_host_projection_v1_new(universe);
+    if (!context) {
+        he_compiled_reader_v1_set_error(error_buf, error_buf_size,
+                                        "failed to initialize the HE Atom projection");
+        return -1;
+    }
+    HECompletePrefixV1 prefix = {out_ids, complete_count};
+    parser_host_projection_v1_set_namespace_sugar(context, false);
+    GSLTDirectAtomProjectionV1 projection = {
+        .context = context,
+        .begin_form = he_compiled_reader_v1_begin_form,
+        .word_bytes = he_compiled_reader_v1_word_bytes,
+        .variable_bytes = he_compiled_reader_v1_variable_bytes,
+        .string_bytes = he_compiled_reader_v1_string_bytes,
+        .expression = he_compiled_reader_v1_expression,
+        .list = he_compiled_reader_v1_list,
+        .retain_context = &prefix,
+        .retain_prefix = he_compiled_reader_v1_retain_prefix,
+    };
+    int result = gslt_direct_reader_v1_parse_bytes_ids(
+        reader->plan, input, input_len, &projection, out_ids, NULL,
+        error_buf, error_buf_size);
+    if (result >= 0)
+        *complete_count = result;
+    parser_host_projection_v1_free(context);
+    return result;
+}
+
+int he_compiled_reader_v1_parse_file_prefix_ids(
+    HECompiledReaderV1 *reader, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count,
+    char *error_buf, size_t error_buf_size) {
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    if (out_ids)
+        *out_ids = NULL;
+    if (complete_count)
+        *complete_count = 0;
+    if (!he_compiled_reader_v1_read_file(filename, &bytes, &len)) {
+        he_compiled_reader_v1_set_error(error_buf, error_buf_size,
+                                        "cannot read HE source file");
+        return -1;
+    }
+    int result = he_compiled_reader_v1_parse_bytes_prefix_ids(
+        reader, bytes, len, universe, out_ids, complete_count,
         error_buf, error_buf_size);
     free(bytes);
     return result;

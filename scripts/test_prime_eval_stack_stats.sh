@@ -40,6 +40,10 @@ run_sum_probe() {
     local stdout_file="$probe_dir/sum-${n}.stdout"
     local stats_file="$probe_dir/sum-${n}.stats"
 
+    # Qualify the canonical continuation machine's own work and collection.
+    # Regional evaluators have separate work accounts and may borrow a host
+    # continuation, so select the canonical route for this numerical probe.
+    CETTA_PETTA_SEARCH_MACHINE=0 CETTA_PREPARED_PURE_REFERENCE=1 \
     CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
     "$BIN" --emit-runtime-stats --lang prime \
         -e '(= (mam:sum $n) (if (< $n 1) 0 (+ (superpose (1)) (mam:sum (- $n 1)))))' \
@@ -138,6 +142,27 @@ run_sum_probe() {
         "$n" "$work" "$heap_peak" "$c_stack_peak" \
         "$gc_frame_safe_points" "$gc_evacuated_bytes"
 }
+
+# The numerical answer must survive an actual collection after a computed
+# function head has been selected. Answers alone cannot detect a collector
+# that declines every safe point while a completed child world is retained.
+head_stdout="$probe_dir/retained-head.stdout"
+head_stats="$probe_dir/retained-head.stats"
+CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+"$BIN" --emit-runtime-stats --lang prime \
+    "$ROOT/tests/prime/need_gc_lifetime.metta" \
+    >"$head_stdout" 2>"$head_stats"
+if [[ $(<"$head_stdout") != "$(cat "$ROOT/tests/prime/need_gc_lifetime.expected")" ]]; then
+    echo "FAIL: retained computed head changed across collection" >&2
+    cat "$head_stdout" >&2
+    exit 1
+fi
+head_collections=$(counter "$head_stats" prime-eval-stack-gc-frame-safe-point)
+if ((head_collections == 0)); then
+    echo "FAIL: retained computed-head probe performed no collection" >&2
+    exit 1
+fi
+echo "PASS: retained computed head survives ${head_collections} collections"
 
 run_sum_probe 400
 run_sum_probe 800
@@ -424,16 +449,22 @@ fi
 # own no source-arena pointer and must not block exact evacuation.  Compare the
 # complete output with GC disabled so every setup occurrence and the final
 # 2^10 proof count remain part of the oracle.
+# The HE-authored chainer refines its enclosing logical variables in match
+# and let patterns. Declare that binding profile: lexical-fresh would make
+# those occurrences new variables and therefore run a different search.
+branch_source="$probe_dir/branch.metta"
+printf '%s\n' '(scope:profile mercury-implicit per-call reference)' \
+    >"$branch_source"
+bash "$ROOT/benchmarks/chaining/roman_chain_noise/gen_kb_branchy.sh" 10 1 \
+    >>"$branch_source"
 branch_stdout="$probe_dir/branch.stdout"
 branch_no_gc_stdout="$probe_dir/branch-no-gc.stdout"
 branch_stats="$probe_dir/branch.stats"
-bash "$ROOT/benchmarks/chaining/roman_chain_noise/gen_kb_branchy.sh" 10 1 |
-    CETTA_GC=1 CETTA_GC_BUDGET_MB=64 \
-    "$BIN" --emit-runtime-stats --lang prime --count-only /dev/stdin \
-        >"$branch_stdout" 2>"$branch_stats"
-bash "$ROOT/benchmarks/chaining/roman_chain_noise/gen_kb_branchy.sh" 10 1 |
-    CETTA_GC=0 "$BIN" --lang prime --count-only /dev/stdin \
-        >"$branch_no_gc_stdout"
+CETTA_GC=1 CETTA_GC_BUDGET_MB=64 \
+    "$BIN" --emit-runtime-stats --lang prime --count-only "$branch_source" \
+    >"$branch_stdout" 2>"$branch_stats"
+CETTA_GC=0 "$BIN" --lang prime --count-only "$branch_source" \
+    >"$branch_no_gc_stdout"
 if ! cmp -s "$branch_no_gc_stdout" "$branch_stdout" ||
    [[ $(tail -n 1 "$branch_stdout") != 1024 ]]; then
     echo "FAIL: empty branch-state carrier changed complete-bag multiplicity" >&2

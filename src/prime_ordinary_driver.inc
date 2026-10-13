@@ -23,7 +23,8 @@ static void prime_ordinary_move_outcomes(OutcomeSet *destination,OutcomeSet *sou
     outcome_set_init(source);
 }
 
-static bool prime_ordinary_observe(Arena *arena,Atom *value,const Bindings *env,void *raw) {
+static bool prime_ordinary_observe(Arena *arena,Atom *value,const Outcome *occurrence,void *raw) {
+    const Bindings *env = &occurrence->env;
     (void)arena;(void)value;(void)env;(void)raw;
     return true;
 }
@@ -52,7 +53,9 @@ static bool prime_ordinary_support_outcomes(PrimeOrdinarySupport *support,const 
     if(!outcomes)return true;
     for(CettaCount i=0u;i<outcomes->len;i++) {
         const Outcome *row=&outcomes->items[i];
-        if(row->kind!=CETTA_OUTCOME_INLINE || row->answer_ref.bank)return false;
+        if(row->kind!=CETTA_OUTCOME_INLINE || row->answer_ref.bank || row->delayed ||
+           (row->result_form!=CETTA_CALL_RESULT_EXPRESSION &&
+            row->result_form!=CETTA_CALL_RESULT_COMPLETED_VALUE))return false;
         PrimeOrdinarySupport bound=*support;
         bound.environment=&row->env;bound.snapshot=bindings_need_view(&row->env);
         if(!prime_ordinary_support_bindings(&bound,&row->env) ||
@@ -249,7 +252,9 @@ static bool prime_ordinary_received_atom(const Atom *atom,void *arena) {
  * common promoter copies the full occurrence first; audit its actual atom,
  * logical/Need/receipt and variant roots in the original receiving arena. */
 static bool prime_ordinary_received_outcome(Arena *arena,const Outcome *row) {
-    if(!arena || !row || row->kind!=CETTA_OUTCOME_INLINE || row->answer_ref.bank ||
+    if(!arena || !row || row->kind!=CETTA_OUTCOME_INLINE || row->answer_ref.bank || row->delayed ||
+        (row->result_form!=CETTA_CALL_RESULT_EXPRESSION &&
+         row->result_form!=CETTA_CALL_RESULT_COMPLETED_VALUE) ||
         !prime_ordinary_received_atom(row->atom,arena) ||
         !prime_ordinary_received_atom(row->materialized_atom,arena) ||
         !prime_ordinary_received_atom(row->delayed,arena) ||
@@ -264,7 +269,7 @@ static bool prime_ordinary_received_outcome(Arena *arena,const Outcome *row) {
 static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     Space *space,Atom *expression,int fuel,const Bindings *environment,uint32_t workers) {
     if(!source || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
-        source->first_answer || source->running_task || source->active_task ||
+        source->streaming || source->running_task || source->active_task ||
         source->root_call_running || source->raw_call_depth || source->bind_depth ||
         source->poison_depth || source->capacity_blocked || source->failed ||
         source->stream_pending || source->prepared_pure_cache.execution_scratch_ready ||
@@ -429,7 +434,7 @@ static bool prime_ordinary_capsule_stack_start(PrimeNativeControl *control) {
     driver->task=work->task;driver->task_ready=true;
     memset(&work->task,0,sizeof(work->task));work->task_initialized=false;
     driver->capsule_stack=true;driver->ordinary_ordered=false;
-    driver->first_answer=false;driver->collection_admitted=false;
+    driver->streaming=false;driver->collection_admitted=false;
     cetta_owned_continuation_destroy(&owned);
     return true;
 }
@@ -488,7 +493,7 @@ static bool prime_ordinary_capsule_stack_adopt(PrimeNativeControl *control) {
     control->frame_index=index;control->frame_index_capacity=capacity;
     control->changed_frames=changed;control->changed_capacity=count;
     source->capsule_stack=false;source->capsule_frontier=false;
-    source->ordinary_ordered=true;source->first_answer=true;
+    source->ordinary_ordered=true;source->streaming=true;
     source->continuations=(CettaOwnedFrameStack){0};source->top=NULL;
     for (size_t i=count;i>0u;i--) {
         PrimeEvalStackFrame *frame=frames[i-1u];

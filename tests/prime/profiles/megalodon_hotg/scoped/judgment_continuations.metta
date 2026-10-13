@@ -1,11 +1,11 @@
-(set:profile megalodon-hotg)
+(hol:profile megalodon-hotg)
 
 ; Judgment operands are syntax. Binding a computed value must preserve that
 ; contract in every evaluator continuation, including relational space lookup.
 ; Every set is a member of its power set: the law of the power set at the set
 ; itself, whose second half, read from right to left, applies to the proof
 ; that every member of the set is a member of it.
-!(set:theorem power-self (all set (lam x (In x (Power x))))
+!(hol:theorem power-self (all set (lam x (In x (Power x))))
    (pf:all-intro
      (pf:imp-elim
        (pf:imp-elim
@@ -18,28 +18,28 @@
 (law many power-self)
 (law many universeIn)
 (= (check-law $law)
-   (set:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty))))
+   (hol:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty))))
 (= (from-space $which)
    (let $law (match &self (law $which $name) $name){$which}
-     (set:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))))
+     (hol:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))))
 (= (from-stream)
    (let $law (superpose (power-self universeIn)) (check-law $law)))
 (= (nested-space $which)
    (let* (($law (match &self (law $which $name) $name){$which $name})
-          ($answer (set:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))))
+          ($answer (hol:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))))
      (case $answer ((True accepted) (False rejected)))))
 (= (case-space $which)
    (let $law (match &self (law $which $name) $name){$which}
-     (case (set:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))
+     (case (hol:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty)))
        ((True accepted) (False rejected)))))
 (= (status-law $law)
-   (let $result (try (set:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty))))
+   (let $result (try (hol:proves (pf:all-elim (pf:known $law) Empty) (In Empty (Power Empty))))
      (car-atom $result)))
 (= (status-space $which)
    (let $law (match &self (law $which $name) $name){$which} (status-law $law)))
 (= (data-proof $law) (pf:all-elim (pf:known $law) Empty))
 (= (compute-proof $law)
-   (let $proof (data-proof $law) (set:proves $proof (In Empty (Power Empty)))))
+   (let $proof (data-proof $law) (hol:proves $proof (In Empty (Power Empty)))))
 !(check-law power-self)
 !(check-law universeIn)
 !(let $law power-self (check-law $law))
@@ -55,32 +55,32 @@
 !(collapse (status-space many))
 !(compute-proof power-self)
 ; An unevaluated program in a proof operand is not silently executed.
-!(set:proves (data-proof power-self) (In Empty (Power Empty)))
+!(hol:proves (data-proof power-self) (In Empty (Power Empty)))
 !(let $law (match &self (law one $name) $name) (uninterpreted-operation $law))
 
 ; Publication and dependent consumption inside a function are live effects,
 ; never constructor values cached by a pure-expression optimization.
 (= (publish-from-space $name)
    (let $law (match &self (law one $source) $source)
-     (set:theorem $name (In Empty (Power Empty)) (pf:all-elim (pf:known $law) Empty))))
+     (hol:theorem $name (In Empty (Power Empty)) (pf:all-elim (pf:known $law) Empty))))
 (= (consume-from-space $name)
-   (let $found (match &self (set:known $name $p $o $pf $d $r $s) $name){$name $p $pf}
-     (let $package (set:native-proof $found)
-       (let (SetNativeProofV1 $n $p $pf $term $type $context $rules $assumptions $digest) $package
-         (let (SetNativeUseV1 $checked $consumer $result (Id $carrier $left $right))
-              (set:native-use $package (Lam $type (Refl (idx 0))))
+   (let $found (match &self (hol:known $name $p $o $pf $d $r $s) $name){$name $p $pf}
+     (let $package (hol:native-proof $found)
+       (let (HolNativeProofV1 $n $p $pf $term $type $context $rules $assumptions $digest) $package
+         (let (HolNativeUseV1 $checked $consumer $result (Id $carrier $left $right))
+              (hol:native-use $package (Lam $type (Refl (idx 0))))
            (Consumed $n (== $checked $package) (== $left $term) (== $right $term)))){$p $pf})))
 !(publish-from-space found-power)
 !(consume-from-space found-power)
 ; An assumption under test: the fact proved from it follows its withdrawal.
-!(set:axiom temporary-law (In Empty (Power Empty)))
-!(set:theorem dependent-law (In Empty (Power Empty)) (pf:known temporary-law))
+!(hol:axiom temporary-law (In Empty (Power Empty)))
+!(hol:theorem dependent-law (In Empty (Power Empty)) (pf:known temporary-law))
 (= (current-law $name)
-   (let $found (match &self (set:known $name $p $o $pf $d $r $s) $name){$name}
-     (let $status (try (set:proves (pf:known $found) (In Empty (Power Empty))))
+   (let $found (match &self (hol:known $name $p $o $pf $d $r $s) $name){$name}
+     (let $status (try (hol:proves (pf:known $found) (In Empty (Power Empty))))
        (car-atom $status))))
 !(current-law dependent-law)
-!(match &self (set:known temporary-law $p $o $pf $d $r $s)
-   (remove-atom &self (set:known temporary-law $p $o $pf $d $r $s)))
+!(match &self (hol:known temporary-law $p $o $pf $d $r $s)
+   (remove-atom &self (hol:known temporary-law $p $o $pf $d $r $s)))
 !(current-law dependent-law)
 !(current-law found-power)

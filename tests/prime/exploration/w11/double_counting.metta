@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Forgetting provenance double-counts evidence.  A derivation records the
 ; answer it supports and the source it rests on.  In the world shared, one
@@ -57,64 +57,64 @@
 ; argument.  Each fact is proved by reflexivity: the checker computes both
 ; sides and compares them.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &thy bool (u 0) (: true bool) (: false bool))
-!(set:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
-!(set:inductive &thy deriv (u 0) (: mk-deriv (-> bool nat deriv)))
-!(set:inductive &thy dlist (u 0) (: dnil dlist) (: dcons (-> deriv dlist dlist)))
-!(set:inductive &thy blist (u 0) (: bnil blist) (: bcons (-> bool blist blist)))
-!(set:inductive &thy nlist (u 0) (: nnil nlist) (: ncons (-> nat nlist nlist)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
+!(hol:inductive &thy nat (u 0) (: O nat) (: S (-> nat nat)))
+!(hol:inductive &thy deriv (u 0) (: mk-deriv (-> bool nat deriv)))
+!(hol:inductive &thy dlist (u 0) (: dnil dlist) (: dcons (-> deriv dlist dlist)))
+!(hol:inductive &thy blist (u 0) (: bnil blist) (: bcons (-> bool blist blist)))
+!(hol:inductive &thy nlist (u 0) (: nnil nlist) (: ncons (-> nat nlist nlist)))
 !(pf:equality &thy bool refl@bool subst@bool)
 !(pf:equality &thy blist refl@blist subst@blist)
-!(set:define &thy andb (-> bool bool bool) (= (andb true $y) $y) (= (andb false $y) false))
-!(set:define &thy orb (-> bool bool bool) (= (orb true $y) true) (= (orb false $y) $y))
-!(set:define &thy notb (-> bool bool) (= (notb true) false) (= (notb false) true))
-!(set:define &thy is-zero (-> nat bool) (= (is-zero O) true) (= (is-zero (S $n)) false))
-!(set:define &thy pred (-> nat nat) (= (pred O) O) (= (pred (S $n)) $n))
-!(set:define &thy if-zero (-> nat nat nat nat) (= (if-zero O $z $s) $z) (= (if-zero (S $n) $z $s) $s))
+!(hol:define &thy andb (-> bool bool bool) (= (andb true $y) $y) (= (andb false $y) false))
+!(hol:define &thy orb (-> bool bool bool) (= (orb true $y) true) (= (orb false $y) $y))
+!(hol:define &thy notb (-> bool bool) (= (notb true) false) (= (notb false) true))
+!(hol:define &thy is-zero (-> nat bool) (= (is-zero O) true) (= (is-zero (S $n)) false))
+!(hol:define &thy pred (-> nat nat) (= (pred O) O) (= (pred (S $n)) $n))
+!(hol:define &thy if-zero (-> nat nat nat nat) (= (if-zero O $z $s) $z) (= (if-zero (S $n) $z $s) $s))
 ; n - m, cut off at zero
-!(set:define &thy monus (-> nat nat nat)
+!(hol:define &thy monus (-> nat nat nat)
    (= (monus O $n) $n) (= (monus (S $m) $n) (if-zero $n O (monus $m (pred $n)))))
-!(set:define &thy nat-eqb (-> nat nat bool)
+!(hol:define &thy nat-eqb (-> nat nat bool)
    (= (nat-eqb $n $m) (andb (is-zero (monus $n $m)) (is-zero (monus $m $n)))))
 ; a derivation's answer and source
-!(set:define &thy answer-of (-> deriv bool) (= (answer-of (mk-deriv $a $s)) $a))
-!(set:define &thy source-of (-> deriv nat) (= (source-of (mk-deriv $a $s)) $s))
+!(hol:define &thy answer-of (-> deriv bool) (= (answer-of (mk-deriv $a $s)) $a))
+!(hol:define &thy source-of (-> deriv nat) (= (source-of (mk-deriv $a $s)) $s))
 ; forgetting provenance: the bag of answers
-!(set:define &thy answers-of (-> dlist blist)
+!(hol:define &thy answers-of (-> dlist blist)
    (= (answers-of dnil) bnil)
    (= (answers-of (dcons $d $rest)) (bcons (answer-of $d) (answers-of $rest))))
 ; counting derivations of true
-!(set:define &thy add-if (-> bool nat nat) (= (add-if true $n) (S $n)) (= (add-if false $n) $n))
-!(set:define &thy count-true (-> blist nat)
+!(hol:define &thy add-if (-> bool nat nat) (= (add-if true $n) (S $n)) (= (add-if false $n) $n))
+!(hol:define &thy count-true (-> blist nat)
    (= (count-true bnil) O)
    (= (count-true (bcons $b $rest)) (add-if $b (count-true $rest))))
 ; counting distinct sources of true
-!(set:define &thy cons-if (-> bool nat nlist nlist)
+!(hol:define &thy cons-if (-> bool nat nlist nlist)
    (= (cons-if true $n $l) (ncons $n $l)) (= (cons-if false $n $l) $l))
-!(set:define &thy true-sources (-> dlist nlist)
+!(hol:define &thy true-sources (-> dlist nlist)
    (= (true-sources dnil) nnil)
    (= (true-sources (dcons $d $rest))
       (cons-if (answer-of $d) (source-of $d) (true-sources $rest))))
-!(set:define &thy mem (-> nlist nat bool)
+!(hol:define &thy mem (-> nlist nat bool)
    (= (mem nnil $n) false) (= (mem (ncons $m $l) $n) (orb (nat-eqb $n $m) (mem $l $n))))
-!(set:define &thy dedup (-> nlist nlist)
+!(hol:define &thy dedup (-> nlist nlist)
    (= (dedup nnil) nnil)
    (= (dedup (ncons $n $l)) (cons-if (notb (mem $l $n)) $n (dedup $l))))
-!(set:define &thy len (-> nlist nat) (= (len nnil) O) (= (len (ncons $n $l)) (S (len $l))))
+!(hol:define &thy len (-> nlist nat) (= (len nnil) O) (= (len (ncons $n $l)) (S (len $l))))
 ; the decision: at least two pieces of evidence
-!(set:define &thy is-succ (-> nat bool) (= (is-succ O) false) (= (is-succ (S $n)) true))
-!(set:define &thy at-least-two (-> nat bool) (= (at-least-two $n) (is-succ (pred $n))))
-!(set:define &thy by-derivations (-> blist bool)
+!(hol:define &thy is-succ (-> nat bool) (= (is-succ O) false) (= (is-succ (S $n)) true))
+!(hol:define &thy at-least-two (-> nat bool) (= (at-least-two $n) (is-succ (pred $n))))
+!(hol:define &thy by-derivations (-> blist bool)
    (= (by-derivations $as) (at-least-two (count-true $as))))
-!(set:define &thy by-sources (-> dlist bool)
+!(hol:define &thy by-sources (-> dlist bool)
    (= (by-sources $ds) (at-least-two (len (dedup (true-sources $ds))))))
 ; the two worlds, with sources 7 and 8
-!(set:define &thy seven nat (= seven (S (S (S (S (S (S (S O)))))))))
-!(set:define &thy eight nat (= eight (S seven)))
-!(set:define &thy shared-evidence dlist
+!(hol:define &thy seven nat (= seven (S (S (S (S (S (S (S O)))))))))
+!(hol:define &thy eight nat (= eight (S seven)))
+!(hol:define &thy shared-evidence dlist
    (= shared-evidence (dcons (mk-deriv true seven) (dcons (mk-deriv true seven) dnil))))
-!(set:define &thy independent-evidence dlist
+!(hol:define &thy independent-evidence dlist
    (= independent-evidence (dcons (mk-deriv true seven) (dcons (mk-deriv true eight) dnil))))
 
 ; 7. The four facts of double_counting: one bag of answers, the shared world

@@ -453,9 +453,14 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
         !cetta_index_expand_expression(budget, depth, a->expr.len))
         return snode_get_grounded_placeholder(node);
     switch (a->kind) {
-    case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
+    case ATOM_SYMBOL:
+        /* This numeric index may over-approximate an unnumbered value. The
+         * ordinary verifier still compares its spelling. Do not register
+         * data merely to retain it in an index. */
+        return atom_symbol_is_spelled(a) ? snode_get_grounded_placeholder(node)
+            : snode_get_sym(node, atom_symbol_current_id(a));
     case ATOM_VAR:
-        return snode_get_var(node, a->var_id, a->sym_id, a->name_key);
+        return snode_get_var(node, a->var_id, atom_symbol_current_id(a), a->name_key);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
@@ -621,10 +626,10 @@ uint32_t stree_head_hash(SymbolId id) {
 }
 
 static SymbolId atom_head_sym(Atom *a) {
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -641,7 +646,11 @@ void stree_bucket_free(SubstBucket *bucket) {
 
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    /* Ground rows have no variables to standardize apart. Retaining one
+     * activation identity per such row makes a large fact index consume the
+     * finite frame inventory without introducing any variable scope. */
+    uint32_t epoch = atom_has_vars(atom)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
     if (!bucket->root) bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
@@ -654,7 +663,8 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    uint32_t epoch = tu_has_vars(universe, atom_id)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
     if (!bucket->root)
         bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
@@ -835,10 +845,10 @@ static bool flat_token_count(Atom *a, CettaIndex *count) {
 static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     switch (a->kind) {
     case ATOM_SYMBOL:
-        buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = a->sym_id, .original = a};
+        buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = atom_symbol_current_id(a), .original = a};
         return pos + 1;
     case ATOM_VAR:
-        buf[pos] = (FlatToken){.kind = FT_VAR, .sym_id = a->sym_id,
+        buf[pos] = (FlatToken){.kind = FT_VAR, .sym_id = atom_symbol_current_id(a),
                                .var_id = a->var_id, .original = a};
         return pos + 1;
     case ATOM_GROUNDED:

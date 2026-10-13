@@ -1394,6 +1394,73 @@ static void check_branch_shared_prefix_compatibility(void) {
     }
 }
 
+/* A returned value may name the completed producer it directly forwards.
+ * The same lookup postcondition holds for numbered and named cells. */
+static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
+    for (unsigned named = 0u; named < 2u; named++) {
+        PrimeNeedSnapshot root = {0}, source, evaluating, produced, allocated, running;
+        PrimeNeedSnapshot forwarded, ordinary;
+        uint64_t producer = 0u, consumer = 0u;
+        uint64_t evaluator = prime_need_fresh_evaluator_id();
+        Atom *origin = atom_symbol(arena, "forwarded-source");
+        Atom *value = atom_expr2(arena, atom_symbol(arena, "Returned"), atom_int(arena, 7));
+        CHECK(prime_need_snapshot_begin(&root), "forwarded producer starts a fresh world");
+        bool ready;
+        if (named) {
+            producer = PRIME_NEED_NAMED_CELL_BIT | UINT64_C(1001);
+            ready = prime_need_snapshot_allocate_named(arena, &root, origin, producer, &source);
+        } else {
+            ready = prime_need_snapshot_allocate(arena, &root, origin, &source, &producer);
+        }
+        CHECK(ready && prime_need_snapshot_start_evaluation(arena, &source, producer,
+                  evaluator, &evaluating) &&
+              prime_need_snapshot_resolve_value(arena, &evaluating, producer,
+                  evaluator, value, &produced), "both named and numbered producers complete");
+        CHECK(prime_need_snapshot_allocate(arena, &produced, origin, &allocated, &consumer) &&
+              prime_need_snapshot_start_evaluation(arena, &allocated, consumer,
+                  evaluator, &running) &&
+              prime_need_snapshot_resolve_forwarded_value(arena, &running, consumer,
+                  evaluator, atom_deep_copy(arena, value), producer, &forwarded),
+              "a direct return retains the actual completed source update");
+        PrimeNeedCellView cell, selected;
+        CHECK(prime_need_snapshot_lookup(&forwarded, consumer, &cell) &&
+              cell.value_role == PRIME_NEED_VALUE_DEMAND_RESULT &&
+              cell.value_producer_thunk == producer && cell.value_producer_update &&
+              prime_need_snapshot_forwarded_value_source(&forwarded, consumer, &selected) &&
+              atom_eq(selected.cached, cell.cached),
+              "the lookup returns the selected source without changing the return role");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        uint64_t update = 0u;
+        CHECK(prime_need_snapshot_cached_update_id(&forwarded, producer, &update) &&
+              update == cell.value_producer_update,
+              "indexed and named-log lookup return the same exact frame update");
+#endif
+        PrimeNeedCellView untouched;
+        memset(&untouched, 0xA7, sizeof(untouched));
+        PrimeNeedCellView before = untouched;
+        CHECK(!prime_need_snapshot_forwarded_value_source(&forwarded, producer, &untouched) &&
+              !memcmp(&before, &untouched, sizeof(before)) &&
+              !prime_need_snapshot_forwarded_value_source(&running, consumer, &untouched) &&
+              !memcmp(&before, &untouched, sizeof(before)),
+              "absent forwarding and unfinished returns leave the output untouched");
+        CHECK(prime_need_snapshot_resolve_value(arena, &running, consumer,
+                  evaluator, value, &ordinary) &&
+              !prime_need_snapshot_forwarded_value_source(&ordinary, consumer, &untouched) &&
+              !memcmp(&before, &untouched, sizeof(before)),
+              "equal value syntax does not invent a forwarded producer");
+        PrimeNeedSnapshot refused = ordinary;
+        CHECK(!prime_need_snapshot_resolve_forwarded_value(arena, &running, consumer,
+                  evaluator + 1u, value, producer, &refused) &&
+              !memcmp(&refused, &ordinary, sizeof(refused)),
+              "forwarding retains the evaluating-owner check and refused destination");
+        PrimeNeedSnapshot image = forwarded;
+        CHECK(prime_need_snapshot_promote(promoted_arena, &image) &&
+              prime_need_snapshot_forwarded_value_source(&image, consumer, &selected) &&
+              atom_eq(selected.cached, value),
+              "snapshot promotion retains forwarded production lookup");
+    }
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1413,6 +1480,7 @@ int main(void) {
     arena_init(&promoted_arena);
 
     check_branch_shared_prefix_compatibility();
+    check_forwarded_production(&arena, &promoted_arena);
 
     PrimeNeedBranchState identity_carrier;
     prime_need_branch_state_init(&identity_carrier);
@@ -1769,6 +1837,66 @@ int main(void) {
               &arena, &evaluating, thunk_id, evaluator_id + 1u,
               atom_symbol(&arena, "wrong-owner"), &invalid),
           "a different evaluator cannot resolve the demand");
+
+    /* Equal syntax can have distinct demand/value roles. Neither a role nor
+     * a copied cache grants a different evaluator permission to complete. */
+    Atom *ready_value = atom_expr3(&arena, atom_symbol(&arena, "+"),
+                                  atom_int(&arena, 1), atom_int(&arena, 2));
+    PrimeNeedSnapshot ready, ordinary;
+    CHECK(prime_need_snapshot_resolve_ready_value(&arena, &evaluating,
+              thunk_id, evaluator_id, ready_value, &ready) &&
+          prime_need_snapshot_resolve_value(&arena, &evaluating,
+              thunk_id, evaluator_id, ready_value, &ordinary),
+          "the same source has distinct produced-value and demand-result updates");
+    PrimeNeedCellView ready_cell, ordinary_cell;
+    CHECK(prime_need_snapshot_lookup(&ready, thunk_id, &ready_cell) &&
+          prime_need_snapshot_lookup(&ordinary, thunk_id, &ordinary_cell) &&
+          ready_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+          ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+          ordinary_cell.value_role == PRIME_NEED_VALUE_DEMAND_RESULT &&
+          ready_cell.cached == ordinary_cell.cached &&
+          ready_cell.origin == term && ordinary_cell.origin == term,
+          "ready syntax is an immutable update property, not pointer classification");
+    uint64_t ready_update = 0u, ordinary_update = 0u;
+    CHECK(prime_need_snapshot_cached_update_id(&ready, thunk_id, &ready_update) &&
+          prime_need_snapshot_cached_update_id(&ordinary, thunk_id, &ordinary_update) &&
+          ready_update != ordinary_update &&
+          !prime_need_snapshot_is_ancestor(&ready, &ordinary) &&
+          !prime_need_snapshot_is_ancestor(&ordinary, &ready),
+          "sibling equal-value productions keep different update identities");
+    PrimeNeedSnapshot role_refused = evaluating;
+    CHECK(!prime_need_snapshot_resolve_ready_value(&arena, &evaluating,
+              thunk_id, evaluator_id + 1u, ready_value, &role_refused) &&
+          role_refused.top == evaluating.top &&
+          !prime_need_snapshot_resolve_ready_value(&arena, &ready,
+              thunk_id, evaluator_id, ready_value, &role_refused) &&
+          role_refused.top == evaluating.top,
+          "wrong owner and repeated ready completion refuse without publication");
+    PrimeNeedSnapshot ready_image = ready;
+    CHECK(prime_need_snapshot_promote(&promoted_arena, &ready_image) &&
+          prime_need_snapshot_lookup(&ready_image, thunk_id, &ready_cell) &&
+          ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+          atom_eq(ready_cell.cached, ready_value) &&
+          prime_need_snapshot_cached_update_id(&ready_image, thunk_id, &ordinary_update) &&
+          ordinary_update == ready_update,
+          "full promotion preserves ready role, content, and update identity");
+    Arena role_suffix, role_image;
+    arena_init_detached(&role_suffix);
+    arena_init_detached(&role_image);
+    PrimeNeedSnapshot suffix_ready;
+    CHECK(prime_need_snapshot_resolve_ready_value(&role_suffix, &evaluating,
+              thunk_id, evaluator_id, ready_value, &suffix_ready) &&
+          prime_need_snapshot_promote_suffix(&role_image, &role_suffix, &suffix_ready) &&
+          prime_need_snapshot_lookup(&suffix_ready, thunk_id, &ready_cell) &&
+          ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+          prime_need_snapshot_excludes_arena(&suffix_ready, &role_suffix),
+          "suffix promotion retains the value role after retiring its source region");
+    arena_free(&role_suffix);
+    CHECK(prime_need_snapshot_lookup(&suffix_ready, thunk_id, &ready_cell) &&
+          ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+          atom_eq(ready_cell.cached, ready_value),
+          "the promoted ready cache remains usable after source-region teardown");
+    arena_free(&role_image);
 
     PrimeNeedSnapshot faulted;
     Atom *fault_value = atom_symbol(&arena, "fault");

@@ -65,6 +65,10 @@ static bool prime_replay_source_outcomes(PrimeReplaySourceScan *scan,const Outco
         if(o->kind!=CETTA_OUTCOME_INLINE||o->answer_ref.bank) {
             scan->refusal="AnswerBankOwner";return false;
         }
+        if(o->result_form!=CETTA_CALL_RESULT_EXPRESSION &&
+           o->result_form!=CETTA_CALL_RESULT_COMPLETED_VALUE) {
+            scan->refusal="OutcomeResultForm";return false;
+        }
         if(!variant_instance_checkpoint_atoms(&o->variant,prime_replay_source_need_atom,scan)||
            !prime_replay_source_push(scan,o->atom,scan->transaction_target!=NULL)||
            !prime_replay_source_push(scan,o->delayed,false)||
@@ -195,7 +199,7 @@ static bool prime_replay_source_roots(PrimeReplaySourceScan *scan,const PrimeNat
         if(f->space!=scan->space||f->control_nested||f->match_rows||f->control_advisory||
             !prime_replay_source_frame_kind(f->kind)||f->control_key||f->control_bound||
             f->control_scoring||f->control_selection_length||
-            f->control_child_bound_length||f->dialect_source||f->dialect_return_advice_length||
+            f->control_child_bound_length||f->dialect_source||f->control_return_advice_length||
             f->weight_algebra||f->weight_trace||
             (f->etype&&!atom_is_symbol_id(f->etype,g_builtin_syms.undefined_type))) {
             scan->refusal="FrameService";return false;
@@ -290,7 +294,7 @@ static bool prime_replay_source_atom(PrimeReplaySourceScan *scan,PrimeReplaySynt
     if(!authored||authored>atom->expr.len){scan->refusal="AuthoredExtent";return false;}
     for(CettaExprIndex i=authored;i<atom->expr.len;i++)
         if(!prime_replay_source_push(scan,atom->expr.elems[i],true))return false;
-    SymbolId h=head->sym_id;CettaExprLen n=authored-1u;
+    SymbolId h=atom_symbol_current_id(head);CettaExprLen n=authored-1u;
     const PrimeNeedSymbolIds *ids=prime_need_symbols();
     if(h==g_builtin_syms.quote&&n==1u)
         return prime_replay_source_push(scan,expr_arg(atom,0u),true);

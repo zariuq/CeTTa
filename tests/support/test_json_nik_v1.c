@@ -180,6 +180,33 @@ static void wide_values(CettaJsonNikV1 *host) {
     }
 }
 
+static void whitespace_values(CettaJsonNikV1 *host) {
+    static const char *cases[] = {
+        "{ }", "{  }", "[ ]", "[  ]", "{\t\r\n }", "[\t\r\n ]",
+        "[{ },[ ]]", "{\"x\":{ },\"x\":[ ]}",
+    };
+    const CettaJsonRuntimeV1 *runtime =
+        cetta_json_nik_v1_borrow_selected_runtime(host);
+    for (unsigned kernel = 0; kernel < 3; kernel++) {
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            Arena arena;
+            Atom *value = NULL;
+            CettaJsonRuntimeV1Status status;
+            CettaJsonRuntimeV1Limits limits;
+            char error[512] = {0};
+            arena_init(&arena);
+            cetta_json_runtime_v1_default_limits(&limits);
+            limits.kernel = (CettaJsonKernelV1)kernel;
+            bool ok = cetta_json_runtime_v1_parse(
+                runtime, &arena, (const uint8_t *)cases[i], strlen(cases[i]),
+                &limits, &value, &status, error, sizeof(error));
+            if (!ok) fprintf(stderr, "whitespace JSON %s: %s\n", cases[i], error);
+            CHECK(ok && status == CETTA_JSON_RUNTIME_V1_OK && value);
+            arena_free(&arena);
+        }
+    }
+}
+
 int main(void) {
     FileBytes language = read_file("langdef/json/rfc8259_syntax_v1.metta");
     FileBytes profile = read_file(
@@ -226,6 +253,7 @@ int main(void) {
     CHECK(cetta_json_nik_v1_production_kernel(admission.host) ==
           CETTA_JSON_KERNEL_V1_PACKED_GLL);
     wide_values(admission.host);
+    whitespace_values(admission.host);
 
     arena_init(&arena);
     arena_init(&prepared_arena);

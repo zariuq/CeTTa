@@ -162,7 +162,7 @@ static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena, 
     Atom *head_atom = call->expr.elems[0];
     if (!head_atom || head_atom->kind != ATOM_SYMBOL)
         return prime_native_owned_region_scalar_head(space, arena, call);
-    SymbolId head = head_atom->sym_id;
+    SymbolId head = atom_symbol_current_id(head_atom);
     if (prime_native_region_primitive(head)) return true;
     /* These are declaration/data constructors, not mutable services. */
     if (head == g_builtin_syms.equals || head == g_builtin_syms.colon ||
@@ -187,7 +187,7 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
         !node->expr.elems[0] || !image->expr.elems[0]) return false;
     Atom *head_atom = node->expr.elems[0];
     bool symbol_head = head_atom->kind == ATOM_SYMBOL;
-    SymbolId head = symbol_head ? head_atom->sym_id : SYMBOL_ID_NONE;
+    SymbolId head = symbol_head ? atom_symbol_current_id(head_atom) : SYMBOL_ID_NONE;
     if (symbol_head) {
         PeTTaNamedArity foreign = petta_libpl_named_arity(
             origin->lib_prolog, head, expr_nargs(node));
@@ -218,14 +218,14 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
         bool foreign_known = false;
         if (right_symbol) {
             PeTTaNamedArity foreign = petta_libpl_named_arity(
-                region->library->lib_prolog, image_head->sym_id, expr_nargs(image));
+                region->library->lib_prolog, atom_symbol_current_id(image_head), expr_nargs(image));
             foreign_known = foreign.known;
         }
         bool same_category = symbol_head == right_symbol && left_scalar == right_scalar &&
-            (symbol_head ? head == image_head->sym_id :
+            (symbol_head ? atom_symbols_equal(head_atom, image_head) :
              left_scalar && head_atom->ground.gkind == image_head->ground.gkind);
         okay = right && same_category && !foreign_known && left_class == right_class &&
-            left_grounded == (right_symbol && is_grounded_op(image_head->sym_id));
+            left_grounded == (right_symbol && is_grounded_op(atom_symbol_current_id(image_head)));
     }
     prime_native_region_scope_leave(&scope);
     return okay;
@@ -520,7 +520,7 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
     for (size_t i=0u; okay && i<capture.length; i++) {
         Atom *node=capture.nodes[i].source, *image=capture.nodes[i].image;
         if (node->kind==ATOM_SYMBOL && capture.nodes[i].value) {
-            Atom *binding=registry_lookup_id(registry,node->sym_id);
+            Atom *binding=registry_lookup_symbol(registry,node);
             if (binding && binding->kind==ATOM_GROUNDED && binding->ground.gkind==GV_SPACE) {
                 okay=false; break;
             }

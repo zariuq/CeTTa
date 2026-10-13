@@ -117,6 +117,10 @@ bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void) {
     return false;
 }
 
+bool cetta_mork_bridge_supports_query_only_v2_cursor(void) {
+    return true;
+}
+
 const char *cetta_mork_bridge_last_error(void) {
     return "bridge stubs disabled in unit test";
 }
@@ -543,6 +547,21 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
         *out_size = g_bridge_size_override == UINT64_MAX
             ? (uint64_t)g_bridge_value_count
             : g_bridge_size_override;
+    return true;
+}
+
+bool cetta_mork_bridge_space_count_expr_bytes(
+    const CettaMorkSpaceHandle *space, const uint8_t *expr_bytes,
+    size_t len, uint64_t *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (space != g_fake_bridge_space || !out_count || (!expr_bytes && len))
+        return false;
+    for (uint32_t i = 0u; i < g_bridge_value_count; i++) {
+        if (g_bridge_value_lens[i] == len &&
+            (!len || memcmp(g_bridge_value_bytes[i], expr_bytes, len) == 0))
+            (*out_count)++;
+    }
     return true;
 }
 
@@ -1055,6 +1074,20 @@ static void test_native_ground_exact_candidate_frontier(void) {
         space_add(&space, unrelated_ground);
     assert(space_length64(&space) > MATCH_TRIE_THRESHOLD);
 
+    /* A cold scan deliberately retains open rows, even under another head.
+       The exact shortcut may decline; the ordinary view still finds the row. */
+    applicable = true;
+    assert(!space_match_exists_ground_exact(&space, present, &applicable));
+    assert(!applicable);
+    view_exists = false;
+    view_examined = UINT64_MAX;
+    assert(space_match_exists_flat_linear_view64(
+        &space, &scratch, &present_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &view_exists, &view_examined));
+    assert(view_exists && view_examined > 0u);
+    space_match_native_ensure_trie(&space);
+
     /* The complete frontier excludes an open row beneath a different rigid
        head, so exact membership decides both the positive and negative case. */
     assert(space_match_exists_ground_exact(&space, present, &applicable));
@@ -1236,7 +1269,7 @@ static void test_native_conjunction_count_fold(void) {
        edge occurrences therefore remain a multiplicative factor. */
     Bindings seed;
     bindings_init(&seed);
-    assert(bindings_add_id(&seed, y->var_id, y->sym_id, b));
+    assert(bindings_add_id(&seed, y->var_id, atom_symbol_current_id(y), b));
     assert(space_match_count_conjunction64(
         &space, &scratch, path, 2u, &seed, &direct));
     assert(direct == 2u);
@@ -1602,9 +1635,22 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
         &space,
         expr3(scratch, sym(scratch, "pair"), query_var, sym(scratch, "B")),
         &sm, &seed, scratch, &out));
-    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+    /* Captured values borrow a cached persistent node. Only A is decoded;
+     * matching the surrounding pair still traverses its encoded storage. */
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
     assert(bindings_lookup_value_id(&out, (query_var)->var_id).skeleton != NULL);
     assert(atom_is_symbol_id(bindings_lookup_value_id(&out, (query_var)->var_id).skeleton,
+                             symbol_intern_cstr(g_symbols, "A")));
+    bindings_free(&out);
+
+    bindings_init(&out);
+    reset_test_counters();
+    assert(space_subst_match_with_seed(
+        &space,
+        expr3(scratch, sym(scratch, "pair"), query_var, sym(scratch, "B")),
+        &sm, &seed, scratch, &out));
+    assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
+    assert(atom_is_symbol_id(bindings_lookup_value_id(&out, query_var->var_id).skeleton,
                              symbol_intern_cstr(g_symbols, "A")));
     bindings_free(&out);
 
@@ -1638,13 +1684,70 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
 
     assert(matches.len == 1);
     assert(matches.items[0].atom_idx == 0);
-    assert(matches.items[0].bindings.len == 1);
+    assert(bindings_has_bound_values(&matches.items[0].bindings));
     assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 1);
-    assert(atom_is_symbol_id(matches.items[0].bindings.entries[0].value.skeleton,
-                             symbol_intern_cstr(g_symbols, "A")));
+    /* Contextual variables live in their frame slots, not generic rows. */
+    BindingValue value = bindings_lookup_value_id(&matches.items[0].bindings,
+        var_epoch_id(4101u, matches.items[0].epoch));
+    assert(value.skeleton && atom_is_symbol_id(value.skeleton,
+        symbol_intern_cstr(g_symbols, "A")));
+    assert(!bindings_lookup_value_id(&matches.items[0].bindings,
+        var_epoch_id(4102u, matches.items[0].epoch)).skeleton);
 
     smset_free(&matches);
     stree_bucket_free(&bucket);
+}
+
+static void test_subst_tree_ground_identity_capacity(TermUniverse *universe,
+                                                     Arena *scratch) {
+    /* More occurrences than the live frame inventory: ground facts must not
+     * need variable identities, and duplicate occurrences must remain rows. */
+    const CettaIndex count = (CettaIndex)CETTA_FRAME_HANDLE_MASK + 1u;
+    Atom *ground = atom_int(scratch, 71819);
+    Atom *open = var(scratch, "index-open", 4171u);
+    AtomId ground_id = term_universe_store_atom_id(universe, NULL, ground);
+    AtomId open_id = term_universe_store_atom_id(universe, NULL, open);
+    assert(ground_id != CETTA_ATOM_ID_NONE && open_id != CETTA_ATOM_ID_NONE);
+    for (unsigned via_id = 0; via_id < 2u; via_id++) {
+        SubstBucket bucket;
+        stree_bucket_init(&bucket);
+        for (CettaIndex i = 0; i < count; i++) {
+            if (via_id)
+                assert(stree_bucket_insert_id(&bucket, universe, ground_id, i));
+            else
+                stree_bucket_insert(&bucket, ground, i);
+        }
+        assert(bucket.count == count);
+        assert(bucket.root->nints == 1u);
+        const SubstNode *leaf = bucket.root->ints[0].child;
+        assert(leaf->nleaves == count);
+        for (CettaIndex i = 0; i < count; i++) {
+            assert(leaf->leaves[i].idx == i);
+            assert(leaf->leaves[i].epoch == 0u);
+            assert(!leaf->leaves[i].owns_identity);
+        }
+        stree_bucket_free(&bucket);
+
+        /* The optimization must not merge the scopes of two open rows. */
+        stree_bucket_init(&bucket);
+        for (CettaIndex i = 0; i < 2u; i++) {
+            if (via_id)
+                assert(stree_bucket_insert_id(&bucket, universe, open_id, i));
+            else
+                stree_bucket_insert(&bucket, open, i);
+        }
+        assert(bucket.root->nvars == 1u);
+        leaf = bucket.root->vars[0].child;
+        assert(leaf->nleaves == 2u);
+        assert(leaf->leaves[0].epoch != leaf->leaves[1].epoch);
+        assert(leaf->leaves[0].owns_identity && leaf->leaves[1].owns_identity);
+        CettaFrameIdentity epochs[2] = {
+            leaf->leaves[0].epoch, leaf->leaves[1].epoch
+        };
+        stree_bucket_free(&bucket);
+        assert(!cetta_frame_identity_retain(epochs[0]));
+        assert(!cetta_frame_identity_retain(epochs[1]));
+    }
 }
 
 static void test_subst_tree_adversarial_int_fanout(Arena *scratch) {
@@ -2507,6 +2610,10 @@ static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) 
     Bindings b;
     Atom *a_var = atom_var_with_id(scratch, "normalize-a", 91001u);
     Atom *b_var = atom_var_with_id(scratch, "normalize-b", 91002u);
+    CettaFrameIdentity epochs[2];
+
+    assert(cetta_frame_identity_acquire(&epochs[0]));
+    assert(cetta_frame_identity_acquire(&epochs[1]));
 
     bindings_init(&a);
     bindings_init(&b);
@@ -2520,7 +2627,10 @@ static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) 
     for (CettaIndex i = 0; i < matches.len; i++) {
         const Bindings *source = i < 2u ? &a : &b;
         matches.items[i].atom_idx = i < 2u ? 10u : 20u;
-        matches.items[i].epoch = i < 2u ? 101u : 202u;
+        matches.items[i].epoch = epochs[i < 2u ? 0u : 1u];
+        matches.items[i].owns_identity =
+            cetta_frame_identity_retain(matches.items[i].epoch);
+        assert(matches.items[i].owns_identity);
         matches.items[i].exact = false;
         assert(bindings_clone(&matches.items[i].bindings, source));
     }
@@ -2533,6 +2643,11 @@ static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) 
     assert(bindings_eq(&matches.items[1].bindings, &b));
 
     smset_free(&matches);
+    for (size_t i = 0; i < 2u; i++) {
+        cetta_frame_identity_release(epochs[i]);
+        /* Compaction must release discarded rows as well as retained rows. */
+        assert(!cetta_frame_identity_retain(epochs[i]));
+    }
     bindings_free(&b);
     bindings_free(&a);
 }
@@ -2568,6 +2683,38 @@ static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
     bindings_free(&base);
 }
 
+static void test_bridge_count_and_cursor_capability_contract(void) {
+    static const uint8_t a[] = {0xC1u, 'A'};
+    static const uint8_t b[] = {0xC1u, 'B'};
+    static const uint8_t missing[] = {0xC1u, 'C'};
+    reset_bridge_capture();
+    g_bridge_value_bytes[0] = a;
+    g_bridge_value_lens[0] = sizeof(a);
+    g_bridge_value_bytes[1] = b;
+    g_bridge_value_lens[1] = sizeof(b);
+    g_bridge_value_bytes[2] = a;
+    g_bridge_value_lens[2] = sizeof(a);
+    g_bridge_value_count = 3u;
+    uint64_t count = UINT64_MAX;
+    assert(cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, a, sizeof(a), &count) && count == 2u);
+    assert(cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, missing, sizeof(missing), &count) && count == 0u);
+    assert(!cetta_mork_bridge_space_count_expr_bytes(
+        NULL, a, sizeof(a), &count) && count == 0u);
+    assert(!cetta_mork_bridge_space_count_expr_bytes(
+        g_fake_bridge_space, a, sizeof(a), NULL));
+    assert(cetta_mork_bridge_supports_query_only_v2_cursor());
+    CettaMorkQueryCursorHandle *cursor = g_fake_query_cursor;
+    assert(!cetta_mork_bridge_query_cursor_new_query_only_v2(
+        g_fake_bridge_space, a, sizeof(a), &cursor) && cursor == NULL);
+    g_query_cursor_enabled = true;
+    assert(cetta_mork_bridge_query_cursor_new_query_only_v2(
+        g_fake_bridge_space, a, sizeof(a), &cursor) &&
+        cursor == g_fake_query_cursor);
+    reset_bridge_capture();
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -2580,6 +2727,7 @@ int main(void) {
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
 
+    test_bridge_count_and_cursor_capability_contract();
     test_native_add_boundary(&universe, &scratch);
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);
@@ -2590,6 +2738,7 @@ int main(void) {
     test_imported_chunk_switchback_regression(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
     test_subst_tree_live_branch_builder_witness(&scratch);
+    test_subst_tree_ground_identity_capacity(&universe, &scratch);
     test_subst_tree_adversarial_int_fanout(&scratch);
     test_parser_direct_add_boundary(&universe, &scratch);
     test_bridge_structural_import_boundary(&universe, &scratch);

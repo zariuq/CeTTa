@@ -369,7 +369,9 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 "(metta <atom> <type> <space>)"), &frame->env);
         frame->phase = HE_INSTRUCTION_DONE;
     } else if (head == g_builtin_syms.context_space && nargs == 0u) {
-        outcome_set_add(os, atom_space(a, s), &frame->env);
+        outcome_set_add(os, atom_space(a,
+            cetta_library_logical_module_space(g_library_context, s)),
+            &frame->env);
         frame->phase = HE_INSTRUCTION_DONE;
     } else if (head == g_builtin_syms.call_native) {
         outcome_set_add(os, call_signature_error(a, atom,

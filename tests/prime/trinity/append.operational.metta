@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Lists of numbers and their append, run.  The two datatypes and append are
 ; declared in &self, so plain evaluation runs append by its two equations,
@@ -6,21 +6,21 @@
 ;   append (cons a as) ys = cons a (append as ys)
 ; wherever a call occurs, until only nil and cons are left: that list is the
 ; value.  A value runs to itself, and running gives one answer.
-!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &self append (-> list list list)
+!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &self append (-> list list list)
    (= (append nil $ys) $ys)
    (= (append (cons $a $as) $ys) (cons $a (append $as $ys))))
 ; Why running ends: append was admitted as recursion on its first argument,
 ; a list; the nil equation has no recursive call and the cons equation
 ; recurses on field 1 of cons, the tail.  The record is quoted so that it is
 ; read as data and not run.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self append))
    (quote $termination))
 ; The record also names the Lean theorem the admission rests on: structural
 ; recursion has a set model.  Lean states it for a function of one argument;
 ; append takes two, which the record says.
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self append))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self append))
    (quote $lean))
 
 ; [0] ++ [1] runs to [0, 1].
@@ -53,20 +53,20 @@
 ; Running gives exactly one answer.
 !(collapse (append (append nil (cons zero nil)) (append nil (cons (suc zero) nil))))
 ; Equality of sets in &self accepts the value that running reached.
-!(set:eq &self (append (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
+!(hol:eq &self (append (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
 
 ; A number is not a list: the call is refused with a type error, not run.
 !(append zero nil)
 
 ; A declaration made in another space does not run here.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
-!(set:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
-!(set:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
-!(set:define &s concat (-> list list list)
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
+!(hol:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
+!(hol:define &s concat (-> list list list)
    (= (concat nil $ys) $ys)
    (= (concat (cons $a $as) $ys) (cons $a (concat $as $ys))))
 ; Plain evaluation in &self does not know concat: the call stays as written,
 !(concat (cons zero nil) (cons (suc zero) nil))
 ; while equality in the space of the declaration computes it.
-!(set:eq &s (concat (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
-!(set:eq &s (concat (cons zero nil) (cons (suc zero) nil)) (cons zero nil))
+!(hol:eq &s (concat (cons zero nil) (cons (suc zero) nil)) (cons zero (cons (suc zero) nil)))
+!(hol:eq &s (concat (cons zero nil) (cons (suc zero) nil)) (cons zero nil))

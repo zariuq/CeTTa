@@ -150,6 +150,47 @@ int main(void) {
               atom_alpha_eq(collision_pair, collision_forms[0]),
           "freshened collision rendering preserves the variable partition");
 
+    Atom *local = atom_var_with_id(&arena, "x", (VarId)60001u);
+    Atom *metadata_only = atom_var_with_id(&arena, "x", (VarId)60002u);
+    Atom *owned = atom_expr3(&arena,
+        atom_internal_tag(&arena, CETTA_INTERNAL_TAG_PRIME_OWN),
+        atom_symbol(&arena, "scope-record"), metadata_only);
+    Atom *let_fields[5] = {
+        atom_symbol(&arena, "let"), local, atom_int(&arena, 1),
+        atom_expr2(&arena, atom_symbol(&arena, "g"), local), owned,
+    };
+    Atom *scoped_let = atom_expr(&arena, let_fields, 5u);
+    char *scoped_text = parser_render_syntax(
+        &arena, scoped_let, PARSER_SYNTAX_PRINT_COMPACT);
+    CHECK(scoped_text && strcmp(scoped_text, "(let $x 1 (g $x))") == 0,
+          "scope metadata is hidden and does not rename an authored variable");
+    char *scoped_expanded = parser_render_syntax(
+        &arena, scoped_let, PARSER_SYNTAX_PRINT_EXPANDED);
+    CHECK(scoped_expanded && strcmp(scoped_expanded,
+              "(let (syn:var x) 1 (g (syn:var x)))") == 0,
+          "expanded syntax hides the same scope metadata");
+    Atom *scoped_roundtrip = scoped_text
+        ? parser_read_source_form(&arena, scoped_text) : NULL;
+    CHECK(scoped_roundtrip && atom_alpha_eq(
+              scoped_roundtrip, atom_expr(&arena, let_fields, 4u)),
+          "rendered scoped let reads back with its authored arity and variable sharing");
+
+    Atom *lambda_fields[4] = {
+        atom_symbol(&arena, "lam"), atom_symbol(&arena, "z"),
+        scoped_let, owned,
+    };
+    char *lambda_text = parser_render_syntax(
+        &arena, atom_expr(&arena, lambda_fields, 4u),
+        PARSER_SYNTAX_PRINT_COMPACT);
+    CHECK(lambda_text && strcmp(lambda_text, "(lam z (let $x 1 (g $x)))") == 0,
+          "nested binder metadata stays outside authored syntax");
+    let_fields[4] = atom_expr(&arena, NULL, 0u);
+    char *ordinary_tail = parser_render_syntax(
+        &arena, atom_expr(&arena, let_fields, 5u),
+        PARSER_SYNTAX_PRINT_COMPACT);
+    CHECK(ordinary_tail && strcmp(ordinary_tail, "(let $x 1 (g $x) ())") == 0,
+          "an explicit final argument is preserved when it is not private metadata");
+
     CHECK(parser_render_syntax(
               &arena, atom_space(&arena, NULL),
               PARSER_SYNTAX_PRINT_COMPACT) == NULL,

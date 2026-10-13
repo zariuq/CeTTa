@@ -1,0 +1,460 @@
+{
+  "format": "CeTTaLlmSurveySourcesV1",
+  "retrieved_utc": "2026-10-05T14:41:19.031482+00:00",
+  "method": "Selected source inspection and primary documentation review; implementations were not run or benchmarked.",
+  "repositories": [
+    {
+      "repository": "https://github.com/MercuryTechnologies/claude",
+      "commit": "5299b9f42e8a506bfa69a9732e7d6c7b3f69284a",
+      "files": [
+        {
+          "path": "src/Claude/V1/Messages.hs",
+          "sha256": "3f89393ae69e1a9f22bf6e7a0292581fe4499226a9fc245aef73a090f9d1834c",
+          "bytes": 48053,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/claude/5299b9f42e8a506bfa69a9732e7d6c7b3f69284a/src/Claude/V1/Messages.hs"
+        },
+        {
+          "path": "examples/claude-stream-example/Main.hs",
+          "sha256": "868815fecd7a074e9913a3e47461b726e8970a1dd1e77d604a69a8d6d029ba70",
+          "bytes": 1930,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/claude/5299b9f42e8a506bfa69a9732e7d6c7b3f69284a/examples/claude-stream-example/Main.hs"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "c53b95b3112eeb71154dcef0b3b48473164b545f12f900b976fbee77baa42dd0",
+          "bytes": 1494,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/claude/5299b9f42e8a506bfa69a9732e7d6c7b3f69284a/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/MercuryTechnologies/openai",
+      "commit": "8a357137b9d3f1727b1dbb6ea3574e7b1b0fb4b7",
+      "files": [
+        {
+          "path": "src/OpenAI/V1/Responses.hs",
+          "sha256": "0a8cc9e14b89066a461318558e106a6f7fb8aafd39fc782d0d3a58aae524a10d",
+          "bytes": 42553,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/openai/8a357137b9d3f1727b1dbb6ea3574e7b1b0fb4b7/src/OpenAI/V1/Responses.hs"
+        },
+        {
+          "path": "src/OpenAI/V1/Chat/Completions/Stream.hs",
+          "sha256": "f25392564a4b4a0f9af78df05422b050bf53f5ad904c989a00a8e1af4640f26d",
+          "bytes": 1802,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/openai/8a357137b9d3f1727b1dbb6ea3574e7b1b0fb4b7/src/OpenAI/V1/Chat/Completions/Stream.hs"
+        },
+        {
+          "path": "examples/responses-stream-example/Main.hs",
+          "sha256": "e015308e54d9d8ea614f845d5133c77e12952a2044197b16f7c3d658ddb3f282",
+          "bytes": 3601,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/openai/8a357137b9d3f1727b1dbb6ea3574e7b1b0fb4b7/examples/responses-stream-example/Main.hs"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "3759b3a0151d9a49886108bb04493300aecfd977d85128152cdc5a0d02848350",
+          "bytes": 1534,
+          "url": "https://raw.githubusercontent.com/MercuryTechnologies/openai/8a357137b9d3f1727b1dbb6ea3574e7b1b0fb4b7/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/ahrefs/ocaml-ai-sdk",
+      "commit": "fe91855a2b1be51e96bff38b68b31b0f67ab13cf",
+      "files": [
+        {
+          "path": "lib/ai_provider/content.mli",
+          "sha256": "9d6c0b1043ff04c23c824d12366e30b87895104576f47bb4aec4bab456342e1a",
+          "bytes": 714,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/content.mli"
+        },
+        {
+          "path": "lib/ai_provider/prompt.mli",
+          "sha256": "ac097c86177836a44e0252be88c76650add109b0a291b6a9b1c493eda56d330f",
+          "bytes": 1917,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/prompt.mli"
+        },
+        {
+          "path": "lib/ai_provider/http_client.mli",
+          "sha256": "984165d893c80406e832bbb1ce83d1041ccfc2c249762e068f09f20c32f2742b",
+          "bytes": 1553,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/http_client.mli"
+        },
+        {
+          "path": "lib/ai_provider/http_timeouts.mli",
+          "sha256": "91309463834d6cc921414e9f72b4aa336be433e1b916d202e4094337da0f218b",
+          "bytes": 993,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/http_timeouts.mli"
+        },
+        {
+          "path": "lib/ai_provider/sse.mli",
+          "sha256": "194c6ad9b2cfb1caf032813a588faa155f912c07802571ea1c967653d58681ec",
+          "bytes": 318,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/sse.mli"
+        },
+        {
+          "path": "lib/ai_provider/stream_part.mli",
+          "sha256": "d7f5ae4bdfc3e3ada5f042b32dfea3005ded310473f7f0a610d5fbc1ad8f49d0",
+          "bytes": 1161,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/stream_part.mli"
+        },
+        {
+          "path": "lib/ai_provider/provider_error.mli",
+          "sha256": "7e37031f3d925fba05173552bfcebab992e9036b573e595abd42880cbca57892",
+          "bytes": 1465,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/provider_error.mli"
+        },
+        {
+          "path": "lib/ai_provider/retry_after.mli",
+          "sha256": "7b268cf0095473f34bc29eb423a2872acb01b5afce04bf62a7eda3f6ca9df543",
+          "bytes": 1097,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/lib/ai_provider/retry_after.mli"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "e8253eb46900999614cf2518b03698f050240e165b18fced1f2f599cd2e6660b",
+          "bytes": 1063,
+          "url": "https://raw.githubusercontent.com/ahrefs/ocaml-ai-sdk/fe91855a2b1be51e96bff38b68b31b0f67ab13cf/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/junjihashimoto/louter",
+      "commit": "95d7fc2678de52ba4aba5c2ffb16e0a044893a8a",
+      "files": [
+        {
+          "path": "src/Louter/Types/Streaming.hs",
+          "sha256": "9dd7988924bea27e77b7fea2eb8a31951e43802288e1d856811da5e4e7370957",
+          "bytes": 3954,
+          "url": "https://raw.githubusercontent.com/junjihashimoto/louter/95d7fc2678de52ba4aba5c2ffb16e0a044893a8a/src/Louter/Types/Streaming.hs"
+        },
+        {
+          "path": "src/Louter/Types/Response.hs",
+          "sha256": "9cf22b68b7e4a236c0b17b10bd33962b7f22e734d0d0190dab791e60588e4c74",
+          "bytes": 2269,
+          "url": "https://raw.githubusercontent.com/junjihashimoto/louter/95d7fc2678de52ba4aba5c2ffb16e0a044893a8a/src/Louter/Types/Response.hs"
+        },
+        {
+          "path": "src/Louter/Protocol/AnthropicStreaming.hs",
+          "sha256": "97a447c8a16df78e007249411e922f83e48dfcd300a9011bca9dcf10fb7c1346",
+          "bytes": 14321,
+          "url": "https://raw.githubusercontent.com/junjihashimoto/louter/95d7fc2678de52ba4aba5c2ffb16e0a044893a8a/src/Louter/Protocol/AnthropicStreaming.hs"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "42cc6492a4d4237eb39b39de6d23a9be31f221e4c721bffa54a33c1a46b1266d",
+          "bytes": 1072,
+          "url": "https://raw.githubusercontent.com/junjihashimoto/louter/95d7fc2678de52ba4aba5c2ffb16e0a044893a8a/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/open-telemetry/semantic-conventions-genai",
+      "commit": "e07f4ebacb08f56db8c4c882d117720333fbca04",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "8ab882b40b743b3474de8d651671e0421e82dd0a8a48967d1bd0d7b06380b46d",
+          "bytes": 1232,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/README.md"
+        },
+        {
+          "path": "changelog.d/README.md",
+          "sha256": "8feef429d47e092b4d29f10e6df65cef17a390cba5ff15d136762076a88a5bb5",
+          "bytes": 961,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/changelog.d/README.md"
+        },
+        {
+          "path": "docs/README.md",
+          "sha256": "d041226379285d412aae57b9cddd2fffc6c394ff3ea9caa44b3b20d7895d0801",
+          "bytes": 1262,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/docs/README.md"
+        },
+        {
+          "path": "docs/gen-ai/README.md",
+          "sha256": "640483c1794c4373a205ed3ffef62e1a727400b7884a22b10429a9b4a68242b3",
+          "bytes": 1482,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/docs/gen-ai/README.md"
+        },
+        {
+          "path": "docs/gen-ai/gen-ai-spans.md",
+          "sha256": "e3142b50018fb4550f855e4081ae9ce4e2ecf133bc91b970ec23526572dbd92c",
+          "bytes": 122918,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/docs/gen-ai/gen-ai-spans.md"
+        },
+        {
+          "path": "docs/gen-ai/gen-ai-events.md",
+          "sha256": "10f21c0bf84e66da34dc1849b5edec570ff0a2882048875ac759b8d89a0986d0",
+          "bytes": 43314,
+          "url": "https://raw.githubusercontent.com/open-telemetry/semantic-conventions-genai/e07f4ebacb08f56db8c4c882d117720333fbca04/docs/gen-ai/gen-ai-events.md"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/openresponses/openresponses",
+      "commit": "92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c",
+      "files": [
+        {
+          "path": "public/openapi/2026-01-15/openapi.json",
+          "sha256": "ee8c96e11e193f052ae2b6aa159ff115123c44a63d9d2f99f50ff261b7b98d0f",
+          "bytes": 125567,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/2026-01-15/openapi.json"
+        },
+        {
+          "path": "public/openapi/2026-04-24/openapi.json",
+          "sha256": "d598753c3a86fd8a2434828fe39dcc8786a7a694bbe46080a0d24c9fa40e72df",
+          "bytes": 138849,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/2026-04-24/openapi.json"
+        },
+        {
+          "path": "public/openapi/openapi.json",
+          "sha256": "693f26090d206230ed22b336681f547a2882cf5b131e86743966cf71bbdeedab",
+          "bytes": 138849,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json"
+        },
+        {
+          "path": "schema/components/schemas/AllowedToolChoice.json",
+          "sha256": "0f599f369c77687f5d951293d150af08be529edab9a85f4e3c045b642bff02c9",
+          "bytes": 1297,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/schema/components/schemas/AllowedToolChoice.json"
+        },
+        {
+          "path": "schema/components/schemas/AllowedToolsParam.json",
+          "sha256": "c230ad8893f14633463fa81f2189605d1037209050fd4b8b13743af1f89ba830",
+          "bytes": 757,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/schema/components/schemas/AllowedToolsParam.json"
+        },
+        {
+          "path": "schema/components/schemas/Annotation.json",
+          "sha256": "f684c08454c50e193019e4a11fcac419108859bdff6600bd3c14d15a74f2a4d0",
+          "bytes": 313,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/schema/components/schemas/Annotation.json"
+        },
+        {
+          "path": "schema/components/schemas/ApiSourceParam.json",
+          "sha256": "25b2c05ef214e70444f73e5543b631f6e9ce592b462bfabf650a8f07a53c7c56",
+          "bytes": 440,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/schema/components/schemas/ApiSourceParam.json"
+        },
+        {
+          "path": "schema/components/schemas/ApplyPatchCallOutputStatus.json",
+          "sha256": "9137c1045b79d923522a9f2b292fa590dcab745da449e0bbe76389b8935d9685",
+          "bytes": 158,
+          "url": "https://raw.githubusercontent.com/openresponses/openresponses/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/schema/components/schemas/ApplyPatchCallOutputStatus.json"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/pvdabeel/prolog-llm",
+      "commit": "b5cddfc02c73de267b2823ff763e793264717aad",
+      "files": [
+        {
+          "path": "llm.pl",
+          "sha256": "3400d29251661db520cc4af44af8b0ae07d29827f4ba4044006022b735a85ca3",
+          "bytes": 18346,
+          "url": "https://raw.githubusercontent.com/pvdabeel/prolog-llm/b5cddfc02c73de267b2823ff763e793264717aad/llm.pl"
+        },
+        {
+          "path": "llm/claude.pl",
+          "sha256": "9f0076afca7b519f3d37bf37841af3ed59cbcfbbe656baebf56b1e1c9671570c",
+          "bytes": 6301,
+          "url": "https://raw.githubusercontent.com/pvdabeel/prolog-llm/b5cddfc02c73de267b2823ff763e793264717aad/llm/claude.pl"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "e49cececeb2293b2b53eb269f9203abdd97436534913fc5be997eb36adc85987",
+          "bytes": 1335,
+          "url": "https://raw.githubusercontent.com/pvdabeel/prolog-llm/b5cddfc02c73de267b2823ff763e793264717aad/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/tmattio/ocaml-anthropic",
+      "commit": "e7e6c67cb30bdff04902c92db9b7141550913b9c",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "f3f24c2d9e1b7d194f71884510766ca9b23ba28e51a82c2f02af6252abc57b30",
+          "bytes": 4380,
+          "url": "https://raw.githubusercontent.com/tmattio/ocaml-anthropic/e7e6c67cb30bdff04902c92db9b7141550913b9c/README.md"
+        },
+        {
+          "path": "examples/message_streaming.ml",
+          "sha256": "877e5764755144ea33c93653f9f0dabd2f0c721d9d5e6561bcfe1ec88e547108",
+          "bytes": 1357,
+          "url": "https://raw.githubusercontent.com/tmattio/ocaml-anthropic/e7e6c67cb30bdff04902c92db9b7141550913b9c/examples/message_streaming.ml"
+        },
+        {
+          "path": "examples/tool_use_streaming.ml",
+          "sha256": "db800ccef4575045e17a5da8443010d4013d97ad118257d404efd18c78101355",
+          "bytes": 8440,
+          "url": "https://raw.githubusercontent.com/tmattio/ocaml-anthropic/e7e6c67cb30bdff04902c92db9b7141550913b9c/examples/tool_use_streaming.ml"
+        },
+        {
+          "path": "lib/anthropic.mli",
+          "sha256": "9c778c4f4a06110e6e7aa316589051fe7505622f9d67df7c1f1d5119ab5f71b0",
+          "bytes": 44354,
+          "url": "https://raw.githubusercontent.com/tmattio/ocaml-anthropic/e7e6c67cb30bdff04902c92db9b7141550913b9c/lib/anthropic.mli"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "a3d81b8d328cdd98e2beed94e5c814d82f582809377d2ee9ac2456b5ae09dfdf",
+          "bytes": 745,
+          "url": "https://raw.githubusercontent.com/tmattio/ocaml-anthropic/e7e6c67cb30bdff04902c92db9b7141550913b9c/LICENSE"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/vercel/ai",
+      "commit": "5440b3a04089fe084b9236f636b316132e890373",
+      "files": [
+        {
+          "path": "packages/provider/src/language-model/v4/language-model-v4.ts",
+          "sha256": "e02ca6315380f381f42bf30425049b68473ac91fd6cc2d89e68b4c21045b481a",
+          "bytes": 1901,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/packages/provider/src/language-model/v4/language-model-v4.ts"
+        },
+        {
+          "path": "packages/provider/src/language-model/v4/language-model-v4-content.ts",
+          "sha256": "055215a2329324a2f9b99fa3f9598d8a77ad6527a629e3ee0f0a78e6e641bf53",
+          "bytes": 1032,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/packages/provider/src/language-model/v4/language-model-v4-content.ts"
+        },
+        {
+          "path": "packages/provider/src/language-model/v4/language-model-v4-stream-part.ts",
+          "sha256": "eb17a33d107c5f9c43113592da438e37d9a0728adeb02b8f10f87386d9fb383e",
+          "bytes": 3268,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/packages/provider/src/language-model/v4/language-model-v4-stream-part.ts"
+        },
+        {
+          "path": "packages/provider/src/language-model/v4/language-model-v4-finish-reason.ts",
+          "sha256": "db70dd3824233e22a128cebf6f53de34adf8c4b7e2110896f20bfbd6ad2b6e6e",
+          "bytes": 1115,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/packages/provider/src/language-model/v4/language-model-v4-finish-reason.ts"
+        },
+        {
+          "path": "packages/provider/src/language-model/v4/language-model-v4-usage.ts",
+          "sha256": "9ae326e89d75f4c7531e9e5560282121dcd964bc2ca343b28a92b150b60a747a",
+          "bytes": 1277,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/packages/provider/src/language-model/v4/language-model-v4-usage.ts"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "b4f9adb7c568904834d0dd6cc98d16c390d21ca32fc17ae7a267715269bd5529",
+          "bytes": 552,
+          "url": "https://raw.githubusercontent.com/vercel/ai/5440b3a04089fe084b9236f636b316132e890373/LICENSE"
+        }
+      ]
+    }
+  ],
+  "documentation": [
+    {
+      "subject": "Open Responses specification",
+      "url": "https://www.openresponses.org/specification",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Open Responses acceptance tests",
+      "url": "https://www.openresponses.org/compliance",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "JSON interoperability",
+      "url": "https://www.rfc-editor.org/rfc/rfc8259",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "HTTP semantics and retry hints",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "JSON Schema dialects",
+      "url": "https://json-schema.org/specification",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Server-Sent Events",
+      "url": "https://html.spec.whatwg.org/multipage/server-sent-events.html",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "MCP tools; dated specification",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "OpenAI function calling",
+      "url": "https://developers.openai.com/api/docs/guides/function-calling",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "OpenAI reasoning",
+      "url": "https://developers.openai.com/api/docs/guides/reasoning",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "OpenAI streaming",
+      "url": "https://developers.openai.com/api/docs/guides/streaming-responses",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Anthropic thinking",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/thinking",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Anthropic streaming",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/streaming",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Gemini Generate Content thought signatures",
+      "url": "https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "SWI-Prolog minimal LLM source",
+      "url": "https://www.swi-prolog.org/pack/file_details/llmpl/prolog/llm.pl?show=src",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "SWI-Prolog scoped cleanup",
+      "url": "https://www.swi-prolog.org/pldoc/man?predicate=setup_call_cleanup/3",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "SWI-Prolog HTTP clients",
+      "url": "https://www.swi-prolog.org/pldoc/man?section=http-clients",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Eio structured concurrency",
+      "url": "https://github.com/ocaml-multicore/eio",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Haskell ResourceT",
+      "url": "https://github.com/snoyberg/conduit/blob/master/resourcet/README.md",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "AI SDK model messages",
+      "url": "https://ai-sdk.dev/docs/reference/ai-sdk-core/model-message",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "AI SDK provider interface",
+      "url": "https://ai-sdk.dev/providers/community-providers/custom-providers",
+      "snapshot": "retrieved documentation; URL may change"
+    },
+    {
+      "subject": "Pydantic AI messages",
+      "url": "https://pydantic.dev/docs/ai/api/pydantic-ai/messages/",
+      "snapshot": "retrieved documentation; URL may change"
+    }
+  ],
+  "local_baselines": {
+    "cetta": "04594d5d8c56a77ce55da3b0bb0c9a0aad316594",
+    "mettaclaw": "a345e3fc734ecebe8c68381ac080021d14ab5cd0"
+  }
+}

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; Evaluation reduces a call by an admitted definition only to a term of the
 ; evaluated space's own vocabulary.  A definition whose body quantifies, or
@@ -11,9 +11,9 @@
 (: imp (-> prop (-> prop prop)))
 (: A prop)
 (: B prop)
-!(set:define and (-> prop prop prop)
+!(hol:define and (-> prop prop prop)
    (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
-!(set:define same (-> prop prop) (= (same $p) (eq prop $p $p)))
+!(hol:define same (-> prop prop) (= (same $p) (eq prop $p $p)))
 !(and A B)
 !(same A)
 
@@ -21,6 +21,6 @@
 (: nat (u 0))
 (: z nat)
 (: s (-> nat nat))
-!(set:define twice (-> nat nat) (= (twice $n) (s (s $n))))
+!(hol:define twice (-> nat nat) (= (twice $n) (s (s $n))))
 !(twice z)
 !(twice (twice z))

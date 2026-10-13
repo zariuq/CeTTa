@@ -1,8 +1,25 @@
 #include "match.h"
+#include "term_canon.h"
 
 #include <stdlib.h>
 #include <assert.h>
 #include <stdatomic.h>
+
+Atom *bindings_capture_images(Arena *arena, Atom *const *variables,
+                              Atom *const *values, size_t count, bool renaming) {
+    if (renaming)
+        return bindings_capture_renaming(arena, variables, values, count);
+    Bindings images;
+    bindings_init(&images);
+    Atom *result = NULL;
+    for (size_t i = 0u; i < count; ++i)
+        if (!bindings_add_var(&images, variables[i], values[i])) goto done;
+    result = bindings_capture_value(arena, &images);
+done:
+    bindings_free(&images);
+    return result;
+}
+
 
 struct BindingsOwners {
     _Atomic size_t references;
@@ -96,9 +113,18 @@ static Atom *captured_bindings_observe(
 
 static bool captured_bindings_equal(
         const CettaBindingsValue *left, const CettaBindingsValue *right) {
+    if (right->equal != captured_bindings_equal) return false;
     CapturedBindings *a = (CapturedBindings *)left;
     CapturedBindings *b = (CapturedBindings *)right;
     return bindings_eq(&a->bindings, &b->bindings);
+}
+
+static Atom *captured_bindings_apply(Arena *arena,
+        const CettaBindingsValue *value, Atom *term) {
+    CapturedBindings *captured = (CapturedBindings *)value;
+    Atom *applied = bindings_apply_graph(&captured->bindings, arena, term);
+    /* Application must outlive the saved substitution which supplied leaves. */
+    return applied ? atom_deep_copy(arena, applied) : NULL;
 }
 
 Atom *bindings_capture_value(Arena *arena, const Bindings *bindings) {
@@ -110,6 +136,7 @@ Atom *bindings_capture_value(Arena *arena, const Bindings *bindings) {
             .observe = captured_bindings_observe,
             .equal = captured_bindings_equal,
             .storage = captured_bindings_storage,
+            .apply = captured_bindings_apply,
         },
         .references = 1u,
     };
@@ -141,9 +168,121 @@ bool bindings_restore_captured_value(const Atom *atom, Bindings *out) {
         atom->ground.gkind != GV_BINDINGS || !atom->ground.ptr)
         return false;
     const CapturedBindings *captured = atom->ground.ptr;
+    if (captured->value.retain != captured_bindings_retain) return false;
     if (!bindings_clone(out, &captured->bindings)) return false;
     bindings_retain_value_owner(out, (CettaBindingsValue *)&captured->value);
     return true;
+}
+
+Atom *bindings_apply_saved(Arena *arena, const Atom *atom, Atom *term) {
+    if (!arena || !term || !atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_BINDINGS || !atom->ground.ptr) return NULL;
+    const CettaBindingsValue *value = atom->ground.ptr;
+    return value->apply ? value->apply(arena, value, term) : NULL;
+}
+
+typedef struct {
+    CettaBindingsValue value;
+    size_t references;
+    Arena syntax;
+    CettaVarMap mapping;
+    Atom **variables;
+} CapturedRenaming;
+
+static void captured_renaming_retain(void *raw) {
+    CapturedRenaming *renaming = raw;
+    assert(renaming->references < SIZE_MAX);
+    ++renaming->references;
+}
+
+static void captured_renaming_release(void *raw) {
+    CapturedRenaming *renaming = raw;
+    if (--renaming->references) return;
+    free((void *)renaming->value.support);
+    cetta_var_map_free(&renaming->mapping);
+    arena_free(&renaming->syntax);
+    free(renaming);
+}
+
+static Atom *captured_renaming_observe(Arena *arena, const CettaBindingsValue *value) {
+    const CapturedRenaming *renaming = (const CapturedRenaming *)value;
+    uint32_t count = renaming->mapping.len;
+    Atom **pairs = count ? arena_alloc(arena, sizeof(*pairs) * count) : NULL;
+    for (uint32_t i = 0u; i < count; ++i)
+        pairs[i] = atom_expr2(arena, atom_deep_copy(arena, renaming->variables[i]),
+            atom_deep_copy(arena, renaming->mapping.items[i].mapped_var));
+    return atom_expr2(arena, atom_symbol(arena, "pat:renaming"),
+                       atom_expr(arena, pairs, count));
+}
+
+static bool captured_renaming_equal(const CettaBindingsValue *left,
+                                    const CettaBindingsValue *right) {
+    if (right->equal != captured_renaming_equal) return false;
+    const CapturedRenaming *a = (const CapturedRenaming *)left;
+    const CapturedRenaming *b = (const CapturedRenaming *)right;
+    if (a->mapping.len != b->mapping.len) return false;
+    for (uint32_t i = 0u; i < a->mapping.len; ++i) {
+        const CettaVarMapEntry *entry = &a->mapping.items[i];
+        Atom *other = cetta_var_map_lookup(&b->mapping, entry->source_id);
+        if (!other || other->var_id != entry->mapped_var->var_id) return false;
+    }
+    return true;
+}
+
+static Atom *captured_renaming_variable(Arena *arena, Atom *variable, void *raw) {
+    const CapturedRenaming *renaming = raw;
+    Atom *mapped = cetta_var_map_lookup(&renaming->mapping, variable->var_id);
+    return atom_deep_copy(arena, mapped ? mapped : variable);
+}
+
+static Atom *captured_renaming_apply(Arena *arena, const CettaBindingsValue *value,
+                                    Atom *term) {
+    return cetta_atom_rewrite_vars(arena, term, captured_renaming_variable,
+                                   (void *)value, false);
+}
+
+Atom *bindings_capture_renaming(Arena *arena, Atom *const *variables,
+                                Atom *const *values, size_t count) {
+    if (!arena || (count && (!variables || !values)) || count > UINT32_MAX ||
+        count > SIZE_MAX / (2u * sizeof(VarId)) ||
+        count > SIZE_MAX / sizeof(Atom *)) return NULL;
+    CapturedRenaming *renaming = cetta_malloc(sizeof(*renaming));
+    *renaming = (CapturedRenaming){
+        .value = {.retain = captured_renaming_retain,
+                  .release = captured_renaming_release,
+                  .observe = captured_renaming_observe,
+                  .equal = captured_renaming_equal,
+                  .apply = captured_renaming_apply},
+        .references = 1u,
+    };
+    arena_init_detached(&renaming->syntax);
+    cetta_var_map_init(&renaming->mapping);
+    renaming->variables = count
+        ? arena_alloc(&renaming->syntax, count * sizeof(*renaming->variables)) : NULL;
+    VarId *support = count ? cetta_malloc(count * 2u * sizeof(*support)) : NULL;
+    renaming->value.support = support;
+    CettaVarMap inverse;
+    cetta_var_map_init(&inverse);
+    Atom *result = NULL;
+    for (size_t i = 0u; i < count; ++i) {
+        if (!variables[i] || variables[i]->kind != ATOM_VAR ||
+            !values[i] || values[i]->kind != ATOM_VAR ||
+            cetta_var_map_lookup(&renaming->mapping, variables[i]->var_id) ||
+            cetta_var_map_lookup(&inverse, values[i]->var_id)) goto done;
+        Atom *key = atom_deep_copy(&renaming->syntax, variables[i]);
+        Atom *value = atom_deep_copy(&renaming->syntax, values[i]);
+        if (!key || !value ||
+            !cetta_var_map_add(&renaming->mapping, key->var_id, value) ||
+            !cetta_var_map_add(&inverse, value->var_id, key)) goto done;
+        renaming->variables[i] = key;
+        support[renaming->value.support_count++] = key->var_id;
+        support[renaming->value.support_count++] = value->var_id;
+    }
+    result = atom_bindings_value(arena, &renaming->value);
+done:
+    cetta_var_map_free(&inverse);
+    captured_renaming_release(renaming);
+    return result;
 }
 
 /* A textual key has no authority until it has a unique identity in the
@@ -158,7 +297,7 @@ typedef struct {
 
 static bool scoped_name_visit(const Atom *atom, void *raw) {
     ScopedName *name = raw;
-    if (atom->kind != ATOM_VAR || atom->name_key || atom->sym_id != name->spelling)
+    if (atom->kind != ATOM_VAR || atom->name_key || atom_symbol_current_id(atom) != name->spelling)
         return false;
     VarId id = name->epoch ? var_epoch_id(atom->var_id, name->epoch) : atom->var_id;
     if (name->id != VAR_ID_NONE && name->id != id) name->ambiguous = true;
@@ -204,8 +343,8 @@ bool bindings_from_atom_scoped(Atom *atom, const Atom *scope,
             if (!bindings_add_var(out, key, value)) goto fail;
         } else if (key->kind == ATOM_SYMBOL) {
             VarId id;
-            if (!scoped_name_resolve(key->sym_id, scope, receiver, &id) ||
-                !bindings_add_id(out, id, key->sym_id, value)) goto fail;
+            if (!scoped_name_resolve(atom_symbol_current_id(key), scope, receiver, &id) ||
+                !bindings_add_id(out, id, atom_symbol_current_id(key), value)) goto fail;
         } else goto fail;
     }
     for (CettaExprIndex i = 0; i < equalities->expr.len; i++) {

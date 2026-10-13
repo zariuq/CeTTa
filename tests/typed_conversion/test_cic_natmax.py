@@ -22,6 +22,9 @@ def check(binary: Path, evidence: Path) -> int:
     evidence.mkdir(parents=True, exist_ok=True)
     sources = sorted((ledger.CURRICULUM / "DeduktiLambdapi").glob("cicdebug*.metta"))
     checked = 0
+    capture_rejected = 0
+    shadowing_checked = 0
+    arithmetic_rejected = 0
     for source in sources:
         forms = [form for form in ledger.recover_forms(source.read_text())
                  if form.startswith("(= (cic-nat-max ")]
@@ -47,19 +50,60 @@ def check(binary: Path, evidence: Path) -> int:
             assert result.returncode == 0 and not result.stderr, (path, result.stderr)
             assert result.stdout.splitlines() == ["[()]"] * len(controls), (path, result.stdout)
             checked += len(controls)
-        # Reintroduce the precise old capture: the whole nonzero argument and
-        # its predecessor become the same variable. Its positive claim must fail.
+        # Reusing this spelling captures under the legacy scope policy, but
+        # lexical-fresh gives the nested binder its own identity.
         assert "($jNonZero (case $i" in definition, source
         mutation = definition.replace("($jNonZero (case $i", "($j0 (case $i", 1)
-        path = evidence / f"{source.stem}-capture-mutant.metta"
-        path.write_text(ledger.prime_port(mutation + "\n" + controls[6] + "\n"))
-        result = subprocess.run([str(binary), "--lang", "prime", str(path)],
-                                cwd=ledger.ROOT, text=True, capture_output=True)
-        assert result.returncode == 0 and not result.stderr, (path, result.stderr)
-        assert result.stdout.startswith("[(Error (assertEqual "), (path, result.stdout)
-        assert "Got: [(App (App (Con m)" in result.stdout, (path, result.stdout)
+        cases = [
+            ("he", "", True),
+            ("prime", "mercury-implicit", True),
+            ("prime", "", False),
+            ("prime", "lexical-fresh", False),
+        ]
+        for dialect, profile, captures in cases:
+            claims = [controls[6]] if captures else controls
+            text = mutation + "\n" + "\n".join(claims) + "\n"
+            if dialect == "prime":
+                text = ledger.prime_port(text)
+            if profile:
+                text = f"(scope:profile {profile})\n" + text
+            path = evidence / f"{source.stem}-shadowing-{dialect}-{profile or 'default'}.metta"
+            path.write_text(text)
+            result = subprocess.run([str(binary), "--lang", dialect, str(path)],
+                                    cwd=ledger.ROOT, text=True, capture_output=True)
+            path.with_suffix(".stdout").write_text(result.stdout)
+            path.with_suffix(".stderr").write_text(result.stderr)
+            assert result.returncode == 0 and not result.stderr, (path, result.stderr)
+            if captures:
+                assert result.stdout.startswith("[(Error (assertEqual "), (path, result.stdout)
+                assert "Got: [(App (App (Con m)" in result.stdout, (path, result.stdout)
+                capture_rejected += 1
+            else:
+                assert result.stdout.splitlines() == ["[()]"] * len(claims), (path, result.stdout)
+                shadowing_checked += len(claims)
+        # Dropping successor changes the mathematics under either scope policy.
+        successor = "(App (Con s) (cic-nat-max $i0 $j0))"
+        assert definition.count(successor) == 1, source
+        mutation = definition.replace(successor, "(cic-nat-max $i0 $j0)", 1)
+        for dialect in ("he", "prime"):
+            text = mutation + "\n" + controls[6] + "\n"
+            if dialect == "prime":
+                text = ledger.prime_port(text)
+            path = evidence / f"{source.stem}-arithmetic-mutant-{dialect}.metta"
+            path.write_text(text)
+            result = subprocess.run([str(binary), "--lang", dialect, str(path)],
+                                    cwd=ledger.ROOT, text=True, capture_output=True)
+            path.with_suffix(".stdout").write_text(result.stdout)
+            path.with_suffix(".stderr").write_text(result.stderr)
+            assert result.returncode == 0 and not result.stderr, (path, result.stderr)
+            assert result.stdout.startswith("[(Error (assertEqual "), (path, result.stdout)
+            assert "Got: [(Con z)]" in result.stdout, (path, result.stdout)
+            arithmetic_rejected += 1
     assert checked, "no CIC maximum definitions found"
-    print(f"PASS CIC maximum: {checked} independent value checks; {checked // 56} capture mutants rejected")
+    print(f"PASS CIC maximum: {checked} independent value checks; "
+          f"{capture_rejected} legacy capture mutants rejected; "
+          f"{shadowing_checked} lexical shadowing checks; "
+          f"{arithmetic_rejected} arithmetic mutants rejected")
     commands = 0
     for source in sources:
         wanted = ["[()]"] * len(ledger.top_level_bangs(source.read_text()))

@@ -438,9 +438,10 @@ def local_git_fixture_workspace(
     petta_dir: Path,
     source: Path,
     fixture: dict[str, Any],
+    *, directory: Path | None = None,
 ):
     with tempfile.TemporaryDirectory(
-        prefix="cetta-petta-git-fixture-"
+        prefix="cetta-petta-git-fixture-", dir=directory,
     ) as temporary:
         workspace = Path(temporary)
         os.symlink(

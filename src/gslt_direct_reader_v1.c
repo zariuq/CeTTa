@@ -1520,6 +1520,9 @@ done:
             error_buf, error_buf_size,
             "source is outside the compiled S-expression LanguageDef");
     }
+    if (result < 0 && projection->retain_prefix &&
+        projection->retain_prefix(projection->retain_context, ids, len))
+        ids = NULL;
     free(ids);
     return result;
 }

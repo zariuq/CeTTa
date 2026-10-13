@@ -42,7 +42,7 @@ static char *receipt_text(Arena *arena,const PrimeNeedReceipt *receipt) {
  prime_need_receipt_graph_free(&graph);return stored;
 }
 #endif
-static bool seen(Arena *a,Atom *v,const Bindings *b,void *raw){(void)a;Result *r=raw;assert(r->count<32);size_t i=r->count++;r->values[i]=atom_deep_copy(&r->storage,v);const CettaWeightLedger *l=bindings_weight_view(b);assert(l->length<=16);r->lengths[i]=l->length;const CettaWeightFactor **f=cetta_weight_ledger_ordered(l);assert(!l->length||f);for(size_t k=0;k<l->length;k++){assert(f[k]->value->kind==ATOM_GROUNDED&&f[k]->value->ground.gkind==GV_INT);r->factors[i][k]=f[k]->value->ground.ival;}free(f);
+static bool seen(Arena *a,Atom *v,const Outcome *occurrence,void *raw){const Bindings *b=&occurrence->env;(void)a;Result *r=raw;assert(r->count<32);size_t i=r->count++;r->values[i]=atom_deep_copy(&r->storage,v);const CettaWeightLedger *l=bindings_weight_view(b);assert(l->length<=16);r->lengths[i]=l->length;const CettaWeightFactor **f=cetta_weight_ledger_ordered(l);assert(!l->length||f);for(size_t k=0;k<l->length;k++){assert(f[k]->value->kind==ATOM_GROUNDED&&f[k]->value->ground.gkind==GV_INT);r->factors[i][k]=f[k]->value->ground.ival;}free(f);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  if(prime_need_receipt_observer_requested())assert(prime_need_receipt_present(bindings_receipt_view(b)));
  if(prime_need_receipt_present(bindings_receipt_view(b)))r->graphs[i]=receipt_text(&r->storage,bindings_receipt_view(b));
@@ -211,11 +211,71 @@ static void one(unsigned client,unsigned cut){
  assert(cetta_native_handle_close(lib,"prime-search",image_handle));arena_free(&a.storage);arena_free(&b.storage);arena_free(&prefix.storage);
  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
 }
+/* The array is optional, but its rows are occurrence indexed. These direct
+ * controls also cover absent/invalid extents and an unowned advice edge. */
+static void return_advice_copy_cases(void) {
+ for(unsigned mode=0u;mode<7u;mode++) {
+  unsigned client=400u+mode,cut=0u;
+  PrimeNativeControl source={0},image={0};
+  arena_init(&source.storage);arena_init(&image.storage);
+  source.driver.arena=&source.storage;image.driver.arena=&image.storage;
+  AtomDeepCopySession *atoms=atom_deep_copy_session_new(&image.storage);assert(atoms);
+  AtomDeepCopyArenaPair pair={&source.storage,&image.storage};
+  assert(atom_deep_copy_session_set_arena_map(atoms,&pair,1u));
+  PrimeParentCopy copy={.source=&source,.image=&image,.atoms=atoms};
+  PrimeNativeAdvice holder={0},mapped={0},foreign={0};
+  holder.key=atom_int(&source.storage,13);mapped.key=atom_int(&image.storage,13);
+  CHECK(parent_copy_register(&copy,&parent_copy_advice_kind,&holder,&mapped,sizeof(holder)));
+  PrimeEvalStackFrame from={.kind=PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM,
+   .arena=&source.storage,.child_initialized=true},to={0};
+  outcome_set_init(&from.child);
+  Atom *same=atom_int(&source.storage,5);
+  Bindings empty;bindings_init(&empty);
+  outcome_set_add(&from.child,same,&empty);outcome_set_add(&from.child,same,&empty);
+  bindings_free(&empty);
+  from.control_return_advice=calloc(4u,sizeof(*from.control_return_advice));assert(from.control_return_advice);
+  PrimeNativeReturnAdvice *owned=from.control_return_advice;
+  from.control_return_advice_capacity=4u;from.control_return_advice_length=2u;
+  owned[0]=(PrimeNativeReturnAdvice){atom_int(&source.storage,1),atom_int(&source.storage,7),&holder};
+  owned[1]=(PrimeNativeReturnAdvice){atom_int(&source.storage,3),atom_int(&source.storage,11),&holder};
+  if(mode==1u)from.control_return_advice_length=5u;
+  if(mode==2u)from.control_return_advice_length=3u;
+  if(mode==3u)from.control_return_advice=NULL;
+  if(mode==4u)from.control_return_advice_capacity=0u;
+  if(mode==5u)owned[1].advice=&foreign;
+  if(mode==6u){from.control_return_advice=NULL;from.control_return_advice_length=0u;from.control_return_advice_capacity=0u;}
+  PrimeEvalStackFrame before=from;
+  PrimeNativeReturnAdvice saved[2]={owned[0],owned[1]};
+  bool copied=parent_copy_frame(&copy,&from,&to);
+  CHECK(!memcmp(&from,&before,sizeof(from))&&!memcmp(owned,saved,sizeof(saved)));
+  CHECK(copied==(mode==0u||mode==6u));
+  if(mode==0u) {
+   CHECK(to.control_return_advice!=owned&&to.control_return_advice_length==2u&&to.control_return_advice_capacity==4u);
+   CHECK(to.control_return_advice[0].advice==&mapped&&to.control_return_advice[1].advice==&mapped);
+   CHECK(atom_eq(to.control_return_advice[0].key,saved[0].key)&&atom_eq(to.control_return_advice[1].key,saved[1].key));
+   CHECK(atom_eq(to.control_return_advice[0].bound,saved[0].bound)&&atom_eq(to.control_return_advice[1].bound,saved[1].bound));
+   mapped.key=atom_int(&image.storage,29);
+   CHECK(to.control_return_advice[0].advice->key==mapped.key&&to.control_return_advice[1].advice->key==mapped.key);
+   CHECK(holder.key->ground.ival==13);
+  }
+  if(mode==1u||mode==2u||mode==4u)CHECK(copy.refusal&&!strcmp(copy.refusal,"ReturnAdviceExtent"));
+  if(mode==3u)CHECK(copy.refusal&&!strcmp(copy.refusal,"ArrayExtent"));
+  if(mode==5u)CHECK(copy.refusal&&!strcmp(copy.refusal,"UnregisteredEdge"));
+  if(mode==6u)CHECK(!to.control_return_advice&&!to.control_return_advice_length&&!to.control_return_advice_capacity);
+  outcome_set_free(&from.child);outcome_set_free(&to.child);
+  free(owned);
+  atom_deep_copy_session_free(atoms);arena_free(&source.storage);
+  if(mode==0u)CHECK(to.control_return_advice[0].key->ground.ival==1&&to.control_return_advice[1].bound->ground.ival==11&&mapped.key->ground.ival==29);
+  free(to.control_return_advice);
+  arena_free(&image.storage);
+ }
+}
 static void lifecycle_cases(void);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 #include "native_parent_recording_compare.inc"
 #endif
 int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+ return_advice_copy_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
  for(unsigned c=0;c<12;c++)for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)one(c,cuts[i]);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS

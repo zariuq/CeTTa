@@ -1,16 +1,16 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A universal equality certificate justifies an alternative value computation.
 ; Membership remains an explicit argument; this does not authorize effects.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))
-!(set:define &thy copy (-> (A : (u 0)) (x : A) A)
+!(hol:define &thy copy (-> (A : (u 0)) (x : A) A)
    (= (copy $A $x) $x))
-!(set:define &thy nestedCopy (-> (A : (u 0)) (x : A) A)
+!(hol:define &thy nestedCopy (-> (A : (u 0)) (x : A) A)
    (= (nestedCopy $A $x) (copy $A (copy $A $x))))
-!(set:define &thy certifiedShortcut
+!(hol:define &thy certifiedShortcut
    (-> (A : (u 0)) (B : (-> (z : A) (u 0)))
        (f g : (-> (z : A) (B z)))
        (Member : (-> (z : A) (u 0)))

@@ -348,6 +348,9 @@ def compile_exec(form: SExpr) -> CompiledRule:
     if contains(query, "exec"):
         raise TranslationError("reflective exec queries are outside the basic subset")
     query_variables = variables(query)
+    # A uniform expression wrapper gives bare symbols and empty expressions
+    # the same data/removal interpretation in every hosted dialect.
+    hosted_query: SExpr = [",", *[["mm2-data", factor] for factor in query[1:]]]
 
     if not isinstance(template, list) or not template:
         raise TranslationError("exec template must be a non-empty comma or O expression")
@@ -361,7 +364,7 @@ def compile_exec(form: SExpr) -> CompiledRule:
                     "comma output contains a variable not bound by the query")
             operations.append(["mm2add", atom])
         translated: SExpr = ["mm2ops", operations]
-        entry: SExpr = ["mm2write", query, translated]
+        entry: SExpr = ["mm2write", hosted_query, translated]
     elif template[0] == "O":
         sinks = template[1:]
         if len(sinks) == 1 and is_call(sinks[0], "count", 3):
@@ -389,7 +392,7 @@ def compile_exec(form: SExpr) -> CompiledRule:
             reject_exec_payload(target)
             reject_exec_payload(counted)
             target_with_slot = substitute(target, guard, "MM2_COUNT_SLOT")
-            entry = ["mm2count", query, target_with_slot, counted]
+            entry = ["mm2count", hosted_query, target_with_slot, counted]
         else:
             operations = []
             for sink in sinks:
@@ -407,7 +410,7 @@ def compile_exec(form: SExpr) -> CompiledRule:
                 operations.append(
                     ["mm2add" if operator == "+" else "mm2del", atom])
             translated = ["mm2ops", operations]
-            entry = ["mm2write", query, translated]
+            entry = ["mm2write", hosted_query, translated]
     else:
         raise TranslationError("exec template functor must be comma or O")
 
@@ -450,13 +453,13 @@ def render_program(program: CompiledProgram, include_engine: bool) -> str:
         parts.append(engine.read_text(encoding="utf-8").rstrip())
     parts.append("!(let $ignored (bind! &mm2-program (new-space)) ())")
     parts.extend(
-        f"!(let $ignored (add-atom &mm2-program {unparse(atom)}) ())"
+        f"!(let $ignored (add-atom &mm2-program (mm2-data {unparse(atom)})) ())"
         for atom in program.atoms)
     queue: SExpr = [rule.queue_entry for rule in program.rules]
     parts.append(
         f"!(let $ignored (mm2-run &mm2-program {unparse(queue)}) ())")
     parts.append(
-        "!(collapse (match &mm2-program $atom (mm2-result $atom)))")
+        "!(collapse (match &mm2-program (mm2-data $atom) (mm2-result $atom)))")
     return "\n\n".join(parts) + "\n"
 
 

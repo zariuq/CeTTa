@@ -471,37 +471,99 @@ static PrimeEvalStackFrame *native_dialect_source_sink(const PrimeNativeWork *wo
         work->dialect->target == &frame->child ? frame : NULL;
 }
 
-static bool native_dialect_source_reserve_advice(PrimeEvalStackFrame *frame) {
-    if (!frame || frame->child.len < frame->dialect_return_advice_capacity) return true;
-    size_t capacity=frame->dialect_return_advice_capacity;
+static bool prime_native_return_reserve_advice(PrimeEvalStackFrame *frame) {
+    if (!frame || frame->child.len < frame->control_return_advice_capacity) return true;
+    size_t capacity=frame->control_return_advice_capacity;
     if (capacity > SIZE_MAX / 2u) return false;
     capacity=capacity ? capacity * 2u : 4u;
     if (frame->child.len==SIZE_MAX) return false;
     if (capacity<=frame->child.len) capacity=(size_t)frame->child.len+1u;
-    if (capacity > SIZE_MAX / sizeof(*frame->dialect_return_advice)) return false;
-    void *items=realloc(frame->dialect_return_advice,
-        capacity * sizeof(*frame->dialect_return_advice));
+    if (capacity > SIZE_MAX / sizeof(*frame->control_return_advice)) return false;
+    void *items=realloc(frame->control_return_advice,
+        capacity * sizeof(*frame->control_return_advice));
     if (!items) return false;
-    frame->dialect_return_advice=items;
-    frame->dialect_return_advice_capacity=capacity;
+    frame->control_return_advice=items;
+    frame->control_return_advice_capacity=capacity;
     return true;
 }
 
-static bool native_dialect_note_returns(PrimeEvalStackFrame *frame) {
-    if (!frame || frame->kind!=PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE) return true;
-    if (!native_dialect_source_reserve_advice(frame)) return false;
+/* These receivers append physical rows without splicing or reordering
+ * their child sets. Other frame protocols keep their own inherited context. */
+static bool prime_native_return_receiver(const PrimeEvalStackFrame *frame) {
+    return frame && (frame->kind == PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE ||
+        (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+         (frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
+          frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN ||
+          frame->kind == PRIME_EVAL_STACK_FRAME_FORCE ||
+          frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)));
+}
+
+static bool prime_native_note_returns(PrimeEvalStackFrame *frame) {
+    if (!prime_native_return_receiver(frame) || !frame->child_initialized ||
+        frame->control_return_advice_length >= frame->child.len) return true;
     PrimeNativeControl *control=g_prime_eval_stack_driver->control;
-    while (frame->dialect_return_advice_length < frame->child.len)
-        frame->dialect_return_advice[frame->dialect_return_advice_length++]=
-            (NativeDialectReturnAdvice){.key=control->active_key,
+    /* Ordinary ungraded Prime evaluation neither allocates nor populates
+     * this optional scheduling sidecar. */
+    if (frame->kind != PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
+        !control->policy.priority && !control->live_bound) return true;
+    if (!prime_native_return_reserve_advice(frame)) return false;
+    while (frame->control_return_advice_length < frame->child.len)
+        frame->control_return_advice[frame->control_return_advice_length++]=
+            (PrimeNativeReturnAdvice){.key=control->active_key,
                 .bound=control->active_bound,.advice=control->active_advice};
     return true;
 }
 
+static const PrimeNativeReturnAdvice *prime_native_frame_next_return(
+    const PrimeEvalStackFrame *frame) {
+    if (!frame || ((frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
+                   frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN) &&
+                  frame->state != PRIME_EVAL_STACK_FRAME_WAIT_CALL)) return NULL;
+    CettaCount index = frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH
+        ? frame->stream_forwarded : frame->index;
+    if (frame->kind == PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
+        index >= frame->child.len && !frame->control_pending &&
+        !frame->dialect_source_success) index = frame->dialect_error_index;
+    return index < frame->control_return_advice_length
+        ? &frame->control_return_advice[index] : NULL;
+}
+
+static PrimeNativeReturnScope prime_native_return_enter(
+    const PrimeEvalStackFrame *frame, CettaCount index) {
+    PrimeNativeReturnScope scope = {0};
+    if (!prime_eval_stack_queued(g_prime_eval_stack_driver) ||
+        index >= frame->control_return_advice_length) return scope;
+    PrimeNativeControl *control = g_prime_eval_stack_driver->control;
+    scope.control = control;
+    scope.saved = (PrimeNativeReturnAdvice){control->active_key,
+        control->active_bound, control->active_advice};
+    const PrimeNativeReturnAdvice *returned = &frame->control_return_advice[index];
+    control->active_key = returned->key;
+    control->active_bound = returned->bound;
+    control->active_advice = returned->advice;
+    return scope;
+}
+
+static void prime_native_return_leave(PrimeNativeReturnScope *scope) {
+    if (!scope->control) return;
+    scope->control->active_key = scope->saved.key;
+    scope->control->active_bound = scope->saved.bound;
+    scope->control->active_advice = scope->saved.advice;
+}
+
 static bool native_dialect_source_return(PrimeEvalStackFrame *frame, CettaCount index) {
-    if (index >= frame->child.len || index >= frame->dialect_return_advice_length) return false;
+    if (index >= frame->child.len || index >= frame->control_return_advice_length) return false;
     Outcome *value=&frame->child.items[index];
-    NativeDialectReturnAdvice inherited=frame->dialect_return_advice[index];
+    /* The machine's supply API consumes a value without a delay service at
+     * this return point. It cannot erase a conditional occurrence. */
+    if (value->delayed ||
+        (value->result_form != CETTA_CALL_RESULT_EXPRESSION &&
+         value->result_form != CETTA_CALL_RESULT_COMPLETED_VALUE)) {
+        g_prime_eval_stack_driver->control->failed = true;
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeNativeReturnAdvice inherited=frame->control_return_advice[index];
     NativeDialectWork *template=frame->dialect_source;
     NativeDialectOwner *owner=template->machine;
     PrimeNativeControl *control=g_prime_eval_stack_driver->control;
@@ -637,7 +699,7 @@ static bool native_dialect_work_step(PrimeNativeWork *work) {
     else native_dialect_attach_candidate(work);
     if (control->driver.capacity_blocked || control->failed) return false;
     PrimeEvalStackFrame *source_sink=native_dialect_source_sink(work);
-    if (!native_dialect_source_reserve_advice(source_sink)) {
+    if (!prime_native_return_reserve_advice(source_sink)) {
         control->driver.capacity_blocked=true;return false;
     }
     owner->context.controller_quantum_active = true;

@@ -1,4 +1,4 @@
-(set:profile hol)
+(hol:profile core)
 
 ; A shared producer forced inside and outside a measuring handler.  The
 ; handler, cost:firings, owns the productions it forces; those it forced
@@ -6,8 +6,8 @@
 ; first, the production is charged inside and reused outside; forced outside
 ; first, the handler finds it made and charges nothing.  Either way the whole
 ; run charges it once: nothing is lost and nothing is charged twice.
-!(set:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
-!(set:define &self two nat (= two (succ (succ zero))))
+!(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))
+!(hol:define &self two nat (= two (succ (succ zero))))
 !(P (cost:firings two) two)
 !(cost:firings (P (cost:firings two) two))
 !(P two (cost:firings two))

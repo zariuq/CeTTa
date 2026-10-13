@@ -1,8 +1,8 @@
-(set:profile hol)
+(hol:profile core)
 
 ; One theorem, four faces.  Implication transitivity,
 ;   forall P Q R. (P -> Q) -> (Q -> R) -> (P -> R),
-; is stated and checked as HOL in the set: language, as a dependent type in
+; is stated and checked as HOL in the hol: language, as a dependent type in
 ; the type: language, as a NIK certificate against the admitted implication
 ; calculus, and as a Boolean model computation.  Two distinct negatives are
 ; kept apart on every face that can express them: an invalid proof of the
@@ -12,18 +12,18 @@
 ; which only the model face refutes as a proposition; the proof faces can
 ; only fail to prove it.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile hol)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
 
 ; ---- HOL face: a natural-deduction proof over simple types
 !(pf:theorem &thy imp-trans
    (all prop (lam P (all prop (lam Q (all prop (lam R (imp (imp P Q) (imp (imp Q R) (imp P R)))))))))
    (pf:fix P (pf:fix Q (pf:fix R (pf:assume f (pf:assume g (pf:assume x (pf:by g (pf:by f x)))))))))
 ; an invalid proof of the true theorem: the applications in the wrong order
-!(set:proves &thy
+!(hol:proves &thy
    (pf:fix P (pf:fix Q (pf:fix R (pf:assume f (pf:assume g (pf:assume x (pf:by f (pf:by g x))))))))
    (all prop (lam P (all prop (lam Q (all prop (lam R (imp (imp P Q) (imp (imp Q R) (imp P R))))))))))
 ; the false variant: the valid proof does not prove it, which is all a checker can say
-!(set:proves &thy
+!(hol:proves &thy
    (pf:fix P (pf:fix Q (pf:fix R (pf:assume f (pf:assume g (pf:assume x (pf:by g (pf:by f x))))))))
    (all prop (lam P (all prop (lam Q (all prop (lam R (imp (imp P Q) (imp (imp Q R) (imp R P))))))))))
 
@@ -37,7 +37,7 @@
 !(type:check (lam P (lam Q (lam R (lam f (lam g (lam x (g (f x))))))))
    (-> (P : (u 0)) (-> (Q : (u 0)) (-> (R : (u 0)) (-> (f : (-> P Q)) (-> (g : (-> Q R)) (-> (x : R) P)))))))
 ; the two faces agree on conjunction introduction as well: Church pair and dependent pair
-!(set:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
+!(hol:define &thy and (-> prop prop prop) (= (and $p $q) (all prop (lam r (imp (imp $p (imp $q r)) r)))))
 !(pf:theorem &thy and-intro (all prop (lam P (all prop (lam Q (imp P (imp Q (and P Q)))))))
    (pf:fix P (pf:fix Q (pf:assume p (pf:assume q (pf:fix r (pf:assume k (pf:by k p q))))))))
 !(type:check (lam P (lam Q (lam p (lam q (pair p q)))))

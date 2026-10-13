@@ -1,0 +1,30 @@
+true
+true
+()
+true
+true
+true
+true
+true
+(1 0 1 0)
+(0 0 1 0)
+(0 1 0 1)
+(0 0 0 0)
+(1 1 1 1)
+(0 0 0 0)
+(IndexFailure stale-view)
+(1 0 1 0)
+true
+(1 0 1 1)
+(IndexFailure row-out-of-bounds)
+(IndexFailure row-out-of-bounds)
+(IndexFailure invalid-value)
+(IndexFailure shape-mismatch)
+(IndexFailure invalid-capacity)
+(IndexFailure invalid-capacity)
+(IndexInfo 1 4 exact row-mask (All Eq And Or) 2)
+(IndexFailure unsupported-filter)
+true
+true
+(1 0 0 0)
+(0 1 0 0)

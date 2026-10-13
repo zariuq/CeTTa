@@ -1,0 +1,1936 @@
+{
+  "cases": [
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "match%",
+      "patterns": [],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "match%",
+      "patterns": [],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "match%",
+      "patterns": [],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f a b)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f b a) (f b a))) (patterns (f b a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f a b)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f a b)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b)) (pat:row (pat:occurrence 0 0 3) (f b a) (f b a))) (patterns (f a b) (f b a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f b a) (f b a)) (pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f b a) (f a b)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a b) (f a b)) (pat:row (pat:occurrence 0 0 3) (f b a) (f b a))) (patterns (f a a) (f a b) (f b a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a b) (f a b)) (pat:row (pat:occurrence 0 0 3) (f b a) (f b a))) (patterns (f a a) (f a b) (f b a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f b a) (f b a)) (pat:row (pat:occurrence 0 0 0) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f b a) (f a a) (f a b)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f b a) (f b a)) (pat:row (pat:occurrence 0 0 1) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f b a) (f a a) (f a b)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "match%",
+      "patterns": [],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000))) (patterns (f $v1000 $v1000)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000))) (patterns (f $v1000 $v1000)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v1004 $v1005))) (patterns (f $v1004 $v1005)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 4) (f $v1016 b) (f $v1016 b))) (patterns (f $v1016 b)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1100 $v1100))) (patterns (f $v1000 $v1000) (f $v1100 $v1100)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f $v1000 $v1000) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f $v1000 $v1000) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1100 $v1100))) (patterns (f a a) (f $v1100 $v1100)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1100 $v1100))) (patterns (f a a) (f $v1100 $v1100)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 2) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a)) (pat:row (pat:occurrence 0 0 3) (f a a) (f a a))) (patterns (f a a) (f a a) (f a a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "match%",
+      "patterns": [],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f (f $v1000 a) $v1000) (f (f $v1000 a) $v1000))) (patterns (f (f $v1000 a) $v1000)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f (f a a) a) (f (f a a) a))) (patterns (f (f a a) a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f b $v1008) (f b $v1008))) (patterns (f b $v1008)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "match%",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f (f $v1000 a) $v1000) (f (f $v1000 a) $v1000))) (patterns (f (f $v1000 a) $v1000)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f (f a a) a) (f (f a a) a))) (patterns (f (f a a) a)))"
+      ],
+      "mode": "match%",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "%match",
+      "patterns": [],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "%match",
+      "patterns": [],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "%match",
+      "patterns": [],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f a b)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "%match",
+      "patterns": [],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v0 $v0))) (patterns (f $v0 $v0)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v0))) (patterns (f $v0 $v0)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v1))) (patterns (f $v0 $v1)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f a $v1))) (patterns (f a $v1)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f a b))) (patterns (f a b)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 4) (f $v1016 b) (f a b))) (patterns (f a b)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f $v0 a))) (patterns (f $v0 $v0) (f $v0 a)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f $v0 a))) (patterns (f $v0 $v0) (f $v0 a)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v1)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f $v1 $v0))) (patterns (f $v0 $v1) (f $v1 $v0)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1 $v1))) (patterns (f $v0 $v0) (f $v1 $v1)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f $v1 $v1))) (patterns (f $v0 $v0) (f $v1 $v1)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1 $v1))) (patterns (f $v0 $v0) (f $v1 $v1)))",
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 $v0)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f $v1 $v1))) (patterns (f $v0 $v0) (f $v1 $v1)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v0 a)) (pat:row (pat:occurrence 0 0 1) (f $v1104 $v1105) (f a $v1)) (pat:row (pat:occurrence 0 0 1) (f $v1204 $v1205) (f $v1 $v0))) (patterns (f $v0 a) (f a $v1) (f $v1 $v0)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f (f $v0 a) $v0))) (patterns (f (f $v0 a) $v0)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "%match",
+      "patterns": [],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "%match",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f (f $v1000 a) $v1000) (f (f $v0 a) $v0))) (patterns (f (f $v0 a) $v0)))"
+      ],
+      "mode": "%match",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "variant",
+      "patterns": [],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": []
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "variant",
+      "patterns": [],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "variant",
+      "patterns": [],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 2) (f a b) (f a b))) (patterns (f a b)))"
+      ],
+      "mode": "variant",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f a a)",
+        "(f a a)",
+        "(f a b)",
+        "(f b a)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "variant",
+      "patterns": [],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000))) (patterns (f $v1000 $v1000)))"
+      ],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 1) (f $v1004 $v1005) (f $v1004 $v1005))) (patterns (f $v1004 $v1005)))"
+      ],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f $v1000 $v1000) (f $v1000 $v1000)) (pat:row (pat:occurrence 0 0 0) (f $v1100 $v1100) (f $v1100 $v1100))) (patterns (f $v1000 $v1000) (f $v1100 $v1100)))"
+      ],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f $v0 $v0)",
+        "(f $v0 $v1)",
+        "(f a a)",
+        "(f a a)",
+        "(f $v0 b)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed () (patterns))"
+      ],
+      "mode": "variant",
+      "patterns": [],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f a b)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v0 a)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 $v0)",
+        "(f $v1 $v1)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [],
+      "mode": "variant",
+      "patterns": [
+        "(f $v0 a)",
+        "(f a $v1)",
+        "(f $v1 $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    },
+    {
+      "answers": [
+        "(pat:observed ((pat:row (pat:occurrence 0 0 0) (f (f $v1000 a) $v1000) (f (f $v1000 a) $v1000))) (patterns (f (f $v1000 a) $v1000)))"
+      ],
+      "mode": "variant",
+      "patterns": [
+        "(f (f $v0 a) $v0)"
+      ],
+      "rows": [
+        "(f (f $v0 a) $v0)",
+        "(f (f a a) a)",
+        "(f b $v0)"
+      ]
+    }
+  ],
+  "schema": 1,
+  "semantics": "ordered first-order joins; fresh row scopes; exact occurrence observations"
+}

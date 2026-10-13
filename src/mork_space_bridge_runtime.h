@@ -83,6 +83,9 @@ slot provenance.
 bool cetta_mork_bridge_is_available(void);
 bool cetta_mork_bridge_supports_expr_bytes_batch_add(void);
 bool cetta_mork_bridge_supports_expr_bytes_batch_remove(void);
+/* Constructor availability, not admission of a particular query. Older
+   bridges without this constructor can still supply query-only packets. */
+bool cetta_mork_bridge_supports_query_only_v2_cursor(void);
 const char *cetta_mork_bridge_last_error(void);
 
 CettaMorkSpaceHandle *cetta_mork_bridge_space_new(void);
@@ -144,6 +147,12 @@ bool cetta_mork_bridge_space_contains_expr_bytes(const CettaMorkSpaceHandle *spa
                                                  const uint8_t *expr_bytes,
                                                  size_t len,
                                                  bool *out_found);
+/* Structural occurrence count. Open stored rows may also unify with a
+   ground query, so callers must establish an exact-ground match frontier. */
+bool cetta_mork_bridge_space_count_expr_bytes(const CettaMorkSpaceHandle *space,
+                                              const uint8_t *expr_bytes,
+                                              size_t len,
+                                              uint64_t *out_count);
 bool cetta_mork_bridge_space_remove_sexpr(CettaMorkSpaceHandle *space,
                                           const uint8_t *text,
                                           size_t len,

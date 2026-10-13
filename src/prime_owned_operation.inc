@@ -60,7 +60,8 @@ static bool prime_native_acquired_prepare_row(PrimeNativeAcquiredOperation *oper
  * Copying is a separate phase. False retains legacy accept-and-stop; a
  * malformed callback also leaves an explicit incomplete return. */
 static bool prime_native_acquired_accept(
-    Arena *arena, Atom *value, const Bindings *environment, void *payload) {
+    Arena *arena, Atom *value, const Outcome *occurrence, void *payload) {
+    const Bindings *environment = &occurrence->env;
     PrimeNativeAcquiredOperation *operation = payload;
     PrimeNativeControl *control = cetta_native_handle_use_resource(&operation->use);
     cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP, 1u);
@@ -73,7 +74,7 @@ static bool prime_native_acquired_accept(
     const Outcome *row = &control->output.items[index];
     if (index < operation->accept_cursor || index >= control->delivered_capacity ||
         !control->delivered[index] || !value || row->materialized_atom != value ||
-        &row->env != environment || operation->accepted_count == SIZE_MAX) {
+        row != occurrence || &row->env != environment || operation->accepted_count == SIZE_MAX) {
         operation->return_refusal = "ReturnCallbackRow";
         return false;
     }
