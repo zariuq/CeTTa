@@ -89,6 +89,7 @@ CeTTa checkout or a different source branch.
 | Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
 | Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
+| Shell helper library | `lib/shell.metta` | [Shell module](lib/shell.metta) |
 | Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |
 | Managed spellings and registered-name reclamation | `ENABLE_MANAGED_SYMBOLS=1` | [Symbol lifetime experiment](verification/gc/README.md) |
 | Native memory collection, packed cosine search and journaled space owner | `space-service value-worker` targets | [Local setup and qualification](docs/memory/README.md) |

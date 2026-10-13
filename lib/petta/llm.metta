@@ -2,9 +2,9 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self json)
-!(import! &self str)
-!(import! &self io)
+!(import! &self (library json))
+!(import! &self (library str))
+!(import! &self (library io))
 (= (llm:v1:object-get $object $key) (__cetta_lib_json_object_get $object $key))
 (= (llm:v1:get $object $key) (case $object (((llm:v1:failure $code) (llm:v1:failure $code)) ((JsonObject $pairs) (llm:v1:object-get $object $key)) ($other JsonNull))))
 (= (llm:v1:render-json $value) (__cetta_lib_json_stringify $value))

@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self llm)
+!(import! &self (library llm))
 (: llm:v1:command-reasoning (-> Atom Atom Atom %Undefined%))
 (= (llm:v1:command-reasoning $protocol $request $body) (let $profiled (llm:v1:with $request "chat_profile" (JsonString "compatible")) (llm:v1:reasoning-options $protocol $profiled $body)))
 (: llm:v1:command-cache (-> Atom %Undefined%))

@@ -287,6 +287,13 @@ def transform(form, dialect: str):
         if handoff is not None:
             return spell_value_handoff(transform(handoff, dialect), dialect)
         if dialect == "petta":
+            # HE module names designate MeTTa libraries. PeTTa also imports
+            # Python modules by bare name (notably math and io), so preserve
+            # the library identity explicitly rather than choosing Python.
+            if (len(form) == 3 and form[0] == Symbol("import!")
+                    and isinstance(form[2], Symbol)
+                    and "/" not in form[2] and "." not in form[2]):
+                return [form[0], form[1], [Symbol("library"), form[2]]]
             if (len(form) == 4 and form[0] == "metta"
                     and isinstance(form[0], Symbol)
                     and form[2] == Symbol("%Undefined%")

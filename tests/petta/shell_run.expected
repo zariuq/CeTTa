@@ -1,0 +1,9 @@
+true
+(proc:exited 0 "λ 🌸 error" "")
+(proc:exited 7 "" "")
+(proc:timed-out "before" "")
+(proc:exited 0 "12345
+[output truncated: kept 5 of 10 bytes]
+" "")
+(proc:failed "timeout seconds must be nonnegative")
+(proc:exited 0 "done" "")

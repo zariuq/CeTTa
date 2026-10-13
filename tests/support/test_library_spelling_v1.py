@@ -14,6 +14,11 @@ def spell(source, dialect="petta"):
 
 
 class HeldBodySpelling(unittest.TestCase):
+    def test_petta_library_import_does_not_select_python_module(self):
+        self.assertEqual(spell("!(import! &self math)"), "!(import! &self (library math))")
+        self.assertEqual(spell("!(import! &self ./local.metta)"), "!(import! &self ./local.metta)")
+        self.assertEqual(spell("!(import! &self math)", "prime"), "!(import! &self math)")
+
     def test_current_space_interpretation(self):
         self.assertEqual(spell("(metta $body %Undefined% &self)"), "(eval $body)")
         self.assertEqual(spell("(metta $body %Undefined% (context-space))"),

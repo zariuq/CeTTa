@@ -28752,6 +28752,18 @@ test-lib-proc: $(BIN)
 	fi; \
 	echo "PASS: lib/proc runs a child process within its bounds"
 
+.PHONY: test-lib-shell
+test-petta-semantics: test-lib-shell
+test-lib-shell: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta tests/petta/shell_run.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/shell_run.expected)" ]; then \
+		echo "FAIL: lib/shell"; \
+		diff <(cat tests/petta/shell_run.expected) <(printf '%s\n' "$$actual") | head -30; \
+		exit 1; \
+	fi; \
+	echo "PASS: native shell preserves output, exit status and selectable deadlines"
+
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
 # A stored row with variables meets a query holding a list built at run time
@@ -41690,7 +41702,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc cwp io durable llm llm/io llm/command llm/compat
+	system fs proc shell cwp io durable llm llm/io llm/command llm/compat
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor

@@ -3,10 +3,10 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 !(import! &self lib_he)
-!(import! &self langdef)
-!(import! &self fs)
-!(import! &self list)
-!(import! &self str)
+!(import! &self (library langdef))
+!(import! &self (library fs))
+!(import! &self (library list))
+!(import! &self (library str))
 (= (tptp:official-syntaxbnf-digest) "f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6")
 (= (tptp:official-reader-cache-path) "runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/pack.sexpr")
 (= (tptp:official-snapshot-path) "runtime/tptp-official-reader/f47940c43c23ed5ed8633a3b74a2847648d5ab794669430c8f0c38f138e61df6/tables.tpp1")
