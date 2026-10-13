@@ -128,16 +128,20 @@ array. Each binding has `name`, `sender`, and `directory`:
 ```
 
 Supply the actual socket path. One Linux inotify descriptor watches all
-configured directories. A published `.json` file contains exactly `id`,
-`correlation`, `sender`, and text `body`; sender must match the binding.
+configured directories. A published `.json` file contains `id`, `correlation`,
+`sender`, and text `body`; sender must match the binding. An optional `headers`
+object carries `from`, `return_address` and `in_reply_to`. The last two may be
+null. Headers are retained with the message in the same native transaction,
+and an existing identity cannot be rewritten with different headers.
 `mailbox_bridge.deliver` publishes by flushing a temporary file, renaming it,
 and flushing the directory. Use immutable, unique filenames and atomic
 publication. A running watcher also handles ordinary copies on close;
 startup and overflow rescans cannot determine whether a file is still open.
 
 The bridge durably admits a message before moving its source into `received/`.
-Malformed files and refused symlinks move into `rejected/`, retaining their
-contents without scheduling endless retries. Each file failure is contained,
+Malformed files, unsupported direct text drops and refused symlinks move into
+`rejected/`, retaining their contents and a `.reason` file with the actual error,
+posting command and accepted envelope example. Each file failure is contained,
 including an excessively nested JSON envelope. Lost
 acknowledgements reconcile by exact message identity. Startup, overflow, and
 replaced directories trigger rescans. Transient owner outages retry held
@@ -146,6 +150,16 @@ sender labels do not authenticate someone who can write that directory.
 
 Published envelopes grant read access to their inherited group. For writers
 under other accounts, use a setgid directory whose group includes the bridge.
+
+Writers can use `python3 tools/mailbox_post.py --config bindings.json NAME
+--body-file note.txt` instead of constructing JSON. Sender identity defaults to
+the configured identity or Unix account. `--from writer --reply-to writer`
+supplies a named return route; a matching configured writer binding supplies
+it automatically. `--in-reply-to` preserves the answered message identity,
+and `--id` supplies a stable identity for an intentional publication retry.
+An explicit return route must exist in the registry. A publication receipt
+means the envelope was written, not that it was read. A directory flush failure
+after rename reports `unknown` rather than claiming nothing was published.
 
 ## Codex bindings
 
