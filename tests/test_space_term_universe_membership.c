@@ -1050,7 +1050,47 @@ static void test_runtime_symbol_membership(void) {
     puts("PASS: runtime spelling membership, mixed keys, duplicates and mutation");
 }
 
-int main(void) {
+static void test_unregistered_head_lookup(void) {
+    Arena scratch;
+    arena_init(&scratch);
+
+#if CETTA_MANAGED_SYMBOLS
+    /* A dynamically read, unknown head remains a spelled symbol. In a
+     * hashed trie, its absent number must not select an empty hash slot's
+     * uninitialized child. Stored wildcards must still match that head. */
+    DiscNode *unknown_head_disc = disc_node_new();
+    for (CettaIndex i = 0u; i < 64u; i++) {
+        char head_name[64];
+        snprintf(head_name, sizeof(head_name), "hashed-known-head-%llu",
+                 (unsigned long long)i);
+        Atom *known_head = atom_symbol(&scratch, head_name);
+        (void)atom_symbol_register_id(known_head);
+        disc_insert(unknown_head_disc,
+                    atom_expr2(&scratch, known_head, atom_int(&scratch, 1)), i);
+    }
+    Atom *unknown_head = atom_symbol_data(&scratch, "hashed-unregistered-head");
+    assert(atom_symbol_current_id(unknown_head) == SYMBOL_ID_NONE);
+    Atom *unknown_query = atom_expr2(
+        &scratch, unknown_head, atom_var(&scratch, "$unknown-head-value"));
+    CettaIndex *unknown_matches = NULL;
+    CettaIndex unknown_count = 0u, unknown_capacity = 0u;
+    disc_lookup(unknown_head_disc, unknown_query, &unknown_matches,
+                &unknown_count, &unknown_capacity);
+    assert(unknown_count == 0u);
+    free(unknown_matches);
+    disc_insert(unknown_head_disc,
+                atom_expr2(&scratch, atom_var(&scratch, "$any-head"),
+                           atom_int(&scratch, 1)), 64u);
+    disc_lookup(unknown_head_disc, unknown_query, &unknown_matches,
+                &unknown_count, &unknown_capacity);
+    assert(unknown_count == 1u && unknown_matches[0] == 64u);
+    free(unknown_matches);
+    disc_node_free(unknown_head_disc);
+#endif
+    arena_free(&scratch);
+}
+
+int main(int argc, char **argv) {
     SymbolTable symbols;
     Arena persistent;
     Arena scratch_a;
@@ -1063,6 +1103,13 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_unregistered_head_lookup();
+    if (argc == 2 && strcmp(argv[1], "--unregistered-head") == 0) {
+        g_symbols = NULL;
+        symbol_table_free(&symbols);
+        puts("PASS: unregistered symbol lookup and stored wildcard");
+        return 0;
+    }
     test_runtime_symbol_membership();
     test_space_imported_prefix();
     test_space_equation_projection_tokens();

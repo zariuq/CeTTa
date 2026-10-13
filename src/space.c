@@ -625,6 +625,10 @@ static void disc_sym_ht_init(DiscPool *pool, DiscSymHashTable *ht,
 }
 
 static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
+    /* A spelled query need not be registered. Zero is the empty-slot key,
+     * never a stored symbol; its child is intentionally uninitialized. */
+    if (key == SYMBOL_ID_NONE)
+        return NULL;
     uint32_t idx = disc_sym_hash(key) & ht->mask;
     for (;;) {
         if (ht->entries[idx].key == key)
