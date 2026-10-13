@@ -85,6 +85,16 @@ class Fixture:
 
 
 class ServiceTests(unittest.TestCase):
+    def test_idle_shutdown_does_not_wait_for_the_poll_deadline(self):
+        # Close the last connection, then stop while the service is preparing
+        # or entering its idle wait, reopening the same durable directory.
+        self.client.close()
+        for _ in range(12):
+            self.fixture.process.terminate()
+            self.fixture.process.wait(timeout=2)
+            self.fixture.stop()
+            self.fixture.start()
+
     def setUp(self):
         self.fixture = Fixture()
         self.addCleanup(self.fixture.close)

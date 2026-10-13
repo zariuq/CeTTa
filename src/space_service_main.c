@@ -1079,6 +1079,13 @@ int main(int argc,char **argv) {
     struct sigaction action={.sa_handler=stop}; sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL); sigaction(SIGTERM,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
+    /* Check the stop flag with these signals blocked, then unblock them
+     * atomically in ppoll. A stop between the check and poll must not wait
+     * for the ordinary 30-second idle deadline. */
+    sigset_t stop_signals, wait_signals;
+    sigemptyset(&stop_signals);
+    sigaddset(&stop_signals,SIGINT); sigaddset(&stop_signals,SIGTERM);
+    if (sigprocmask(SIG_BLOCK,&stop_signals,&wait_signals)) goto done;
     Client clients[CLIENTS]; for (size_t i=0;i<CLIENTS;++i) clients[i]=(Client){.fd=-1};
     fprintf(stderr,"space-service: ready\n");
     while (!stopping && !s->poisoned) {
@@ -1095,7 +1102,8 @@ int main(int argc,char **argv) {
             if (s->snapshots[i].id && s->snapshots[i].expires<deadline) deadline=s->snapshots[i].expires;
         current=now_ms();
         int timeout=deadline>current ? (int)(deadline-current) : 0;
-        int n=poll(pollfds,CLIENTS+1,timeout);
+        struct timespec wait_time={timeout/1000,(timeout%1000)*1000000L};
+        int n=ppoll(pollfds,CLIENTS+1,&wait_time,&wait_signals);
         if (n<0 && errno==EINTR) continue;
         if (n<0) { s->poisoned=true; break; }
         if (pollfds[0].revents&POLLIN) {
@@ -1128,6 +1136,7 @@ int main(int argc,char **argv) {
             s->poisoned=true;
     }
     for (size_t i=0;i<CLIENTS;++i) client_close(s,&clients[i]);
+    (void)sigprocmask(SIG_SETMASK,&wait_signals,NULL);
     struct stat current;
     if (!lstat(path,&current) && current.st_dev==socket_identity.st_dev &&
         current.st_ino==socket_identity.st_ino) unlink(path);
