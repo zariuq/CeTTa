@@ -923,6 +923,43 @@ bool bindings_frame_index_register(
         false);
 }
 
+/* A frame numbered from its first identifier names each slot past its schema
+ * by its position.  A receiving frame that names its slots by a schema of its
+ * own cannot grow by position; it takes the source's slots by those names,
+ * presented as the source presents them.  The schema of those names: */
+static BindingsFrameSchema *bindings_frame_positional_schema(
+        const BindingsFrameIndexEntry *frame) {
+    if (!frame->schema->source_ids_contiguous ||
+        frame->schema->source_first_id != 1u ||
+        frame->slot_len <= frame->schema->len ||
+        (size_t)frame->slot_len > SIZE_MAX / sizeof(VarId))
+        return NULL;
+    VarId *ids = cetta_malloc((size_t)frame->slot_len * sizeof(*ids));
+    for (uint32_t slot = 0u; slot < frame->slot_len; slot++)
+        ids[slot] = bindings_frame_slot_source_id(frame, slot);
+    BindingsFrameSchema *schema = bindings_frame_schema_new(ids, frame->slot_len);
+    free(ids);
+    if (!schema)
+        return NULL;
+    for (uint32_t slot = 0u; slot < frame->slot_len; slot++) {
+        schema->spellings[slot] = bindings_frame_slot_spelling(frame, slot);
+        schema->name_keys[slot] = bindings_frame_slot_name_key(frame, slot);
+    }
+    return schema;
+}
+
+static bool bindings_frame_index_register_positional_slots(
+        Bindings *destination, const BindingsFrameIndexEntry *frame) {
+    BindingsFrameSchema *schema = bindings_frame_positional_schema(frame);
+    if (!schema)
+        return false;
+    bool registered = bindings_frame_index_register_kind(
+        destination, schema->source_ids, schema->len, frame->epoch,
+        frame->schema_complete, schema, NULL, false);
+    bindings_frame_schema_release(schema);
+    return registered;
+}
+
 bool bindings_frame_index_merge_schemas(
     Bindings *destination, const Bindings *source) {
     if (!destination || !source)
@@ -937,7 +974,8 @@ bool bindings_frame_index_merge_schemas(
                 frame->epoch, frame->schema_complete, frame->schema, NULL,
                 false) ||
             (frame->slot_len > frame->schema->len &&
-             !bindings_frame_index_grow_slots(destination, frame->epoch, frame->slot_len))) {
+             !bindings_frame_index_grow_slots(destination, frame->epoch, frame->slot_len) &&
+             !bindings_frame_index_register_positional_slots(destination, frame))) {
             return false;
         }
     }
@@ -1151,6 +1189,18 @@ static bool bindings_frame_merge_slot_extent(
     return true;
 }
 
+static bool bindings_builder_register_positional_slots(
+        BindingsBuilder *builder, const BindingsFrameIndexEntry *frame) {
+    BindingsFrameSchema *schema = bindings_frame_positional_schema(frame);
+    if (!schema)
+        return false;
+    bool registered = bindings_builder_register_frame_kind(
+        builder, schema->source_ids, schema->len, frame->epoch,
+        frame->schema_complete, schema, NULL);
+    bindings_frame_schema_release(schema);
+    return registered;
+}
+
 bool bindings_builder_merge_frame_schemas(
         BindingsBuilder *builder, const Bindings *source) {
     if (!builder || !source)
@@ -1186,7 +1236,8 @@ bool bindings_builder_merge_frame_schemas(
             }
             if (frame->slot_len > frame->schema->len &&
                 !bindings_frame_index_grow_slots(
-                    &builder->current, frame->epoch, frame->slot_len)) {
+                    &builder->current, frame->epoch, frame->slot_len) &&
+                !bindings_builder_register_positional_slots(builder, frame)) {
                 return false;
             }
         }

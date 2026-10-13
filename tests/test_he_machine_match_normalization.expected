@@ -1,0 +1,8 @@
+[(3 4)]
+[(3 4)]
+[((Error (+ 1) IncorrectNumberOfArguments))]
+[(1 2), (1 2)]
+[1, 2]
+[(pair ok 1), (pair ok 2)]
+[(step a b), (step b c)]
+[(b c)]

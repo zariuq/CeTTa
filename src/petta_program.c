@@ -243,6 +243,7 @@ typedef struct {
     const PettaEquationTemplate *equation_template;
     uint32_t static_variable_count;
     SymbolId head;
+    bool rhs_binds_variables;
 } PettaProgramEquation;
 
 struct PettaEquationTemplateC0 {
@@ -380,6 +381,14 @@ typedef struct {
     bool admits_any_head;
 } PettaCallabilityDomain;
 
+/* What the callability cache read of one space: its equation projection,
+ * the prefix it scanned, and how many rows. */
+typedef struct {
+    SpaceEquationToken equations;
+    SpaceReadToken read;
+    CettaCount scanned_len;
+} PettaCallabilityScan;
+
 #define PETTA_TABLE_SAFETY_CACHE_CAP 128u
 
 /* Keyed on the space program (equation and declaration occurrences), not on
@@ -420,12 +429,12 @@ struct PettaProgram {
     PettaProgramAnalysisState *analysis;
     PettaCallabilityDomain predeclared_callability;
     uint64_t predeclared_generation;
-    /* Callability is program knowledge: it changes only with equation or
-       declaration occurrences (each space's SpaceProgramToken) and with
-       predeclared heads.  It is read once per program revision, not once
-       per planned expression. */
+    /* Callability is program knowledge: the heads of the equation
+       occurrences of the program's spaces and the predeclared heads.  It is
+       read once per change of those, not once per planned expression; an
+       append adds the heads of the appended rows. */
     PettaCallabilityDomain callability_cache;
-    SpaceProgramToken *callability_cache_tokens;
+    PettaCallabilityScan *callability_cache_tokens;
     size_t callability_cache_token_len;
     size_t callability_cache_token_cap;
     uint64_t callability_cache_predeclared_generation;
@@ -821,6 +830,35 @@ static bool petta_program_variables_contained(
         }
     }
     return true;
+}
+
+/* Whether `right` holds a variable `left` lacks; both sets are sorted. */
+static bool petta_program_variables_beyond(
+    const PettaProgramVarSet *left, const PettaProgramVarSet *right) {
+    size_t left_index = 0u;
+    for (size_t right_index = 0u; right_index < right->len; right_index++) {
+        while (left_index < left->len &&
+               left->items[left_index] < right->items[right_index])
+            left_index++;
+        if (left_index >= left->len ||
+            left->items[left_index] != right->items[right_index])
+            return true;
+    }
+    return false;
+}
+
+/* Whether an equation's body binds variables of its own. */
+static bool petta_program_rhs_binds_variables(Atom *lhs, Atom *rhs) {
+    if (!rhs || !atom_has_vars(rhs))
+        return false;
+    PettaProgramVarSet lhs_variables = {0};
+    PettaProgramVarSet rhs_variables = {0};
+    bool binds = !petta_program_collect_variables(lhs, &lhs_variables) ||
+        !petta_program_collect_variables(rhs, &rhs_variables) ||
+        petta_program_variables_beyond(&lhs_variables, &rhs_variables);
+    free(lhs_variables.items);
+    free(rhs_variables.items);
+    return binds;
 }
 
 static bool petta_program_variable_union_count(
@@ -3100,8 +3138,8 @@ static bool petta_program_space_is_live(const PettaProgramSpace *space) {
            space->instance_id == space_instance_id(space->space);
 }
 
-/* The spaces read, their program tokens and the predeclared generation still
-   describe the cached domain. */
+/* The spaces read, their equation tokens and the predeclared generation
+   still describe the cached domain. */
 static bool petta_program_callability_cache_current(
     const PettaProgram *program) {
     if (!program->callability_cache_valid ||
@@ -3112,15 +3150,15 @@ static bool petta_program_callability_cache_current(
     }
     for (size_t index = 0u; index < program->space_len; index++) {
         const PettaProgramSpace *space = &program->spaces[index];
-        SpaceProgramToken token =
-            program->callability_cache_tokens[index];
+        const PettaCallabilityScan *scan =
+            &program->callability_cache_tokens[index];
         if (!petta_program_space_is_live(space)) {
-            if (token.space)
+            if (scan->equations.space)
                 return false;
             continue;
         }
-        if (!space_program_token_matches_live_space(
-                token, space->space)) {
+        if (!space_equation_token_matches_live_space(
+                scan->equations, space->space)) {
             return false;
         }
     }
@@ -3141,6 +3179,97 @@ static bool petta_callability_copy(
     memcpy(out->named_heads, source->named_heads,
            sizeof(*out->named_heads) * source->named_len);
     out->named_len = source->named_len;
+    return true;
+}
+
+/* Add the heads of the equations among rows [from, to) of one space. */
+static bool petta_program_scan_callability_rows(
+    const PettaProgram *program, const Space *space,
+    CettaCount from, CettaCount to,
+    PettaCallabilityDomain *callability) {
+    for (CettaIndex atom_index = from; atom_index < to; atom_index++) {
+        Atom *lhs = NULL;
+        SymbolId head = SYMBOL_ID_NONE;
+        if (petta_program_equation_view(program,
+                space_get_at64(space, atom_index),
+                &lhs, NULL, &head)) {
+            if (petta_equation_lhs_admits_any_named_head(lhs)) {
+                callability->admits_any_head = true;
+            } else if (head != SYMBOL_ID_NONE &&
+                       !petta_callability_insert_named(
+                           callability, head)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static PettaCallabilityScan petta_program_callability_scan_of(
+    const PettaProgramSpace *space) {
+    PettaCallabilityScan scan = {0};
+    if (petta_program_space_is_live(space)) {
+        scan.equations = space_equation_token(space->space);
+        scan.read = space_read_token(space->space);
+        scan.scanned_len = space_length64(space->space);
+    }
+    return scan;
+}
+
+/* Bring the cached domain up to date when every space whose equations
+ * changed only grew: the rows it scanned are intact, so their heads stand
+ * and only the appended rows are read.  False when a space was rewritten,
+ * replaced or added; the caller then rescans. */
+static bool petta_program_extend_callability(PettaProgram *program) {
+    if (!program->callability_cache_valid ||
+        program->callability_cache_predeclared_generation !=
+            program->predeclared_generation ||
+        program->callability_cache_token_len != program->space_len) {
+        return false;
+    }
+    for (size_t index = 0u; index < program->space_len; index++) {
+        const PettaProgramSpace *space = &program->spaces[index];
+        const PettaCallabilityScan *scan =
+            &program->callability_cache_tokens[index];
+        if (!petta_program_space_is_live(space)) {
+            if (scan->equations.space)
+                return false;
+            continue;
+        }
+        if (space_equation_token_matches_live_space(
+                scan->equations, space->space))
+            continue;
+        SpaceReadToken now = space_read_token(space->space);
+        if (scan->read.space != space->space ||
+            !space_read_token_prefix_intact(scan->read) ||
+            now.base_dependency_epoch != scan->read.base_dependency_epoch ||
+            space_length64(space->space) < scan->scanned_len) {
+            return false;
+        }
+    }
+    size_t named_before = program->callability_cache.named_len;
+    bool any_before = program->callability_cache.admits_any_head;
+    for (size_t index = 0u; index < program->space_len; index++) {
+        const PettaProgramSpace *space = &program->spaces[index];
+        PettaCallabilityScan *scan =
+            &program->callability_cache_tokens[index];
+        if (!petta_program_space_is_live(space) ||
+            space_equation_token_matches_live_space(
+                scan->equations, space->space)) {
+            continue;
+        }
+        if (!petta_program_scan_callability_rows(
+                program, space->space, scan->scanned_len,
+                space_length64(space->space),
+                &program->callability_cache)) {
+            program->callability_cache_valid = false;
+            return false;
+        }
+        *scan = petta_program_callability_scan_of(space);
+    }
+    if (program->callability_cache.named_len != named_before ||
+        program->callability_cache.admits_any_head != any_before)
+        program->callability_epoch++;
     return true;
 }
 
@@ -3165,22 +3294,10 @@ static bool petta_program_scan_callability(
             &program->spaces[space_index];
         if (!petta_program_space_is_live(space))
             continue;
-        CettaCount length = space_length64(space->space);
-        for (CettaIndex atom_index = 0u;
-             atom_index < length; atom_index++) {
-            Atom *lhs = NULL;
-            SymbolId head = SYMBOL_ID_NONE;
-            if (petta_program_equation_view(program,
-                    space_get_at64(space->space, atom_index),
-                    &lhs, NULL, &head)) {
-                if (petta_equation_lhs_admits_any_named_head(lhs)) {
-                    callability->admits_any_head = true;
-                } else if (head != SYMBOL_ID_NONE &&
-                           !petta_callability_insert_named(
-                               callability, head)) {
-                    return false;
-                }
-            }
+        if (!petta_program_scan_callability_rows(
+                program, space->space, 0u,
+                space_length64(space->space), callability)) {
+            return false;
         }
     }
     return true;
@@ -3193,7 +3310,8 @@ static bool petta_program_collect_callability(
     PettaCallabilityDomain *callability) {
     if (!program || !callability)
         return false;
-    if (petta_program_callability_cache_current(program))
+    if (petta_program_callability_cache_current(program) ||
+        petta_program_extend_callability(program))
         return petta_callability_copy(
             callability, &program->callability_cache);
     if (!petta_program_scan_callability(program, callability))
@@ -3208,13 +3326,9 @@ static bool petta_program_collect_callability(
             &program->callability_cache, callability)) {
         return true;
     }
-    for (size_t index = 0u; index < program->space_len; index++) {
-        const PettaProgramSpace *space = &program->spaces[index];
-        SpaceProgramToken token = {0};
-        if (petta_program_space_is_live(space))
-            token = space_program_token(space->space);
-        program->callability_cache_tokens[index] = token;
-    }
+    for (size_t index = 0u; index < program->space_len; index++)
+        program->callability_cache_tokens[index] =
+            petta_program_callability_scan_of(&program->spaces[index]);
     program->callability_cache_token_len = program->space_len;
     program->callability_cache_predeclared_generation =
         program->predeclared_generation;
@@ -4356,6 +4470,8 @@ bool petta_program_note_add(
             .equation_template = equation_template,
             .static_variable_count = static_variable_count,
             .head = head,
+            .rhs_binds_variables =
+                petta_program_rhs_binds_variables(lhs, rhs),
         });
     return true;
 }
@@ -4477,9 +4593,15 @@ bool petta_program_synchronize_space(
     CettaCount view_count = space_view_length64(space);
     PettaCallabilityDomain callability = {0};
     bool ok = true;
+    /* The view's first rows are the space's own; the equations among them,
+     * in order, are the ones compiled below. */
+    CettaIndex *own_rules = NULL;
+    size_t own_rule_len = 0u, own_rule_cap = 0u;
     /* Imported heads are callable in this view, while each equation remains
      * owned by its defining space's occurrence catalog below. */
     for (CettaIndex index = 0u; ok && index < view_count; index++) {
+        if (!space_view_row_may_be_rule(space, index))
+            continue;
         Atom *atom = space_view_get_at64(space, index);
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
@@ -4487,6 +4609,20 @@ bool petta_program_synchronize_space(
             ok = false;
         } else if (petta_program_equation_view(program,
                        atom, &lhs, NULL, &head)) {
+            if (index < atom_count) {
+                if (own_rule_len == own_rule_cap) {
+                    size_t cap = own_rule_cap ? own_rule_cap * 2u : 16u;
+                    CettaIndex *grown =
+                        realloc(own_rules, cap * sizeof(*own_rules));
+                    if (!grown) {
+                        ok = false;
+                        break;
+                    }
+                    own_rules = grown;
+                    own_rule_cap = cap;
+                }
+                own_rules[own_rule_len++] = index;
+            }
             if (petta_equation_lhs_admits_any_named_head(lhs)) {
                 callability.admits_any_head = true;
             } else if (head != SYMBOL_ID_NONE) {
@@ -4522,10 +4658,8 @@ bool petta_program_synchronize_space(
         ok = false;
     }
     size_t cursor = 0u;
-    for (CettaIndex index = 0u; ok && index < atom_count; index++) {
-        Atom *atom = space_get_at64(space, index);
-        if (!petta_program_admits_equation(program, atom))
-            continue;
+    for (size_t rule = 0u; ok && rule < own_rule_len; rule++) {
+        Atom *atom = space_get_at64(space, own_rules[rule]);
         size_t match = known_len;
         if (cursor < known_len && !taken[cursor] &&
             atom_eq(known[cursor].equation, atom)) {
@@ -4555,6 +4689,7 @@ bool petta_program_synchronize_space(
     }
     free(taken);
     free(known);
+    free(own_rules);
     free(callability.named_heads);
 
     if (!ok || !space_read_token_matches_live_space(read, space)) {
@@ -5331,6 +5466,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
                         admit_local_execution_payload
                             ? record->static_variable_count : 0u),
                 .occurrence = actual[matched].occurrence,
+                .rhs_binds_variables = record->rhs_binds_variables,
             };
         }
     }

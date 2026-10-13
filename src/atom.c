@@ -257,10 +257,104 @@ void *cetta_realloc(void *ptr, size_t size) {
     return out;
 }
 
-static void arena_free_block_list(ArenaBlock *head) {
+/* Short-lived arenas, such as a table generator's machine, return their
+ * blocks as fast as they take them.  A thread keeps a few full-size blocks
+ * of recycling arenas for the next one: given back to the allocator, they
+ * would let it trim the heap top and grow it again around every such
+ * lifetime.  Other arenas leave the allocator's own reuse undisturbed. */
+#define ARENA_THREAD_STOCK_BLOCKS 32u
+
+#if defined(__SANITIZE_ADDRESS__)
+#define ARENA_STOCK_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ARENA_STOCK_ASAN 1
+#endif
+#endif
+#ifdef ARENA_STOCK_ASAN
+#include <sanitizer/asan_interface.h>
+#define ARENA_STOCK_POISON(block) \
+    ASAN_POISON_MEMORY_REGION((block)->data, (block)->capacity)
+#define ARENA_STOCK_UNPOISON(block) \
+    ASAN_UNPOISON_MEMORY_REGION((block)->data, (block)->capacity)
+#else
+#define ARENA_STOCK_POISON(block) ((void)(block))
+#define ARENA_STOCK_UNPOISON(block) ((void)(block))
+#endif
+
+static _Thread_local ArenaBlock *g_arena_stock;
+static _Thread_local uint32_t g_arena_stock_len;
+static _Thread_local bool g_arena_stock_registered;
+static pthread_key_t g_arena_stock_key;
+static pthread_once_t g_arena_stock_once = PTHREAD_ONCE_INIT;
+
+static void arena_stock_release(void *unused) {
+    (void)unused;
+    ArenaBlock *block = g_arena_stock;
+    g_arena_stock = NULL;
+    g_arena_stock_len = 0u;
+    while (block) {
+        ArenaBlock *next = block->next;
+        ARENA_STOCK_UNPOISON(block);
+        free(block);
+        block = next;
+    }
+}
+
+static void arena_stock_key_init(void) {
+    (void)pthread_key_create(&g_arena_stock_key, arena_stock_release);
+}
+
+/* A thread's stock is released when the thread exits. */
+static void arena_retire_block(ArenaBlock *block, bool recycle) {
+    if (!recycle || block->capacity != ARENA_BLOCK_SIZE ||
+        g_arena_stock_len >= ARENA_THREAD_STOCK_BLOCKS) {
+        free(block);
+        return;
+    }
+    if (!g_arena_stock_registered) {
+        (void)pthread_once(&g_arena_stock_once, arena_stock_key_init);
+        (void)pthread_setspecific(g_arena_stock_key, (void *)1);
+        g_arena_stock_registered = true;
+    }
+    block->next = g_arena_stock;
+    block->used = 0;
+    ARENA_STOCK_POISON(block);
+    g_arena_stock = block;
+    g_arena_stock_len++;
+}
+
+static ArenaBlock *arena_stock_take(void) {
+    ArenaBlock *block = g_arena_stock;
+    if (!block)
+        return NULL;
+    ARENA_STOCK_UNPOISON(block);
+    g_arena_stock = block->next;
+    g_arena_stock_len--;
+    block->next = NULL;
+    block->used = 0;
+    return block;
+}
+
+/* A new block, from the thread's stock when it is full-size.  Out of line,
+ * so the claim path of small arenas stays as short as before. */
+static __attribute__((noinline)) ArenaBlock *arena_block_alloc(
+    size_t capacity, bool recycle) {
+    ArenaBlock *block = recycle && capacity == ARENA_BLOCK_SIZE
+        ? arena_stock_take() : NULL;
+    if (block)
+        return block;
+    block = cetta_malloc(sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + capacity);
+    block->capacity = capacity;
+    block->used = 0;
+    block->next = NULL;
+    return block;
+}
+
+static void arena_free_block_list(ArenaBlock *head, bool recycle) {
     while (head) {
         ArenaBlock *next = head->next;
-        free(head);
+        arena_retire_block(head, recycle);
         head = next;
     }
 }
@@ -294,10 +388,7 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
                                         : ARENA_BLOCK_SIZE;
     if (min_capacity > capacity)
         capacity = min_capacity;
-    block = cetta_malloc(sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + capacity);
-    block->capacity = capacity;
-    block->used = 0;
-    block->next = NULL;
+    block = arena_block_alloc(capacity, a->recycle_blocks);
     a->reserved_bytes += block->capacity;
     a->block_count++;
     arena_runtime_note_usage(a);
@@ -764,6 +855,7 @@ void arena_init(Arena *a) {
     a->retained_owners = NULL;
     a->frame_identities = NULL;
     a->scalar_cache = false;
+    a->recycle_blocks = false;
 }
 
 void arena_init_detached(Arena *a) {
@@ -1089,8 +1181,8 @@ void arena_free(Arena *a) {
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_FREE);
     provenance_unregister_arena(a);
     arena_run_finalizers_until(a, NULL);
-    arena_free_block_list(a->head);
-    arena_free_block_list(a->spare);
+    arena_free_block_list(a->head, a->recycle_blocks);
+    arena_free_block_list(a->spare, a->recycle_blocks);
     arena_symbol_cache_free(a);
     arena_release_frame_identities(a);
     a->head = NULL;
@@ -1128,6 +1220,11 @@ void arena_set_hashcons(Arena *a, HashConsTable *hc) {
 void arena_set_scalar_cache(Arena *a, bool enabled) {
     if (a)
         a->scalar_cache = enabled;
+}
+
+void arena_set_block_recycling(Arena *a, bool enabled) {
+    if (a)
+        a->recycle_blocks = enabled;
 }
 
 void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
@@ -1205,7 +1302,7 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
         a->spare_block_count--;
         a->reserved_bytes -= block->capacity;
         a->block_count--;
-        free(block);
+        arena_retire_block(block, a->recycle_blocks);
     }
     arena_runtime_note_usage(a);
     arena_runtime_note_spare(a);
@@ -2287,14 +2384,19 @@ static __attribute__((noinline)) SymbolId symbol_cached_literal_slow(
 
 /* ── Arena ──────────────────────────────────────────────────────────────── */
 
+/* A new head block for an allocation that does not fit.  Out of line, so
+ * the bump path of arena_alloc stays short whatever claiming involves. */
+static __attribute__((noinline)) void arena_grow(Arena *a, size_t size) {
+    ArenaBlock *b = arena_claim_block(a, size);
+    b->next = a->head;
+    a->head = b;
+}
+
 void *arena_alloc(Arena *a, size_t size) {
     /* Align to 8 bytes */
     size = (size + 7) & ~(size_t)7;
-    if (!a->head || a->head->used + size > a->head->capacity) {
-        ArenaBlock *b = arena_claim_block(a, size);
-        b->next = a->head;
-        a->head = b;
-    }
+    if (!a->head || a->head->used + size > a->head->capacity)
+        arena_grow(a, size);
     void *ptr = a->head->data + a->head->used;
     a->head->used += size;
     a->live_bytes += size;

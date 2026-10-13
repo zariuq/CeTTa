@@ -264,9 +264,17 @@ bool cetta_language_visible_in(CettaLanguageId language_id,
 void cetta_profile_print_inventory_for_language(FILE *out,
                                                 CettaLanguageId language_id);
 const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name);
+/* Positions name policies compactly: a policy's index plus one, zero for
+ * none.  Every position is below CETTA_BUILTIN_POLICY_POSITIONS. */
+#define CETTA_BUILTIN_POLICY_POSITIONS 256u
+uint32_t cetta_builtin_policy_position(const CettaBuiltinPolicy *policy);
+const CettaBuiltinPolicy *cetta_builtin_policy_at_position(uint32_t position);
 bool cetta_language_allows_builtin(CettaLanguageId language_id,
                                    const CettaProfile *profile,
                                    const char *name);
+bool cetta_language_allows_builtin_policy(CettaLanguageId language_id,
+                                          const CettaProfile *profile,
+                                          const CettaBuiltinPolicy *policy);
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,
                                                 const CettaProfile *profile);
 bool cetta_language_reads_lists(CettaLanguageId language_id,

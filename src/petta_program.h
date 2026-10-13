@@ -236,6 +236,9 @@ typedef struct {
     /* Revision-pinned source layout used to activate a relational equation
      * without rediscovering its sides or copying its complete syntax. */
     PettaEquationActivationLayout activation_layout;
+    /* The right side has a variable the left side lacks: the body binds
+     * variables of its own. */
+    bool rhs_binds_variables;
     /* Stable only within the captured Space revision.  The executor treats
      * this as evidence provenance, never as a replacement for the equation
      * or its authoritative matcher. */

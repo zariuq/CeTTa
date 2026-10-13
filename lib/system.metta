@@ -1,4 +1,5 @@
 (: system:monotonic-ns (-> Number))
+(: system:cwd (-> String))
 
 (= (system:args)
    (function

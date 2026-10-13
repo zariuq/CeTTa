@@ -18683,14 +18683,18 @@ test-petta-libpl-leak-ownership-body: $(BIN) $(LSAN_SCOPE_PROBE_BIN)
 test-gc-full-fast-differential-contract:
 	@scripts/test_gc_full_fast_differential_contract.sh
 
+# Sanitized frames are larger, and the evaluator's C-stack guard takes its
+# budget from the stack limit: the sanitized suites run with a larger stack.
+SANITIZER_STACK_KB ?= 65536
+
 test-asan:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-asan-main:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=main ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-asan-mork:
-	@CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 $(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 test-correctness-all
+	@ulimit -s $(SANITIZER_STACK_KB); CETTA_RHOMETTA_AUDIT_TIMEOUT=240 CETTA_LIST_LANES_TIMEOUT=240 CETTA_WALL_TIME_SCALE=10 $(MAKE) -s BUILD=mork ENABLE_SANITIZERS=1 SANITIZERS=address,undefined ASAN_REPEATABLE=1 PRIME_COMPLETION_TIMEOUT=600 test-correctness-all
 
 test-tsan:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 SANITIZERS=thread test-rhocalc
@@ -21015,9 +21019,11 @@ probe-heavy-diagnostics: $(BIN)
 	echo "---"; \
 	echo "$$count heavy diagnostic probes"
 
+# Native NIK regression checks remain in `test`. Experimental cross-realization
+# proof qualification is opt-in: run `make test-prime-nik-v1` when working on
+# that subsystem; it is outside the routine correctness and sanitizer gates.
 test-correctness-all:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-nik-qualification-v1
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-symbolic-battery
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-held-symbolic
@@ -27256,6 +27262,34 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_forwarding.metta 2>&1); \
+	expected=$$(cat tests/petta/search_machine_tabled_forwarding.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: forwarded PeTTa tables change an observation of the flat replay"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	forward_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_tabled_forwarding.metta \
+		2>&1 >/dev/null); \
+	for case in edges view_reads declined_continuation declined_open \
+			declined_incomplete declined_policy declined_branching \
+			declined_shared_child declined_overlap; do \
+		if ! printf '%s\n' "$$forward_stats" | \
+				grep -Eq "table_forward_$${case}=[1-9][0-9]*"; then \
+			echo "FAIL: table forwarding case $$case was not exercised"; \
+			exit 1; \
+		fi; \
+	done; \
+	if ! printf '%s\n' "$$forward_stats" | \
+			grep -Eq 'table_count_folds=[1-9][0-9]*'; then \
+		echo "FAIL: a count of a complete table was not folded"; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_tabled_effect_boundary.metta 2>&1); \
 	expected=$$(cat \
 		tests/petta/search_machine_tabled_effect_boundary.base.expected); \
@@ -28037,11 +28071,12 @@ test-petta-tier-views-over-kept-storage: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_views_over_kept_storage.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_views_over_kept_storage.expected)" ]; then \
-			echo "FAIL: list walks within 5 s on the $$route route"; \
+			echo "FAIL: list walks within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/tier_views_over_kept_storage.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -28058,11 +28093,12 @@ test-petta-tier-tail-superpose: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_tail_superpose.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_tail_superpose.expected)" ]; then \
-			echo "FAIL: tail superpose within 5 s on the $$route route"; \
+			echo "FAIL: tail superpose within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/tier_tail_superpose.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -28079,11 +28115,12 @@ test-petta-prepared-decons-views: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 5 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/prepared_decons_views.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/prepared_decons_views.expected)" ]; then \
-			echo "FAIL: deconstruction walks within 5 s on the $$route route"; \
+			echo "FAIL: deconstruction walks within $$(( 5 * $${CETTA_WALL_TIME_SCALE:-1} )) s on the $$route route"; \
 			diff <(cat tests/petta/prepared_decons_views.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
 			exit 1; \
@@ -28100,7 +28137,8 @@ test-petta-tier-list-heads: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 10 \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			timeout $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) \
 			$(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/tier_list_heads.metta 2>&1) || true; \
 		if [ "$$actual" != "$$(cat tests/petta/tier_list_heads.expected)" ]; then \
@@ -30869,10 +30907,11 @@ test-petta-oem-collection-stress: $(BIN)
 test: test-petta-oem-queue-drain
 test-petta-oem-queue-drain: $(BIN)
 	@set -eu; \
-	actual=$$(timeout 10 $(CETTA_BIN_INVOKE) --lang petta \
+	actual=$$(timeout $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) \
+		$(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/oem_queue_drain.metta 2>&1) || true; \
 	if [ "$$actual" != "$$(cat tests/petta/oem_queue_drain.expected)" ]; then \
-		echo "FAIL: a queue drain of 200,000 items within 10 s"; \
+		echo "FAIL: a queue drain of 200,000 items within $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) s"; \
 		diff <(cat tests/petta/oem_queue_drain.expected) \
 			<(printf '%s\n' "$$actual") | head -10; \
 		exit 1; \
@@ -36076,6 +36115,11 @@ TRACKED_GENERATED_V1 = \
 	$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 	$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C)
 
+# A lock that seals a compiled native artifact holds that artifact's digest
+# in the ordinary build; a sanitized build compiles it differently, so the
+# sanitized check leaves those locks to the ordinary one.
+TRACKED_GENERATED_FLAVOR_SEALED_V1 = $(METAMATH_DIRECT_RUNTIME_LOCK_V1)
+
 # Regenerate every tracked output from its sources and require the bytes git
 # holds for it in the index, so what is committed or about to be, headers
 # included; a generated header git does not track fails too.  The check
@@ -36087,7 +36131,7 @@ check-generated:
 	@set -eu; \
 	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/check-generated.XXXXXX"); \
 	trap 'rm -rf "$${work:?}"' EXIT INT TERM; \
-	outputs="$(TRACKED_GENERATED_V1)"; \
+	outputs="$(if $(filter 1,$(ENABLE_SANITIZERS)),$(filter-out $(TRACKED_GENERATED_FLAVOR_SEALED_V1),$(TRACKED_GENERATED_V1)),$(TRACKED_GENERATED_V1))"; \
 	compared=""; \
 	for output in $$outputs; do \
 		compared="$$compared $$output"; \
@@ -39302,6 +39346,8 @@ test-decl-langdef-import-v1-body: $(BIN) $(DECL_LANGDEF_MANIFEST_V1) $(DECL_LANG
 	echo '(DeclImportV1Summary 12 12 0)'
 
 .PHONY: test-decl-langdef-regeneration-v1
+# The link check reads the ordinary build: sanitizer instrumentation keeps
+# every linked object alive, so unused bridge code stays in that build.
 test-decl-langdef-regeneration-v1: $(LANGDEF_COMPILER_V1_BIN)
 	@set -eu; \
 	work=$$(mktemp -d runtime/decl-langdef-regeneration.XXXXXX); \
@@ -39319,7 +39365,8 @@ test-decl-langdef-regeneration-v1: $(LANGDEF_COMPILER_V1_BIN)
 		<(rg -v '^; source-package-sha256 ' $(DECL_LANGDEF_PROGRAM_V1)); \
 	cmp -s "$$work/pack" $(DECL_LANGDEF_PACK_V1); \
 	cmp -s "$$work/lock" $(DECL_LANGDEF_LOCK_V1); \
-	if ldd $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; then \
+	if [ "$(ENABLE_SANITIZERS)" != 1 ] && \
+			ldd $(LANGDEF_COMPILER_V1_BIN) | rg -qi 'python|libswipl'; then \
 		echo 'langdef compiler unexpectedly links Python or SWI-Prolog'; exit 1; \
 	fi; \
 	echo '(DeclLangDefRegenerationV1Summary 5 5 0)'
@@ -43081,3 +43128,62 @@ $(ANSWER_STORAGE_TEST_BIN): $(ANSWER_STORAGE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TE
 $(ANSWER_STORAGE_TEST_OBJ): tests/support/test_answer_storage.c src/answer_storage.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
+
+test: test-petta-space-head-chains
+test-petta-space-head-chains: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/space_head_chains.metta); \
+	expected=$$(cat tests/petta/space_head_chains.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: declarations and equations are read through the chain of their head'
+
+test: test-petta-space-marked-removal
+test-petta-space-marked-removal: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/space_marked_removal.metta); \
+	expected=$$(cat tests/petta/space_marked_removal.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: removed rows leave the others in order for every reader, running matches included'
+test: test-petta-path-index-bound-lead
+test-petta-path-index-bound-lead: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/path_index_bound_lead.metta); \
+	expected=$$(cat tests/petta/path_index_bound_lead.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: a lookup whose bound field leads reads the position index of that field, kept through removal by marks'
+
+test: test-petta-path-index-open-rows
+test-petta-path-index-open-rows: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/path_index_open_rows.metta); \
+	expected=$$(cat tests/petta/path_index_open_rows.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: position indexes keep open rows of several heads as candidates'
+
+test: test-petta-program-rule-rows
+test-petta-program-rule-rows: $(BIN)
+	@set -eu; \
+	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/program_rule_rows.metta); \
+	expected=$$(cat tests/petta/program_rule_rows.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo 'PASS: a program reads rules among facts, a rule added while running, and a rule holding a space'

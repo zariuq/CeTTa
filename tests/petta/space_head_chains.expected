@@ -1,0 +1,11 @@
+(-> Number Number)
+(-> Atom Atom)
+((-> Number Number) (-> Atom Atom))
+%Undefined%
+8
+9
+12
+(halve 4)
+true
+8
+found

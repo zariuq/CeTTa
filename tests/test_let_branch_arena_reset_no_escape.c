@@ -81,6 +81,19 @@ void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
     (void)atom_idx;
 }
 void space_match_backend_note_remove(Space *s) { (void)s; }
+void space_match_backend_note_swap_remove(Space *s, CettaIndex removed_row,
+                                          AtomId removed_id,
+                                          CettaIndex moved_from,
+                                          AtomId moved_id) {
+    (void)s; (void)removed_row; (void)removed_id; (void)moved_from; (void)moved_id;
+}
+void space_match_native_note_indexed_query(Space *space) { (void)space; }
+void space_query_conjunction(Space *s, Arena *a, Atom **patterns,
+                             CettaExprLen npatterns, const Bindings *seed,
+                             BindingSet *out) {
+    (void)s; (void)a; (void)patterns; (void)npatterns; (void)seed;
+    binding_set_init(out);
+}
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out) {
     (void)s;

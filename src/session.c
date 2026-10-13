@@ -574,10 +574,22 @@ const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name) {
     return NULL;
 }
 
-bool cetta_language_allows_builtin(CettaLanguageId language_id,
-                                   const CettaProfile *profile,
-                                   const char *name) {
-    const CettaBuiltinPolicy *policy = cetta_builtin_policy_lookup(name);
+_Static_assert(sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]) <
+                   CETTA_BUILTIN_POLICY_POSITIONS,
+               "every policy has a position");
+
+uint32_t cetta_builtin_policy_position(const CettaBuiltinPolicy *policy) {
+    return policy ? (uint32_t)(policy - CETTA_BUILTIN_POLICIES) + 1u : 0u;
+}
+
+const CettaBuiltinPolicy *cetta_builtin_policy_at_position(uint32_t position) {
+    size_t count = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
+    return position && position <= count ? &CETTA_BUILTIN_POLICIES[position - 1u] : NULL;
+}
+
+bool cetta_language_allows_builtin_policy(CettaLanguageId language_id,
+                                          const CettaProfile *profile,
+                                          const CettaBuiltinPolicy *policy) {
     if (!policy) return true;
     /* Other language adapters use the general builtin mask. Structural
        order is explicitly an HE/PeTTa extended-profile operation. */
@@ -589,6 +601,13 @@ bool cetta_language_allows_builtin(CettaLanguageId language_id,
          strcmp(policy->name, "@>=") == 0))
         return false;
     return cetta_language_visible_in(language_id, profile, policy->visibility_mask);
+}
+
+bool cetta_language_allows_builtin(CettaLanguageId language_id,
+                                   const CettaProfile *profile,
+                                   const char *name) {
+    return cetta_language_allows_builtin_policy(
+        language_id, profile, cetta_builtin_policy_lookup(name));
 }
 
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,

@@ -1,0 +1,25 @@
+; Numbers compare by value across representations on every candidate path:
+; cold scans, the match trie and position indexes keep a stored rational or
+; big integer as a candidate for a float or integer query, and the reverse.
+(baz 1/2)
+(qux 0.5)
+(big 18446744073709551616)
+(rat 3/1)
+(int 3)
+(pair a 1/2)
+(pair b 0.25)
+!(collapse (match &self (baz 0.5) found))
+!(collapse (match &self (qux 1/2) found))
+!(collapse (match &self (big 18446744073709551616.0) found))
+!(collapse (match &self (int 3.0) found))
+!(collapse (match &self (rat 3) found))
+!(collapse (match &self (pair $k 0.5) $k))
+!(collapse (match &self (pair $k 1/4) $k))
+(= (inside) (collapse (match &self (baz 0.5) inside-found)))
+!(inside)
+(= (count-halves) (size-atom (collapse (match &self ($h 0.5) $h))))
+!(count-halves)
+; Negative cases: different values stay apart.
+!(collapse (match &self (baz 0.25) found))
+!(collapse (match &self (big 18446744073709551615) found))
+!(collapse (match &self (pair $k 1/3) $k))

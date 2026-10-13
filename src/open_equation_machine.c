@@ -6156,7 +6156,7 @@ static inline bool oem_parts_may_meet(uint64_t pattern, uint64_t row) {
  * (native_candidates): its rows are read once per revision, and a match
  * tests their root keys before the rows themselves. */
 static bool oem_space_small(const Space *space) {
-    return space->native.len <= MATCH_TRIE_THRESHOLD;
+    return space->native.len - space->native.marked <= MATCH_TRIE_THRESHOLD;
 }
 
 static bool oem_small_space_rows(CettaOpenEquationCursor *cursor,

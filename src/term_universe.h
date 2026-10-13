@@ -395,6 +395,9 @@ SymbolId term_universe_head_sym_unrecorded(const TermUniverse *universe,
                                            AtomId id);
 
 /* The record header of `id`, or NULL when it has none. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
 static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
                                          AtomId id) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS

@@ -554,6 +554,10 @@ typedef struct {
      * and per small integer until its next reset.  Opt-in, for arenas whose
      * owner allocates such scalars at a high rate. */
     bool scalar_cache;
+    /* Retired full-size blocks go to the thread's stock for its next
+     * recycling arena instead of back to the allocator.  Opt-in, for owners
+     * that create and retire many short-lived arenas. */
+    bool recycle_blocks;
 } Arena;
 
 typedef struct {
@@ -606,6 +610,7 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+void  arena_set_block_recycling(Arena *a, bool enabled);
 /* Name `older` as the older generation of `young`, whose atoms may then share
  * its storage.  The owner releases `older` only together with `young`.  An
  * arena that has an older generation cannot serve as one: the link is then

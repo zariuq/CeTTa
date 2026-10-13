@@ -1341,6 +1341,11 @@ static void petta_libpl_global_init(void) {
         if (!g_petta_libpl_ready)
             return;
         g_petta_libpl_owns_engine = true;
+        /* Atom and clause collection runs in the engine that finds the
+         * garbage instead of a `gc` thread of SWI's own, which would select
+         * its own alternate signal stack: the host owns every thread of the
+         * run.  A build without threads has no such thread to turn off. */
+        (void)PL_set_prolog_flag("gc_thread", PL_BOOL, false);
         /* A parallel worker that starts the engine does not keep SWI's main
          * engine: it may outlive nothing (a one-shot worker) or idle until
          * the run ends (a pooled one), and the run's end must be able to
@@ -5972,6 +5977,55 @@ bool petta_libpl_prefer_rationals(void) {
                           (entries << 1) | (prefer ? 1u : 0u),
                           memory_order_release);
     return prefer;
+}
+
+/* (entries << 16) | flag, as of the last read; 0 when never read. */
+static _Atomic uint64_t g_petta_libpl_cpu_count_cache;
+
+bool petta_libpl_cpu_count(uint32_t *count) {
+    CettaLibraryContext *context = eval_current_library_context();
+    CettaLibPrologRuntime *runtime = context ? context->lib_prolog : NULL;
+    if (!count || !runtime || !runtime->prepared)
+        return false;
+    uint64_t cached = atomic_load_explicit(
+        &g_petta_libpl_cpu_count_cache, memory_order_acquire);
+    if (cached != 0u &&
+        (cached >> 16) == atomic_load_explicit(
+                              &g_petta_libpl_entries, memory_order_acquire)) {
+        *count = (uint32_t)(cached & 0xffffu);
+        return true;
+    }
+    bool claimed = false;
+    if (!petta_libpl_enter(&claimed))
+        return false;
+    uint64_t entries = atomic_load_explicit(
+        &g_petta_libpl_entries, memory_order_acquire);
+    int value = 0;
+    bool read = false;
+    fid_t frame = PL_open_foreign_frame();
+    if (frame) {
+        term_t arguments = PL_new_term_refs(2);
+        predicate_t flag = PL_predicate("current_prolog_flag", 2, "system");
+        atom_t name = PL_new_atom("cpu_count");
+        read = arguments && flag && name &&
+            PL_put_atom(arguments, name) &&
+            PL_call_predicate(NULL, PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION,
+                              flag, arguments) &&
+            PL_get_integer(arguments + 1, &value) && value >= 1;
+        PL_discard_foreign_frame(frame);
+        if (name)
+            PL_unregister_atom(name);
+    }
+    petta_libpl_leave(claimed);
+    if (!read)
+        return false;
+    if (value > 1024)
+        value = 1024;
+    atomic_store_explicit(&g_petta_libpl_cpu_count_cache,
+                          (entries << 16) | (uint64_t)value,
+                          memory_order_release);
+    *count = (uint32_t)value;
+    return true;
 }
 
 #include "petta_solver_client.inc"

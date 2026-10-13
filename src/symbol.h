@@ -21,6 +21,10 @@ typedef struct {
     uint32_t len;
     uint64_t hash;
     uint32_t flags;
+    /* The builtin policy of the name, resolved on first use: zero until
+     * then, otherwise the policy's position plus one (position zero: none).
+     * Read and written only through the accessors below. */
+    uint32_t builtin_policy;
 } SymbolEntry;
 
 typedef struct {
@@ -521,7 +525,8 @@ static inline SymbolSpelling symbol_spelling(
     X(pat_let_forward, "pat:let%") \
     X(pat_case_forward, "pat:case%") \
     X(pat_is_instance, "pat:is-instance") \
-    X(pat_is_variant, "pat:is-variant")
+    X(pat_is_variant, "pat:is-variant") \
+    X(subtype, ":<")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -728,6 +733,9 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right);
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
+uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
+/* The value depends only on the name, so concurrent callers record the same. */
+void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
 

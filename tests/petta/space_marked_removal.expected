@@ -1,0 +1,22 @@
+(true true true true true)
+((A 0 5) (A 1 0) (A 2 4) (A 3 8) (A 4 2) (A 7 1) (A 8 7) (A 9 9) (A 10 10) (A 12 3) (A 14 6))
+()
+(true true true)
+((A 0 5) (A 2 4) (A 3 8) (A 8 7) (A 9 9) (A 10 10) (A 12 3) (A 14 6) (A 1 100) (A 4 100) (A 7 100))
+11
+24
+true
+true
+42
+true
+((double 21))
+true
+42
+(true true true true true true true true true true true)
+()
+true
+true
+((A 0 zero) (A 1 one))
+(true true true true true true true true true true true true true true true true true true true true true true)
+()
+((A 0 zero) (A 1 one))

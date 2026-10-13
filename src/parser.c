@@ -819,6 +819,9 @@ ParserHostProjectionV1 *parser_host_projection_v1_new(
     projection->namespace_sugar = g_namespace_sugar_enabled;
     arena_init(&projection->scratch);
     arena_set_hashcons(&projection->scratch, NULL);
+    /* The root mark holds the first block, so starting a form keeps it
+     * instead of claiming a block for every form. */
+    arena_reserve(&projection->scratch, 1u);
     projection->scratch_root = arena_mark(&projection->scratch);
     parser_var_scope_init(&projection->scope);
     return projection;

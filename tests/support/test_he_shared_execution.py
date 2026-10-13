@@ -42,8 +42,13 @@ CASES = [
      '(BadArgType 2 (Number (Number Number Number)) (Number Number Number Number)))]\n',
      False),
     ("constructor-fault-before-divergence", "(= (loop) (loop))\n"
-     "!(Box (+ 1 \"S\") (loop))\n",
+     "(= (boxed) (Box (+ 1 \"S\") (loop)))\n!(boxed)\n",
      '[(Error (+ 1 "S") (BadArgType 2 Number String))]\n', True),
+    # A closed data tuple at the root computes only in its fields, each at
+    # its own call boundary.
+    ("root-constructor-fault-before-divergence", "(= (loop) (loop))\n"
+     "!(Box (+ 1 \"S\") (loop))\n",
+     '[(Error (+ 1 "S") (BadArgType 2 Number String))]\n', False),
     ("constructor-fault-alternatives", "(= (choices) (+ 1 \"S\"))\n"
      "(= (choices) 1)\n(= (choices) 1)\n!(Box (choices) 2)\n",
      '[(Box 1 2), (Box 1 2)]\n',
@@ -310,20 +315,28 @@ def main():
                                   result.stdout, result.stderr))
         observations += 1
         # Plain values stay on the dialect's value/cast boundary; interpreting
-        # them must not allocate a relational computation episode.
-        path = Path(directory) / "plain-values.metta"
-        path.write_text('! 16\n! spelling\n! $caller\n! True\n'
-                        '(= (plain $n) (if (< $n 10) 16 17))\n!(plain 3)\n')
+        # them must not allocate a relational computation episode. A call
+        # whose result is a plain value is one episode.
         env = dict(os.environ, CETTA_HE_CANONICAL_EXECUTION="1",
                    CETTA_HE_SHARED_EXECUTION="1", CETTA_PETTA_MACHINE_STATS="1",
                    CETTA_PREPARED_PURE_REFERENCE="1", CETTA_OPEN_EQUATIONS_REFERENCE="1")
-        result = subprocess.run([str(binary), "--lang", "he", str(path)],
-                                cwd=root, env=env, capture_output=True,
-                                text=True, timeout=30)
-        if result.returncode or result.stdout != "[16]\n[spelling]\n[$caller]\n[True]\n[16]\n" or result.stderr:
-            raise AssertionError(("plain-values", result.returncode,
-                                  result.stdout, result.stderr))
-        observations += 1
+        for name, source, expected, episodes in (
+                ("plain-values", '! 16\n! spelling\n! $caller\n! True\n',
+                 "[16]\n[spelling]\n[$caller]\n[True]\n", 0),
+                ("plain-call", '(= (plain $n) (if (< $n 10) 16 17))\n!(plain 3)\n',
+                 "[16]\n", 1)):
+            path = Path(directory) / (name + ".metta")
+            path.write_text(source)
+            result = subprocess.run([str(binary), "--lang", "he", str(path)],
+                                    cwd=root, env=env, capture_output=True,
+                                    text=True, timeout=30)
+            lines = result.stderr.splitlines()
+            if (result.returncode or result.stdout != expected or
+                    len(lines) != episodes or
+                    any(not line.startswith("PETTA_MACHINE_STATS ") for line in lines)):
+                raise AssertionError((name, result.returncode,
+                                      result.stdout, result.stderr))
+            observations += 1
         # Force a declined closed realization through the general route: its
         # ordered occurrences and correlated uses must still agree.
         name, source, expected, _ = next(case for case in CASES if case[0] == "duplicates")

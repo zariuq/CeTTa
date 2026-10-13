@@ -187,6 +187,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             sym->len = len;
             sym->hash = hash;
             sym->flags = 0;
+            sym->builtin_policy = 0;
 
             entry->hash = hash;
             entry->len = len;
@@ -304,6 +305,29 @@ uint32_t symbol_flags(const SymbolTable *st, SymbolId id) {
         return 0u;
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
     return entry ? entry->flags : 0u;
+}
+
+uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE)
+        return 0u;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_acquire);
+    if (id >= entry_len)
+        return 0u;
+    const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+    return entry ? __atomic_load_n(&entry->builtin_policy, __ATOMIC_RELAXED) : 0u;
+}
+
+void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value) {
+    if (!st || id == SYMBOL_ID_NONE)
+        return;
+    uint32_t entry_len = atomic_load_explicit(
+        &st->entry_len, memory_order_acquire);
+    if (id >= entry_len)
+        return;
+    SymbolEntry *entry = symbol_table_entry_mut(st, id);
+    if (entry)
+        __atomic_store_n(&entry->builtin_policy, value, __ATOMIC_RELAXED);
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
