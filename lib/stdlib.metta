@@ -45,6 +45,11 @@
 (: fold-by-key (-> Atom Atom Variable Variable Atom Atom %Undefined%))
 (: reduce (-> Atom Atom Variable Variable Atom %Undefined%))
 (: once (-> Atom %Undefined%))
+(: work-new (-> Atom Expression))
+(: work-take (-> %Undefined% Number Expression))
+(: work-budget (-> %Undefined% Number Expression))
+(: work-cancel (-> %Undefined% Expression))
+(: work-record (-> %Undefined% Expression))
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
@@ -269,6 +274,38 @@
   (@params (
     (@param "Result expression to evaluate")))
   (@return "First visible occurrence encountered under the active traversal policy"))
+
+(@doc work-new
+  (@desc "HE-extended retained computation. Answers a handle on the computation of its argument, which is not evaluated yet: a native handle of kind work, owned by whatever holds it, so the computation is released with its last holder or by work-cancel. The handle's other forms advance the computation by prefixes, budget it, cancel it and describe its route; unlike select, taking a prefix commits nothing.")
+  (@params (
+    (@param "Computation to retain")))
+  (@return "Work handle"))
+
+(@doc work-take
+  (@desc "Advances a retained computation until it has given k more answers, completed, or spent its budget. Answers (taken (a1 ... aj) state), the state being more-possible, complete or paused; the answers after the prefix stay with the handle, in the order the computation produces them. Effects happen when their answers are produced, never again.")
+  (@params (
+    (@param "Work handle")
+    (@param "Number of answers to take")))
+  (@return "(taken prefix state)"))
+
+(@doc work-budget
+  (@desc "Bounds each later take of a retained computation to n transitions of its machine; a take that reaches the bound pauses at an answer boundary and the next take continues there. Zero removes the bound.")
+  (@params (
+    (@param "Work handle")
+    (@param "Transitions per take")))
+  (@return "Unit"))
+
+(@doc work-cancel
+  (@desc "Releases a retained computation before its last holder does. Its handle names no computation afterwards (a WorkReleased error); effects it already made stay.")
+  (@params (
+    (@param "Work handle")))
+  (@return "Unit"))
+
+(@doc work-record
+  (@desc "The route a retained computation runs on, as data: (route-record (route R) (law L) (modes M) (observer O) (footprint F) (work W) (retained B) (owner H) (state S) (taken N)). The route is general for the general machine and completed for a computation evaluated whole; work counts machine transitions and retained the bytes its residual holds.")
+  (@params (
+    (@param "Work handle")))
+  (@return "Route record"))
 
 (@doc search-policy
   (@desc "Search-policy literal constructor for explicit controlled-search calls. The current native CeTTa lane is recursive-dependent-proof, and it supports result-order control through (search-policy recursive-dependent-proof), (search-policy recursive-dependent-proof (order reverse)), (search-policy recursive-dependent-proof (order lex)), and (search-policy recursive-dependent-proof (order shortlex)). The lex mode orders results by canonical rendered-atom bytes. The shortlex mode orders results by canonical rendered-atom length first, then bytewise lexical order. ATP and solver lanes are named here for future explicit oracle work, but are not executed by the native evaluator yet.")

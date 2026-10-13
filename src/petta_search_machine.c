@@ -1460,6 +1460,46 @@ static bool petta_machine_is_reify_head(
         head == g_builtin_syms.collapse;
 }
 
+static Atom *petta_fresh_variable(PettaMachineImpl *machine);
+
+/* HE's library definition of a collection function's call, its arguments
+ * in place: each argument collected into a fresh variable in turn, the
+ * aggregate of those, and its elements as alternatives. */
+static Atom *petta_machine_he_library_stream_lower(
+    PettaMachineImpl *machine, Atom *call, SymbolId aggregate) {
+    Arena *heap = &machine->heap;
+    CettaExprLen arity = call->expr.len - 1u;
+    if (arity != 1u && arity != 2u)
+        return NULL;
+    Atom *collected[2] = {NULL, NULL};
+    for (CettaExprLen index = 0u; index < arity; index++) {
+        collected[index] = petta_fresh_variable(machine);
+        if (!collected[index])
+            return NULL;
+    }
+    Atom *result = petta_fresh_variable(machine);
+    Atom *combined_elems[3] = {
+        atom_symbol_id(heap, aggregate), collected[0], collected[1],
+    };
+    Atom *combined = result
+        ? atom_expr(heap, combined_elems, arity + 1u) : NULL;
+    Atom *emit = combined
+        ? atom_expr2(heap, atom_symbol_id(heap, g_builtin_syms.superpose),
+                     result) : NULL;
+    Atom *body = emit ? atom_expr(heap, (Atom *[]){
+        atom_symbol_id(heap, g_builtin_syms.let), result, combined, emit},
+        4u) : NULL;
+    for (CettaExprLen index = arity; body && index > 0u; index--) {
+        Atom *collect = atom_expr2(
+            heap, atom_symbol_id(heap, petta_machine_reify_head(machine)),
+            call->expr.elems[index]);
+        body = collect ? atom_expr(heap, (Atom *[]){
+            atom_symbol_id(heap, g_builtin_syms.let), collected[index - 1u],
+            collect, body}, 4u) : NULL;
+    }
+    return body;
+}
+
 static bool petta_machine_atom_is_reify_head(
     const PettaMachineImpl *machine, const Atom *atom) {
     return atom && atom->kind == ATOM_SYMBOL &&
@@ -19401,7 +19441,8 @@ static bool petta_machine_he_may_branch(const PettaMachineImpl *machine,
     const Atom *head = term->expr.elems[0];
     if (head->kind == ATOM_SYMBOL) {
         SymbolId id = head->sym_id;
-        if (id == g_builtin_syms.collapse || id == g_builtin_syms.quote ||
+        if (petta_machine_is_reify_head(machine, id) ||
+            id == g_builtin_syms.quote ||
             id == g_builtin_syms.add_atom || id == g_builtin_syms.remove_atom)
             return false;
         if (id == g_builtin_syms.superpose || id == g_builtin_syms.match ||
@@ -31182,6 +31223,29 @@ static bool petta_machine_dispatch_solve(
             petta_plan_child(plan, 1u), 0u, failure);
     }
 
+    /* HE's library collection functions take their arguments unevaluated:
+     * `(unique X)` is `(let $c (collapse X) (let $u (unique-atom $c)
+     * (superpose $u)))`, and the two-argument functions collect each
+     * argument before combining them.  The call runs as that definition. */
+    if (machine->host.he_library_stream &&
+        (form == PETTA_FORM_STREAM_UNIQUE ||
+         form == PETTA_FORM_STREAM_UNION ||
+         form == PETTA_FORM_STREAM_INTERSECTION ||
+         form == PETTA_FORM_STREAM_SUBTRACTION)) {
+        SymbolId aggregate = machine->host.he_library_stream(
+            machine->host.context, machine->space, expression);
+        if (aggregate != SYMBOL_ID_NONE) {
+            Atom *lowered = petta_machine_he_library_stream_lower(
+                machine, expression, aggregate);
+            if (!lowered || !petta_push_solve_planned(
+                    machine, lowered, expected, goal->barrier, NULL)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return true;
+        }
+    }
+
     /* Stream forms use the same authored lowering as the dialect evaluator.
      * Keep its collect/filter/emit continuation on this machine rather than
      * evaluating the recursive body behind a host call.  Translation retains
@@ -36312,6 +36376,13 @@ bool petta_machine_table_stats(
     PettaTableStats *leased = petta_table_stats(machine->impl->table_shared);
     *stats = leased ? *leased : (PettaTableStats){0};
     return true;
+}
+
+size_t petta_machine_retained_bytes(const PettaMachine *machine) {
+    if (!machine || !machine->impl)
+        return 0u;
+    return arena_accounted_live_bytes(&machine->impl->heap) +
+        arena_accounted_live_bytes(&machine->impl->tenured);
 }
 
 bool petta_machine_stats(

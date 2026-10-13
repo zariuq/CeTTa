@@ -5877,6 +5877,21 @@ done:
     return answer;
 }
 
+/* Whether a built pattern is its own resolution as an operand: each part
+ * is an unbound cell or holds no variable.  oem_instantiate reads a built
+ * pattern's parts through their cells, so resolving such a pattern would
+ * rebuild it part for part. */
+static inline bool oem_pattern_resolved(const Atom *pattern) {
+    if (pattern->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        const Atom *part = pattern->expr.elems[index];
+        if (part->kind != ATOM_VAR && atom_has_vars(part))
+            return false;
+    }
+    return true;
+}
+
 /* One copy of the resolver per use, each with its mode fixed. */
 static Atom *oem_resolve_answer(CettaOpenEquationCursor *cursor, Atom *root) {
     return oem_resolve_in(cursor, root, false, cursor->answer_arena, NULL,
@@ -6592,6 +6607,316 @@ static OemRun oem_match_host_step(
     uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
     uint32_t depth, const OemStep *step, Atom *reference);
 
+static OemRun oem_match_fallback_host(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, uint32_t local_count, const OemCont *cont, uint32_t depth,
+    const OemStep *step);
+static bool oem_fill_cells(CettaOpenEquationCursor *cursor,
+                           const CettaOpenEquationProgram *program,
+                           Atom **locals, uint32_t template_index,
+                           uint32_t depth);
+
+/* The joint rows of a conjunction's legs: the steps of the legs, the slots
+ * their patterns name, and the values those slots take on each joint row,
+ * `slot_count` per row. */
+typedef struct {
+    CettaOpenEquationCursor *cursor;
+    const CettaOpenEquationProgram *program;
+    Atom **locals;
+    Space *space;
+    const uint32_t *leg_pcs;
+    uint32_t legs;
+    const uint32_t *slots;
+    uint32_t slot_count;
+    Atom **values;
+    size_t value_len, value_cap;
+    uint32_t row_count;
+} OemJointRows;
+
+/* The distinct slots a pattern template names, added to `slots`. */
+static bool oem_joint_slots(const CettaOpenEquationProgram *program,
+                            uint32_t template_index, uint32_t **slots,
+                            uint32_t *count, uint32_t *cap,
+                            const uint32_t *inline_slots, uint32_t depth) {
+    const OemTemplate *item = &program->templates[template_index];
+    if (depth > OEM_MAX_DEPTH)
+        return false;
+    if (item->kind == OEM_T_LITERAL)
+        return true;
+    if (item->kind == OEM_T_SLOT) {
+        for (uint32_t index = 0u; index < *count; index++)
+            if ((*slots)[index] == item->slot)
+                return true;
+        if (*count == *cap) {
+            uint32_t grown_cap = *cap * 2u;
+            uint32_t *grown = *slots == inline_slots
+                ? malloc(sizeof(*grown) * grown_cap)
+                : realloc(*slots, sizeof(*grown) * grown_cap);
+            if (!grown)
+                return false;
+            if (*slots == inline_slots)
+                memcpy(grown, inline_slots, sizeof(*grown) * *count);
+            *slots = grown;
+            *cap = grown_cap;
+        }
+        (*slots)[(*count)++] = item->slot;
+        return true;
+    }
+    for (uint32_t index = 0u; index < item->count; index++)
+        if (!oem_joint_slots(program,
+                             program->template_children[item->first + index],
+                             slots, count, cap, inline_slots, depth + 1u))
+            return false;
+    return true;
+}
+
+/* The slots' values on one joint row.  Each must be ground: a value that
+ * holds a cell would lose that cell's binding when the reading is undone,
+ * so such a conjunction is the host's. */
+static OemRun oem_joint_record(OemJointRows *join) {
+    if (join->value_len + join->slot_count > join->value_cap) {
+        size_t cap = join->value_cap ? join->value_cap * 2u : 64u;
+        while (cap < join->value_len + join->slot_count)
+            cap *= 2u;
+        Atom **grown = realloc(join->values, cap * sizeof(*grown));
+        if (!grown)
+            return OEM_RUN_HANDOFF;
+        join->values = grown;
+        join->value_cap = cap;
+    }
+    for (uint32_t index = 0u; index < join->slot_count; index++) {
+        Atom *value = oem_deref(join->cursor,
+                                join->locals[join->slots[index]]);
+        if (!value || atom_has_vars(value))
+            return OEM_RUN_HOST;
+        join->values[join->value_len++] = value;
+    }
+    if (join->row_count == UINT32_MAX)
+        return OEM_RUN_HANDOFF;
+    join->row_count++;
+    return OEM_RUN_CALLED;
+}
+
+static OemRun oem_joint_next_leg(OemJointRows *join, uint32_t leg);
+
+/* A leg's rows, each tried in turn: a row that unifies binds the leg's
+ * variables, and the next leg reads on, or the last records the joint row.
+ * The leg reads under a marker frame of its own, since a binding is
+ * trailed only for a cell older than the newest frame (oem_bind), and
+ * every reading is undone before the next, so the region, the cells and
+ * the slots are as the leg found them.  A row with variables of its own is
+ * the host's: its fresh cells would not outlive the reading. */
+static OemRun oem_joint_leg(OemJointRows *join, uint32_t leg,
+                            Atom *pattern, Atom *const *rows, uint32_t len) {
+    CettaOpenEquationCursor *cursor = join->cursor;
+    if (!oem_push_frame(cursor, NULL, OEM_ONCE_FRAME, NULL, NULL, 0u))
+        return OEM_RUN_HANDOFF;
+    uint32_t frame = cursor->frame_len - 1u;
+    OemFrame mark = cursor->frames[frame];
+    OemRun result = OEM_RUN_CALLED;
+    for (uint32_t index = 0u; index < len; index++) {
+        Atom *row = rows[index];
+        if (atom_has_vars(row)) {
+            result = OEM_RUN_HOST;
+            break;
+        }
+        OemRun run = oem_try_candidate(cursor, pattern, row);
+        if (run == OEM_RUN_CALLED)
+            run = leg + 1u == join->legs
+                ? oem_joint_record(join)
+                : oem_joint_next_leg(join, leg + 1u);
+        oem_restore(cursor, &mark);
+        if (run != OEM_RUN_CALLED && run != OEM_RUN_FAILED) {
+            result = run;
+            break;
+        }
+    }
+    oem_truncate_frames(cursor, frame);
+    return result;
+}
+
+/* A later leg's rows under the bindings the earlier legs made: its pattern
+ * as built now, and the rows the space's index offers for it, judged as
+ * the match step judges its own (a row the language would evaluate further
+ * where a template instance holds part of it is the host's). */
+static OemRun oem_joint_next_leg(OemJointRows *join, uint32_t leg) {
+    CettaOpenEquationCursor *cursor = join->cursor;
+    const OemStep *step = &join->program->steps[join->leg_pcs[leg]];
+    Atom *pattern = oem_instantiate(cursor, join->program, join->locals,
+                                    step->pattern);
+    Atom *query = !pattern ? NULL
+        : oem_pattern_resolved(pattern) ? pattern
+        : oem_resolve_mode(cursor, pattern, true);
+    bool exact_query = false;
+    if (query)
+        query = petta_semantics_match_index_pattern(&cursor->region, query,
+                                                    &exact_query);
+    if (!query)
+        return OEM_RUN_HANDOFF;
+    CettaIndex *indices = NULL;
+    CettaIndex count = space_match_candidates64(join->space, query, &indices);
+    if (count > (CettaIndex)UINT32_MAX) {
+        free(indices);
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
+        return OEM_RUN_HANDOFF;
+    }
+    Atom **rows = count
+        ? arena_alloc(&cursor->region, sizeof(*rows) * (size_t)count)
+        : NULL;
+    uint32_t len = 0u;
+    for (CettaIndex index = 0u; rows && index < count; index++) {
+        Atom *candidate =
+            space_match_candidate_at64(join->space, indices[index]);
+        if (candidate && oem_row_may_unify(cursor, query, candidate, 0u))
+            rows[len++] = candidate;
+    }
+    free(indices);
+    if (count && !rows)
+        return OEM_RUN_HANDOFF;
+    if (len == 0u)
+        return OEM_RUN_FAILED;
+    if (step->relation && cursor->runtime.value_reducible) {
+        uint32_t positions[OEM_FLAT_PATTERN_VARIABLES];
+        uint32_t position_count = 0u;
+        CettaExprLen flat_len = 0u;
+        bool flat = oem_flat_pattern_variables(cursor, pattern, positions,
+                                               &position_count, &flat_len);
+        for (uint32_t index = 0u; index < len; index++) {
+            Atom *row = rows[index];
+            if (flat && row->kind == ATOM_EXPR && row->expr.len == flat_len
+                    ? oem_row_positions_reducible(cursor, join->space, row,
+                                                  positions, position_count)
+                    : oem_row_bound_part_reducible(cursor, join->space,
+                                                   pattern, row, 0u))
+                return OEM_RUN_HOST;
+        }
+    }
+    return oem_joint_leg(join, leg, pattern, rows, len);
+}
+
+/* A conjunction's rows, completed before any template runs.  Under HE's
+ * completion of producers a match evaluates its query whole, so the
+ * effects of one row's template reach neither this leg's rows nor a later
+ * leg's.  The joint rows of this leg and the legs after it are read here,
+ * each as the values the legs' patterns give their variables, and the
+ * template's code then runs once per joint row, in row order, from an
+ * elements frame over those tuples.  Legs with code of their own between
+ * them, a row with variables of its own, a value that holds a cell, and a
+ * row the language would evaluate further leave the conjunction to the
+ * host, which completes the legs from this one on: reading is pure, so
+ * nothing has run that the host would run again. */
+static __attribute__((noinline)) OemRun oem_match_complete_rows(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    uint32_t pc, Atom **locals, uint32_t local_count, const OemCont *cont,
+    uint32_t depth, const OemStep *step, Space *space, Atom *pattern,
+    Atom *const *rows, uint32_t len) {
+    uint32_t legs = program->match_fallbacks[step->relation - 1u].legs;
+    uint32_t leg_pcs_inline[8];
+    uint32_t slots_inline[16];
+    uint32_t *leg_pcs = legs <= 8u
+        ? leg_pcs_inline : malloc(sizeof(*leg_pcs) * legs);
+    uint32_t *slots = slots_inline;
+    uint32_t slot_count = 0u, slot_cap = 16u;
+    OemJointRows join = {0};
+    OemRun run = OEM_RUN_HOST;
+    if (!leg_pcs) {
+        cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
+        return OEM_RUN_HANDOFF;
+    }
+    leg_pcs[0] = pc;
+    bool chain = true;
+    for (uint32_t leg = 1u; chain && leg < legs; leg++) {
+        uint32_t next = leg_pcs[leg - 1u] + 1u;
+        chain = next < program->step_len &&
+            program->steps[next].kind == OEM_S_MATCH &&
+            program->steps[next].match_row;
+        leg_pcs[leg] = next;
+    }
+    for (uint32_t leg = 0u; chain && leg < legs; leg++) {
+        uint32_t pattern_template = program->steps[leg_pcs[leg]].pattern;
+        if (!oem_fill_cells(cursor, program, locals, pattern_template, 0u) ||
+            !oem_joint_slots(program, pattern_template, &slots, &slot_count,
+                             &slot_cap, slots_inline, 0u)) {
+            run = OEM_RUN_HANDOFF;
+            goto done;
+        }
+    }
+    if (!chain)
+        goto host;
+    if (!pattern)
+        pattern = oem_instantiate(cursor, program, locals, step->pattern);
+    Atom **hole_parts = arena_alloc(&cursor->region,
+        sizeof(*hole_parts) * (slot_count ? slot_count : 1u));
+    if (!pattern || !hole_parts) {
+        run = OEM_RUN_HANDOFF;
+        goto done;
+    }
+    for (uint32_t index = 0u; index < slot_count; index++)
+        hole_parts[index] = oem_deref(cursor, locals[slots[index]]);
+    Atom *hole = atom_expr(&cursor->region, hole_parts, slot_count);
+    if (!hole) {
+        run = OEM_RUN_HANDOFF;
+        goto done;
+    }
+    join = (OemJointRows){
+        .cursor = cursor, .program = program, .locals = locals,
+        .space = space, .leg_pcs = leg_pcs, .legs = legs,
+        .slots = slots, .slot_count = slot_count,
+    };
+    run = oem_joint_leg(&join, 0u, pattern, rows, len);
+    if (run == OEM_RUN_HOST)
+        goto host;
+    if (run != OEM_RUN_CALLED)
+        goto done;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_OPEN_EQUATION_JOINT_ROWS_COMPLETED);
+    if (join.row_count == 0u) {
+        run = OEM_RUN_FAILED;
+        goto done;
+    }
+    Atom **tuples = arena_alloc(&cursor->region,
+                                sizeof(*tuples) * (size_t)join.row_count);
+    Atom **args = arena_alloc(&cursor->region, sizeof(*args) * 2u);
+    OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
+    bool built = tuples && args && resume;
+    for (uint32_t row = 0u; built && row < join.row_count; row++) {
+        tuples[row] = atom_expr(&cursor->region,
+                                join.values + (size_t)row * slot_count,
+                                slot_count);
+        built = tuples[row] != NULL;
+    }
+    Atom *list = built
+        ? atom_expr(&cursor->region, tuples, join.row_count) : NULL;
+    if (!list) {
+        run = OEM_RUN_HANDOFF;
+        goto done;
+    }
+    args[0] = hole;
+    args[1] = list;
+    *resume = (OemCont){
+        .parent = cont, .receiver_parent = oem_receiver_cont(cont),
+        .program = program, .locals = locals,
+        .local_count = local_count, .pc = leg_pcs[legs - 1u] + 1u,
+        .depth = depth,
+    };
+    run = oem_push_frame(cursor, program, OEM_ELEMENTS_FRAME, args, resume,
+                         depth)
+        ? OEM_RUN_CALLED : OEM_RUN_HANDOFF;
+    goto done;
+host:
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_OPEN_EQUATION_JOINT_ROWS_DECLINED);
+    run = oem_match_fallback_host(cursor, program, locals, local_count, cont,
+                                  depth, step);
+done:
+    free(join.values);
+    if (leg_pcs != leg_pcs_inline)
+        free(leg_pcs);
+    if (slots != slots_inline)
+        free(slots);
+    return run;
+}
+
 /* A match: the rows the space's index offers for the pattern, snapshotted
  * now, so an answer's effects neither add to nor remove from this match's
  * alternatives (the logical-update view).  The index may offer rows that do
@@ -6711,7 +7036,8 @@ static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
         pattern = oem_instantiate(cursor, program, locals, step->pattern);
         if (!pattern)
             return OEM_RUN_HANDOFF;
-        Atom *query = oem_resolve_mode(cursor, pattern, true);
+        Atom *query = oem_pattern_resolved(pattern)
+            ? pattern : oem_resolve_mode(cursor, pattern, true);
         if (!query)
             return OEM_RUN_HANDOFF;
         bool exact_query = false;
@@ -6783,12 +7109,14 @@ static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
     }
     /* A conjunction's rows complete before any template runs.  Its legs run
      * in turn, so a later leg would read rows that the templates of this
-     * leg's earlier rows changed; the host completes the legs from this one
-     * on.  A leg with one row, and a last leg, are read once. */
+     * leg's earlier rows changed; the legs from this one on are read whole
+     * first (oem_match_complete_rows).  A leg with one row, and a last leg,
+     * are read once. */
     if (step->relation && (he && cursor->runtime.completes_producers) && len > 1u &&
         program->match_fallbacks[step->relation - 1u].legs > 1u)
-        return oem_match_fallback_host(cursor, program, locals, local_count,
-                                       cont, depth, step);
+        return oem_match_complete_rows(cursor, program, pc, locals,
+                                       local_count, cont, depth, step, space,
+                                       pattern, rows->rows, len);
     rows->len = len;
     rows->arena = cursor->region.identity;
     OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));

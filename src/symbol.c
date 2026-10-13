@@ -285,7 +285,9 @@ int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right) {
 bool symbol_id_is_builtin(SymbolId id) {
     return id != SYMBOL_ID_NONE &&
            (id <= g_builtin_syms.native_handle ||
-            id == g_builtin_syms.empty_form);
+            id == g_builtin_syms.empty_form ||
+            (id >= g_builtin_syms.work_new &&
+             id <= g_builtin_syms.work_record));
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {

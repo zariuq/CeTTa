@@ -1894,7 +1894,7 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
             /* Builtin data names are not PeTTa operations.  User
              * definitions still establish callability through ordinary
              * resolution. */
-            (head <= g_builtin_syms.native_handle &&
+            (symbol_id_is_builtin(head) &&
              !petta_program_builtin_names_data(head)) ||
             is_grounded_op(head) ||
             (grounded_op_is_pattern(head) && eval_current_pattern_control_arity &&

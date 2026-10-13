@@ -6827,6 +6827,11 @@ static const char *whole_call_extension_builtin_name(SymbolId head_id) {
     if (head_id == g_builtin_syms.space_truncate) return "space-truncate";
     if (head_id == g_builtin_syms.step_bang) return "step!";
     if (head_id == g_builtin_syms.count_atoms) return "count-atoms";
+    if (head_id == g_builtin_syms.work_new) return "work-new";
+    if (head_id == g_builtin_syms.work_take) return "work-take";
+    if (head_id == g_builtin_syms.work_budget) return "work-budget";
+    if (head_id == g_builtin_syms.work_cancel) return "work-cancel";
+    if (head_id == g_builtin_syms.work_record) return "work-record";
     return NULL;
 }
 
@@ -40998,6 +41003,17 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         head->sym_id == g_builtin_syms.import_bang) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;
     }
+    /* work-new retains its argument's computation unevaluated; the other
+     * work forms read values. */
+    if (head->kind == ATOM_SYMBOL &&
+        head->sym_id == g_builtin_syms.work_new)
+        return PETTA_MACHINE_HOST_READY_APPLICATION;
+    if (head->kind == ATOM_SYMBOL &&
+        (head->sym_id == g_builtin_syms.work_take ||
+         head->sym_id == g_builtin_syms.work_budget ||
+         head->sym_id == g_builtin_syms.work_cancel ||
+         head->sym_id == g_builtin_syms.work_record))
+        return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     /*
      * Assertion is strict in its condition, but its failure reporting and
      * process contract remain host effects.  Evaluating the condition in
@@ -41319,6 +41335,7 @@ typedef struct {
     void *stream_head_decisions;
     void *grounded_signatures;
     void *symbol_callabilities;
+    void *single_answer_decisions;
 } HeAdmissionCaches;
 static _Thread_local HeAdmissionCaches g_he_admission_caches;
 static pthread_key_t g_he_admission_caches_key;
@@ -41330,6 +41347,7 @@ static void he_admission_caches_release(void *unused) {
     free(g_he_admission_caches.stream_head_decisions);
     free(g_he_admission_caches.grounded_signatures);
     free(g_he_admission_caches.symbol_callabilities);
+    free(g_he_admission_caches.single_answer_decisions);
     g_he_admission_caches = (HeAdmissionCaches){0};
 }
 
@@ -41498,6 +41516,16 @@ static bool he_machine_stream_admitted(void *context, Space *space,
     Arena *arena, Atom *call) {
     (void)context;
     return he_stream_call_admitted(space, arena, call);
+}
+
+static SymbolId he_library_stream_aggregate(Space *space, const Atom *term);
+
+/* HE's library collection functions the machine runs as their definition
+ * (he_library_stream_aggregate). */
+static SymbolId he_machine_library_stream(void *context, Space *space,
+                                          Atom *call) {
+    (void)context;
+    return he_library_stream_aggregate(space, call);
 }
 
 /* HE's match rows: the same complete query the canonical match frame reads. */
@@ -43202,6 +43230,8 @@ static PettaMachineHost petta_eval_machine_host(
         .stream_admitted = g_he_shared_execution ? he_machine_stream_admitted : NULL,
         .match_instances = g_he_shared_execution ? he_machine_match_instances : NULL,
         .if_keeps_undecided_call = g_he_shared_execution,
+        .he_library_stream = g_he_shared_execution
+            ? he_machine_library_stream : NULL,
         .collected_value_reducible = g_he_shared_execution &&
                 g_he_shared_execution_effect_free &&
                 g_he_shared_execution_rereads
@@ -43479,6 +43509,27 @@ static __attribute__((noinline)) bool petta_eval_machine_try(
         requested_controller, controller_requested, false);
 }
 
+/* The match semantics the general machine compiles decisions under: HE's
+ * where it runs under HE's rules or a portable contract, else the
+ * session's own. */
+static CettaMatchDecisionSemanticIdentity petta_eval_machine_match_semantics(
+    const CettaLibraryContext *library, bool he_rules) {
+    if (he_rules)
+        return he_match_decision_semantics();
+    return (CettaMatchDecisionSemanticIdentity){
+        .language_id = library
+            ? (uint32_t)library->session.language_id
+            : (uint32_t)CETTA_LANGUAGE_PETTA,
+        .profile_id = library && library->session.profile
+            ? (uint32_t)library->session.profile->id
+            : (uint32_t)CETTA_PROFILE_PETTA_EXTENDED,
+        .match_policy_id = PETTA_MATCH_POLICY_RELATIONAL_STRUCTURAL_V1,
+        .demand_policy_id = PETTA_DEMAND_POLICY_STRICT_CALL_ARGUMENTS_V1,
+        .presentation_identity = PETTA_SEMANTIC_PRESENTATION_ID_V1,
+        .compiler_identity = cetta_match_decision_compiler_identity(),
+    };
+}
+
 static __attribute__((noinline)) bool petta_eval_machine_run(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
     int fuel, const Bindings *outer_environment,
@@ -43711,27 +43762,9 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
 #endif
     };
     CettaMatchDecisionSemanticIdentity match_decision_semantics =
-        portable_machine || g_he_shared_execution
-            ? he_match_decision_semantics()
-            : (CettaMatchDecisionSemanticIdentity){
-                  .language_id = context.library_context
-                      ? (uint32_t)context.library_context
-                            ->session.language_id
-                      : (uint32_t)CETTA_LANGUAGE_PETTA,
-                  .profile_id = context.library_context &&
-                                context.library_context->session.profile
-                      ? (uint32_t)context.library_context
-                            ->session.profile->id
-                      : (uint32_t)CETTA_PROFILE_PETTA_EXTENDED,
-                  .match_policy_id =
-                      PETTA_MATCH_POLICY_RELATIONAL_STRUCTURAL_V1,
-                  .demand_policy_id =
-                      PETTA_DEMAND_POLICY_STRICT_CALL_ARGUMENTS_V1,
-                  .presentation_identity =
-                      PETTA_SEMANTIC_PRESENTATION_ID_V1,
-                  .compiler_identity =
-                      cetta_match_decision_compiler_identity(),
-              };
+        petta_eval_machine_match_semantics(
+            context.library_context,
+            portable_machine || g_he_shared_execution);
     PettaMachineHost host = petta_eval_machine_host(
         &context, fuel, prime_machine, portable_machine, frontier_admitted,
         source_output_constraints,
@@ -47073,6 +47106,7 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
 
 #include "eval_he_execution.inc"
 #include "eval_he_canonical.inc"
+#include "eval_work.inc"
 
 /* The answer of an operation HE's library defines by an equation whose
  * result type is %Undefined%: HE evaluates it where it is answered, so a
@@ -50112,6 +50146,14 @@ petta_lowered_to_shared_form:
                 atom_error(a, atom, reason ? reason : atom_symbol(a, "MalformedSearchPolicy")),
                 &_empty);
         }
+        return;
+    }
+
+    /* ── retained work ─────────────────────────────────────────────────── */
+    if (eval_is_work_form(head_id)) {
+        if (!active_builtin_allowed(symbol_bytes(g_symbols, head_id)))
+            goto generic_dispatch;
+        eval_work_call(s, a, atom, head_id, fuel, os);
         return;
     }
 

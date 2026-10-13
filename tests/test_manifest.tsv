@@ -295,8 +295,10 @@ tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test
 tests/test_he_exact_index_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frame_schema_merge.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_joint_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_malformed.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_prepared.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_library_collections.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_case.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_closed_answers.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_collections.metta	he	metta	extended	main	native	test	golden	-
@@ -691,5 +693,6 @@ tests/test_with_space_snapshot_equation_regression.metta	he	metta	extended	main	
 tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_control.metta	he	metta	extended	main	native	test	golden	-
 tests/test_xor.metta	he	metta	extended	main	native	test	golden	-
 tests/test_zero_arity_function_overload.metta	he	metta	extended	main	native	test	golden	-

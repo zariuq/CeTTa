@@ -526,7 +526,12 @@ static inline SymbolSpelling symbol_spelling(
     X(pat_case_forward, "pat:case%") \
     X(pat_is_instance, "pat:is-instance") \
     X(pat_is_variant, "pat:is-variant") \
-    X(subtype, ":<")
+    X(subtype, ":<") \
+    X(work_new, "work-new") \
+    X(work_take, "work-take") \
+    X(work_budget, "work-budget") \
+    X(work_cancel, "work-cancel") \
+    X(work_record, "work-record")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

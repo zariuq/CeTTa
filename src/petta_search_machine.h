@@ -303,6 +303,11 @@ typedef struct {
      * reads a collected value so. */
     bool (*collected_value_reducible)(void *context, Space *space,
                                       Atom *value);
+    /* The aggregate of a call of one of HE's library collection functions
+     * whose library equation is in force (`unique` and the like), or
+     * SYMBOL_ID_NONE: the machine runs the call as that definition, with
+     * the arguments in place. */
+    SymbolId (*he_library_stream)(void *context, Space *space, Atom *call);
     /* No computation of this run has an effect, so a completed producer may
      * hand its successes on as they arrive and hold back only its errors:
      * the completed answers, normalized, are the same. */
@@ -813,6 +818,8 @@ bool petta_machine_answer_delayed(PettaMachine *machine, Atom *answer,
                                   Atom **payload);
 
 void petta_machine_destroy(PettaMachine *machine);
+/* The bytes the machine holds now: its heap and its tenured store. */
+size_t petta_machine_retained_bytes(const PettaMachine *machine);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the
  * head it names, or every head for `*`. */
 bool petta_machine_query_traced(SymbolId head);
