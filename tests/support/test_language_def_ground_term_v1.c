@@ -702,6 +702,267 @@ static void resolution_input_language_gates(
     pool_free(&pool);
 }
 
+static Atom *projection_span(TestAtomPool *pool, int64_t left, int64_t right) {
+    Atom *args[] = {pool_int(pool, left), pool_int(pool, right),
+                   pool_int(pool, left), pool_int(pool, right)};
+    return pool_expr(pool, "LbnfSourceSpanV1", args, 4u);
+}
+
+static Atom *projection_node(TestAtomPool *pool, const char *category,
+                             const char *label, Atom *span, Atom **children, uint32_t count) {
+    Atom *list = pool_symbol(pool, "LNil");
+    for (uint32_t i = count; i-- > 0u;) {
+        Atom *args[] = {children[i], list};
+        list = pool_expr(pool, "LCons", args, 2u);
+    }
+    Atom *args[] = {pool_string(pool, category), pool_string(pool, label), span, list};
+    return pool_expr(pool, "LbnfAstNodeV1", args, 4u);
+}
+
+static Atom *projection_token(TestAtomPool *pool, const char *category,
+                              Atom *span, const uint32_t *points, uint32_t count) {
+    Atom *text = pool_nullary(pool, "bnf-v1:text-nil");
+    for (uint32_t i = count; i-- > 0u;) {
+        Atom *args[] = {pool_int(pool, points[i]), text};
+        text = pool_expr(pool, "bnf-v1:text-cons", args, 2u);
+    }
+    Atom *where[] = {pool_int(pool, 3), pool_int(pool, 7)};
+    Atom *args[] = {pool_string(pool, category), pool_symbol(pool, "TokenTextV1"), text,
+        pool_expr(pool, "LbnfTokenPositionV1", where, 2u), span, text};
+    return pool_expr(pool, "LbnfAstTokenV1", args, 6u);
+}
+
+#define PROJECT_TEXT(s) { .bytes = (uint8_t *)(s), .len = sizeof(s) - 1u }
+static void parser_projection_gates(TestCounts *counts) {
+    CettaLdTypeDeclV1 types[] = {
+        {.name = PROJECT_TEXT("Nat"), .carrier = CETTA_LD_CARRIER_AST_V1},
+        {.name = PROJECT_TEXT("Word"), .carrier = CETTA_LD_CARRIER_BUILTIN_STRING_V1},
+        {.name = PROJECT_TEXT("Count"), .carrier = CETTA_LD_CARRIER_BUILTIN_INT_V1},
+        {.name = PROJECT_TEXT("Raw"), .carrier = CETTA_LD_CARRIER_TOKEN_RAW_V1},
+        {.name = PROJECT_TEXT("Flag"), .carrier = CETTA_LD_CARRIER_BUILTIN_BOOL_V1}};
+    CettaLdTermParamV1 parameter = {.kind = CETTA_LD_PARAM_SIMPLE_V1,
+        .type = {.kind = CETTA_LD_TYPE_BASE_V1, .as.base = PROJECT_TEXT("Nat")}};
+    CettaLdGrammarRuleV1 rules[] = {
+        {.label = PROJECT_TEXT("Z"), .category = PROJECT_TEXT("Nat")},
+        {.label = PROJECT_TEXT("S"), .category = PROJECT_TEXT("Nat"), .params = &parameter, .param_len = 1u},
+        {.label = PROJECT_TEXT("Z"), .category = PROJECT_TEXT("Nat")}};
+    CettaLanguageDefCoreV1 language = {.types = types, .type_len = 5u, .terms = rules, .term_len = 2u};
+    TestAtomPool input, output;
+    pool_init(&input); pool_init(&output);
+    Atom *span = projection_span(&input, 0, 10);
+    Atom *z = projection_node(&input, "Nat", "Z", span, NULL, 0u);
+    Atom *children[] = {z};
+    Atom *s = projection_node(&input, "Nat", "S", span, children, 1u);
+    Atom *sentinel = pool_symbol(&output, "unchanged"), *term = sentinel, *sources = sentinel;
+    const Atom *blame = NULL;
+    CettaLdGroundTermV1Status status;
+    char error[256];
+#define PROJECT(category, value, depth, work) \
+    cetta_language_def_ground_term_v1_project_ast(&output.arena, &language, category, value, \
+        depth, work, &term, &sources, &blame, &status, error, sizeof(error))
+    (void)expect(counts, PROJECT("Nat", s, 100u, 10000u) &&
+        cetta_language_def_ground_term_v1_admit(&language, "Nat", term, 100u, 10000u,
+            &status, error, sizeof(error)) && sources->expr.len == 2u &&
+        sources->expr.elems[1]->expr.elems[2]->ground.ival == 0 &&
+        sources->expr.elems[1]->expr.elems[3]->ground.ival == 0,
+        "labelled AST projects to an admitted constructor term with recoverable child positions");
+    Atom *retained = term, *retained_sources = sources;
+    term = sources = sentinel;
+    (void)expect(counts, !PROJECT("Word", s, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH && blame == span &&
+        term == sentinel && sources == sentinel, "wrong category refuses atomically at its source span");
+    Atom *unknown = projection_node(&input, "Nat", "Invented", span, NULL, 0u);
+    (void)expect(counts, !PROJECT("Nat", unknown, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNKNOWN_CONSTRUCTOR, "projection cannot invent a constructor");
+    Atom *arity = projection_node(&input, "Nat", "Z", span, children, 1u);
+    (void)expect(counts, !PROJECT("Nat", arity, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_ARITY_MISMATCH, "projection checks the core constructor arity");
+    language.term_len = 3u;
+    (void)expect(counts, !PROJECT("Nat", z, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_AMBIGUOUS_CONSTRUCTOR,
+        "ambiguous authority declarations are not silently identified by label");
+    language.term_len = 2u;
+    Atom *outside = projection_node(&input, "Nat", "Z", projection_span(&input, 9, 11), NULL, 0u);
+    children[0] = outside;
+    Atom *bad_span = projection_node(&input, "Nat", "S", span, children, 1u);
+    (void)expect(counts, !PROJECT("Nat", bad_span, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT, "child source spans must lie inside their parent");
+    (void)expect(counts, !PROJECT("Nat", s, 0u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT && blame == span &&
+        term == sentinel && sources == sentinel,
+        "projection depth exhaustion is incomplete with no published prefix");
+    (void)expect(counts, !PROJECT("Nat", s, 100u, 1u) &&
+        status == CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
+        "projection construction work is bounded independently of semantic refusal");
+    uint32_t word[] = {0x3bb, 0x1f600};
+    Atom *token = projection_token(&input, "Word", span, word, 2u);
+    (void)expect(counts, PROJECT("Word", token, 100u, 10000u) && term->ground.gkind == GV_STRING &&
+        !strcmp(term->ground.sval, "λ😀") &&
+        sources->expr.elems[0]->expr.elems[5]->expr.elems[1]->ground.ival == 3,
+        "builtin string projection decodes Unicode and retains token position");
+    uint32_t digits[] = {'0', '0', '4', '2'};
+    token->expr.elems[4] = pool_symbol(&input, "LbnfNoTokenPositionV1");
+    (void)expect(counts, PROJECT("Word", token, 100u, 10000u) &&
+        term->ground.gkind == GV_STRING && !strcmp(term->ground.sval, "λ😀"),
+        "the parser's symbolic absent token position projects without inventing a position");
+    token = projection_token(&input, "Count", span, digits, 4u);
+    (void)expect(counts, PROJECT("Count", token, 100u, 10000u) && term->ground.gkind == GV_INT &&
+        term->ground.ival == 42, "decimal token spelling projects to the declared integer value");
+    uint32_t overflow[] = {'9','2','2','3','3','7','2','0','3','6','8','5','4','7','7','5','8','0','8'};
+    token = projection_token(&input, "Count", span, overflow, 19u);
+    (void)expect(counts, !PROJECT("Count", token, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_NONCANONICAL_BUILTIN, "integer overflow cannot silently change a value");
+    token = projection_token(&input, "Raw", span, word, 2u);
+    (void)expect(counts, !PROJECT("Raw", token, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE, "raw token declaration is not silently a builtin string");
+    uint32_t nul[] = {0};
+    token = projection_token(&input, "Word", span, nul, 1u);
+    (void)expect(counts, !PROJECT("Word", token, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE, "counted NUL text cannot be truncated into a builtin string");
+    uint32_t truth[] = {'T','r','u','e'};
+    token = projection_token(&input, "Flag", span, truth, 4u);
+    (void)expect(counts, PROJECT("Flag", token, 100u, 10000u) &&
+        term->ground.gkind == GV_BOOL && term->ground.bval &&
+        cetta_language_def_ground_term_v1_admit(&language, "Flag", term, 100u, 10000u,
+            &status, error, sizeof(error)), "declared builtin Boolean projects to an admitted Boolean atom");
+    uint32_t invented_truth[] = {'y','e','s'};
+    token = projection_token(&input, "Flag", span, invented_truth, 3u);
+    (void)expect(counts, !PROJECT("Flag", token, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_NONCANONICAL_BUILTIN,
+        "a token spelling cannot invent a Boolean value");
+    Atom *list_fields[] = {pool_string(&input, "Nat"), span, pool_symbol(&input, "LNil")};
+    Atom *ast_list = pool_expr(&input, "LbnfAstListV1", list_fields, 3u);
+    (void)expect(counts, !PROJECT("Nat", ast_list, 100u, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "a parser list cannot silently acquire a constructor-carrier meaning");
+    Atom *deep = z;
+    for (uint32_t i = 0u; i < 100000u; ++i) {
+        children[0] = deep;
+        deep = projection_node(&input, "Nat", "S", span, children, 1u);
+    }
+    (void)expect(counts, PROJECT("Nat", deep, UINT32_MAX, 4000000u) &&
+        sources->expr.len == 100001u &&
+        cetta_language_def_ground_term_v1_admit(&language, "Nat", term, UINT32_MAX, 4000000u,
+            &status, error, sizeof(error)), "100000-level projection and admission use no recursive C traversal");
+    pool_free(&input);
+    (void)expect(counts, cetta_language_def_ground_term_v1_admit(&language, "Nat", retained, 100u, 10000u,
+        &status, error, sizeof(error)) && retained_sources->expr.elems[0]->expr.elems[4]->expr.elems[2]->ground.ival == 10,
+        "projected terms and associated spans outlive the AST input arena");
+    pool_free(&output);
+#undef PROJECT
+}
+static void mixed_profile_gates(TestCounts *counts) {
+    CettaLdTypeDeclV1 types[] = {
+        {.name = PROJECT_TEXT("Nat"), .carrier = CETTA_LD_CARRIER_AST_V1},
+        {.name = PROJECT_TEXT("Scoped"), .carrier = CETTA_LD_CARRIER_AST_V1}};
+    CettaLdTermParamV1 plain = {.kind = CETTA_LD_PARAM_SIMPLE_V1,
+        .type = {.kind = CETTA_LD_TYPE_BASE_V1, .as.base = PROJECT_TEXT("Nat")}};
+    CettaLdTermParamV1 binding = {.kind = CETTA_LD_PARAM_ABSTRACTION_NAMED_V1,
+        .type = {.kind = CETTA_LD_TYPE_BASE_V1, .as.base = PROJECT_TEXT("Nat")}};
+    CettaLdTermParamV1 scoped = {.kind = CETTA_LD_PARAM_SIMPLE_V1,
+        .type = {.kind = CETTA_LD_TYPE_BASE_V1, .as.base = PROJECT_TEXT("Scoped")}};
+    CettaLdGrammarRuleV1 rules[] = {
+        {.label = PROJECT_TEXT("Z"), .category = PROJECT_TEXT("Nat")},
+        {.label = PROJECT_TEXT("S"), .category = PROJECT_TEXT("Nat"), .params = &plain, .param_len = 1u},
+        {.label = PROJECT_TEXT("Binder"), .category = PROJECT_TEXT("Scoped"), .params = &binding, .param_len = 1u},
+        {.label = PROJECT_TEXT("Inject"), .category = PROJECT_TEXT("Nat"), .params = &scoped, .param_len = 1u},
+        {.label = PROJECT_TEXT("Z"), .category = PROJECT_TEXT("Nat"), .params = &binding, .param_len = 1u}};
+    CettaLanguageDefCoreV1 language = {.types = types, .type_len = 2u, .terms = rules, .term_len = 3u};
+    TestAtomPool input, output;
+    pool_init(&input); pool_init(&output);
+    Atom *z = pool_nullary(&input, "Z");
+    Atom *args[] = {z};
+    Atom *s = pool_expr(&input, "S", args, 1u);
+    Atom *binder = pool_expr(&input, "Binder", args, 1u);
+    CettaLdGroundTermV1Status status;
+    char error[256];
+    CettaLdPatternV1 pattern;
+    cetta_ld_pattern_v1_init(&pattern);
+#define MIX_ADMIT(category, term, work) \
+    cetta_language_def_ground_term_v1_admit(&language, category, term, 128u, work, \
+        &status, error, sizeof(error))
+#define MIX_CODEC(category) \
+    cetta_language_def_ground_term_v1_supports_pattern_codec(&language, category, 10000u, \
+        &status, error, sizeof(error))
+    (void)expect(counts, MIX_ADMIT("Nat", s, 10000u),
+        "an independent binder declaration does not disable constructor admission");
+    (void)expect(counts, MIX_CODEC("Nat"),
+        "codec closure considers only constructors reachable from its category");
+    (void)expect(counts, !MIX_CODEC("Scoped") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "a reachable binding declaration still needs its own codec");
+    (void)expect(counts, !MIX_ADMIT("Scoped", binder, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "selecting a binding constructor never erases its scope");
+    (void)expect(counts, cetta_language_def_ground_term_v1_to_pattern(&language, "Nat", s, &pattern,
+        128u, 10000u, &status, error, sizeof(error)) && pattern_apply_has_head(&pattern, "S", 1u),
+        "supported terms retain the Pattern codec in a mixed language");
+    Atom *roundtrip = cetta_language_def_ground_term_v1_from_pattern(&output.arena, &language,
+        "Nat", &pattern, 128u, 10000u, &status, error, sizeof(error));
+    (void)expect(counts, roundtrip && atom_eq(s, roundtrip),
+        "mixed-language constructor conversion roundtrips exactly");
+    (void)expect(counts, !cetta_language_def_ground_term_v1_to_pattern(&language, "Scoped", binder,
+        &pattern, 128u, 10000u, &status, error, sizeof(error)) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE && pattern_apply_has_head(&pattern, "S", 1u),
+        "unsupported conversion preserves the previous complete Pattern");
+    CettaLdPatternV1 binding_pattern = {.kind = CETTA_LD_PATTERN_APPLY_V1,
+        .as.apply = {.head = PROJECT_TEXT("Binder"), .arguments = pattern.as.apply.arguments}};
+    (void)expect(counts, !cetta_language_def_ground_term_v1_from_pattern(&output.arena, &language,
+        "Scoped", &binding_pattern, 128u, 10000u, &status, error, sizeof(error)) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "Pattern readback also refuses the selected binding constructor");
+
+    Atom *span = projection_span(&input, 0, 4);
+    Atom *node = projection_node(&input, "Nat", "Z", span, NULL, 0u);
+    Atom *children[] = {node};
+    Atom *ast = projection_node(&input, "Nat", "S", span, children, 1u);
+    Atom *sentinel = pool_symbol(&output, "unchanged"), *term = sentinel, *sources = sentinel;
+    const Atom *blame = NULL;
+#define MIX_PROJECT(category, ast) \
+    cetta_language_def_ground_term_v1_project_ast(&output.arena, &language, category, ast, \
+        128u, 10000u, &term, &sources, &blame, &status, error, sizeof(error))
+    (void)expect(counts, MIX_PROJECT("Nat", ast) && atom_eq(term, s),
+        "AST projection reaches the independent constructor profile");
+    ast = projection_node(&input, "Scoped", "Binder", span, children, 1u);
+    term = sources = sentinel;
+    (void)expect(counts, !MIX_PROJECT("Scoped", ast) &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE && blame == span &&
+        term == sentinel && sources == sentinel,
+        "binding projection refuses atomically at the selected occurrence");
+    language.term_len = 4u;
+    (void)expect(counts, !MIX_CODEC("Nat") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "a transitive binding dependency is not skipped by a category-wide codec claim");
+    (void)expect(counts, MIX_ADMIT("Nat", s, 10000u),
+        "concrete admission needs only the constructors in the actual term");
+    language.term_len = 5u;
+    (void)expect(counts, !MIX_ADMIT("Nat", z, 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_AMBIGUOUS_CONSTRUCTOR,
+        "an unsupported declaration is not filtered out to resolve ambiguity");
+    language.term_len = 3u;
+    CettaLdTypeExprV1 base = plain.type;
+    binding.kind = CETTA_LD_PARAM_SIMPLE_V1;
+    binding.type = (CettaLdTypeExprV1){.kind = CETTA_LD_TYPE_ARROW_V1,
+        .as.arrow = {.domain = &base, .codomain = &base}};
+    (void)expect(counts, MIX_ADMIT("Nat", s, 10000u) && !MIX_CODEC("Scoped") &&
+        status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "non-base parameter profiles are likewise local to the partial consumer");
+    bool budget_ok = true, saw_success = false, saw_incomplete = false;
+    for (uint64_t budget = 0; budget < 128u; ++budget) {
+        bool ok = MIX_ADMIT("Nat", s, budget);
+        saw_success |= ok;
+        saw_incomplete |= status == CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT;
+        budget_ok &= ok || status == CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT ||
+            (budget == 0u && status == CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT);
+    }
+    (void)expect(counts, budget_ok && saw_success && saw_incomplete,
+        "mixed-profile admission budgets never turn an unrelated capability into rejection");
+    cetta_ld_pattern_v1_free(&pattern);
+    pool_free(&input); pool_free(&output);
+#undef MIX_PROJECT
+#undef MIX_CODEC
+#undef MIX_ADMIT
+}
+#undef PROJECT_TEXT
+
 int main(void) {
     TestCounts counts = {0};
     SymbolTable symbols;
@@ -747,6 +1008,8 @@ int main(void) {
     resource_gates(&counts, &language);
     syntax_tree_language_gates(&counts, &syntax_language);
     resolution_input_language_gates(&counts, &language);
+    parser_projection_gates(&counts);
+    mixed_profile_gates(&counts);
     (void)expect(
         &counts,
         strcmp(cetta_ld_ground_term_v1_status_name(

@@ -9,12 +9,18 @@
 #include <stdint.h>
 
 /*
- * Exact Atom representation of the constructor Pattern profile.
+ * Exact Atom representation of the existing LanguageDef Pattern carrier.
  *
  * Values use the same public constructors as a LanguageDef wire:
  *
  *   (FVar "name")
  *   (PApp "head" (LCons pattern ... LNil))
+ *   (Var index), (PLam BNone body), (PMultiLam arity LNil body)
+ *   (PSubst body replacement), (PCollection kind elements RNone)
+ *
+ * Binder names, multi-binder names and collection rests are retained when
+ * supplied. Decoding is not scope/type admission or an execution licence;
+ * individual consumers still check their own semantic profile.
  *
  * This representation is intentionally distinct from an ordinary guest term.
  * In particular, a nullary PApp is not silently identified with either a

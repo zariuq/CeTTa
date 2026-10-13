@@ -1,0 +1,32 @@
+import Naturals from "RewriteBundles"
+Module DerivedTuples {
+  Theory TupleSyntax(n: Naturals) {
+    n Terms {
+      NatPair . Product { Nat; Nat; } ::= "(" Nat "," Nat ")";
+      PairBox . Wrapped ::= "wrap" Product { Nat; Nat; };
+      UnitTuple . Product {} ::= "unit";
+      UnitBox . WrappedUnit ::= "box" Product {};
+    }
+  }
+  Theory WrongComponents(n: Naturals) {
+    n Terms {
+      BadPair . Product { Nat; Nat; } ::= "bad" Nat;
+    }
+  }
+  Theory TupleRenamed(n: Naturals) {
+    TupleSyntax(n) Replacements {
+      [0,1] NatPair . Product { Nat; Nat; } => PairOf . Product { Nat; Nat; } ::= "pair(" Nat "," Nat ")";
+    }
+  }
+  Theory CollidingHead(n: Naturals) {
+    n Terms {
+      NatZ . Product { Nat; Nat; } ::= "bad" Nat Nat;
+    }
+  }
+  Theory NestedComponents(n: Naturals) {
+    n Terms {
+      NestedPair . Product { Product { Nat; Nat; }; Nat; } ::= "nested" Nat Nat;
+    }
+  }
+  theory Empty
+}

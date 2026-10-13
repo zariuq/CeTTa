@@ -98,6 +98,20 @@ bool cetta_ld_parser_profile_v1_decode(
 void cetta_ld_parser_pack_v1_init(CettaLdParserPackV1 *compiled);
 void cetta_ld_parser_pack_v1_free(CettaLdParserPackV1 *compiled);
 
+Atom *cetta_ld_parser_pack_v1_export_storage(
+    Arena *, const CettaLdParserPackV1 *, char *, size_t);
+bool cetta_ld_parser_pack_v1_import_storage(
+    CettaLdParserPackV1 *, Atom *, char *, size_t);
+
+/* Structural construction checks over decoded, owned grammar data. No
+ * compiler equations, lexical automata or recognizer tables are built.
+ * Lexical language decisions (including nonempty token consumption) are
+ * established when the immutable parser is compiled. */
+bool cetta_language_def_parser_pack_v1_validate_structure(
+    const CettaLanguageDefCoreV1 *language,
+    const CettaLdParserProfileV1 *profile, uint32_t work_limit,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size);
+
 /*
  * Compile the exact first-order terminal/nonterminal syntax fragment.
  *

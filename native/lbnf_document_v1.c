@@ -54,8 +54,8 @@ static bool boolean(Atom *value, bool *out) {
     if (value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_BOOL) {
         *out = value->ground.bval; return true;
     }
-    if (atom_is_symbol(value, "True")) { *out = true; return true; }
-    if (atom_is_symbol(value, "False")) { *out = false; return true; }
+    if (atom_is_symbol(value, "True") || atom_is_symbol(value, "true")) { *out = true; return true; }
+    if (atom_is_symbol(value, "False") || atom_is_symbol(value, "false")) { *out = false; return true; }
     return false;
 }
 
@@ -190,9 +190,10 @@ static Atom *token_text(Atom *node) {
 static Atom *cat_from_ast(Lower *l, Atom *node, uint32_t depth) {
     Atom *children[1];
     if (!spend(l) || depth > 512u) return NULL;
+    if (form(node, "LbnfAstTokenV1", 6u)) return text_string(l, token_text(node));
     if (args(ast_children(node, "IdCat"), children, 1u))
         return text_string(l, token_text(children[0]));
-    if (args(ast_children(node, "ListCat"), children, 1u)) {
+    if (args(ast_children(node, "ListCat"), children, 1u) || args(ast_children(node, "ListOfCat"), children, 1u)) {
         Atom *element = cat_from_ast(l, children[0], depth + 1u);
         if (!string(element)) return NULL;
         size_t n = strlen(element->ground.sval);
@@ -309,7 +310,8 @@ static Atom *definition_from_ast(Lower *l, Atom *node) {
         Atom *rows = children[1]->expr.elems[3];
         for (; form(rows, "LCons", 2u); rows = rows->expr.elems[2]) {
             Atom *rhs[1];
-            if (!args(ast_children(rows->expr.elems[1], "RHS"), rhs, 1u)) { clear(&values); return NULL; }
+            if (!args(ast_children(rows->expr.elems[1], "RHS"), rhs, 1u) &&
+                !args(ast_children(rows->expr.elems[1], "MkRHS"), rhs, 1u)) { clear(&values); return NULL; }
             Atom *items = items_from_ast(l, rhs[0]);
             if (!items || !push(l, &values, items)) { clear(&values); return NULL; }
         }
@@ -326,6 +328,24 @@ static Atom *definition_from_ast(Lower *l, Atom *node) {
     if (!body || !form(node, "LbnfAstNodeV1", 4u)) return NULL;
     Atom *values[] = {atom_deep_copy(l->arena, node->expr.elems[3]), body};
     return make(l->arena, "LbnfDefinitionV1", values, 2u);
+}
+
+bool cetta_lbnf_definition_v1_project(
+    Arena *arena, Atom *ast, uint32_t work_limit,
+    Atom **out, Atom **refusal) {
+    if (!arena || !out || !refusal) return false;
+    Lower lower = {.arena = arena, .remaining = work_limit,
+        .site = form(ast, "LbnfAstNodeV1", 4u) ? ast->expr.elems[3] : NULL};
+    Atom *definition = definition_from_ast(&lower, ast);
+    if (!definition) {
+        fail(&lower, "malformed-definition", "Expected a labelled LBNF declaration.");
+        *refusal = atom_deep_copy(arena, lower.refusal);
+        return false;
+    }
+    Atom *owned = atom_deep_copy(arena, definition);
+    if (!owned) return false;
+    *out = owned;
+    return true;
 }
 
 bool cetta_lbnf_document_v1_project(
@@ -869,6 +889,82 @@ static bool lower_definition(Lower *l, Atom *body, size_t index) {
         if (!strcmp(name, "Function")) return fail(l, "define", "Define declarations are retained in the document but not lowered in this profile.");
     }
     return fail(l, "malformed-definition", "Unknown or malformed LBNF document declaration.");
+}
+
+bool cetta_lbnf_document_v1_declarations(
+    Arena *arena, Atom *document, Atom *name, uint32_t *remaining_work,
+    Atom **language, Atom **production_sites, Atom **refusal) {
+    if (!arena || !remaining_work || !language || !refusal) return false;
+    Lower l = {.arena = arena, .remaining = *remaining_work};
+    bool ok = false;
+    if (!form(document, "LbnfDocumentV1", 2u) || !string(name) || !name->ground.sval[0]) {
+        fail(&l, "malformed-document", "Expected a declaration document and a language name."); goto done;
+    }
+    l.namespace_value = document->expr.elems[1];
+    if (!string(l.namespace_value) || !l.namespace_value->ground.sval[0]) {
+        fail(&l, "malformed-document", "Expected a declaration namespace."); goto done;
+    }
+    Atom *rows = document->expr.elems[2];
+    size_t index = 0u;
+    for (; form(rows, "LCons", 2u); rows = rows->expr.elems[2], ++index) {
+        if (!spend(&l)) goto done;
+        Atom *row = rows->expr.elems[1];
+        if (!form(row, "LbnfDefinitionV1", 2u)) {
+            fail(&l, "malformed-definition", "Expected a located declaration."); goto done;
+        }
+        l.site = row->expr.elems[1];
+        Atom *body = row->expr.elems[2];
+        if (form(body, "LbnfRuleV1", 4u) || form(body, "LbnfSeparatorV1", 3u) ||
+            form(body, "LbnfTerminatorV1", 3u) || form(body, "LbnfCoercionsV1", 2u) ||
+            form(body, "LbnfRulesV1", 2u)) {
+            if (!lower_definition(&l, body, index)) goto done;
+        } else if (form(body, "LbnfTokenV1", 3u)) {
+            bool positioned;
+            Atom *category = body->expr.elems[1];
+            if (!string(category) || !category->ground.sval[0] ||
+                !boolean(body->expr.elems[3], &positioned)) {
+                fail(&l, "malformed-token", "Expected a named token declaration."); goto done;
+            }
+            if (has(&l.custom_tokens, category)) {
+                fail(&l, "duplicate-token-definition", "Duplicate token definitions."); goto done;
+            }
+            if (!push(&l, &l.custom_tokens, category)) goto done;
+        } else if (!form(body, "LbnfEntrypointsV1", 1u) &&
+                   !form(body, "LbnfLineCommentV1", 1u) &&
+                   !form(body, "LbnfBlockCommentV1", 2u) &&
+                   !form(body, "LbnfPragmaV1", 2u)) {
+            fail(&l, "malformed-definition", "Unknown declaration notation."); goto done;
+        }
+    }
+    if (!atom_is_symbol(rows, "LNil")) {
+        fail(&l, "malformed-definition-list", "Expected a finite declaration list."); goto done;
+    }
+    for (size_t i = 0u; i < l.custom_tokens.len; ++i) {
+        if (has(&l.defined, l.custom_tokens.items[i])) {
+            fail(&l, "token-category-conflict", "A category cannot be both a token and an AST sort."); goto done;
+        }
+        if (!type(&l, l.custom_tokens.items[i], true)) goto done;
+    }
+    for (size_t i = 0u; i < l.referenced.len; ++i) {
+        Atom *category = l.referenced.items[i];
+        if (!type(&l, category, has(&l.custom_tokens, category) || builtin(category->ground.sval))) goto done;
+    }
+    Atom *nil = atom_symbol(arena, "LNil");
+    Atom *fields[] = {name, list(arena, &l.types), list(arena, &l.rules), nil, nil};
+    Atom *owned = atom_deep_copy(arena, make(arena, "GSLTLanguageDefWireV1", fields, 5u));
+    if (!owned) { fail(&l, "allocation-failure", "Could not own the declaration value."); goto done; }
+    Atom *sites = production_sites ? atom_deep_copy(arena, list(arena, &l.rule_sites)) : NULL;
+    if (production_sites && !sites) { fail(&l, "allocation-failure", "Could not own declaration sites."); goto done; }
+    *language = owned;
+    if (production_sites) *production_sites = sites;
+    ok = true;
+done:
+    *remaining_work = l.remaining;
+    if (!ok) {
+        if (!l.refusal) fail(&l, "malformed-definition", "Malformed declaration fields.");
+        *refusal = l.refusal;
+    }
+    close_lower(&l); return ok;
 }
 
 static bool validate_grammar(Lower *l) {

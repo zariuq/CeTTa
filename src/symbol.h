@@ -340,6 +340,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
+    X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \

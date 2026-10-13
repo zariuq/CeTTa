@@ -34,3 +34,10 @@
 ; Canonical failures are data rather than dialect-specific engine errors.
 !(json:parse "01")
 !(json:stringify (JsonNumberV1 "01"))
+
+; Conversion preserves ordered occurrences and exact values without a wire trip.
+!(json-stringify
+   (json:to-legacy (json:parse "{\"x\":-12.50e+2,\"x\":[true,false,null,\"λ\\u0000z\"]}")))
+!(case (json:to-legacy (JsonStringV1 ((cp 55296))))
+   (((JsonFailureV1 $operation $status $call $message) $status)
+    ($other UnexpectedJsonConversion)))
