@@ -132,6 +132,32 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
     return true;
 }
 
+static _Thread_local const char *g_prime_share_refusal;
+
+static void prime_share_refuse(const char *reason) {
+    if (!g_prime_share_refusal)
+        g_prime_share_refusal = reason;
+}
+
+static const char *prime_share_grounded_refusal(GroundedKind kind) {
+    switch (kind) {
+    case GV_INT: case GV_FLOAT: case GV_BOOL: case GV_STRING:
+    case GV_BIGINT: case GV_RATIONAL:
+        return "immutable-scalar";
+    case GV_SPACE: return "immutable-space";
+    case GV_STATE: return "immutable-state";
+    case GV_CAPTURE: return "immutable-capture";
+    case GV_FOREIGN: return "immutable-foreign";
+    case GV_PRIME_NEED_CAPABILITY: return "immutable-need";
+    case GV_PRIME_CONTEXT: return "immutable-context";
+    case GV_INTERNAL_TAG: return "immutable-tag";
+    case GV_BINDINGS: return "immutable-bindings";
+    case GV_TERM_GRAPH: return "immutable-term-graph";
+    case GV_TENSOR: return "immutable-tensor";
+    }
+    return "immutable-grounded";
+}
+
 /* The ordinary caller holds the source/universe, registry, symbols and
  * library until its synchronous frontier has joined and published. This
  * inspection admits immutable syntax payloads; it does not create a pin or
@@ -141,51 +167,105 @@ static bool prime_ordinary_immutable_graph(PrimeEvalStackSupportBuffer *scan,
     CettaStorageCensus *seen) {
     for(size_t i=0u;i<scan->len;i++) {
         Atom *atom=scan->items[i];
-        if(!atom)return false;
+        if(!atom) {
+            prime_share_refuse("immutable-null");
+            return false;
+        }
         if(!cetta_storage_object(seen,atom,0u,CETTA_STORAGE_VISITED)) {
-            if(seen->incomplete || seen->overflow)return false;
+            if(seen->incomplete || seen->overflow) {
+                prime_share_refuse("immutable-census");
+                return false;
+            }
             continue;
         }
-        if(atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)return false;
+        if(atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
+            prime_share_refuse("immutable-handle");
+            return false;
+        }
         if(atom->kind==ATOM_GROUNDED) {
             GroundedKind kind=atom->ground.gkind;
             if(kind!=GV_INT && kind!=GV_FLOAT && kind!=GV_BOOL && kind!=GV_STRING &&
-                kind!=GV_BIGINT && kind!=GV_RATIONAL)return false;
+                kind!=GV_BIGINT && kind!=GV_RATIONAL) {
+                prime_share_refuse(prime_share_grounded_refusal(kind));
+                return false;
+            }
         } else if(atom->kind==ATOM_EXPR) {
             for(CettaExprIndex j=0u;j<atom->expr.len;j++)
-                if(!prime_eval_stack_support_buffer_push(scan,atom->expr.elems[j]))return false;
+                if(!prime_eval_stack_support_buffer_push(scan,atom->expr.elems[j])) {
+                    prime_share_refuse("immutable-push");
+                    return false;
+                }
         } else if(atom->kind==ATOM_VAR) {
-            if(atom->name_key && !prime_eval_stack_support_buffer_push(scan,atom->name_key))return false;
-        } else if(atom->kind!=ATOM_SYMBOL)return false;
+            if(atom->name_key && !prime_eval_stack_support_buffer_push(scan,atom->name_key)) {
+                prime_share_refuse("immutable-push");
+                return false;
+            }
+        } else if(atom->kind!=ATOM_SYMBOL) {
+            prime_share_refuse("immutable-kind");
+            return false;
+        }
     }
+    if (seen->incomplete || seen->overflow)
+        prime_share_refuse("immutable-census");
     return !seen->incomplete && !seen->overflow;
 }
+
 static bool prime_ordinary_shared_source_admitted(Space *space) {
     SpaceReadView view={0};
-    if(!space_read_view_capture(space,&view))return false;
+    if(!space_read_view_capture(space,&view)) {
+        prime_share_refuse("view-capture");
+        return false;
+    }
+    if (view.base_count)
+        prime_share_refuse("overlay-base");
+    if (!space_read_view_has_native_occurrences(&view))
+        prime_share_refuse("no-native-occurrences");
     bool safe=!view.base_count && space_read_view_has_native_occurrences(&view);
-    for(size_t i=0u;safe && i<g_context_home_depth;i++)safe=g_context_home_stack[i]==space;
-    for(size_t i=0u;safe && i<g_context_here_depth;i++)safe=g_context_here_stack[i]==space;
+    for(size_t i=0u;safe && i<g_context_home_depth;i++) {
+        safe=g_context_home_stack[i]==space;
+        if (!safe) prime_share_refuse("home-stack");
+    }
+    for(size_t i=0u;safe && i<g_context_here_depth;i++) {
+        safe=g_context_here_stack[i]==space;
+        if (!safe) prime_share_refuse("here-stack");
+    }
     PrimeEvalStackSupportBuffer scan;prime_eval_stack_support_buffer_init(&scan);
     CettaStorageCensus seen={0};
-    for(CettaCount i=0u;safe && i<space_length64(space);i++)
+    for(CettaCount i=0u;safe && i<space_length64(space);i++) {
         safe=prime_eval_stack_support_buffer_push(&scan,space_get_at64(space,i));
+        if (!safe) prime_share_refuse("space-row");
+    }
     if(g_registry)for(uint32_t i=0u;safe && i<g_registry->len;i++) {
         Atom *value=g_registry->entries[i].value;
         if(value && value->kind==ATOM_GROUNDED && value->ground.gkind==GV_SPACE) {
             safe=value->ground.ptr==space;
-        } else if(value)safe=prime_eval_stack_support_buffer_push(&scan,value);
+            if (!safe) prime_share_refuse("registry-space");
+        } else if(value) {
+            safe=prime_eval_stack_support_buffer_push(&scan,value);
+            if (!safe) prime_share_refuse("registry-value");
+        }
         if(safe && g_registry->entries[i].key==SYMBOL_ID_NONE) {
             const Atom *key=registry_entry_name_key(g_registry,i);
             safe=key && prime_eval_stack_support_buffer_push(&scan,(Atom *)key);
+            if (!safe) prime_share_refuse("registry-key");
         }
     }
     /* The static relation classifier consumes compiled RHS plans. Use the
      * common live-Space ingress; it preserves existing declaration plans,
-     * and its preparation/cache work remains part of this call. */
-    safe=safe && prime_ordinary_immutable_graph(&scan,&seen) &&
-        petta_program_synchronize_space(g_library_context->petta_program,space) &&
-        space_read_view_is_current(&view);
+     * and its preparation/cache work remains part of this call. Synchronize
+     * still runs only after the immutable-graph conjunct, as before. */
+    if (safe && !prime_ordinary_immutable_graph(&scan,&seen)) {
+        prime_share_refuse("immutable-graph");
+        safe = false;
+    }
+    if (safe && !petta_program_synchronize_space(g_library_context->petta_program,space)) {
+        prime_share_refuse("synchronize");
+        safe = false;
+    }
+    if (safe && !space_read_view_is_current(&view)) {
+        prime_share_refuse("view-stale");
+        safe = false;
+    }
     cetta_storage_census_free(&seen);prime_eval_stack_support_buffer_free(&scan);
     space_read_view_release(&view);return safe;
 }
@@ -198,6 +278,7 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
     CettaStorageCensus seen={0},calls={0};
     bool safe=prime_eval_stack_support_buffer_push(&scan,expression) &&
         prime_ordinary_immutable_graph(&scan,&seen);
+    if (!safe) prime_share_refuse("task-expression");
     for(size_t i=0u;safe && i<scan.len;i++) {
         Atom *atom=scan.items[i];
         if(!cetta_storage_object(&calls,atom,0u,CETTA_STORAGE_VISITED)) {
@@ -209,11 +290,17 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
         /* A registry binding supplies a different callable/value region.
          * This read-closure profile does not transport that interpretation. */
         if((head->kind!=ATOM_SYMBOL && head->kind!=ATOM_GROUNDED) ||
-            registry_lookup_atom(head)) {safe=false;break;}
+            registry_lookup_atom(head)) {
+            prime_share_refuse("task-head");
+            safe=false;break;
+        }
         if(atom_has_constructor_head(space,arena,atom))continue;
         /* Reading immutable syntax is independent of worker placement.
          * The complete closure and real call classifier still apply. */
-        if(!prime_native_actual_call_allowed(space,arena,atom)) {safe=false;break;}
+        if(!prime_native_actual_call_allowed(space,arena,atom)) {
+            prime_share_refuse("task-call");
+            safe=false;break;
+        }
         SymbolId id=atom_head_symbol_id(atom);
         if(id!=SYMBOL_ID_NONE && !symbol_id_is_builtin(id) &&
             !registry_lookup_atom(head) && eval_equations_may_match_known_head(space,id)) {
@@ -226,8 +313,10 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
                 g_library_context->petta_program,space,id,expr_nargs(atom));
             safe=safety==PETTA_RELATION_SAFETY_STATIC ||
                 safety==PETTA_RELATION_SAFETY_GUARDED_DYNAMIC;
+            if (!safe) prime_share_refuse("task-relation");
             SpaceEquationCursor cursor;
             safe=safe && space_equation_cursor_init(space,id,&cursor);
+            if (!safe) prime_share_refuse("task-equation");
             while(safe) {
                 SpaceEquationOccurrenceId occurrence_id;
                 SpaceEquationCursorStep step=space_equation_cursor_next(&cursor,&occurrence_id);
@@ -239,8 +328,12 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
                     prime_eval_stack_support_buffer_push(&scan,occurrence.rhs);
             }
             safe=safe && prime_ordinary_immutable_graph(&scan,&seen);
-        } else safe=petta_program_classify_resolved_call(g_library_context->petta_program,
-            space,atom)==PETTA_RESOLVED_CALL_MACHINE_LOCAL;
+            if (!safe) prime_share_refuse("task-rhs");
+        } else {
+            safe=petta_program_classify_resolved_call(g_library_context->petta_program,
+                space,atom)==PETTA_RESOLVED_CALL_MACHINE_LOCAL;
+            if (!safe) prime_share_refuse("task-machine");
+        }
     }
     cetta_storage_census_free(&calls);cetta_storage_census_free(&seen);
     prime_eval_stack_support_buffer_free(&scan);return safe;

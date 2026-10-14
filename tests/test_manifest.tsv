@@ -67,6 +67,8 @@ tests/prime/conformance/closed_lambda_pi_refine_boundary.metta	prime	metta		any	
 tests/prime/conformance/closed_lambda_pi_synth.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/conversion_typed_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/empty_observation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/he_declarations_hol_checked.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/he_tuple_projections.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-profiles	property	Prime language-identity side of the independently versioned lane boundary
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/nested_synthesis.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

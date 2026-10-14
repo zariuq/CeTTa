@@ -43,6 +43,11 @@ static inline CettaOwnedFrameLink *cetta_owned_frame_pop(
 typedef struct {
     CettaCallOutcome outcome;
     const Bindings *environment;
+    /* The producer has established that no return remains after this one.
+     * This certifies its own stream, not completion of a suspended payload,
+     * permission to force it, or release of another owner's account. False
+     * retains the ordinary continuation protocol. */
+    bool final;
 } CettaOwnedReturn;
 
 typedef enum {

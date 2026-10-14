@@ -499,6 +499,11 @@ PrimeNeedRecordingStatus prime_need_recording_status(const PrimeNeedRecording *r
 bool prime_need_recording_reserve(PrimeNeedRecording *recording,
     const PrimeNeedReceipt *seed, size_t nodes, size_t payload_bytes,
     PrimeNeedReceipt *out);
+/* A continuing worker may acquire further grants of this size from the
+ * same bounded group. Ordinary reserve retains its fixed slice limits. */
+bool prime_need_recording_reserve_growing(PrimeNeedRecording *recording,
+    const PrimeNeedReceipt *seed, size_t node_quantum, size_t byte_quantum,
+    PrimeNeedReceipt *out);
 bool prime_need_recording_promote(Arena *dst, PrimeNeedReceipt *receipt);
 bool prime_need_recording_merge(PrimeNeedReceipt *dst, const PrimeNeedReceipt *src);
 /* Dynamic allocation authority is separate from immutable captured roots.
@@ -513,10 +518,18 @@ void prime_need_recording_enter(PrimeNeedRecordingScope *scope,
     const PrimeNeedReceipt *slice);
 void prime_need_recording_leave(PrimeNeedRecordingScope *scope);
 void prime_need_recording_omit_scope(void);
+/* Reserve a sibling slice in the active scope's group. False leaves *out
+ * untouched and does not mark the parent incomplete. */
+bool prime_need_recording_inherit(PrimeNeedReceipt *out);
+/* Quiescent publication adopts an initial root and joins independent roots
+ * through bounded DAG
+ * joins in the active scope. Source carriers and allocation owners remain
+ * intact; refusal is optional evidence loss and records incompleteness. */
+void prime_need_recording_publish(PrimeNeedReceipt *src);
 bool prime_need_recording_merge_scoped(PrimeNeedReceipt *dst,
     const PrimeNeedReceipt *src);
 typedef bool (*PrimeNeedRecordingRootVisitor)(const PrimeNeedReceipt *, void *);
-/* Quiescent terminal roots allocated by this slice, in allocation order.
+/* Quiescent terminal roots retained by this slice, including an adopted root.
  * Roots are separate branch views and may have overlapping ancestors. */
 bool prime_need_recording_roots(const PrimeNeedReceipt *slice,
     PrimeNeedRecordingRootVisitor visit, void *context);

@@ -2384,6 +2384,25 @@ def controller_agreement(gate):
     controllers(gate)
 
 
+def computed_head_authority(gate):
+    source = '(= (head:source) +) '
+    _, obs = gate.run('computed pure coefficient head', source +
+        f'!(select 1 {control()} {read("(weight:where V ((head:source) 2 3))")})')
+    assert contribution(obs[-1]['values'][0])[:2] == ['V', 5], obs
+    gate.passed_case('computed heads resolve under the existing pure coefficient authority')
+    for name, source, coefficient, marker in (
+        ('resolved effect', '(= (head:source) println!) ',
+         '((head:source) "FORBIDDEN-COMPUTED-HEAD")', 'FORBIDDEN-COMPUTED-HEAD'),
+        ('effectful producer', '',
+         '((let $_ (println! "FORBIDDEN-HEAD-PRODUCER") +) 2 3)', 'FORBIDDEN-HEAD-PRODUCER'),
+    ):
+        _, obs = gate.run('computed coefficient '+name, source +
+            f'!(select 1 {control()} {read(f"(weight:where V {coefficient})")})')
+        assert obs[-1]['status'] == 'fault' and not obs[-1]['values'], obs
+        assert marker not in gate.receipts[-1]['stdout'], gate.receipts[-1]
+        gate.passed_case('pure authority refuses '+name+' before publication')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, default=ROOT / 'cetta')
@@ -2431,6 +2450,7 @@ def main():
         imported_coefficients(gate)
         authored_keys(gate)
         native_handler_boundaries(gate)
+        computed_head_authority(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True, exist_ok=True)

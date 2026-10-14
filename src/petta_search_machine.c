@@ -8904,6 +8904,7 @@ static bool petta_transfer_hosts_equal(
     if (left->capture_resource != right->capture_resource) return false;
     if (left->measure_stats != right->measure_stats) return false;
     if (left->quote_is_inert_data != right->quote_is_inert_data) return false;
+    if (left->return_occurrence_owner != right->return_occurrence_owner) return false;
     if (left->graded_equations != right->graded_equations) return false;
     if (left->empty_symbol_is_no_result != right->empty_symbol_is_no_result) return false;
     if (left->source_output_constraints != right->source_output_constraints) return false;
@@ -19229,8 +19230,8 @@ static size_t petta_machine_prune_empty_guard_candidates(
     return write;
 }
 
-static Atom *petta_machine_execute_prepared_call(
-        PettaMachineImpl *machine, Atom *call);
+static bool petta_machine_execute_prepared_call(
+        PettaMachineImpl *machine, Atom *call, CettaCallOutcome *reply);
 static bool petta_machine_start_answer_producer(
     PettaMachineImpl *machine, const PettaSpaceQueryView *query,
     Atom *expected, const PettaCandidateSnapshotLease *entry_lease,
@@ -19434,10 +19435,10 @@ static bool petta_machine_start_space_query(
         if (!determinate_declined &&
             petta_machine_space_query_closed(machine, query)) {
             Atom *call = petta_machine_materialize_space_query(machine, query);
-            Atom *result = call
-                ? petta_machine_execute_prepared_call(machine, call) : NULL;
-            if (result)
-                return petta_machine_unify(machine, result, expected);
+            CettaCallOutcome reply;
+            if (call && petta_machine_execute_prepared_call(machine, call, &reply))
+                return reply.kind == CETTA_CALL_VALUE &&
+                    petta_machine_unify(machine, reply.term, expected);
             determinate_declined = true;
         }
         producer_candidate = determinate_declined &&
@@ -26932,17 +26933,23 @@ static bool petta_machine_space_query_closed(
     return view->closed_state == PETTA_QUERY_CLOSED_YES;
 }
 
-static Atom *petta_machine_execute_prepared_call(
-        PettaMachineImpl *machine, Atom *call) {
-    if (!machine->host.execute_prepared_pure_call ||
-        petta_machine_prepared_call_blocked(machine, call))
-        return NULL;
-    Atom *result = machine->host.execute_prepared_pure_call(
-        machine->host.context, machine->space, &machine->heap, call);
+static bool petta_machine_execute_prepared_call(
+        PettaMachineImpl *machine, Atom *call, CettaCallOutcome *reply) {
+    if (!reply || !machine->host.execute_prepared_pure_call ||
+        petta_machine_prepared_call_blocked(machine, call) ||
+        !machine->host.execute_prepared_pure_call(
+            machine->host.context, machine->space, &machine->heap, call, reply))
+        return false;
     /* A foreign registry can make a returned data head callable without a
      * Space revision change. Such results still need ordinary dispatch. */
-    return result && !petta_machine_extension_callable(machine, result)
-        ? result : NULL;
+    if (reply->kind == CETTA_CALL_VALUE &&
+        (!reply->term || petta_machine_extension_callable(machine, reply->term)))
+        return false;
+    if (reply->kind == CETTA_CALL_INTERRUPTED) {
+        machine->terminal = true;
+        machine->terminal_step = PETTA_MACHINE_STEP_SUSPENDED;
+    }
+    return true;
 }
 
 /*
@@ -28753,7 +28760,7 @@ static Atom *petta_machine_materialize_closed_activation_call(
  * value that is not a truth value, declines to the ordinary path. */
 static bool petta_machine_activation_prepared_condition(
         PettaMachineImpl *machine, const PettaGoal *goal, Atom *source,
-        bool *truth_out) {
+        bool *truth_out, CettaCallOutcome *reply) {
     Atom *condition = source->expr.elems[1];
     const PettaPlanNode *condition_plan = petta_plan_child(goal->plan, 1u);
     if (!machine->host.execute_prepared_pure_call || !condition_plan ||
@@ -28801,9 +28808,10 @@ static bool petta_machine_activation_prepared_condition(
             return false;
         call = petta_machine_materialize_space_query(machine, &query.query);
     }
-    Atom *value = call ? petta_machine_execute_prepared_call(machine, call)
-                       : NULL;
-    return value && petta_semantics_truth_value(value, truth_out);
+    if (!call || !petta_machine_execute_prepared_call(machine, call, reply))
+        return false;
+    return reply->kind != CETTA_CALL_VALUE ||
+        petta_semantics_truth_value(reply->term, truth_out);
 }
 
 /*
@@ -29082,6 +29090,7 @@ activation_tail_segment:
                 }
                 PettaIfBranchSelection selected = {0};
                 bool decided = false;
+                CettaCallOutcome condition_reply;
                 if (region_hole &&
                     petta_machine_activation_plain_scalar_truth(
                         machine, &condition_goal, &truth,
@@ -29102,7 +29111,9 @@ activation_tail_segment:
                     decided = true;
                 } else if (!region_hole &&
                            petta_machine_activation_prepared_condition(
-                               machine, goal, source, &truth)) {
+                               machine, goal, source, &truth, &condition_reply)) {
+                    if (condition_reply.kind != CETTA_CALL_VALUE)
+                        return false;
                     CettaExprIndex child = truth ? 2u : 3u;
                     selected = (PettaIfBranchSelection){
                         .branch = source->expr.elems[child],
@@ -34739,9 +34750,13 @@ static bool petta_machine_dispatch_goal(
                     : symbol_bytes(g_symbols, prepared_head));
         }
         if (!count_collection_result && ordinary_ready_call) {
-            Atom *pure_result = petta_machine_execute_prepared_call(machine, first);
-            if (pure_result)
-                return petta_machine_unify_resolved(machine, pure_result, second);
+            CettaCallOutcome reply;
+            if (petta_machine_execute_prepared_call(machine, first, &reply)) {
+                if (reply.kind == CETTA_CALL_INTERRUPTED)
+                    *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return reply.kind == CETTA_CALL_VALUE &&
+                    petta_machine_unify_resolved(machine, reply.term, second);
+            }
         }
         if (!count_collection_result && !translated &&
             !relation_declared_tabled &&
@@ -35296,8 +35311,12 @@ static bool petta_machine_emit(
         goto fail_exports;
     if (bindings_prime_present(current)) {
         bindings_prime_assign(environment, current);
-        if (!bindings_promote_atoms_to_arena(
-                environment, machine->answer_arena)) {
+        Arena *occurrence_owner = machine->host.return_occurrence_owner
+            ? machine->host.return_occurrence_owner(
+                machine->host.context, machine->answer_arena, environment)
+            : NULL;
+        if (!bindings_promote_atoms_to_arena(environment,
+                occurrence_owner ? occurrence_owner : machine->answer_arena)) {
             goto fail_exports;
         }
     }

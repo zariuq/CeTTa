@@ -375,6 +375,9 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
         parallel->refill_item=NULL;
         parallel->grant=item->reserved;
         parallel->spent=item->spent;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        prime_native_parallel_history_publish(parallel);
+#endif
         refused=refused || item->push_refused || item->invalid;
         if (history) {
             for (size_t j=0u;j<item->length;j++)

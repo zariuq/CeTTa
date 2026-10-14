@@ -580,11 +580,12 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* Execute a closed, revision-pinned determinate pure call through the
-     * shared generated machine.  NULL declines to canonical equation search. */
-    Atom *(*execute_prepared_pure_call)(
+    /* Execute a closed, revision-pinned pure call with at most one answer.
+     * False declines to equation search. True reports a completed VALUE,
+     * FAILURE (no answer), or INTERRUPTED through the common outcome type. */
+    bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call);
+        Atom *prepared_call, CettaCallOutcome *result);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only
@@ -774,6 +775,12 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *head,
         CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
         bool *hold_body);
+    /* Optional host-owned storage for the complete occurrence attached to a
+     * return.  The host keeps this region alive for every published carrier;
+     * NULL keeps the ordinary answer-arena promotion.  This chooses storage,
+     * not a branch world or any additional execution authority. */
+    Arena *(*return_occurrence_owner)(void *context, Arena *answer_arena,
+                                      const Bindings *environment);
 } PettaMachineHost;
 
 typedef enum {

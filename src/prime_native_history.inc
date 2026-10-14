@@ -34,7 +34,7 @@ static PrimeNeedReceipt prime_native_history_reserve(PrimeNativeControl *control
     PrimeNeedReceipt receipt = {0};
     if (history->group && history->reservations < history->spec.selections) {
         history->reservations++;
-        (void)prime_need_recording_reserve(history->group, NULL,
+        (void)prime_need_recording_reserve_growing(history->group, NULL,
             history->spec.nodes, history->spec.bytes, &receipt);
     }
     return receipt;

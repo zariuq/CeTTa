@@ -48,6 +48,7 @@ static bool prime_replay_compare_policy(const CettaSearchPolicySpec *a,
     RP(present);RP(lane);RP(order);RP(native_control);RP(implicit_first_value);
     RP(priority);RP(age_share);RP(work_budget);RP(workers);RP(worker_quantum);
     RP(resource_profile);RP(resource_worlds);RP(retain);RP(receipts);RP(costs);
+    RP(source_share);RP(prepare_meter);
     RP(additional);RP(all);RP(descending);RP(by_weight);RP(weight_law);RP(selection);
 #undef RP
 #define RA(f) RC_A("policy."#f,a->f,b->f)
@@ -519,7 +520,7 @@ static bool prime_replay_compare_prepared_cache(const PreparedPureProgramCache *
         if(pa!=qa)return false;
         if(!pa)continue;
 #define PD(f) RC_FIELDS("prepared.decline",p,q,f)
-        PD(head);PD(arity);PD(language_id);PD(call_mode);PD(answer_producer);
+        PD(head);PD(arity);PD(language_id);PD(call_mode);PD(kind);
         PD(entry_arguments_are_values);PD(total_structural_equality);PD(declined);
 #undef PD
     }

@@ -1022,6 +1022,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-hol-guest-refused",
     "prime-hol-guest-unavailable",
     "prime-he-fragment-get-type",
+    "prepared-optional-call-admission",
+    "prepared-optional-call-empty",
+    "prepared-optional-call-value",
 };
 
 static int64_t clamp_counter(uint64_t value) {

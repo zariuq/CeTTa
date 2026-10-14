@@ -126,13 +126,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 625
+PRIME_NEED_ALGEBRA_CHECKS := 657
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 633
+PRIME_NEED_ALGEBRA_CHECKS := 665
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -24222,7 +24222,7 @@ test-prime-fuel-verdicts: $(BIN)
 test-prime-fast-fixtures: test-prime-quote-profiles
 test-prime-fast-fixtures: test-prime-route-agreement
 test-prime-fast-fixtures: test-prime-scope-spectrum
-# A variable's #suffix is the instance the runtime gave it (a clause renamed
+# A variable's #suffix is the instance the runtime gave it (an equation renamed
 # for a call, a template's own slot copied for an activation).  Fixtures
 # compare each answer line with its suffixes renumbered in order of first
 # occurrence: which positions share an instance is kept, the runtime's
@@ -32217,7 +32217,8 @@ test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-
 	scalar_guard_reference_out=$$(mktemp runtime/prepared-pure-scalar-guard-reference.XXXXXX); \
 	answer_effect_out=$$(mktemp runtime/prepared-pure-answer-effect.XXXXXX); \
 	answer_effect_diag=$$(mktemp runtime/prepared-pure-answer-effect-diag.XXXXXX); \
-	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out" "$$answer_effect_out" "$$answer_effect_diag"' EXIT INT TERM; \
+	answer_effect_reference_out=$$(mktemp runtime/prepared-pure-answer-effect-reference.XXXXXX); \
+	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out" "$$answer_effect_out" "$$answer_effect_diag" "$$answer_effect_reference_out"' EXIT INT TERM; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_out"; \
 	diff -u tests/prepared_pure_call_machine.he.expected "$$he_out"; \
@@ -32226,14 +32227,12 @@ test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-
 		>"$$answer_effect_out" 2>"$$answer_effect_diag"; \
 	diff -u tests/prepared_pure_answer_effect_boundary.he.expected \
 		"$$answer_effect_out"; \
-	answer_effect_declines=$$(grep -c \
-		'answer effect is outside the single-result machine' \
-		"$$answer_effect_diag"); \
-	if [ "$$answer_effect_declines" -ne 2 ]; then \
-		echo "FAIL: direct answer-effect boundary was not exercised twice"; \
-		cat "$$answer_effect_diag"; \
-		exit 1; \
-	fi; \
+	CETTA_PREPARED_PURE_REFERENCE=1 ./$(BIN) --lang he --profile extended \
+		tests/prepared_pure_answer_effect_boundary.metta \
+		>"$$answer_effect_reference_out"; \
+	diff -u tests/prepared_pure_answer_effect_boundary.he.expected \
+		"$$answer_effect_reference_out"; \
+	diff -u "$$answer_effect_reference_out" "$$answer_effect_out"; \
 	CETTA_GC=0 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_no_gc_out"; \
 	diff -u "$$he_no_gc_out" "$$he_out"; \
@@ -32382,9 +32381,23 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$${answer_admissions:-0}" -lt 3 ] || \
 	   [ "$${answer_commits:-0}" -lt 3 ] || \
 	   [ "$${answer_declines:-0}" -lt 1 ] || \
-	   [ "$${answer_count:-0}" -ne 7 ] || \
+	   [ "$${answer_count:-0}" -ne 13 ] || \
 	   [ "$${answer_tail_calls:-0}" -lt 1 ]; then \
 		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed answer-admission=$$answer_admissions answer-commit=$$answer_commits answer-decline=$$answer_declines answers=$$answer_count answer-tail-calls=$$answer_tail_calls"; \
+		exit 1; \
+	fi; \
+	optional_result=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		tests/prepared_pure_call_machine.metta 2>&1); \
+	optional_admissions=$$(printf '%s\n' "$$optional_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-optional-call-admission" { print $$3 }'); \
+	optional_empty=$$(printf '%s\n' "$$optional_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-optional-call-empty" { print $$3 }'); \
+	optional_values=$$(printf '%s\n' "$$optional_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-optional-call-value" { print $$3 }'); \
+	if [ "$${optional_admissions:-0}" -ne 6 ] || \
+	   [ "$${optional_empty:-0}" -ne 3 ] || \
+	   [ "$${optional_values:-0}" -ne 3 ]; then \
+		echo "FAIL: optional call outcomes admission=$$optional_admissions empty=$$optional_empty value=$$optional_values"; \
 		exit 1; \
 	fi; \
 	need_result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \

@@ -453,6 +453,13 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         if (refusal) *refusal = "QuiescentOwnerProfile";
         return false;
     }
+    /* These retained protocols have not supplied an injective transport
+     * of their producer owners. A shallow copy would alias arrays
+     * and copy a live mutex. Refuse before creating an image. */
+    if (source->need_claim_count || source->need_share_waiting) {
+        if (refusal) *refusal = "RetainedProducerWorldTransport";
+        return false;
+    }
     if(g_prime_eval_stack_driver==&source->driver||g_prime_eval_top_authority==&source->driver||
         !source->driver.nested||source->driver.running_task||source->driver.active_task||source->driver.root_call_running||source->active_work||
         source->active_allowance||source->active_spent||source->driver.task_ready||source->driver.top||
@@ -886,6 +893,9 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     Arena destination=image->storage;
     PrimeNativeSourceServices *services=image->source_services;
     *image=*source;image->storage=destination;image->source_services=services;
+    image->need_claims=NULL;image->need_claim_count=0u;image->need_claim_cap=0u;
+    image->need_claim_mu_ready=false;
+    memset(&image->need_claim_mu,0,sizeof(image->need_claim_mu));
     image->owned_arena=true;image->handle_id=0u;image->leased=false;
     image->owned_top_episode=NULL;image->space_agenda=NULL;
     memset(&image->hub,0,sizeof(image->hub));image->frames=NULL;image->retired_frames=NULL;
@@ -908,6 +918,10 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->driver.prepared_pure_cache=source->driver.prepared_pure_cache;
     image->driver.gc_anchor=arena_mark(&image->storage);
     bool ok=parent_copy_register(copy,&parent_copy_outcome_kind,&source->output,&image->output,sizeof(OutcomeSet));
+    if(ok) {
+        image->need_claim_mu_ready=pthread_mutex_init(&image->need_claim_mu,NULL)==0;
+        if(!image->need_claim_mu_ready)ok=parent_copy_refuse(copy,"NeedClaimMutex");
+    }
     if(ok && source->space_agenda && (!transaction ||
         !cetta_space_agenda_checkpoint_copy(source->space_agenda,&image->storage,atoms,
             &image->space_agenda,transaction)))

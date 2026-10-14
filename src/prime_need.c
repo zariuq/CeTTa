@@ -313,18 +313,25 @@ struct PrimeNeedReceiptFrame {
 struct PrimeNeedRecordingSlice {
     PrimeNeedRecording *group;
     Arena arena;
+    size_t node_quantum, byte_quantum;
+    bool growing;
     size_t node_limit, byte_limit, nodes, charge;
     _Atomic uint64_t omitted;
     _Atomic bool incomplete, overflow;
     PrimeNeedReceiptFrame *first, *last;
+    /* A quiescent nested publication can adopt an existing root without
+     * moving its allocation inventory or manufacturing an event. */
+    const PrimeNeedReceiptFrame *published_root;
 };
 
 struct PrimeNeedRecording {
     _Atomic size_t references;
     _Atomic size_t owner_links;
+    atomic_flag budget_lock;
     PrimeNeedRecordingLimits limits;
     uint64_t session_id;
     size_t slice_count, reserved_nodes, reserved_bytes;
+    uint64_t publication_revision;
     size_t allocation_bytes, metadata_bound;
     PrimeNeedRecordingSlice slices[];
 };
@@ -2876,6 +2883,19 @@ void prime_need_recording_omit_scope(void) {
         prime_need_recording_omit(g_prime_need_recording_scope->recording);
 }
 
+bool prime_need_recording_inherit(PrimeNeedReceipt *out) {
+    if (!out)
+        return false;
+    const PrimeNeedReceipt *active = g_prime_need_recording_scope;
+    PrimeNeedRecordingSlice *parent = active && active->recording
+        ? active->recording : NULL;
+    if (!parent || !parent->group)
+        return false;
+    return (parent->growing ? prime_need_recording_reserve_growing
+                            : prime_need_recording_reserve)(
+        parent->group, NULL, parent->node_quantum, parent->byte_quantum, out);
+}
+
 static bool prime_need_recording_scoped(const PrimeNeedReceipt *base,
     PrimeNeedReceipt *out) {
     const PrimeNeedReceipt *active = g_prime_need_recording_scope;
@@ -2883,13 +2903,12 @@ static bool prime_need_recording_scoped(const PrimeNeedReceipt *base,
     *out = *active;
     if (!active->recording)
         return false;
-    if (base && base->top) {
-        if (base->recording &&
-            base->recording->group == active->recording->group)
-            out->top = base->top;
-        else
-            prime_need_recording_omit(active->recording);
-    }
+    /* A base frame from this bounded group extends the slice chain. A base
+     * outside the group is not a recording edge: retain the event on the
+     * slice's own chain instead of marking every later event omitted. */
+    if (base && base->top && base->recording &&
+        base->recording->group == active->recording->group)
+        out->top = base->top;
     return true;
 }
 
@@ -2911,6 +2930,18 @@ bool prime_need_recording_roots(const PrimeNeedReceipt *receipt,
     PrimeNeedRecordingRootVisitor visit, void *context) {
     if (!receipt || !receipt->recording || !visit) return false;
     const PrimeNeedRecordingSlice *slice = receipt->recording;
+    bool imported_exposed = slice->published_root &&
+        slice->published_root->owner != &slice->arena;
+    for (const PrimeNeedReceiptFrame *frame = slice->first;
+         imported_exposed && frame; frame = frame->recording_next)
+        if (!frame->recording_referenced &&
+            prime_need_receipt_reachable(frame, slice->published_root))
+            imported_exposed = false;
+    if (imported_exposed) {
+        PrimeNeedReceipt root = *receipt;
+        root.top = slice->published_root;
+        if (!visit(&root, context)) return false;
+    }
     for (const PrimeNeedReceiptFrame *frame = slice->first; frame;
          frame = frame->recording_next) {
         if (!frame->recording_referenced) {
@@ -2937,6 +2968,7 @@ static PrimeNeedRecording *prime_need_recording_allocate(PrimeNeedRecordingLimit
     PrimeNeedRecording *group = calloc(1u, bytes);
     if (!group)
         return NULL;
+    atomic_flag_clear_explicit(&group->budget_lock, memory_order_relaxed);
     atomic_init(&group->references, 1u);
     atomic_init(&group->owner_links, 0u);
     group->limits = limits;
@@ -3011,26 +3043,71 @@ PrimeNeedRecordingStatus prime_need_recording_status(const PrimeNeedRecording *g
     return status;
 }
 
-bool prime_need_recording_reserve(PrimeNeedRecording *group,
+static void prime_need_recording_budget_lock(PrimeNeedRecording *group) {
+    while (atomic_flag_test_and_set_explicit(&group->budget_lock,
+            memory_order_acquire)) {}
+}
+
+static void prime_need_recording_budget_unlock(PrimeNeedRecording *group) {
+    atomic_flag_clear_explicit(&group->budget_lock, memory_order_release);
+}
+
+/* A parallel episode reuses one slice across steps that a serial history
+ * would reserve separately. Grow this slice by its original quantum, taken
+ * from the group budget the caller already configured. */
+static bool prime_need_recording_extend(PrimeNeedRecordingSlice *slice) {
+    if (!slice || !slice->growing || !slice->group ||
+        !slice->node_quantum || !slice->byte_quantum)
+        return false;
+    PrimeNeedRecording *group = slice->group;
+    prime_need_recording_budget_lock(group);
+    bool ok = slice->node_quantum <= group->limits.nodes - group->reserved_nodes &&
+        slice->byte_quantum <= group->limits.payload_bytes - group->reserved_bytes &&
+        slice->node_limit <= SIZE_MAX - slice->node_quantum &&
+        slice->byte_limit <= SIZE_MAX - slice->byte_quantum;
+    if (ok) {
+        group->reserved_nodes += slice->node_quantum;
+        group->reserved_bytes += slice->byte_quantum;
+        slice->node_limit += slice->node_quantum;
+        slice->byte_limit += slice->byte_quantum;
+    }
+    prime_need_recording_budget_unlock(group);
+    return ok;
+}
+
+static bool prime_need_recording_reserve_mode(PrimeNeedRecording *group,
     const PrimeNeedReceipt *seed, size_t nodes, size_t bytes,
-    PrimeNeedReceipt *out) {
-    if (!group || !out || group->slice_count == group->limits.slices ||
-        nodes > group->limits.nodes - group->reserved_nodes ||
-        bytes > group->limits.payload_bytes - group->reserved_bytes ||
+    bool growing, PrimeNeedReceipt *out) {
+    if (!group || !out ||
         (seed && prime_need_receipt_present(seed) &&
          (!seed->recording || seed->recording->group != group)))
         return false;
-    PrimeNeedRecordingSlice *slice = &group->slices[group->slice_count++];
-    slice->group = group;
-    slice->node_limit = nodes;
-    slice->byte_limit = bytes;
+    prime_need_recording_budget_lock(group);
+    bool ok = group->slice_count < group->limits.slices &&
+        nodes <= group->limits.nodes - group->reserved_nodes &&
+        bytes <= group->limits.payload_bytes - group->reserved_bytes;
+    PrimeNeedRecordingSlice *slice = NULL;
+    if (ok) {
+        slice = &group->slices[group->slice_count++];
+        slice->group = group;
+        slice->node_quantum = nodes;
+        slice->byte_quantum = bytes;
+        slice->growing = growing;
+        slice->node_limit = nodes;
+        slice->byte_limit = bytes;
+        group->reserved_nodes += nodes;
+        group->reserved_bytes += bytes;
+    }
+    if (!ok) {
+        prime_need_recording_budget_unlock(group);
+        return false;
+    }
     atomic_init(&slice->omitted, 0u);
     atomic_init(&slice->incomplete, false);
     atomic_init(&slice->overflow, false);
     arena_init_detached(&slice->arena);
     arena_set_block_capacity(&slice->arena, PRIME_NEED_RECORDING_BLOCK_BYTES);
-    group->reserved_nodes += nodes;
-    group->reserved_bytes += bytes;
+    prime_need_recording_budget_unlock(group);
     *out = (PrimeNeedReceipt){
         .top = seed ? seed->top : NULL,
         .session_id = group->session_id,
@@ -3038,6 +3115,16 @@ bool prime_need_recording_reserve(PrimeNeedRecording *group,
         .recording = slice,
     };
     return true;
+}
+
+bool prime_need_recording_reserve(PrimeNeedRecording *group,
+    const PrimeNeedReceipt *seed, size_t nodes, size_t bytes, PrimeNeedReceipt *out) {
+    return prime_need_recording_reserve_mode(group, seed, nodes, bytes, false, out);
+}
+
+bool prime_need_recording_reserve_growing(PrimeNeedRecording *group,
+    const PrimeNeedReceipt *seed, size_t nodes, size_t bytes, PrimeNeedReceipt *out) {
+    return prime_need_recording_reserve_mode(group, seed, nodes, bytes, true, out);
 }
 
 bool prime_need_recording_promote(Arena *dst, PrimeNeedReceipt *receipt) {
@@ -3177,20 +3264,35 @@ done:
     return ok;
 }
 
+static bool prime_need_recording_event_fits(const PrimeNeedRecordingSlice *slice,
+    PrimeNeedReceiptEvent event, size_t *charge_out) {
+    size_t charge = 0u;
+    if (slice->nodes >= slice->node_limit || slice->charge > slice->byte_limit)
+        return false;
+    if (!prime_need_recording_allocation_charge(sizeof(PrimeNeedReceiptFrame),
+            slice->byte_limit - slice->charge, &charge) ||
+        !prime_need_recording_payload_charge(event.before, event.after,
+            slice->byte_limit - slice->charge, &charge))
+        return false;
+    *charge_out = charge;
+    return true;
+}
+
 static bool prime_need_recording_append(const PrimeNeedReceipt *base,
     PrimeNeedReceiptEvent event, const PrimeNeedReceiptFrame *right,
     bool has_event, PrimeNeedReceipt *out) {
     PrimeNeedRecordingSlice *slice = base->recording;
     *out = *base;
     size_t charge = 0u;
-    if (slice->incomplete || slice->nodes == slice->node_limit ||
-        event.state_cell ||
-        !prime_need_recording_allocation_charge(sizeof(PrimeNeedReceiptFrame),
-            slice->byte_limit - slice->charge, &charge) ||
-        !prime_need_recording_payload_charge(event.before, event.after,
-            slice->byte_limit - slice->charge, &charge)) {
+    if (slice->incomplete || event.state_cell) {
         prime_need_recording_omit(slice);
         return true;
+    }
+    while (!prime_need_recording_event_fits(slice, event, &charge)) {
+        if (!prime_need_recording_extend(slice)) {
+            prime_need_recording_omit(slice);
+            return true;
+        }
     }
     uint64_t identity = prime_need_fresh_nonzero(&g_prime_need_next_receipt_node);
     if (!identity) {
@@ -3233,6 +3335,59 @@ static bool prime_need_recording_append(const PrimeNeedReceipt *base,
     out->top = frame;
     cetta_native_cost_charge(CETTA_COST_RECEIPT_APPEND, 1u);
     return true;
+}
+
+static bool prime_need_recording_publication_change(PrimeNeedRecordingSlice *slice) {
+    if (slice->group->publication_revision == UINT64_MAX) {
+        slice->overflow = true;
+        prime_need_recording_omit(slice);
+        return false;
+    }
+    slice->group->publication_revision++;
+    return true;
+}
+
+static bool prime_need_recording_publish_root(PrimeNeedRecordingSlice *to,
+    const PrimeNeedReceipt *active, const PrimeNeedReceiptFrame *root) {
+    PrimeNeedReceipt joined = *active;
+    joined.top = to->published_root ? to->published_root : to->last;
+    if (joined.top && prime_need_receipt_reachable(joined.top, root))
+        return true;
+    if (!joined.top || prime_need_receipt_reachable(root, joined.top)) {
+        if (!prime_need_recording_publication_change(to)) return false;
+        to->published_root = root;
+        return true;
+    }
+    const PrimeNeedReceiptFrame *previous = joined.top;
+    if (!prime_need_recording_publication_change(to)) return false;
+    if (!prime_need_recording_append(&joined, (PrimeNeedReceiptEvent){0},
+            root, false, &joined) || joined.top == previous)
+        return false;
+    to->published_root = joined.top;
+    return true;
+}
+
+/* After workers join, retain their roots, joining nonempty frontiers through
+ * budgeted DAG nodes. Each
+ * slice keeps its allocation inventory, arena, charges and writable quota.
+ * A failed join leaves the source root available and reports an omission. */
+void prime_need_recording_publish(PrimeNeedReceipt *src) {
+    const PrimeNeedReceipt *active = g_prime_need_recording_scope;
+    if (!src || !src->recording || !active || !active->recording ||
+        active->recording == src->recording || !src->recording->group ||
+        active->recording->group != src->recording->group)
+        return;
+    PrimeNeedRecordingSlice *to = active->recording;
+    if (src->recording->published_root)
+        (void)prime_need_recording_publish_root(to, active,
+            src->recording->published_root);
+    for (PrimeNeedReceiptFrame *frame = src->recording->first; frame;
+         frame = frame->recording_next) {
+        if (frame->recording_referenced) continue;
+        if (prime_need_recording_publish_root(to, active, frame) &&
+            prime_need_recording_publication_change(to))
+            frame->recording_referenced = true;
+    }
 }
 
 bool prime_need_recording_merge(PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
@@ -4391,6 +4546,7 @@ PrimeNeedRecordingCopy *prime_need_recording_copy_new(PrimeNeedRecording *source
     copy->captured = prime_need_recording_status(source);
     PrimeNeedRecording *image = copy->image;
     image->session_id = source->session_id;
+    image->publication_revision = source->publication_revision;
     image->reserved_nodes = nodes;
     image->reserved_bytes = bytes;
     atomic_store_explicit(&image->owner_links, links, memory_order_relaxed);
@@ -4402,6 +4558,8 @@ PrimeNeedRecordingCopy *prime_need_recording_copy_new(PrimeNeedRecording *source
         arena_set_block_capacity(&d->arena, s->arena.block_capacity);
         arena_set_runtime_kind(&d->arena, s->arena.runtime_kind);
         arena_set_scalar_cache(&d->arena, s->arena.scalar_cache);
+        d->node_quantum = s->node_quantum; d->byte_quantum = s->byte_quantum;
+        d->growing = s->growing;
         d->node_limit = s->node_limit; d->byte_limit = s->byte_limit;
         d->nodes = s->nodes; d->charge = s->charge;
         atomic_init(&d->omitted, atomic_load_explicit(&s->omitted, memory_order_relaxed));
@@ -4410,6 +4568,7 @@ PrimeNeedRecordingCopy *prime_need_recording_copy_new(PrimeNeedRecording *source
         /* Captured endpoints are never published; preparation replaces them
          * through the same typed metadata map as every receipt carrier. */
         d->first = s->first; d->last = s->last;
+        d->published_root = s->published_root;
         image->slice_count++;
     }
     return copy;
@@ -4430,7 +4589,8 @@ bool prime_need_recording_copy_pair(const PrimeNeedRecordingCopy *copy,
 
 static bool prime_need_recording_copy_current(const PrimeNeedRecordingCopy *copy) {
     const PrimeNeedRecording *s = copy->source, *d = copy->image;
-    if (!s || !d || s->session_id != d->session_id || s->slice_count != d->slice_count ||
+    if (!s || !d || s->session_id != d->session_id ||
+        s->publication_revision != d->publication_revision || s->slice_count != d->slice_count ||
         s->reserved_nodes != d->reserved_nodes || s->reserved_bytes != d->reserved_bytes ||
         s->limits.nodes != d->limits.nodes || s->limits.payload_bytes != d->limits.payload_bytes ||
         s->limits.slices != d->limits.slices || s->limits.owner_links != d->limits.owner_links ||
@@ -4457,7 +4617,8 @@ bool prime_need_recording_copy_prepare(PrimeNeedRecordingCopy *copy,
         const PrimeNeedRecordingSlice *s = &source->slices[i];
         const PrimeNeedRecordingSlice *d = &image->slices[i];
         if (!atom_deep_copy_session_maps_arena(session, &s->arena, &d->arena) ||
-            s->first != d->first || s->last != d->last || s->nodes != d->nodes ||
+            s->first != d->first || s->last != d->last ||
+            s->published_root != d->published_root || s->nodes != d->nodes ||
             s->charge != d->charge || s->node_limit != d->node_limit ||
             s->byte_limit != d->byte_limit) goto done;
         size_t count = 0u;
@@ -4476,6 +4637,9 @@ bool prime_need_recording_copy_prepare(PrimeNeedRecordingCopy *copy,
         if ((frame->left && !prime_need_receipt_frames_contains(&frames, frame->left)) ||
             (frame->right && !prime_need_receipt_frames_contains(&frames, frame->right))) goto done;
     }
+    for (size_t i = 0u; i < source->slice_count; i++)
+        if (source->slices[i].published_root && !prime_need_receipt_frames_contains(
+                &frames, source->slices[i].published_root)) goto done;
     if (frames.len > 1u)
         qsort(frames.items, frames.len, sizeof(*frames.items), prime_need_receipt_frame_depth_compare);
     if (!prime_need_receipt_copy_frames(session, &frames, source->session_id, true) ||
@@ -4488,6 +4652,11 @@ bool prime_need_recording_copy_prepare(PrimeNeedRecordingCopy *copy,
                 s, d, sizeof(*s)) ||
             !atom_deep_copy_session_object_record(session, &prime_need_recording_owner_copy_kind,
                 &s->arena, d, sizeof(s->arena))) goto done;
+        d->published_root = s->published_root
+            ? atom_deep_copy_session_object_forwarded(session,
+                &prime_need_receipt_copy_kind, s->published_root,
+                sizeof(*s->published_root)) : NULL;
+        if (s->published_root && !d->published_root) goto done;
         d->first = NULL; d->last = NULL;
         for (const PrimeNeedReceiptFrame *frame = s->first; frame;
              frame = frame->recording_next) {
@@ -5245,6 +5414,7 @@ bool prime_need_recording_compare(const PrimeNeedRecording *a,
     if(!read->identity(read->context,"recording.session",CETTA_CHECKPOINT_RECEIPT_SESSION,
         a->session_id,b->session_id))return false;
     RG_S("recording.slice_count",a->slice_count,b->slice_count);
+    RG_S("recording.publication_revision",a->publication_revision,b->publication_revision);
     RG_S("recording.reserved_nodes",a->reserved_nodes,b->reserved_nodes);
     RG_S("recording.reserved_bytes",a->reserved_bytes,b->reserved_bytes);
     RG_S("recording.allocation_bytes",a->allocation_bytes,b->allocation_bytes);
@@ -5255,6 +5425,9 @@ bool prime_need_recording_compare(const PrimeNeedRecording *a,
             y->nodes>y->node_limit||x->charge>x->byte_limit||y->charge>y->byte_limit)return false;
         RG_S("recording.slice_index",i,i);RG_P("recording.slice",x,y);
         RG_P("recording.slice_group",x->group,y->group);if(!read->arena(read->context,"recording.slice_arena",&x->arena,&y->arena))return false;
+        RG_S("recording.slice_node_quantum",x->node_quantum,y->node_quantum);
+        RG_S("recording.slice_byte_quantum",x->byte_quantum,y->byte_quantum);
+        RG_S("recording.slice_growing",x->growing,y->growing);
         RG_S("recording.slice_node_limit",x->node_limit,y->node_limit);
         RG_S("recording.slice_byte_limit",x->byte_limit,y->byte_limit);
         RG_S("recording.slice_nodes",x->nodes,y->nodes);RG_S("recording.slice_charge",x->charge,y->charge);
@@ -5265,6 +5438,7 @@ bool prime_need_recording_compare(const PrimeNeedRecording *a,
         RG_S("recording.slice_overflow",atomic_load_explicit(&x->overflow,memory_order_relaxed),
             atomic_load_explicit(&y->overflow,memory_order_relaxed));
         RG_P("recording.first",x->first,y->first);RG_P("recording.last",x->last,y->last);
+        RG_P("recording.published_root",x->published_root,y->published_root);
         const PrimeNeedReceiptFrame *p=x->first,*q=y->first,*pl=NULL,*ql=NULL;
         for(size_t j=0u;j<x->nodes;j++) {
             if(!p||!q||p->owner!=&x->arena||q->owner!=&y->arena||

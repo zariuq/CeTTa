@@ -92,16 +92,28 @@ typedef struct {
     CettaPreparedClosedStep status;
     const void *frame_storage, *slot_storage;
     const char *decline;
+    bool optional_result;
+    Atom *pending_answer;
 } CettaPreparedClosedState;
 CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open(
     CettaPreparedPureProgram *program, Arena *arena, const void *owner);
+/* The optional register worker retains its exact instruction prefix. A zero
+ * instruction completes empty; a value stays pending until explicit owner
+ * acknowledgement. Repeated observation, including zero allowance, returns
+ * the same borrowed value and performs no instruction or terminal probe. */
+CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open_optional(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner);
+bool cetta_prepared_pure_closed_accept_optional(
+    CettaPreparedPureClosedExecution *execution, const void *owner, Atom *answer);
 CettaPreparedClosedStep cetta_prepared_pure_closed_step(
     CettaPreparedPureClosedExecution *execution, Arena *arena, const void *owner,
     uint64_t allowance, uint64_t *spent, Atom **answer);
 bool cetta_prepared_pure_closed_read(
     CettaPreparedPureClosedExecution *execution, CettaPreparedClosedState *state);
 /* Read-only validation of an externally held exclusive invocation. This
- * checks the existing reservation; it neither acquires lifetime nor resumes. */
+ * checks the existing reservation; it neither acquires lifetime nor resumes.
+ * Earned optional outcomes retain that reservation after source edits;
+ * unfinished work additionally requires its current source view. */
 bool cetta_prepared_pure_closed_owned_by(
     CettaPreparedPureClosedExecution *execution,
     const CettaPreparedPureProgram *program, const Arena *arena, const void *owner);
@@ -275,6 +287,25 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
+/* Compile an eager, effect-free at-most-one worker from actual equations.
+ * Arguments must have the supplied value interpretation; unsupported code
+ * and potentially overlapping answers refuse admission. No annotation is
+ * used as evidence, and no commitment is introduced. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
 /* Retained call-by-need service profile. Closed canonical source nodes issue
  * occurrence-bound requests; the supplied owner must enable/drive services
  * and acknowledge every reply through the retained execution API. Open
@@ -325,6 +356,11 @@ bool cetta_prepared_pure_program_all_heads_determinate(
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program);
 
+/* The compiler-selected result representation, without executing a body.
+ * This inspection grants neither source freshness nor execution authority. */
+bool cetta_prepared_pure_program_returns_optional(
+    const CettaPreparedPureProgram *program);
+
 /* Rebind the runtime arguments of a previously compiled closed entry call.
  * The head and arity must match the compiled entry descriptor. */
 bool cetta_prepared_pure_program_rebind_closed_entry_call(
@@ -356,6 +392,24 @@ bool cetta_prepared_pure_program_execute_closed(
     Atom **result_out);
 
 bool cetta_prepared_pure_program_execute_closed_controlled(
+    CettaPreparedPureProgram *program, Arena *arena,
+    size_t nursery_budget_bytes,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, Atom **result_out);
+
+typedef enum {
+    CETTA_PREPARED_PURE_OPTIONAL_VALUE = 0,
+    CETTA_PREPARED_PURE_OPTIONAL_EMPTY,
+    CETTA_PREPARED_PURE_OPTIONAL_DECLINED,
+    CETTA_PREPARED_PURE_OPTIONAL_INTERRUPTED,
+    CETTA_PREPARED_PURE_OPTIONAL_INVALIDATED,
+} CettaPreparedPureOptionalResult;
+
+/* Only the dialect's explicit zero operation produces EMPTY. An unmatched
+ * call or unsupported operation declines without claiming emptiness. VALUE
+ * is borrowed under the same scratch/survivor lifetime as closed execution.
+ * This pure synchronous ABI supplies no retained resumption or effect rights. */
+CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optional(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
@@ -487,6 +541,14 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
  * enumeration and the cursor must not be advanced again. */
 CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     CettaPreparedPureAnswerCursor *cursor, Atom **answer_out);
+
+/* Read-only completion evidence for the retained frontier. True means every
+ * remaining call has matched and has no untried equation, so only reclamation
+ * remains. This executes no body, continuation, guard or interrupt observer;
+ * it does not release the borrowed answer. An unmatched call, lost authority
+ * or a handoff cannot establish completion. */
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
 
 /* Whether detach can release entry-argument borrows into a private arena.
  * Caller-arena cursors and programs with unsupported continuation locals

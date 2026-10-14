@@ -38,6 +38,8 @@ struct PrimeNativeParallel {
     uint64_t borrowed_library_revision;
     uint64_t borrowed_symbol_instance;
     PrimeNativeControl *child;
+    /* Parent that owns the shared Need claim. Not a second world. */
+    PrimeNativeControl *claim_control;
     PrimeNativeWork *dialect_operation;
     CettaSpaceAgenda *resource_provider;
     CettaSpaceAgendaMatch *resource_match;
@@ -76,6 +78,14 @@ static PrimeNeedReceipt prime_native_parallel_history(const PrimeNativeWork *wor
         ? work->parallel->history : (PrimeNeedReceipt){0};
 }
 #endif
+
+/* The preparing parent owns the search token. A worker's private world is
+ * not that space. */
+static PrimeNativeControl *prime_native_parallel_claim_owner(PrimeNativeControl *child) {
+    if (!child || !child->parallel_owner)
+        return NULL;
+    return child->parallel_owner->claim_control;
+}
 
 typedef struct {
     CettaLibraryContext *library;
@@ -374,6 +384,41 @@ static bool prime_native_parallel_borrowed_query_current(
 }
 
 static bool prime_native_parallel_validate(PrimeNativeControl *,PrimeNativeParallel *);
+static void prime_native_need_share_release(PrimeNativeWork *work);
+
+static void prime_native_prepare_meter_note(PrimeNativeControl *owner,
+        const HyperposeThreadBranch *branch, bool share_refused,
+        const char *share_refusal) {
+    if (!owner || !owner->policy.prepare_meter || !branch ||
+        !branch->source_prepare_measured)
+        return;
+    if (share_refused && share_refusal && !owner->prepare_share_refusal)
+        owner->prepare_share_refusal = share_refusal;
+    if (owner->prepare_copied_bytes > UINT64_MAX - branch->source_copied_bytes)
+        owner->prepare_copied_overflow = true;
+    else
+        owner->prepare_copied_bytes += branch->source_copied_bytes;
+    if (branch->source_retained_known) {
+        owner->prepare_retained_known = true;
+        if (branch->source_retained_bytes > owner->prepare_retained_bytes)
+            owner->prepare_retained_bytes = branch->source_retained_bytes;
+    }
+    if (owner->prepare_share_count || owner->prepare_copy_count) {
+        if (branch->source_rows != owner->prepare_source_rows ||
+            branch->result_rows != owner->prepare_result_rows)
+            owner->prepare_rows_disagree = true;
+    }
+    if (branch->source_rows > owner->prepare_source_rows)
+        owner->prepare_source_rows = branch->source_rows;
+    if (branch->result_rows > owner->prepare_result_rows)
+        owner->prepare_result_rows = branch->result_rows;
+    if (branch->source_shared)
+        owner->prepare_share_count++;
+    else
+        owner->prepare_copy_count++;
+    if (share_refused)
+        owner->prepare_share_refused++;
+}
 
 static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
                                           PrimeNativeWork *work) {
@@ -427,8 +472,17 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     if (eval_current_language_id() != CETTA_LANGUAGE_PRIME) return false;
     if (!work->task_initialized && work->frame)
         return prime_native_execution_prepare(owner, work);
-    if (work->parallel)
+    if (work->parallel) {
+        prime_native_need_share_release(work);
+        /* A suspended sharer is still a wave member. Rejecting it here made
+         * the producer fall through to one-step coordinator polls, so the
+         * thunk never occupied a worker slice. The slice itself returns
+         * immediately while need_pending remains set. */
+        if (work->parallel->child && work->parallel->child->need_share_waiting &&
+            !work->parallel->coordinator_only)
+            return true;
         return !work->parallel->coordinator_only && !work->parallel->child->need_pending;
+    }
     if (!work->task_initialized || !work->task.target || work->parallel_refused ||
         active_search_table_mode() != CETTA_TABLE_MODE_NONE) return false;
     PrimeEvalStackTask *task = &work->task;
@@ -460,6 +514,23 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     bool shared_source=owner->driver.ordinary_shared_source &&
         task->space==owner->source_read.space &&
         prime_ordinary_shared_task_admitted(task->space,arena,expression);
+    bool share_refused=false;
+    bool share_admission_passed=false;
+    if(owner->policy.source_share==2u)
+        shared_source=false;
+    else if(owner->policy.source_share==1u) {
+        /* The caller clears. Admission keeps the first reason and must not
+         * reset this pointer, or a nested call would erase it. */
+        g_prime_share_refusal=NULL;
+        bool same_space=task->space==owner->source_read.space;
+        if(!same_space)
+            prime_share_refuse("source-space");
+        shared_source=same_space &&
+            prime_ordinary_shared_source_admitted(task->space) &&
+            prime_ordinary_shared_task_admitted(task->space,arena,expression);
+        share_admission_passed=shared_source;
+        share_refused=!shared_source;
+    }
     if(shared_source) {
         shared_source=space_read_view_capture(task->space,&parallel->borrowed_source) &&
             space_read_view_has_native_occurrences(&parallel->borrowed_source) &&
@@ -471,6 +542,11 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
             parallel->borrowed_symbol_instance=symbol_table_instance_id(g_symbols);
         }
     }
+    if(owner->policy.source_share==1u && !shared_source) {
+        share_refused=true;
+        if(!g_prime_share_refusal)
+            prime_share_refuse(share_admission_passed ? "borrow-view" : "unclassified");
+    }
     __attribute__((cleanup(prime_native_restore_hashcons)))
     HashConsTable *previous_hashcons = g_hashcons;
     g_hashcons = &parallel->world.hashcons;
@@ -481,6 +557,8 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     bool prepared = hyperpose_prepare_thread_branch(&parallel->world, 0u,
         task->space, &owner->registry_read.initial, expression, NULL,
         NULL, shared_source, true, need, NULL);
+    prime_native_prepare_meter_note(owner, &parallel->world, share_refused,
+        share_refused ? g_prime_share_refusal : NULL);
     if (!prepared ||
         !space_equation_token_matches_live_space(source_equations, task->space) ||
         symbol_source.admission != prime_scoped_judgment_admission_epoch()) {
@@ -545,6 +623,9 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     child->pure_authority = owner->pure_authority || work->scoring || task->pure_authority;
     child->parallel_owner = parallel;
     PrimeNativeWork *root = cetta_continuation_hub_at(&child->hub, 0u)->payload;
+    /* The child is a new control. Its root task must keep the publication
+     * overlay the parent work already carries; a null TLS at prepare time
+     * does not mean this body writes the shared base. */
     root->task.kind = task->kind;
     root->task.pure_authority = task->pure_authority;
     root->task.etype = task->etype ? atom_deep_copy(child->driver.arena, task->etype) : NULL;
@@ -578,6 +659,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     }
     parallel->attachment = attachment;
     parallel->activation_occurrence = activation;
+    parallel->claim_control = owner;
     work->parallel = parallel;
     return true;
 }
@@ -643,40 +725,450 @@ static void prime_native_need_receipt(PrimeNativeControl *control,
     control->need_barriers[control->need_barrier_count++] = atom_expr(arena, parts, 7u);
 }
 
+enum {
+    PRIME_NATIVE_NEED_CLAIM_EVALUATING = 1,
+    PRIME_NATIVE_NEED_CLAIM_VALUE = 2,
+    PRIME_NATIVE_NEED_CLAIM_FAILED = 3,
+};
+
+typedef struct PrimeNativeNeedClaim {
+    uint64_t session_id;
+    uint64_t thunk_id;
+    uint64_t authority_id;
+    PrimeNativeControl *producer;
+    int state;
+    PrimeNeedSnapshot base;
+    PrimeNeedSnapshot published;
+} PrimeNativeNeedClaim;
+
+static PrimeNativeNeedClaim *prime_native_need_claim_find(
+        PrimeNativeControl *registry, uint64_t session, uint64_t thunk,
+        uint64_t authority) {
+    if (!registry) return NULL;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *claim = &registry->need_claims[i];
+        if (claim->state && claim->session_id == session &&
+            claim->thunk_id == thunk && claim->authority_id == authority)
+            return claim;
+    }
+    return NULL;
+}
+
+static void prime_native_need_claims_storage(const PrimeNativeControl *control,
+                                             CettaStorageCensus *census) {
+    cetta_storage_array(census, control->need_claims, control->need_claim_cap,
+        sizeof(*control->need_claims), 0u);
+    for (size_t i = 0u; i < control->need_claim_count; i++) {
+        prime_need_snapshot_storage_census(&control->need_claims[i].base, census);
+        prime_need_snapshot_storage_census(&control->need_claims[i].published, census);
+    }
+}
+
+static void prime_native_need_share_trace(const char *why, uint64_t thunk_id);
+
+/* Move the active snapshot forward only along one lineage. Sibling
+ * refinements stay where they are. */
+static bool prime_native_need_share_install(const PrimeNeedSnapshot *published) {
+    PrimeNeedSnapshot active;
+    if (!published) return false;
+    active = g_prime_need_active;
+    if (!prime_need_snapshot_is_ancestor(&active, published) &&
+        !prime_need_snapshot_is_ancestor(published, &active))
+        return false;
+    if (!prime_need_snapshot_merge(&active, published))
+        return false;
+    g_prime_need_active = active;
+    if (g_prime_need_logical_env)
+        *bindings_need_mut((Bindings *)g_prime_need_logical_env) = active;
+    return true;
+}
+
+static bool prime_native_need_share_barrier(
+        PrimeNativeControl *control, PrimeNativeParallel *parallel,
+        uint64_t thunk_id, const PrimeNeedCellView *current) {
+    PrimeNativeControl *registry = parallel ? parallel->claim_control : NULL;
+    PrimeNativeNeedClaim *claim;
+    uint64_t session, authority;
+    control->need_share_waiting = false;
+    g_prime_need_share_waiting = false;
+    if (!registry || !registry->need_claim_mu_ready || !current || !thunk_id)
+        return false;
+    session = g_prime_need_active.session_id;
+    authority = current->authority_id;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return false;
+    claim = prime_native_need_claim_find(registry, session, thunk_id, authority);
+    if (claim && claim->state == PRIME_NATIVE_NEED_CLAIM_VALUE) {
+        PrimeNeedSnapshot published = claim->published;
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        g_prime_need_share_claimed = false;
+        prime_native_need_share_trace("claim-value", thunk_id);
+        if (prime_native_need_share_install(&published))
+            control->need_pending = false;
+        else {
+            /* Incomparable private worlds do not merge. The caller still
+             * observes this one published value. */
+            g_prime_need_share_value = published;
+            g_prime_need_share_value_ready = true;
+            prime_native_need_share_trace("install-refused", thunk_id);
+        }
+        return false;
+    }
+    if (claim && (claim->state == PRIME_NATIVE_NEED_CLAIM_FAILED ||
+                  claim->producer == control)) {
+        bool failed = claim->state == PRIME_NATIVE_NEED_CLAIM_FAILED;
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        if (failed)
+            g_prime_need_share_claimed = false;
+        return false;
+    }
+    if (claim && claim->state == PRIME_NATIVE_NEED_CLAIM_EVALUATING) {
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        prime_native_need_share_trace("claim-evaluating", thunk_id);
+        prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
+        control->need_pending = true;
+        control->need_share_thunk = thunk_id;
+        control->need_share_waiting = true;
+        g_prime_need_share_waiting = true;
+        g_prime_need_share_claimed = false;
+        return true;
+    }
+    if (registry->need_claim_count == registry->need_claim_cap) {
+        size_t cap = registry->need_claim_cap ? registry->need_claim_cap * 2u : 4u;
+        PrimeNativeNeedClaim *grown;
+        if (cap < registry->need_claim_count + 1u ||
+            cap > SIZE_MAX / sizeof(*registry->need_claims)) {
+            pthread_mutex_unlock(&registry->need_claim_mu);
+            return false;
+        }
+        grown = realloc(registry->need_claims, cap * sizeof(*grown));
+        if (!grown) {
+            pthread_mutex_unlock(&registry->need_claim_mu);
+            return false;
+        }
+        memset(grown + registry->need_claim_count, 0,
+            (cap - registry->need_claim_count) * sizeof(*grown));
+        registry->need_claims = grown;
+        registry->need_claim_cap = cap;
+    }
+    claim = &registry->need_claims[registry->need_claim_count++];
+    memset(claim, 0, sizeof(*claim));
+    claim->session_id = session;
+    claim->thunk_id = thunk_id;
+    claim->authority_id = authority;
+    claim->producer = control;
+    claim->state = PRIME_NATIVE_NEED_CLAIM_EVALUATING;
+    claim->base = g_prime_need_active;
+    g_prime_need_share_claimed = true;
+    pthread_mutex_unlock(&registry->need_claim_mu);
+    prime_native_need_share_trace("claim-created", thunk_id);
+    return false;
+}
+
+static void prime_native_need_claim_publish(
+        uint64_t thunk_id, const PrimeNeedSnapshot *published) {
+    PrimeNativeParallel *parallel = g_prime_native_parallel_current;
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    PrimeNativeControl *child = driver ? driver->control : NULL;
+    PrimeNativeControl *registry = parallel ? parallel->claim_control : NULL;
+    PrimeNativeNeedClaim *claim = NULL;
+    PrimeNeedSnapshot stable;
+    Arena *arena;
+    if (!registry || !registry->need_claim_mu_ready || !child || !published || !thunk_id)
+        return;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *item = &registry->need_claims[i];
+        if (item->state == PRIME_NATIVE_NEED_CLAIM_EVALUATING &&
+            item->producer == child && item->thunk_id == thunk_id &&
+            item->session_id == published->session_id) {
+            claim = item;
+            break;
+        }
+    }
+    if (!claim || !prime_need_snapshot_is_ancestor(&claim->base, published)) {
+        if (claim) claim->state = PRIME_NATIVE_NEED_CLAIM_FAILED;
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        return;
+    }
+    /* A scalar response carries no pending fields or producer-local
+     * authority. Compound/lazy responses need their complete returned world
+     * and remain on the canonical retained-demand path. */
+    PrimeNeedCellView value;
+    bool portable = prime_need_snapshot_lookup(published, thunk_id, &value) &&
+        value.cache_state == PRIME_NEED_CACHE_VALUE && value.cached &&
+        value.cached->kind == ATOM_GROUNDED &&
+        (value.cached->ground.gkind == GV_INT || value.cached->ground.gkind == GV_FLOAT ||
+         value.cached->ground.gkind == GV_BOOL || value.cached->ground.gkind == GV_STRING ||
+         value.cached->ground.gkind == GV_BIGINT || value.cached->ground.gkind == GV_RATIONAL);
+    if (!portable) {
+        claim->state = PRIME_NATIVE_NEED_CLAIM_FAILED;
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        return;
+    }
+    stable = *published;
+    arena = registry->driver.arena ? registry->driver.arena : &registry->storage;
+    if (!prime_need_snapshot_promote(arena, &stable)) {
+        claim->state = PRIME_NATIVE_NEED_CLAIM_FAILED;
+        pthread_mutex_unlock(&registry->need_claim_mu);
+        return;
+    }
+    claim->published = stable;
+    claim->state = PRIME_NATIVE_NEED_CLAIM_VALUE;
+    pthread_mutex_unlock(&registry->need_claim_mu);
+}
+
+static void prime_native_need_claim_fail(uint64_t thunk_id) {
+    PrimeNativeParallel *parallel = g_prime_native_parallel_current;
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    PrimeNativeControl *child = driver ? driver->control : NULL;
+    PrimeNativeControl *registry = parallel ? parallel->claim_control : NULL;
+    if (!registry || !registry->need_claim_mu_ready || !child || !thunk_id)
+        return;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *item = &registry->need_claims[i];
+        if (item->state == PRIME_NATIVE_NEED_CLAIM_EVALUATING &&
+            item->producer == child && item->thunk_id == thunk_id)
+            item->state = PRIME_NATIVE_NEED_CLAIM_FAILED;
+    }
+    pthread_mutex_unlock(&registry->need_claim_mu);
+}
+
+static void prime_native_need_claim_abandon(PrimeNativeControl *child) {
+    PrimeNativeControl *registry;
+    if (!child || !child->parallel_owner || !child->parallel_owner->claim_control)
+        return;
+    if (!child->failed && !prime_native_control_closed(child))
+        return;
+    registry = child->parallel_owner->claim_control;
+    if (!registry->need_claim_mu_ready)
+        return;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *item = &registry->need_claims[i];
+        if (item->producer == child && item->state == PRIME_NATIVE_NEED_CLAIM_EVALUATING)
+            item->state = PRIME_NATIVE_NEED_CLAIM_FAILED;
+    }
+    pthread_mutex_unlock(&registry->need_claim_mu);
+}
+
+static bool prime_native_need_claim_resolved(
+        PrimeNativeControl *registry, PrimeNativeControl *child, uint64_t thunk) {
+    bool resolved = false;
+    if (!registry || !registry->need_claim_mu_ready || !child || !thunk)
+        return false;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return false;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *item = &registry->need_claims[i];
+        if (item->thunk_id == thunk && item->producer != child &&
+            (item->state == PRIME_NATIVE_NEED_CLAIM_VALUE ||
+             item->state == PRIME_NATIVE_NEED_CLAIM_FAILED))
+            resolved = true;
+    }
+    pthread_mutex_unlock(&registry->need_claim_mu);
+    return resolved;
+}
+
+static void prime_native_need_share_release(PrimeNativeWork *work) {
+    PrimeNativeControl *child, *registry;
+    if (!work || !work->parallel || !work->parallel->child)
+        return;
+    child = work->parallel->child;
+    if (!child->need_pending || !child->need_share_thunk)
+        return;
+    registry = work->parallel->claim_control;
+    if (!prime_native_need_claim_resolved(registry, child, child->need_share_thunk))
+        return;
+    child->need_pending = false;
+    work->prepared_publication = false;
+    work->parallel->completed = false;
+}
+
+static bool prime_native_resume_shared_need_frames(PrimeNativeControl *control) {
+    PrimeNativeControl *registry;
+    PrimeNeedSnapshot published;
+    bool ready = false;
+    bool failed = false;
+    bool resumed = false;
+    if (!control || !control->need_share_thunk)
+        return false;
+    registry = control->parallel_owner ? control->parallel_owner->claim_control : NULL;
+    if (!registry || !registry->need_claim_mu_ready)
+        return false;
+    if (pthread_mutex_lock(&registry->need_claim_mu) != 0)
+        return false;
+    for (size_t i = 0u; i < registry->need_claim_count; i++) {
+        PrimeNativeNeedClaim *item = &registry->need_claims[i];
+        if (item->thunk_id == control->need_share_thunk &&
+            item->producer != control &&
+            (item->state == PRIME_NATIVE_NEED_CLAIM_VALUE ||
+             item->state == PRIME_NATIVE_NEED_CLAIM_FAILED)) {
+            ready = item->state == PRIME_NATIVE_NEED_CLAIM_VALUE;
+            failed = !ready;
+            if (ready) published = item->published;
+        }
+    }
+    pthread_mutex_unlock(&registry->need_claim_mu);
+    if (!ready && !failed)
+        return false;
+    for (PrimeEvalStackFrame *frame = control->frames; frame; frame = frame->control_next) {
+        CettaCount before_len;
+        PrimeNeedCellView view;
+        PrimeNeedActiveGuard guard;
+        if (!frame->shared_need_wait || frame->control_closed ||
+            frame->thunk_id != control->need_share_thunk || !frame->target)
+            continue;
+        guard = prime_need_active_enter(frame->env_initialized ? &frame->env : NULL);
+        if (failed) {
+            /* An abandoned attempt is not an empty answer. Requeue the
+             * unpaid source demand in its receiver's retained world. */
+            PrimeEvalStackFrame *previous = control->driver.top;
+            control->driver.top = frame->control_parent;
+            bool queued = prime_eval_stack_schedule_call(frame->space, frame->arena,
+                frame->ref, NULL, frame->fuel, true, -1, &frame->env, &frame->env,
+                frame->evaluator_id, frame->target);
+            control->driver.top = previous;
+            if (queued) {
+                frame->shared_need_wait = false;
+                prime_native_control_frame_closed(control, frame);
+                resumed = true;
+            } else control->driver.capacity_blocked = true;
+            prime_need_active_leave(&guard);
+            continue;
+        }
+        if (prime_need_snapshot_lookup(&published, frame->thunk_id, &view) &&
+            (view.cache_state == PRIME_NEED_CACHE_VALUE ||
+             view.cache_state == PRIME_NEED_CACHE_STABLE_FAULT)) {
+            before_len = frame->target->len;
+            frame->shared_need_wait = false;
+            /* Comparable worlds take the published extension. An incomparable
+             * private world still receives the value, without a second body. */
+            if (prime_native_need_share_install(&published))
+                prime_need_force_active(frame->space, frame->arena, frame->ref,
+                    frame->thunk_id, frame->fuel, frame->target);
+            else if (!prime_need_observe_published_value(
+                    frame->arena, frame->thunk_id, &published, frame->target))
+                frame->shared_need_wait = true;
+            if (!frame->shared_need_wait && frame->target->len > before_len) {
+                prime_eval_stack_stream_note(frame->target);
+                prime_native_control_frame_closed(control, frame);
+                resumed = true;
+            } else
+                frame->shared_need_wait = true;
+        }
+        prime_need_active_leave(&guard);
+    }
+    if (resumed) {
+        control->need_pending = false;
+        control->need_share_thunk = 0u;
+        control->need_share_waiting = false;
+    }
+    return resumed;
+}
+
+static void prime_native_need_share_trace(const char *why, uint64_t thunk_id) {
+    if (!getenv("CETTA_PRIME_NATIVE_CONTROL_TRACE"))
+        return;
+    fprintf(stderr, "[need-share] %s thunk=%llu\n",
+        why ? why : "?", (unsigned long long)thunk_id);
+    fflush(stderr);
+}
+
+/* A scalar rendezvous cannot publish a branching producer or transport a
+ * captured lexical/Need world. Reuse the closed pure machine's conservative
+ * classifier without executing its program or suppressing native steps. */
+static bool prime_native_need_scalar_share_admitted(Space *space, Atom *origin) {
+    if (!origin || atom_has_vars(origin) ||
+        prime_need_atom_has_observable_ref(origin) ||
+        hyperpose_atom_has_thread_local_resource(origin))
+        return false;
+    CettaPreparedPureExpressionViewFn view =
+        prepared_pure_expression_view_for_language(CETTA_LANGUAGE_PRIME);
+    if (cetta_prepared_pure_single_result_requires_answer_effect(space, origin, view))
+        return false;
+    CettaPreparedPureSourceView source =
+        prepared_pure_source_view_for_language(CETTA_LANGUAGE_PRIME, origin);
+    cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP, 1u);
+    CettaPreparedPureProgram *certificate = cetta_prepared_pure_program_compile_closed(
+        space, origin, CETTA_GSLT_PURE_CALL_CALL_BY_NEED, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always, NULL,
+        cetta_prepared_pure_register_view, view, NULL, &source, false,
+        active_composition_uses_total_structural_eq(),
+        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_CALL_BY_NEED));
+    bool admitted = certificate && cetta_prepared_pure_program_is_current(certificate) &&
+        cetta_prepared_pure_program_all_heads_determinate(certificate);
+    cetta_prepared_pure_program_free(certificate);
+    return admitted;
+}
+
 static bool prime_native_parallel_force_barrier(
         Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel,
         OutcomeSet *target) {
     PrimeNativeParallel *parallel = g_prime_native_parallel_current;
     PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
     PrimeNativeControl *control = driver ? driver->control : NULL;
-    if (!parallel || parallel->attachment == PRIME_NATIVE_ATTACHMENT_NONE || !control ||
-        parallel->captured_need.session_id != g_prime_need_active.session_id)
+    g_prime_need_share_waiting = false;
+    g_prime_need_share_value_ready = false;
+    /* A rendezvous shares execution, never grants force authority. Refusal
+     * falls through to the ordinary force-denied outcome before a claim is
+     * created or a sibling's published value can be observed. */
+    uint64_t authorized_thunk = 0u;
+    if (!prime_need_ref_belongs_to_with_rights(ref, &g_prime_need_active,
+            CETTA_PRIME_NEED_RIGHT_FORCE, &authorized_thunk) ||
+        authorized_thunk != thunk_id)
         return false;
-    PrimeNeedCellView captured, current;
-    if (!prime_need_snapshot_lookup(&parallel->captured_need, thunk_id, &captured) ||
-        !prime_need_snapshot_lookup(&g_prime_need_active, thunk_id, &current) ||
+    if (!parallel || parallel->attachment == PRIME_NATIVE_ATTACHMENT_NONE || !control ||
+        parallel->captured_need.session_id != g_prime_need_active.session_id) {
+        prime_native_need_share_trace(
+            !parallel ? "no-parallel" :
+            parallel->attachment == PRIME_NATIVE_ATTACHMENT_NONE ? "attachment-none" :
+            !control ? "no-control" : "session-mismatch", thunk_id);
+        return false;
+    }
+    PrimeNeedCellView captured = {0}, current = {0};
+    bool captured_ok = prime_need_snapshot_lookup(&parallel->captured_need, thunk_id, &captured);
+    bool current_ok = prime_need_snapshot_lookup(&g_prime_need_active, thunk_id, &current);
+    if (!captured_ok || !current_ok ||
         captured.authority_id != current.authority_id ||
         current.cache_state == PRIME_NEED_CACHE_VALUE ||
-        current.cache_state == PRIME_NEED_CACHE_STABLE_FAULT)
+        current.cache_state == PRIME_NEED_CACHE_STABLE_FAULT) {
+        const char *why = !captured_ok || !current_ok ? "lookup-miss" :
+            captured.authority_id != current.authority_id ? "authority" :
+            current.cache_state == PRIME_NEED_CACHE_VALUE ? "local-value" : "local-fault";
+        prime_native_need_share_trace(why, thunk_id);
         return false;
+    }
     /* Self-demand remains the native blackhole. A private producer created
      * after capture has no entry in captured_need and proceeds locally. */
     if (current.cache_state == PRIME_NEED_CACHE_EVALUATING &&
         current.evaluator_id == g_prime_need_evaluator_id)
         return false;
     if (!control->worker_execution) {
+        /* One coordinator thread evaluates. It does not suspend on itself. */
+        prime_native_need_share_trace("coordinator", thunk_id);
         prime_native_need_receipt(control, parallel, "Coordinator", thunk_id);
         return false;
     }
-    if (!prime_eval_stack_schedule_call(space, arena, ref, NULL, fuel, true, -1,
-            g_prime_need_logical_env, g_prime_need_logical_env,
-            g_prime_need_evaluator_id, target)) {
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    if (!prime_native_need_scalar_share_admitted(space, current.origin)) {
+        /* Keep the canonical coordinator continuation for unqualified
+         * producers. It retains all branches and their selected worlds. */
+        if (!prime_eval_stack_schedule_call(space, arena, ref, NULL, fuel, true, -1,
+                g_prime_need_logical_env, g_prime_need_logical_env,
+                g_prime_need_evaluator_id, target))
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
+        control->need_pending = true;
         return true;
     }
-    prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
-    control->need_pending = true;
-    return true;
+    /* Every worker force, including a force inside an equation-tagged task,
+     * shares one thunk or waits. Incomparable snapshots are not merged.
+     * Sibling equation tasks are not themselves this force. */
+    return prime_native_need_share_barrier(control, parallel, thunk_id, &current);
 }
 
 static bool prime_native_parallel_ignore(Arena *arena, Atom *value,
@@ -840,6 +1332,7 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
         parallel->spent = child->steps - before;
         parallel->completed = prime_native_control_closed(child);
     }
+    prime_native_need_claim_abandon(child);
     if (child->effect_pending) parallel->coordinator_only = true;
     if (metered) cetta_native_cost_scope_leave(&cost);
     cetta_native_cost_detach_end(containing_cost);
@@ -997,18 +1490,37 @@ static bool prime_native_parallel_apply_ready(PrimeNativeControl *owner,PrimeNat
         prime_native_parallel_publish(owner,work);
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+/* Nested workers do not own the enclosing history spec. Record into a
+ * same-group slice, then publish its frames onto the enclosing selection
+ * after the join. A refused reservation leaves this slice unrecorded and
+ * does not mark the parent slice incomplete. */
+static void prime_native_parallel_history_inherit(PrimeNativeParallel *parallel) {
+    if (parallel->history.recording)
+        return;
+    if (!prime_need_recording_inherit(&parallel->history)) {
+        parallel->history_enabled = false;
+        parallel->history = (PrimeNeedReceipt){0};
+    }
+}
+
+static void prime_native_parallel_history_publish(PrimeNativeParallel *parallel) {
+    if (parallel)
+        prime_need_recording_publish(&parallel->history);
+}
+#endif
+
 static void prime_native_parallel_slice_begin(PrimeNativeControl *owner,
         PrimeNativeParallel *parallel, uint64_t grant, uint64_t occurrence) {
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     parallel->history_enabled = owner->history.spec.enabled ||
         g_prime_need_recording_scope != NULL;
-    parallel->history = owner->history.spec.enabled
-        ? prime_native_history_reserve(owner) : (PrimeNeedReceipt){0};
-    /* An inherited private slice is never writable by nested workers.
-     * Their unrepresented detail remains explicitly missing in the outer
-     * graph; the evaluator's nested dispatch is unchanged. */
-    if (!owner->history.spec.enabled && parallel->history_enabled)
-        prime_need_recording_omit_scope();
+    if (owner->history.spec.enabled)
+        parallel->history = prime_native_history_reserve(owner);
+    else if (parallel->history_enabled)
+        prime_native_parallel_history_inherit(parallel);
+    else
+        parallel->history = (PrimeNeedReceipt){0};
     if (owner->history.active && owner->history.active->occurrence == occurrence) {
         owner->history.active->prepared = parallel->history;
         owner->history.active->preparation = true;
@@ -1219,6 +1731,7 @@ static uint64_t prime_native_descendant_grant(PrimeNativeControl *owner,
 static void prime_native_parallel_single(PrimeNativeControl *owner,
                                          CettaOwnedContinuation *owned) {
     PrimeNativeWork *candidate = owned->payload;
+    prime_native_need_share_release(candidate);
     if (candidate->parallel->execution.profile != PRIME_NATIVE_EXECUTION_NONE) {
         prime_native_execution_single(owner, owned);
         return;
@@ -1289,6 +1802,9 @@ static void prime_native_parallel_single(PrimeNativeControl *owner,
         prime_native_parallel_slice_begin(owner,work->parallel,grant,owned->occurrence_id);
         CettaParallelWorker worker={.index=0u};
         (void)prime_native_parallel_task(&worker,work->parallel,&run);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        prime_native_parallel_history_publish(work->parallel);
+#endif
         owner->active_spent=work->parallel->spent;
         assert(owner->active_spent<=owner->active_allowance);
         CettaNativeCostLedger *slice=&work->parallel->slice_cost;
@@ -1343,8 +1859,12 @@ static uint64_t prime_native_parallel_execute(PrimeNativeControl *owner,
             (void)prime_native_parallel_task(&worker,works[i]->parallel,&run);
         }
     }
-    for (size_t i = 0u; i < count; i++)
+    for (size_t i = 0u; i < count; i++) {
         prime_native_execution_joined(works[i]->parallel);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        prime_native_parallel_history_publish(works[i]->parallel);
+#endif
+    }
     uint64_t spent = 0u;
     Atom **branches = run.receipts ? cetta_malloc(count*sizeof(*branches)) : NULL;
     CettaNativeCostPlacement *placement = metered ? cetta_malloc(count*sizeof(*placement)) : NULL;
@@ -1604,9 +2124,21 @@ static bool prime_native_control_parallel_wave(PrimeNativeControl *owner,
     owner->parallel_wave_workers=workers;
     owner->parallel_wave_deferred=wave.deferred;
     owner->parallel_wave_cursor=0u;
+    bool share_waiter=false;
     for (size_t i=0u;i<count;i++) {
+        PrimeNativeControl *child=works[i]->parallel ? works[i]->parallel->child : NULL;
+        if (child && child->need_share_waiting) share_waiter=true;
+    }
+    for (size_t i=0u;i<count;i++) {
+        PrimeNativeControl *child=works[i]->parallel ? works[i]->parallel->child : NULL;
+        /* A waiting peer permits the normal bounded default producer slice.
+         * Explicit worker quanta and the enclosing allowance stay binding. */
+        bool claim_holder=share_waiter && child && !child->need_share_waiting &&
+            !works[i]->resource_step && !works[i]->dialect && works[i]->parallel &&
+            works[i]->parallel->execution.profile==PRIME_NATIVE_EXECUTION_NONE;
         works[i]->parallel->wave_remaining=
-            (works[i]->resource_step || works[i]->dialect)?1u:reservation;
+            (works[i]->resource_step || works[i]->dialect)?1u:
+            claim_holder && !owner->policy.worker_quantum?64u:reservation;
         works[i]->parallel->wave_settled=false;
         works[i]->parallel->attempted=false;
         if(works[i]->dialect)works[i]->parallel->dialect_operation=works[i];

@@ -117,6 +117,25 @@
      (/ 5 2)))
 !(prepared-list-algebra ignored)
 
+
+; An optional pure worker distinguishes an empty answer stream from a value.
+; Repeating either call keeps that distinction. Later equations remain live
+; alternatives and defeat the optional realization rather than being cut.
+(= (prepared-maybe $x) (if (== $x 0) (empty) (Box $x)))
+!(collapse (prepared-maybe 0))
+!(collapse (prepared-maybe 7))
+!(collapse (prepared-maybe 0))
+(= (prepared-maybe-more $x) (if (== $x 0) (empty) (Box $x)))
+(= (prepared-maybe-more $x) (Box 9))
+!(collapse (prepared-maybe-more 0))
+!(collapse (prepared-maybe-more 7))
+
+; Optional conditions fail their branch without retrying a completed call.
+(= (prepared-maybe-bool $x) (if (== $x 0) (empty) (== $x 7)))
+!(collapse (if (prepared-maybe-bool 0) yes no))
+!(collapse (if (prepared-maybe-bool 7) yes no))
+!(collapse (if (prepared-maybe-bool 8) yes no))
+
 ; Negative: the generated deconstruction instruction implements only the
 ; successful nonempty-expression arm.  Computation zero and dialect-specific
 ; errors must decline and replay through the canonical evaluator.

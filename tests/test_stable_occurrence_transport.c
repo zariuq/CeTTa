@@ -2313,17 +2313,22 @@ static void test_retained_match_relocation(void) {
     for (unsigned success = 0u; success < 2u; success++) {
         for (size_t cut = 0u; cut < sizeof(cuts)/sizeof(*cuts); cut++) {
             Arena inputs, source, destination, destination_inputs;
+            Arena source_need, destination_need;
             arena_init(&inputs); arena_init(&source); arena_init(&destination);
             arena_init(&destination_inputs);
+            arena_init(&source_need); arena_init(&destination_need);
             if (profile > 0u) {
                 arena_set_runtime_kind(&inputs,CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_runtime_kind(&source,CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_runtime_kind(&destination_inputs,CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_runtime_kind(&destination,CETTA_ARENA_RUNTIME_KIND_EVAL);
+                arena_set_runtime_kind(&source_need,CETTA_ARENA_RUNTIME_KIND_EVAL);
+                arena_set_runtime_kind(&destination_need,CETTA_ARENA_RUNTIME_KIND_EVAL);
             }
             if (profile == 2u) {
                 arena_set_scalar_cache(&inputs,true); arena_set_scalar_cache(&source,true);
                 arena_set_scalar_cache(&destination_inputs,true); arena_set_scalar_cache(&destination,true);
+                arena_set_scalar_cache(&source_need,true); arena_set_scalar_cache(&destination_need,true);
             }
             if (profile == 3u) {
                 arena_set_older_generation(&source,&inputs);
@@ -2357,9 +2362,17 @@ static void test_retained_match_relocation(void) {
             prime_need_snapshot_init(&empty);
             assert(prime_need_snapshot_begin(&empty));
             uint64_t cell = 0u;
-            assert(prime_need_snapshot_allocate(&source,&empty,origin,&need,&cell));
-            assert(prime_need_snapshot_start_evaluation(&source,&need,cell,31u,&need));
-            assert(prime_need_snapshot_resolve_value(&source,&need,cell,31u,origin,&need));
+            /* Need metadata has an independent owner even when the logical
+             * atoms use a generation chain. Reject that chain as its owner. */
+            if (profile == 3u) {
+                PrimeNeedSnapshot refused_need = empty;
+                assert(!prime_need_snapshot_allocate(
+                    &source,&empty,origin,&refused_need,&cell));
+                assert(cell == 0u && refused_need.top == empty.top);
+            }
+            assert(prime_need_snapshot_allocate(&source_need,&empty,origin,&need,&cell));
+            assert(prime_need_snapshot_start_evaluation(&source_need,&need,cell,31u,&need));
+            assert(prime_need_snapshot_resolve_value(&source_need,&need,cell,31u,origin,&need));
             need.max_storage_key = 911u;
             CettaWeightLedger weights={0}, prefix={0}, selected={0};
             assert(cetta_weight_ledger_append(&source,&weights,701u,71u,
@@ -2376,36 +2389,46 @@ static void test_retained_match_relocation(void) {
             assert(!match_atoms_cursor_copy_to_arena(original,&source,session));
             assert(!match_atoms_cursor_copy_to_arena(original,&destination,session));
             const AtomDeepCopyArenaPair pairs[] = {
-                {&source, &destination}, {&inputs, &destination_inputs}};
-            assert(atom_deep_copy_session_set_arena_map(session,pairs,2u));
+                {&source, &destination}, {&inputs, &destination_inputs},
+                {&source_need, &destination_need}};
+            assert(atom_deep_copy_session_set_arena_map(session,pairs,3u));
             CettaNativeCostLedger cost; CettaNativeCostScope scope;
             cetta_native_cost_init(&cost); cetta_native_cost_scope_enter(&scope,&cost,1u);
-            Arena refused, refused_inputs;
+            Arena refused, refused_inputs, refused_need;
             arena_init(&refused); arena_init(&refused_inputs);
+            arena_init(&refused_need);
             arena_set_runtime_kind(&refused,source.runtime_kind);
             arena_set_runtime_kind(&refused_inputs,inputs.runtime_kind);
             arena_set_scalar_cache(&refused,source.scalar_cache);
             arena_set_scalar_cache(&refused_inputs,inputs.scalar_cache);
+            arena_set_runtime_kind(&refused_need,source_need.runtime_kind);
+            arena_set_scalar_cache(&refused_need,source_need.scalar_cache);
             if (profile==3u) arena_set_older_generation(&refused,&refused_inputs);
             AtomDeepCopySession *missing=atom_deep_copy_session_new(&refused);
-            const AtomDeepCopyArenaPair missing_pair={&source,&refused};
-            assert(atom_deep_copy_session_set_arena_map(missing,&missing_pair,1u)==(profile!=3u));
+            const AtomDeepCopyArenaPair missing_pairs[]={
+                {&source,&refused},{&source_need,&refused_need}};
+            assert(atom_deep_copy_session_set_arena_map(missing,missing_pairs,2u)==(profile!=3u));
             assert(!match_atoms_cursor_copy_to_arena(original,&refused,missing));
             atom_deep_copy_session_free(missing);
-            arena_free(&refused); arena_free(&refused_inputs);
+            arena_free(&refused_need); arena_free(&refused); arena_free(&refused_inputs);
             arena_init(&refused); arena_init(&refused_inputs);
+            arena_init(&refused_need);
             arena_set_runtime_kind(&refused,source.runtime_kind);
             arena_set_runtime_kind(&refused_inputs,inputs.runtime_kind);
             arena_set_scalar_cache(&refused,source.scalar_cache);
             arena_set_scalar_cache(&refused_inputs,inputs.scalar_cache);
+            arena_set_runtime_kind(&refused_need,source_need.runtime_kind);
+            arena_set_scalar_cache(&refused_need,source_need.scalar_cache);
             if (profile==3u) arena_set_older_generation(&refused,&refused_inputs);
             AtomDeepCopySession *stale=atom_deep_copy_session_new(&refused);
-            const AtomDeepCopyArenaPair stale_pairs[]={{&source,&refused},{&inputs,&refused_inputs}};
-            assert(atom_deep_copy_session_set_arena_map(stale,stale_pairs,2u));
+            const AtomDeepCopyArenaPair stale_pairs[]={
+                {&source,&refused},{&inputs,&refused_inputs},
+                {&source_need,&refused_need}};
+            assert(atom_deep_copy_session_set_arena_map(stale,stale_pairs,3u));
             arena_reset(&refused_inputs,arena_mark(&refused_inputs));
             assert(!match_atoms_cursor_copy_to_arena(original,&refused,stale));
             atom_deep_copy_session_free(stale);
-            arena_free(&refused); arena_free(&refused_inputs);
+            arena_free(&refused_need); arena_free(&refused); arena_free(&refused_inputs);
             CettaMatchCursor *copy=match_atoms_cursor_copy_to_arena(original,&destination,session);
             assert(copy && match_atoms_cursor_epoch(copy)==epoch);
             assert(cost.total.counts[CETTA_COST_MATCH_NODE]==0u &&
@@ -2425,6 +2448,7 @@ static void test_retained_match_relocation(void) {
             uint64_t attempts=cost.total.counts[CETTA_COST_MATCH_ATTEMPT]-attempt;
             match_atoms_cursor_free(original);
             bindings_free(&seed);
+            arena_free(&source_need);
             arena_free(&source); arena_free(&inputs);
             before=cost.total.counts[CETTA_COST_MATCH_NODE];
             attempt=cost.total.counts[CETTA_COST_MATCH_ATTEMPT];
@@ -2450,7 +2474,8 @@ static void test_retained_match_relocation(void) {
                 assert(bindings_lookup_value_id(&answer,copied_kept->var_id).skeleton==copied_origin);
                 const PrimeNeedSnapshot *retained=bindings_need_view(&answer);
                 PrimeNeedCellView view;
-                assert(retained && retained->max_storage_key==911u &&
+                assert(retained && retained->owner==&destination_need &&
+                       retained->max_storage_key==911u &&
                        prime_need_snapshot_lookup(retained,cell,&view));
                 assert(view.origin==copied_origin && view.cached==copied_origin);
                 assert(bindings_occurrence_token(&answer)==811u);
@@ -2458,6 +2483,7 @@ static void test_retained_match_relocation(void) {
             }
             bindings_free(&answer); match_atoms_cursor_free(copy);
             cetta_native_cost_scope_leave(&scope); cetta_native_cost_free(&cost);
+            arena_free(&destination_need);
             arena_free(&destination);
             arena_free(&destination_inputs);
         }
@@ -2615,12 +2641,12 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
 }
 
 static void test_owned_need_graph(void) {
-    Arena source, young, separate, destination, young_destination, separate_destination;
-    arena_init_detached(&source); arena_init_detached(&young);
+    Arena source, extension, separate, destination, extension_destination, separate_destination;
+    arena_init_detached(&source); arena_init_detached(&extension);
     arena_init_detached(&separate); arena_init_detached(&destination);
-    arena_init_detached(&young_destination); arena_init_detached(&separate_destination);
-    arena_set_older_generation(&young, &source);
-    arena_set_older_generation(&young_destination, &destination);
+    arena_init_detached(&extension_destination); arena_init_detached(&separate_destination);
+    /* Successive immutable Need frames may use distinct standalone owners.
+     * Generation-linked metadata owners are refused above. */
     Atom *value = atom_expr2(&source, atom_symbol(&source, "owned-value"), atom_int(&source, 7));
     PrimeNeedSnapshot root = {0}, allocated, running, completed;
     uint64_t cell = 0u;
@@ -2632,8 +2658,8 @@ static void test_owned_need_graph(void) {
 #else
     assert(prime_need_snapshot_allocate(&source, &root, value, &allocated, &cell));
 #endif
-    assert(prime_need_snapshot_start_evaluation(&young, &allocated, cell, 19u, &running));
-    assert(prime_need_snapshot_resolve_value(&young, &running, cell, 19u, value, &completed));
+    assert(prime_need_snapshot_start_evaluation(&extension, &allocated, cell, 19u, &running));
+    assert(prime_need_snapshot_resolve_value(&extension, &running, cell, 19u, value, &completed));
     completed.max_storage_key += 307u;
     PrimeNeedCellView a, b;
     assert(prime_need_snapshot_lookup(&allocated, cell, &a));
@@ -2645,17 +2671,17 @@ static void test_owned_need_graph(void) {
     assert(prime_need_snapshot_promote(&separate, &independent));
     assert(independent.top != completed.top);
     AtomDeepCopyArenaPair pairs[] = {{&source, &destination},
-        {&young, &young_destination}, {&separate, &separate_destination}};
-    AtomDeepCopySession *session = atom_deep_copy_session_new(&young_destination);
+        {&extension, &extension_destination}, {&separate, &separate_destination}};
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&extension_destination);
     assert(session && atom_deep_copy_session_set_arena_map(session, pairs, 3u));
     PrimeNeedSnapshot first = completed, again = completed, prefix = allocated;
     PrimeNeedSnapshot different = independent;
-    assert(prime_need_snapshot_copy_with_session(&young_destination, session, &first));
-    assert(prime_need_snapshot_copy_with_session(&young_destination, session, &again));
-    assert(prime_need_snapshot_copy_with_session(&young_destination, session, &prefix));
-    assert(prime_need_snapshot_copy_with_session(&young_destination, session, &different));
+    assert(prime_need_snapshot_copy_with_session(&extension_destination, session, &first));
+    assert(prime_need_snapshot_copy_with_session(&extension_destination, session, &again));
+    assert(prime_need_snapshot_copy_with_session(&extension_destination, session, &prefix));
+    assert(prime_need_snapshot_copy_with_session(&extension_destination, session, &different));
     assert(first.top == again.top && first.top != different.top);
-    assert(first.owner == &young_destination && prefix.owner == &destination &&
+    assert(first.owner == &extension_destination && prefix.owner == &destination &&
         different.owner == &separate_destination);
     assert(first.session_id == completed.session_id &&
         first.max_storage_key == completed.max_storage_key);
@@ -2673,12 +2699,12 @@ static void test_owned_need_graph(void) {
     assert(first.heap_index == again.heap_index && first.lineage_index == again.lineage_index);
     PrimeNeedSnapshot no_index = completed;
     no_index.heap_index = NULL; no_index.lineage_index = NULL;
-    assert(prime_need_snapshot_copy_with_session(&young_destination, session, &no_index));
+    assert(prime_need_snapshot_copy_with_session(&extension_destination, session, &no_index));
     assert(no_index.top == first.top && !no_index.heap_index && !no_index.lineage_index);
     assert(prime_need_snapshot_lookup(&no_index, cell, &a) && a.cached == b.cached);
 #endif
     assert(prime_need_snapshot_excludes_arena(&first, &source) &&
-        prime_need_snapshot_excludes_arena(&first, &young) &&
+        prime_need_snapshot_excludes_arena(&first, &extension) &&
         prime_need_snapshot_excludes_arena(&different, &separate));
     atom_deep_copy_session_free(session);
 
@@ -2712,7 +2738,7 @@ static void test_owned_need_graph(void) {
         arena_init_detached(&failed_prefix); arena_init_detached(&failed_suffix);
         arena_set_older_generation(&failed_suffix, &failed_prefix);
         session = atom_deep_copy_session_new(&failed_suffix);
-        AtomDeepCopyArenaPair incomplete[] = {{&source, &failed_prefix}, {&young, &failed_suffix}};
+        AtomDeepCopyArenaPair incomplete[] = {{&source, &failed_prefix}, {&extension, &failed_suffix}};
         assert(session && atom_deep_copy_session_set_arena_map(session, incomplete, 2u));
         PrimeNeedSnapshot bad_index = completed;
         bad_index.heap_index = independent.heap_index;
@@ -2728,7 +2754,7 @@ static void test_owned_need_graph(void) {
         arena_free(&failed_suffix); arena_free(&failed_prefix);
     }
 #endif
-    arena_free(&young); arena_free(&source); arena_free(&separate);
+    arena_free(&extension); arena_free(&source); arena_free(&separate);
     assert(prime_need_snapshot_lookup(&first, cell, &b) &&
         b.origin == b.cached && b.cache_state == PRIME_NEED_CACHE_VALUE &&
         atom_is_symbol(b.cached->expr.elems[0], "owned-value"));
@@ -2737,10 +2763,10 @@ static void test_owned_need_graph(void) {
 #endif
     PrimeNeedSnapshot extra;
     uint64_t extra_cell = 0u;
-    assert(prime_need_snapshot_allocate(&young_destination, &first, b.cached, &extra, &extra_cell));
+    assert(prime_need_snapshot_allocate(&extension_destination, &first, b.cached, &extra, &extra_cell));
     assert(prime_need_snapshot_is_ancestor(&first, &extra) &&
         prime_need_snapshot_lookup(&extra, cell, &a) && a.cached == b.cached);
-    arena_free(&young_destination); arena_free(&destination); arena_free(&separate_destination);
+    arena_free(&extension_destination); arena_free(&destination); arena_free(&separate_destination);
 }
 
 static void test_owned_builder_need_graph(void) {

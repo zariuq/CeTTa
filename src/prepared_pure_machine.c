@@ -302,6 +302,9 @@ typedef struct {
     /* Weak-head matching selects at most one equation, and no body reaches
      * choice: a call that is not deterministic, or choice zero. */
     bool deterministic;
+    /* Weak-head matching selects at most one equation; a body may fail.
+     * This says nothing about termination, coverage or execution rights. */
+    bool at_most_one;
     /* A type annotation names the head. */
     bool declares_type;
     /* Its equations form one keyed group: decisions[first_decision]. */
@@ -387,6 +390,8 @@ typedef enum {
     PREPARED_PURE_CODE_TAIL_CALL,
     /* The operand answers for this body. */
     PREPARED_PURE_CODE_RETURN,
+    /* A qualified optional computation returns no answer. */
+    PREPARED_PURE_CODE_EMPTY,
 } PreparedPureCodeKind;
 
 #define PREPARED_PURE_CODE_LITERAL UINT32_C(0x80000000)
@@ -605,6 +610,10 @@ struct CettaPreparedPureProgram {
     /* Every equation and the root lowered to register code; the root's
      * registers are its locals, then the entry arguments, then its values. */
     bool code_ready;
+    /* Optional execution has a distinct result ABI. It never enters the
+     * ordinary one-value executor or an answer-producer cursor. */
+    bool optional_result;
+    bool optional_empty;
     uint32_t root_first_code;
     uint32_t root_register_count;
     PreparedPureCode *code;
@@ -729,6 +738,9 @@ struct CettaPreparedPureClosedExecution {
     uint8_t *origin_children_ready;
     size_t origin_children_length,origin_children_capacity,origin_children_ready_capacity;
     CettaPreparedClosedStep status;
+    /* An optional return remains borrowed by the held invocation until its
+     * owner acknowledges that exact value or closes the invocation. */
+    Atom *pending_answer;
     const char *decline;
 };
 
@@ -1894,8 +1906,8 @@ static bool prepared_pure_code_trim_dead_registers(
             program->slot_live[slot] = 1u;
             continue;
         }
-        const uint32_t *operands =
-            &program->code_operands[code->first_operand];
+        const uint32_t *operands = code->operand_count
+            ? &program->code_operands[code->first_operand] : NULL;
         for (uint32_t i = 0u; i < code->operand_count; i++) {
             if (operands[i] & PREPARED_PURE_CODE_LITERAL)
                 continue;
@@ -3194,7 +3206,7 @@ static bool prepared_pure_compile_eval_with_role(
         }
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_ZERO) {
-            if (!program->answer_producer)
+            if (!program->answer_producer && !program->optional_result)
                 return prepared_pure_reject(
                     program,
                     "choice zero is not an ordinary prepared value",
@@ -7652,31 +7664,39 @@ static bool prepared_pure_answer_value_node(
     return true;
 }
 
-/* A node whose evaluation cannot choose: it holds no choice zero and calls
- * only deterministic heads. */
-static bool prepared_pure_node_chooses(
+/* The optional bound admits zero but excludes alternatives. The ordinary
+ * single-value region additionally excludes zero and calls such regions.
+ * Neither bound establishes coverage or termination. */
+static bool prepared_pure_node_exceeds_single(
     const CettaPreparedPureProgram *program, uint32_t node_index,
-    uint32_t depth) {
+    uint32_t depth, bool optional) {
     if (!program || node_index >= program->node_len ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return true;
     const PreparedPureNode *node = &program->nodes[node_index];
     if (node->kind == PREPARED_PURE_ZERO)
-        return true;
+        return !optional;
     if (node->kind == PREPARED_PURE_CALL &&
         (node->auxiliary >= program->head_len ||
-         !program->heads[node->auxiliary].deterministic))
+         !(optional ? program->heads[node->auxiliary].at_most_one
+                    : program->heads[node->auxiliary].deterministic)))
         return true;
     if (node->first_child > program->child_len ||
         node->child_count > program->child_len - node->first_child)
         return true;
     for (uint32_t index = 0u; index < node->child_count; index++) {
-        if (prepared_pure_node_chooses(
+        if (prepared_pure_node_exceeds_single(
                 program, program->children[node->first_child + index],
-                depth + 1u))
+                depth + 1u, optional))
             return true;
     }
     return false;
+}
+
+static bool prepared_pure_node_chooses(
+    const CettaPreparedPureProgram *program, uint32_t node_index,
+    uint32_t depth) {
+    return prepared_pure_node_exceeds_single(program, node_index, depth, false);
 }
 
 /* The greatest fixed point: start from the heads weak-head matching makes
@@ -7687,23 +7707,28 @@ static void prepared_pure_classify_deterministic_heads(
         PreparedPureHead *head = &program->heads[index];
         head->deterministic = head->compiled &&
             prepared_pure_head_is_whnf_determinate(program, head);
+        head->at_most_one = head->deterministic;
     }
     bool changed = true;
     while (changed) {
         changed = false;
         for (uint32_t index = 0u; index < program->head_len; index++) {
             PreparedPureHead *head = &program->heads[index];
-            if (!head->deterministic)
+            if (!head->deterministic && !head->at_most_one)
                 continue;
             for (uint32_t offset = 0u;
                  offset < head->equation_count; offset++) {
                 const PreparedPureEquation *equation =
                     &program->equations[head->first_equation + offset];
-                if (prepared_pure_node_chooses(
+                if (head->at_most_one && prepared_pure_node_exceeds_single(
+                        program, equation->root, 0u, true)) {
+                    head->at_most_one = false;
+                    changed = true;
+                }
+                if (head->deterministic && prepared_pure_node_chooses(
                         program, equation->root, 0u)) {
                     head->deterministic = false;
                     changed = true;
-                    break;
                 }
             }
         }
@@ -8278,6 +8303,10 @@ static bool prepared_pure_code_node(
         return false;
     PreparedPureNode node = program->nodes[node_index];
     switch (node.kind) {
+    case PREPARED_PURE_ZERO:
+        return program->optional_result && prepared_pure_code_emit(
+            program, (PreparedPureCode){.kind = PREPARED_PURE_CODE_EMPTY},
+            NULL, 0u, NULL);
     case PREPARED_PURE_LITERAL:
     case PREPARED_PURE_SLOT:
     case PREPARED_PURE_ENTRY_ARGUMENT: {
@@ -8488,6 +8517,7 @@ static bool prepared_pure_code_liveness(
         PreparedPureCode *code = &program->code[index];
         memset(out, 0, words * sizeof(*out));
         bool falls_through = code->kind != PREPARED_PURE_CODE_RETURN &&
+            code->kind != PREPARED_PURE_CODE_EMPTY &&
             code->kind != PREPARED_PURE_CODE_TAIL_CALL &&
             code->kind != PREPARED_PURE_CODE_JUMP && !code->returns;
         bool jumps = code->kind == PREPARED_PURE_CODE_JUMP ||
@@ -8566,8 +8596,8 @@ static bool prepared_pure_code_liveness(
                     prepared_pure_code_live_clear(out, binding->slot);
             }
         }
-        const uint32_t *operands =
-            &program->code_operands[code->first_operand];
+        const uint32_t *operands = code->operand_count
+            ? &program->code_operands[code->first_operand] : NULL;
         for (uint32_t i = 0u; ok && i < code->operand_count; i++) {
             if (operands[i] & PREPARED_PURE_CODE_LITERAL)
                 continue;
@@ -9027,7 +9057,11 @@ prepared_pure_program_compile_closed_mode(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool answer_producer, bool service_source_nodes) {
+    bool answer_producer, bool service_source_nodes, bool optional_result) {
+    if (optional_result && (answer_producer || service_source_nodes ||
+            call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+            !entry_arguments_are_values))
+        return NULL;
     if ((service_source_nodes && (answer_producer ||
             call_mode!=CETTA_GSLT_PURE_CALL_CALL_BY_NEED)) ||
         !space || !expression || atom_has_vars(expression) ||
@@ -9077,6 +9111,7 @@ prepared_pure_program_compile_closed_mode(
     program->match_decision_semantics = match_decision_semantics;
     program->closed_program = true;
     program->answer_producer = answer_producer;
+    program->optional_result = optional_result;
     program->service_source_nodes = service_source_nodes;
     program->allow_callable_templates = true;
     PreparedPureCompileContext context = {0};
@@ -9099,12 +9134,23 @@ prepared_pure_program_compile_closed_mode(
     }
     if (call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
         prepared_pure_code_enabled()) {
+        if (optional_result) {
+            prepared_pure_classify_deterministic_heads(program);
+            if (prepared_pure_node_exceeds_single(program, program->root, 0u, true)) {
+                cetta_prepared_pure_program_free(program);
+                return NULL;
+            }
+        }
         program->code_ready = prepared_pure_lower_code(program);
         if (prepared_pure_debug_enabled())
             fprintf(stderr, "prepared-pure code: %s\n",
                     program->code_ready
                         ? "bodies lowered to register code"
                         : "a body left to the node executor");
+    }
+    if (optional_result && !program->code_ready) {
+        cetta_prepared_pure_program_free(program);
+        return NULL;
     }
     return program;
 }
@@ -9128,7 +9174,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, false);
+        total_structural_equality, match_decision_semantics, false, false, false);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
@@ -9150,7 +9196,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, true);
+        total_structural_equality, match_decision_semantics, false, true, false);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
@@ -9172,13 +9218,39 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, true, false);
+        total_structural_equality, match_decision_semantics, true, false, false);
+}
+
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
+    return prepared_pure_program_compile_closed_mode(
+        space, expression, call_mode, boolean_value, construct_value,
+        constructs_expression, opaque_value, register_view,
+        expression_view, pattern_view, source_view, entry_arguments_are_values,
+        total_structural_equality, match_decision_semantics, false, false, true);
 }
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program) {
     return program &&
            space_program_token_is_current(program->source_program);
+}
+
+bool cetta_prepared_pure_program_returns_optional(
+    const CettaPreparedPureProgram *program) {
+    return program && program->optional_result;
 }
 
 bool cetta_prepared_pure_program_rebind_closed_entry_call(
@@ -10370,6 +10442,29 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     return CETTA_PREPARED_PURE_CURSOR_EXHAUSTED;
 }
 
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor) {
+    if (!cursor || !cursor->program || cursor->program->execution ||
+        cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NONE ||
+        !cetta_prepared_pure_program_is_current(cursor->program))
+        return false;
+    const CettaPreparedPureProgram *program = cursor->program;
+    for (size_t index = 0u; index < cursor->frame_len; index++) {
+        const PreparedPureAnswerFrame *frame = &cursor->frames[index];
+        if (frame->head_index >= program->head_len ||
+            frame->argument_base > cursor->argument_len ||
+            frame->arity > cursor->argument_len - frame->argument_base ||
+            !frame->matched_equation)
+            return false;
+        const PreparedPureHead *head = &program->heads[frame->head_index];
+        if (!head->compiled || head->first_equation > program->equation_len ||
+            head->equation_count > program->equation_len - head->first_equation ||
+            frame->next_equation < head->equation_count)
+            return false;
+    }
+    return true;
+}
+
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *computation, CettaOwnedReturn *returned,
     CettaEvalCompletion *completion) {
@@ -10380,6 +10475,9 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     if (step == CETTA_PREPARED_PURE_CURSOR_ANSWER) {
         returned->outcome = cetta_call_completed_value(value);
         returned->environment = NULL;
+        returned->final = cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor);
+        if (returned->final)
+            *completion = CETTA_EVAL_COMPLETE;
         return CETTA_OWNED_EXECUTION_RETURN;
     }
     if (step == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED) {
@@ -11068,9 +11166,20 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
             execution->remaining--;execution->performed++;
         }
         const PreparedPureCode *code = &program->code[frame->pc++];
-        const uint32_t *operands =
-            &program->code_operands[code->first_operand];
+        const uint32_t *operands = code->operand_count
+            ? &program->code_operands[code->first_operand] : NULL;
         switch (code->kind) {
+        case PREPARED_PURE_CODE_EMPTY:
+            if (!program->optional_result || step) {
+                decline = "empty instruction outside optional execution";
+                goto declined;
+            }
+            program->optional_empty = true;
+            program->code_frame_len = 0u;
+            program->slot_len = 0u;
+            prepared_pure_memo_clear(program);
+            if (execution) execution->poll_countdown = poll_countdown;
+            return true;
         case PREPARED_PURE_CODE_MOVE:
             registers[code->destination] =
                 prepared_pure_code_value(program, registers, operands[0]);
@@ -12443,7 +12552,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     void *interrupt_context,
     Atom **result_out) {
     if (result_out) *result_out=NULL;
-    if (program && (program->execution || program->service_source_nodes)) return false;
+    if (program && (program->execution || program->service_source_nodes ||
+                   program->optional_result)) return false;
     return prepared_pure_program_execute_retained(program,arena,accumulator,item,
         runtime_expression,step_node,step_slot_count,closed,nursery_budget_bytes,
         interrupt_poll,interrupt_context,result_out,NULL);
@@ -12501,6 +12611,45 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
         result_out);
+}
+
+typedef struct {
+    CettaPreparedPureInterruptPollFn poll;
+    void *context;
+    bool interrupted;
+} PreparedPureOptionalPoll;
+
+static bool prepared_pure_optional_poll(void *context) {
+    PreparedPureOptionalPoll *state = context;
+    if (state->poll && state->poll(state->context))
+        state->interrupted = true;
+    return state->interrupted;
+}
+
+CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optional(
+    CettaPreparedPureProgram *program, Arena *arena,
+    size_t nursery_budget_bytes,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, Atom **result_out) {
+    if (result_out) *result_out = NULL;
+    if (!program || !arena || !result_out || !program->optional_result ||
+        !program->code_ready || program->execution)
+        return CETTA_PREPARED_PURE_OPTIONAL_DECLINED;
+    if (!cetta_prepared_pure_program_is_current(program))
+        return CETTA_PREPARED_PURE_OPTIONAL_INVALIDATED;
+    program->optional_empty = false;
+    PreparedPureOptionalPoll poll = {.poll=interrupt_poll, .context=interrupt_context};
+    bool done = prepared_pure_program_execute_retained(
+        program, arena, NULL, NULL, NULL, PREPARED_PURE_RUNTIME_NODE, 0u,
+        true, nursery_budget_bytes,
+        interrupt_poll ? prepared_pure_optional_poll : NULL, &poll,
+        result_out, NULL);
+    if (poll.interrupted)
+        return CETTA_PREPARED_PURE_OPTIONAL_INTERRUPTED;
+    if (!done)
+        return CETTA_PREPARED_PURE_OPTIONAL_DECLINED;
+    return program->optional_empty ? CETTA_PREPARED_PURE_OPTIONAL_EMPTY
+                                  : CETTA_PREPARED_PURE_OPTIONAL_VALUE;
 }
 
 /* A service cut owns the mutable invocation prefix. Compiler tables,
@@ -12923,13 +13072,15 @@ bool cetta_prepared_pure_closed_service_complete(
     return ok;
 }
 
-CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open(
-    CettaPreparedPureProgram *program, Arena *arena, const void *owner) {
+static CettaPreparedPureClosedExecution *prepared_pure_closed_open_mode(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner,
+    bool optional) {
     if (!program || !arena || !owner || program->execution ||
         program->references != 1u || !program->closed_program ||
-        program->answer_producer ||
+        program->answer_producer || program->optional_result != optional ||
         !cetta_prepared_pure_program_is_current(program) ||
-        !cetta_prepared_pure_program_all_heads_determinate(program))
+        (optional ? !program->code_ready :
+                    !cetta_prepared_pure_program_all_heads_determinate(program)))
         return NULL;
     for (size_t i=0u; i<program->entry_argument_count; i++)
         if (!program->entry_arguments[i]) return NULL;
@@ -12955,12 +13106,23 @@ CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open(
     }
     program->slot_len=registers;
     program->code_resumed=false;
+    program->optional_empty=false;
     execution->program=program;execution->arena=arena;execution->owner=owner;
     atomic_init(&execution->entered,false);
     execution->initialized=true;execution->poll_countdown=1u;
     execution->status=CETTA_PREPARED_CLOSED_SUSPENDED;
     program->execution=execution;
     return execution;
+}
+
+CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner) {
+    return prepared_pure_closed_open_mode(program, arena, owner, false);
+}
+
+CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open_optional(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner) {
+    return prepared_pure_closed_open_mode(program, arena, owner, true);
 }
 
 CettaPreparedClosedStep cetta_prepared_pure_closed_step(
@@ -12976,6 +13138,11 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
     CettaPreparedPureProgram *program=execution->program;
     CettaPreparedClosedStep status=execution->status;
     if (program->execution!=execution) status=CETTA_PREPARED_CLOSED_REFUSED;
+    else if (program->optional_result && status!=CETTA_PREPARED_CLOSED_SUSPENDED) {
+        /* These are earned outcomes, not another execution request. A source
+         * mutation cannot discard a pending value or reopen a terminal cut. */
+        if (status==CETTA_PREPARED_CLOSED_ANSWER) *answer=execution->pending_answer;
+    }
     else if (!allowance) { /* No execution or terminal acknowledgement. */ }
     else if (!cetta_prepared_pure_program_is_current(program))
         status=execution->status=CETTA_PREPARED_CLOSED_INVALIDATED;
@@ -13001,7 +13168,11 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
             : prepared_pure_program_execute_retained(program,arena,NULL,NULL,NULL,
                 PREPARED_PURE_RUNTIME_NODE,0u,true,0u,NULL,NULL,answer,execution);
         *spent=allowance-execution->remaining;
-        if (ok) status=execution->status=CETTA_PREPARED_CLOSED_ANSWER;
+        if (ok) {
+            status=execution->status=program->optional_empty
+                ? CETTA_PREPARED_CLOSED_EXHAUSTED : CETTA_PREPARED_CLOSED_ANSWER;
+            if (program->optional_result) execution->pending_answer=*answer;
+        }
         else if (execution->status==CETTA_PREPARED_CLOSED_SERVICE ||
                  execution->status==CETTA_PREPARED_CLOSED_EXHAUSTED)
             status=execution->status;
@@ -13013,6 +13184,24 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
     return status;
 }
 
+bool cetta_prepared_pure_closed_accept_optional(
+    CettaPreparedPureClosedExecution *execution, const void *owner, Atom *answer) {
+    if (!execution || !owner || owner!=execution->owner || !answer) return false;
+    bool expected=false;
+    if (!atomic_compare_exchange_strong_explicit(&execution->entered,&expected,true,
+            memory_order_acquire,memory_order_relaxed)) return false;
+    CettaPreparedPureProgram *program=execution->program;
+    bool ok=program->execution==execution && program->optional_result &&
+        execution->status==CETTA_PREPARED_CLOSED_ANSWER &&
+        answer==execution->pending_answer;
+    if (ok) {
+        execution->pending_answer=NULL;
+        execution->status=CETTA_PREPARED_CLOSED_EXHAUSTED;
+    }
+    atomic_store_explicit(&execution->entered,false,memory_order_release);
+    return ok;
+}
+
 bool cetta_prepared_pure_closed_owned_by(
     CettaPreparedPureClosedExecution *execution,
     const CettaPreparedPureProgram *program, const Arena *arena, const void *owner) {
@@ -13022,7 +13211,10 @@ bool cetta_prepared_pure_closed_owned_by(
             memory_order_acquire,memory_order_relaxed)) return false;
     bool valid=execution->program==program && execution->arena==arena &&
         execution->owner==owner && program->execution==execution &&
-        cetta_prepared_pure_program_is_current(program);
+        (cetta_prepared_pure_program_is_current(program) ||
+         (program->optional_result &&
+          (execution->status==CETTA_PREPARED_CLOSED_ANSWER ||
+           execution->status==CETTA_PREPARED_CLOSED_EXHAUSTED)));
     atomic_store_explicit(&execution->entered,false,memory_order_release);
     return valid;
 }
@@ -13040,7 +13232,8 @@ bool cetta_prepared_pure_closed_read(
         .poll_countdown=program->code_ready ? execution->poll_countdown : execution->interrupt_poll_steps,.status=execution->status,
         .next=CETTA_PREPARED_INSTRUCTION_NONE,.frame_storage=program->code_frames,
         .slot_storage=program->slots,.decline=execution->decline,
-        .register_code=program->code_ready,.values=program->value_len,.contexts=program->context_len};
+        .register_code=program->code_ready,.values=program->value_len,.contexts=program->context_len,
+        .optional_result=program->optional_result,.pending_answer=execution->pending_answer};
     if (program->code_frame_len) {
         PreparedPureCodeFrame frame=program->code_frames[program->code_frame_len-1u];
         state->pc=frame.pc;state->base=frame.base;

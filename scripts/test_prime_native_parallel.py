@@ -523,6 +523,98 @@ def generated(gate, count):
         gate.passed_case(f'generated duplicate-sensitive source bag {i}')
 
 
+def shared_producer_boundaries(gate):
+    source = ('(= (share:spin $k) (if (< $k 1) 1 (+ 1 (share:spin (- $k 1))))) '
+              '(= (share:pair $p) (Pair (force $p) (force $p))) '
+              '(= (share:one $p) (force $p)) '
+              '(= (share:deny $p) '
+              '(if-error (force (suspension:restrict $p (suspension:rights inspect))) Denied Leaked)) ')
+    cases = [
+        ('branching promise', '(let $_ (share:spin 40) (superpose (A B)))',
+         '(superpose ((share:pair $p) (share:pair $p)))',
+         [['Pair', 'A', 'A'], ['Pair', 'B', 'B']] * 2),
+        ('equal distinct producer branches', '(let $_ (share:spin 40) (superpose (A A)))',
+         '(superpose ((share:pair $p) (share:pair $p)))', [['Pair', 'A', 'A']] * 4),
+        ('empty producer', '(let $_ (share:spin 40) (empty))',
+         '(superpose ((share:one $p) (share:one $p)))', []),
+        ('force rights allowed first', '(share:spin 40)',
+         '(superpose ((share:one $p) (share:deny $p)))', [41, 'Denied']),
+        ('force rights denied first', '(share:spin 40)',
+         '(superpose ((share:deny $p) (share:one $p)))', [41, 'Denied']),
+        ('closed deterministic producer', '(share:spin 40)',
+         '(superpose ((share:pair $p) (share:pair $p)))', [['Pair', 41, 41]] * 2),
+    ]
+    for workers in (1, 2, 4):
+        for name, producer, consumer, expected in cases:
+            expression = f'(let $p (delay {producer}) {consumer})'
+            _, results = gate.run(f'{name} workers={workers}', source +
+                f'!(select 8 {policy(workers)} {expression})')
+            result = results[-1]
+            # This explicitly selects the complete-bag observer. Ordered
+            # streams and prefix selection require their own placement law.
+            assert result['closed'] == 'True' and bag(result['values']) == bag(expected), result
+            gate.passed_case(f'{name} complete bag and closure workers={workers}')
+        expression = ('(let $p (delay (+ $x 1)) '
+                      '(superpose ((let $_ (unify $x 1 True False) (force $p)) '
+                      '(let $_ (unify $x 2 True False) (force $p)))))')
+        _, results = gate.run(f'captured producer refinements workers={workers}', source +
+            f'!(select 8 {policy(workers)} {expression})')
+        assert results[-1]['closed'] == 'True' and results[-1]['values'] == [2, 3], results[-1]
+        gate.passed_case(f'captured lexical worlds stay distinct workers={workers}')
+
+
+def stored_demand_boundaries(gate):
+    for workers in (1, 2, 4):
+        source = ('(= (code:choice) @A) (= (code:choice) @B) '
+                  '(= (code:twice $c) (Pair *$c *$c)) '
+                  '(= (code:run $c) *$c) '
+                  '!(code:twice (code:choice)) !(code:run (+ 1 2)) !(collapse (code:run (empty)))')
+        trees, _ = gate.run(f'activation operand demand workers={workers}', source,
+                            arguments=('--num-threads', str(workers)))
+        assert bag(trees[0]) == bag([['Pair', 'A', 'A'], ['Pair', 'B', 'B']]), trees
+        assert trees[1:] == [[['unquote', 3]], [[]]], trees
+        gate.passed_case(f'code value choice is shared; non-code and empty stay distinct workers={workers}')
+        source = ('(= (zero:jobs) 1) (= (zero:jobs) 2) '
+                  f'!(let {PATTERN} (select 0 {policy(workers, evidence=False)} (zero:jobs)) '
+                  f'(Zero $v $w (select 0 {policy(workers, extra="(demand all)", evidence=False)} $r)))')
+        trees, results = gate.run(f'zero initial demand workers={workers}', source)
+        assert trees[-1][0][:3] == ['Zero', [], 0], trees
+        assert results[-1]['values'] == [1, 2] and results[-1]['closed'] == 'True', results
+        gate.passed_case(f'zero initial demand retains unexecuted source workers={workers}')
+        source = ('(= (absolute:jobs) 1) (= (absolute:jobs) 2) (= (absolute:jobs) 3) '
+                  f'!(let {PATTERN} (select 1 {policy(workers, evidence=False)} (absolute:jobs)) '
+                  '(let (Observation $v2 (satisfied $s2) (closed $c2) (residual $r2) (work $w2) (status $t2)) '
+                  f'(select 1 {policy(workers, evidence=False)} $r) '
+                  f'(Absolute $v $v2 $w $w2 (select 0 {policy(workers, extra="(demand all)", evidence=False)} $r2))))')
+        trees, results = gate.run(f'satisfied absolute demand workers={workers}', source)
+        value = trees[-1][0]
+        assert value[:3] == ['Absolute', [1], []] and value[3] == value[4], trees
+        assert results[-1]['values'] == [2, 3] and results[-1]['closed'] == 'True', results
+        gate.passed_case(f'satisfied absolute demand preserves the suffix workers={workers}')
+    source = ('(: stored:raw (-> (Data Atom) (Data Atom))) '
+              '(= (stored:raw $x) $x) '
+              '(= (stored:save $x) (add-atom &self (Saved $x))) '
+              '!(stored:save (+ 1 2)) '
+              '!(match &self (Saved $x) (stored:raw $x)) '
+              '!(match &self (Saved $x) $x)')
+    for workers in (1, 2, 4):
+        trees, _ = gate.run(f'stored arithmetic source and value workers={workers}', source,
+                            arguments=('--num-threads', str(workers)))
+        assert trees[-2:] == [[['+', 1, 2]], [3]], trees
+        gate.passed_case(f'storage reifies; explicit value demand evaluates workers={workers}')
+    # Prefix mutation may invalidate this exact-snapshot controller. Its
+    # committed physical effect must survive and cannot be reported undone.
+    source = ('(Old) (Keep) (= (delete:jobs) (let $_ (remove-atom &self (Old)) Gone)) '
+              '(= (delete:jobs) Ready) '
+              '!(match &self (Old) Before) '
+              f'!(select 10 {policy(2, evidence=False)} (delete:jobs)) '
+              '!(match &self (Old) leaked) !(match &self (Keep) After)')
+    trees, results = gate.run('deletion persists across scope invalidation', source)
+    assert trees[0] == ['Before'] and trees[-1] == ['After'] and 'leaked' not in repr(trees)
+    assert results[-1]['status'] == 'invalidated', results
+    gate.passed_case('a committed deletion is retained when its source scope invalidates')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary',type=Path,default=ROOT/'cetta')
@@ -531,7 +623,7 @@ def main():
     parser.add_argument('--receipt',type=Path)
     args=parser.parse_args();args.binary=args.binary.resolve();gate=Gate(args)
     try:
-        fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases)
+        fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True,exist_ok=True)

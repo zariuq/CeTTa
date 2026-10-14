@@ -22,8 +22,283 @@ static unsigned failures = 0u;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static bool recording_root_count(const PrimeNeedReceipt *root, void *raw) {
     if (!root->top) return false;
+    PrimeNeedReceiptGraph graph = {0};
+    PrimeNeedReceiptGraphStatus status = prime_need_receipt_graph_collect(root, &graph);
+    prime_need_receipt_graph_free(&graph);
+    if (status != PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        status != PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE) return false;
     (*(size_t *)raw)++;
     return true;
+}
+
+static void check_nested_recording_publication(void) {
+    Arena input, destination;
+    arena_init_detached(&input);
+    arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){24u, 196608u, 3u, 1u});
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    PrimeNeedReceipt parent = {0}, child = {0};
+    bool ready = group && prime_need_recording_reserve(
+        group, NULL, 8u, 65536u, &parent);
+    CHECK(ready, "nested history reserves its parent's allocation inventory");
+    if (!ready) goto done;
+    PrimeNeedRecordingScope scope;
+    prime_need_recording_enter(&scope, &parent);
+    ready = prime_need_recording_inherit(&child);
+    prime_need_recording_leave(&scope);
+    CHECK(ready, "nested history inherits a separate bounded slice");
+    if (!ready) goto done;
+    CHECK(prime_need_receipt_observe_cell(&input, &parent, 31u, 1u,
+              atom_int(&input, 7), &parent) &&
+          prime_need_receipt_observe_cell(&input, &child, 31u, 2u,
+              atom_int(&input, 7), &child),
+          "equal parent and child payloads have distinct event occurrences");
+    const PrimeNeedReceiptFrame *child_root = child.top;
+    prime_need_recording_enter(&scope, &parent);
+    prime_need_recording_publish(&child);
+    PrimeNeedRecordingStatus once = prime_need_recording_status(group);
+    prime_need_recording_publish(&child);
+    PrimeNeedRecordingStatus twice = prime_need_recording_status(group);
+    prime_need_recording_leave(&scope);
+    CHECK(child.top == child_root && once.nodes == twice.nodes &&
+              once.payload_charge == twice.payload_charge && !twice.incomplete,
+          "nested publication is idempotent and retains the source receipt");
+    size_t roots = 0u;
+    CHECK(prime_need_recording_roots(&parent, recording_root_count, &roots) && roots == 1u,
+          "parent root inventory exposes the joined nested history");
+    copy = prime_need_recording_copy_new(group);
+    CHECK(copy && prime_need_recording_copy_pair_count(copy) == 2u,
+          "published history retains two valid allocation domains");
+    if (!copy) goto done;
+    AtomDeepCopyArenaPair pairs[3] = {{&input, &destination}};
+    session = atom_deep_copy_session_new(&destination);
+    ready = session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        prime_need_recording_copy_pair(copy, 1u, &pairs[2]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 3u) &&
+        prime_need_recording_copy_prepare(copy, session);
+    CHECK(ready, "nested publication remains eligible for complete recording copy");
+    if (!ready) goto done;
+    PrimeNeedReceipt copied_parent = {0}, copied_child = {0};
+    CHECK(prime_need_recording_copy_receipt(copy, &parent, &copied_parent) &&
+          prime_need_recording_copy_receipt(copy, &child, &copied_child) &&
+          copied_child.top && copied_child.top != child_root,
+          "parent and child carriers relocate through the same owner map");
+    roots = 0u;
+    CHECK(prime_need_recording_roots(&copied_parent, recording_root_count, &roots) && roots == 1u,
+          "copied parent preserves its nested publication root inventory");
+done:
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group);
+    arena_free(&destination);
+    arena_free(&input);
+
+    arena_init_detached(&input);
+    group = prime_need_recording_new((PrimeNeedRecordingLimits){2u, 8192u, 2u, 0u});
+    parent = (PrimeNeedReceipt){0};
+    child = (PrimeNeedReceipt){0};
+    ready = group && prime_need_recording_reserve(group, NULL, 0u, 0u, &parent) &&
+        prime_need_recording_reserve(group, NULL, 2u, 8192u, &child) &&
+        prime_need_receipt_observe_cell(&input, &child, 31u, 3u,
+            atom_int(&input, 7), &child);
+    CHECK(ready, "publication refusal control retains an actual child event");
+    if (ready) {
+        prime_need_recording_enter(&scope, &parent);
+        prime_need_recording_publish(&child);
+        prime_need_recording_leave(&scope);
+        roots = 0u;
+        CHECK(!prime_need_recording_status(group).incomplete &&
+              prime_need_recording_status(group).nodes == 1u &&
+              prime_need_recording_roots(&parent, recording_root_count, &roots) && roots == 1u,
+              "an empty parent adopts a valid child root without allocating a join");
+        PrimeNeedReceipt other = child;
+        other.top = NULL;
+        CHECK(prime_need_receipt_observe_cell(&input, &other, 31u, 4u,
+            atom_int(&input, 8), &child),
+            "a second independent child root requires a real publication join");
+        child_root = child.top;
+        prime_need_recording_enter(&scope, &parent);
+        prime_need_recording_publish(&child);
+        prime_need_recording_leave(&scope);
+        roots = 0u;
+        CHECK(prime_need_recording_status(group).incomplete &&
+              child.top == child_root &&
+              prime_need_recording_roots(&child, recording_root_count, &roots) && roots == 1u,
+              "refused publication reports omission without dropping child evidence");
+    }
+    prime_need_recording_release(group);
+    arena_free(&input);
+}
+
+static void check_adopted_recording_copy(void) {
+    Arena input, destination;
+    arena_init_detached(&input);
+    arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 32768u, 3u, 0u});
+    PrimeNeedReceipt parent = {0}, child = {0}, outer = {0};
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    bool ready = group && prime_need_recording_reserve(group, NULL, 1u, 8192u, &parent) &&
+        prime_need_recording_reserve(group, NULL, 1u, 8192u, &outer) &&
+        prime_need_recording_reserve(group, NULL, 2u, 16384u, &child) &&
+        prime_need_receipt_observe_cell(&input, &child, 31u, 5u,
+            atom_int(&input, 9), &child);
+    CHECK(ready, "adopted history has an independently allocated child event");
+    if (!ready) goto done;
+    PrimeNeedRecordingScope scope;
+    prime_need_recording_enter(&scope, &parent);
+    prime_need_recording_publish(&child);
+    prime_need_recording_publish(&child);
+    prime_need_recording_leave(&scope);
+    size_t roots = 0u;
+    CHECK(prime_need_recording_status(group).nodes == 1u &&
+          prime_need_recording_roots(&parent, recording_root_count, &roots) && roots == 1u,
+          "first publication retains a valid root with no extra event or node");
+    prime_need_recording_enter(&scope, &outer);
+    prime_need_recording_publish(&parent);
+    prime_need_recording_publish(&parent);
+    prime_need_recording_leave(&scope);
+    roots = 0u;
+    CHECK(prime_need_recording_status(group).nodes == 1u &&
+          prime_need_recording_roots(&outer, recording_root_count, &roots) && roots == 1u,
+          "an adopted root publishes through a second empty parent without duplication");
+    parent.top = child.top;
+    CHECK(prime_need_receipt_observe_cell(&input, &parent, 31u, 6u,
+            atom_int(&input, 10), &parent),
+          "a local parent event can extend its adopted causal root");
+    roots = 0u;
+    CHECK(prime_need_recording_roots(&parent, recording_root_count, &roots) && roots == 1u,
+          "a local descendant exposes its adopted predecessor exactly once");
+    prime_need_recording_enter(&scope, &outer);
+    prime_need_recording_publish(&parent);
+    prime_need_recording_publish(&parent);
+    prime_need_recording_leave(&scope);
+    copy = prime_need_recording_copy_new(group);
+    CHECK(copy && prime_need_recording_copy_pair_count(copy) == 3u,
+          "an adopted root retains both allocation owners for transport");
+    if (!copy) goto done;
+    AtomDeepCopyArenaPair pairs[4] = {{&input, &destination}};
+    session = atom_deep_copy_session_new(&destination);
+    ready = session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        prime_need_recording_copy_pair(copy, 1u, &pairs[2]) &&
+        prime_need_recording_copy_pair(copy, 2u, &pairs[3]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 4u) &&
+        prime_need_recording_copy_prepare(copy, session);
+    CHECK(ready, "complete owner transport relocates an adopted publication root");
+    if (!ready) goto done;
+    PrimeNeedReceipt image = {0};
+    roots = 0u;
+    CHECK(prime_need_recording_copy_receipt(copy, &outer, &image) &&
+          prime_need_recording_roots(&image, recording_root_count, &roots) && roots == 1u,
+          "copied outer parent exposes the same valid adopted graph");
+done:
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group);
+    arena_free(&destination);
+    arena_free(&input);
+}
+
+static void check_growing_recording_grants(void) {
+    Arena input, destination;
+    arena_init_detached(&input);
+    arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 16384u, 2u, 0u});
+    PrimeNeedReceipt parent = {0}, child = {0};
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    bool ready = group && prime_need_recording_reserve_growing(
+        group, NULL, 1u, 4096u, &parent);
+    CHECK(ready, "growing recording reserves an explicit initial grant");
+    if (!ready) goto done;
+    for (uint64_t i = 0u; i < 3u; i++)
+        ready &= prime_need_receipt_observe_cell(&input, &parent, 31u, i + 1u,
+            atom_int(&input, 7), &parent);
+    PrimeNeedRecordingStatus grown = prime_need_recording_status(group);
+    CHECK(ready && grown.nodes == 3u && grown.reserved_nodes == 3u &&
+          grown.reserved_payload_bytes == 12288u && !grown.incomplete,
+          "continuing recording pays for each further grant within the group limit");
+    PrimeNeedRecordingScope scope;
+    prime_need_recording_enter(&scope, &parent);
+    ready = prime_need_recording_inherit(&child);
+    prime_need_recording_leave(&scope);
+    CHECK(ready && prime_need_recording_status(group).reserved_nodes == 4u,
+          "inheritance takes the original quantum rather than the parent's expanded limit");
+    if (!ready) goto done;
+    const PrimeNeedReceiptFrame *saved = parent.top;
+    CHECK(prime_need_receipt_observe_cell(&input, &parent, 31u, 5u,
+              atom_int(&input, 9), &parent) && parent.top == saved &&
+          prime_need_recording_status(group).nodes == 3u &&
+          prime_need_recording_status(group).omitted == 1u,
+          "growth exhaustion retains the prefix and exposes the omitted event");
+    copy = prime_need_recording_copy_new(group);
+    session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[3] = {{&input, &destination}};
+    CHECK(copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+          prime_need_recording_copy_pair(copy, 1u, &pairs[2]) &&
+          atom_deep_copy_session_set_arena_map(session, pairs, 3u) &&
+          prime_need_recording_copy_prepare(copy, session),
+          "growing reservations and omissions survive complete owner transport");
+done:
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group);
+    arena_free(&destination);
+    arena_free(&input);
+}
+
+static void check_adoption_invalidates_current_copy(void) {
+    Arena input, destination;
+    arena_init_detached(&input);
+    arena_init_detached(&destination);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){1u, 8192u, 2u, 0u});
+    PrimeNeedReceipt parent = {0}, child = {0};
+    PrimeNeedRecordingCopy *copy = NULL;
+    AtomDeepCopySession *session = NULL;
+    bool ready = group && prime_need_recording_reserve(group, NULL, 0u, 0u, &parent) &&
+        prime_need_recording_reserve(group, NULL, 1u, 8192u, &child) &&
+        prime_need_receipt_observe_cell(&input, &child, 31u, 7u,
+            atom_int(&input, 11), &child);
+    CHECK(ready, "metadata-only adoption control has a real retained child event");
+    if (!ready) goto done;
+    copy = prime_need_recording_copy_new(group);
+    session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pairs[3] = {{&input, &destination}};
+    ready = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        prime_need_recording_copy_pair(copy, 1u, &pairs[2]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 3u) &&
+        prime_need_recording_copy_enable(session) &&
+        prime_need_recording_copy_prepare(copy, session);
+    CHECK(ready, "metadata-only adoption control prepares a complete recording copy");
+    if (!ready) goto done;
+    CHECK(prime_need_recording_copy_lookup(session, group) == copy,
+          "the prepared image initially authenticates current correspondence");
+    PrimeNeedRecordingStatus before = prime_need_recording_status(group);
+    PrimeNeedRecordingScope scope;
+    prime_need_recording_enter(&scope, &parent);
+    prime_need_recording_publish(&child);
+    prime_need_recording_leave(&scope);
+    PrimeNeedRecordingStatus after = prime_need_recording_status(group);
+    CHECK(before.nodes == after.nodes && before.payload_charge == after.payload_charge,
+          "first-root adoption changes correspondence without allocating a node");
+    CHECK(prime_need_recording_copy_lookup(session, group) == NULL,
+          "metadata-only publication invalidates the old currentness capability");
+    PrimeNeedReceipt old_parent = {0};
+    size_t roots = 0u;
+    CHECK(prime_need_recording_copy_receipt(copy, &parent, &old_parent) &&
+          prime_need_recording_roots(&old_parent, recording_root_count, &roots) && roots == 0u,
+          "a captured snapshot remains readable without claiming current correspondence");
+done:
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    prime_need_recording_release(group);
+    arena_free(&destination);
+    arena_free(&input);
 }
 
 static void check_recording_copy(void) {
@@ -2004,6 +2279,10 @@ int main(void) {
     check_recording_scopes();
     check_recording_admission();
     check_recording_copy();
+    check_nested_recording_publication();
+    check_adopted_recording_copy();
+    check_adoption_invalidates_current_copy();
+    check_growing_recording_grants();
     check_recording_copy_owner_domain();
     check_recording_copy_mode();
     check_recording_copy_mode_invalidation(false);
