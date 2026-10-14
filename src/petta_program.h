@@ -465,6 +465,12 @@ bool petta_program_head_declared(
 const PettaPlanNode *petta_program_plan_current(
     PettaProgram *program, Atom *atom);
 
+/* Derive semantic occurrence plans in the caller's storage. The caller keeps
+ * the source syntax live through compilation; physical source-specific
+ * workers are separate from these plans. No plan is retained by the program. */
+const PettaPlanNode *petta_program_plan_current_in(
+    PettaProgram *program, Arena *plans, Atom *atom);
+
 /*
  * Translate a runtime term at an explicit forcing boundary (eval, a computed
  * hyperpose branch).  The plan records the term's code, a call-free subtree

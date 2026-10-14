@@ -43445,7 +43445,7 @@ test-run-report:
 	@runtime/check-run-report
 
 test-run-cli: $(BIN) test-run-report
-	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--lib-prolog,)
+	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime $(if $(filter 1,$(LIB_PROLOG_ENABLED)),--lib-prolog,)
 
 test: test-run-cli
 
@@ -43705,6 +43705,12 @@ test-petta-search-machine: test-work-observers
 test-work-observers: $(BIN)
 	@python3 tests/support/check_work_observers.py ./$(BIN)
 
+.PHONY: test-ready-call-protocol
+test-petta-search-machine: test-ready-call-protocol
+test-ready-call-protocol: $(BIN)
+	@python3 tests/support/check_ready_call_protocol.py $(BIN) \
+		--out runtime/ready-call-protocol-$$(date +%s%N)
+
 .PHONY: test-sequence-call-contract
 test-petta-search-machine: test-sequence-call-contract
 test-sequence-call-contract: $(BIN)
@@ -43728,3 +43734,30 @@ test: test-petta-callability-refresh
 test-petta-callability-refresh: $(BIN) $(PETTA_CALLABILITY_REFRESH_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_CALLABILITY_REFRESH_TEST_BIN))
 	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN)
+
+.PHONY: test-borrowed-query-views
+BORROWED_QUERY_VIEW_TEST_OBJ = runtime/bootstrap/test_borrowed_query_view.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+BORROWED_QUERY_VIEW_TEST_BIN = runtime/test_borrowed_query_view-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(BORROWED_QUERY_VIEW_TEST_OBJ:.o=.d)
+$(BORROWED_QUERY_VIEW_TEST_OBJ): tests/support/test_borrowed_query_view.c src/atom.h src/space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(BORROWED_QUERY_VIEW_TEST_BIN): $(BORROWED_QUERY_VIEW_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-petta-search-machine: test-borrowed-query-views
+test-borrowed-query-views: $(BIN) $(BORROWED_QUERY_VIEW_TEST_BIN)
+	@$(call cetta_exec,./$(BORROWED_QUERY_VIEW_TEST_BIN))
+	@python3 tests/support/check_borrowed_query_views.py $(BIN)
+
+.PHONY: test-petta-plan-owner
+PETTA_PLAN_OWNER_TEST_OBJ = runtime/bootstrap/test_petta_plan_owner.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_PLAN_OWNER_TEST_BIN = runtime/test_petta_plan_owner-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_PLAN_OWNER_TEST_OBJ:.o=.d)
+$(PETTA_PLAN_OWNER_TEST_OBJ): tests/support/test_petta_plan_owner.c src/petta_program.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+$(PETTA_PLAN_OWNER_TEST_BIN): $(PETTA_PLAN_OWNER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+test-petta-search-machine: test-petta-plan-owner
+test-petta-plan-owner: $(PETTA_PLAN_OWNER_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_PLAN_OWNER_TEST_BIN))

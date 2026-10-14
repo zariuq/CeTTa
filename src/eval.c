@@ -38005,7 +38005,7 @@ typedef struct {
     const CettaProfile *profile;
     SymbolId reify_head;
     bool count_fusion;
-    bool body_is_data;
+    CettaOpenEquationEntryKind entry_kind;
     SymbolId head;
     uint32_t arity;
     /* NULL records that the relation declined. */
@@ -47053,7 +47053,7 @@ static bool petta_eval_open_foreign_reads_current(
 
 static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     PettaEvalMachineContext *eval_context, Space *space, SymbolId head,
-    uint32_t arity, bool body_is_data, bool create) {
+    uint32_t arity, CettaOpenEquationEntryKind entry_kind, bool create) {
     PettaOpenProgramCache *cache = petta_eval_open_program_cache(eval_context);
     if (!cache)
         return NULL;
@@ -47073,7 +47073,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     for (size_t index = 0u; index < cache->len; index++) {
         PettaOpenProgramCacheEntry *entry = &cache->entries[index];
         if (entry->head != head || entry->arity != arity ||
-            entry->body_is_data != body_is_data)
+            entry->entry_kind != entry_kind)
             continue;
         if (entry->token.space == space &&
             entry->token.instance_id == token.instance_id &&
@@ -47095,7 +47095,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
                  (entry->program && cetta_open_equation_program_refresh(
                      entry->program, space, &entry->reads))) &&
                 petta_eval_open_foreign_reads_current(entry, library, foreign,
-                    eval_context, space, body_is_data) &&
+                    eval_context, space, entry_kind == CETTA_OPEN_ENTRY_BODY_DATA) &&
                 space_program_token_matches_live_space(token, space)) {
                 if (!program_same)
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_SPACE_REUSE);
@@ -47139,8 +47139,9 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     /* Collect a certificate only after this relation has needed a rebuild.
      * Stable programs retain their original preparation path and cost. */
     CettaOpenEquationHost host = petta_eval_open_compile_host(
-        eval_context, space, body_is_data);
+        eval_context, space, entry_kind == CETTA_OPEN_ENTRY_BODY_DATA);
     host.capture_reads = capture_reads;
+    host.entry_ready_call = entry_kind == CETTA_OPEN_ENTRY_READY_CALL;
     const char *reason = NULL;
     *reusable = (PettaOpenProgramCacheEntry){
         .token = token,
@@ -47154,7 +47155,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
         .count_fusion = count_fusion,
         .head = head,
         .arity = arity,
-        .body_is_data = body_is_data,
+        .entry_kind = entry_kind,
         .program = cetta_open_equation_program_compile(
             eval_context->library_context->petta_program, space, head,
             arity, &host, &reason),
@@ -47179,12 +47180,13 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
  * caller, who releases it; NULL when there is none.  `*cached_out`, when
  * given, tells a relation the tier declined (an entry without a program)
  * from one never looked up. */
-static CettaOpenEquationProgram *petta_eval_open_program_acquire(
+static CettaOpenEquationProgram *petta_eval_open_program_acquire_entry(
     PettaEvalMachineContext *eval_context, Space *space, SymbolId head,
-    uint32_t arity, bool body_is_data, bool create, bool *cached_out) {
+    uint32_t arity, CettaOpenEquationEntryKind entry_kind, bool create,
+    bool *cached_out) {
     pthread_mutex_lock(&g_petta_open_programs_lock);
     PettaOpenProgramCacheEntry *entry = petta_eval_open_program_lookup_locked(
-        eval_context, space, head, arity, body_is_data, create);
+        eval_context, space, head, arity, entry_kind, create);
     CettaOpenEquationProgram *program = entry ? entry->program : NULL;
     cetta_open_equation_program_retain(program);
     if (cached_out)
@@ -47193,6 +47195,14 @@ static CettaOpenEquationProgram *petta_eval_open_program_acquire(
     return program;
 }
 
+
+static CettaOpenEquationProgram *petta_eval_open_program_acquire(
+    PettaEvalMachineContext *context, Space *space, SymbolId head,
+    uint32_t arity, bool body_is_data, bool create, bool *cached) {
+    return petta_eval_open_program_acquire_entry(context, space, head, arity,
+        body_is_data ? CETTA_OPEN_ENTRY_BODY_DATA : CETTA_OPEN_ENTRY_BODY_VALUE,
+        create, cached);
+}
 
 static bool petta_eval_open_program_current(
     void *context, Space *space, const CettaOpenEquationProgram *program) {
@@ -47208,7 +47218,7 @@ static bool petta_eval_open_program_current(
         if (entry->program == program) {
             PettaOpenProgramCacheEntry *validated =
                 petta_eval_open_program_lookup_locked(eval_context, space,
-                    entry->head, entry->arity, entry->body_is_data, false);
+                    entry->head, entry->arity, entry->entry_kind, false);
             current = validated && validated->program == program;
             break;
         }
@@ -47240,6 +47250,17 @@ static CettaOpenEquationProgram *petta_eval_open_current_program(
         return NULL;
     return petta_eval_open_program_acquire(eval_context, space, head, arity,
                                            body_is_data, true, NULL);
+}
+
+static CettaOpenEquationProgram *petta_eval_open_current_ready_call(
+    void *context, Space *space, SymbolId head, uint32_t arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !petta_eval_open_relation_ready(eval_context) || !space ||
+        !petta_eval_open_call_protocol_admitted(context, space, head, arity))
+        return NULL;
+    return petta_eval_open_program_acquire_entry(eval_context, space, head, arity,
+        CETTA_OPEN_ENTRY_READY_CALL, true, NULL);
 }
 
 /* The search machine's ready path for a ground add-atom, for a running
@@ -47321,6 +47342,8 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .context = eval_context,
         .interrupt = eval_prepared_pure_interrupt_poll,
         .current = petta_eval_open_current_program,
+        .current_ready = petta_eval_open_current_ready_call,
+        .open_head_is_data = !he,
         .program_current = petta_eval_open_program_current,
         .relation_admitted = petta_eval_open_relation_admitted,
         .resolve_space = petta_eval_machine_resolve_space,
