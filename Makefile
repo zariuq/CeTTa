@@ -43589,6 +43589,11 @@ test-petta-program-rule-rows: $(BIN)
 # given, with the phrase in its output.  The library a version reads is
 # compared exactly.
 .PHONY: test-petta-language-versions
+.PHONY: test-language-versions
+test: test-language-versions
+test-language-versions: $(BIN)
+	@python3 tests/support/check_language_versions.py $(BIN)
+
 test: test-petta-language-versions
 test-petta-language-versions: $(BIN)
 	@set -eu; \

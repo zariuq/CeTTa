@@ -1336,8 +1336,7 @@ static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->langdef_manifest_path[0] = '\0';
 }
 
-/* The one place a language's spelling is read: `language@version` names a
- * language and one of its released versions (`petta@1.0.6`, `petta@1.1`). */
+/* Both CLI endpoints use the same registered language@version contract. */
 static bool endpoint_split_version(CettaCliEndpoint *endpoint,
                                    const char *role) {
     endpoint->version_name = NULL;
@@ -1795,7 +1794,9 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
-    fputs("       cetta --lang prime <file.metta>\n", out);
+    fputs("       cetta --lang he@0.0.1 [--profile extended] <file.metta> # default CeTTa HE contract\n", out);
+    fputs("       cetta --lang he@0.2.10 <file.metta> # Rust-HE compatibility profile\n", out);
+    fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
     fputs("       cetta --lang petta@1.0.6 <file.metta> # default PeTTa version\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);

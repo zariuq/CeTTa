@@ -3,12 +3,14 @@ import copy
 import json
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import parser_artifact_build_v1 as build
+import test_parser_artifacts_v1 as hosts
 from gslt2parse_schema_v1 import Symbol, parse_sexprs
 
 
@@ -68,6 +70,38 @@ class ModuleArtifactBuildTest(unittest.TestCase):
             self.assertIn(operation, program)
         self.assertIn('"build-module:composed-binding"', program)
         self.assertIn('"build-import:RewriteBundles"', program)
+
+    def test_compiler_runs_on_pinned_petta_not_prime(self):
+        completed = SimpleNamespace(returncode=0, stdout="(CompiledV1 7)\n", stderr="")
+        with mock.patch.object(build.subprocess, "run", return_value=completed) as invoke:
+            self.assertEqual(build.run_compiler(ROOT / "cetta", self.output, "compiler",
+                                               "!(CompiledV1 7)\n", 1),
+                             [(Symbol("CompiledV1"), 7)])
+        self.assertEqual(invoke.call_args.args[0][1:5],
+                         ["--lang", "petta@1.0.6", "--profile", "extended"])
+
+    def test_shared_hosts_preserve_profiles_and_frozen_prime(self):
+        completed = SimpleNamespace(returncode=0, stdout="(HostV1 7)\n", stderr="")
+        for language, (endpoint, profile) in hosts.HOST_ENDPOINTS.items():
+            with self.subTest(language=language), \
+                    mock.patch.object(hosts.subprocess, "run", return_value=completed) as invoke:
+                self.assertEqual(hosts.run_file(ROOT / "cetta", language, self.output,
+                                               "host", ROOT / "examples/module_derived_values_v1.metta"),
+                                 [(Symbol("HostV1"), 7)])
+                expected = [str(ROOT / "cetta"), "--lang", endpoint]
+                if profile:
+                    expected += ["--profile", profile]
+                self.assertEqual(invoke.call_args.args[0][:-1], expected)
+        self.assertEqual(hosts.HOST_ENDPOINTS["prime"], ("prime@0.0.1", None))
+
+    def test_host_and_compiler_failure_do_not_publish_success(self):
+        completed = SimpleNamespace(returncode=2, stdout="(HostV1 7)\n", stderr="refused")
+        with mock.patch.object(build.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "compiler failed"):
+                build.run_compiler(ROOT / "cetta", self.output, "compiler-failed", "!x", 1)
+            with self.assertRaisesRegex(AssertionError, "refused"):
+                hosts.run_file(ROOT / "cetta", "petta", self.output, "host-failed",
+                               ROOT / "examples/module_derived_values_v1.metta")
 
     def test_nested_construction_does_not_capture_outer_bindings(self):
         rows = self.rows + [{"name": "joined", "format": "join", "start": "Expr",
