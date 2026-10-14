@@ -498,10 +498,9 @@ bool bindings_frame_index_ensure_presentation_slot(
         bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id)) {
         return false;
     }
-    if (slot >= frame->schema->len)
-        return name_key == NULL;
-    SymbolId existing_spelling = frame->schema->spellings[slot];
-    Atom *existing_key = frame->schema->name_keys[slot];
+    SymbolId existing_spelling = slot < frame->schema->cap
+        ? frame->schema->spellings[slot] : SYMBOL_ID_NONE;
+    Atom *existing_key = bindings_frame_slot_name_key(frame, slot);
     if (existing_key && name_key &&
         !atom_eq(existing_key, name_key)) {
         return false;
@@ -517,8 +516,10 @@ bool bindings_frame_index_ensure_presentation_slot(
     if (!frame || slot >= frame->slot_len ||
         bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id))
         return false;
-    BindingsFrameSchema *schema = bindings_frame_schema_clone(
-        frame->schema);
+    uint32_t capacity = frame->schema->cap > frame->slot_len
+        ? frame->schema->cap : frame->slot_len;
+    BindingsFrameSchema *schema = bindings_frame_schema_clone_capacity(
+        frame->schema, capacity);
     if (!schema)
         return false;
     if (needs_spelling)

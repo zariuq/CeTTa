@@ -16,7 +16,9 @@ struct BindingsFrameSchema {
     /* Presentation belongs to the contextual variable inventory, not to a
      * chronological binding update.  Keeping it with the immutable schema
      * lets frame-only values cross the observation boundary without
-     * reconstructing their keys from a row store. */
+     * reconstructing their keys from a row store. Entries up to cap may carry
+     * presentation for positional slots grown beyond the len source IDs;
+     * growing presentation never renumbers that immutable source inventory. */
     SymbolId *spellings;
     Atom **name_keys;
     VarId source_ids[];
@@ -28,6 +30,8 @@ BindingsFrameSchema *bindings_frame_schema_alloc(uint32_t capacity);
 void bindings_frame_schema_publish(BindingsFrameSchema *schema, uint32_t len);
 BindingsFrameSchema *bindings_frame_schema_dense(uint32_t count);
 BindingsFrameSchema *bindings_frame_schema_clone(const BindingsFrameSchema *source);
+BindingsFrameSchema *bindings_frame_schema_clone_capacity(
+    const BindingsFrameSchema *source, uint32_t capacity);
 bool bindings_frame_schema_find_slot(const BindingsFrameSchema *schema,
                                      VarId source_id, uint32_t *slot_out);
 

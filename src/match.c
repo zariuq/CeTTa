@@ -3165,7 +3165,7 @@ static bool bindings_transport_frame_presentations(
         BindingsFrameIndexEntry *frame =
             &bindings->frame_index->frames[frame_index];
         bool has_key = false;
-        for (uint32_t slot = 0u; slot < frame->schema->len; slot++)
+        for (uint32_t slot = 0u; slot < frame->schema->cap; slot++)
             has_key = has_key || bindings_frame_slot_name_key(frame, slot) != NULL;
         if (!has_key)
             continue;
@@ -3173,7 +3173,7 @@ static bool bindings_transport_frame_presentations(
             frame->schema);
         if (!schema)
             return false;
-        for (uint32_t slot = 0u; slot < schema->len; slot++) {
+        for (uint32_t slot = 0u; slot < schema->cap; slot++) {
             if (!schema->name_keys[slot])
                 continue;
             schema->name_keys[slot] = transport(
@@ -6707,7 +6707,7 @@ static bool bindings_builder_move_atoms_with_session(
         if (!source_schema)
             continue;
         bool has_name_keys = false;
-        for (uint32_t slot = 0u; slot < source_schema->len; slot++) {
+        for (uint32_t slot = 0u; slot < source_schema->cap; slot++) {
             has_name_keys = has_name_keys ||
                 source_schema->name_keys[slot] != NULL;
         }
@@ -6758,7 +6758,7 @@ bool bindings_builder_payloads_satisfy(const BindingsBuilder *bb,
     }
     for (uint32_t i = 0u; i < bb->frame_registration_undo_len; i++) {
         const BindingsFrameSchema *schema = bb->frame_registration_undo[i].previous_schema;
-        for (uint32_t slot = 0u; schema && slot < schema->len; slot++)
+        for (uint32_t slot = 0u; schema && slot < schema->cap; slot++)
             if (schema->name_keys[slot] && !atoms(schema->name_keys[slot], context))
                 return false;
     }
@@ -14937,7 +14937,8 @@ bool bindings_frame_schema_compare(const BindingsFrameSchema *a,
     uint32_t ar=atomic_load_explicit(&a->references,memory_order_relaxed);
     uint32_t br=atomic_load_explicit(&b->references,memory_order_relaxed);
     if (!ar || !br || a->len!=b->len || a->len>a->cap || b->len>b->cap ||
-        (a->len&&(!a->spellings||!b->spellings||!a->name_keys||!b->name_keys))) return false;
+        (a->cap&&(!a->spellings||!a->name_keys)) ||
+        (b->cap&&(!b->spellings||!b->name_keys))) return false;
     BC_F("schema.references",ar,br);BC_F("schema.capacity",a->cap,b->cap);
     BC_S("schema.length",a->len,b->len);
     BC_I("schema.first",CETTA_CHECKPOINT_VAR,a->source_first_id,b->source_first_id);
@@ -14947,8 +14948,13 @@ bool bindings_frame_schema_compare(const BindingsFrameSchema *a,
     for (uint32_t i=0u;i<a->len;i++) {
         BC_S("schema.slot",i,i);
         BC_I("schema.source_id",CETTA_CHECKPOINT_VAR,a->source_ids[i],b->source_ids[i]);
-        BC_S("schema.spelling",a->spellings[i],b->spellings[i]);
-        BC_A("schema.name_key",a->name_keys[i],b->name_keys[i]);
+    }
+    uint32_t capacity = a->cap > b->cap ? a->cap : b->cap;
+    for (uint32_t i=0u;i<capacity;i++) {
+        BC_S("schema.spelling",i<a->cap?a->spellings[i]:SYMBOL_ID_NONE,
+            i<b->cap?b->spellings[i]:SYMBOL_ID_NONE);
+        BC_A("schema.name_key",i<a->cap?a->name_keys[i]:NULL,
+            i<b->cap?b->name_keys[i]:NULL);
     }
     return true;
 }
