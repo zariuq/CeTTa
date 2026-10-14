@@ -12323,6 +12323,9 @@ typedef enum {
 static bool prime_code_match_forms(Arena *a, Atom *pattern, Atom *value,
                                    Atom **pattern_out, Atom **value_out);
 
+static Atom *prime_need_reify_match_value(
+    Arena *arena, Atom *value, const Bindings *environment);
+
 static PrimeLetMatchStatus prime_let_match_body(
     const AbtSignature *signature, Arena *arena,
     const PrimeLetPrepared *prepared, Atom *value,
@@ -12357,9 +12360,15 @@ static PrimeLetMatchStatus prime_let_match_body(
     Atom *matched_value = held_parts ? atom_prime_held_payload(value) : value;
     /* A quoted pattern meets quoted code binder by binder, by identity
        (prime_semantics_code_canonical). */
-    Atom *pattern_form = prepared->pattern, *value_form = matched_value;
+    Atom *pattern = prime_need_reify_match_value(
+        arena, prepared->pattern, &builder.current);
+    if (!pattern) {
+        bindings_builder_free(&builder);
+        return PRIME_LET_MATCH_INVALID;
+    }
+    Atom *pattern_form = pattern, *value_form = matched_value;
     if (!held_parts &&
-        !prime_code_match_forms(arena, prepared->pattern, matched_value,
+        !prime_code_match_forms(arena, pattern, matched_value,
                                 &pattern_form, &value_form)) {
         bindings_builder_free(&builder);
         return PRIME_LET_MATCH_INVALID;
@@ -12377,10 +12386,10 @@ static PrimeLetMatchStatus prime_let_match_body(
        contextual code (prime_semantics_contextual_match); the body splices
        its syntax where it quotes the hole (prime_semantics_subst_var).  A
        binder that would escape its code fails the match. */
-    if (!held_parts && (pattern_form != prepared->pattern ||
+    if (!held_parts && (pattern_form != pattern ||
                         value_form != matched_value)) {
         bool kept = true;
-        if (!prime_semantics_contextual_match(arena, prepared->pattern,
+        if (!prime_semantics_contextual_match(arena, pattern,
                                               matched_value, matched_env_out,
                                               NULL, &kept)) {
             bindings_free(matched_env_out);
@@ -26862,6 +26871,7 @@ typedef enum {
     PRIME_NEED_REIFY_PERSISTENCE,
     PRIME_NEED_REIFY_JUDGMENT_SYNTAX,
     PRIME_NEED_REIFY_RETURN_VALUE,
+    PRIME_NEED_REIFY_MATCH_VALUE,
 } PrimeNeedReifyMode;
 
 static Atom *prime_need_reify_mode(
@@ -26870,6 +26880,7 @@ static Atom *prime_need_reify_mode(
     const bool persist_sharing = mode == PRIME_NEED_REIFY_PERSISTENCE;
     const bool syntax_only = mode == PRIME_NEED_REIFY_JUDGMENT_SYNTAX;
     const bool memoize = mode == PRIME_NEED_REIFY_OBSERVATION;
+    const bool match_value = mode == PRIME_NEED_REIFY_MATCH_VALUE;
     Atom *syntax_child = NULL;
     const PrimeNeedSymbolIds *syms = prime_need_symbols();
     PrimeNeedReifyFrame inline_frames[32];
@@ -26935,7 +26946,7 @@ static Atom *prime_need_reify_mode(
             /* Return forwards an already produced value without exporting
              * its live child cells. Written quotation remains source syntax;
              * explicit suspension values retain their original identity. */
-            if (frame->retain_values &&
+            if ((frame->retain_values || match_value) &&
                 (prime_need_is_promise(frame->source) ||
                  prime_need_is_resampler(frame->source))) {
                 *frame->destination = frame->source;
@@ -26998,7 +27009,7 @@ static Atom *prime_need_reify_mode(
                 }
                 if (!persist_sharing &&
                     (rights & CETTA_PRIME_NEED_RIGHT_INSPECT) == 0u) {
-                    *frame->destination = syntax_only
+                    *frame->destination = syntax_only || match_value
                         ? frame->source
                         : atom_symbol_id(arena, syms->suspension_opaque);
                     len--;
@@ -27020,7 +27031,7 @@ static Atom *prime_need_reify_mode(
                  * structure, retaining only genuinely pending child demands;
                  * storing its origin as a new demand would replay it and hide
                  * that structure from ordinary space matching. */
-                if (persist_sharing && cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+                if ((persist_sharing || match_value) && cell.cache_state == PRIME_NEED_CACHE_VALUE &&
                     cell.cached && cell.value_role == PRIME_NEED_VALUE_READY) {
                     frame->waiting_for_payload = true;
                     frame->resolving_thunk = thunk_id;
@@ -27247,6 +27258,15 @@ fail:
     if (frames != inline_frames)
         free(frames);
     return NULL;
+}
+
+/* Structural matching sees an implicit carrier's selected ready value in
+ * this branch. It executes no source code, preserves explicit suspensions,
+ * and must not use the source-inspection memo shared by sibling snapshots. */
+static Atom *prime_need_reify_match_value(
+    Arena *arena, Atom *value, const Bindings *environment) {
+    return prime_need_reify_mode(arena, value, bindings_need_view(environment),
+                                 PRIME_NEED_REIFY_MATCH_VALUE);
 }
 
 static Atom *prime_need_reify_suspended_mode(
