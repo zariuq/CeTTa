@@ -57,7 +57,7 @@
    (pair (open-at $h 0) (pair (open-at $h 1) $h)))
 
 ; 16-17. Held syntax survives storage.
-!(add-atom &self (stored (hold (f nil))))
+!(let $held (hold (f nil)) (add-atom &self (stored $held)))
 !(match &self (stored $s) (pair $s (size-atom $s)))
 
 ; 18-19. `Atom` is the top type: an Atom parameter evaluates its argument,
