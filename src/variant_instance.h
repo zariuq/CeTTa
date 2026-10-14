@@ -51,4 +51,11 @@ Atom *variant_instance_peek_private_id(const VariantInstance *instance, VarId id
 Atom *variant_instance_peek_private_var(const VariantInstance *instance,
                                         Atom *var);
 
+
+void variant_instance_storage_census(const VariantInstance *instance, CettaStorageCensus *census);
+
+
+#include "checkpoint_compare.h"
+bool variant_instance_checkpoint_compare(const VariantInstance *, const VariantInstance *, const CettaCheckpointCompare *);
+bool variant_instance_checkpoint_atoms(const VariantInstance *, AtomTreePredicate, void *);
 #endif /* CETTA_VARIANT_INSTANCE_H */

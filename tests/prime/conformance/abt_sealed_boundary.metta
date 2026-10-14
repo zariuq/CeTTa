@@ -6,7 +6,7 @@
    (let (quote (ABTLetScopeV1 (pair $bound $freshened)))
         (sealed ()
           (quote (ABTLetScopeV1 (pair (idx 0) $free))))
-     (pair (== $bound (idx 0)) (== $freshened $free)))
+     (pair (== $bound (idx 0)) (== $freshened $free))){$bound $freshened}
    (pair True False))
 
 ; The first argument is an exclusion set: mentioned metavariables retain their
@@ -14,7 +14,7 @@
 !(assertEqual
    (let (quote (pair $kept-result $fresh-result))
         (sealed ($keep) (quote (pair $keep $fresh)))
-     (pair (== $kept-result $keep) (== $fresh-result $fresh)))
+     (pair (== $kept-result $keep) (== $fresh-result $fresh))){$kept-result $fresh-result}
    (pair True False))
 
 ; `sealed` is a producer-side hygiene operation, not checker authority.  It

@@ -14,8 +14,10 @@ MUTATIONS = {
         "atom_int(arena, (int64_t)i)",
     ),
     "binder-freshness": (
-        "if (freshness == PATTERN_SCAN_FOUND)",
-        "if (false)",
+        "if (freshness == PATTERN_SCAN_FOUND)\n"
+        "        return pattern_syntax_failure(",
+        "if (false)\n"
+        "        return pattern_syntax_failure(",
     ),
     "expected-formation-phase": (
         "result.phase = CETTA_PRIME_REGULAR_PATTERN_PHASE_EXPECTED_FORMATION;",
@@ -37,9 +39,9 @@ MUTATIONS = {
     ),
     "syntax-multibinder-nesting": (
         "for (size_t i = count; i > 0u; i--)\n"
-        "        nested = regular_term_pattern_lambda(arena, nested);",
+        "        nested = domains[i - 1u]",
         "for (size_t i = count; i > 1u; i--)\n"
-        "        nested = regular_term_pattern_lambda(arena, nested);",
+        "        nested = domains[i - 1u]",
     ),
     "syntax-telescope-arity": (
         "(types_count != 1u && types_count != names_count)",
@@ -52,6 +54,20 @@ MUTATIONS = {
     "syntax-index-scope": (
         "if (!regular_term_binding_has_index(environment, direct_index))",
         "if (false && !regular_term_binding_has_index(environment, direct_index))",
+    ),
+    "syntax-group-domain-shift": (
+        "            environment, budget);\n"
+        "        if (domain.status != CETTA_PRIME_REGULAR_TERM_OK) return domain;\n"
+        "        CettaPrimeRegularTermElaborationV1 placed = regular_term_weaken_pattern(\n"
+        "            arena, domain.pattern, (uint64_t)i, 0u, budget);",
+        "            environment, budget);\n"
+        "        if (domain.status != CETTA_PRIME_REGULAR_TERM_OK) return domain;\n"
+        "        CettaPrimeRegularTermElaborationV1 placed = regular_term_weaken_pattern(\n"
+        "            arena, domain.pattern, 0u, 0u, budget);",
+    ),
+    "syntax-group-nested-cutoff": (
+        "arena, pattern->expr.elems[2], amount, cutoff + 1u, budget);",
+        "arena, pattern->expr.elems[2], amount, cutoff, budget);",
     ),
 }
 

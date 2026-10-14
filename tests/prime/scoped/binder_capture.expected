@@ -1,0 +1,6 @@
+[y]
+[y]
+[z]
+[(lam $binder y)]
+[(quote (lam y x))]
+[(quote x)]

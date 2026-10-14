@@ -10,6 +10,8 @@
     (operator sexpr-prefix-rule 4)
     (operator sexpr-list-rule 6)
     (operator sexpr-list-prefix-rule 3)
+    (operator sexpr-meta-rule 4)
+    (operator sexpr-braces-rule 2)
     (operator sexpr-codepoint-map 2)
     (operator sexpr-projection-cons 2))
   (equations)
@@ -89,5 +91,22 @@
       (head
         (sexpr-list-prefix-rule
           cetta-prime-v1 list-structural-reference structural-reference))
+      (body))
+
+    ; A braces node {x y}, the set notation, is the Atom (BRACES x y), whose
+    ; tag no source spells.  Its elements are read as an expression's.
+    (rule sexpr-braces-rule-cetta-prime-braces
+      (head (sexpr-braces-rule cetta-prime-v1 braces))
+      (body))
+
+    ; A meta-argument: a bracket list or a braces node TOUCHING a term's end,
+    ; T[...] and T{...}, is the Atom (meta T [...]) or (meta T {...}); they
+    ; apply left to right, and a prefix form binds tighter.  The reader gives
+    ; no head a meaning.  Inside a touching bracket the binding mark is a
+    ; word (T[k := v]); in a list after layout it is refused, so the
+    ; one-space slip T [k := v] is caught.
+    (rule sexpr-meta-rule-cetta-prime-meta
+      (head (sexpr-meta-rule cetta-prime-v1 meta-list meta-braces
+                             cetta-prime-binding-mark))
       (body))
   ))

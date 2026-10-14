@@ -92,7 +92,9 @@ bool petta_type_call_compile(Atom *signature, PettaTypeCall *call) {
 
 bool petta_type_call_instantiate(Arena *arena, const PettaTypeCall *source,
                                  PettaTypeCall *call) {
-    if (!arena || !source || !call)
+    /* Captured applicability is tied to its activation's variable identities.
+     * This operation freshens declaration templates, not retained calls. */
+    if (!arena || !source || !call || source->source_refinement)
         return false;
     Atom *signature = cetta_instantiate_frame_syntax(arena, source->signature);
     if (!signature)

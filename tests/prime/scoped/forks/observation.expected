@@ -1,0 +1,8 @@
+[()]
+[()]
+[()]
+[()]
+[(direct a c), (via b (direct b c))]
+[True, True]
+[True]
+[(Pair (direct a c) (False)), (Pair (via b (direct b c)) (True))]

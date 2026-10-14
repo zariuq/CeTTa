@@ -155,6 +155,7 @@ typedef struct {
 
 SubstNode *snode_new(void);
 void       snode_free(SubstNode *n);
+void snode_storage_census(const SubstNode *node, CettaStorageCensus *census);
 
 void stree_init(SubstTree *t);
 void stree_free(SubstTree *t);

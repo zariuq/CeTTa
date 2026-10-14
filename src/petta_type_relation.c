@@ -99,7 +99,7 @@ static size_t petta_type_fact_retained_bytes(void) {
     return petta_type_facts.payloads.reserved_bytes +
            (size_t)petta_type_facts.payloads.block_count * offsetof(ArenaBlock, data) +
            petta_type_facts.payloads.external_bytes +
-           petta_type_facts.payloads.symbol_cache_bytes +
+           petta_type_facts.payloads.persistent_bytes +
            (petta_type_facts.entries
                 ? sizeof(*petta_type_facts.entries) * PETTA_TYPE_FACT_ENTRIES : 0u);
 }

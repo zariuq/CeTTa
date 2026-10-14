@@ -14,6 +14,112 @@
  * outside the fragment is rejected and remains on the ordinary evaluator.
  */
 typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
+/* The caller holds the Program, arena and source/services exclusively until
+ * close. These checks reject same-scope misuse; ordinary Program APIs and
+ * reclamation are not independently thread-safe. Only step/readout reject
+ * competing entry atomically on an already held execution. No collection is
+ * performed in this initial bounded profile. */
+typedef struct CettaPreparedPureClosedExecution CettaPreparedPureClosedExecution;
+typedef enum {
+    CETTA_PREPARED_CLOSED_SUSPENDED = 0,
+    CETTA_PREPARED_CLOSED_ANSWER,
+    CETTA_PREPARED_CLOSED_EXHAUSTED,
+    CETTA_PREPARED_CLOSED_DECLINED,
+    CETTA_PREPARED_CLOSED_INVALIDATED,
+    CETTA_PREPARED_CLOSED_REFUSED,
+    CETTA_PREPARED_CLOSED_SERVICE,
+} CettaPreparedClosedStep;
+typedef struct CettaPreparedServiceCut CettaPreparedServiceCut;
+typedef struct {
+    uint64_t ordinal;
+    Atom *call;
+    uint64_t ready_arguments;
+    uint32_t operand_count, value_base;
+    size_t frame_index;
+    bool source_expression;
+    bool normalize_result;
+    /* Runtime sources and mixed-role applications retain operand origins. */
+    bool export_source;
+} CettaPreparedServiceRequest;
+
+/* These operations borrow the same held execution, arena and source owner.
+ * A reply's value is already evaluated in that interpretation. Unresolved
+ * operands require a separate Need transport contract at the service. */
+bool cetta_prepared_pure_closed_enable_service(
+    CettaPreparedPureClosedExecution *, const void *owner);
+bool cetta_prepared_pure_closed_service_request(
+    CettaPreparedPureClosedExecution *, const void *owner,
+    CettaPreparedServiceRequest *);
+CettaPreparedServiceCut *cetta_prepared_pure_closed_service_capture(
+    CettaPreparedPureClosedExecution *, const void *owner, uint64_t ordinal);
+bool cetta_prepared_pure_closed_service_restore(
+    CettaPreparedPureClosedExecution *, const void *owner, CettaPreparedServiceCut *);
+bool cetta_prepared_pure_closed_service_reply(
+    CettaPreparedPureClosedExecution *, Arena *, const void *owner,
+    CettaPreparedServiceCut *, uint64_t ordinal, uint64_t reply_position, Atom *);
+bool cetta_prepared_pure_closed_service_complete(
+    CettaPreparedPureClosedExecution *, const void *owner,
+    CettaPreparedServiceCut *, uint64_t ordinal, uint64_t reply_position);
+
+/* The callback materializes one occurrence under the caller-held owner.
+ * Equal syntax is not an origin. Refusal leaves the prepared cut unchanged;
+ * the callback retains any partially materialized cells for an exact retry. */
+typedef Atom *(*CettaPreparedServiceExportFn)(void *context,Atom *source,
+    uint64_t source_occurrence_id,uint32_t source_argument_index,
+    uint64_t reply_position,Atom *value,bool ready);
+bool cetta_prepared_pure_closed_service_export(
+    CettaPreparedPureClosedExecution *,Arena *,const void *owner,
+    CettaPreparedServiceCut *,uint64_t ordinal,
+    CettaPreparedServiceExportFn,void *context,Atom **result);
+
+typedef enum {
+    CETTA_PREPARED_INSTRUCTION_OTHER = 0,
+    CETTA_PREPARED_INSTRUCTION_CALL,
+    CETTA_PREPARED_INSTRUCTION_TAIL_CALL,
+    CETTA_PREPARED_INSTRUCTION_RETURN,
+    CETTA_PREPARED_INSTRUCTION_NONE,
+    CETTA_PREPARED_NODE_CALL,
+    CETTA_PREPARED_NODE_CALL_RETURN,
+} CettaPreparedInstruction;
+typedef struct {
+    uint64_t performed, terminal_dispatches;
+    size_t frames, slots, memo_entries;
+    uint32_t pc, base, poll_countdown;
+    uint32_t frame_state, node_kind;
+    size_t values, contexts;
+    bool register_code, runtime_frame;
+    CettaPreparedInstruction next;
+    CettaPreparedClosedStep status;
+    const void *frame_storage, *slot_storage;
+    const char *decline;
+    bool optional_result;
+    Atom *pending_answer;
+} CettaPreparedClosedState;
+CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner);
+/* The optional register worker retains its exact instruction prefix. A zero
+ * instruction completes empty; a value stays pending until explicit owner
+ * acknowledgement. Repeated observation, including zero allowance, returns
+ * the same borrowed value and performs no instruction or terminal probe. */
+CettaPreparedPureClosedExecution *cetta_prepared_pure_closed_open_optional(
+    CettaPreparedPureProgram *program, Arena *arena, const void *owner);
+bool cetta_prepared_pure_closed_accept_optional(
+    CettaPreparedPureClosedExecution *execution, const void *owner, Atom *answer);
+CettaPreparedClosedStep cetta_prepared_pure_closed_step(
+    CettaPreparedPureClosedExecution *execution, Arena *arena, const void *owner,
+    uint64_t allowance, uint64_t *spent, Atom **answer);
+bool cetta_prepared_pure_closed_read(
+    CettaPreparedPureClosedExecution *execution, CettaPreparedClosedState *state);
+/* Read-only validation of an externally held exclusive invocation. This
+ * checks the existing reservation; it neither acquires lifetime nor resumes.
+ * Earned optional outcomes retain that reservation after source edits;
+ * unfinished work additionally requires its current source view. */
+bool cetta_prepared_pure_closed_owned_by(
+    CettaPreparedPureClosedExecution *execution,
+    const CettaPreparedPureProgram *program, const Arena *arena, const void *owner);
+bool cetta_prepared_pure_closed_close(
+    CettaPreparedPureClosedExecution *execution, const void *owner);
+
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -49,6 +155,8 @@ typedef enum {
      * declines, the caller must discard the attempt and run the original
      * expression. Never valid for a producer that publishes answers. */
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
+    /* A dialect-owned value. Inspection must not enter its payload. */
+    CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE,
 } CettaPreparedPureExpressionViewState;
 typedef enum {
     CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,
@@ -62,7 +170,7 @@ typedef struct {
     CettaPreparedPureProjectionMode projection_mode;
     CettaPreparedPureValueObservation observation;
 } CettaPreparedPureExpressionView;
-/* Classify dialect-owned expression forms before the generic constructor
+/* Classify dialect-owned atoms before the generic value/constructor
  * fallback.  A projection names the source child which is the form's value;
  * an observation names a pure outer-value discriminator whose operand is
  * data rather than an evaluation position.  Decline prevents an unhandled
@@ -70,17 +178,19 @@ typedef struct {
  * instructions have had their chance.  Canonical-only rejects the form at
  * both compilation and dynamic execution boundaries.  Zero identifies a
  * dialect-owned no-result form; it is usable only as an explicitly guarded
- * equation branch and never becomes an ordinary prepared value. */
+ * equation branch and never becomes an ordinary prepared value. The hook
+ * also receives atomic syntax, such as HE's no-result symbol Empty, and the
+ * actual source Space whose revision the prepared program retains. */
 typedef CettaPreparedPureExpressionViewState
 (*CettaPreparedPureExpressionViewFn)(
-    const Atom *expression, CettaPreparedPureExpressionView *view);
+    Space *space, const Atom *expression, CettaPreparedPureExpressionView *view);
 
 /* A closed single-result program cannot represent a branch whose selected
  * arm has no answer.  Detect that direct answer-effect boundary before
  * constructing a program; false means only "not established" and never
  * licenses execution. */
 bool cetta_prepared_pure_single_result_requires_answer_effect(
-    const Atom *expression,
+    Space *space, const Atom *expression,
     CettaPreparedPureExpressionViewFn expression_view);
 typedef enum {
     CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE = 0,
@@ -177,6 +287,45 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
+/* Compile an eager, effect-free at-most-one worker from actual equations.
+ * Arguments must have the supplied value interpretation; unsupported code
+ * and potentially overlapping answers refuse admission. No annotation is
+ * used as evidence, and no commitment is introduced. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
+/* Retained call-by-need service profile. Closed canonical source nodes issue
+ * occurrence-bound requests; the supplied owner must enable/drive services
+ * and acknowledge every reply through the retained execution API. Open
+ * lexical source requests still decline. Ordinary execute APIs refuse this
+ * Program; source/call authority remains the embedding owner's obligation. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
 /* Compile the finite answer-producing fragment of a closed pure relation.
  * An equation whose body is a fully determined value, or a pure tail call on
  * fully determined arguments, answers directly.  Any other body is lowered to
@@ -199,7 +348,17 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
+/* Every reachable authored head has disjoint WHNF alternatives. This is
+ * classification only; it executes no call and grants no service authority. */
+bool cetta_prepared_pure_program_all_heads_determinate(
+    const CettaPreparedPureProgram *program);
+
 bool cetta_prepared_pure_program_is_current(
+    const CettaPreparedPureProgram *program);
+
+/* The compiler-selected result representation, without executing a body.
+ * This inspection grants neither source freshness nor execution authority. */
+bool cetta_prepared_pure_program_returns_optional(
     const CettaPreparedPureProgram *program);
 
 /* Rebind the runtime arguments of a previously compiled closed entry call.
@@ -233,6 +392,24 @@ bool cetta_prepared_pure_program_execute_closed(
     Atom **result_out);
 
 bool cetta_prepared_pure_program_execute_closed_controlled(
+    CettaPreparedPureProgram *program, Arena *arena,
+    size_t nursery_budget_bytes,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, Atom **result_out);
+
+typedef enum {
+    CETTA_PREPARED_PURE_OPTIONAL_VALUE = 0,
+    CETTA_PREPARED_PURE_OPTIONAL_EMPTY,
+    CETTA_PREPARED_PURE_OPTIONAL_DECLINED,
+    CETTA_PREPARED_PURE_OPTIONAL_INTERRUPTED,
+    CETTA_PREPARED_PURE_OPTIONAL_INVALIDATED,
+} CettaPreparedPureOptionalResult;
+
+/* Only the dialect's explicit zero operation produces EMPTY. An unmatched
+ * call or unsupported operation declines without claiming emptiness. VALUE
+ * is borrowed under the same scratch/survivor lifetime as closed execution.
+ * This pure synchronous ABI supplies no retained resumption or effect rights. */
+CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optional(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
@@ -364,6 +541,14 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
  * enumeration and the cursor must not be advanced again. */
 CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     CettaPreparedPureAnswerCursor *cursor, Atom **answer_out);
+
+/* Read-only completion evidence for the retained frontier. True means every
+ * remaining call has matched and has no untried equation, so only reclamation
+ * remains. This executes no body, continuation, guard or interrupt observer;
+ * it does not release the borrowed answer. An unmatched call, lost authority
+ * or a handoff cannot establish completion. */
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
 
 /* Whether detach can release entry-argument borrows into a private arena.
  * Caller-arena cursors and programs with unsupported continuation locals
@@ -520,5 +705,7 @@ void cetta_prepared_pure_program_release_closed_execution(
 
 void cetta_prepared_pure_program_free(
     CettaPreparedPureProgram *program);
+
+void cetta_prepared_pure_program_storage_census(const CettaPreparedPureProgram *program, CettaStorageCensus *census);
 
 #endif /* CETTA_PREPARED_PURE_MACHINE_H */

@@ -2073,10 +2073,38 @@ static bool grounded_keyed_number_compare(
         isnan(left->val) || isnan(right->val)) {
         return false;
     }
-    *ordering = left->val < right->val
-        ? -1 : left->val > right->val ? 1 : 0;
+    if (!left->is_float && !right->is_float) {
+        *ordering = left->ival < right->ival ? -1 : left->ival > right->ival ? 1 : 0;
+    } else if (left->is_float && right->is_float) {
+        *ordering = left->val < right->val ? -1 : left->val > right->val ? 1 : 0;
+    } else {
+        const NumArg *floating = left->is_float ? left : right;
+        const NumArg *integer = left->is_float ? right : left;
+        int compare;
+        /* Check the conversion range before truncation.  Converting the
+         * integer to double first would collapse adjacent large integers. */
+        if (floating->val < -0x1p63)
+            compare = -1;
+        else if (floating->val >= 0x1p63)
+            compare = 1;
+        else {
+            int64_t truncated = (int64_t)floating->val;
+            compare = truncated < integer->ival ? -1 : truncated > integer->ival ? 1 :
+                floating->val < (double)truncated ? -1 :
+                floating->val > (double)truncated ? 1 : 0;
+        }
+        *ordering = left->is_float ? compare : -compare;
+    }
     return true;
 #endif
+}
+
+bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering) {
+    NumArg l, r;
+    if (!left || !right || !ordering ||
+        !get_numeric_arg(left, &l) || !get_numeric_arg(right, &r))
+        return false;
+    return grounded_keyed_number_compare(&l, &r, ordering);
 }
 
 typedef enum {
@@ -2623,10 +2651,22 @@ static Atom *grounded_parse_text(Arena *a, Atom *head, Atom **args,
         Atom *parsed = parser_read_source_form_n(a, args[0]->ground.sval,
                                                  args[0]->ground.slen);
         parser_set_rational_literals_enabled(old_rational_literals);
-        return parsed
-            ? parsed
-            : grounded_raise(a, head, args, nargs,
-                             atom_symbol(a, "ParseFailed"));
+        if (!parsed)
+            return grounded_raise(a, head, args, nargs,
+                                  atom_symbol(a, "ParseFailed"));
+        /* Code read from text is elaborated as the reader elaborates a
+         * form (binders, ownership, the seal), under the profile in force:
+         * the seal lives in the term, wherever the term is formed. */
+        if (!prime_semantics_elaborate_form)
+            return parsed;
+        Atom *elaborated = prime_semantics_elaborate_form(a, parsed);
+        if (elaborated)
+            return elaborated;
+        const char *why = prime_semantics_elaboration_error
+            ? prime_semantics_elaboration_error() : NULL;
+        return grounded_raise(a, head, args, nargs,
+                              why ? atom_string(a, why)
+                                  : atom_symbol(a, "ElaborationFailed"));
     }
 
     if (require_all_input &&
@@ -3599,7 +3639,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if ((head_id == g_builtin_syms.car_atom ||
          head_id == g_builtin_syms.cdr_atom) &&
         nargs == 1u) {
-        Atom *argument = args[0];
+        /* A fragment of held syntax is held syntax. */
+        bool held = atom_prime_held_is(args[0]);
+        Atom *argument = atom_prime_held_payload(args[0]);
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
         CettaExprLen len = 0u;
@@ -3616,11 +3658,10 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                 return atom_unit(a);
         }
         if (sequence && len > 0u) {
-            if (head_id == g_builtin_syms.car_atom)
-                return elems[0];
-            return atom_is_list(argument)
-                ? atom_sequence_like(a, argument, elems + 1u, len - 1u)
-                : atom_expr_suffix(a, argument, 1u);
+            Atom *part = head_id == g_builtin_syms.car_atom
+                ? elems[0]
+                : atom_sequence_rest(a, argument, elems, len);
+            return held ? atom_prime_held_wrap(a, part) : part;
         }
         return grounded_raise(
             a, head, args, nargs,
@@ -3807,11 +3848,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                 args[0], &counted_collection)) {
             return atom_int(a, counted_collection);
         }
+        /* A held value has the size of the syntax it holds. */
         Atom *const *size_elems;
         CettaExprLen size_len;
         if (grounded_current_language_is_petta()
                 ? petta_semantics_sequence_view(args[0], &size_elems, &size_len)
-                : atom_sequence_view(args[0], &size_elems, &size_len))
+                : atom_sequence_view(atom_prime_held_payload(args[0]),
+                                     &size_elems, &size_len))
             return atom_int(a, (int64_t)size_len);
         if (head_id == g_builtin_syms.size_atom &&
             grounded_current_language_is_petta()) {
@@ -3841,6 +3884,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     }
 
     if (head_id == g_builtin_syms.index_atom && nargs == 2) {
+        bool held = atom_prime_held_is(args[0]);
+        args[0] = atom_prime_held_payload(args[0]);
+        /* A held list is read by its elements, as the sequence operations
+         * above read an unheld one. */
+        if (held && atom_is_list(args[0])) {
+            Atom *elements = atom_sequence_like(
+                a, NULL, atom_list_elems(args[0]), atom_list_len(args[0]));
+            if (!elements)
+                return NULL;
+            args[0] = elements;
+        }
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
@@ -3862,7 +3916,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             return grounded_raise(a, head, args, nargs,
                                   atom_string(a, "Index is out of bounds"));
         }
-        return args[0]->expr.elems[idx];
+        return held ? atom_prime_held_wrap(a, args[0]->expr.elems[idx]) : args[0]->expr.elems[idx];
     }
 
     if (head_id == g_builtin_syms.unique_atom && nargs == 1) {
@@ -4002,7 +4056,19 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Equality of values (any atom type) ────────────────────────────── */
     if (head_id == g_builtin_syms.op_eq && nargs == 2) {
-        return atom_value_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+        Atom *left = atom_prime_held_payload(args[0]);
+        Atom *right = atom_prime_held_payload(args[1]);
+        /* In Prime `==` compares authored terms: inferred ownership is not
+         * part of them, and bound names are compared by position, never by
+         * spelling (prime_semantics_binders_eq). */
+        bool equal = eval_current_language_id &&
+                     eval_current_language_id() == CETTA_LANGUAGE_PRIME
+            ? atom_value_eq(left, right) ||
+                  atom_prime_authored_eq(left, right) ||
+                  (prime_semantics_binders_eq &&
+                   prime_semantics_binders_eq(a, left, right))
+            : atom_value_eq(left, right);
+        return equal ? atom_true(a) : atom_false(a);
     }
 
     /* ── Boolean ops ───────────────────────────────────────────────────── */
@@ -4119,7 +4185,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         }
 #else
         if (na.is_bigint || nb.is_bigint || na.is_rational || nb.is_rational)
-            return atom_eq(args[0], args[1]) ? atom_true(a) : atom_false(a);
+            return atom_eq(atom_prime_held_payload(args[0]),
+                       atom_prime_held_payload(args[1]))
+            ? atom_true(a) : atom_false(a);
 #endif
         return na.ival == nb.ival ? atom_true(a) : atom_false(a);
     }

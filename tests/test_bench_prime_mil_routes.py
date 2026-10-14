@@ -18,7 +18,7 @@ SPEC.loader.exec_module(BENCH)
 
 
 def route_lines(
-    legacy_he_applicability: int,
+    he_declaration_applicability: int,
     map_rel_realized: int = 0,
 ) -> list[str]:
     values = {
@@ -27,8 +27,8 @@ def route_lines(
         "prime-checking-route-declared-regular": 0,
         "prime-checking-route-closed-regular": 0,
         "prime-checking-route-ambient-formation": 0,
-        "prime-legacy-he-checking": 0,
-        "prime-legacy-he-typed-applicability": legacy_he_applicability,
+        "prime-he-fragment-checking": 0,
+        "prime-he-declaration-applicability": he_declaration_applicability,
         "prime-level-normalization-step": 7,
         "prime-declaration-polymorphic-lookup": 2,
         "prime-declaration-level-parameter-fresh": 5,
@@ -151,5 +151,5 @@ if BENCH.native_calculus_qualification_error(
 injected = BENCH.parse_checking_routes(route_lines(1))
 if injected["qualification"] == "prime-native-regular":
     raise RuntimeError("injected HE applicability retained the native label")
-if injected["legacy_he_applicability_checks"] != 1:
+if injected["he_declaration_applicability_checks"] != 1:
     raise RuntimeError("injected HE applicability was not retained in the receipt")

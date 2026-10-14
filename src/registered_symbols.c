@@ -1,4 +1,5 @@
 #include "registered_symbols.h"
+#include "storage_census.h"
 
 #include <limits.h>
 #include <pthread.h>
@@ -252,6 +253,21 @@ bool registered_symbol_borrow_end(RegisteredSymbols *table,
     if (!borrow || !registered_symbol_release(table, &borrow->hold)) return false;
     *borrow = (RegisteredSymbolBorrow){0};
     return true;
+}
+
+void registered_symbols_storage_census(RegisteredSymbols *table, CettaStorageCensus *census) {
+    if (!table || !census) return;
+    pthread_mutex_lock(&table->mutex);
+    if (cetta_storage_object(census, table, sizeof(*table), CETTA_STORAGE_BLOCK)) {
+        cetta_storage_array(census, table->spellings, table->capacity,
+            2u * sizeof(*table->spellings), 0u);
+        for (size_t i = 0u; i < table->capacity; i++)
+            for (RegisteredEntry *entry = table->spellings[i]; entry;
+                 entry = entry->spelling_next)
+                cetta_storage_object(census, entry,
+                    sizeof(*entry) + (size_t)entry->length + 1u, CETTA_STORAGE_BLOCK);
+    }
+    pthread_mutex_unlock(&table->mutex);
 }
 
 void registered_symbols_stats(RegisteredSymbols *table, RegisteredSymbolStats *out) {

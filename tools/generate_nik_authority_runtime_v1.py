@@ -202,7 +202,7 @@ def parse_authority(value: sx.SExpr, index: int) -> Authority:
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise GenerationError(f"{context}: digest is not lowercase SHA-256")
     presentation = tagged(
-        items[5], "GPresentationV1", 5, f"{context} presentation"
+        items[5], "GInferenceLanguageV1", 5, f"{context} presentation"
     )
     if presentation[1] != 1:
         raise GenerationError(f"{context}: unsupported presentation version")

@@ -20,9 +20,10 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 manifest="$root/benchmarks/mm2_corpus/manifest.tsv"
 bin="${CETTA_BIN:-$root/cetta}"
+: "${AIHUB:=$(cd "$root/../.." && pwd)}"
 : "${CETTA_ROOT:=$root}"
 : "${MORK_REPO_DIR:=$root/../MORK}"
-: "${MM2_CHAINER_REPO_DIR:=$root/../mm2-chainer}"
+: "${MM2_CHAINER_REPO_DIR:=$AIHUB/repos/mm2-chainer}"
 
 [ -x "$bin" ] || { echo "no cetta binary at $bin (make BUILD=mork cetta)" >&2; exit 2; }
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 2; }
@@ -44,6 +45,7 @@ while IFS=$'\t' read -r name origin path want_status want_atoms; do
     file="${path//'$CETTA_ROOT'/$CETTA_ROOT}"
     file="${file//'$MORK_REPO_DIR'/$MORK_REPO_DIR}"
     file="${file//'$MM2_CHAINER_REPO_DIR'/$MM2_CHAINER_REPO_DIR}"
+    file="${file//'$AIHUB'/$AIHUB}"
     if [ ! -f "$file" ]; then
         missing=$((missing + 1))
         printf '%-44s %-18s MISSING\n' "$name" "$origin"

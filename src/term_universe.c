@@ -100,6 +100,7 @@ static size_t term_universe_atom_id_storage_width_bytes(
     const TermUniverse *universe);
 static size_t term_universe_slot_storage_width_bytes(
     const TermUniverse *universe);
+static inline size_t term_universe_intern_pair_width(size_t id_width);
 static AtomId term_universe_load_stored_atom_id(const TermUniverse *universe,
                                                 const uint8_t *src);
 static uint64_t term_universe_load_slot_value(const TermUniverse *universe,
@@ -833,6 +834,7 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -875,6 +877,7 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -909,6 +912,45 @@ void term_universe_free(TermUniverse *universe) {
     universe->observer_len = 0;
     universe->observer_cap = 0;
     universe->persistent_arena = NULL;
+}
+
+void term_universe_storage_census(const TermUniverse *u, CettaStorageCensus *c) {
+    if (!u || !cetta_storage_object(c, u, 0u, CETTA_STORAGE_VISITED)) return;
+    cetta_storage_array(c, u->blob_pool, u->blob_cap, 1u, 0u);
+    cetta_storage_array(c, u->entries, u->cap, sizeof(*u->entries), 0u);
+    cetta_storage_array(c, u->observers, u->observer_cap, sizeof(*u->observers), 0u);
+    size_t width = term_universe_slot_storage_width_bytes(u);
+    if (u->intern_slots && u->intern_mask == SIZE_MAX) cetta_storage_refuse(c, "InternCapacity");
+    else cetta_storage_array(c, u->intern_slots, u->intern_mask + 1u, term_universe_intern_pair_width(width), 0u);
+    if (u->ptr_slots && u->ptr_mask == SIZE_MAX) cetta_storage_refuse(c, "PointerIndexCapacity");
+    else cetta_storage_array(c, u->ptr_slots, u->ptr_mask + 1u, width, 0u);
+    if (u->frame_identities.identities != u->frame_identities.inline_identities)
+        cetta_storage_array(c, u->frame_identities.identities, u->frame_identities.cap,
+            sizeof(*u->frame_identities.identities), 0u);
+    if (u->integer_slots) {
+        if (u->integer_mask == SIZE_MAX) { cetta_storage_refuse(c, "IntegerIndexCapacity"); return; }
+        cetta_storage_array(c, u->integer_slots, u->integer_mask + 1u, sizeof(*u->integer_slots), 0u);
+        for (size_t i = 0u; i <= u->integer_mask; i++) {
+            const CettaIntegerInternPage *page = u->integer_slots[i].page;
+            if (!page || !cetta_storage_object(c, page, sizeof(*page), CETTA_STORAGE_BLOCK)) continue;
+            if (page->dense) cetta_storage_array(c, page->data.positions,
+                TERM_UNIVERSE_INTEGER_PAGE_SIZE, sizeof(*page->data.positions), 0u);
+            else cetta_storage_array(c, page->data.sparse, page->cap, sizeof(*page->data.sparse), 0u);
+        }
+    }
+    cetta_storage_array(c, u->variable_support_blocks, u->variable_support_block_cap,
+        sizeof(*u->variable_support_blocks), 0u);
+    for (size_t i = 0u; u->variable_support_blocks && i < u->variable_support_block_cap; i++) {
+        const CettaTermVariableSupportBlock *block = atomic_load_explicit(
+            &u->variable_support_blocks[i], memory_order_acquire);
+        if (!block || !cetta_storage_object(c, block, sizeof(*block), CETTA_STORAGE_BLOCK)) continue;
+        for (size_t j = 0u; j < CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE; j++) {
+            const CettaTermVariableSupport *support = atomic_load_explicit(&block->slots[j], memory_order_acquire);
+            if (!support) continue;
+            size_t n = support->representation == CETTA_TERM_VARIABLE_SUPPORT_DENSE64 ? 0u : support->count;
+            cetta_storage_array(c, support, n, sizeof(*support->sparse_base_ids), sizeof(*support));
+        }
+    }
 }
 
 void term_universe_set_persistent_arena(TermUniverse *universe,
@@ -2704,6 +2746,23 @@ double tu_float(const TermUniverse *universe, AtomId id) {
                : 0.0;
 }
 
+CettaExprLen tu_authored_arity(const TermUniverse *universe, AtomId id) {
+    CettaExprLen arity = tu_arity(universe, id);
+    if (arity < 3u || tu_kind(universe, id) != ATOM_EXPR)
+        return arity;
+    AtomId head = tu_child(universe, id, 0u);
+    SymbolId sym = tu_kind(universe, head) == ATOM_SYMBOL
+        ? tu_sym(universe, head) : SYMBOL_ID_NONE;
+    if (!atom_prime_scope_metadata_shape(arity, sym))
+        return arity;
+    AtomId last = tu_child(universe, id, arity - 1u);
+    if (tu_kind(universe, last) != ATOM_EXPR || tu_arity(universe, last) < 2u ||
+        tu_internal_tag(universe, tu_child(universe, last, 0u)) !=
+            (int64_t)CETTA_INTERNAL_TAG_PRIME_OWN)
+        return arity;
+    return arity - 1u;
+}
+
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr)
@@ -3332,6 +3391,23 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
     result = children[0] == CETTA_ATOM_ID_NONE
         ? CETTA_ATOM_ID_NONE
         : tu_expr_from_ids(universe, children, len);
+    free(children);
+    return result;
+}
+
+AtomId tu_braces_from_ids(TermUniverse *universe, const AtomId *elems,
+                          CettaExprLen elem_len) {
+    if (!universe || (elem_len > 0u && !elems) ||
+        !cetta_expr_len_mul_fits_size(elem_len + 1u, sizeof(AtomId)))
+        return CETTA_ATOM_ID_NONE;
+    AtomId *children = cetta_malloc(((size_t)elem_len + 1u) * sizeof(*children));
+    children[0] = tu_intern_stable_tag(universe,
+                                       CETTA_INTERNAL_TAG_PRIME_BRACES);
+    for (CettaExprIndex i = 0u; i < elem_len; i++)
+        children[1u + i] = elems[i];
+    AtomId result = children[0] == CETTA_ATOM_ID_NONE
+        ? CETTA_ATOM_ID_NONE
+        : tu_expr_from_ids(universe, children, elem_len + 1u);
     free(children);
     return result;
 }
@@ -4104,6 +4180,24 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
     case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
         int64_t list_tag = 0;
+        /* T[...] and T{...}, touching, as the atom printer writes them. */
+        if (len == 3u &&
+            tu_kind(universe, tu_child(universe, id, 0)) == ATOM_SYMBOL &&
+            tu_sym(universe, tu_child(universe, id, 0)) ==
+                g_builtin_syms.prime_meta &&
+            tu_kind(universe, tu_child(universe, id, 2)) == ATOM_EXPR &&
+            tu_arity(universe, tu_child(universe, id, 2)) > 0u) {
+            int64_t argument_tag = tu_internal_tag(
+                universe, tu_child(universe, tu_child(universe, id, 2), 0));
+            if (argument_tag == (int64_t)CETTA_INTERNAL_TAG_LIST ||
+                argument_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 1));
+                term_universe_sb_append_atom_text(sb, universe,
+                                                  tu_child(universe, id, 2));
+                return;
+            }
+        }
         if (len > 0u) {
             const CettaTermHdr *head = tu_hdr(universe, tu_child(universe, id, 0));
             if (head && (AtomKind)head->tag == ATOM_GROUNDED &&
@@ -4122,6 +4216,17 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
                 term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
             }
             term_universe_sb_append_char(sb, ']');
+            return;
+        }
+        if (list_tag == (int64_t)CETTA_INTERNAL_TAG_PRIME_BRACES) {
+            /* {x1 x2}, as the atom printer writes it */
+            term_universe_sb_append_char(sb, '{');
+            for (CettaExprIndex i = 1; i < len; i++) {
+                if (i != 1)
+                    term_universe_sb_append_char(sb, ' ');
+                term_universe_sb_append_atom_text(sb, universe, tu_child(universe, id, i));
+            }
+            term_universe_sb_append_char(sb, '}');
             return;
         }
         term_universe_sb_append_char(sb, '(');
@@ -4306,11 +4411,12 @@ static Atom *term_universe_copy_read_leaf(Arena *dst, Atom *atom, void *context)
     return atom_deep_copy(dst, value ? value : atom);
 }
 
-static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
+static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
                                           Arena *dst, AtomId id,
                                           uint32_t epoch,
                                           bool rename_epoch_vars,
-                                          TermUniverseCopyMemo *memo) {
+                                          TermUniverseCopyMemo *memo,
+                                          Atom **children) {
     Atom *out = NULL;
     if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
         return NULL;
@@ -4349,8 +4455,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
             Atom *key = memo->read_symbol
                 ? term_universe_copy_atom(universe, dst,
                       tu_var_name_key_id(universe, id))
-                : term_universe_copy_atom_impl(universe, dst,
-                      tu_var_name_key_id(universe, id), epoch, false, memo);
+                : (children ? children[0] : NULL);
             out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
         } else {
             out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
@@ -4396,20 +4501,7 @@ static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
         break;
     case ATOM_EXPR: {
         CettaExprLen len = tu_arity(universe, id);
-        Atom **elems = NULL;
-        if (len > 0) {
-            if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
-                return NULL;
-            elems = arena_alloc(dst, sizeof(Atom *) * (size_t)len);
-        }
-        for (CettaExprIndex i = 0; i < len; i++) {
-            elems[i] = term_universe_copy_atom_impl(
-                universe, dst, tu_child(universe, id, i), epoch,
-                rename_epoch_vars, memo);
-            if (!elems[i])
-                return NULL;
-        }
-        out = atom_expr_shared(dst, elems, len);
+        out = atom_expr_shared(dst, children, len);
         break;
     }
     }
@@ -4427,6 +4519,88 @@ done:
     if (!term_universe_copy_memo_store(memo, id, out))
         return NULL;
     return out;
+}
+
+typedef struct {
+    AtomId id;
+    Atom **target;
+    Atom **children;
+    bool rename_epoch_vars;
+    bool finish;
+} TermUniverseCopyFrame;
+
+static bool term_universe_copy_frame_push(TermUniverseCopyFrame **frames,
+                                          size_t *len, size_t *cap,
+                                          TermUniverseCopyFrame frame) {
+    if (*len == *cap) {
+        size_t next = *cap ? *cap * 2u : 64u;
+        if (next < *cap || next > SIZE_MAX / sizeof(**frames))
+            return false;
+        *frames = cetta_realloc(*frames, next * sizeof(**frames));
+        *cap = next;
+    }
+    (*frames)[(*len)++] = frame;
+    return true;
+}
+
+/* Postorder copying uses a heap work stack, so a deep closed proof article
+ * does not consume the C call stack. The existing memo still preserves DAG
+ * sharing, and structural variable name keys remain outside epoch renaming. */
+static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
+                                          Arena *dst, AtomId id,
+                                          uint32_t epoch,
+                                          bool rename_epoch_vars,
+                                          TermUniverseCopyMemo *memo) {
+    if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
+        return NULL;
+    TermUniverseCopyFrame *frames = NULL;
+    size_t len = 0, cap = 0;
+    Atom *out = NULL;
+    if (!term_universe_copy_frame_push(&frames, &len, &cap,
+            (TermUniverseCopyFrame){id, &out, NULL, rename_epoch_vars, false}))
+        return NULL;
+    while (len) {
+        TermUniverseCopyFrame frame = frames[--len];
+        if (frame.id == CETTA_ATOM_ID_NONE)
+            goto failed;
+        Atom *cached = term_universe_copy_memo_lookup(memo, frame.id);
+        if (cached) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_MEMO_HIT);
+            *frame.target = cached;
+            continue;
+        }
+        const CettaTermHdr *hdr = tu_hdr(universe, frame.id);
+        bool name_key = hdr && hdr->tag == ATOM_VAR &&
+            hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY;
+        CettaExprLen count = name_key ? (memo->read_symbol ? 0u : 1u) :
+            (hdr && hdr->tag == ATOM_EXPR ? tu_arity(universe, frame.id) : 0u);
+        if (!frame.finish && count) {
+            if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
+                goto failed;
+            frame.children = arena_alloc(dst, (size_t)count * sizeof(Atom *));
+            frame.finish = true;
+            if (!term_universe_copy_frame_push(&frames, &len, &cap, frame))
+                goto failed;
+            for (CettaExprLen i = count; i > 0u; --i) {
+                AtomId child = name_key ? tu_var_name_key_id(universe, frame.id) :
+                    tu_child(universe, frame.id, i - 1u);
+                if (!term_universe_copy_frame_push(&frames, &len, &cap,
+                        (TermUniverseCopyFrame){child, &frame.children[i - 1u], NULL,
+                            !name_key && frame.rename_epoch_vars, false}))
+                    goto failed;
+            }
+            continue;
+        }
+        *frame.target = term_universe_copy_atom_finish(universe, dst, frame.id,
+            epoch, frame.rename_epoch_vars, memo, frame.children);
+        if (!*frame.target)
+            goto failed;
+    }
+    free(frames);
+    return out;
+failed:
+    free(frames);
+    return NULL;
 }
 
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
@@ -4821,6 +4995,14 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
                                                false, &stable);
     if (!stable)
         return CETTA_ATOM_ID_NONE;
+    if (stable_id == CETTA_ATOM_ID_NONE && universe->snapshot_entries) {
+        for (size_t i = 0u; i < universe->len; i++) {
+            const TermEntry *entry = &universe->entries[i];
+            if (!term_universe_entry_has_blob(entry) && entry->decoded_cache &&
+                atom_eq(entry->decoded_cache, src))
+                return term_universe_physical_index_to_atom_id(universe, i);
+        }
+    }
     return stable_id;
 }
 
@@ -5021,6 +5203,42 @@ static void term_universe_track_ptr_id(TermUniverse *universe, AtomId id) {
             return;
     }
     (void)term_universe_insert_ptr_id(universe, id);
+}
+
+AtomId term_universe_store_snapshot_image(TermUniverse *universe,
+        const AtomDeepCopySession *snapshot, const Atom *source) {
+    if (!universe || !universe->persistent_arena) return CETTA_ATOM_ID_NONE;
+    Atom *image = atom_deep_copy_session_snapshot_image(
+        snapshot, universe->persistent_arena, source);
+    if (!image) return CETTA_ATOM_ID_NONE;
+    AtomId existing = term_universe_lookup_ptr_id(universe, image);
+    if (existing != CETTA_ATOM_ID_NONE) return existing;
+    term_universe_clear_error(universe);
+    if (!term_universe_atom_id_capacity_available(universe) ||
+        universe->len == SIZE_MAX ||
+        !term_universe_reserve_entries(universe, universe->len + 1u))
+        return CETTA_ATOM_ID_NONE;
+    size_t capacity = universe->ptr_slots ? universe->ptr_mask + 1u : 0u;
+    if (!capacity || universe->ptr_used >= capacity / 2u) {
+        size_t requested = 0u;
+        if (!term_universe_double_request(universe, capacity, 1024u, &requested) ||
+            !term_universe_ptr_reserve(universe, requested)) return CETTA_ATOM_ID_NONE;
+    }
+    size_t index = universe->len;
+    AtomId id = term_universe_physical_index_to_atom_id(universe, index);
+    if (id == CETTA_ATOM_ID_NONE) return CETTA_ATOM_ID_NONE;
+    universe->entries[index] = (TermEntry){
+        .byte_off = CETTA_TERM_ENTRY_BLOB_NONE, .decoded_cache = image};
+    universe->len++;
+    if (!term_universe_insert_ptr_id(universe, id)) {
+        universe->len--;
+        universe->entries[index] = (TermEntry){.byte_off=CETTA_TERM_ENTRY_BLOB_NONE};
+        return CETTA_ATOM_ID_NONE;
+    }
+    universe->snapshot_entries = true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT);
+    return id;
 }
 
 static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
@@ -5267,6 +5485,61 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
     return NULL;
 }
 
+/* Decode one entry and remember the atom.  The children of an expression are
+ * decoded on the way, so the depth of this call is the depth of the entries
+ * under it that are not decoded yet. */
+static Atom *term_universe_decode_entry(TermUniverse *universe, AtomId id) {
+    size_t physical_index = 0;
+    if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
+        return NULL;
+    TermEntry *entry = &universe->entries[physical_index];
+    if (entry->decoded_cache)
+        return entry->decoded_cache;
+    if (!term_universe_entry_has_blob(entry))
+        return NULL;
+    Atom *decoded = term_universe_decode_atom(universe, id);
+    entry = &universe->entries[physical_index];
+    entry->decoded_cache = decoded;
+    if (entry->decoded_cache) {
+        TU_DIAG_INC(universe, lazy_decode_count);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
+    }
+    term_universe_track_ptr_id(universe, id);
+    return entry->decoded_cache;
+}
+
+/* The expression child of an expression entry, from its `next` child on,
+ * that has a blob and is not decoded yet.  Children of other kinds decode
+ * without recursion and are left to the decoding of the expression. */
+static bool term_universe_next_undecoded_expr_child(
+    const TermUniverse *universe, AtomId id, uint32_t *next,
+    AtomId *child_out) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    const uint8_t *payload = term_universe_payload(universe, id);
+    if (!hdr || !payload || (AtomKind)hdr->tag != ATOM_EXPR)
+        return false;
+    uint32_t len = term_universe_aux_data(hdr);
+    size_t atom_id_width = term_universe_atom_id_storage_width_bytes(universe);
+    while (*next < len) {
+        AtomId child_id = term_universe_load_stored_atom_id(
+            universe, payload + ((size_t)*next * atom_id_width));
+        (*next)++;
+        const TermEntry *child = term_universe_entry(universe, child_id);
+        if (!child || child->decoded_cache ||
+            !term_universe_entry_has_blob(child))
+            continue;
+        const CettaTermHdr *child_hdr = tu_hdr(universe, child_id);
+        if (child_hdr && (AtomKind)child_hdr->tag == ATOM_EXPR) {
+            *child_out = child_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* An expression is decoded without recursing on its depth: the expressions
+ * under it that are not decoded yet are decoded first, deepest first, from a
+ * stack of ids, so that each one finds its expression children decoded. */
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
     size_t physical_index = 0;
     if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
@@ -5277,13 +5550,52 @@ Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
         return entry->decoded_cache;
     if (!term_universe_entry_has_blob(entry))
         return NULL;
-    entry->decoded_cache = term_universe_decode_atom(mutable_universe, id);
-    if (entry->decoded_cache) {
-        TU_DIAG_INC(mutable_universe, lazy_decode_count);
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
+    uint32_t probe = 0u;
+    AtomId first_child = CETTA_ATOM_ID_NONE;
+    if (!term_universe_next_undecoded_expr_child(
+            universe, id, &probe, &first_child))
+        return term_universe_decode_entry(mutable_universe, id);
+
+    typedef struct {
+        AtomId id;
+        uint32_t next;
+    } DecodeFrame;
+    enum { DECODE_INLINE_FRAMES = 32u };
+    DecodeFrame inline_frames[DECODE_INLINE_FRAMES];
+    DecodeFrame *frames = inline_frames;
+    size_t len = 0u, cap = DECODE_INLINE_FRAMES;
+    frames[len++] = (DecodeFrame){.id = id, .next = 0u};
+    Atom *result = NULL;
+    while (len > 0u) {
+        DecodeFrame *top = &frames[len - 1u];
+        AtomId child = CETTA_ATOM_ID_NONE;
+        if (term_universe_next_undecoded_expr_child(
+                universe, top->id, &top->next, &child)) {
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u / sizeof *frames)
+                    break;
+                size_t next_cap = cap * 2u;
+                DecodeFrame *grown = frames == inline_frames
+                    ? cetta_malloc(sizeof *frames * next_cap)
+                    : cetta_realloc(frames, sizeof *frames * next_cap);
+                if (frames == inline_frames)
+                    memcpy(grown, inline_frames, sizeof *frames * len);
+                frames = grown;
+                cap = next_cap;
+            }
+            frames[len++] = (DecodeFrame){.id = child, .next = 0u};
+            continue;
+        }
+        Atom *decoded = term_universe_decode_entry(mutable_universe,
+                                                   frames[len - 1u].id);
+        if (!decoded)
+            break;
+        if (--len == 0u)
+            result = decoded;
     }
-    term_universe_track_ptr_id(mutable_universe, id);
-    return entry->decoded_cache;
+    if (frames != inline_frames)
+        free(frames);
+    return result;
 }
 
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,

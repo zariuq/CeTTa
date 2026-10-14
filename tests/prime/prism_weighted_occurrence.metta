@@ -27,7 +27,7 @@
            $next-seed
            $events
            (+ $left (if (noreduce-eq $occurrence concrete-a) 1 0))
-           (+ $right (if (noreduce-eq $occurrence concrete-b) 1 0))))))
+           (+ $right (if (noreduce-eq $occurrence concrete-b) 1 0)))){$semantic $occurrence $rate $target $next-seed}))
 
 (= (prism:simulate-two-state
      $remaining A $seed $time-a $time-b)
@@ -37,7 +37,7 @@
             (lts:weighted:exponential-wait $seed 1)
          (prism:simulate-two-state
            (- $remaining 1) B $next-seed
-           (+ $time-a $duration) $time-b))))
+           (+ $time-a $duration) $time-b)){$duration $next-seed}))
 
 (= (prism:simulate-two-state
      $remaining B $seed $time-a $time-b)
@@ -47,7 +47,7 @@
             (lts:weighted:exponential-wait $seed 3)
          (prism:simulate-two-state
            (- $remaining 1) A $next-seed
-           $time-a (+ $time-b $duration)))))
+           $time-a (+ $time-b $duration))){$duration $next-seed}))
 
 ; Pure seed replay and input validation.
 !(assertEqual (lts:weighted:next-seed 1) 1103527590)

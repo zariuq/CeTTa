@@ -1049,7 +1049,7 @@ static bool gdl_stratified_token_matches_v1(
         return atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind == GV_INT &&
             atom->ground.ival == (int64_t)value;
-    return atom_is_symbol(atom, token);
+    return atom_is_symbol_named(atom, token);
 }
 
 static bool gdl_stratified_match_expression_v1(

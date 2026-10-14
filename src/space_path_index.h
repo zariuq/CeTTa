@@ -80,7 +80,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
 }
 
 bool space_path_index_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity);
 void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position);
 void space_path_indexes_retire(Space *space);
 /* Aggregate storage account, with the most recently created path's record.

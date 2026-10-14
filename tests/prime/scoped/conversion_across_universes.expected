@@ -1,0 +1,7 @@
+[(u 1)]
+[True]
+[True]
+[False]
+[False]
+[True]
+[(type:eq (PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) (idx 0)) (PrimeScoped (PrimeCtxCons (Sort (LevelConst 1)) PrimeCtxNil) (idx 0)))]

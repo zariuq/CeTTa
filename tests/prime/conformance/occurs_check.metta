@@ -2,11 +2,11 @@
 ; substitution.  This rule set used to fabricate an inhabitant of any target
 ; by solving a type variable as its own negation.
 
-(: Target Type)
-(: Good Type)
+(: Target (u 0))
+(: Good (u 0))
 (: good Good)
-(: neg (-> Type Type))
-(: impl (-> Type Type Type))
+(: neg (-> (u 0) (u 0)))
+(: impl (-> (u 0) (u 0) (u 0)))
 
 (: pm2.24ii (-> $ph (neg $ph) $ps))
 (chaining-rule pm2.24ii)
@@ -43,3 +43,11 @@
       (pm2.24ii (pm2.18i notnot) (pm2.18i notnotr))
       Target
       100000))
+
+; The binding kernel itself refuses a cyclic binding: x = (f x) has no
+; finite solution, whether the equation is posed directly, through a
+; repeated pattern variable, or by a case pattern.
+!(unify $x (f $x) CyclicBindingAdmitted CyclicBindingRefused)
+!(unify (g $x $x) (g $y (f $y)) CyclicBindingAdmitted CyclicBindingRefused)
+!(case (g $y (f $y))
+   (((g $x $x) CyclicBindingAdmitted) ($other CyclicBindingRefused)))

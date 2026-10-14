@@ -3,19 +3,22 @@
 
 #include "language_def_core_v1.h"
 #include "parser_pack_abi_v1.h"
+#include "parser_pack_native_v1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+struct CettaParserTokenProfileV1;
+
 /*
  * Parser-oriented extension of the five-field LanguageDef.
  *
  * The LanguageDef core owns constructor labels, result sorts, parameters,
- * and concrete syntax rows.  This separate layer supplies only the scalar
- * classes that cannot be represented by finite literal terminals.  It does
- * not define a second grammar and it does not assign Horn meaning to the
- * LanguageDef relations.
+ * and concrete syntax rows. V1 supplies scalar classes; its V2 extension
+ * carries regular tokens, occurrence identities and AST projections as
+ * owned data. Neither layer defines a second grammar or assigns Horn
+ * meaning to the LanguageDef relations.
  */
 
 typedef enum {
@@ -43,6 +46,7 @@ typedef struct {
     uint32_t class_len;
     CettaLdLexicalStateV1 *states;
     uint32_t state_len;
+    struct CettaParserTokenProfileV1 *tokens;
     char authority_sha256[65];
 } CettaLdParserProfileV1;
 
@@ -69,6 +73,8 @@ typedef struct {
     uint32_t authored_rule_len;
     uint32_t lexical_rule_len;
     uint32_t entry_rule_len;
+    bool tokenized;
+    PPNativeV1TokenBindingPlan token_bindings;
 } CettaLdParserPackV1;
 
 void cetta_ld_parser_profile_v1_init(CettaLdParserProfileV1 *profile);

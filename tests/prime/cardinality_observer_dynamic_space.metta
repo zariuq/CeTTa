@@ -12,8 +12,8 @@
                     (add-atom
                       &cardinality-dynamic-space
                       (cardinality-row $key $bucket))
-                 (cardinality-load (- $key 1)))
-               impossible)))))
+                 (cardinality-load (- $key 1))){$_}
+               impossible)){$bucket})))
 
 (= (cardinality-all)
    (collapse
@@ -24,17 +24,17 @@
    (collapse
      (match &cardinality-dynamic-space
             (cardinality-row $key $bucket)
-            (cardinality-row $key $bucket))))
+            (cardinality-row $key $bucket)){$key}))
 (= (cardinality-second $bucket)
    (collapse
      (match &cardinality-dynamic-space
             (cardinality-row $key $bucket)
-            (cardinality-row $key $bucket))))
+            (cardinality-row $key $bucket)){$bucket}))
 (= (cardinality-both $key $bucket)
    (collapse
      (match &cardinality-dynamic-space
             (cardinality-row $key $bucket)
-            (cardinality-row $key $bucket))))
+            (cardinality-row $key $bucket)){$key $bucket}))
 
 !(let $_ (cardinality-load 1000)
    (let* (($all (cardinality-all))

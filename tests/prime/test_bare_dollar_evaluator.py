@@ -133,6 +133,12 @@ def main() -> int:
             expected,
         )
 
+    # Raw equality compares syntax as supplied. A held space value is not
+    # the unresolved spelling `&self`; nameability below compares two values.
+    for policy in ("fresh", "shared"):
+        expect(policy, "raw-space-spelling-is-not-a-held-reference",
+            ("! (let $ &self (noreduce-eq $ &self))",), "[False]")
+
     # Two fresh anonymous variables are independent; one shared variable is an
     # equality constraint.  Equal fields expose the positive shared case.
     for policy, unequal, equal in (
@@ -169,7 +175,7 @@ def main() -> int:
         expect(
             policy,
             "body-referenceability",
-            ("! (let $ &self (noreduce-eq $ &self))",),
+            ("! (let $reference &self (let $ $reference (noreduce-eq $ $reference)))",),
             reused,
         )
 
@@ -177,13 +183,13 @@ def main() -> int:
         expect(
             policy,
             "chain-binder-referenceability",
-            ("! (chain &self $ (noreduce-eq $ &self))",),
+            ("! (let $reference &self (chain $reference $ (noreduce-eq $ $reference)))",),
             expected,
         )
         expect(
             policy,
             "let-star-binder-referenceability",
-            ("! (let* (($ &self)) (noreduce-eq $ &self))",),
+            ("! (let $reference &self (let* (($ $reference)) (noreduce-eq $ $reference)))",),
             expected,
         )
 
@@ -256,11 +262,9 @@ def main() -> int:
             "[True]",
         )
 
-    # Native substitution has two observable classes.  Lexical ABT binders
-    # (`let` and `let*`) treat quote as a scope barrier.  Matcher/template
-    # substitution (`chain`, `unify`, `match`, and rewrite application) may
-    # instantiate matching identities below quote.  Named variables pin this
-    # distinction independently of the bare-dollar contenders.
+    # Prime's sealed quotation retains the written variable under each
+    # binder. `lift` is the explicit operation that puts a bound value into
+    # code. HE's unsealed quotation remains a separate dialect contract.
     for policy in contenders:
         expect(
             policy,
@@ -278,16 +282,23 @@ def main() -> int:
         )
         expect(
             policy,
+            "quoted-named-lambda-binder",
+            ("! ((lam $x @$x) a)",),
+            "[(quote $x)]",
+            pretty_vars=True,
+        )
+        expect(
+            policy,
             "quoted-named-chain-binder",
             ("! (chain a $x @$x)",),
-            "[(quote a)]",
+            "[(quote $x)]",
             pretty_vars=True,
         )
         expect(
             policy,
             "quoted-named-unifier-binding",
             ("! (unify $x a @$x no)",),
-            "[(quote a)]",
+            "[(quote $x)]",
             pretty_vars=True,
         )
         expect(
@@ -298,21 +309,39 @@ def main() -> int:
                 "(let $_ (add-atom $s (P a)) "
                 "(match $s (P $x) @$x)))",
             ),
-            "[(quote a)]",
+            "[(quote $x)]",
             pretty_vars=True,
         )
         expect(
             policy,
             "quoted-named-rewrite-binding",
             ("(= (quote-named $x) @$x)", "! (quote-named a)"),
-            "[(quote a)]",
+            "[(quote $x)]",
             pretty_vars=True,
         )
 
-    # This is characterization evidence for the root-binder decision, not a
-    # claim that shared bare-dollar behavior should be promoted.  A uniformly
-    # fresh anonymous occurrence never names the earlier pattern occurrence,
-    # so neither substitution class can accidentally recover its binding.
+        lifted_cases = (
+            ("lifted-named-let-binder", ("! (let $x a (lift $x))",)),
+            ("lifted-named-let-star-binder", ("! (let* (($x a)) (lift $x))",)),
+            ("lifted-named-chain-binder", ("! (chain a $x (lift $x))",)),
+            ("lifted-named-unifier-binding", ("! (unify $x a (lift $x) no)",)),
+            ("lifted-named-space-match-binding", (
+                "! (let $s (new-space) (let $_ (add-atom $s (P a)) (match $s (P $x) (lift $x))))",
+            )),
+            ("lifted-named-rewrite-binding", (
+                "(= (lift-named $x) (lift $x))", "! (lift-named a)",
+            )),
+        )
+        for label, expressions in lifted_cases:
+            expect(policy, label, expressions, "[(quote a)]", pretty_vars=True)
+        for label, expression in (
+            ("he-quoted-named-let-binder", "! (let $x a (quote $x))"),
+            ("he-quoted-named-chain-binder", "! (chain a $x (quote $x))"),
+        ):
+            expect(policy, label, (expression,), "[(quote a)]", language="he", pretty_vars=True)
+
+    # Sealing retains both anonymous policies' written glyph. The exact
+    # identity checks above distinguish their syntax identities separately.
     quote_rows = (
         (
             "fresh",
@@ -327,10 +356,10 @@ def main() -> int:
             "shared",
             "[(quote $)]",
             "[(quote $)]",
-            "[(quote a)]",
-            "[(quote a)]",
-            "[(quote a)]",
-            "[(quote a)]",
+            "[(quote $)]",
+            "[(quote $)]",
+            "[(quote $)]",
+            "[(quote $)]",
         ),
     )
     for (
@@ -389,12 +418,11 @@ def main() -> int:
             pretty_vars=True,
         )
 
-    # Unquoting makes the distinction visible as ordinary syntax.  Lexical
-    # substitution still cannot retroactively cross its quote barrier;
-    # matcher substitution has already instantiated the quoted variable.
+    # Running the held syntax in the retained enclosing context distinguishes
+    # a fresh occurrence from the shared binder without changing its quotation.
     for policy, lexical, matcher in (
         ("fresh", "[$]", "[$]"),
-        ("shared", "[$]", "[a]"),
+        ("shared", "[a]", "[a]"),
     ):
         expect(
             policy,

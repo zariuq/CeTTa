@@ -15,6 +15,7 @@
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
 #include "search_control_advice.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "petta_semantics.h"
 #include "petta_type_policy.h"
@@ -49,6 +50,18 @@ static void test_type_policy_component(Arena *arena) {
     assert(call.guard_result && !call.hold_result);
     assert(!petta_type_call_open(call.signature, 1u, NULL));
     assert(!petta_type_call_open(parse_one(arena, "(-[det]-> Number Atom)"), 1u, NULL));
+    PettaTypeCall fresh;
+    assert(call.source_refinement == NULL &&
+           petta_type_call_instantiate(arena, &call, &fresh));
+    Bindings applicability;
+    bindings_init(&applicability);
+    assert(bindings_add_var(&applicability, parse_one(arena, "$caller-type"),
+                            parse_one(arena, "Number")));
+    call.source_refinement = bindings_capture_value(arena, &applicability);
+    bindings_free(&applicability);
+    assert(call.source_refinement &&
+           !petta_type_call_instantiate(arena, &call, &fresh));
+    call.source_refinement = NULL;
     assert(petta_type_argument(call.signature->expr.elems[1], false).demand ==
            PETTA_TYPE_TRANSLATE_AND_GUARD);
     assert(petta_type_argument(call.signature->expr.elems[2], false).demand == PETTA_TYPE_RAW);
@@ -10797,6 +10810,9 @@ typedef struct {
     uint64_t revision;
     size_t calls;
     size_t remaining;
+    uint64_t domain;
+    bool operation_suspended;
+    size_t operation_checks;
 } OwnedContinuationAuthority;
 
 static CettaBranchAdmission
@@ -10829,6 +10845,97 @@ static CettaContinuationStatus restore_relational_continuation(
     PettaMachine *machine, CettaOwnedContinuation *continuation) {
     return cetta_continuation_restore(
         petta_machine_continuation_machine(machine), continuation);
+}
+
+typedef struct {
+    size_t live;
+    size_t restored;
+    size_t destroyed;
+} UncountedContinuationOwner;
+
+typedef struct {
+    UncountedContinuationOwner *owner;
+} UncountedContinuationPayload;
+
+static CettaContinuationStatus uncounted_continuation_capture(
+        void *machine, void **payload) {
+    UncountedContinuationOwner *owner = machine;
+    if (!owner || !payload || *payload)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    UncountedContinuationPayload *image = malloc(sizeof(*image));
+    assert(image);
+    image->owner = owner;
+    owner->live++;
+    *payload = image;
+    return CETTA_CONTINUATION_READY;
+}
+
+static CettaContinuationStatus uncounted_continuation_restore(
+        void *machine, void **payload) {
+    UncountedContinuationPayload *image = payload ? *payload : NULL;
+    if (!image || image->owner != machine)
+        return CETTA_CONTINUATION_INVALIDATED;
+    assert(image->owner->live > 0u);
+    image->owner->live--;
+    image->owner->restored++;
+    free(image);
+    *payload = NULL;
+    return CETTA_CONTINUATION_READY;
+}
+
+static void uncounted_continuation_destroy(void *payload) {
+    UncountedContinuationPayload *image = payload;
+    assert(image && image->owner->live > 0u);
+    image->owner->live--;
+    image->owner->destroyed++;
+    free(image);
+}
+
+static void test_continuation_ownership_without_census(void) {
+    const CettaContinuationProvider provider = {
+        .representation_name = "owned-without-census",
+        .ownership = {
+            .capture = uncounted_continuation_capture,
+            .restore = uncounted_continuation_restore,
+            .destroy = uncounted_continuation_destroy,
+        },
+    };
+    UncountedContinuationOwner owner = {0}, other = {0};
+    CettaContinuationMachine machine = {&owner, &provider};
+    CettaOwnedContinuation image = {0};
+    assert(strcmp(cetta_continuation_machine_representation_name(machine),
+                  "owned-without-census") == 0);
+    assert(cetta_continuation_capture(machine, &image) == CETTA_CONTINUATION_READY);
+    CettaContinuationStorage storage = {0};
+    assert(!cetta_owned_continuation_storage(&image, &storage));
+    assert(owner.live == 1u);
+    assert(cetta_continuation_restore(
+               (CettaContinuationMachine){&other, &provider}, &image) ==
+           CETTA_CONTINUATION_INVALIDATED);
+    assert(owner.live == 1u && image.payload);
+    assert(cetta_continuation_restore(machine, &image) == CETTA_CONTINUATION_READY);
+    assert(owner.live == 0u && owner.restored == 1u && !image.payload);
+    assert(cetta_continuation_restore(machine, &image) == CETTA_CONTINUATION_UNSUPPORTED);
+    cetta_owned_continuation_destroy(&image);
+    assert(owner.destroyed == 0u);
+
+    assert(cetta_continuation_capture(machine, &image) == CETTA_CONTINUATION_READY);
+    CettaContinuationStore store;
+    cetta_continuation_store_init(&store);
+    assert(cetta_continuation_store_append(&store, &image));
+    assert(!image.payload && owner.live == 1u);
+    size_t shared = 0u, exclusive = 0u;
+    assert(!cetta_continuation_store_storage(&store, &shared, &exclusive));
+    cetta_continuation_store_destroy(&store);
+    assert(owner.live == 0u && owner.destroyed == 1u);
+
+    CettaContinuationProvider invalid = provider;
+    invalid.ownership.destroy = NULL;
+    assert(cetta_continuation_capture(
+               (CettaContinuationMachine){&owner, &invalid}, &image) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(owner.live == 0u && !image.payload);
+    puts("PASS: continuation ownership survives unavailable census; storage and stale-owner checks decline");
 }
 
 typedef struct {
@@ -11494,6 +11601,569 @@ static bool permit_owned_continuation_transition(void *opaque) {
         return false;
     state->remaining--;
     return true;
+}
+
+static bool admit_owned_continuation_transfer(
+        void *destination, const void *source, Space *space) {
+    (void)space;
+    const OwnedContinuationAuthority *left = destination, *right = source;
+    return left && right && left->revision == right->revision &&
+        left->domain == right->domain;
+}
+
+static bool permit_owned_operation(void *raw, Space *space,
+        PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    (void)space; (void)operation; (void)view;
+    OwnedContinuationAuthority *authority = raw;
+    authority->operation_checks++;
+    return !authority->operation_suspended;
+}
+
+static void test_owned_operation_view(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    Atom *x = atom_var_with_id(arena, "operation-x", fresh_var_id());
+    Atom *y = atom_var_with_id(arena, "operation-y", fresh_var_id());
+    Atom *open = atom_var_with_id(arena, "operation-open", fresh_var_id());
+    Atom *seven = atom_int(arena, 7);
+    Atom *eleven = atom_int(arena, 11);
+    Atom *effect = parse_one(arena, "(add-atom &self (OperationEffect 7))");
+    Bindings environment;
+    bindings_init(&environment);
+    assert(bindings_add_var(&environment, x, y));
+    assert(bindings_add_var(&environment, y, seven));
+    PettaMachineOperationView view = {.expression=x, .environment=&environment};
+    Bindings before;
+    assert(bindings_clone(&before, &environment));
+    size_t allocated = arena_accounted_live_bytes(arena);
+    Atom *root = NULL;
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(root == seven && bindings_eq(&before, &environment));
+    assert(arena_accounted_live_bytes(arena) == allocated);
+    bindings_free(&before);
+
+    assert(bindings_rewrite_value_id(&environment, y->var_id,
+        binding_value_from_atom(effect)));
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(root == effect); /* Readiness must still inspect this actual call. */
+    view.expression = open;
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(root == open && root->kind == ATOM_VAR);
+    view.expression = x;
+    assert(bindings_rewrite_value_id(&environment, y->var_id,
+        binding_value_from_atom(x)));
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    assert(root == NULL);
+    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    Atom *contextual = atom_expr2(arena, atom_symbol(arena, "OperationBox"), open);
+    assert(bindings_rewrite_value_id(&environment, y->var_id,
+        binding_value_from_context(contextual, epoch)));
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    assert(root == NULL);
+    bindings_free(&environment);
+
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_add_var_fresh(&builder, y, eleven));
+    uint32_t first = builder.current.len;
+    VarId ids[] = {x->var_id};
+    Atom *variables[] = {x};
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    assert(bindings_activation_view_prepare(&frame, &builder, ids, variables,
+        1u, epoch, first));
+    Atom *slot = atom_var_like(arena, x, var_epoch_id(x->var_id, epoch));
+    assert(slot && bindings_builder_add_var_fresh(&builder, slot, y));
+    view = (PettaMachineOperationView){.expression=x, .environment=&builder.current,
+        .activation_epoch=epoch, .activation_first_entry=first};
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(root == eleven);
+    view.activation_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    assert(root == NULL); /* A different activation cannot borrow this slot. */
+    view.activation_epoch = epoch;
+    view.activation_first_entry = builder.current.len + 1u;
+    assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_INVALID_V1);
+    assert(root == NULL);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&builder);
+    puts("PASS: operation view follows captured aliases without forcing and refuses cycles or foreign/open activation roots");
+}
+
+typedef struct {
+    size_t remaining;
+    size_t variable_returns;
+    size_t denied_calls;
+    size_t typed_calls;
+    PettaMachineOperation last_operation;
+    bool deny_all;
+} OperandPermitProbe;
+
+static bool permit_operand_transition(void *raw) {
+    OperandPermitProbe *probe = raw;
+    if (!probe->remaining) return false;
+    probe->remaining--;
+    return true;
+}
+
+static bool permit_operand_operation(void *raw, Space *space,
+        PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    (void)space;
+    OperandPermitProbe *probe = raw;
+    probe->last_operation = operation;
+    if (operation == PETTA_MACHINE_OPERATION_LOCAL && view &&
+        view->expression && view->expression->kind == ATOM_VAR)
+        probe->variable_returns++;
+    Atom *root = NULL;
+    if (operation == PETTA_MACHINE_OPERATION_CALL &&
+        petta_machine_operation_view_root(view, &root) == CETTA_GSLT_TERM_VIEW_OK_V1 &&
+        atom_head_symbol_id(root) == g_builtin_syms.add_atom) {
+        probe->denied_calls++;
+        return false;
+    }
+    return !probe->deny_all;
+}
+
+static bool prepare_operand_he_type(void *raw, Space *space, Arena *arena,
+        Atom *source, Atom *type, bool *handled, bool *untyped,
+        PettaTypeCall **calls, uint32_t *count, OutcomeSet *outcomes) {
+    (void)space; (void)arena; (void)source; (void)type;
+    (void)handled; (void)untyped; (void)calls; (void)count; (void)outcomes;
+    ((OperandPermitProbe *)raw)->typed_calls++;
+    return false;
+}
+
+static void test_owned_operation_source_role(
+        Space *space, Arena *arena) {
+    Atom *variable = atom_var_with_id(arena, "operation-value", fresh_var_id());
+    Atom *effect = parse_one(arena, "(add-atom &self (OperationNotExecuted 7))");
+    Bindings seed;
+    bindings_init(&seed);
+    assert(bindings_add_var(&seed, variable, effect));
+    OperandPermitProbe probe = {.remaining=1000u, .deny_all=true};
+    PettaMachineHost host = {.context=&probe,
+        .permit_transition=permit_operand_transition,
+        .permit_operation=permit_operand_operation};
+    PettaMachine machine = {0};
+    assert(petta_machine_init(&machine, space, arena, variable, &seed, &host));
+    Atom *answer = NULL; Bindings environment;
+    for (size_t i=0u; i<3u; ++i) {
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+        assert(answer == NULL && probe.remaining == 1000u && probe.denied_calls == 0u);
+        bindings_free(&environment);
+    }
+    assert(probe.variable_returns == 3u);
+    probe.deny_all = false;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer, effect) && probe.denied_calls == 0u);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    /* The same captured value becomes executable only through explicit eval.
+     * Its effect must stop at CALL, before that transition spends any fuel. */
+    Atom *forced = atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.eval), variable);
+    probe.remaining = 1000u;
+    assert(petta_machine_init(&machine, space, arena, forced, &seed, &host));
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+    assert(probe.denied_calls == 1u && answer == NULL);
+    bindings_free(&environment);
+    size_t remaining = probe.remaining;
+    PettaMachineStats before, after;
+    assert(petta_machine_stats(&machine, &before));
+    for (size_t i=0u; i<3u; ++i) {
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+        assert(answer == NULL && probe.remaining == remaining);
+        assert(petta_machine_stats(&machine, &after) && after.transitions == before.transitions);
+        bindings_free(&environment);
+    }
+    assert(probe.denied_calls == 4u);
+    petta_machine_destroy(&machine);
+
+    /* HE's source-variable interpretation still owns its type obligation. */
+    probe.remaining = 1000u;
+    probe.deny_all = true;
+    host.prepare_he_type = prepare_operand_he_type;
+    assert(petta_machine_init(&machine, space, arena, variable, &seed, &host));
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+    assert(probe.last_operation == PETTA_MACHINE_OPERATION_CALL &&
+        probe.typed_calls == 0u && probe.remaining == 1000u);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&seed);
+    puts("PASS: source-variable return preserves effect-shaped data while explicit force retains its denied call before fuel");
+}
+
+static void test_owned_operation_permit(Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space, persistent, "(= (permit-operation-row) (Same 1 1))");
+    add_equation(space, persistent, "(= (permit-operation-row) (Same 2 2))");
+    Atom *query = parse_one(answers, "(permit-operation-row)");
+    OwnedContinuationAuthority authority = {.revision=8u, .remaining=1000u,
+        .operation_suspended=true};
+    PettaMachineHost host = {.context=&authority,
+        .admit_branch_capture=admit_effect_free_continuation,
+        .permit_transition=permit_owned_continuation_transition,
+        .permit_operation=permit_owned_operation};
+    PettaMachine machine = {0};
+    assert(petta_machine_init(&machine, space, answers, query, NULL, &host));
+    Atom *answer; Bindings environment;
+    for (size_t i=0u; i<3u; ++i) {
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+        bindings_free(&environment);
+        PettaMachineStats stats;
+        assert(petta_machine_stats(&machine, &stats) && stats.transitions == 0u);
+        assert(authority.remaining == 1000u && answer == NULL);
+    }
+    CettaOwnedContinuation image = {0};
+    assert(capture_relational_continuation(&machine, &image) == CETTA_CONTINUATION_READY);
+    void *payload = image.payload;
+    authority.revision++;
+    assert(restore_relational_continuation(&machine, &image) == CETTA_CONTINUATION_INVALIDATED);
+    assert(image.payload == payload);
+    authority.revision--;
+    assert(restore_relational_continuation(&machine, &image) == CETTA_CONTINUATION_READY);
+    authority.operation_suspended=false;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "(Same 1 1)")));
+    bindings_free(&environment);
+    size_t remaining=authority.remaining;
+    authority.operation_suspended=true;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+    assert(authority.remaining == remaining);
+    bindings_free(&environment);
+    authority.operation_suspended=false;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "(Same 2 2)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(authority.operation_checks > 4u);
+    petta_machine_destroy(&machine);
+    puts("PASS: denied operation retains goal and choice before fuel, with source authority on resume");
+}
+
+static void test_owned_continuation_transfer(
+        Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space, persistent, "(= (owned-transfer-choice) 1)");
+    add_equation(space, persistent, "(= (owned-transfer-choice) 1)");
+    add_equation(space, persistent, "(= (owned-transfer-choice) 2)");
+    Atom *query = parse_one(answers,
+        "(let $x (owned-transfer-choice) (TransferPair $x $x))");
+    Atom *expected[] = {
+        parse_one(answers, "(TransferPair 1 1)"),
+        parse_one(answers, "(TransferPair 1 1)"),
+        parse_one(answers, "(TransferPair 2 2)"),
+    };
+    PettaProgram *program = petta_program_new_with_host_intrinsics(NULL);
+    assert(program && petta_program_synchronize_space(program, space));
+    const PettaPlanNode *original = petta_program_plan_transient(program, query);
+    assert(original);
+    size_t transfers = 0u;
+    for (size_t budget = 0u; budget < 32u; ++budget) {
+        Arena source_plans;
+        arena_init(&source_plans);
+        const PettaPlanNode *plan = petta_plan_copy_semantics(&source_plans, original);
+        assert(plan);
+        OwnedContinuationAuthority from = {.revision=41u, .remaining=budget, .domain=3u};
+        OwnedContinuationAuthority to = {.revision=41u, .remaining=1000u, .domain=3u};
+        PettaMachineHost source_host = {
+            .context=&from, .admit_branch_capture=admit_effect_free_continuation,
+            .admit_branch_transfer=admit_owned_continuation_transfer,
+            .permit_transition=permit_owned_continuation_transition,
+        };
+        PettaMachineHost target_host = source_host;
+        target_host.context = &to;
+        PettaMachine source = {0}, target = {0};
+        assert(petta_machine_init_with_plan(
+            &source, space, answers, query, plan, NULL, &source_host));
+        assert(petta_machine_init(&target, space, answers, query, NULL, &target_host));
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(&source, &answer, &environment);
+        size_t seen = step == PETTA_MACHINE_STEP_ANSWER ? 1u : 0u;
+        if (seen) assert(atom_alpha_eq(answer, expected[0]));
+        bindings_free(&environment);
+        assert(step == PETTA_MACHINE_STEP_SUSPENDED || step == PETTA_MACHINE_STEP_ANSWER);
+        CettaOwnedContinuation image = {0};
+        assert(capture_relational_continuation(&source, &image) == CETTA_CONTINUATION_READY);
+        void *original_payload = image.payload;
+        /* Equal capture tokens alone do not establish context equivalence. */
+        to.domain++;
+        assert(petta_machine_transfer_continuation(&target, &source, &image) ==
+            CETTA_CONTINUATION_UNSUPPORTED);
+        assert(image.payload == original_payload);
+        to.domain--;
+        to.revision++;
+        assert(petta_machine_transfer_continuation(&target, &source, &image) ==
+            CETTA_CONTINUATION_INVALIDATED);
+        assert(image.payload == original_payload);
+        to.revision--;
+        assert(restore_relational_continuation(&target, &image) == CETTA_CONTINUATION_UNSUPPORTED);
+        if (budget == 0u) {
+            petta_machine_destroy(&target);
+            target_host.empty_symbol_is_no_result = true;
+            assert(petta_machine_init(&target, space, answers, query, NULL, &target_host));
+            assert(petta_machine_transfer_continuation(&target, &source, &image) ==
+                CETTA_CONTINUATION_UNSUPPORTED);
+            assert(image.payload == original_payload);
+            petta_machine_destroy(&target);
+            target_host.empty_symbol_is_no_result = false;
+            assert(petta_machine_init(&target, space, answers, query, NULL, &target_host));
+        }
+        assert(petta_machine_transfer_continuation(&target, &source, &image) ==
+            CETTA_CONTINUATION_READY);
+        assert(image.payload == NULL);
+        petta_machine_destroy(&source);
+        arena_free(&source_plans);
+        while ((step = petta_machine_next(&target, &answer, &environment)) ==
+                PETTA_MACHINE_STEP_ANSWER) {
+            assert(seen < 3u && atom_alpha_eq(answer, expected[seen++]));
+            bindings_free(&environment);
+        }
+        bindings_free(&environment);
+        assert(step == PETTA_MACHINE_STEP_EXHAUSTED && seen == 3u);
+        petta_machine_destroy(&target);
+        transfers++;
+    }
+    assert(transfers == 32u);
+    petta_program_free(program);
+    puts("PASS: checked machine transfer retains duplicate answers and source plans after source destruction");
+    puts("PASS: transfer refuses context, authority and dialect changes without consuming the image");
+}
+
+static void assert_owned_carrier_environment(
+        const Bindings *environment, uint64_t cell_id,
+        VarId visible, VarId branch_variable, VarId coefficient,
+        StateCell *state, uint64_t occurrence) {
+    assert(environment);
+    Bindings inspected;
+    assert(bindings_clone(&inspected, environment));
+    PrimeNeedCellView cell = {0};
+    Atom *branch_value = NULL;
+    const CettaWeightLedger *weights = bindings_weight_view(&inspected);
+    assert(prime_need_snapshot_lookup(bindings_need_view(&inspected), cell_id, &cell));
+    assert(cell.origin == cell.cached &&
+        bindings_lookup_value_id(&inspected, visible).skeleton == cell.origin);
+    assert(prime_need_branch_state_value(bindings_branch_state_view(&inspected),
+        state, &branch_value) &&
+        bindings_lookup_value_id(&inspected, branch_variable).skeleton == branch_value);
+    assert(weights->length == 1u && weights->last &&
+        weights->last->occurrence == 711u && weights->last->dependency == 811u &&
+        weights->last->value == bindings_lookup_value_id(&inspected, coefficient).skeleton &&
+        cetta_weight_ledger_handler(weights, 711u) == 911u);
+    assert(cell.origin != branch_value && cell.origin != weights->last->value &&
+        branch_value != weights->last->value && atom_eq(cell.origin, branch_value) &&
+        atom_eq(cell.origin, weights->last->value));
+    assert(bindings_need_view(&inspected)->max_storage_key == 911u &&
+        bindings_occurrence_token(&inspected) == occurrence);
+    bindings_free(&inspected);
+}
+
+static void test_owned_continuation_carrier_transfer(
+        Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space, persistent, "(= (carrier-transfer-choice) 1)");
+    add_equation(space, persistent, "(= (carrier-transfer-choice) 1)");
+    add_equation(space, persistent, "(= (carrier-transfer-choice) 2)");
+    Atom *query = parse_one(answers,
+        "(let $x (carrier-transfer-choice) (CarrierPair $x $x))");
+    Atom *expected[] = {
+        parse_one(answers, "(CarrierPair 1 1)"),
+        parse_one(answers, "(CarrierPair 1 1)"),
+        parse_one(answers, "(CarrierPair 2 2)"),
+    };
+    for (size_t budget = 0u; budget < 32u; ++budget) {
+        Arena seed_owner;
+        arena_init(&seed_owner);
+        Atom *value = atom_expr2(&seed_owner, atom_symbol(&seed_owner, "Carrier"),
+                                 atom_int(&seed_owner, 17));
+        PrimeNeedSnapshot root = {0}, allocated, running, completed, elided;
+        uint64_t cell_id = 0u, dead_cell = 0u;
+        assert(prime_need_snapshot_begin(&root) &&
+            prime_need_snapshot_allocate_persisted(&seed_owner, &root, value, 41u,
+                &allocated, &cell_id) &&
+            prime_need_snapshot_start_evaluation(&seed_owner, &allocated, cell_id,
+                83u, &running) &&
+            prime_need_snapshot_resolve_value(&seed_owner, &running, cell_id, 83u,
+                value, &completed) &&
+            prime_need_snapshot_allocate_persisted(&seed_owner, &completed, value,
+                911u, &elided, &dead_cell));
+        completed.max_storage_key = elided.max_storage_key;
+        /* The external state identity outlives both machines; this control
+         * retires the captured Atom owner, not that separately owned resource. */
+        StateCell state = {0};
+        PrimeNeedBranchState branch = {0}, written;
+        assert(prime_need_branch_state_begin(&seed_owner, &branch) &&
+            prime_need_branch_state_write(&seed_owner, &branch, &state, value,
+                value, &written));
+        Atom *branch_value = NULL;
+        assert(prime_need_branch_state_value(&written, &state, &branch_value));
+        CettaWeightLedger empty = {0}, factors, handled, selected;
+        assert(cetta_weight_ledger_append(&seed_owner, &empty, 711u, 811u, value,
+                &factors) &&
+            cetta_weight_ledger_handle(&seed_owner, &factors, &empty, 911u,
+                &handled, &selected));
+        Bindings seed;
+        bindings_init(&seed);
+        VarId visible = fresh_var_id(), branch_variable = fresh_var_id();
+        VarId coefficient = fresh_var_id();
+        assert(bindings_add_id(&seed, visible, SYMBOL_ID_NONE, value) &&
+            bindings_add_id(&seed, branch_variable, SYMBOL_ID_NONE, branch_value) &&
+            bindings_add_id(&seed, coefficient, SYMBOL_ID_NONE, handled.last->value) &&
+            bindings_refresh_occurrence_token(&seed));
+        *bindings_need_mut(&seed) = completed;
+        *bindings_branch_state_mut(&seed) = written;
+        *bindings_weight_mut(&seed) = handled;
+        uint64_t occurrence = bindings_occurrence_token(&seed);
+        assert_owned_carrier_environment(&seed, cell_id, visible, branch_variable,
+            coefficient, &state, occurrence);
+        OwnedContinuationAuthority from = {.revision=61u, .remaining=budget, .domain=7u};
+        OwnedContinuationAuthority to = {.revision=61u, .remaining=1000u, .domain=7u};
+        PettaMachineHost host = {
+            .context=&from, .admit_branch_capture=admit_effect_free_continuation,
+            .admit_branch_transfer=admit_owned_continuation_transfer,
+            .permit_transition=permit_owned_continuation_transition,
+        };
+        PettaMachineHost target_host = host;
+        target_host.context = &to;
+        PettaMachine source = {0}, target = {0};
+        assert(petta_machine_init(&source, space, answers, query, &seed, &host) &&
+            petta_machine_init(&target, space, answers, query, NULL, &target_host));
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(&source, &answer, &environment);
+        size_t seen = step == PETTA_MACHINE_STEP_ANSWER ? 1u : 0u;
+        if (seen) assert(atom_alpha_eq(answer, expected[0]));
+        bindings_free(&environment);
+        assert(step == PETTA_MACHINE_STEP_SUSPENDED || step == PETTA_MACHINE_STEP_ANSWER);
+        assert_owned_carrier_environment(petta_machine_pending_environment(&source),
+            cell_id, visible, branch_variable, coefficient, &state, occurrence);
+        CettaOwnedContinuation image = {0};
+        assert(capture_relational_continuation(&source, &image) == CETTA_CONTINUATION_READY &&
+            petta_machine_transfer_continuation(&target, &source, &image) == CETTA_CONTINUATION_READY);
+        assert_owned_carrier_environment(petta_machine_pending_environment(&target),
+            cell_id, visible, branch_variable, coefficient, &state, occurrence);
+        petta_machine_destroy(&source);
+        bindings_free(&seed);
+        arena_free(&seed_owner);
+        assert_owned_carrier_environment(petta_machine_pending_environment(&target),
+            cell_id, visible, branch_variable, coefficient, &state, occurrence);
+        while ((step = petta_machine_next(&target, &answer, &environment)) ==
+                PETTA_MACHINE_STEP_ANSWER) {
+            assert(seen < 3u && atom_alpha_eq(answer, expected[seen++]));
+            bindings_free(&environment);
+        }
+        bindings_free(&environment);
+        assert(step == PETTA_MACHINE_STEP_EXHAUSTED && seen == 3u);
+        petta_machine_destroy(&target);
+    }
+    puts("PASS: owned provider transfer preserves actual carrier aliases and distinct equal roots at 32 cuts");
+    puts("PASS: carrier transfer keeps claims, key reservations and duplicate answers after source retirement");
+}
+
+typedef struct {
+    size_t references;
+    size_t *destroyed;
+    Space space;
+} OwnedResourceProbe;
+
+typedef struct {
+    OwnedContinuationAuthority authority;
+    OwnedResourceProbe *resource;
+    const void *scope;
+    bool admitted;
+} ResourceCaptureProbe;
+
+static void owned_resource_probe_retain(void *raw) {
+    OwnedResourceProbe *resource = raw;
+    assert(resource->references > 0u && resource->references < SIZE_MAX);
+    resource->references++;
+}
+
+static void owned_resource_probe_release(void *raw) {
+    OwnedResourceProbe *resource = raw;
+    assert(resource->references > 0u);
+    if (--resource->references) return;
+    ++*resource->destroyed;
+    space_free(&resource->space);
+    free(resource);
+}
+
+static bool capture_probe_resource(void *raw, const Atom *atom,
+                                   PettaMachineResourceLease *lease) {
+    ResourceCaptureProbe *probe = raw;
+    if (!probe->admitted || !atom || atom->kind != ATOM_GROUNDED ||
+        atom->ground.gkind != GV_SPACE || atom->ground.ptr != &probe->resource->space)
+        return false;
+    *lease = (PettaMachineResourceLease){.scope=probe->scope,.owner=probe->resource,
+        .retain=owned_resource_probe_retain,.release=owned_resource_probe_release};
+    return true;
+}
+
+static void test_owned_resource_transfer(Space *space) {
+    size_t destroyed = 0u;
+    unsigned scope = 1u, other_scope = 2u;
+    OwnedResourceProbe *resource = calloc(1u, sizeof(*resource));
+    assert(resource);
+    resource->references = 1u;
+    resource->destroyed = &destroyed;
+    space_init(&resource->space);
+    Space *identity = &resource->space;
+    Arena authored, answers;
+    arena_init(&authored); arena_init(&answers);
+    Atom *query = atom_expr2(&authored, atom_symbol(&authored,"HeldResource"),
+        atom_space(&authored,identity));
+    assert(query && !atom_graph_is_closed_for_arena(&authored,query));
+    ResourceCaptureProbe from = {
+        .authority={.revision=3u,.domain=7u},.resource=resource,.scope=&scope};
+    ResourceCaptureProbe to = from;
+    to.authority.remaining = 1000u;
+    PettaMachineHost source_host = {.context=&from,
+        .admit_branch_capture=admit_effect_free_continuation,
+        .admit_branch_transfer=admit_owned_continuation_transfer,
+        .permit_transition=permit_owned_continuation_transition,
+        .resource_scope=&scope,.capture_resource=capture_probe_resource};
+    PettaMachineHost target_host = source_host;
+    target_host.context=&to;
+    PettaMachine source={0}, target={0};
+    assert(petta_machine_init(&source,space,&answers,query,NULL,&source_host));
+    Atom *answer=NULL; Bindings environment;
+    assert(petta_machine_next(&source,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    bindings_free(&environment);
+    CettaOwnedContinuation image={0};
+    assert(capture_relational_continuation(&source,&image)==CETTA_CONTINUATION_CAPACITY);
+    assert(image.payload==NULL && from.authority.remaining==0u && resource->references==1u);
+    from.admitted=true;to.admitted=true;
+    assert(capture_relational_continuation(&source,&image)==CETTA_CONTINUATION_READY);
+    assert(resource->references>1u);
+    void *original=image.payload;
+    target_host.resource_scope=&other_scope;
+    assert(petta_machine_init(&target,space,&answers,query,NULL,&target_host));
+    assert(petta_machine_transfer_continuation(&target,&source,&image)==CETTA_CONTINUATION_UNSUPPORTED);
+    assert(image.payload==original && destroyed==0u);
+    petta_machine_destroy(&target);
+    target_host.resource_scope=&scope;
+    assert(petta_machine_init(&target,space,&answers,query,NULL,&target_host));
+    to.authority.revision++;
+    assert(petta_machine_transfer_continuation(&target,&source,&image)==CETTA_CONTINUATION_INVALIDATED);
+    assert(image.payload==original && destroyed==0u);
+    to.authority.revision--;
+    assert(petta_machine_transfer_continuation(&target,&source,&image)==CETTA_CONTINUATION_READY);
+    petta_machine_destroy(&source);
+    arena_free(&authored);
+    owned_resource_probe_release(resource);
+    assert(destroyed==0u);
+    assert(petta_machine_next(&target,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(answer && answer->kind==ATOM_EXPR && answer->expr.len==2u &&
+        answer->expr.elems[1]->kind==ATOM_GROUNDED &&
+        answer->expr.elems[1]->ground.gkind==GV_SPACE &&
+        answer->expr.elems[1]->ground.ptr==identity);
+    bindings_free(&environment);
+    assert(petta_machine_next(&target,&answer,&environment)==PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&target);
+    assert(destroyed==0u);
+    arena_free(&answers);
+    assert(destroyed==1u);
+    puts("PASS: captured resource identity outlives source and destination machines through an exported owner pin");
+    puts("PASS: resource capture and transfer refuse missing leases, foreign scope and changed authority without consuming work");
 }
 
 static CettaContinuationStatus expand_relational_frontier(
@@ -12740,6 +13410,101 @@ static void test_act_incremental_compression(void) {
          " advice");
 }
 
+typedef struct {
+    OwnedContinuationAuthority authority;
+    bool refuse;
+} SuperposeCaptureProbe;
+
+static CettaBranchAdmission admit_superpose_capture(void *raw, Space *space) {
+    SuperposeCaptureProbe *probe = raw;
+    CettaBranchAdmission admission = admit_effect_free_continuation(raw, space);
+    if (probe->refuse)
+        admission.capacity = CETTA_BRANCH_CAPTURE_INLINE_ONLY;
+    return admission;
+}
+
+static void superpose_expect(PettaMachine *machine,
+        SuperposeCaptureProbe *probe, const SymbolId *names, size_t count) {
+    probe->authority.remaining = 1000u;
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t i = 0u; i < count; ++i) {
+        assert(petta_machine_next(machine, &answer, &environment) ==
+            PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_is_symbol_id(answer, names[i]));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(machine, &answer, &environment) ==
+        PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+}
+
+static void test_owned_superpose_partition(Space *space, Arena *answers) {
+    SymbolId expected[] = {symbol_intern_cstr(g_symbols, "partition-left"),
+        symbol_intern_cstr(g_symbols, "partition-left"),
+        symbol_intern_cstr(g_symbols, "partition-right")};
+    Atom *query = parse_one(answers,
+        "(superpose (partition-left partition-left partition-right))");
+    for (unsigned cancel = 0u; cancel < 2u; ++cancel) {
+        SuperposeCaptureProbe probe = {.authority={.revision=731u}};
+        PettaMachineHost host = {.context=&probe,
+            .admit_branch_capture=admit_superpose_capture,
+            .permit_transition=permit_owned_continuation_transition};
+        PettaMachine machine = {0};
+        probe.authority.remaining = 1u;
+        assert(petta_machine_init(&machine,space,answers,query,NULL,&host));
+        Atom *answer = NULL; Bindings environment;
+        assert(petta_machine_next(&machine,&answer,&environment) == PETTA_MACHINE_STEP_SUSPENDED);
+        bindings_free(&environment);
+        Bindings before;
+        assert(bindings_clone(&before,petta_machine_pending_environment(&machine)));
+        size_t remaining = probe.authority.remaining;
+        CettaContinuationBatch refused = {0};
+        probe.refuse = true;
+        assert(expand_relational_frontier(&machine,&refused) == CETTA_CONTINUATION_UNSUPPORTED);
+        assert(refused.length == 0u && refused.items == NULL);
+        assert(probe.authority.remaining == remaining);
+        Bindings after;
+        assert(bindings_clone(&after,petta_machine_pending_environment(&machine)));
+        assert(bindings_eq(&before,&after));
+        bindings_free(&after);
+        probe.refuse = false;
+        CettaContinuationBatch frontier = {0};
+        assert(expand_relational_frontier(&machine,&frontier) == CETTA_CONTINUATION_READY);
+        assert(frontier.length == 3u && probe.authority.remaining == remaining);
+        CettaContinuationStore store;
+        cetta_continuation_store_init(&store);
+        assert(cetta_continuation_store_append_batch(&store,&frontier));
+        for (size_t i = 0u; i < 3u; ++i) {
+            const CettaOwnedContinuation *item = cetta_continuation_store_at(&store,i);
+            assert(item && item->payload && item->occurrence_id != 0u);
+            for (size_t j = 0u; j < i; ++j) {
+                const CettaOwnedContinuation *prior = cetta_continuation_store_at(&store,j);
+                assert(item->occurrence_id != prior->occurrence_id && item->payload != prior->payload);
+            }
+        }
+        bindings_free(&before);
+        if (cancel) {
+            cetta_continuation_store_destroy(&store);
+            superpose_expect(&machine,&probe,expected,3u);
+        } else {
+            /* Preparing the images preserves the original cursor. Each
+             * selected image owns exactly its one partitioned alternative. */
+            superpose_expect(&machine,&probe,expected,3u);
+            for (size_t i = 0u; i < 3u; ++i) {
+                CettaOwnedContinuation selected = {0};
+                assert(cetta_continuation_store_take(&store,0u,&selected));
+                assert(restore_relational_continuation(&machine,&selected) == CETTA_CONTINUATION_READY);
+                superpose_expect(&machine,&probe,&expected[i],1u);
+                cetta_owned_continuation_destroy(&selected);
+            }
+            cetta_continuation_store_destroy(&store);
+        }
+        petta_machine_destroy(&machine);
+    }
+    puts("PASS: superpose partitions equal siblings once, refusal and cancellation preserve original cursor");
+}
+
 /* A host generation may be replaced while an open equation cursor keeps
  * exported ground data.  Its next answer must not read the retired arena. */
 static void test_open_cursor_stable_arena_detach(
@@ -12867,12 +13632,20 @@ int main(int argc, char **argv) {
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
     test_controller_batch_ranker();
+    test_continuation_ownership_without_census();
     test_continuation_hub_atomic_reclamation();
     test_observation_frozen_environment(&answers);
     test_observation_indexed_control_plan();
     test_branch_capture_algebra();
     test_owned_equation_continuation_roundtrip(
         &space, &persistent, &answers);
+    test_owned_continuation_transfer(&space, &persistent, &answers);
+    test_owned_continuation_carrier_transfer(&space, &persistent, &answers);
+    test_owned_resource_transfer(&space);
+    test_owned_operation_view(&answers);
+    test_owned_operation_source_role(&space, &answers);
+    test_owned_operation_permit(&space, &persistent, &answers);
+    test_owned_superpose_partition(&space, &answers);
     test_relational_frontier_expansion(
         &space, &persistent, &answers);
     test_fifo_starvation_and_duplicate_canaries(

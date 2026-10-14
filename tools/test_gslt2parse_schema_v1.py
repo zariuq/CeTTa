@@ -71,7 +71,7 @@ EXPECTED_MEGALODON_DIGEST = (
     "2eba88d8bb4681540cb84bf6dd15e183cf83ad2821ae682cb94a754b4f2eb36a"
 )
 EXPECTED_CETTA_PRIME_READER_DIGEST = (
-    "993ef4d50f23ed8738a4a35cac9b09855b4843a753e75f6e80290451298b0438"
+    "7d90c256218c4c469ac451332d6d9713d11536fc4818f8a6bf8e4a886d3f54eb"
 )
 EXPECTED_CETTA_RHO_READER_DIGEST = (
     "722739d757a25e5ff6c982682f9fb8e024db8148707fcaf8868f4035d2b6b4b8"
@@ -89,7 +89,7 @@ EXPECTED_COMPILER_DIGEST = (
     "0186885115acae44b9e982bc6fc19c236f35fda523e3c94abc1a96c0d4e509a9"
 )
 EXPECTED_PARSER_PACK_COMPILER_DIGEST = (
-    "493efbe57646f3e566e02e5e112d4243728a389f0b1ad1eb6bb1bd5e0cdfcdb5"
+    "944cd230567183bc8e184380d5b4ff11f3dbfd5f655855164842495a187f75b4"
 )
 PROVENANCE_FIELDS = (
     "artifact_id",
@@ -153,6 +153,27 @@ def check_provenance() -> None:
 
 
 def main() -> int:
+    # Theory inventories and proof DAGs use long canonical linked lists.
+    deep: schema.SExpr = schema.Symbol("Nil")
+    for index in range(4096):
+        deep = (schema.Symbol("Cons"), index, deep)
+    rendered_deep = schema.render(deep)
+    parsed_deep = schema.parse_sexprs(rendered_deep)
+    assert len(parsed_deep) == 1 and schema.render(parsed_deep[0]) == rendered_deep
+    for malformed in [rendered_deep[:-1], rendered_deep + ")"]:
+        try:
+            schema.parse_sexprs(malformed)
+        except schema.SchemaError:
+            pass
+        else:
+            raise SystemExit("malformed deep inventory accepted")
+    for invalid in [schema.Symbol("bad name"), schema.Variable("_"), ")"]:
+        try:
+            schema.render(invalid)
+        except schema.SchemaError:
+            pass
+        else:
+            raise SystemExit("invalid serialization input accepted")
     passed = 0
 
     admitted = schema.admit([CORE, TOY])

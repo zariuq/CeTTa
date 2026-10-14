@@ -277,13 +277,25 @@ def run_frontier(frontier: str | None):
     return forms, completion, plain.stdout
 
 
-def admitted(forms, form: int) -> list[Answer]:
+def admitted(forms, form: int, head: str | None = None) -> list[Answer]:
+    def matches(event) -> bool:
+        if head is None:
+            return True
+        for field in event[3:]:
+            if (isinstance(field, list) and len(field) == 2 and
+                    field[0] == "before"):
+                equation = field[1]
+                return (isinstance(equation, list) and len(equation) == 3 and
+                        equation[0] == "=" and isinstance(equation[1], list) and
+                        len(equation[1]) > 0 and equation[1][0] == head)
+        return False
+
     return [answer for answer in forms[form]
-            if answer.events_named("use-equation")]
+            if any(matches(event) for event in answer.events_named("use-equation"))]
 
 
-def admitted_bag(forms, form: int) -> Counter[str]:
-    return Counter(answer.value for answer in admitted(forms, form))
+def admitted_bag(forms, form: int, head: str | None = None) -> Counter[str]:
+    return Counter(answer.value for answer in admitted(forms, form, head))
 
 
 def producer_count(forms, form: int) -> int:
@@ -714,9 +726,10 @@ def main() -> int:
         )
 
         def experimental12():
-            require(admitted_bag(observed, 16) == Counter({
+            # A producer's equation receipt does not admit its caller.
+            require(admitted_bag(observed, 16, "tournament:c12-before-use") == Counter({
                 "c12-before-a": 1, "c12-before-b": 1,
-            }) and admitted_bag(observed, 19) == Counter({
+            }) and admitted_bag(observed, 19, "tournament:c12-after-use") == Counter({
                 "c12-after-a": 1, "c12-after-b": 1,
             }), "transactional effect values changed")
             require(value_bag(observed, 17) == Counter({"0": 1}) and

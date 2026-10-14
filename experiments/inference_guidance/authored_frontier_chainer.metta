@@ -6,60 +6,62 @@
 ; kernel.  These constructor shapes are deliberately explicit: reconstructing
 ; nested dependent terms through a generic cons-atom fold exposes child
 ; applications to ordinary evaluation before the enclosing term is checked.
-(= (proof:build (proof:constructor $name ()) ())
+; A quotation is sealed, so the rule data arrives as code too (proof:reify
+; lifts it) and every part of a built proof is a variable of a quoted pattern.
+(= (proof:build (quote (proof:constructor $name ())) ())
    (quote $name))
-(= (proof:build (proof:constructor $name ()) ((quote $p1)))
+(= (proof:build (quote (proof:constructor $name ())) ((quote $p1)))
    (quote ($name $p1)))
-(= (proof:build (proof:constructor $name ())
+(= (proof:build (quote (proof:constructor $name ()))
                 ((quote $p1) (quote $p2)))
    (quote ($name $p1 $p2)))
-(= (proof:build (proof:constructor $name ())
+(= (proof:build (quote (proof:constructor $name ()))
                 ((quote $p1) (quote $p2) (quote $p3)))
    (quote ($name $p1 $p2 $p3)))
 
-(= (proof:build (proof:constructor $name ($a1)) ())
+(= (proof:build (quote (proof:constructor $name ($a1))) ())
    (quote ($name $a1)))
-(= (proof:build (proof:constructor $name ($a1)) ((quote $p1)))
+(= (proof:build (quote (proof:constructor $name ($a1))) ((quote $p1)))
    (quote ($name $a1 $p1)))
-(= (proof:build (proof:constructor $name ($a1))
+(= (proof:build (quote (proof:constructor $name ($a1)))
                 ((quote $p1) (quote $p2)))
    (quote ($name $a1 $p1 $p2)))
-(= (proof:build (proof:constructor $name ($a1))
+(= (proof:build (quote (proof:constructor $name ($a1)))
                 ((quote $p1) (quote $p2) (quote $p3)))
    (quote ($name $a1 $p1 $p2 $p3)))
 
-(= (proof:build (proof:constructor $name ($a1 $a2)) ())
+(= (proof:build (quote (proof:constructor $name ($a1 $a2))) ())
    (quote ($name $a1 $a2)))
-(= (proof:build (proof:constructor $name ($a1 $a2)) ((quote $p1)))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2))) ((quote $p1)))
    (quote ($name $a1 $a2 $p1)))
-(= (proof:build (proof:constructor $name ($a1 $a2))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2)))
                 ((quote $p1) (quote $p2)))
    (quote ($name $a1 $a2 $p1 $p2)))
-(= (proof:build (proof:constructor $name ($a1 $a2))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2)))
                 ((quote $p1) (quote $p2) (quote $p3)))
    (quote ($name $a1 $a2 $p1 $p2 $p3)))
 
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3)) ())
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3))) ())
    (quote ($name $a1 $a2 $a3)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3)))
                 ((quote $p1)))
    (quote ($name $a1 $a2 $a3 $p1)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3)))
                 ((quote $p1) (quote $p2)))
    (quote ($name $a1 $a2 $a3 $p1 $p2)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3)))
                 ((quote $p1) (quote $p2) (quote $p3)))
    (quote ($name $a1 $a2 $a3 $p1 $p2 $p3)))
 
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3 $a4)) ())
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3 $a4))) ())
    (quote ($name $a1 $a2 $a3 $a4)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3 $a4))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3 $a4)))
                 ((quote $p1)))
    (quote ($name $a1 $a2 $a3 $a4 $p1)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3 $a4))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3 $a4)))
                 ((quote $p1) (quote $p2)))
    (quote ($name $a1 $a2 $a3 $a4 $p1 $p2)))
-(= (proof:build (proof:constructor $name ($a1 $a2 $a3 $a4))
+(= (proof:build (quote (proof:constructor $name ($a1 $a2 $a3 $a4)))
                 ((quote $p1) (quote $p2) (quote $p3)))
    (quote ($name $a1 $a2 $a3 $a4 $p1 $p2 $p3)))
 
@@ -70,8 +72,8 @@
        (let $pair (decons-atom $declarations)
          (unify ($declaration $remaining) $pair
            (let $_ (add-atom $space $declaration)
-             (proof:load-reference-space $space $remaining))
-           (proof:invalid-candidate-list $declarations)))))
+             (proof:load-reference-space $space $remaining)){$_}
+           (proof:invalid-candidate-list $declarations))){$pair}))
 
 ; Populate an ordered Space from only the requested prefix of a ranked list.
 ; The bound is a readout decision: ranking itself still preserves every
@@ -85,8 +87,8 @@
              (unify ($declaration $remaining) $pair
                (let $_ (add-atom $space $declaration)
                  (proof:load-reference-prefix
-                   $space (- $limit 1) $remaining))
-               (proof:invalid-candidate-list $declarations))))))
+                   $space (- $limit 1) $remaining)){$_}
+               (proof:invalid-candidate-list $declarations))){$pair})))
 
 ; Uniform authored relation: facts and each supported Horn arity are separate
 ; equations.  This leaves indexing, freshening, and branch substitutions to the
@@ -95,7 +97,7 @@
 (= (proof:derive $space $_ $goal)
    (match $space
      (: $rule-data $goal)
-     (proof:tree $rule-data ())))
+     (proof:tree $rule-data ())){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -103,7 +105,7 @@
      (chain
        (proof:derive $space $depth $premise1)
        $proof1
-       (proof:tree $rule-data ($proof1)))))
+       (proof:tree $rule-data ($proof1)))){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -114,7 +116,7 @@
        (chain
          (proof:derive $space $depth $premise2)
          $proof2
-         (proof:tree $rule-data ($proof1 $proof2))))))
+         (proof:tree $rule-data ($proof1 $proof2))))){$goal})
 
 (= (proof:derive $space (S $depth) $goal)
    (match $space
@@ -128,22 +130,22 @@
          (chain
            (proof:derive $space $depth $premise3)
            $proof3
-           (proof:tree $rule-data ($proof1 $proof2 $proof3)))))))
+           (proof:tree $rule-data ($proof1 $proof2 $proof3)))))){$goal})
 
 (= (proof:reify (proof:tree $rule-data ()))
-   (proof:build $rule-data ()))
+   (proof:build (lift $rule-data) ()))
 
 (= (proof:reify (proof:tree $rule-data ($tree1)))
    (let $proof1 (proof:reify $tree1)
-     (proof:build $rule-data ($proof1))))
+     (proof:build (lift $rule-data) ($proof1))))
 
 (= (proof:reify (proof:tree $rule-data ($tree1 $tree2)))
    (let* (($proof1 (proof:reify $tree1))
           ($proof2 (proof:reify $tree2)))
-     (proof:build $rule-data ($proof1 $proof2))))
+     (proof:build (lift $rule-data) ($proof1 $proof2))))
 
 (= (proof:reify (proof:tree $rule-data ($tree1 $tree2 $tree3)))
    (let* (($proof1 (proof:reify $tree1))
           ($proof2 (proof:reify $tree2))
           ($proof3 (proof:reify $tree3)))
-     (proof:build $rule-data ($proof1 $proof2 $proof3))))
+     (proof:build (lift $rule-data) ($proof1 $proof2 $proof3))))

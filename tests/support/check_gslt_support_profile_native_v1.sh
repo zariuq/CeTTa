@@ -19,7 +19,7 @@ profile_sources=(src/gslt_support_profile_v1.c native/operational_language_def_v
     src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c src/atom.c src/binding/frame_identity.c src/symbol.c
     src/name_key.c src/native_sha256.c src/parser.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c
     src/gslt_support_transform_runtime.c src/gslt_pure_provider_v1.c src/mm2_lower.c
-    src/prime_need.c src/variant_shape.c)
+    src/prime_need.c src/native_cost.c src/weight_ledger.c src/variant_shape.c)
 profile_observer=tests/support/test_gslt_support_profile_emission_v1.c
 profile_unit=tests/support/test_gslt_support_profile_v1.c
 profile_runtime=tests/support/test_gslt_support_transform_runtime.c

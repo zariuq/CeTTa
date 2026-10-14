@@ -1,0 +1,7 @@
+[(quote (lam x (+ (* 3 (* x (* x x))) 10)))]
+[(Agree True True True True)]
+[34]
+[34]
+[(quote (lam x 42))]
+["@(lam x (+ (* 3 (* x (* x x))) 10))"]
+[(Reread True 34)]

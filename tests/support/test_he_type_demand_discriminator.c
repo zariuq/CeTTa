@@ -77,7 +77,7 @@ int main(void) {
     for (size_t i = 0u; i < sizeof(subjects) / sizeof(*subjects); i++) {
         Atom *metatype = reference_metatype(&arena, subjects[i]);
         assert(metatype->kind == ATOM_SYMBOL);
-        assert(atom_meta_type_id(subjects[i]) == metatype->sym_id);
+        assert(atom_meta_type_id(subjects[i]) == atom_symbol_current_id(metatype));
         assert(atom_eq(get_meta_type(&arena, subjects[i]), metatype));
         for (size_t j = 0u; j < sizeof(expected) / sizeof(*expected); j++) {
             size_t before = arena_accounted_live_bytes(&arena);

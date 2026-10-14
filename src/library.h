@@ -244,6 +244,11 @@ typedef struct CettaLibraryContext {
      * which frees it through `petta_static_imports_free`. */
     void *petta_static_imports;
     void (*petta_static_imports_free)(void *imports);
+    /* The hosted HOL Light checker that Prime consults for HE-style
+     * declarations, in a private space loaded on first use; owned by the
+     * evaluator, which frees it through `prime_hol_guest_free`. */
+    void *prime_hol_guest;
+    void (*prime_hol_guest_free)(void *guest);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -261,6 +266,12 @@ void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
+/* Private structural Prime snapshots have no foreign capability service.
+ * The caller must independently validate every captured root and call. A
+ * false result still leaves an initialized context requiring normal free. */
+bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx);
+void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
+    CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);
 /* Track nested compatibility initialization attempts within a runner request.
  * Completed compatibility attempts do not cache refusals. Default profiles

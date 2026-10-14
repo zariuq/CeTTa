@@ -587,11 +587,23 @@ static void apply_bindings_replace(ApplyBindings *destination, ApplyBindings *so
     apply_bindings_init(source);
 }
 
-static bool apply_bind_domain(BindingsBuilder *builder, Atom *domain,
-                              Atom *argument, bool dependent) {
-    HeTypeDomain view = he_type_domain(domain, dependent);
-    return !view.binder || bindings_builder_add_var_fresh(builder, view.binder, argument);
+static HeTypeDomain apply_domain(const HeTypeApplicationServices *services,
+                                 Atom *domain, bool dependent) {
+    return services->domain ? services->domain(services->context, domain)
+        : he_type_domain(domain, dependent);
 }
+
+/* A name is instantiated in the later domains and in the result; only a
+ * variable binder enters the binding store. */
+static bool apply_bind_domain(const HeTypeApplicationServices *services,
+                              BindingsBuilder *builder, Atom *domain,
+                              Atom *argument, bool dependent) {
+    HeTypeDomain view = apply_domain(services, domain, dependent);
+    return !view.binder || view.binder->kind != ATOM_VAR ||
+           bindings_builder_add_var_fresh(builder, view.binder, argument);
+}
+
+#define HE_TYPE_TELESCOPE_NAMES 8u
 
 static bool apply_refine(const HeTypeApplicationServices *services,
                           Atom *actual, Atom *expected, BindingsBuilder *builder,
@@ -629,21 +641,29 @@ HeTypeApplicability he_type_call_applicable(
     ApplyBindings paths;
     apply_bindings_init(&paths);
     if (!apply_bindings_push(&paths)) return HE_TYPE_APPLICATION_INCOMPLETE;
+    Atom *names[HE_TYPE_TELESCOPE_NAMES];
+    Atom *named_arguments[HE_TYPE_TELESCOPE_NAMES];
+    size_t named = 0u;
     for (CettaExprIndex i = 0u; i < call.arity && paths.len; i++) {
         Atom *domain = signature->expr.elems[i + 1u];
+        if (named)
+            domain = services->instantiate(services->context, arena, domain,
+                                           names, named_arguments, named);
         Atom *argument = expression->expr.elems[i + 1u];
         if (services->source_argument)
             argument = services->source_argument(services->context, argument);
         ApplyBindings next;
         apply_bindings_init(&next);
         for (uint32_t p = 0u; p < paths.len; p++) {
-            HeTypeDomain view = he_type_domain(domain, dependent);
+            HeTypeDomain view = apply_domain(services, domain, dependent);
             Atom *expected = bindings_apply_if_vars(&paths.items[p], arena, view.formal);
             if (services->normalize &&
                 !services->normalize(services->context, expected, &expected))
                 goto incomplete;
             HeTypeArgumentCheck check = he_type_argument_check(expected);
-            if (check == HE_TYPE_ARGUMENT_ANY) {
+            if (check == HE_TYPE_ARGUMENT_ANY ||
+                (services->takes_source &&
+                 services->takes_source(services->context, expected))) {
                 if (!apply_bindings_move(&next, &paths.items[p])) goto incomplete;
                 continue;
             }
@@ -651,7 +671,7 @@ HeTypeApplicability he_type_call_applicable(
                 atom_meta_type_accepts(arena, expected, argument)) {
                 BindingsBuilder candidate;
                 if (!bindings_builder_init(&candidate, &paths.items[p])) goto incomplete;
-                bool matched = apply_bind_domain(&candidate, domain, argument, dependent);
+                bool matched = apply_bind_domain(services, &candidate, domain, argument, dependent);
                 bool saved = !matched || apply_bindings_clone(&next, bindings_builder_bindings(&candidate));
                 bindings_builder_free(&candidate);
                 if (!saved) goto incomplete;
@@ -683,10 +703,19 @@ HeTypeApplicability he_type_call_applicable(
             SearchContext trial;
             search_context_init_owned(&trial, &paths.items[p], NULL);
             for (uint32_t t = 0u; t < count; t++) {
-                if (services->refuted && services->refuted(services->context, actual[t], expected)) continue;
+                if (services->refuted &&
+                    services->refuted(services->context, argument, actual[t],
+                                      expected)) continue;
                 ChoicePoint point = search_context_save(&trial);
-                bool matched = apply_refine(services, actual[t], expected, search_context_builder(&trial), arena) &&
-                               apply_bind_domain(search_context_builder(&trial), domain, argument, dependent);
+                bool matched = apply_refine(services, actual[t], expected, search_context_builder(&trial), arena);
+                if (!matched && services->equivalent) {
+                    /* Undo the failed attempt's partial substitution. */
+                    search_context_rollback(&trial, point);
+                    point = search_context_save(&trial);
+                    matched = services->equivalent(services->context, actual[t], expected);
+                }
+                matched = matched &&
+                    apply_bind_domain(services, search_context_builder(&trial), domain, argument, dependent);
                 bool saved = !matched || apply_bindings_clone(&next, search_context_bindings(&trial));
                 search_context_rollback(&trial, point);
                 if (!saved) {
@@ -702,12 +731,22 @@ HeTypeApplicability he_type_call_applicable(
             if (!saved) goto incomplete;
         }
         apply_bindings_replace(&paths, &next);
+        if (paths.len && services->instantiate && named < HE_TYPE_TELESCOPE_NAMES) {
+            HeTypeDomain view = apply_domain(services, signature->expr.elems[i + 1u], dependent);
+            if (view.binder && view.binder->kind != ATOM_VAR) {
+                names[named] = view.binder;
+                named_arguments[named++] = argument;
+            }
+        }
         continue;
 incomplete:
         apply_bindings_free(&next);
         apply_bindings_free(&paths);
         return HE_TYPE_APPLICATION_INCOMPLETE;
     }
+    if (named)
+        call.result_type = services->instantiate(services->context, arena, call.result_type,
+                                                 names, named_arguments, named);
     bool accepted = false;
     for (uint32_t p = 0u; p < paths.len; p++) {
         SearchContext trial;
@@ -721,7 +760,18 @@ incomplete:
             return HE_TYPE_APPLICATION_INCOMPLETE;
         }
         bool saved;
-        if (apply_refine(services, result, expected_result, search_context_builder(&trial), arena)) {
+        bool matched;
+        if (services->equivalent) {
+            ChoicePoint point = search_context_save(&trial);
+            matched = apply_refine(services, result, expected_result, search_context_builder(&trial), arena);
+            if (!matched) {
+                search_context_rollback(&trial, point);
+                matched = services->equivalent(services->context, result, expected_result);
+            }
+        } else {
+            matched = apply_refine(services, result, expected_result, search_context_builder(&trial), arena);
+        }
+        if (matched) {
             accepted = true;
             Atom *contract = bindings_apply_if_vars(search_context_bindings(&trial), arena, result);
             saved = he_type_contracts_push_unique(contracts, he_type_result_demand(arena, contract));

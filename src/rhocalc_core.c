@@ -3361,6 +3361,7 @@ static bool rho_eval_payload_results(Arena *arena,
     uint64_t owner_epoch = 0;
     Atom *payload;
     bool alias_fault = false;
+    bool redirects_started = false;
 
     if (!arena || !eval_context || !eval_context->space || !payload_expr || !out) {
         return false;
@@ -3376,6 +3377,7 @@ static bool rho_eval_payload_results(Arena *arena,
     owner_epoch = eval_next_payload_owner_epoch();
     if (!eval_payload_redirects_begin(persistent))
         goto fail;
+    redirects_started = true;
 
     /* Overlay the self space, every registry-bound space, and every baked space
      * literal in the payload term. State cells are rebound separately below. */
@@ -3501,7 +3503,7 @@ fail:
     rho_overlay_map_free(&map);
     rho_state_clone_map_free(&state_map);
     registry_free(&local_registry);
-    eval_payload_redirects_end();
+    if (redirects_started) eval_payload_redirects_end();
     return false;
 }
 

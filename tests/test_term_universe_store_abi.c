@@ -63,28 +63,28 @@ static void test_arena_accounting_saturation_contract(void) {
     assert(arena_accounted_live_bytes(NULL) == 0u);
     arena.live_bytes = 11u;
     arena.external_bytes = 7u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == 23u);
     arena.live_bytes = SIZE_MAX - 3u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 0u;
+    arena.persistent_bytes = 0u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
     arena.live_bytes = SIZE_MAX - 7u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
 
     mark.live_bytes = 13u;
     mark.external_bytes = 3u;
-    mark.symbol_cache_bytes = 2u;
+    mark.persistent_bytes = 2u;
     assert(arena_mark_accounted_live_bytes(mark) == 18u);
     mark.live_bytes = SIZE_MAX - 1u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 0u;
+    mark.persistent_bytes = 0u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
     mark.live_bytes = SIZE_MAX - 4u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 3u;
+    mark.persistent_bytes = 3u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
 }
 
@@ -692,9 +692,15 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 
@@ -1693,6 +1699,43 @@ static void test_native_handle_id_retention(void) {
     assert(holders == 0);
 }
 
+static void test_deep_term_universe_copy(void) {
+    Arena persistent, result;
+    TermUniverse universe;
+    arena_init_detached(&persistent);
+    arena_init_detached(&result);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    SymbolId name = symbol_intern_cstr(g_symbols, "deep-copy-variable");
+    AtomId leaf = tu_intern_var(&universe, name, 42u);
+    AtomId root = leaf;
+    const size_t depth = 50000u;
+    for (size_t i = 0; i < depth; ++i) {
+        AtomId children[2] = {root, root};
+        root = tu_expr_from_ids(&universe, children, 2u);
+        assert(root != CETTA_ATOM_ID_NONE);
+    }
+    Atom *plain = term_universe_copy_atom(&universe, &result, root);
+    Atom *fresh = term_universe_copy_atom_epoch(&universe, &result, root, 99u);
+    assert(plain && fresh && plain != fresh);
+    for (size_t i = 0; i < depth; ++i) {
+        assert(plain->kind == ATOM_EXPR && plain->expr.len == 2u);
+        assert(fresh->kind == ATOM_EXPR && fresh->expr.len == 2u);
+        assert(plain->expr.elems[0] == plain->expr.elems[1]);
+        assert(fresh->expr.elems[0] == fresh->expr.elems[1]);
+        plain = plain->expr.elems[0];
+        fresh = fresh->expr.elems[0];
+    }
+    assert(plain->kind == ATOM_VAR && fresh->kind == ATOM_VAR);
+    assert(plain->var_id == tu_var_id(&universe, leaf));
+    assert(fresh->var_id == var_epoch_id(plain->var_id, 99u));
+    assert(tu_var_id(&universe, leaf) == plain->var_id);
+    assert(term_universe_copy_atom(&universe, &result, CETTA_ATOM_ID_NONE) == NULL);
+    term_universe_free(&universe);
+    arena_free(&result);
+    arena_free(&persistent);
+}
+
 /* Immutable callable tags retain their public role through both term-store
  * formats. Authored head spellings have no such role. */
 static void test_callable_value_store_contract(void) {
@@ -1932,8 +1975,8 @@ static void test_copy_reads_symbols_once_with_owned_values(void) {
     Atom *word = atom_symbol(&source, "read-token");
     Atom *later = atom_symbol(&source, "read-later");
     Atom *value = atom_expr2(&source, atom_symbol(&source, "pair"), later);
-    registry_bind_id(&names, word->sym_id, value);
-    registry_bind_id(&names, later->sym_id, atom_int(&source, 99));
+    registry_bind_id(&names, atom_symbol_current_id(word), value);
+    registry_bind_id(&names, atom_symbol_current_id(later), atom_int(&source, 99));
     Atom *form = atom_expr3(&source, atom_symbol(&source, "form"), word, word);
     AtomId id = term_universe_store_atom_id(&universe, NULL, form);
     assert(id != CETTA_ATOM_ID_NONE && tu_hdr(&universe, id));
@@ -1985,6 +2028,7 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_deep_term_universe_copy();
     test_compact_hashcons_identity_across_growth();
     test_batched_integer_identity();
     test_batched_expression_identity();

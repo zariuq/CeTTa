@@ -26,5 +26,7 @@
 [False]
 [False]
 [False]
-[(type:check (lam (x : u0) x) (-> u0 u0))]
+[True]
 [(type:check (lam x (unknown x)) (-> u0 u0))]
+[(type:check (lam (quote (mm-var "ph")) (quote (mm-var "ph"))) (-> u0 u0))]
+[(type:check (lam x (quote x)) (-> u0 u0))]

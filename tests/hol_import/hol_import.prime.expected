@@ -1,0 +1,5 @@
+[()]
+[self-imp]
+[True]
+[(Undetermined (hol:unknown-name universeIn))]
+[(set:proves (pf:known self-imp) (all prop (lam p (imp p p))))]

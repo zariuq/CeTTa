@@ -1,0 +1,270 @@
+#include "atom.h"
+#include "match.h"
+#include "prime_need.h"
+#include "symbol.h"
+#include "space.h"
+#include "parser.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static unsigned checks;
+#define CHECK(condition) do { assert(condition); checks++; } while (0)
+
+static void identities(void) {
+    unsigned char objects[1024] = {0};
+    CettaStorageCensus c = {0};
+    CHECK(cetta_storage_object(&c, objects, 10u, CETTA_STORAGE_BLOCK));
+    CHECK(!cetta_storage_object(&c, objects, 10u, CETTA_STORAGE_BLOCK));
+    CHECK(c.bytes == 10u && c.retained == 10u && c.repeated == 1u);
+    CHECK(cetta_storage_object_dual(&c, objects, 2u, 100u, CETTA_STORAGE_ARENA));
+    CHECK(cetta_storage_object(&c, objects + 1u, 10u, CETTA_STORAGE_BLOCK));
+    CHECK(c.bytes == 22u && c.retained == 120u);
+    CHECK(!cetta_storage_object(&c, objects, 11u, CETTA_STORAGE_BLOCK));
+    CHECK(c.invalidated && !strcmp(c.incomplete, "OwnerChangedDuringInspection"));
+    cetta_storage_census_free(&c);
+    CHECK(cetta_storage_object(&c, objects, SIZE_MAX, CETTA_STORAGE_BLOCK));
+    CHECK(cetta_storage_object(&c, objects + 1u, 1u, CETTA_STORAGE_BLOCK));
+    CHECK(c.overflow && !c.invalidated && c.bytes == SIZE_MAX && c.retained == SIZE_MAX);
+    cetta_storage_census_free(&c);
+    CHECK(!cetta_storage_array(&c, objects, SIZE_MAX, 8u, 0u));
+    CHECK(c.overflow && c.incomplete && !c.bytes);
+    cetta_storage_census_free(&c);
+    for (size_t i = 0u; i < sizeof(objects); i++)
+        assert(cetta_storage_object(&c, objects+i, i+1u, CETTA_STORAGE_BLOCK));
+    for (size_t i = 0u; i < sizeof(objects); i++)
+        assert(!cetta_storage_object(&c, objects+i, i+1u, CETTA_STORAGE_BLOCK));
+    CHECK(c.bytes == 1024u*1025u/2u && c.repeated == 1024u && !c.incomplete);
+    cetta_storage_census_free(&c);
+}
+
+typedef struct Link { const struct Link *next; } Link;
+static void visit_link(const void *raw, CettaStorageCensus *c) {
+    const Link *link = raw;
+    if (cetta_storage_object(c, link, sizeof(*link), CETTA_STORAGE_BLOCK))
+        cetta_storage_schedule(c, link->next, visit_link);
+}
+static void cycles_and_depth(void) {
+    const size_t count = 100000u;
+    Link *links = calloc(count, sizeof(*links));
+    assert(links);
+    for (size_t i = 0u; i < count - 1u; i++) links[i].next = &links[i+1u];
+    links[count-1u].next = links;
+    CettaStorageCensus c = {0};
+    cetta_storage_schedule(&c, links, visit_link);
+    cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.length == count && c.repeated == 1u);
+    CHECK(c.bytes == count * sizeof(*links) && !c.job_length);
+    cetta_storage_census_free(&c);
+    free(links);
+}
+
+typedef struct { size_t refs; char bytes[91]; } SharedOwner;
+static void retain(void *raw) { ((SharedOwner *)raw)->refs++; }
+static void release(void *raw) { ((SharedOwner *)raw)->refs--; }
+static void owner_storage(const void *raw, CettaStorageCensus *c) {
+    cetta_storage_object(c, raw, sizeof(SharedOwner), CETTA_STORAGE_BLOCK);
+}
+static size_t blocks(const Arena *arena) {
+    size_t bytes = 0;
+    const ArenaBlock *heads[] = {arena->head, arena->spare};
+    for (size_t i = 0u; i < 2u; i++)
+        for (const ArenaBlock *b = heads[i]; b; b = b->next)
+            bytes += sizeof(ArenaBlock) - ARENA_BLOCK_SIZE + b->capacity;
+    return bytes;
+}
+static void arenas_and_owners(void) {
+    Arena a, b;
+    arena_init(&a); arena_init(&b);
+    arena_set_block_capacity(&a, 256u);
+    (void)arena_alloc(&a, 200u);
+    ArenaMark mark = arena_mark(&a);
+    (void)arena_alloc(&a, 700u);
+    arena_reset(&a, mark);
+    CHECK(a.spare != NULL && a.head != NULL);
+    CettaStorageCensus c = {0};
+    arena_storage_census(&a, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes == arena_accounted_live_bytes(&a));
+    CHECK(c.retained == blocks(&a) + a.external_bytes + a.persistent_bytes);
+    CHECK(c.retained > c.bytes);
+    cetta_storage_census_free(&c);
+    SharedOwner shared = {0};
+    CHECK(arena_retain_owner_with_storage(&a, &shared, retain, release, owner_storage));
+    CHECK(arena_retain_owner_with_storage(&b, &shared, retain, release, owner_storage));
+    CHECK(shared.refs == 2u);
+    ArenaMark before_link = arena_mark(&b);
+    arena_set_older_generation(&b, &a);
+    ArenaFrameIdentitySet *metadata = b.frame_identities;
+    size_t persistent = b.persistent_bytes;
+    CHECK(metadata && persistent);
+    arena_set_older_generation(&b, &a);
+    CHECK(b.frame_identities == metadata && b.persistent_bytes == persistent);
+    (void)arena_alloc(&b, 64u);
+    arena_reset(&b, before_link);
+    CHECK(b.older_identity == a.identity && b.frame_identities == metadata);
+    CHECK(b.persistent_bytes == persistent);
+    arena_storage_census(&b, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.repeated >= 1u);
+    CHECK(c.bytes == arena_accounted_live_bytes(&a) + arena_accounted_live_bytes(&b) + sizeof(shared));
+    CHECK(c.retained == blocks(&a) + blocks(&b) + a.external_bytes + b.external_bytes + a.persistent_bytes + b.persistent_bytes + sizeof(shared));
+    size_t before = c.bytes;
+    arena_storage_census(&a, &c); cetta_storage_finish(&c);
+    CHECK(c.bytes == before && !c.incomplete);
+    cetta_storage_census_free(&c);
+    arena_set_older_generation(&b, NULL);
+    CHECK(!b.older_identity && b.frame_identities == metadata);
+    arena_storage_census(&b, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes == arena_accounted_live_bytes(&b) + sizeof(shared));
+    CHECK(c.retained == blocks(&b) + b.external_bytes + b.persistent_bytes + sizeof(shared));
+    cetta_storage_census_free(&c);
+    arena_free(&b); arena_free(&a);
+    CHECK(!shared.refs);
+    arena_init(&a);
+    CHECK(arena_retain_owner(&a, &shared, retain, release));
+    arena_storage_census(&a, &c); cetta_storage_finish(&c);
+    CHECK(c.incomplete && !strcmp(c.incomplete, "OpaqueRetainedOwner") && !c.invalidated);
+    cetta_storage_census_free(&c); arena_free(&a);
+}
+
+static void bindings_and_need(void) {
+    Arena arena;
+    arena_init(&arena);
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL));
+    for (unsigned i = 0u; i < 100u; i++) {
+        char name[32]; snprintf(name, sizeof(name), "storage%u", i);
+        Atom *variable = atom_var(&arena, name);
+        assert(bindings_builder_add_var_fresh(&builder, variable, atom_int(&arena, i)));
+    }
+    Bindings first, second;
+    bindings_builder_take(&builder, &first);
+    bindings_builder_free(&builder);
+    CHECK(bindings_clone(&second, &first));
+    CettaStorageCensus c = {0};
+    bindings_storage_census(&first, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes > 0u);
+    size_t initial = c.bytes;
+    bindings_storage_census(&second, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes == initial && c.repeated > 0u);
+    cetta_storage_census_free(&c);
+    PrimeNeedSnapshot root, allocated;
+    prime_need_snapshot_init(&root);
+    CHECK(prime_need_snapshot_begin(&root));
+    uint64_t cell = 0u;
+    CHECK(prime_need_snapshot_allocate(&arena, &root, atom_symbol(&arena, "delayed"), &allocated, &cell));
+    *bindings_need_mut(&first) = allocated;
+    *bindings_need_mut(&second) = allocated;
+    bindings_storage_census(&first, &c); bindings_storage_census(&second, &c);
+    cetta_storage_finish(&c);
+    /* Two occurrence records share one immutable Need owner and COW buffers. */
+    CHECK(!c.incomplete && c.bytes == initial + 2u*sizeof(PrimeOccurrence) + arena_accounted_live_bytes(&arena));
+    CHECK(c.retained >= blocks(&arena) && c.repeated > 0u);
+    cetta_storage_census_free(&c);
+    bindings_free(&second); bindings_free(&first); arena_free(&arena);
+}
+
+static void numeric_storage(void) {
+    Arena arena;
+    arena_init(&arena);
+#if CETTA_BUILD_WITH_GMP
+    mpz_t z;
+    mpz_init2(z, 8192u);
+    mpz_set_ui(z, 123u);
+    mpz_setbit(z, 100u);
+    char expected[64];
+    mpz_get_str(expected, 10, z);
+    Atom *big = atom_bigint_take_mpz(&arena, z);
+    mpz_clear(z);
+    CettaStorageCensus c = {0};
+    arena_storage_census(&arena, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained >= blocks(&arena) + 1024u);
+    size_t before = c.retained;
+    cetta_storage_census_free(&c);
+    CHECK(!strcmp(atom_bigint_cstr(big), expected));
+    arena_storage_census(&arena, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained == before + strlen(expected) + 1u);
+    cetta_storage_census_free(&c);
+    Atom *rational = atom_rational(&arena, "123456789123456789/987654321");
+    CHECK(rational != NULL);
+    arena_storage_census(&arena, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained > before + strlen(expected) + 1u);
+    cetta_storage_census_free(&c);
+#else
+    Atom *big = atom_bigint(&arena, "123456789123456789123456789");
+    CHECK(big != NULL);
+    CettaStorageCensus c = {0};
+    arena_storage_census(&arena, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained >= blocks(&arena) + strlen(atom_bigint_cstr(big)) + 1u);
+    cetta_storage_census_free(&c);
+#endif
+    arena_free(&arena);
+}
+
+static void private_world_storage(void) {
+    HashConsTable hash;
+    hashcons_init_compact(&hash);
+    Arena arena;
+    arena_init_detached(&arena);
+    CettaStorageCensus c = {0};
+    hashcons_storage_census(&hash, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes == hash.size * sizeof(Atom *));
+    size_t empty = c.retained;
+    cetta_storage_census_free(&c);
+    Atom value; atom_scalar_leaf_int(&value, 9);
+    CHECK(hashcons_get(&hash, &value) != &value);
+    hashcons_storage_census(&hash, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.bytes >= empty + sizeof(Atom));
+    size_t before = c.retained;
+    hashcons_storage_census(&hash, &c); cetta_storage_finish(&c);
+    CHECK(c.retained == before && c.repeated > 0u);
+    cetta_storage_census_free(&c);
+
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    Space space; space_init_with_universe(&space, &universe);
+    for (unsigned i = 0u; i < 400u; i++) {
+        char source[100]; snprintf(source, sizeof(source), "(= (member %u $x) (Pair %u $x))", i, i);
+        Atom **parsed = NULL;
+        CHECK(parse_metta_text(source, &arena, &parsed) == 1);
+        space_add(&space, parsed[0]); free(parsed);
+    }
+    Atom **parsed = NULL;
+    CHECK(parse_metta_text("(member 10 A)", &arena, &parsed) == 1);
+    space_match_native_ensure_trie(&space);
+    free(parsed);
+    for (size_t i = 0u; i < universe.len; i++) {
+        const CettaTermVariableSupport *support;
+        CHECK(term_universe_variable_support(&universe, i, &support));
+    }
+    term_universe_storage_census(&universe, &c); space_storage_census(&space, &c);
+    cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained >= universe.blob_cap + space.cap * sizeof(uint32_t));
+    before = c.retained;
+    term_universe_storage_census(&universe, &c); space_storage_census(&space, &c); cetta_storage_finish(&c);
+    CHECK(c.retained == before && c.repeated >= 2u);
+    cetta_storage_census_free(&c);
+    SpaceEngine old = space.match_backend.kind;
+    space.match_backend.kind = SPACE_ENGINE_MORK;
+    space_storage_census(&space, &c); cetta_storage_finish(&c);
+    CHECK(c.incomplete && !strcmp(c.incomplete, "ForeignSpaceBackendOwner"));
+    cetta_storage_census_free(&c); space.match_backend.kind = old;
+    space_free(&space); term_universe_free(&universe); arena_free(&arena); hashcons_free(&hash);
+}
+
+int main(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    SymbolTable symbols;
+    VarInternTable variables;
+    symbol_table_init(&symbols);
+    symbol_table_init_builtins(&symbols, &g_builtin_syms);
+    var_intern_init(&variables);
+    g_symbols = &symbols; g_var_intern = &variables; g_hashcons = NULL;
+    identities(); cycles_and_depth(); arenas_and_owners(); bindings_and_need(); numeric_storage(); private_world_storage();
+    var_intern_free(&variables); symbol_table_free(&symbols);
+    g_symbols = NULL; g_var_intern = NULL;
+    printf("PASS: owned storage census: %u identity, capacity, sharing, cycle and refusal checks\n", checks);
+    return 0;
+}

@@ -1,6 +1,6 @@
 ; Equation heads that repeat a variable: every occurrence after the first
 ; matches only a value equal to the first one.  Unequal values leave the
-; equation unmatched, which fails in PeTTa and stands for itself in HE.
+; equation unmatched, which fails in PeTTa and stands for itself in HE and Prime.
 (= (same $x $x) yes)
 (= (twin (P $x $x)) $x)
 (= (triple $a $a $a) ok)
@@ -48,3 +48,10 @@
 !(dup-head (() () 3))
 !(ends-same (4 5) 4)
 !(ends-same (4 5) 5)
+
+; Independent calls retain every pick occurrence. One bound result reused
+; twice is shared; an unmatched call differs from an empty answer stream.
+!(pick (Cons 1 (Cons 2 (Cons 1 Nil))))
+!(let $a (pick (Cons 1 (Cons 2 (Cons 1 Nil)))) (Pair $a $a))
+!(collapse (pick Nil))
+!(collapse (superpose ()))

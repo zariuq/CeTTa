@@ -1,0 +1,97 @@
+(hol:profile core)
+
+; Search proposes arguments; the native dependent checker accepts the proof.
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(add-atom &thy (: A (u 0)))
+!(add-atom &thy (: a A))
+!(add-atom &thy (: b A))
+!(add-atom &thy (: f (-> (z : A) A)))
+!(add-atom &thy (: P (-> (z : A) (u 0))))
+!(add-atom &thy (: h (P a)))
+; This is an explicit hypothesis, not an invented closed theorem.
+!(add-atom &thy (: next (-> (x : A) (w : (P x)) (P (f x)))))
+!(add-atom &thy (chaining-rule next))
+!(type:check &thy (next a h) (P (f a)))
+!(search-first-inhabitant &thy (P (f a)) 2)
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (== $proof (next a h)))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (type:check &thy $proof (P (f a))))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (type:check &thy $proof (P (f b))))
+!(search-first-inhabitant &thy (P (f a)) 2 1)
+!(search-first-inhabitant &thy (P (f a)) 0)
+; An ordinary function is a higher-order argument, not an implicitly firing rule.
+!(hol:define &thy k (-> (p : (P (f a))) (id A b b))
+   (= (k $p) (refl b)))
+!(hol:define &thy consumeEvidence
+   (-> (e : (P (f a))) (k : (-> (p : (P (f a))) (id A b b))) (id A b b))
+   (= (consumeEvidence $e $k) ($k $e)))
+!(add-atom &thy (chaining-rule consumeEvidence))
+; Elaboration is a substitution, not an ordered sequence of allocations:
+; observe the checked proof and type, four distinct local keys, and the bag
+; of values.
+(= (evidence-search-observation
+     (he-accept
+       (typed-answer-v2 (: $proof $type)
+         (answer-substitution-v2
+           (query-substitution-v1)
+           (elaboration-substitution-v1
+             (elaboration-binding-v1 $k1 $v1)
+             (elaboration-binding-v1 $k2 $v2)
+             (elaboration-binding-v1 $k3 $v3)
+             (elaboration-binding-v1 $k4 $v4))
+           (answer-constraints-v1)))))
+   (checked
+     (=alpha $proof (consumeEvidence (next a h) k))
+     (=alpha $type (id A b b))
+     (=alpha (keys $k1 $k2 $k3 $k4) (keys $w $x $y $z))
+     (superpose ($v1 $v2 $v3 $v4))))
+!(assertEqualToResult
+   (evidence-search-observation
+     (search-first-inhabitant &thy (quote (id A b b)) 3))
+   ((checked True True True k) (checked True True True a)
+    (checked True True True h) (checked True True True (next a h))))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A b b) 3)
+      (== $proof (consumeEvidence (next a h) k)))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A b b) 3)
+      (type:check &thy $proof (id A b b)))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A b b) 3)
+      (type:eq &thy $proof (refl b)))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A b b) 3)
+      (type:check &thy $proof (id A a a)))
+; Parallel binders and a later equality premise share one actual assignment.
+!(hol:define &thy same (id A a a) (= same (refl a)))
+!(hol:define &thy sameVia
+   (-> (x y : A) (w : (id A x y)) (id A (f x) (f x)))
+   (= (sameVia $x $y $w) (refl (f $x))))
+!(add-atom &thy (chaining-rule sameVia))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A (f a) (f a)) 2)
+      (== $proof (sameVia a a same)))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A (f a) (f a)) 2)
+      (type:check &thy $proof (id A (f a) (f a))))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (id A (f a) (f a)) 2)
+      (type:eq &thy $proof (refl (f a))))
+!(type:check &thy (sameVia a b same) (id A (f a) (f a)))
+; An HE annotation alone cannot manufacture native evidence of an unformed type.
+!(add-atom &thy (: forgedProof Unformed))
+!(search-first-inhabitant &thy Unformed 0)
+; A found proof is handed back as evidence and never run, even where this
+; program gives its head an equation.
+(= (next a h) the-proof-ran)
+!(search-first-inhabitant &thy (P (f a)) 2)
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (let $removed (remove-atom &thy (: h (P a)))
+        (let $result (try (type:check &thy $proof (P (f a))))
+          (car-atom $result))))

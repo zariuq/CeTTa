@@ -42,16 +42,24 @@
 (= (prime-need:same $x $y) any)
 !(prime-need:same (superpose (A B)) A)
 
-; Nested structure demands only the path inspected by the pattern.  The B
-; alternative remains an inert residual and its unrelated empty argument is
-; never forced.
+; Matching demands only the inspected path. At the answer boundary the B
+; residual's ordinary argument is observed as a value, so empty contributes
+; no answer. Explicit delay instead retains that argument as code.
 (= (prime-need:box (Box A) $unused) boxed-a)
 !(prime-need:box (Box (superpose (A B))) (empty))
+!(prime-need:box (Box (superpose (A B))) (delay (empty)))
 
-; A code boundary reifies the suspended source; it never exposes a private
-; heap reference and never evaluates the quoted term.
+; A code boundary never exposes a private heap reference.  A quotation is
+; sealed, so a quoted parameter stays the literal variable (observed by its
+; metatype) and its suspended argument is never demanded, not even for its
+; effect; lifting the parameter demands the argument and quotes its value.
+; The quote-as-written profile reifies the suspended source instead
+; (tests/prime/quote_profiles/need_quote_preservation.metta).
 (= (prime-need:quote-arg $x) (quote $x))
-!(prime-need:quote-arg (+ 1 2))
+!(case (prime-need:quote-arg (+ 1 2)) (((quote $v) (get-metatype $v))))
+!(case (prime-need:quote-arg (println! must-not-run)) (((quote $v) (get-metatype $v))))
+(= (prime-need:lift-arg $x) (lift $x))
+!(prime-need:lift-arg (+ 1 2))
 
 ; Case selection is internal control, not an observation boundary.  The
 ; scrutinee carries a delayed argument through a constructor; unboxing it
@@ -127,9 +135,25 @@
 ; same source variable outside the nested function must therefore not observe
 ; the inner binding to 3.
 !(function
-   (chain (function (chain 3 $x (return inner))) $_inner
+   (chain (function (chain 3 $x (return inner)){$x}) $_inner
      (chain (eval (noreduce-eq $x 3)) $binding-leaked
-       (return $binding-leaked))))
+       (return $binding-leaked)){$binding-leaked}){$_inner})
+
+; The body's `$r` is a name of the form that its let binds, so the environment
+; the caller receives keeps its value.
+(= (prime-need:private-bind) (unify $w private done no))
+!(collapse-bind
+   (function (let $r (prime-need:private-bind) (return $r)){$r}))
+
+; A binding the body makes for its own work stays inside the function: here
+; the body refines a fresh variable that a call created, which is none of the
+; body's names, and the environment its caller receives holds none of it.
+(= (prime-need:fresh-variable) $v)
+(= (prime-need:private-bind-of $x) (unify $x private done no))
+!(collapse-bind
+   (function
+     (chain (prime-need:fresh-variable) $c
+       (chain (prime-need:private-bind-of $c) $d (return $d)){$d}){$c}))
 
 ; Checking-first authority does not force a valid argument, but it rejects a
 ; raw argument that violates an admitted function contract even when unused.

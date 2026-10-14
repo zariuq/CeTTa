@@ -1,4 +1,5 @@
 #include "registry_resolver.h"
+#include "identity_counter.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -15,11 +16,30 @@ struct RegistryCapability {
 static _Atomic uint64_t registry_capability_next_serial = 1u;
 
 RegistryCapability *registry_capability_new(void) {
+    /* The serial is drawn first: a refused one allocates nothing. */
+    uint64_t serial = cetta_identity_try_take(
+        &registry_capability_next_serial);
+    if (serial == 0u)
+        return NULL;
     RegistryCapability *capability = cetta_malloc(sizeof(*capability));
-    capability->serial = atomic_fetch_add_explicit(
-        &registry_capability_next_serial, 1u, memory_order_relaxed);
+    capability->serial = serial;
     return capability;
 }
+
+#if CETTA_REGISTRY_CAPABILITY_TEST_HOOKS
+bool registry_capability_test_seed(uint64_t next) {
+    if (next == 0u)
+        return false;
+    atomic_store_explicit(&registry_capability_next_serial, next,
+                          memory_order_relaxed);
+    return true;
+}
+
+uint64_t registry_capability_test_next(void) {
+    return atomic_load_explicit(&registry_capability_next_serial,
+                                memory_order_relaxed);
+}
+#endif
 
 void registry_capability_delete(RegistryCapability *capability) {
     free(capability);

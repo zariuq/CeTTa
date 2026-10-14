@@ -40,9 +40,9 @@ CHECKING_ROUTE_COUNTERS = (
     "prime-checking-route-declared-regular",
     "prime-checking-route-closed-regular",
     "prime-checking-route-ambient-formation",
-    "prime-legacy-he-checking",
+    "prime-he-fragment-checking",
 )
-PRIME_HE_APPLICABILITY_COUNTER = "prime-legacy-he-typed-applicability"
+PRIME_HE_APPLICABILITY_COUNTER = "prime-he-declaration-applicability"
 PRIME_DECLARATION_COUNTERS = (
     "prime-level-normalization-step",
     "prime-declaration-polymorphic-lookup",
@@ -213,12 +213,12 @@ def parse_checking_routes(stderr_lines: list[str]) -> dict[str, Any]:
         value for name, value in routes.items()
         if name not in (
             "prime-checking-route-ambient-formation",
-            "prime-legacy-he-checking",
+            "prime-he-fragment-checking",
         )
     )
     ambient = routes["prime-checking-route-ambient-formation"]
-    legacy = routes["prime-legacy-he-checking"]
-    legacy_applicability = counters[PRIME_HE_APPLICABILITY_COUNTER]
+    fragments = routes["prime-he-fragment-checking"]
+    declaration_applicability = counters[PRIME_HE_APPLICABILITY_COUNTER]
     declaration_work = {
         name: counters[name] for name in PRIME_DECLARATION_COUNTERS
     }
@@ -228,24 +228,26 @@ def parse_checking_routes(stderr_lines: list[str]) -> dict[str, Any]:
     native_calculus = {
         name: counters[name] for name in PRIME_NATIVE_CALCULUS_COUNTERS
     }
-    if native == 0 and ambient == 0 and legacy == 0 and legacy_applicability == 0:
+    if (native == 0 and ambient == 0 and fragments == 0 and
+            declaration_applicability == 0):
         raise RuntimeError("workload produced no observable type-check route")
-    if native > 0 and ambient == 0 and legacy == 0 and legacy_applicability == 0:
+    if (native > 0 and ambient == 0 and fragments == 0 and
+            declaration_applicability == 0):
         qualification = "prime-native-regular"
-    elif (native == 0 and ambient > 0 and legacy == 0 and
-          legacy_applicability == 0):
+    elif (native == 0 and ambient > 0 and fragments == 0 and
+          declaration_applicability == 0):
         qualification = "ambient-formation-only"
-    elif (native == 0 and ambient == 0 and legacy > 0 and
-          legacy_applicability == 0):
-        qualification = "legacy-he-only"
+    elif (native == 0 and ambient == 0 and fragments > 0 and
+          declaration_applicability == 0):
+        qualification = "he-declaration-fragments-only"
     else:
         qualification = "mixed-prime-and-he"
     return {
         "qualification": qualification,
         "native_checks": native,
         "ambient_formation_checks": ambient,
-        "legacy_he_checks": legacy,
-        "legacy_he_applicability_checks": legacy_applicability,
+        "he_fragment_checks": fragments,
+        "he_declaration_applicability_checks": declaration_applicability,
         "declaration_work": declaration_work,
         "interior_checks": interior_checks,
         "native_calculus": native_calculus,
@@ -375,7 +377,7 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--require-zero-legacy-he-applicability",
+        "--require-zero-he-declaration-applicability",
         action="store_true",
         help="fail if Prime typed applicability consults the HE classifier",
     )
@@ -453,18 +455,19 @@ def main() -> int:
                     f"observed {first_routes['qualification']} "
                     f"({first_routes['ambient_formation_checks']} ambient "
                     f"formation decisions, "
-                    f"{first_routes['legacy_he_checks']} legacy HE checks, "
-                    f"{first_routes['legacy_he_applicability_checks']} "
-                    f"legacy HE applicability checks)",
+                    f"{first_routes['he_fragment_checks']} HE-declaration "
+                    f"fragment checks, "
+                    f"{first_routes['he_declaration_applicability_checks']} "
+                    f"HE-declaration applicability checks)",
                     file=sys.stderr,
                 )
                 return 1
-            if (args.require_zero_legacy_he_applicability and
-                    first_routes["legacy_he_applicability_checks"] != 0):
+            if (args.require_zero_he_declaration_applicability and
+                    first_routes["he_declaration_applicability_checks"] != 0):
                 print(
-                    f"FAIL: {lane}/{name}: requested zero legacy HE "
+                    f"FAIL: {lane}/{name}: requested zero HE-declaration "
                     f"applicability, observed "
-                    f"{first_routes['legacy_he_applicability_checks']}",
+                    f"{first_routes['he_declaration_applicability_checks']}",
                     file=sys.stderr,
                 )
                 return 1

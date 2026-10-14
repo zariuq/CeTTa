@@ -54,6 +54,10 @@ bool registered_symbol_borrow_end(RegisteredSymbols *table,
     RegisteredSymbolBorrow *borrow);
 void registered_symbols_stats(RegisteredSymbols *table,
     RegisteredSymbolStats *out);
+struct CettaStorageCensus;
+/* Requested allocation census; the enclosing owner remains quiescent. */
+void registered_symbols_storage_census(RegisteredSymbols *table,
+    struct CettaStorageCensus *census);
 
 #ifdef CETTA_TEST_HOOKS
 /* Only moves forward, with no outstanding entries. */

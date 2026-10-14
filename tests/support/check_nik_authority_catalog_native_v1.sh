@@ -38,7 +38,7 @@ done
 # line is already in the shared Lean wire renderer's canonical form.
 nik_fill_digest() {
     local input=$1 output=$2 presentation digest
-    presentation=$(sed -n '/^[[:space:]]*(GPresentationV1 /s/^[[:space:]]*//p' "$input")
+    presentation=$(sed -n '/^[[:space:]]*(GInferenceLanguageV1 /s/^[[:space:]]*//p' "$input")
     test -n "$presentation"
     digest=$(printf '%s' "$presentation" | sha256sum); digest=${digest%% *}
     sed "s/DIGEST/$digest/" "$input" > "$output"
@@ -111,7 +111,7 @@ nik_mutant() {
     nik_fill_digest "$nik_controls/$label.template" "$nik_controls/$label.metta"
     nik_refuse "$label" --catalog "$nik_controls/$label.metta" "${nik_args[@]:2}"
 }
-nik_mutant version 's/GPresentationV1 1/GPresentationV1 2/'
+nik_mutant version 's/GInferenceLanguageV1 1/GInferenceLanguageV1 2/'
 nik_mutant declaration-arity 's/(JDecl "J" 1)/(JDecl "J" 2)/'
 nik_mutant negative-arity 's/(JDecl "J" 1)/(JDecl "J" -1)/'
 nik_mutant overflowing-arity 's/(JDecl "J" 1)/(JDecl "J" 18446744073709551616)/'

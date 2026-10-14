@@ -15,6 +15,6 @@
 !(bind! &prime-grad:state (new-space))
 !(add-atom &prime-grad:state (seen alpha))
 !(add-atom &prime-grad:state (seen beta))
-!(reify (match &prime-grad:state (seen $x) $x))
+!(reify (match &prime-grad:state (seen $x) $x){$x})
 !(remove-atom &prime-grad:state (seen beta))
-!(reify (match &prime-grad:state (seen $x) $x))
+!(reify (match &prime-grad:state (seen $x) $x){$x})

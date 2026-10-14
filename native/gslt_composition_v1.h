@@ -67,6 +67,51 @@ bool cetta_gslt_composition_digest_v1(
 
 void cetta_gslt_composition_free_v1(CettaGsltCompositionV1 *composition);
 
+typedef struct {
+    Atom *origin;
+    Atom *label;
+    Atom *body;
+} CettaGsltOriginEntryV1;
+
+typedef enum {
+    CETTA_GSLT_ORIGIN_VIEW_V1 = 0,
+    CETTA_GSLT_ORIGIN_COHERENT_V1
+} CettaGsltOriginPolicyV1;
+
+typedef enum {
+    CETTA_GSLT_ORIGIN_JOIN_OK_V1 = 0,
+    CETTA_GSLT_ORIGIN_JOIN_BAD_ARGUMENT_V1,
+    CETTA_GSLT_ORIGIN_JOIN_LABEL_CONFLICT_V1,
+    CETTA_GSLT_ORIGIN_JOIN_ORIGIN_CONFLICT_V1,
+    CETTA_GSLT_ORIGIN_JOIN_RESOURCE_LIMIT_V1,
+    CETTA_GSLT_ORIGIN_JOIN_ALLOCATION_FAILURE_V1
+} CettaGsltOriginJoinStatusV1;
+
+typedef struct {
+    CettaGsltOriginJoinStatusV1 status;
+    size_t first;
+    size_t second;
+} CettaGsltOriginJoinWitnessV1;
+
+/* Ordered refinement of ModuleAlgebra.OriginView.orderedJoin? (or, with
+ * COHERENT, ModuleAlgebra.orderedJoin?). Identity is the full origin/label/body
+ * triple, never the body alone. A shared full entry keeps its first position;
+ * distinct views at a shared origin survive VIEW. Labels are supplied by the
+ * client, including any declaration namespace. All atom storage is borrowed.
+ * Success owns only *entries_out; failure publishes no prefix. Witness indices
+ * refer to the concatenation of the two input occurrence lists.
+ *
+ * The older composition builder above collects ordered source presentations
+ * and has no declaration-site origins. This is its provenance-aware admission
+ * boundary, not a claim that unannotated sources have a module-algebra meaning.
+ */
+bool cetta_gslt_origin_join_v1(
+    const CettaGsltOriginEntryV1 *first, size_t first_len,
+    const CettaGsltOriginEntryV1 *second, size_t second_len,
+    CettaGsltOriginPolicyV1 policy,
+    CettaGsltOriginEntryV1 **entries_out, size_t *len_out,
+    CettaGsltOriginJoinWitnessV1 *witness);
+
 bool cetta_gslt_composition_has_operator_v1(
     const CettaGsltCompositionV1 *composition,
     const char *name,

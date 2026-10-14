@@ -113,7 +113,7 @@
          (cons-atom $state $agenda)
          (let $inserted
               (eval (atp:agenda:insert $state $tail $policy))
-           (cons-atom $head $inserted)))))
+           (cons-atom $head $inserted)){$inserted})))
 
 (= (atp:agenda:take $limit $items)
    (if (<= $limit 0)
@@ -123,7 +123,7 @@
            (let ($head $tail) (decons-atom $items)
              (let $rest
                   (eval (atp:agenda:take (- $limit 1) $tail))
-               (cons-atom $head $rest))))))
+               (cons-atom $head $rest)){$rest}){$head $tail})))
 
 (= (atp:agenda:add-successor-with-limit
      (ATP.AgendaPack $agenda $truncated $next-age)
@@ -240,7 +240,7 @@
          (atp:agenda:replace-hole $partial $hole $proof)
          $next-hole $age $guidance-cost
          (atp:agenda:unsupported-obligations
-           $knowledge $index $rest)))))
+           $knowledge $index $rest))){$goal}))
 
 (= (atp:agenda:expand-theorem-fact
      $knowledge $index
@@ -258,7 +258,7 @@
          (atp:agenda:replace-hole $partial $hole $proof)
          $next-hole $age $guidance-cost
          (atp:agenda:unsupported-obligations
-           $knowledge $index $rest)))))
+           $knowledge $index $rest))){$goal}))
 
 (= (atp:agenda:candidate-fact-limit $candidate-policy)
    (let (ATP.DirectSearch $selection $premise-order) $candidate-policy
@@ -322,7 +322,7 @@
                             $source-age $generality $misses $support
                             $rule $premises $goal)))
                      (atp:agenda:unsupported-obligations
-                       $knowledge $index $next-obligations))))))))))
+                       $knowledge $index $next-obligations))){$next-obligations}){$scheduled-obligations}){$selection $premise-order}){$new-obligations $new-holes $after}){$source-age $generality $misses $support $rule $premises $goal})))
 
 (= (atp:agenda:expand $knowledge $index $state $candidate-policy)
    (let (ATP.AgendaState
@@ -343,7 +343,7 @@
                    (atp:agenda:expand-theorem-fact
                      $knowledge $index $state
                      (atp:agenda:candidate-fact-limit
-                       $candidate-policy)))))))))
+                       $candidate-policy)))))){$hole $goal $depth $ancestors $rest})))
 
 (= (atp:agenda:incomplete-reason $reason False)
    (ATP.AgendaIncomplete $reason CompleteAgenda))
@@ -389,7 +389,7 @@
                           $knowledge $index $original-goal
                           $rest-agenda $seen (- $steps 1)
                           (+ $expanded 1) $next-age
-                          $fuel $policy $candidate-policy $truncated))))
+                          $fuel $policy $candidate-policy $truncated)))){$checked $_}
                    (if (atp:agenda:seen-state $state $seen)
                        (atp:agenda:search-loop
                          $knowledge $index $original-goal
@@ -427,7 +427,7 @@
                                $seen)
                              (- $steps 1) (+ $expanded 1) $merged-age
                              $fuel $policy $candidate-policy
-                             $next-truncated))))))))))))
+                             $next-truncated)){$next-agenda $next-truncated $merged-age}){$local-successors $local-truncated $after-age}){$selected-successors}){$successor-limit}))){$obligations $proof $next-hole $age $guidance-cost $unsupported}){$state $rest-agenda})))
 
 (= (atp:agenda:first-checked
      $knowledge $index $goal $depth $steps $fuel $policy)

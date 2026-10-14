@@ -203,9 +203,10 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
     space_match_native_ensure_trie(&space);
     Atom *query = row(arena, head, atom_var(arena, "prefix-refinement-output"),
                       atom_int(arena, 7));
-    CettaIndex *positions = NULL, count = 0u;
-    assert(space_path_index_candidates(&space, query, &positions, &count));
+    CettaIndex *positions = NULL, count = 0u, capacity = 0u;
+    assert(space_path_index_candidates(&space, query, &positions, &count, &capacity));
     assert(count == 13u);
+    assert(capacity == 77u);
     /* Eight matching ground occurrences, then the variable-headed row,
      * whole-row variable and correlated row of the right constructor. */
     for (CettaIndex index = 0u; index < 8u; index++)
@@ -309,7 +310,7 @@ static void test_unrelated_rows(TermUniverse *universe, Arena *arena, CettaCount
 #endif
     for (size_t repeat = 0u; repeat < 12u; repeat++) {
         CettaIndex *positions = NULL, count = 0u;
-        assert(space_path_index_candidates(&space, query, &positions, &count));
+        assert(space_path_index_candidates(&space, query, &positions, &count, NULL));
         assert(count == 4u && positions[0] == 0u && positions[1] == 1u &&
                positions[2] == 2u && positions[3] == rows);
         free(positions);
@@ -375,9 +376,11 @@ static void test_cold_candidates(Arena *arena, TermUniverseStoreFormat format) {
             add(&space, terms[i]);
         assert(!space.match_backend.native.match_trie);
         assert(!tu_hdr(&universe, space_get_atom_id_at64(&space, 14u)));
-        CettaIndex *positions = NULL, count = 0u;
+        CettaIndex *positions = NULL, count = 0u, capacity = 0u;
         Atom *query = queries[query_index];
-        assert(space_match_native_try_cold_candidates(&space, query, &positions, &count));
+        assert(space_match_native_try_cold_candidates(
+            &space, query, &positions, &count, &capacity));
+        assert(capacity >= count);
         assert(!space.match_backend.native.match_trie);
         CettaIndex next = 0u;
         for (CettaIndex position = 0u; position < space_length64(&space); position++) {

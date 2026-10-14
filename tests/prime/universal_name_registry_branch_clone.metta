@@ -24,19 +24,19 @@
 !(assertEqual
   (reify
     (match &@(branch-registry clone-witness)
-           (branch $which) $which))
+           (branch $which) $which){$which})
   (left right))
 
 !(bind! &registry-clone-stats (runtime-stats!))
 !(assertEqualToResult
   (match &registry-clone-stats
     (runtime-counter hyperpose-threaded-run $n)
-    (== $n 0))
+    (== $n 0)){$n}
   (True))
 !(assertEqualToResult
   (match &registry-clone-stats
     (runtime-counter parallel-worker-task $n)
-    (== $n 0))
+    (== $n 0)){$n}
   (True))
 
 !(println! (PrimeUniversalNameRegistryBranchCloneGuardSummary 5 5 0))

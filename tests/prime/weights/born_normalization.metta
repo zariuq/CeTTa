@@ -1,0 +1,12 @@
+; Add coherent amplitudes before normalization, retaining both A contributions.
+!(import! &self ../../../lib/native_weight_algebras.metta)
+!(pragma! prefer-rationals True)
+(=w (path) A (Complex 3 0))
+(=w (path) A (Complex 1 3))
+(=w (path) B (Complex 0 1))
+!(select 1 (search-policy (control FIFO (budget 50000)))
+   (let (Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))
+     (select 0 (search-policy (control FIFO (budget 30000) (demand all)))
+       (weight:read (weights:complex) (path)))
+     (let $sums (weights:aggregate (weights:complex) $v)
+       (BornRead $v $sums (weights:born $sums)))))

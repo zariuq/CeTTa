@@ -78,6 +78,8 @@ def main() -> int:
         3, 2, 1,
     ):
         raise SystemExit("shared proof accounting is incorrect")
+    if dag.replay_node_budget(compiled.article) != 2:
+        raise SystemExit("version-one replay allowance did not count proof nodes")
     rendered = sx.render(compiled.article)
     if sx.parse_sexprs(rendered, source="compiled DAG") != [compiled.article]:
         raise SystemExit("compiled DAG does not survive canonical S-expression round trip")
@@ -115,6 +117,20 @@ def main() -> int:
         shared_patterns.shared_pattern_occurrences,
     ) != (1, 1, 7, 3, 4):
         raise SystemExit("shared Pattern accounting is incorrect")
+    if dag.replay_node_budget(shared_patterns.article) != 4:
+        raise SystemExit("version-two replay allowance omitted Pattern nodes")
+    changed_root = (*shared_patterns.article[:4], 10**12, shared_patterns.article[5])
+    if dag.replay_node_budget(changed_root) != 4:
+        raise SystemExit("untrusted identifiers controlled the replay allowance")
+    if dag.replay_node_budget((sx.Symbol("GProofDAG"), 1, sx.Symbol("BadTail"), 0, goal)) is not None:
+        raise SystemExit("malformed node spine acquired a replay allowance")
+    if dag.replay_node_budget(leaf) is not None:
+        raise SystemExit("raw proof was mistaken for a chronological DAG")
+    large_nodes = sx.Symbol("LNil")
+    for _ in range(1_000_001):
+        large_nodes = (sx.Symbol("LCons"), sx.Symbol("Node"), large_nodes)
+    if dag.replay_node_budget((sx.Symbol("GProofDAG"), 1, large_nodes, 0, goal)) != 1_000_001:
+        raise SystemExit("replay allowance silently retained the default node ceiling")
     if not (
         isinstance(shared_patterns.article, tuple)
         and shared_patterns.article[:2] == (sx.Symbol("GProofDAG"), 2)
@@ -168,10 +184,56 @@ def main() -> int:
     ) != [all_constructors.article]:
         raise SystemExit("full shared Pattern carrier is not canonical")
 
+    deep = pattern("Leaf")
+    for _ in range(4096):
+        deep = pattern("Next", deep)
+    deep_compilation = dag.compile_shared_article(deep, proof("deep", [deep, deep], []))
+    if (deep_compilation.unique_pattern_nodes,
+        deep_compilation.raw_pattern_occurrences) != (4097, 3 * 4097):
+        raise SystemExit("deep sharing lost a node or an expanded occurrence")
+    deep_text = sx.render(deep_compilation.article)
+    deep_parsed = sx.parse_sexprs(deep_text, source="deep shared DAG")
+    if len(deep_parsed) != 1 or sx.render(deep_parsed[0]) != deep_text:
+        raise SystemExit("deep shared article changed in the serialization round trip")
+    if deep_compilation.article[-1] != 4096:
+        raise SystemExit("deep shared article lost its actual target")
+    deep_proof = proof("leaf", [leaf_pattern], [])
+    for _ in range(4096):
+        deep_proof = proof("step", [], [deep_proof])
+    deep_proofs = dag.compile_shared_article(leaf_pattern, deep_proof)
+    if (deep_proofs.raw_proof_nodes, deep_proofs.unique_proof_nodes,
+        deep_proofs.article[-2]) != (4097, 4097, 4096):
+        raise SystemExit("deep proof chronology or node accounting changed")
+    shared_ordered = dag.compile_shared_article(leaf_pattern,
+        proof("root", [], [proof("pair", [], [leaf, deep_proof]),
+                           proof("pair", [], [deep_proof, leaf])]))
+    if shared_ordered.unique_proof_nodes != 4101:
+        raise SystemExit("deep traversal conflated reversed proof premises")
+    repeated = proof("leaf", [leaf_pattern], [])
+    for _ in range(30):
+        repeated = proof("pair", [leaf_pattern], [repeated, repeated])
+    repeated_dag = dag.compile_shared_article(leaf_pattern, repeated)
+    if (repeated_dag.unique_proof_nodes, repeated_dag.raw_proof_nodes,
+        repeated_dag.raw_pattern_occurrences) != (31, 2 ** 31 - 1, 2 ** 31):
+        raise SystemExit("shared subproof traversal lost expanded occurrences")
+    # Shared versus separately allocated input has identical canonical output.
+    unshared = proof("pair", [leaf_pattern],
+        [proof("leaf", [leaf_pattern], []), proof("leaf", [leaf_pattern], [])])
+    one_leaf = proof("leaf", [leaf_pattern], [])
+    shared = proof("pair", [leaf_pattern], [one_leaf, one_leaf])
+    if dag.compile_shared_article(leaf_pattern, unshared) != dag.compile_shared_article(leaf_pattern, shared):
+        raise SystemExit("physical sharing changed the encoded article or its counts")
+    try:
+        dag.compile_shared_article(pattern("Next", sx.Symbol("Malformed")), leaf)
+    except dag.ProofDAGError:
+        pass
+    else:
+        raise SystemExit("iterative compiler accepted a malformed nested Pattern")
+
     print(
         "(NikProofDAGV1Summary raw-nodes=3 unique-nodes=2 "
         "shared-occurrences=1 pattern-occurrences=7 pattern-nodes=3 "
-        "constructors=7 ordered-negatives=2 malformed-negatives=3)"
+        "constructors=7 ordered-negatives=3 malformed-negatives=4 deep=4096 proof-depth=4096 shared-proof-depth=30 replay-budget-controls=6)"
     )
     return 0
 

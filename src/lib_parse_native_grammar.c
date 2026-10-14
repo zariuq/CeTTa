@@ -27,7 +27,7 @@ static bool atom_expr_head_is(Atom *atom, const char *name) {
     return atom &&
            atom->kind == ATOM_EXPR &&
            atom->expr.len > 0 &&
-           atom_is_symbol(atom->expr.elems[0], name);
+           atom_is_symbol_named(atom->expr.elems[0], name);
 }
 
 static bool atom_to_symbol_id(Atom *atom, SymbolId *out) {
@@ -8888,6 +8888,35 @@ static bool native_parse_input_at_end(
     return true;
 }
 
+/* The first position after the layout edges that follow `position`, when
+ * the lattice asks for layout-transparent lookahead; `position` otherwise.
+ * Such a lattice is a chain, so at most one edge starts at a position. */
+static uint32_t native_parse_input_after_layout(
+    const CettaLpNativeParseInput *input,
+    uint32_t position) {
+    const CettaLpNativeUtf8Lattice *lattice =
+        input->kind == CETTA_LP_NATIVE_PARSE_INPUT_LATTICE
+            ? input->lattice : NULL;
+    if (!lattice || !lattice->layout_lookahead)
+        return position;
+    while (position < lattice->scalar_len) {
+        uint32_t edge = lattice->start_offsets[position];
+        uint32_t end = lattice->start_offsets[position + 1u];
+        uint32_t next = position;
+        for (; edge < end; edge++) {
+            if (lattice->edges[edge].terminal_id == lattice->layout_terminal_id &&
+                lattice->edges[edge].scalar_right > position) {
+                next = lattice->edges[edge].scalar_right;
+                break;
+            }
+        }
+        if (next == position)
+            break;
+        position = next;
+    }
+    return position;
+}
+
 static bool native_parse_input_finish(
     CettaLpNativeParseInput *input,
     char *error_buf,
@@ -10552,6 +10581,10 @@ static bool native_gll_parse_input_forest(
     uint32_t max_rhs_len = prepared ? prepared->max_rhs_len : 0u;
     uint32_t prod_idx;
     bool full_prediction = prepared && prepared->full_prediction;
+    const bool layout_lookahead = full_prediction && follow && input &&
+        input->kind == CETTA_LP_NATIVE_PARSE_INPUT_LATTICE &&
+        input->lattice && input->lattice->layout_lookahead;
+    int32_t *lhs_indices = NULL;
     bool limit_hit = false;
     bool ok = false;
 
@@ -10563,6 +10596,13 @@ static bool native_gll_parse_input_forest(
         slr_summary_set_error(error_buf, error_buf_size,
                               "bad native GLL parse-input arguments");
         goto done;
+    }
+    if (layout_lookahead) {
+        lhs_indices = cetta_malloc(
+            sizeof(*lhs_indices) * (production_len ? production_len : 1u));
+        for (prod_idx = 0u; prod_idx < production_len; prod_idx++)
+            lhs_indices[prod_idx] =
+                idvec_find(&nonterminals, productions[prod_idx].lhs);
     }
     for (prod_idx = 0u; prod_idx < production_len; prod_idx++) {
         uint32_t item_idx;
@@ -10780,6 +10820,22 @@ static bool native_gll_parse_input_forest(
         {
             uint32_t done_idx;
             uint32_t edge_idx;
+            if (layout_lookahead && cur.prod_idx >= 0 &&
+                (uint32_t)cur.prod_idx < production_len &&
+                lhs_indices[cur.prod_idx] >= 0) {
+                bool follows = false;
+                if (!gll_full_prediction_matches_terminals(
+                        input, &grammar_terminals,
+                        &follow[lhs_indices[cur.prod_idx]],
+                        native_parse_input_after_layout(input, cur.pos),
+                        &follows, error_buf, error_buf_size)) {
+                    goto done;
+                }
+                /* No terminal that may follow this nonterminal begins
+                 * after the layout here, so no caller can continue. */
+                if (!follows)
+                    continue;
+            }
             if (rhs_len == 0u) {
                 int32_t symbol_idx =
                     gll_node_get_sym(&nodes, lhs, cur.pos, cur.pos);
@@ -10886,6 +10942,7 @@ done:
     cetta_lp_native_utf8_forest_free(&result);
     free(roots.data);
     free(expectations.data);
+    free(lhs_indices);
     gll_nodevec_free(&nodes);
     gll_gssvec_free(&gss_nodes);
     gll_descvec_free(&seen);
@@ -12327,6 +12384,8 @@ static bool native_glr_parse_input_forest_prepared(
     uint32_t farthest = start_scalar;
     uint32_t work_items = 0u;
     uint32_t index;
+    bool layout_lookahead = false;
+    uint32_t layout_index = UINT32_MAX;
     bool accepted = false;
     bool limit_hit = false;
     bool ok = false;
@@ -12351,6 +12410,12 @@ static bool native_glr_parse_input_forest_prepared(
                 table.terminals.data[index]);
             goto done;
         }
+    }
+    layout_lookahead = input->kind == CETTA_LP_NATIVE_PARSE_INPUT_LATTICE &&
+        input->lattice->layout_lookahead;
+    for (index = 0u; layout_lookahead && index < table.terminals.len; index++) {
+        if (table.terminals.data[index] == input->lattice->layout_terminal_id)
+            layout_index = index;
     }
     {
         uint32_t initial_top;
@@ -12425,8 +12490,19 @@ static bool native_glr_parse_input_forest_prepared(
             current = &configs.data[config_index];
             if (action->state != state)
                 continue;
+            uint32_t lookahead_position = position;
+            if (layout_lookahead && action->kind == 'r') {
+                /* A reduction consumes nothing, so the next non-layout
+                 * terminal decides it; follow sets hold that terminal
+                 * wherever they hold layout, so layout-keyed reductions
+                 * are already covered. */
+                if (action->token_idx == layout_index)
+                    continue;
+                lookahead_position =
+                    native_parse_input_after_layout(input, position);
+            }
             if (!glr_parse_input_action_begin(
-                    input, &table, action, position, &applicable,
+                    input, &table, action, lookahead_position, &applicable,
                     &terminal_id, &match_iter, &match,
                     error_buf, error_buf_size)) {
                 goto done;

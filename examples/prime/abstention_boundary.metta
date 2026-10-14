@@ -26,7 +26,7 @@
 !(type:check (lam x x) u0)
 
 ; 4. in-class refutation: equality proof for x = x claimed as x = y —
-; checked distinct-normal-forms.
+; x and y are not convertible at u0.
 !(type:check (lam (x y) (refl x)) (-> (x y : u0) (id u0 x y)))
 
 ; 5. out-of-class: Nil's polymorphic Modus Ponens with variables used as

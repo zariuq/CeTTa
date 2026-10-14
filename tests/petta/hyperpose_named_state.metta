@@ -16,3 +16,10 @@
 !(test (collapse (match &worker-space (row $x) $x)) (7))
 !(test (collapse (hyperpose ((car-atom (catch (get-state missing-worker)))))) (Error))
 !(test (get-state parent-value) 10)
+; Empty nested episodes still restore the caller's private state owner.
+!(test (collapse (hyperpose ())) ())
+!(test (get-state parent-value) 10)
+!(test (collapse (hyperpose ((let $done (change-state! outer-empty 23)
+                              (let $inner (collapse (hyperpose ()))
+                                (get-state outer-empty)))))) (23))
+!(test (car-atom (catch (get-state outer-empty))) Error)

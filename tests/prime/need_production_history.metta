@@ -1,0 +1,5 @@
+(= (history-coin) 3)
+(= (history-coin) 3)
+(= (history-coin) 6)
+(= (history-pair $x) (Pair $x $x))
+!(history-pair (history-coin))

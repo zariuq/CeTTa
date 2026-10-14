@@ -216,6 +216,9 @@ static inline SymbolSpelling symbol_spelling(
     X(abt_parse, "__cetta_abt_parse") \
     X(abt_scope_check, "__cetta_abt_scope_check") \
     X(abt_alpha_eq, "__cetta_abt_alpha_eq")     X(abt_free_names, "__cetta_abt_free_names")     X(abt_substitute, "__cetta_abt_substitute")     X(abt_rename_bound, "__cetta_abt_rename_bound")     X(abt_named_alpha_eq, "__cetta_abt_named_alpha_eq") \
+    X(abt_instantiate, "__cetta_abt_instantiate") \
+    X(abt_contextual_canonical, "__cetta_abt_contextual_canonical") \
+    X(abt_quote_syntax, "langdef:quote-syntax") \
     X(collect, "collect") \
     X(fold, "fold") \
     X(fold_by_key, "fold-by-key") \
@@ -268,6 +271,12 @@ static inline SymbolSpelling symbol_spelling(
     X(superpose_bind, "superpose-bind") \
     X(metta, "metta") \
     X(evalc, "evalc") \
+    X(amp_here, "&here") \
+    X(amp_home, "&home") \
+    X(ctx_colon_capture, "ctx:capture") \
+    X(captured, "captured") \
+    X(run, "run") \
+    X(context_colon_self, "context:self") \
     X(new_state, "new-state") \
     X(get_state, "get-state") \
     X(change_state_bang, "change-state!") \
@@ -277,6 +286,7 @@ static inline SymbolSpelling symbol_spelling(
     X(get_type, "get-type") \
     X(get_type_space, "get-type-space") \
     X(prime_package, "prime-package") \
+    X(prime_elaborate, "prime:elaborate") \
     X(nik_colon_check, "nik:check") \
     X(assertEqual, "assertEqual") \
     X(assertEqualToResult, "assertEqualToResult") \
@@ -612,12 +622,72 @@ static inline SymbolSpelling symbol_spelling(
     X(type_colon_may, "type:may") \
     X(type_colon_must, "type:must") \
     X(type_colon_theorem, "type:theorem") \
+    X(type_colon_kernel_query, "type:kernel-query") \
     X(type_colon_prove, "type:prove") \
+    X(cost_colon_firings, "cost:firings") \
+    X(set_colon_signature, "set:signature") \
+    X(set_colon_formed, "set:formed") \
+    X(set_colon_of, "set:of") \
+    X(set_colon_check, "set:check") \
+    X(set_colon_eq, "set:eq") \
+    X(set_colon_proves, "set:proves") \
+    X(set_colon_axiom, "set:axiom") \
+    X(set_colon_define, "set:define") \
+    X(set_colon_inductive, "set:inductive") \
+    X(set_colon_family, "set:family") \
+    X(set_colon_theorem, "set:theorem") \
+    X(set_colon_recheck, "set:recheck") \
+    X(set_colon_known_proof, "set:known-proof") \
+    X(set_colon_known_proposition, "set:known-proposition") \
+    X(set_colon_signature_digest, "set:signature-digest") \
+    X(set_colon_numerals, "set:numerals") \
+    X(set_colon_oracle, "set:oracle") \
+    X(set_colon_irrelevant, "set:irrelevant") \
+    X(lang_colon_languages, "lang:languages") \
+    X(lang_colon_parse, "lang:parse") \
+    X(lang_colon_print, "lang:print") \
+    X(lang_colon_native_type, "lang:native-type") \
+    X(lang_colon_step, "lang:step") \
+    X(try_judgment, "try") \
+    X(id_colon_region, "id:region") \
+    X(id_colon_policy, "id:policy") \
     X(compile_link_package, "compile:link-package") \
     X(unquote, "unquote") \
     X(remove_all_atom, "remove-all-atom") \
     X(sort_numbers_atom, "sort-numbers-atom") \
+    X(set_colon_native_proof, "set:native-proof") \
+    X(set_colon_native_use, "set:native-use") \
+    X(set_colon_native_normalize, "set:native-normalize") \
+    X(set_colon_native_link, "set:native-link") \
+    X(set_colon_interpret, "set:interpret") \
+    X(hol_colon_signature, "hol:signature") \
+    X(hol_colon_formed, "hol:formed") \
+    X(hol_colon_of, "hol:of") \
+    X(hol_colon_check, "hol:check") \
+    X(hol_colon_eq, "hol:eq") \
+    X(hol_colon_proves, "hol:proves") \
+    X(hol_colon_axiom, "hol:axiom") \
+    X(hol_colon_define, "hol:define") \
+    X(hol_colon_inductive, "hol:inductive") \
+    X(hol_colon_family, "hol:family") \
+    X(hol_colon_theorem, "hol:theorem") \
+    X(hol_colon_recheck, "hol:recheck") \
+    X(hol_colon_known_proof, "hol:known-proof") \
+    X(hol_colon_known_proposition, "hol:known-proposition") \
+    X(hol_colon_signature_digest, "hol:signature-digest") \
+    X(hol_colon_numerals, "hol:numerals") \
+    X(hol_colon_oracle, "hol:oracle") \
+    X(hol_colon_irrelevant, "hol:irrelevant") \
+    X(hol_colon_native_proof, "hol:native-proof") \
+    X(hol_colon_native_use, "hol:native-use") \
+    X(hol_colon_native_normalize, "hol:native-normalize") \
+    X(hol_colon_native_link, "hol:native-link") \
+    X(hol_colon_interpret, "hol:interpret") \
     X(petta_decons, "decons") \
+    X(prime_data, "Data") \
+    X(prime_lam, "lam") \
+    X(prime_meta, "meta") \
+    X(prime_new, "new") \
     X(term_lt, "@<") \
     X(term_gt, "@>") \
     X(term_le, "@<=") \
@@ -640,6 +710,9 @@ static inline SymbolSpelling symbol_spelling(
    SymbolEntry flags, so evaluator dispatch reads one capability bit instead
    of reclassifying an interned opcode by name. */
 #define CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_quote_syntax) \
+    X(abt_instantiate) \
+    X(abt_contextual_canonical) \
     X(abt_default_signatures) \
     X(abt_signature_admitted) \
     X(abt_shift) \
@@ -812,7 +885,8 @@ static inline SymbolSpelling symbol_spelling(
 /* Result-type purity is weaker than effect freedom. Additional type-only
  * licenses belong here, not in the shared execution-permission list above. */
 #define CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(X) \
-    CETTA_PURE_GROUNDED_SYMBOL_FIELDS(X)
+    CETTA_PURE_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_quote_syntax)
 
 /* Additional operations admitted in a host-owned speculative HE context.
  * Query spaces must be fresh in-memory projections of the supplied observation.

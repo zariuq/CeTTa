@@ -1,0 +1,41 @@
+{
+  "format": "BnfcSavedTreeErrataV1",
+  "entries": [
+    {
+      "grammar": "testing/regression-tests/249_unicode/test.cf",
+      "input": "testing/regression-tests/249_unicode/good01.in",
+      "golden": "testing/regression-tests/249_unicode/good01.out",
+      "sha256": {
+        "grammar": "a9a298ecadb146de9cdcd3280cee072bf03d70cf6f6f886f1ae53cba097c2aff",
+        "input": "dcf634c4da987ccf350f0317420469322ec41e4b56b1e2a8ec284ec8dfc52e68",
+        "golden": "ce7642cad424233be864f7df137b5cf67e3199d0c6b12aeae31ca22db1f2979b"
+      },
+      "upstream_commit": "https://github.com/BNFC/bnfc/commit/b7e625a",
+      "proof": "ETimes has three fields in the grammar; both saved ETimes nodes omit their Op field."
+    },
+    {
+      "grammar": "testing/regression-tests/358_MixFixLists/test.cf",
+      "input": "testing/regression-tests/358_MixFixLists/good01.in",
+      "golden": "testing/regression-tests/358_MixFixLists/good01.out",
+      "sha256": {
+        "grammar": "e95bf570d28e5499ba1ccd6f1e38c0cb20898ad092fa81b031b7ce4c8930dcd0",
+        "input": "bfbfc3bdc416c24814da2a9995fe565c9f4fe26736d17b16f31adc48852377eb",
+        "golden": "4addf7841f13f3a3c7f94ca52c7585887b9bb20f3d2d7766693fd705de0547f6"
+      },
+      "upstream_commit": "https://github.com/BNFC/bnfc/commit/3c1c609",
+      "proof": "The input and saved linearized section contain five strings; the saved AST string list contains four."
+    },
+    {
+      "grammar": "testing/regression-tests/204_InternalToken/test.cf",
+      "input": "testing/regression-tests/204_InternalToken/good01.in",
+      "golden": "testing/regression-tests/204_InternalToken/good01.out",
+      "sha256": {
+        "grammar": "79748d379ee39acb94e1846449637074ee0fc901e75c9a7e9e155d705c41f8eb",
+        "input": "d1f160447f7111d30ee458ec0c5c746478176e42c911076609d6b9e8033db284",
+        "golden": "cf3afb1fe097d3269e45e227c313215143d6aa7d13604903c1d87d96a2234b8d"
+      },
+      "upstream_commit": "https://github.com/BNFC/bnfc/commit/3bb050a",
+      "proof": "Main takes the position token Id in the grammar; its saved AST uses the absent token category Ident."
+    }
+  ]
+}

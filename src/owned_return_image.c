@@ -43,7 +43,7 @@ static bool remember_name_key(ReturnCopy *copy, Atom *source, Atom *variable) {
 static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
     ReturnCopy *copy = context;
     if (leaf->kind == ATOM_SYMBOL)
-        return atom_symbol_id(arena, atom_symbol_current_id(leaf));
+        return atom_symbol_copy(arena, leaf);
     if (leaf->kind == ATOM_VAR) {
         Atom *variable = atom_var_with_spelling(arena, atom_symbol_current_id(leaf), leaf->var_id);
         if (leaf->name_key) {

@@ -1,0 +1,12 @@
+; Symbolic coefficients can complete while their strict comparison remains unresolved.
+!(import! &self ../../../lib/native_weight_algebras.metta)
+!(pragma! prefer-rationals True)
+!(import! &self ../../../lib/probability/finite_bayes.metta)
+!(import! &self ../../../lib/native_weight_reals.metta)
+(= (strict-verdict $v) (if (== $v Less) True (if (or (== $v Greater) (== $v Equal)) False $v)))
+(= (same-log $w) (strict-verdict (real:compare $w (RealLog 2) 0)))
+(= (below-bound $w) (strict-verdict (real:refine (real:compare $w (RealQ (/ 7 10)) 0) 4)))
+(=w (unsettled) (let $_ (println! UNRESOLVED-REAL-BODY) Waiting) (RealLog 2) (admit same-log))
+(=w (refined) (let $_ (println! APPROVED-REAL) Approved) (RealLog 2) (admit below-bound))
+!(weight:read (weights:real) (unsettled))
+!(weight:read (weights:real) (refined))

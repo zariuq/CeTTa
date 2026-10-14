@@ -1,0 +1,8 @@
+[(quote (diag (quote (diag x))))]
+[True]
+[True]
+["@(diag @(diag x))"]
+[(receipt (quote (shown (diag (quote (shown (diag x)))))))]
+[True]
+[True]
+[(Self measure 2)]

@@ -1,0 +1,144 @@
+#ifndef CETTA_PRIME_SCOPED_JUDGMENTS_H
+#define CETTA_PRIME_SCOPED_JUDGMENTS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "atom.h"
+#include "space.h"
+#include "symbol.h"
+
+/* Draft scoped judgment bubbles beside the existing `type:` vocabulary.
+ *
+ * `set:`  — simple-typed judgments and proposition proofs over an admitted
+ *           theory-space profile.  No selection leaves forms uninterpreted.
+ *           HOL selects no set axioms; megalodon-hotg opts into them. Terms and types are the same authored
+ *           syntax that `type:` accepts; every `set:` term judgment is the
+ *           corresponding `type:` judgment in an environment extended by the
+ *           signature, guarded by a syntactic descent check that the operands
+ *           lie in the constant-family (simple) fragment.  `set:proves` checks
+ *           a proof term against a proposition of type `prop` bidirectionally.
+ * `lang:` — language-level operations: registered language inventory,
+ *           parsing and printing of source text, and the diamond native type
+ *           over Prime's own evaluation.
+ * `try`   — one evaluation of a judgment with its outcome made explicit:
+ *           `(Established e)`, `(Refuted r)`, `(Undetermined r)` or
+ *           `(Incomplete r)`.  Nothing is stored and nothing is re-run: a
+ *           plain judgment yields True, False or stays inert; `try` is the
+ *           same single evaluation with the diagnostic returned instead.
+ *
+ * Ownership is by exact symbol: only these spellings are judgments.  Any
+ * other `set:`- or `lang:`-prefixed symbol is ordinary vocabulary. */
+
+bool prime_scoped_judgment_is_head_id(SymbolId head);
+
+/* The engine's spelling of one of its `set:` words, or `Set` package
+ * names, in the `hol:` namespace when `hol` holds. */
+const char *prime_scoped_word(const char *word, bool hol);
+
+/* Whether the theory a space selects is a profile of the native logic. */
+bool prime_scoped_space_is_hol(Space *space);
+
+/* Returns NULL for an unowned head or an unselected set: interpretation. */
+Atom *prime_scoped_judgment_judge(
+    Arena *arena, Space *space, Atom *judgment,
+    bool steps_limited, uint64_t steps);
+
+/* The identity profile of a space, as the kernel's CETTA_PRIME_IDENTITY_*
+ * value.  A space selects one with `(id:profile NAME)`, NAME one of
+ * identity-j, identity-scoped, identity-uip and identity-univalence, read
+ * like `(set:profile NAME)`; a space that selects none has the run's profile
+ * (`--profile`).  An unknown name, or two different names, is a conflicting
+ * selection: -1, under which no profile-dependent declaration exists and the
+ * identity judgments stay unevaluated. */
+int prime_space_identity_policy(Space *space);
+
+/* Spellings of the declaration identities that proof packages generate.  No
+ * program declares them: admission refuses them and declaration lookup does
+ * not see them, so a printed spelling confers no authority. */
+#define CETTA_PRIME_PROOF_IDENTITY_PREFIX "__cetta_proof_"
+#define CETTA_PRIME_HOLDS_IDENTITY_PREFIX "__cetta_holds_"
+bool prime_scoped_judgment_reserved_name(Atom *name);
+
+/* Admission of a record that the evaluator has just published. */
+void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
+
+/* Keep what was published in a space, admitted records and theorem records,
+ * with the space's contents when another space comes to hold them. */
+void prime_scoped_judgment_follow_space_contents(void);
+
+/* Whether admission published `record` in the space that `space` is or
+ * views.  Kernel computation trusts no rule and no definition record that
+ * admission did not publish. */
+bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record);
+
+/* A number that changes whenever what is admitted may have changed. */
+uint64_t prime_scoped_judgment_admission_epoch(void);
+/* Bounded read of actual per-instance authority, including revoked history.
+ * Neither function initializes a ledger nor changes the installed hook. */
+bool prime_scoped_judgment_instance_empty(uint64_t instance, size_t limit,
+    size_t *visited, bool *empty);
+SpaceContentsMovedHook prime_scoped_judgment_contents_subscriber(void);
+
+/* What a refutation by the conversion algorithm of `left` and `right`
+ * assumes in `space`: `(assumes-completeness kind ...)`, the kinds of
+ * declaration the comparison meets for which Lean has not proved the
+ * algorithm complete, or NULL when it meets none. */
+Atom *prime_scoped_judgment_completeness_assumed(Arena *a, Space *space, Atom *left,
+                                                 Atom *right);
+
+/* The Lean theorem a refutation of `left` against `right` rests on without
+ * assuming the conversion algorithm complete, or NULL: the empty list
+ * against `cons` of closed constructor terms, in a space whose numbers and
+ * lists are declared as Lean declares them, rests on
+ * `nil_not_equal_cons`. */
+const char *prime_scoped_judgment_refutation_without_completeness(
+    Arena *a, Space *space, Atom *left, Atom *right);
+
+/* The typed account of a query.  `term` is `(match space pattern returned)`
+ * against a space that declares the pattern's functor typed with
+ * `(type:stored (F T1 ... Tn))`, or a call `(f k)` of a function whose
+ * stored rules `space` declares typed with `(type:stored (= (f K) T))`; the
+ * verdict's evidence is
+ * `(PrimeTypedQuery answer-type (Answers (Answer answer value) ...)
+ * (NotAnswers (NotAnswer occurrence key) ...))`, the answer type
+ * `Sigma (o : F@occurrence). Id Tp (F@argp o) k` in the authored spelling.
+ * NULL for any other term, which the other routes judge. */
+Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
+                                     Atom *term, bool limited, uint64_t steps);
+
+/* The space an ordinary `type:` judgment reads: `space` itself, or, where
+ * it declares stored atoms typed with `(type:stored (F T1 ... Tn))`, the
+ * space extended with what they give: the type `F@occurrence`, one
+ * occurrence `F@x1@...@xn` for each stored atom (`#k` after the k-th copy
+ * of one atom, from 2), and the argument maps `F@argi` with one equation
+ * for each stored atom.  The extension is rebuilt when the space changes. */
+Space *prime_scoped_stored_space(Arena *a, Space *space);
+
+/* Constructors of a datatype declared with parameters, written without
+ * them, `nil` or `(cons zero nil)`, elaborated to the explicit form by
+ * unification against the type each use is expected at and the types of
+ * its fields.  The report says whether some use was elaborated, whether a
+ * parameter was read off a field whose type is a sort, which universes'
+ * cumulativity leaves open, and whether some use was left as written for
+ * want of its parameters. */
+typedef struct {
+    bool changed;
+    bool unforced;
+    bool unsolved;
+} PrimeImplicitReport;
+
+/* `term` with such uses elaborated, at `expected` when given. */
+Atom *prime_scoped_implicit_term(Arena *a, Space *space, Atom *term, Atom *expected,
+                                 PrimeImplicitReport *report);
+
+/* A `type:` judgment with such uses elaborated: a term at the type it is
+ * checked at, the terms of `type:eq` at each other's type. */
+Atom *prime_scoped_implicit_judgment(Arena *a, Space *space, Atom *judgment,
+                                     PrimeImplicitReport *report);
+
+/* A call with such uses elaborated, for the evaluator; NULL when nothing
+ * changes. */
+Atom *prime_scoped_implicit_call(Arena *a, Space *space, Atom *call);
+
+#endif /* CETTA_PRIME_SCOPED_JUDGMENTS_H */

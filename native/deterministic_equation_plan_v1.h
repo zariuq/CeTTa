@@ -115,9 +115,13 @@ bool cetta_deterministic_equation_plan_v1_run(
     Atom **out, CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 
-/* Apply a ground symbol-headed call to already computed argument values.
+/* Apply a symbol-headed call to already computed argument values.
  * Only the selected equation body is evaluated; argument subtrees are never
- * interpreted as equations, binders or primitive calls on entry. */
+ * interpreted as equations, binders or primitive calls on entry. Logical
+ * variable atoms in these values retain their identities as data; they are
+ * neither solved nor interpreted as the source equations' metavariables.
+ * Unlike run, apply may return a value containing those variable atoms.
+ * Unbound source metavariables remain inadmissible. */
 bool cetta_deterministic_equation_plan_v1_apply(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,

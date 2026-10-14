@@ -15,9 +15,15 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 
@@ -1347,7 +1353,44 @@ int main(int argc, char **argv) {
         }
         assert(overlay_step == SPACE_EQUATION_CURSOR_END);
         assert(overlay_matches == 4u);
+        assert(!space_has_graded_equations(&overlay_cursor_space));
         space_free(&overlay_cursor_space);
+
+        /* Overlay grade presence follows visible physical rows, rather than
+         * interpreting every transactional payload as a weighted program. */
+        Space grade_base, grade_overlay, grade_nested;
+        space_init_with_universe(&grade_base, &equation_universe);
+        space_add(&grade_base, source_equation);
+        space_init_overlay(&grade_overlay, &grade_base);
+        assert(!space_has_graded_equations(&grade_base));
+        assert(!space_has_graded_equations(&grade_overlay));
+        Atom *grade_parts[] = {atom_symbol(&equation_scratch, "=w"),
+            source_lhs, atom_true(&equation_scratch), atom_int(&equation_scratch, 2)};
+        Atom *grade_row = atom_expr(&equation_scratch, grade_parts, 4u);
+        space_add(&grade_overlay, grade_row);
+        space_add(&grade_overlay, grade_row);
+        assert(space_has_graded_equations(&grade_overlay));
+        assert(!space_has_graded_equations(&grade_base));
+        space_init_overlay(&grade_nested, &grade_overlay);
+        assert(space_has_graded_equations(&grade_nested));
+        SpaceReadToken grade_read = space_read_token(&grade_nested);
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_read_token_is_current(grade_read));
+        assert(space_has_graded_equations(&grade_nested));
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_has_graded_equations(&grade_nested));
+        assert(space_has_graded_equations(&grade_overlay));
+        /* A later base append is outside the nested overlay's captured
+         * prefix; a local append is visible and removal refreshes metadata. */
+        space_add(&grade_overlay, grade_row);
+        assert(!space_has_graded_equations(&grade_nested));
+        space_add(&grade_nested, grade_row);
+        assert(space_has_graded_equations(&grade_nested));
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_has_graded_equations(&grade_nested));
+        space_free(&grade_nested);
+        space_free(&grade_overlay);
+        space_free(&grade_base);
 
         Space occurrence_space;
         space_init_with_universe(&occurrence_space, &equation_universe);

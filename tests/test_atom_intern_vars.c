@@ -74,6 +74,57 @@ int main(void) {
     assert(atom_symbol_current_id(fy->expr.elems[1]) == y);
     assert(atom_expr(&arena, with_x, 2u) == fx);
 
+    /* An absent numeric ID does not identify unregistered data spellings. */
+    Arena spelled_owner;
+    arena_init_detached(&spelled_owner);
+    Atom *spelled_a = atom_symbol_data(&spelled_owner, "intern-unregistered-a");
+    Atom *spelled_again = atom_symbol_data(&spelled_owner, "intern-unregistered-a");
+    Atom *spelled_b = atom_symbol_data(&spelled_owner, "intern-unregistered-b");
+#if CETTA_MANAGED_SYMBOLS
+    assert(atom_symbol_current_id(spelled_a) == SYMBOL_ID_NONE);
+    assert(atom_symbol_current_id(spelled_b) == SYMBOL_ID_NONE);
+#endif
+#if CETTA_MANAGED_SYMBOLS
+    /* Unregistered bytes retain their arena owner and are not admitted to
+     * the owner-independent interning table. Equality remains structural. */
+    assert(hashcons_get(&table, spelled_a) == spelled_a);
+    assert(hashcons_get(&table, spelled_again) == spelled_again);
+    assert(hashcons_get(&table, spelled_b) == spelled_b);
+#else
+    collision_identity(spelled_a, spelled_again, true);
+    collision_identity(spelled_a, spelled_b, false);
+#endif
+    Atom *spelled_left = atom_expr2(&spelled_owner, head, spelled_a);
+    Atom *spelled_equal = atom_expr2(&spelled_owner, head, spelled_again);
+    Atom *spelled_other = atom_expr2(&spelled_owner, head, spelled_b);
+    assert(atom_eq(spelled_left, spelled_equal));
+    assert(!atom_eq(spelled_left, spelled_other));
+    /* Arena-owned descendants are not a global interning licence in either
+     * representation. A numbered leaf can be published separately. */
+    assert(hashcons_get(&table, spelled_left) == spelled_left);
+    assert(hashcons_get(&table, spelled_equal) == spelled_equal);
+    assert(hashcons_get(&table, spelled_other) == spelled_other);
+#if !CETTA_MANAGED_SYMBOLS
+    Atom *published_a = hashcons_get(&table, spelled_a);
+    Atom *published_equal = hashcons_get(&table, spelled_again);
+    Atom *published_b = hashcons_get(&table, spelled_b);
+    assert(published_a->arena_id == 0u && published_equal == published_a);
+    assert(published_b->arena_id == 0u && published_b != published_a);
+    Atom *published_left = atom_expr2(&spelled_owner, head, published_a);
+    Atom *published_same = atom_expr2(&spelled_owner, head, published_equal);
+    Atom *published_other = atom_expr2(&spelled_owner, head, published_b);
+    collision_identity(published_left, published_same, true);
+    collision_identity(published_left, published_other, false);
+#endif
+    /* A compound child exercises the bounded structural comparator rather
+     * than only the immediate-leaf shortcut. */
+    Atom *nested_left = atom_expr2(&spelled_owner, head, spelled_left);
+    Atom *nested_equal = atom_expr2(&spelled_owner, head, spelled_equal);
+    Atom *nested_other = atom_expr2(&spelled_owner, head, spelled_other);
+    assert(atom_eq(nested_left, nested_equal));
+    assert(!atom_eq(nested_left, nested_other));
+    arena_free(&spelled_owner);
+
     /* Symbols intern as before. */
     assert(atom_symbol(&arena, "f") == head);
 

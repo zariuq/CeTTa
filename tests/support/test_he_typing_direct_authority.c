@@ -193,6 +193,190 @@ static void test_he_type_policy_component(Arena *arena) {
     puts("PASS: HE type interface preserves demands, wildcard refinement and ordered applicability paths");
 }
 
+static void test_grounded_profile_inference(
+    const CettaHeProfiledTypeInferenceDirectServiceV1 *service) {
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, NULL);
+    Space space;
+    space_init(&space);
+    Atom *huge;
+#if CETTA_BUILD_WITH_GMP
+    mpz_t value;
+    mpz_init_set_ui(value, 3u);
+    mpz_mul_2exp(value, value, 32768u);
+    mpz_add_ui(value, value, 7u);
+    huge = atom_bigint_from_mpz(&arena, value);
+    mpz_clear(value);
+#else
+    huge = atom_bigint(&arena, "314159265358979323846264338327950288419716939937510");
+#endif
+    assert(huge && huge->ground.gkind == GV_BIGINT && huge->hash_cache == 0u);
+    Atom *values[] = {huge,
+#if CETTA_BUILD_WITH_GMP
+        atom_rational(&arena, "123456789123456789/1000000007"),
+#endif
+        atom_int(&arena, 42), atom_float(&arena, 1.25),
+        atom_bool(&arena, true), atom_string(&arena, "grounded")};
+    const char *expected[] = {"Number",
+#if CETTA_BUILD_WITH_GMP
+        "Number",
+#endif
+        "Number", "Number", "Bool", "String"};
+    for (unsigned repeat = 0u; repeat < 3u; repeat++) {
+        for (unsigned i = 0u; i < sizeof(values) / sizeof(values[0]); i++) {
+            Atom **types = NULL, **reference = NULL;
+            uint32_t count = service->infer(&space, &arena, values[i], &types);
+            uint32_t reference_count = service->infer_transient(
+                &space, &arena, values[i], &reference);
+            assert(count == 1u && reference_count == count);
+            assert(atom_is_symbol(types[0], expected[i]));
+            assert(atom_eq(types[0], reference[0]));
+            free(types);
+            free(reference);
+            CettaTypeInferenceBudget budget = inference_budget(1u);
+            count = service->infer_budgeted(
+                &space, &arena, values[i], &types, &budget);
+            assert(budget.complete && count == 1u &&
+                   atom_is_symbol(types[0], expected[i]));
+            free(types);
+        }
+    }
+    /* Asking for an intrinsic type must not serialize/hash its huge value. */
+    assert(huge->hash_cache == 0u);
+    Atom *number = atom_symbol(&arena, "Number");
+    Atom *string = atom_symbol(&arena, "String");
+    Atom *annotation = atom_expr3(&arena, atom_symbol(&arena, ":"), huge, string);
+    space_add(&space, annotation);
+    Atom **types = NULL;
+    uint32_t count = service->infer(&space, &arena, huge, &types);
+    assert(count == 1u && atom_eq(types[0], number));
+    free(types);
+    assert(space_remove(&space, annotation));
+
+    StateCell cell = {.value = atom_int(&arena, 1), .content_type = number};
+    Atom *state = atom_state(&arena, &cell);
+    uint64_t revision = space_revision(&space);
+    count = service->infer(&space, &arena, state, &types);
+    assert(count == 1u && atom_eq(types[0], atom_expr2(
+        &arena, atom_symbol(&arena, "StateMonad"), number)));
+    free(types);
+    cell.content_type = string;
+    count = service->infer(&space, &arena, state, &types);
+    assert(space_revision(&space) == revision);
+    assert(count == 1u && atom_eq(types[0], atom_expr2(
+        &arena, atom_symbol(&arena, "StateMonad"), string)));
+    free(types);
+    cell.content_type = NULL;
+    count = service->infer(&space, &arena, state, &types);
+    assert(count == 1u && atom_is_symbol(types[0], "State"));
+    free(types);
+    eval_profiled_type_cache_free_for_current_thread();
+    space_free(&space);
+    arena_free(&arena);
+    puts("PASS: grounded type inference preserves intrinsic, budgeted and mutable type authority without value hashing");
+}
+
+static void test_shared_profile_cache_admission(
+    const CettaHeProfiledTypeInferenceDirectServiceV1 *service) {
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, NULL);
+    Space space;
+    space_init(&space);
+    Atom *node = atom_symbol(&arena, "cache-admission-node");
+    Atom *dag = atom_int(&arena, 1);
+    for (unsigned depth = 0u; depth < 40u; depth++)
+        dag = atom_expr3(&arena, node, dag, dag);
+
+    eval_profiled_type_cache_free_for_current_thread();
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+#endif
+    for (unsigned repeat = 0u; repeat < 2u; repeat++) {
+        Atom **types = NULL, **reference = NULL;
+        uint32_t count = service->infer(&space, &arena, dag, &types);
+        uint32_t reference_count = service->infer_transient(
+            &space, &arena, dag, &reference);
+        assert(count == reference_count);
+        for (uint32_t i = 0u; i < count; i++)
+            assert(atom_eq(types[i], reference[i]));
+        free(types);
+        free(reference);
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats stats;
+    cetta_runtime_stats_snapshot(&stats);
+    cetta_runtime_stats_disable();
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] == 0u);
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 0u);
+#endif
+
+    /* A small input may have a large shared result. Declining its store must
+     * preserve the ordered result from the transient service. */
+    Atom *type = atom_symbol(&arena, "cache-admission-leaf");
+    for (unsigned depth = 0u; depth < 8u; depth++)
+        type = atom_expr3(&arena, node, type, type);
+    Atom *subject = atom_symbol(&arena, "cache-admission-subject");
+    space_add(&space, atom_expr3(
+        &arena, atom_symbol_id(&arena, g_builtin_syms.colon), subject, type));
+    eval_profiled_type_cache_free_for_current_thread();
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+#endif
+    for (unsigned repeat = 0u; repeat < 2u; repeat++) {
+        Atom **types = NULL, **reference = NULL;
+        uint32_t count = service->infer(&space, &arena, subject, &types);
+        uint32_t reference_count = service->infer_transient(
+            &space, &arena, subject, &reference);
+        assert(count == 1u && reference_count == count);
+        assert(atom_eq(types[0], type) && atom_eq(types[0], reference[0]));
+        free(types);
+        free(reference);
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&stats);
+    cetta_runtime_stats_disable();
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] == 0u);
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 2u);
+#endif
+
+    /* Repeated aliases of a mutable cell are not stable cache keys, even
+     * when its content type changes without a Space revision. */
+    Atom *number = atom_symbol(&arena, "Number");
+    Atom *string = atom_symbol(&arena, "String");
+    StateCell cell = {.value = atom_int(&arena, 1), .content_type = number};
+    Atom *state = atom_state(&arena, &cell);
+    Atom *same = atom_symbol(&arena, "cache-admission-same");
+    Atom *variable = atom_var(&arena, "$cache-admission-type");
+    space_add(&space, atom_expr3(
+        &arena, atom_symbol_id(&arena, g_builtin_syms.colon), same,
+        atom_expr(&arena, (Atom *[]){atom_symbol_id(&arena, g_builtin_syms.arrow),
+                                   variable, variable, variable}, 4u)));
+    Atom *application = atom_expr3(&arena, same, state, state);
+    uint64_t revision = space_revision(&space);
+    for (unsigned repeat = 0u; repeat < 2u; repeat++) {
+        cell.content_type = repeat == 0u ? number : string;
+        Atom **types = NULL, **reference = NULL;
+        uint32_t count = service->infer(&space, &arena, application, &types);
+        uint32_t reference_count = service->infer_transient(
+            &space, &arena, application, &reference);
+        assert(space_revision(&space) == revision);
+        assert(count == 1u && reference_count == count);
+        assert(atom_eq(types[0], reference[0]));
+        assert(atom_eq(types[0], atom_expr2(
+            &arena, atom_symbol(&arena, "StateMonad"), cell.content_type)));
+        free(types);
+        free(reference);
+    }
+    eval_profiled_type_cache_free_for_current_thread();
+    space_free(&space);
+    arena_free(&arena);
+    puts("PASS: bounded type-cache admission preserves shared inputs, result lists and mutable aliases");
+}
+
 int main(void) {
     Arena persistent;
     TermUniverse universe;
@@ -242,6 +426,8 @@ int main(void) {
         eval_get_atom_types_structural_profiled);
     assert(profile_service->infer_structural_budgeted ==
         eval_get_atom_types_structural_profiled_budgeted);
+    test_grounded_profile_inference(profile_service);
+    test_shared_profile_cache_admission(profile_service);
 
     assert(cetta_he_inference_contracts_v1_are_valid());
     static const char *const inference_names[] = {

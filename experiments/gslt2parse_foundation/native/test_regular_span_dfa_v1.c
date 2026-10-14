@@ -245,7 +245,149 @@ static bool forest_has_scalar(
     return false;
 }
 
+static int test_byte_cursor(void) {
+    static const CettaLpNativeUnicodeRange byte_range[] = {{0u, 255u}};
+    static const CettaLpNativeUnicodeRange lead_range[] = {{206u, 206u}};
+    static const CettaLpNativeUnicodeRange tail_range[] = {{187u, 187u}};
+    static const CettaLpNativeUnicodeRange lambda_range[] = {{955u, 955u}};
+    static const CettaLpNativeUnicodeRange a_range[] = {{97u, 97u}};
+    static const uint32_t starts[] = {0u};
+    static const RSDFAV1NfaEdge edges[] = {
+        {0u, 1u, RSDFA_V1_NFA_RANGES, byte_range, 1u},
+        {1u, 1u, RSDFA_V1_NFA_RANGES, byte_range, 1u},
+        {0u, 2u, RSDFA_V1_NFA_RANGES, lead_range, 1u},
+        {2u, 3u, RSDFA_V1_NFA_RANGES, tail_range, 1u},
+        {0u, 4u, RSDFA_V1_NFA_RANGES, lambda_range, 1u},
+        {0u, 5u, RSDFA_V1_NFA_RANGES, a_range, 1u},
+        {5u, 6u, RSDFA_V1_NFA_EOF, NULL, 0u},
+    };
+    static const RSDFAV1NfaAccept accepts[] = {
+        {0u, 0u}, {1u, 0u}, {1u, 1u}, {3u, 2u},
+        {4u, 3u}, {5u, 4u}, {6u, 5u},
+    };
+    const RSDFAV1Nfa nfa = {
+        .state_len = 7u, .start_states = starts, .start_len = 1u,
+        .edges = edges, .edge_len = 7u, .accepts = accepts,
+        .accept_len = 7u, .tag_len = 6u,
+    };
+    const uint8_t utf8[] = {206u, 187u, 97u};
+    const uint8_t ascii[] = {97u, 97u};
+    uint8_t all_bytes[256];
+    RSDFAV1Plan plan;
+    RSDFAV1Program program;
+    RSDFAV1BuildOutcome outcome;
+    RSDFAV1ByteToken tokens[65];
+    RSDFAV1Token scalar_tokens[6];
+    RSDFAV1ByteCursorScanResult result;
+    RSDFAV1CursorScanResult scalar_result;
+    CettaLpNativeUtf8ScalarBuffer source;
+    char error[512] = {0};
+
+    rsdfa_v1_plan_init(&plan);
+    rsdfa_v1_program_init(&program);
+    cetta_lp_native_utf8_scalar_buffer_init(&source);
+    CHECK(rsdfa_v1_plan_build(&nfa, 128u, 1024u, &plan, &outcome,
+                              error, sizeof(error)) &&
+              outcome == RSDFA_V1_BUILD_COMPLETED &&
+              rsdfa_v1_plan_export_program(&plan, &program, error, sizeof(error)),
+          error);
+    CHECK(rsdfa_v1_program_scan_byte_cursor_longest(
+              &program, utf8, 3u, 0u, 100u, tokens, 65u, &result,
+              error, sizeof(error)) && result.accept_len == 3u &&
+              result.reached_eof && result.stop_byte == 3u &&
+              tokens[0].tag == 0u && tokens[0].end_byte == 3u &&
+              tokens[1].tag == 1u && tokens[1].end_byte == 3u &&
+              tokens[2].tag == 2u && tokens[2].end_byte == 2u,
+          "byte cursor decoded UTF-8 or lost tagged longest prefixes");
+    CHECK(cetta_lp_native_utf8_scalar_buffer_prepare(
+              &source, utf8, 3u, error, sizeof(error)) &&
+              rsdfa_v1_program_scan_cursor_longest(
+                  &program, &source.view, 0u, 100u,
+                  scalar_tokens, 6u, &scalar_result, error, sizeof(error)) &&
+              scalar_result.accept_len == 2u && scalar_result.stop_scalar == 1u &&
+              scalar_result.stop_byte == 2u && scalar_tokens[1].tag == 3u,
+          "scalar cursor no longer recognizes the Unicode scalar separately");
+    for (uint32_t i = 0u; i < 256u; ++i) all_bytes[i] = (uint8_t)i;
+    CHECK(rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+              &program, all_bytes, 256u, 0u, 256u, tokens, 65u, &result,
+              error, sizeof(error)) && result.reached_eof &&
+              result.accept_len == 2u && result.work_item_len == 256u &&
+              tokens[0].end_byte == 256u && tokens[1].end_byte == 256u,
+          "byte cursor refused zero or high bytes");
+    CHECK(rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+              &program, all_bytes, 256u, 0u, 1u, tokens, 65u, &result,
+              error, sizeof(error)) &&
+              result.outcome == RSDFA_V1_CURSOR_SCAN_WORK_LIMIT &&
+              result.stop_byte == 1u && !result.reached_eof,
+          "byte cursor hid its work limit");
+    CHECK(rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+              &program, NULL, 0u, 0u, 1u, tokens, 65u, &result,
+              error, sizeof(error)) && result.reached_eof &&
+              result.accept_len == 1u && tokens[0].end_byte == 0u,
+          "byte cursor lost the empty-input acceptance");
+    CHECK(rsdfa_v1_program_scan_byte_cursor_longest(
+              &program, ascii, 1u, 0u, 100u, tokens, 65u, &result,
+              error, sizeof(error)) && result.accept_len == 4u &&
+              tokens[3].tag == 5u && tokens[3].end_byte == 1u,
+          "byte cursor lost EOF-conditioned acceptance");
+    CHECK(cetta_lp_native_utf8_scalar_buffer_prepare(
+              &source, ascii, 2u, error, sizeof(error)), error);
+    for (uint32_t cursor = 0u; cursor <= 2u; ++cursor) {
+        CHECK(rsdfa_v1_program_scan_byte_cursor_longest(
+                  &program, ascii, 2u, cursor, 100u, tokens, 65u, &result,
+                  error, sizeof(error)) &&
+                  rsdfa_v1_program_scan_cursor_longest(
+                      &program, &source.view, cursor, 100u,
+                      scalar_tokens, 6u, &scalar_result, error, sizeof(error)) &&
+                  result.accept_len == scalar_result.accept_len &&
+                  result.stop_byte == scalar_result.stop_byte &&
+                  result.work_item_len == scalar_result.work_item_len &&
+                  result.reached_eof == scalar_result.reached_eof,
+              "byte and scalar cursors disagree on ASCII");
+        for (uint32_t i = 0u; i < result.accept_len; ++i) {
+            CHECK(tokens[i].tag == scalar_tokens[i].tag &&
+                      tokens[i].start_byte == scalar_tokens[i].start_byte &&
+                      tokens[i].end_byte == scalar_tokens[i].end_byte,
+                  "byte cursor changed an ASCII acceptance span");
+        }
+    }
+    CHECK(!rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+              &program, NULL, 1u, 0u, 1u, tokens, 65u, &result, error, sizeof(error)) &&
+              !rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+                  &program, ascii, 2u, 3u, 1u, tokens, 65u, &result, error, sizeof(error)) &&
+              !rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+                  &program, ascii, 2u, 0u, 1u, tokens, 5u, &result, error, sizeof(error)) &&
+              !rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+                  &program, ascii, 2u, 0u, 0u, tokens, 65u, &result, error, sizeof(error)) &&
+              !rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(
+                  &program, ascii, 2u, 0u, 1u, NULL, 65u, &result, error, sizeof(error)),
+          "byte cursor accepted invalid arguments");
+    {
+        RSDFAV1Nfa large_nfa = nfa;
+        RSDFAV1NfaAccept large_accepts[7];
+        memcpy(large_accepts, accepts, sizeof(accepts));
+        large_accepts[2].tag = 64u;
+        large_nfa.accepts = large_accepts;
+        large_nfa.tag_len = 65u;
+        CHECK(rsdfa_v1_plan_build(&large_nfa, 128u, 1024u, &plan, &outcome,
+                                  error, sizeof(error)) &&
+                  outcome == RSDFA_V1_BUILD_COMPLETED &&
+                  rsdfa_v1_plan_export_program(&plan, &program, error, sizeof(error)) &&
+                  rsdfa_v1_program_scan_byte_cursor_longest(
+                      &program, all_bytes, 256u, 0u, 256u,
+                      tokens, 65u, &result, error, sizeof(error)) &&
+                  result.accept_len == 2u && tokens[1].tag == 64u &&
+                  tokens[1].end_byte == 256u,
+              "byte cursor lost tags outside its small bitset");
+    }
+    cetta_lp_native_utf8_scalar_buffer_free(&source);
+    rsdfa_v1_program_free(&program);
+    rsdfa_v1_plan_free(&plan);
+    return 0;
+}
+
 int main(void) {
+    CHECK(test_byte_cursor() == 0, "byte cursor controls failed");
     static const CettaLpNativeUnicodeRange a_range[] = {{97u, 97u}};
     static const CettaLpNativeUnicodeRange lambda_range[] = {{955u, 955u}};
     static const uint32_t starts[] = {0u, 2u, 4u, 6u, 9u};

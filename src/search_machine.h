@@ -314,6 +314,11 @@ bool cetta_selection_automaton_ratio(
     CettaSelectionAutomaton *automaton);
 bool cetta_selection_automaton_valid(
     const CettaSelectionAutomaton *automaton);
+/* Compare the checked transition graph, independently of its retained phase.
+ * Updating an observation allowance does not initialize a new controller. */
+bool cetta_selection_automaton_same_graph(
+    const CettaSelectionAutomaton *left,
+    const CettaSelectionAutomaton *right);
 /* The lane-recurrence check described above.  Structural: it inspects only
  * the automaton data, never an occurrence-store run. */
 bool cetta_selection_automaton_has_recurrent_oldest(
@@ -405,6 +410,8 @@ typedef struct {
     /* Controller-neutral causal lineage.  Zero names a frontier root.  This
      * is advisory/provenance data only; it never licenses restoration. */
     uint64_t parent_occurrence_id;
+    uint64_t resume_store;
+    uint64_t resume_lease;
 } CettaOwnedContinuation;
 
 /* A bounded advisor may inspect a provider-projected, owned description of a
@@ -497,6 +504,13 @@ typedef struct {
     size_t length;
 } CettaContinuationBatch;
 
+typedef struct {
+    uint64_t occurrence;
+    uint64_t lease;
+    void *payload;
+    const CettaContinuationProvider *provider;
+} CettaContinuationLease;
+
 /* One controller-neutral live-occurrence store.  Each payload occurs exactly
  * once; FIFO, LIFO, valuation, and learned selectors choose an index without
  * converting or copying the stored continuation representation. */
@@ -506,6 +520,11 @@ typedef struct {
     size_t end;
     size_t capacity;
     uint64_t next_occurrence_id;
+    uint64_t identity;
+    uint64_t next_lease;
+    CettaContinuationLease *leases;
+    size_t lease_length;
+    size_t lease_capacity;
 } CettaContinuationStore;
 
 /* Evaluator-neutral control hub for one observation scope.  The hub owns one
@@ -522,12 +541,26 @@ typedef struct {
     bool initialized;
 } CettaContinuationHub;
 
+/* One entry in the parent's prepared payload transport. SOURCE borrows an
+ * actual queued or issued handle; PREPARED owns a separately prepared handle
+ * of the same provider, with all occurrence/lease fields initially zero.
+ * The parent transport must preserve payload meaning, shared graph aliases,
+ * and independent writable ownership. A matching pointer or provider tag
+ * cannot establish these obligations. Independently retained immutable
+ * payloads may share physical storage. */
+typedef struct {
+    const CettaOwnedContinuation *source;
+    CettaOwnedContinuation prepared;
+} CettaContinuationTransport;
+
 typedef struct {
     CettaContinuationStatus (*capture)(
         void *machine, void **payload);
     CettaContinuationStatus (*restore)(
         void *machine, void **payload);
     void (*destroy)(void *payload);
+    /* Optional census. Its absence makes storage observation unavailable;
+     * capture, restore and destruction retain their ownership contract. */
     bool (*storage)(
         const void *payload,
         CettaContinuationStorage *storage);
@@ -691,6 +724,27 @@ bool cetta_continuation_hub_init(
     CettaSelectionDuty selection_duty,
     const CettaControlPlan *plan);
 void cetta_continuation_hub_destroy(CettaContinuationHub *hub);
+/* Install one complete, quiescent prepared copy into an empty DESTINATION.
+ * TRANSPORT covers every queued occurrence and every issued lease exactly
+ * once, in any order. Issued entries must borrow the actual external owner
+ * handles, including their parent lineage; a lease table alone does not
+ * retain that lineage. No provider is executed and SOURCE is never consumed.
+ *
+ * Success preserves queue geometry, occurrence/parent IDs, counters, plan,
+ * observation count and the entire retained schedule. It assigns a fresh
+ * destination store identity. Queued PREPARED handles move into the new hub;
+ * issued PREPARED handles remain in TRANSPORT with consistently remapped
+ * return leases. Old-store handles cannot return to the new hub.
+ *
+ * Refusal changes neither hub nor any transport handle. It releases only
+ * temporary control arrays; all prepared payloads remain caller-owned.
+ * Enabled cost observation records control scans/allocations/captures, not
+ * evaluator quanta. This copies the hub component, not its opaque parent
+ * frames, arenas, services, or replay authority. */
+CettaContinuationStatus cetta_continuation_hub_copy_prepared(
+    const CettaContinuationHub *source,
+    CettaContinuationTransport *transport, size_t length,
+    CettaContinuationHub *destination);
 size_t cetta_continuation_hub_length(const CettaContinuationHub *hub);
 const CettaOwnedContinuation *cetta_continuation_hub_at(
     const CettaContinuationHub *hub, size_t index);
@@ -706,6 +760,14 @@ bool cetta_continuation_hub_select(
 bool cetta_continuation_hub_switch_schedule(
     CettaContinuationHub *hub,
     const CettaSelectionAutomaton *schedule);
+/* A lease authorizes return to this exact store. Refusal retains both the
+ * queue and caller's residual. Release revokes a completed external owner. */
+bool cetta_continuation_hub_take_for_resume(CettaContinuationHub *hub, size_t index,
+    CettaOwnedContinuation *continuation);
+bool cetta_continuation_hub_release_lease(CettaContinuationHub *hub,
+    CettaOwnedContinuation *continuation);
+bool cetta_continuation_hub_requeue(CettaContinuationHub *hub,
+    CettaOwnedContinuation *continuation);
 bool cetta_continuation_hub_append(
     CettaContinuationHub *hub,
     CettaOwnedContinuation *continuation);

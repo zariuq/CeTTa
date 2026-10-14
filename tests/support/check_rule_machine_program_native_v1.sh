@@ -16,7 +16,7 @@ rule_core=experiments/gslt2parse_foundation/presentations/core/rule_machine_core
 rule_program=experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 rule_observer=tests/support/test_rule_machine_program_generated_v1.c
 rule_sources=(src/atom.c src/binding/frame_identity.c src/binding/closure.c src/symbol.c src/name_key.c src/match.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c
-    src/prime_need.c src/variant_shape.c src/term_universe.c src/term_canon.c)
+    src/prime_need.c src/native_cost.c src/weight_ledger.c src/variant_shape.c src/term_universe.c src/term_canon.c)
 sha256sum "$rule_tool" "$rule_script" "$rule_reference" "$rule_core" "$rule_program" \
     "$rule_observer" tools/rule_machine_program_v1.c tools/gslt_native_emission_v1.h \
     native/operational_language_def_v1.c native/gslt_composition_v1.c \

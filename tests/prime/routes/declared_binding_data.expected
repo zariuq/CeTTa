@@ -1,0 +1,9 @@
+intentional-execution
+[()]
+[(quote (println! "unrequested-direct-execution"))]
+[(quote (println! "unrequested-direct-formation"))]
+[(quote (binding:result (println! "unrequested-instance-execution")))]
+[(quote (println! "unrequested-lowering-execution"))]
+[2]
+[(quote (AbtBindings))]
+[()]

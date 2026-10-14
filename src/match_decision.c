@@ -2521,3 +2521,392 @@ void cetta_match_decision_stats(
     *stats = decision
         ? decision->stats : (CettaMatchDecisionStats){0};
 }
+
+
+void cetta_match_decision_storage_census(const CettaMatchDecision *decision,
+        CettaStorageCensus *census) {
+    if (!decision || !cetta_storage_object(census, decision, sizeof(*decision), CETTA_STORAGE_BLOCK)) return;
+#define COUNT(field, count) cetta_storage_array(census, decision->field, (count), sizeof(*decision->field), 0u)
+    COUNT(equations, decision->equation_count);
+    COUNT(paths, decision->path_capacity);
+    COUNT(candidate_locals, decision->candidate_local_capacity);
+    COUNT(candidate_sources, decision->candidate_source_capacity);
+    COUNT(working_lists, decision->working_list_capacity);
+    COUNT(discriminators, decision->path_count);
+    COUNT(equalities, decision->equality_capacity);
+    COUNT(equality_offsets, decision->equation_count + 1u);
+    COUNT(observation_nodes, decision->stats.prefix_observation_direct_edges + 1u);
+    COUNT(observation_states, decision->observation_node_count);
+    COUNT(observation_values, decision->observation_node_count);
+    COUNT(observation_stamps, decision->observation_node_count);
+#undef COUNT
+    for (size_t i = 0; i < decision->path_count; i++) {
+        const CettaMatchDecisionPath *path = &decision->paths[i];
+#define COUNT(field, count) cetta_storage_array(census, path->field, (count), sizeof(*path->field), 0u)
+        COUNT(path, path->path_len);
+        COUNT(keys, path->key_capacity);
+        COUNT(key_slots, path->key_slot_capacity);
+        COUNT(wildcard_refs, path->wildcard_capacity);
+        COUNT(observed_tags, path->key_count);
+#undef COUNT
+        for (uint32_t j = 0; j < path->key_count; j++)
+            cetta_storage_array(census, path->keys[j].equation_refs, path->keys[j].equation_capacity,
+                sizeof(*path->keys[j].equation_refs), 0u);
+    }
+    for (size_t i = 0; i < decision->equality_count; i++) {
+        const CettaMatchDecisionEquality *equality = &decision->equalities[i];
+        cetta_storage_array(census, equality->paths, (size_t)equality->first_len + equality->second_len,
+            sizeof(*equality->paths), 0u);
+    }
+    cetta_code_tree_storage_census(decision->code_tree, census);
+    cetta_code_tree_cursor_storage_census(decision->tree_cursor, census);
+}
+
+/* Copy a quiescent compiled selector, without invoking classification,
+ * recompilation, selection or ambient process policy. The caller has ended
+ * every borrowed selection view and holds the source graph for this session. */
+static const char match_decision_copy_kind;
+
+static bool match_decision_copy_array(void **out, const void *source,
+    size_t length, size_t capacity, size_t width) {
+    *out = NULL;
+    if (length > capacity || (capacity && !source) ||
+        !width || capacity > SIZE_MAX / width)
+        return false;
+    if (!capacity) return source == NULL;
+    void *image = calloc(capacity, width);
+    if (!image) return false;
+    if (length) memcpy(image, source, length * width);
+    *out = image;
+    return true;
+}
+
+static bool match_decision_copy_atom(AtomDeepCopySession *atoms, Atom **value) {
+    if (!*value) return true;
+    Atom *image = atom_deep_copy_session_copy(atoms, *value);
+    if (!image) return false;
+    *value = image;
+    return true;
+}
+
+CettaMatchDecision *cetta_match_decision_copy_lookup(
+    const CettaMatchDecision *source, const AtomDeepCopySession *atoms) {
+    return source && atoms ? atom_deep_copy_session_object_forwarded(
+        atoms, &match_decision_copy_kind, source, sizeof(*source)) : NULL;
+}
+
+CettaMatchDecision *cetta_match_decision_copy_with_session(
+    const CettaMatchDecision *source, AtomDeepCopySession *atoms) {
+    if (!source || !atoms || !source->equation_count ||
+        source->equation_count > UINT32_MAX ||
+        source->path_count > source->path_capacity ||
+        source->discriminator_count > source->path_count ||
+        source->equality_count > source->equality_capacity ||
+        source->observation_selector_node_count > source->observation_node_count)
+        return NULL;
+    CettaMatchDecision *known = cetta_match_decision_copy_lookup(source, atoms);
+    if (known) return cetta_match_decision_retain(known);
+    CettaMatchDecision *image = calloc(1u, sizeof(*image));
+    if (!image) return NULL;
+    atomic_init(&image->owner_count, 1u);
+    image->read = source->read;
+    image->equation_token = source->equation_token;
+    image->equation_projection_pinned = source->equation_projection_pinned;
+    image->semantic_identity = source->semantic_identity;
+    image->mode = source->mode;
+    image->max_depth = source->max_depth;
+    image->realization = source->realization;
+    image->tree_epoch = source->tree_epoch;
+    image->observation_epoch = source->observation_epoch;
+    image->observation_ready = source->observation_ready;
+    image->stats = source->stats;
+    image->equation_count = source->equation_count;
+    image->path_capacity = source->path_capacity;
+    image->candidate_local_capacity = source->candidate_local_capacity;
+    image->candidate_source_capacity = source->candidate_source_capacity;
+    image->working_list_capacity = source->working_list_capacity;
+    image->discriminator_count = source->discriminator_count;
+    image->equality_capacity = source->equality_capacity;
+    image->observation_node_count = source->observation_node_count;
+    image->observation_selector_node_count = source->observation_selector_node_count;
+#define MD_ARRAY(f,n,c) do { if (!match_decision_copy_array((void **)&image->f, source->f, (n), (c), sizeof(*source->f))) goto fail; } while (0)
+    MD_ARRAY(equations, source->equation_count, source->equation_count);
+    for (size_t i = 0u; i < source->equation_count; i++)
+        if (!match_decision_copy_atom(atoms, &image->equations[i].pattern)) goto fail;
+    MD_ARRAY(paths, 0u, source->path_capacity);
+    image->path_count = source->path_count;
+    for (size_t i = 0u; i < source->path_count; i++) {
+        const CettaMatchDecisionPath *s = &source->paths[i];
+        CettaMatchDecisionPath *d = &image->paths[i];
+        if (s->key_count > s->key_capacity || s->wildcard_count > s->wildcard_capacity)
+            goto fail;
+        d->path_len = s->path_len; d->observation_node = s->observation_node;
+        d->key_capacity = s->key_capacity;
+        d->key_slot_capacity = s->key_slot_capacity;
+        d->wildcard_count = s->wildcard_count; d->wildcard_capacity = s->wildcard_capacity;
+        d->observed_epoch = s->observed_epoch;
+#define MD_PATH(f,n,c) do { if (!match_decision_copy_array((void **)&d->f, s->f, (n), (c), sizeof(*s->f))) goto fail; } while (0)
+        MD_PATH(path, s->path_len, s->path_len);
+        MD_PATH(keys, 0u, s->key_capacity);
+        d->key_count = s->key_count;
+        MD_PATH(key_slots, s->key_slot_capacity, s->key_slot_capacity);
+        /* A conjunctive tree has consumed and freed the posting arrays. */
+        if (s->wildcard_refs) MD_PATH(wildcard_refs, s->wildcard_count, s->wildcard_capacity);
+        else if (s->wildcard_capacity && !source->code_tree) goto fail;
+        for (uint32_t j = 0u; j < s->key_count; j++) {
+            const CettaMatchDecisionKey *sk = &s->keys[j];
+            CettaMatchDecisionKey *dk = &d->keys[j];
+            if (sk->equation_count > sk->equation_capacity) goto fail;
+            dk->kind = sk->kind; dk->expression_length = sk->expression_length;
+            dk->atom = sk->atom; dk->equation_count = sk->equation_count;
+            dk->equation_capacity = sk->equation_capacity;
+            if (!match_decision_copy_atom(atoms, &dk->atom)) goto fail;
+            if (sk->equation_refs) {
+                if (!match_decision_copy_array((void **)&dk->equation_refs,
+                        sk->equation_refs, sk->equation_count, sk->equation_capacity,
+                        sizeof(*sk->equation_refs))) goto fail;
+            } else if (sk->equation_capacity && !source->code_tree) goto fail;
+        }
+        if (s->observed_tags) MD_PATH(observed_tags, 0u, s->key_count);
+        if (source->tree_epoch && s->observed_epoch == source->tree_epoch) {
+            if (s->observation.count > s->key_count ||
+                s->observation.tags != s->observed_tags ||
+                (s->observation.count && !s->observed_tags)) goto fail;
+            d->observation = s->observation;
+            d->observation.tags = d->observed_tags;
+            if (s->observation.count)
+                memcpy(d->observed_tags, s->observed_tags,
+                    s->observation.count * sizeof(*s->observed_tags));
+        }
+#undef MD_PATH
+    }
+    /* No selection-result borrow crosses this boundary. Selection initializes
+     * these private buffers before use; preserving capacity avoids a hidden
+     * allocation-policy change on the next request. */
+    MD_ARRAY(candidate_locals, 0u, source->candidate_local_capacity);
+    MD_ARRAY(candidate_sources, 0u, source->candidate_source_capacity);
+    MD_ARRAY(working_lists, 0u, source->working_list_capacity);
+    MD_ARRAY(discriminators, source->discriminator_count,
+        source->discriminators ? source->path_count : 0u);
+    MD_ARRAY(equalities, 0u, source->equality_capacity);
+    image->equality_count = source->equality_count;
+    for (size_t i = 0u; i < source->equality_count; i++) {
+        const CettaMatchDecisionEquality *s = &source->equalities[i];
+        CettaMatchDecisionEquality *d = &image->equalities[i];
+        *d = *s; d->paths = NULL;
+        size_t count = (size_t)s->first_len + s->second_len;
+        if (count < s->first_len || !match_decision_copy_array((void **)&d->paths,
+                s->paths, count, count, sizeof(*s->paths))) goto fail;
+    }
+    MD_ARRAY(equality_offsets, source->equality_offsets ? source->equation_count + 1u : 0u,
+        source->equality_offsets ? source->equation_count + 1u : 0u);
+    if (source->code_tree) {
+        image->code_tree = cetta_code_tree_copy(source->code_tree);
+        if (!image->code_tree) goto fail;
+    }
+    if (source->tree_cursor) {
+        image->tree_cursor = cetta_code_tree_cursor_copy_quiescent(source->tree_cursor);
+        if (!image->tree_cursor) goto fail;
+    }
+    if (source->observation_nodes) {
+        if (source->stats.prefix_observation_direct_edges >= SIZE_MAX) goto fail;
+        MD_ARRAY(observation_nodes, source->observation_node_count,
+            (size_t)source->stats.prefix_observation_direct_edges + 1u);
+    } else if (source->observation_node_count) goto fail;
+    MD_ARRAY(observation_states, 0u, source->observation_node_count);
+    MD_ARRAY(observation_values, 0u, source->observation_node_count);
+    MD_ARRAY(observation_stamps, source->observation_node_count, source->observation_node_count);
+    for (size_t i = 0u; i < source->observation_node_count; i++) {
+        if (!source->observation_epoch || source->observation_stamps[i] != source->observation_epoch)
+            continue;
+        /* The materialized Prime query profile has no borrowed resolver
+         * scope. Stale slots are never dereferenced or transported. */
+        if (source->observation_values[i].scope) goto fail;
+        image->observation_states[i] = source->observation_states[i];
+        image->observation_values[i] = source->observation_values[i];
+        if (image->observation_values[i].source) {
+            const Arena *held_source = NULL;
+            Arena *held_image = NULL;
+            /* A cache lifetime does not retain the last query's owner.
+             * Check a held physical span without reading the Atom first. */
+            if (!atom_deep_copy_session_owner_of_span(atoms,
+                    image->observation_values[i].source, sizeof(Atom), NULL,
+                    &held_source, &held_image)) goto fail;
+        }
+        if (!match_decision_copy_atom(atoms, &image->observation_values[i].source)) goto fail;
+    }
+#undef MD_ARRAY
+    if (!atom_deep_copy_session_object_record(atoms, &match_decision_copy_kind,
+            source, image, sizeof(*source))) goto fail;
+    return image;
+fail:
+    cetta_match_decision_free(image);
+    return NULL;
+}
+
+#define MD_S(n,x,y) do { if(!read->scalar(read->context,n,(uint64_t)(x),(uint64_t)(y)))return false; } while(0)
+#define MD_F(n,x,y) do { if(!read->physical(read->context,n,(uint64_t)(x),(uint64_t)(y)))return false; } while(0)
+#define MD_P(n,x,y) do { if(!read->address(read->context,n,x,y))return false; } while(0)
+#define MD_A(n,x,y) do { if(!read->atom(read->context,n,x,y))return false; } while(0)
+static bool match_decision_compare_refs(const uint32_t *a,size_t an,
+    const uint32_t *b,size_t bn,const CettaCheckpointCompare *read) {
+    if(an!=bn||(an&&(!a||!b)))return false;
+    MD_S("selector.refs_length",an,bn);
+    for(size_t i=0u;i<an;i++)MD_S("selector.ref",a[i],b[i]);
+    return true;
+}
+
+bool cetta_match_decision_checkpoint_compare(const CettaMatchDecision *a,
+    const CettaMatchDecision *b,const CettaCheckpointCompare *read) {
+    if(!cetta_checkpoint_compare_valid(read))return false;
+    MD_P("selector",a,b);
+    if(!a||!b)return !a&&!b;
+    size_t ar=atomic_load_explicit(&a->owner_count,memory_order_relaxed);
+    size_t br=atomic_load_explicit(&b->owner_count,memory_order_relaxed);
+    if(!ar||!br||a->equation_count!=b->equation_count||
+        (a->equation_count&&(!a->equations||!b->equations))||
+        !cetta_checkpoint_extent(a->paths,a->path_count,a->path_capacity,b->paths,b->path_count,b->path_capacity)||
+        !cetta_checkpoint_extent(a->equalities,a->equality_count,a->equality_capacity,b->equalities,b->equality_count,b->equality_capacity))return false;
+    MD_F("selector.references",ar,br);
+    /* Source services are rigid, not freshly allocated replay identities. */
+    if(a->read.space!=b->read.space||a->equation_token.space!=b->equation_token.space||
+        a->equation_token.projection_dependency!=b->equation_token.projection_dependency)return false;
+    MD_P("selector.read_space",a->read.space,b->read.space);
+#define MD_READ(f) MD_S("selector.read."#f,a->read.f,b->read.f)
+    MD_READ(instance_id);MD_READ(revision);MD_READ(prefix_epoch);MD_READ(base_prefix_epoch);MD_READ(base_dependency_epoch);
+#undef MD_READ
+    MD_P("selector.equation_space",a->equation_token.space,b->equation_token.space);
+    MD_P("selector.equation_dependency",a->equation_token.projection_dependency,b->equation_token.projection_dependency);
+    MD_S("selector.equation_instance",a->equation_token.instance_id,b->equation_token.instance_id);
+    MD_S("selector.equation_revision",a->equation_token.equation_revision,b->equation_token.equation_revision);
+    MD_S("selector.equation_dependency_epoch",a->equation_token.projection_dependency_epoch,b->equation_token.projection_dependency_epoch);
+    MD_S("selector.pinned",a->equation_projection_pinned,b->equation_projection_pinned);
+#define MD_SEM(f) MD_S("selector.semantic."#f,a->semantic_identity.f,b->semantic_identity.f)
+    MD_SEM(language_id);MD_SEM(profile_id);MD_SEM(match_policy_id);MD_SEM(demand_policy_id);
+    MD_SEM(presentation_identity);MD_SEM(compiler_identity);
+#undef MD_SEM
+    MD_S("selector.mode",a->mode,b->mode);MD_S("selector.depth",a->max_depth,b->max_depth);
+#define MD_REAL(f) MD_S("selector.realization."#f,a->realization.f,b->realization.f)
+    MD_REAL(use_direct_prefix_observation);MD_REAL(use_eager_prefix_observation);MD_REAL(use_direct_equality_observation);
+#undef MD_REAL
+    MD_P("selector.equations",a->equations,b->equations);
+    MD_S("selector.equation_count",a->equation_count,b->equation_count);
+    for(size_t i=0u;i<a->equation_count;i++) {
+        MD_S("selector.equation_index",i,i);
+        MD_S("selector.source_ref",a->equations[i].source_ref,b->equations[i].source_ref);
+        MD_A("selector.pattern",a->equations[i].pattern,b->equations[i].pattern);
+    }
+    MD_S("selector.path_count",a->path_count,b->path_count);MD_F("selector.path_capacity",a->path_capacity,b->path_capacity);
+    MD_P("selector.paths",a->paths,b->paths);MD_S("selector.tree_epoch",a->tree_epoch,b->tree_epoch);
+    for(size_t i=0u;i<a->path_count;i++) {
+        const CettaMatchDecisionPath *x=&a->paths[i],*y=&b->paths[i];
+        if(x->path_len!=y->path_len||(x->path_len&&(!x->path||!y->path))||
+            !cetta_checkpoint_extent(x->keys,x->key_count,x->key_capacity,y->keys,y->key_count,y->key_capacity)||
+            !cetta_checkpoint_extent(x->wildcard_refs,x->wildcard_count,x->wildcard_capacity,y->wildcard_refs,y->wildcard_count,y->wildcard_capacity))return false;
+        MD_S("selector.path_index",i,i);MD_S("selector.path_length",x->path_len,y->path_len);
+        MD_P("selector.path_edges",x->path,y->path);
+        for(uint32_t j=0u;j<x->path_len;j++)MD_S("selector.path_edge",x->path[j],y->path[j]);
+        MD_S("selector.observation_node",x->observation_node,y->observation_node);
+        MD_S("selector.key_count",x->key_count,y->key_count);MD_F("selector.key_capacity",x->key_capacity,y->key_capacity);
+        MD_P("selector.keys",x->keys,y->keys);
+        for(uint32_t j=0u;j<x->key_count;j++) {
+            const CettaMatchDecisionKey *p=&x->keys[j],*q=&y->keys[j];
+            if(!cetta_checkpoint_extent(p->equation_refs,p->equation_count,p->equation_capacity,
+                q->equation_refs,q->equation_count,q->equation_capacity))return false;
+            MD_S("selector.key_index",j,j);MD_S("selector.key_kind",p->kind,q->kind);
+            MD_S("selector.key_arity",p->expression_length,q->expression_length);
+            MD_A("selector.key_atom",p->atom,q->atom);
+            MD_F("selector.key_ref_capacity",p->equation_capacity,q->equation_capacity);
+            MD_P("selector.key_refs",p->equation_refs,q->equation_refs);
+            if(!match_decision_compare_refs(p->equation_refs,p->equation_count,q->equation_refs,q->equation_count,read))return false;
+        }
+        /* key_slots contains initialized key indices, not raw addresses. */
+        MD_P("selector.key_slots",x->key_slots,y->key_slots);
+        if(!match_decision_compare_refs(x->key_slots,x->key_slot_capacity,y->key_slots,y->key_slot_capacity,read))return false;
+        MD_F("selector.wildcard_capacity",x->wildcard_capacity,y->wildcard_capacity);
+        MD_P("selector.wildcards",x->wildcard_refs,y->wildcard_refs);
+        if(!match_decision_compare_refs(x->wildcard_refs,x->wildcard_count,y->wildcard_refs,y->wildcard_count,read))return false;
+        MD_S("selector.observed_epoch",x->observed_epoch,y->observed_epoch);
+        bool xc=a->tree_epoch&&x->observed_epoch==a->tree_epoch;
+        bool yc=b->tree_epoch&&y->observed_epoch==b->tree_epoch;
+        MD_S("selector.tags_current",xc,yc);
+        if(xc!=yc)return false;
+        if(xc) {
+            if(x->observation.count>x->key_count||y->observation.count>y->key_count)return false;
+            MD_S("selector.all_tags",x->observation.all_tags,y->observation.all_tags);
+            MD_S("selector.include_free",x->observation.include_free,y->observation.include_free);
+            MD_P("selector.observed_tags",x->observation.tags,y->observation.tags);
+            if(!match_decision_compare_refs(x->observation.tags,x->observation.count,y->observation.tags,y->observation.count,read))return false;
+        }
+    }
+    /* Candidate/output scratch is not a suspended selection. No borrowed
+     * selection view survives the admitted source call boundary. */
+    MD_F("selector.candidate_local_capacity",a->candidate_local_capacity,b->candidate_local_capacity);
+    MD_F("selector.candidate_source_capacity",a->candidate_source_capacity,b->candidate_source_capacity);
+    MD_F("selector.working_list_capacity",a->working_list_capacity,b->working_list_capacity);
+    if(!cetta_code_tree_checkpoint_compare(a->code_tree,a->tree_cursor,b->code_tree,b->tree_cursor,read))return false;
+    MD_P("selector.discriminators",a->discriminators,b->discriminators);
+    if(!match_decision_compare_refs(a->discriminators,a->discriminator_count,b->discriminators,b->discriminator_count,read))return false;
+    MD_S("selector.equality_count",a->equality_count,b->equality_count);
+    MD_F("selector.equality_capacity",a->equality_capacity,b->equality_capacity);
+    MD_P("selector.equalities",a->equalities,b->equalities);
+    for(size_t i=0u;i<a->equality_count;i++) {
+        const CettaMatchDecisionEquality *x=&a->equalities[i],*y=&b->equalities[i];
+        MD_S("selector.equality_index",i,i);MD_S("selector.first_length",x->first_len,y->first_len);
+        MD_S("selector.second_length",x->second_len,y->second_len);
+        MD_S("selector.first_node",x->first_observation_node,y->first_observation_node);
+        MD_S("selector.second_node",x->second_observation_node,y->second_observation_node);
+        size_t xn=(size_t)x->first_len+x->second_len,yn=(size_t)y->first_len+y->second_len;
+        if(xn<x->first_len||yn<y->first_len||xn!=yn||(xn&&(!x->paths||!y->paths)))return false;
+        MD_P("selector.equality_paths",x->paths,y->paths);
+        for(size_t j=0u;j<xn;j++)MD_S("selector.equality_edge",x->paths[j],y->paths[j]);
+    }
+    MD_P("selector.equality_offsets",a->equality_offsets,b->equality_offsets);
+    if((a->equality_offsets!=NULL)!=(b->equality_offsets!=NULL))return false;
+    if(a->equality_offsets)for(size_t i=0u;i<=a->equation_count;i++)
+        MD_S("selector.equality_offset",a->equality_offsets[i],b->equality_offsets[i]);
+    MD_S("selector.observation_ready",a->observation_ready,b->observation_ready);
+    MD_S("selector.observation_epoch",a->observation_epoch,b->observation_epoch);
+    MD_S("selector.observation_nodes",a->observation_node_count,b->observation_node_count);
+    MD_S("selector.observation_selectors",a->observation_selector_node_count,b->observation_selector_node_count);
+    if(a->observation_node_count!=b->observation_node_count||
+        (a->observation_node_count&&(!a->observation_nodes||!b->observation_nodes||
+        !a->observation_stamps||!b->observation_stamps||!a->observation_states||
+        !b->observation_states||!a->observation_values||!b->observation_values)))return false;
+    MD_P("selector.observation_storage",a->observation_nodes,b->observation_nodes);
+    for(size_t i=0u;i<a->observation_node_count;i++) {
+        MD_S("selector.observation_index",i,i);
+        MD_S("selector.observation_parent",a->observation_nodes[i].parent,b->observation_nodes[i].parent);
+        MD_S("selector.observation_edge",a->observation_nodes[i].edge,b->observation_nodes[i].edge);
+        MD_S("selector.observation_stamp",a->observation_stamps[i],b->observation_stamps[i]);
+        bool ac=a->observation_epoch&&a->observation_stamps[i]==a->observation_epoch;
+        bool bc=b->observation_epoch&&b->observation_stamps[i]==b->observation_epoch;
+        MD_S("selector.value_current",ac,bc);if(ac!=bc)return false;
+        if(ac) {
+            MD_S("selector.observation_state",a->observation_states[i],b->observation_states[i]);
+            /* Contextual service cursors are not admitted by this image
+             * profile. Atom admission must validate a held span BEFORE its
+             * callback dereferences the initialized current source pointer. */
+            if(a->observation_values[i].scope||b->observation_values[i].scope)return false;
+            MD_A("selector.current_value",a->observation_values[i].source,b->observation_values[i].source);
+        }
+    }
+#define MD_STAT(f) MD_S("selector.stats."#f,a->stats.f,b->stats.f)
+    MD_STAT(compilations);MD_STAT(runs);MD_STAT(code_tree_node_visits);MD_STAT(equation_inputs);
+    MD_STAT(equation_survivors);MD_STAT(linear_fallbacks);MD_STAT(unavailable_path_fallbacks);
+    MD_STAT(discriminator_unbound_skips);MD_STAT(key_index_build_probes);MD_STAT(key_index_select_probes);
+    MD_STAT(generic_key_policy_scans);MD_STAT(equality_checks);MD_STAT(equality_refutations);
+    MD_STAT(equality_observation_reads);MD_STAT(equality_observation_fallbacks);
+    MD_STAT(equality_observation_direct_edges);MD_STAT(equality_observation_graph_edges);
+    MD_STAT(prefix_observation_build_attempts);MD_STAT(prefix_observation_build_commits);
+    MD_STAT(prefix_observation_build_declines);MD_STAT(prefix_observation_runs);
+    MD_STAT(prefix_observation_node_visits);MD_STAT(prefix_observation_absorbed_suffixes);
+    MD_STAT(prefix_observation_skipped_edges);MD_STAT(prefix_observation_direct_edges);
+    MD_STAT(prefix_observation_trie_edges);
+#undef MD_STAT
+    return true;
+}
+#undef MD_S
+#undef MD_F
+#undef MD_P
+#undef MD_A

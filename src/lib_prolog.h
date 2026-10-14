@@ -26,10 +26,12 @@ bool cetta_lib_prolog_runtime_set_working_dir(
 
 /*
  * Final process-level shutdown for an adapter-owned Prolog engine.  Runtime
- * contexts must be freed first; this call intentionally does not support
- * creating another runtime afterward.
+ * contexts must be freed first. A live context, nested foreign entry or live
+ * worker episode refuses without closing admission. Success joins workers,
+ * destroys detached engines and reclaims the owned engine. It is idempotent
+ * and intentionally does not support creating another runtime afterward.
  */
-void cetta_lib_prolog_global_shutdown(void);
+bool cetta_lib_prolog_global_shutdown(void);
 
 /*
  * Probe the optional engine and prepare this context's private module.

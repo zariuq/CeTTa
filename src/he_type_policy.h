@@ -121,11 +121,29 @@ typedef struct {
     bool (*normalize)(void *context, Atom *type, Atom **normalized);
     /* Optional representation projection, never an evaluation request. */
     Atom *(*source_argument)(void *context, Atom *argument);
-    /* A refutation service may only reject established impossible pairs. */
-    bool (*refuted)(void *context, Atom *actual, Atom *expected);
+    /* A refutation service may only reject established impossible pairs.
+     * It receives the argument as well as one of its actual types, so a
+     * client may decide the argument's typing itself. */
+    bool (*refuted)(void *context, Atom *argument, Atom *actual,
+                    Atom *expected);
     /* NULL uses HE interpreter refinement. Non-HE clients of the shared
      * applicability mechanism supply their own relation explicitly. */
     bool (*refine)(Atom *actual, Atom *expected, BindingsBuilder *, Arena *);
+    /* The remaining services are optional; NULL keeps HE's reading. They
+     * serve a client whose telescope and type equality are richer. */
+    /* Reads one domain. A binder that is not a variable is a name: it is
+     * bound by `instantiate`, never by the binding store. */
+    HeTypeDomain (*domain)(void *context, Atom *domain);
+    /* The type with the names bound so far replaced by the source arguments
+     * supplied for them. Required when `domain` can return a name. */
+    Atom *(*instantiate)(void *context, Arena *arena, Atom *type,
+                         Atom **names, Atom **arguments, size_t count);
+    /* A formal that takes its argument as written, as Atom and %Undefined%
+     * do. */
+    bool (*takes_source)(void *context, Atom *expected);
+    /* Consulted when refinement fails. It decides whether two types are
+     * equivalent and learns no substitution. */
+    bool (*equivalent)(void *context, Atom *actual, Atom *expected);
     /* Optional observation of an accepted instantiated codomain together
      * with its refinement. It runs before the fold releases its path. */
     bool (*accepted)(void *context, Atom *codomain, const Bindings *refinement);

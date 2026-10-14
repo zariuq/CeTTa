@@ -170,6 +170,14 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
         bool expression = term->kind == ATOM_EXPR && term->expr.len;
         if (!expression && term->kind != ATOM_SYMBOL)
             continue;
+        /* Extended semantic handlers keep their owned coefficient,
+         * demand and return continuations on the native evaluator.
+         * Check callable symbol values through the same source view. */
+        Atom head_call = {.kind = ATOM_EXPR,
+            .expr = {.elems = &term, .len = 1u}};
+        if (prepared_pure_requires_native_handler(admission->space,
+                expression ? term : &head_call))
+            return false;
         SymbolId head = expression ? atom_head_symbol_id(term) : atom_symbol_current_id(term);
         bool intrinsic = he_execution_intrinsic(head);
         if (intrinsic && head != g_builtin_syms.let &&
@@ -309,7 +317,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         if (eval_unwinding() || eval_cancel_check())
             return true;
         CettaPreparedPureAnswersResult answers = prepared_pure_closed_answers_try(
-            space, arena, source, fuel, cache, outer, preserve_bindings, outcomes);
+            space, arena, source, type, fuel, cache, outer, preserve_bindings, outcomes);
         if (answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
             answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED)
             return true;

@@ -53,7 +53,7 @@ def catalog : String :=
       (renderRawProof
         Mettapedia.Languages.Megalodon.ImplicationalKernel.modusPonensArticle) ++
       "\n" ++
-    authority "MEGALODON-TERM" "megalodon.mathdata.definition-conversion" "10"
+    authority "MEGALODON-TERM" "megalodon.mathdata.definition-conversion" "11"
       megalodonTermPresentation
       (renderPattern
         Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.canaryGoal)

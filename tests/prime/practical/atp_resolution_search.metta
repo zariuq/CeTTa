@@ -60,8 +60,8 @@
         (let ($proof $rest) (decons-atom $proofs)
           (if (== (atp:resolution-search:conclusion $proof) ())
               (atp:resolution-search:replay $proof)
-              False))
-        False))
+              False)){$proof $rest}
+        False)){$proofs}
   True)
 
 ; A genuine non-ground given-clause search reaches the empty clause.  Only the

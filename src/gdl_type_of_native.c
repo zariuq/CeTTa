@@ -3029,7 +3029,7 @@ static GdlNativeBuildV1 gdl_native_load_presentation(
     size_t rule_count;
     size_t index;
     if (!native ||
-        !gdl_native_expr_named(presentation, "GPresentationV1", 6u) ||
+        !gdl_native_expr_named(presentation, "GInferenceLanguageV1", 6u) ||
         !gdl_native_nonnegative_size(presentation->expr.elems[1], &version) ||
         version != 1u ||
         !gdl_native_wire_list_count(

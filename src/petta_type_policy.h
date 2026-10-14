@@ -18,6 +18,10 @@ typedef struct {
     Atom *signature;
     CettaExprLen arity;
     Atom *result_type;
+    /* An HE activation may refine caller-visible variables while selecting
+     * its contract. This is an owned binding value, not a printed binding
+     * list; cached PeTTa declaration plans leave it NULL. */
+    Atom *source_refinement;
     bool guard_result;
     bool hold_result;
     /* Compact literal modes for the leading word of arguments. Larger

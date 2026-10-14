@@ -200,8 +200,11 @@ static void path_append_row(CettaSpacePathIndex *index, AtomId id,
 static bool path_query_key(const Atom *atom, CettaSpacePathKeyKind *kind,
                             uint64_t *key) {
     if (atom && atom->kind == ATOM_SYMBOL) {
+        SymbolId id = atom_symbol_current_id(atom);
+        if (id == SYMBOL_ID_NONE && atom_symbol_is_spelled(atom))
+            return false;
         *kind = CETTA_SPACE_PATH_SYMBOL_KEY;
-        *key = atom_symbol_current_id(atom);
+        *key = id;
         return true;
     }
     if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
@@ -343,7 +346,8 @@ static bool path_generation_current(const Space *space) {
 }
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
-                                CettaIndex **out, CettaIndex *count) {
+                                CettaIndex **out, CettaIndex *count,
+                                CettaIndex *capacity) {
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
@@ -402,6 +406,8 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
     }
     *out = positions;
     *count = retained;
+    if (capacity)
+        *capacity = candidates;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                            retained);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, retained);

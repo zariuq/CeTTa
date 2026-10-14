@@ -439,7 +439,10 @@ int main(int argc, char **argv) {
             "(type:check 7 $Expected)", "Undetermined") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(type:eq (+ 1 1) 2)", "Established") ||
+            "(type:eq (+ 1 1) 2)", "Undetermined") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(type:eq Number Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
             "(type:eq Number String)", "Refuted") ||
@@ -468,8 +471,9 @@ int main(int argc, char **argv) {
             true, 1000u, "Incomplete", "producer-cutoff") ||
         !expect_direct_typing_status_and_evidence_symbol(
             &scratch, &space, typing_service,
-            "(type:must (PrimeAnswers Complete (PrimeValue 7) "
-            "(PrimeValue \"not-a-number\")) Number)",
+            "(type:must (PrimeAnswers Complete "
+            "(PrimeValue (Sort (LevelConst 0))) "
+            "(PrimeValue (Sort (LevelConst 1)))) (Sort (LevelConst 1)))",
             true, 1000u, "Refuted", "MustCounterexample")) {
         goto cleanup;
     }
@@ -1185,6 +1189,14 @@ int main(int argc, char **argv) {
     Atom *deep_search_query = atom_var(&arena, "deep-search-value");
     Atom *deep_search_fact_type = atom_symbol(&arena, "DeepSearchLeaf");
     Atom *deep_search_head = atom_symbol(&arena, "DeepSearchBox");
+    /* Prime search replays native formation: a deep nominal expression alone
+     * is not a formed type, even if HE inference finds its declaration. */
+    Atom *deep_search_sort = parse_one(&scratch, "(u 0)");
+    Atom *deep_search_family_type = parse_one(&scratch, "(-> (u 0) (u 0))");
+    space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+                                deep_search_fact_type, deep_search_sort));
+    space_add(&space, atom_expr3(&arena, atom_symbol(&arena, ":"),
+                                deep_search_head, deep_search_family_type));
     for (uint32_t i = 0; i < 520u; i++) {
         deep_search_query = atom_expr2(
             &arena, deep_search_head, deep_search_query);
@@ -1591,15 +1603,43 @@ int main(int argc, char **argv) {
     Atom *certificate = parse_one(
         &scratch,
         "(PrimeConversionCertificateV1 "
-        "  (Original (+ 1 1) 2) "
-        "  (NormalForms 2 2) "
+        "  (Original 7 7) "
+        "  (NormalForms 7 7) "
         "  (Relation Equal) "
-        "  (Fragment TypePureGroundedFragment))");
+        "  (Fragment BuiltinConstantFragment))");
     bool equal = false;
     if (!certificate ||
         !prime_semantics_replay_conversion_certificate(
             &scratch, &space, certificate, &equal) || !equal) {
         fprintf(stderr, "valid conversion certificate did not replay\n");
+        goto cleanup;
+    }
+
+    Atom *distinct_certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original 7 8) "
+        "  (NormalForms 7 8) "
+        "  (Relation Distinct) "
+        "  (Fragment BuiltinConstantFragment))");
+    if (!distinct_certificate ||
+        !prime_semantics_replay_conversion_certificate(
+            &scratch, &space, distinct_certificate, &equal) || equal) {
+        fprintf(stderr, "distinct literal certificate did not replay\n");
+        goto cleanup;
+    }
+
+    Atom *primitive_certificate = parse_one(
+        &scratch,
+        "(PrimeConversionCertificateV1 "
+        "  (Original (+ 1 1) 2) "
+        "  (NormalForms 2 2) "
+        "  (Relation Equal) "
+        "  (Fragment BuiltinConstantFragment))");
+    if (!primitive_certificate ||
+        prime_semantics_replay_conversion_certificate(
+            &scratch, &space, primitive_certificate, &equal)) {
+        fprintf(stderr, "grounded primitive computation entered conversion replay\n");
         goto cleanup;
     }
 
@@ -1630,7 +1670,7 @@ int main(int argc, char **argv) {
         "  (Original (user-normal q) TagA) "
         "  (NormalForms TagA TagA) "
         "  (Relation Equal) "
-        "  (Fragment TypePureGroundedFragment))");
+        "  (Fragment BuiltinConstantFragment))");
     if (!user_certificate ||
         prime_semantics_replay_conversion_certificate(
             &scratch, &space, user_certificate, &equal)) {

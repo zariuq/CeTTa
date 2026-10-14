@@ -70,14 +70,12 @@ def main() -> None:
     else:
         old = (
             "    if (!space || !arena || !term || !declarations || !budget)\n"
-            "        return (PrimeRegularDeclaredElaboration){0};\n\n"
-            "    for (;;) {")
+            "        return (PrimeRegularDeclaredElaboration){0};\n")
         new = (
             "    if (!space || !arena || !term || !declarations || !budget)\n"
             "        return (PrimeRegularDeclaredElaboration){0};\n"
             "    if (term->kind == ATOM_EXPR)\n"
-            "        return (PrimeRegularDeclaredElaboration){0};\n\n"
-            "    for (;;) {")
+            "        return (PrimeRegularDeclaredElaboration){0};\n")
         count = prefix.count(old)
         if count != 1:
             raise SystemExit(

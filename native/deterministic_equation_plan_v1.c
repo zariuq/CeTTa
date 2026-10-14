@@ -1243,10 +1243,10 @@ static Atom *evaluate_term(
         if (!root || root->kind != ATOM_EXPR || root->expr.len == 0u ||
             root->expr.len - 1u > UINT32_MAX ||
             !root->expr.elems[0] ||
-            root->expr.elems[0]->kind != ATOM_SYMBOL || atom_has_vars(root)) {
+            root->expr.elems[0]->kind != ATOM_SYMBOL) {
             (void)equation_fail(context,
                 CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
-                "deterministic data application expects a ground symbol-headed call");
+                "deterministic data application expects a symbol-headed call");
             goto fail;
         }
         if (!equation_take_work(context, 0u))
@@ -1673,7 +1673,7 @@ static bool deterministic_equation_execute(
             *status = context.status;
         return false;
     }
-    if (atom_has_vars(*out)) {
+    if (!entry_arguments_are_values && atom_has_vars(*out)) {
         arena_reset(arena, mark);
         *out = NULL;
         if (status)

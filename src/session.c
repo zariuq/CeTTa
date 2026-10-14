@@ -58,6 +58,99 @@ static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+/* Four identity profiles of the draft: the same programs run under each so
+ * that the identity decision family can be tested rather than argued. */
+static const CettaProfile CETTA_PROFILE_PRIME_IDENTITY_J_VALUE = {
+    .id = CETTA_PROFILE_PRIME_IDENTITY_J,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "identity-j",
+    .note = "Identity elimination with one iota rule; every route retained.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_J,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_IDENTITY_SCOPED_VALUE = {
+    .id = CETTA_PROFILE_PRIME_IDENTITY_SCOPED,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "identity-scoped",
+    .note = "Identity elimination plus uniqueness of routes inside declared regions.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_SCOPED,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_IDENTITY_UIP_VALUE = {
+    .id = CETTA_PROFILE_PRIME_IDENTITY_UIP,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "identity-uip",
+    .note = "Uniqueness of identity routes everywhere.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_UIP,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE_VALUE = {
+    .id = CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "identity-univalence",
+    .note = "Identity elimination, declared regions, and the univalence guest declarations without computation.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_UNIVALENCE,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE = {
+    .id = CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "context-self-home",
+    .note = "Inside captured code, &self is the space the code was captured in.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_J,
+    .context_self = CETTA_CONTEXT_SELF_HOME,
+};
+
+static const CettaProfile CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE = {
+    .id = CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "context-self-here",
+    .note = "&self is the space the current evaluation is in.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_J,
+    .context_self = CETTA_CONTEXT_SELF_HERE,
+};
+
+/* An explicit opt-in bubble, never the default: substitution enters
+ * quotations, as HE's does, so a quoted parameter captures its argument as
+ * written.  One variable can then name two things in one body, and the
+ * answer depends on the evaluation route (SealedCode.asWritten_incoherent). */
+static const CettaProfile CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE = {
+    .id = CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN,
+    .language_id = CETTA_LANGUAGE_PRIME,
+    .name = "quote-as-written",
+    .note = "Opt-in: substitution enters quotations and quoted parameters capture their arguments as written.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = true,
+    .rust_he_compat_semantics = false,
+    .identity_policy = CETTA_IDENTITY_POLICY_J,
+    .quote_as_written = true,
+};
+
 static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_PETTA_EXTENDED,
     .language_id = CETTA_LANGUAGE_PETTA,
@@ -362,6 +455,7 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
     return language_id == CETTA_LANGUAGE_HE ||
+           language_id == CETTA_LANGUAGE_PRIME ||
            language_id == CETTA_LANGUAGE_MM2 ||
            language_id == CETTA_LANGUAGE_PETTA ||
            language_id == CETTA_LANGUAGE_RHOCALC ||
@@ -393,6 +487,24 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
         if (cetta_profile_name_matches(name, &CETTA_PROFILE_HE_PRIME_VALUE)) {
             return &CETTA_PROFILE_HE_PRIME_VALUE;
         }
+    }
+    if (language_id == CETTA_LANGUAGE_PRIME) {
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_DEFAULT_VALUE))
+            return &CETTA_PROFILE_PRIME_DEFAULT_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_IDENTITY_J_VALUE))
+            return &CETTA_PROFILE_PRIME_IDENTITY_J_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_IDENTITY_SCOPED_VALUE))
+            return &CETTA_PROFILE_PRIME_IDENTITY_SCOPED_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_IDENTITY_UIP_VALUE))
+            return &CETTA_PROFILE_PRIME_IDENTITY_UIP_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE_VALUE))
+            return &CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE))
+            return &CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE))
+            return &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE))
+            return &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE;
     }
     if (language_id == CETTA_LANGUAGE_RHOCALC) {
         if (cetta_profile_name_matches(name, &CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE)) {
@@ -453,6 +565,13 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_HE_PRIME:
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_PRIME_DEFAULT:
+    case CETTA_PROFILE_PRIME_IDENTITY_J:
+    case CETTA_PROFILE_PRIME_IDENTITY_SCOPED:
+    case CETTA_PROFILE_PRIME_IDENTITY_UIP:
+    case CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE:
+    case CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME:
+    case CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE:
+    case CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN:
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
@@ -506,6 +625,21 @@ void cetta_profile_print_inventory_for_language(FILE *out,
                 CETTA_PROFILE_HE_EXTENDED_VALUE.name, CETTA_PROFILE_HE_EXTENDED_VALUE.note);
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_HE_PRIME_VALUE.name, CETTA_PROFILE_HE_PRIME_VALUE.note);
+        return;
+    }
+    if (language_id == CETTA_LANGUAGE_PRIME) {
+        const CettaProfile *prime_profiles[] = {
+            &CETTA_PROFILE_PRIME_DEFAULT_VALUE,
+            &CETTA_PROFILE_PRIME_IDENTITY_J_VALUE,
+            &CETTA_PROFILE_PRIME_IDENTITY_SCOPED_VALUE,
+            &CETTA_PROFILE_PRIME_IDENTITY_UIP_VALUE,
+            &CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE_VALUE,
+            &CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE,
+            &CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE,
+            &CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE,
+        };
+        for (size_t i = 0; i < sizeof prime_profiles / sizeof prime_profiles[0]; i++)
+            fprintf(out, "%s\t%s\n", prime_profiles[i]->name, prime_profiles[i]->note);
         return;
     }
     if (language_id == CETTA_LANGUAGE_RHOCALC) {

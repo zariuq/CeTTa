@@ -25,7 +25,10 @@
  * NotReducible are raw protocol events, not interchangeable public frontiers.
  */
 
-/* Head classification only; instruction execution validates its operands. */
+/* Head classification only; instruction execution validates its operands.
+ * An instruction is one by its head alone, as upstream's embedded operations
+ * are: whether the space declares it a type does not change that. */
+static bool he_minimal_instruction_head(SymbolId head);
 static bool he_minimal_instruction(Atom *atom);
 static bool he_not_reducible(Atom *atom);
 

@@ -1,18 +1,20 @@
 ; The ATP-guided lane changes only search order.  Both lanes must return a
 ; proof term accepted by the same Prime typing checker.
-(: ph Type)
-(: ps Type)
-(: ch Type)
-(: impl (-> Type Type Type))
+(: ph (u 0))
+(: ps (u 0))
+(: ch (u 0))
+(: impl (-> (u 0) (u 0) (u 0)))
 (: h1 ph)
 (: h2 ps)
 (: h3 (impl ph (impl ps ch)))
-(: ax-mp (-> $a (impl $a $b) $b))
+; The object types are real arguments to this dependent proof hypothesis.
+(: ax-mp (-> (a b : (u 0)) (h : a) (f : (impl a b)) b))
 (chaining-rule ax-mp)
 
 ; Elaboration is a substitution, not an ordered sequence of allocations.
-; Preserve the exact checked proof, four distinct local keys, empty query
-; substitution and residual constraints, and the complete bag of values.
+; Preserve the exact checked proof, with the object types as real arguments,
+; eight distinct local keys, empty query substitution and residual
+; constraints, and the complete bag of values.
 (= (inhabitation-observation
      (he-accept
        (typed-answer-v2 (: $proof ch)
@@ -22,22 +24,43 @@
              (elaboration-binding-v1 $k1 $v1)
              (elaboration-binding-v1 $k2 $v2)
              (elaboration-binding-v1 $k3 $v3)
-             (elaboration-binding-v1 $k4 $v4))
+             (elaboration-binding-v1 $k4 $v4)
+             (elaboration-binding-v1 $k5 $v5)
+             (elaboration-binding-v1 $k6 $v6)
+             (elaboration-binding-v1 $k7 $v7)
+             (elaboration-binding-v1 $k8 $v8))
            (answer-constraints-v1)))))
    (checked
-     (=alpha $proof (ax-mp h2 (ax-mp h1 h3)))
-     (=alpha (keys $k1 $k2 $k3 $k4) (keys $a $b $c $d))
-     (superpose ($v1 $v2 $v3 $v4))))
+     (=alpha $proof (ax-mp ps ch h2 (ax-mp ph (impl ps ch) h1 h3)))
+     (=alpha (keys $k1 $k2 $k3 $k4 $k5 $k6 $k7 $k8)
+             (keys $a $b $c $d $e $f $g $h))
+     (superpose ($v1 $v2 $v3 $v4 $v5 $v6 $v7 $v8))))
 !(assertEqualToResult
    (inhabitation-observation
      (search-first-inhabitant
        &self ch 3 100000 (search-policy atp-guided-inhabitation)))
    ((checked True True ch) (checked True True (impl ps ch))
-    (checked True True ph) (checked True True ps)))
+    (checked True True ph) (checked True True ps)
+    (checked True True h1) (checked True True h2) (checked True True h3)
+    (checked True True (ax-mp ph (impl ps ch) h1 h3))))
 !(assertEqualToResult
    (inhabitation-observation (search-first-inhabitant &self ch 3 100000))
    ((checked True True ch) (checked True True (impl ps ch))
-    (checked True True ph) (checked True True ps)))
+    (checked True True ph) (checked True True ps)
+    (checked True True h1) (checked True True h2) (checked True True h3)
+    (checked True True (ax-mp ph (impl ps ch) h1 h3))))
+
+; Retain and consume the actual tree; search acceptance is not a substitute
+; for checking the same term through the public native judgment.
+!(assertEqual
+  (let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+       (search-first-inhabitant &self ch 3 100000
+         (search-policy atp-guided-inhabitation))
+       (type:check &self $proof ch)){$proof $type $substitution} True)
+!(assertEqual
+  (let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+       (search-first-inhabitant &self ch 3 100000)
+       (type:check &self $proof ph)){$proof $type $substitution} False)
 
 ; A named but unimplemented lane cannot silently fall back to another search.
 !(search-first-inhabitant
@@ -50,10 +73,10 @@
 ; returned term is still checked by the ordinary Prime boundary.
 !(assertEqual
   (let $kb (new-space)
-    (let $i0 (add-atom $kb (: P Type))
-    (let $i1 (add-atom $kb (: Q Type))
-    (let $i2 (add-atom $kb (: L Type))
-    (let $i3 (add-atom $kb (: Goal Type))
+    (let $i0 (add-atom $kb (: P (u 0)))
+    (let $i1 (add-atom $kb (: Q (u 0)))
+    (let $i2 (add-atom $kb (: L (u 0)))
+    (let $i3 (add-atom $kb (: Goal (u 0)))
     (let $i4 (add-atom $kb (: hp P))
     (let $i5 (add-atom $kb (: hq Q))
     (let $i6 (add-atom $kb (: hl L))
@@ -68,13 +91,13 @@
         (((he-accept
             (typed-answer-v2 (: (good hp hq) Goal) $substitution))
           True)
-         ($_ False)))))))))))))))
+         ($_ False))){$substitution $_}){$i10}){$i9}){$i8}){$i7}){$i6}){$i5}){$i4}){$i3}){$i2}){$i1}){$i0}){$kb}
   True)
 
 ; Positive pruning case: the only rule asks for the alpha-variant ancestor
 ; goal, so bounded guided search rejects the loop instead of exhausting fuel.
 !(bind! &guided-loop-kb (new-space))
-!(add-atom &guided-loop-kb (: Loop Type))
+!(add-atom &guided-loop-kb (: Loop (u 0)))
 !(add-atom &guided-loop-kb (: self (-> Loop Loop)))
 !(add-atom &guided-loop-kb (chaining-rule self))
 !(assertEqual
@@ -86,18 +109,18 @@
 ; Negative pruning case: a different child goal remains searchable and its
 ; ordinary checked proof is returned.
 !(bind! &guided-step-kb (new-space))
-!(add-atom &guided-step-kb (: Base Type))
-!(add-atom &guided-step-kb (: Goal2 Type))
+!(add-atom &guided-step-kb (: Base (u 0)))
+!(add-atom &guided-step-kb (: Goal2 (u 0)))
 !(add-atom &guided-step-kb (: base Base))
 !(add-atom &guided-step-kb (: step (-> Base Goal2)))
 !(add-atom &guided-step-kb (chaining-rule step))
 !(assertEqual
   (case
     (search-first-inhabitant
-      &guided-step-kb Goal2 2 1000
+      &guided-step-kb Goal2 2 100000
       (search-policy atp-guided-inhabitation))
     (((he-accept
         (typed-answer-v2 (: (step base) Goal2) $substitution))
       True)
-     ($_ False)))
+     ($_ False))){$substitution $_}
   True)

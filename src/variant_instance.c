@@ -317,3 +317,36 @@ Atom *variant_instance_peek_private_var(const VariantInstance *instance, Atom *v
     return var && var->kind == ATOM_VAR
         ? variant_instance_peek_private_id(instance, var->var_id) : NULL;
 }
+
+
+void variant_instance_storage_census(const VariantInstance *instance, CettaStorageCensus *census) {
+    const VariantInstanceStorage *storage = instance ? instance->storage : NULL;
+    if (!storage || !cetta_storage_object(census, storage, sizeof(*storage), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, storage->slot_vals, storage->slot_count, sizeof(*storage->slot_vals), 0u);
+}
+
+bool variant_instance_checkpoint_compare(const VariantInstance *a,
+    const VariantInstance *b,const CettaCheckpointCompare *read) {
+    if(!a||!b||!cetta_checkpoint_compare_valid(read))return false;
+    const VariantInstanceStorage *x=a->storage,*y=b->storage;
+    if(!read->scalar(read->context,"variant.present",x!=NULL,y!=NULL)||
+        !read->physical(read->context,"variant.storage",(uintptr_t)x,(uintptr_t)y))return false;
+    if(!x||!y)return !x&&!y;
+    if(x->slot_count!=y->slot_count||(x->slot_count&&(!x->slot_vals||!y->slot_vals))||
+        !read->scalar(read->context,"variant.slot_count",x->slot_count,y->slot_count))return false;
+    for(uint32_t i=0u;i<x->slot_count;i++)
+        if(!read->scalar(read->context,"variant.slot",i,i)||
+            !read->atom(read->context,"variant.value",x->slot_vals[i],y->slot_vals[i]))return false;
+    return true;
+}
+
+bool variant_instance_checkpoint_atoms(const VariantInstance *instance,
+    AtomTreePredicate predicate,void *context) {
+    if(!instance||!predicate)return false;
+    const VariantInstanceStorage *s=instance->storage;
+    if(!s)return true;
+    if(s->slot_count&&!s->slot_vals)return false;
+    for(uint32_t i=0u;i<s->slot_count;i++)
+        if(s->slot_vals[i]&&!predicate(s->slot_vals[i],context))return false;
+    return true;
+}

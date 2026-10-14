@@ -2,6 +2,7 @@
 #define CETTA_TEST_RUNTIME_STATS_STUBS_H
 
 #include <string.h>
+#include <stdatomic.h>
 
 #ifndef CETTA_RUNTIME_STATS_IMPL
 #define CETTA_RUNTIME_STATS_IMPL 1
@@ -21,20 +22,22 @@
 #undef cetta_runtime_stats_update_max
 #endif
 
-static uint64_t g_test_runtime_stats_counters[CETTA_RUNTIME_COUNTER_COUNT];
+static _Atomic uint64_t g_test_runtime_stats_counters[CETTA_RUNTIME_COUNTER_COUNT];
 static _Thread_local CettaSurvivorAllocationRole
     g_test_survivor_allocation_role = CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
 
 static inline void test_runtime_stats_reset_counters(void) {
-    memset(g_test_runtime_stats_counters, 0,
-           sizeof(g_test_runtime_stats_counters));
+    for (uint32_t counter = 0; counter < CETTA_RUNTIME_COUNTER_COUNT; counter++)
+        atomic_store_explicit(&g_test_runtime_stats_counters[counter], 0u,
+                              memory_order_relaxed);
 }
 
 static inline uint64_t
 test_runtime_stats_counter(CettaRuntimeCounter counter) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return 0;
-    return g_test_runtime_stats_counters[counter];
+    return atomic_load_explicit(&g_test_runtime_stats_counters[counter],
+                                memory_order_relaxed);
 }
 
 void cetta_runtime_stats_reset(void) {
@@ -54,20 +57,25 @@ bool cetta_runtime_stats_is_enabled(void) {
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    g_test_runtime_stats_counters[counter] += delta;
+    atomic_fetch_add_explicit(&g_test_runtime_stats_counters[counter], delta,
+                              memory_order_relaxed);
 }
 
 void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    g_test_runtime_stats_counters[counter] = value;
+    atomic_store_explicit(&g_test_runtime_stats_counters[counter], value,
+                          memory_order_relaxed);
 }
 
 void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value) {
     if ((uint32_t)counter >= CETTA_RUNTIME_COUNTER_COUNT)
         return;
-    if (value > g_test_runtime_stats_counters[counter])
-        g_test_runtime_stats_counters[counter] = value;
+    uint64_t previous = atomic_load_explicit(&g_test_runtime_stats_counters[counter],
+                                             memory_order_relaxed);
+    while (value > previous && !atomic_compare_exchange_weak_explicit(
+            &g_test_runtime_stats_counters[counter], &previous, value,
+            memory_order_relaxed, memory_order_relaxed)) {}
 }
 
 CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(
@@ -94,19 +102,17 @@ void cetta_runtime_stats_note_survivor_allocation(uint64_t bytes) {
                 CETTA_SURVIVOR_ALLOC_ROLE_COUNT
             ? g_test_survivor_allocation_role
             : CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
-    g_test_runtime_stats_counters[
-        CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES] +=
-        bytes;
-    g_test_runtime_stats_counters[
-        CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + role] +=
-        bytes;
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES, bytes);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + role, bytes);
 }
 
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out)
         return;
-    memcpy(out->counters, g_test_runtime_stats_counters,
-           sizeof(g_test_runtime_stats_counters));
+    for (uint32_t counter = 0; counter < CETTA_RUNTIME_COUNTER_COUNT; counter++)
+        out->counters[counter] = test_runtime_stats_counter(counter);
 }
 
 uint64_t cetta_runtime_stats_survivor_role_total(

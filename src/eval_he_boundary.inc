@@ -2,14 +2,17 @@
  * interpreter's return-type continuation.  The instruction protocol remains
  * local: a raw RHS is data unless it is a function delimiter, and a function
  * consumes a return-shaped value without interpreting the payload. */
-static bool he_minimal_instruction(Atom *atom) {
-    SymbolId head = atom_head_symbol_id(atom);
+static bool he_minimal_instruction_head(SymbolId head) {
     return head == g_builtin_syms.eval || head == g_builtin_syms.evalc ||
            head == g_builtin_syms.chain || head == g_builtin_syms.function ||
            head == g_builtin_syms.unify || head == g_builtin_syms.metta ||
            head == g_builtin_syms.context_space || head == g_builtin_syms.call_native ||
            head == g_builtin_syms.cons_atom || head == g_builtin_syms.decons_atom ||
            head == g_builtin_syms.collapse_bind || head == g_builtin_syms.superpose_bind;
+}
+
+static bool he_minimal_instruction(Atom *atom) {
+    return he_minimal_instruction_head(atom_head_symbol_id(atom));
 }
 
 static bool he_not_reducible(Atom *atom) {
@@ -109,7 +112,13 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         } else {
             BindingSet rows;
             binding_set_init(&rows);
-            match_query_bindings(target, a, expr_arg(atom, 1), &env, &rows);
+            prime_native_observe_space_read(target);
+            if (!space_query_bindings(target, a, expr_arg(atom, 1), &env, &rows)) {
+                binding_set_free(&rows);
+                outcome_set_free(&raw);
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return;
+            }
             MatchVisibleVarSet visible;
             match_visible_var_set_init(&visible);
             collect_match_visible_vars_rec(atom, &visible);

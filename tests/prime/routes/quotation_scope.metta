@@ -1,0 +1,76 @@
+; Rule-M ownership of quoted names and per-opening copies.
+(scope:profile mercury-implicit per-call reference)
+
+; A written quotation is a scope, and each opening is an activation (stage 5,
+; item 3).  The names a quotation owns, the names written only inside it,
+; are recorded in it as hidden metadata, as a template's own names are.
+; Each opening of the code, `*` or the instance `lift let` makes, copies
+; them; under the per-call lifetime each opening has names of its own.  A
+; quotation built at run time owns nothing.  A name written outside the
+; quotation is shared with it.
+!(import! &self template)
+
+(= (rule) (r (quote (head $x)) (quote (body $x))))
+
+; ---- template:map equals map-atom on templates that have locals.
+!(row template-map)
+!(template:map (1 2) k @(let $u k (Pair $u $u)))
+!(row map-atom)
+!(map-atom (1 2) $e (let $u $e (Pair $u $u)))
+!(row template-map-equals-map-atom)
+!(== (template:map (1 2) k @(let $u k (Pair $u $u)))
+     (map-atom (1 2) $e (let $u $e (Pair $u $u))))
+!(row template-fold)
+!(template:foldl (1 2 3) 0 acc item @(let $s (+ acc item) $s))
+
+; ---- Two instances of one code by lift let, and two openings by *.
+!(row two-instances)
+!(let $c @(let $u k $u) (Pair *(lift let k @1 $c) *(lift let k @2 $c)))
+!(row two-openings)
+!(let $c @(Pair $u k) (Pair *$c *$c))
+!(row one-instance-opened-twice)
+!(let $c @(Pair $u k) (let $i (lift let k @1 $c) (Pair *$i *$i)))
+
+; ---- The quotation's own names are hidden: the code prints as written.
+!(row printed)
+!(let $c @(let $u k $u) $c)
+
+; ---- An own name that a match binds is a name no longer: its value stands
+; in its place, and an opening has nothing of it to copy.  A template's own
+; name the same way.
+!(row own-name-bound-by-a-match)
+!(let $c @(Pair $u k) (unify $c (quote (Pair 1 k)) (Pair $c *$c) none))
+!(row template-own-name-bound-by-a-match)
+!(let $f (lam z (Pair z $y)) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+
+; ---- Negative controls.  A name written outside the quotation is not its
+; own: every opening shares it.  A sibling quotation is outside it too, so
+; the head, the premises and the proof template of one rule, written as
+; separate quotations, share their names; a name two quotations inside one
+; quotation share is that quotation's.  A quotation built at run time owns
+; nothing.
+!(row shared-with-outside)
+!(let $c @(Pair $w k) (Pair $w (Pair *$c *$c)))
+!(row sibling-quotations-share)
+!(let (r $h $b) (r (quote (head $x)) (quote (body $x))) (unify $h (quote (head 1)) $b none))
+!(row sibling-quotations-share-in-a-clause)
+!(let (r $h $b) (rule) (unify $h (quote (head 1)) $b none))
+!(row nested-quotations-share-their-quotation)
+!(let $c @(Pair @$y @$y) (Pair *$c *$c))
+!(row built-at-run-time)
+!(let $c (cons-atom quote ((Pair $u k))) (Pair *$c *$c))
+!(row lambda-in-code-owns-its-local)
+!(let $c @(lam z (let $y z (g $y))) (let $f *$c (Pair ($f 1) ($f 2))))
+
+; Bound owned names leave the stored scope list; callable positions activate
+; the retained closure while ordinary code values remain data.
+!(let $f (lam z (Pair z $y)) (unify $f (lam z (Pair z 5)) ($f 1) none))
+!(let $f (lam z (Pair z $y)) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (cons-atom lam (z (Pair z $y))) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (lam z (Triple z $y $w)) (unify $f (lam z (Triple z $a $a)) (unify $a 5 ($f 1) none) none))
+!(let $c @(Pair $y k) (unify $c (quote (Pair 5 k)) (Pair $c *$c) none))
+!(let $c (cons-atom quote ((Pair $y k))) (unify $c (quote (Pair 5 k)) (Pair $c *$c) none))
+!(let $f (chain (println! cp:made) $u (lam z (Pair z $y))) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (lam z (chain (println! cp:applied) $u (Pair z $y))) (unify $f (lam z (chain (println! cp:applied) $u (Pair z 5))) (Pair ($f 1) ($f 2)) none))
+!(let $x (cons-atom + (1 2)) (Pair $x (eval $x)))
+!(let $q (quote (println! cp:forbidden)) (Pair $q $q))

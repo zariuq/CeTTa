@@ -27,7 +27,7 @@
              (if (== $key ATP.AnyHead) 1 0)
              0
              0
-             $rule $premises $goal))))))
+             $rule $premises $goal)){$rule $goal}){$rule}){$rule}){$key})
 
 (= (atp:indexed:rule-candidate $knowledge $index $goal)
    (let $head (atp:indexed:head-key $goal)
@@ -46,12 +46,12 @@
 (= (atp:indexed:lookup-fact-key $knowledge $index $goal $key)
    (match $index (ATP.Index.Fact $key $age $proof)
      (match $knowledge (: $proof $type)
-       (atp:direct:fact-instance $knowledge $goal $proof $type))))
+       (atp:direct:fact-instance $knowledge $goal $proof $type)){$proof}){$key})
 
 (= (atp:indexed:lookup-fact-key $knowledge $index $goal $key)
    (match $index (ATP.Index.Hypothesis $key $age $proof)
      (match $knowledge (: $proof $type)
-       (atp:direct:fact-instance $knowledge $goal $proof $type))))
+       (atp:direct:fact-instance $knowledge $goal $proof $type)){$proof}){$key})
 
 (= (atp:indexed:fact $knowledge $index $goal)
    (let $head (atp:indexed:head-key $goal)
@@ -70,7 +70,7 @@
      $knowledge $index $goal $key)
    (match $index (ATP.Index.Fact $key $age $proof)
      (match $knowledge (: $proof $type)
-       (atp:direct:fact-instance $knowledge $goal $proof $type))))
+       (atp:direct:fact-instance $knowledge $goal $proof $type)){$proof}){$key})
 
 (= (atp:indexed:theorem-fact $knowledge $index $goal)
    (let $head (atp:indexed:head-key $goal)
@@ -112,7 +112,7 @@
      $knowledge $index $goal $key)
    (match $index (ATP.Index.Hypothesis $key $age $proof)
      (match $knowledge (: $proof $type)
-       (atp:direct:fact-instance $knowledge $goal $proof $type))))
+       (atp:direct:fact-instance $knowledge $goal $proof $type)){$proof}){$key})
 
 (= (atp:indexed:hypothesis $knowledge $index $goal)
    (let $head (atp:indexed:head-key $goal)
@@ -148,7 +148,7 @@
           (atp:indexed:bounded-hypothesis
             $knowledge $index $premise $fact-limit)
        (atp:indexed:direct-premises
-         $knowledge $index $rest $fact-limit))))
+         $knowledge $index $rest $fact-limit)){$premise}))
 
 (= (atp:indexed:reverse-onto () $reversed) $reversed)
 
@@ -170,7 +170,7 @@
      (()
       (let ($head $tail) (decons-atom $items)
         (let $prefix (atp:indexed:prefix $tail)
-          (cons-atom $head $prefix))))))
+          (cons-atom $head $prefix)){$prefix}){$head $tail})))
 
 (= (atp:indexed:direct-support
      $knowledge $index $premises $fact-limit $premise-order)
@@ -184,7 +184,7 @@
        (let True
             (atp:indexed:direct-premises
               $knowledge $index $prefix $fact-limit)
-         (size-atom $prefix)))
+         (size-atom $prefix))){$prefix}
      0 $best $count
      (if (> $count $best) $count $best)))
 
@@ -211,7 +211,7 @@
        0
        (let ($head $tail) (decons-atom $items)
          (+ (atp:feature:term-weight $head)
-            (atp:feature:items-weight $tail)))))
+            (atp:feature:items-weight $tail))){$head $tail}))
 
 (= (atp:feature:candidate
      (ATP.Candidate
@@ -260,7 +260,7 @@
                 (atp:policy:cost $ranker $head))
              (cons-atom $candidate $ordered)
              (cons-atom
-               $head (atp:indexed:insert $candidate $tail $ranker))))))
+               $head (atp:indexed:insert $candidate $tail $ranker)))){$head $tail}))
 
 (= (atp:indexed:take $limit $items)
    (if (<= $limit 0)
@@ -270,7 +270,7 @@
            (let ($head $tail) (decons-atom $items)
              (let $taken
                   (atp:indexed:take (- $limit 1) $tail)
-               (cons-atom $head $taken))))))
+               (cons-atom $head $taken)){$taken}){$head $tail})))
 
 (= (atp:indexed:insert-bounded
      $candidate $ordered $ranker $limit)
@@ -299,7 +299,7 @@
      (fold
        (let $candidate (superpose $coarse)
          (atp:indexed:support-candidate
-           $knowledge $index $fact-limit $premise-order $candidate))
+           $knowledge $index $fact-limit $premise-order $candidate)){$candidate}
        () $ordered $candidate
        (atp:indexed:insert-bounded
          $candidate $ordered $fine-ranker $final-limit))))
@@ -354,7 +354,7 @@
              (atp:indexed:prove-premises
                $knowledge $index $rest $depth
                ATP.LeftToRight $policy $ancestors)))
-       (ATP.Proofs (cons-atom $proof $proofs)))))
+       (ATP.Proofs (cons-atom $proof $proofs))){$premise}))
 
 (= (atp:indexed:prove-premises
      $knowledge $index $premises $depth
@@ -368,7 +368,7 @@
             ((: $proof $premise)
              (atp:indexed:prove-judgment-with-ancestors
                $knowledge $index $premise $depth $policy $ancestors)))
-       (ATP.Proofs (cons-atom $proof $proofs)))))
+       (ATP.Proofs (cons-atom $proof $proofs))){$premise}))
 
 (= (atp:indexed:use-rule
      $knowledge $index $goal $depth $policy $ancestors)
@@ -382,7 +382,7 @@
             (atp:indexed:prove-premises
               $knowledge $index $premises (- $depth 1)
               $premise-order $policy $ancestors)
-         (: (cons-atom $rule $proofs) $goal)))))
+         (: (cons-atom $rule $proofs) $goal))){$goal}))
 
 (= (atp:indexed:prove-judgment-with-ancestors
      $knowledge $index $goal $depth $policy $ancestors)
@@ -406,7 +406,7 @@
         (atp:indexed:prove-judgment
           $knowledge $index $goal $depth $policy)
      (atp:direct:certify
-       $proof $goal (check-type $knowledge $proof $goal $fuel))))
+       $proof $goal (check-type $knowledge $proof $goal $fuel))){$goal})
 
 (= (atp:indexed:first-checked
      $knowledge $index $goal $depth $fuel $policy)

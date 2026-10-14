@@ -45,7 +45,7 @@
             &indexed-kb &rule-index 4 ATP.RightToLeft
             (atp:indexed:rule-candidate
               &indexed-kb &rule-index ch))
-       (atp:policy:cost &ranker $candidate)))
+       (atp:policy:cost &ranker $candidate)){$candidate})
    (6708))
 
 ; A head-specific rule ranks ahead of the generic modus-ponens scheme.  This
@@ -58,7 +58,7 @@
         (select
           (atp:indexed:ranked-candidate
             &indexed-kb &rule-index D &policy))
-     $rule)
+     $rule){$_age $_generality $_misses $_direct-support $rule $_premises $_goal}
    combine3)
 
 ; Search reads only rule labels from the optional index, reconstructs each

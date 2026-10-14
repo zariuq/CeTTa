@@ -21,6 +21,68 @@ typedef struct {
     unsigned failed;
 } TestCounts;
 
+/* A form over two long numerals, written over several lines: the product
+ * of the binary numerals 2^33 + 1 and 2^31 + 1, and two 21-digit decimal
+ * numerals.  The same form on one line, and the form with the close of
+ * `cost:firings` missing, which is the source an earlier fixture had. */
+#define LONG_BIT33 \
+    "(bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "one)))))))))))))))))))))))))))))))))"
+#define LONG_BIT31 \
+    "(bit1 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 " \
+    "(bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 (bit0 one)))))))))))))))))))))))))))))))"
+#define LONG_FORM_HEAD "!(let ($values $n) (cost:firings\n      (pmul " LONG_BIT33 "\n            " LONG_BIT31
+#define LONG_FORM_TAIL \
+    "\n   (quote (product-by-equations (firings $n)\n          (decimal 123456789012345678901\n" \
+    "                   -987654321098765432109))))\n"
+static const char LONG_FORM_LINES[] = LONG_FORM_HEAD "))" LONG_FORM_TAIL;
+static const char LONG_FORM_ONE_LINE[] =
+    "!(let ($values $n) (cost:firings (pmul " LONG_BIT33 " " LONG_BIT31 ")) "
+    "(quote (product-by-equations (firings $n) (decimal 123456789012345678901 "
+    "-987654321098765432109))))";
+static const char LONG_FORM_MISSING_CLOSE[] = LONG_FORM_HEAD ")" LONG_FORM_TAIL;
+
+/* Rejected sources and the message each must carry: what the input ends
+ * inside of, or what no rule reads, and where. */
+typedef struct {
+    const char *label;
+    const char *source;
+    const char *message;
+} PrimeReaderRejectionV1;
+
+static const PrimeReaderRejectionV1 REJECTIONS[] = {
+    {"form missing a close", LONG_FORM_MISSING_CLOSE,
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the expression opened at line 1, column 2"},
+    {"stray close after a complete form", "!(f x)\n  (g y))\n",
+     "source is outside the compiled prefix S-expression LanguageDef: no rule "
+     "reads ')' at line 2, column 8"},
+    {"unterminated string on a later line", "(a b)\n(c \"d e\n",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the string opened at line 2, column 4"},
+    {"unclosed list after non-ASCII text", "(λ x [1 2\n",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the list opened at line 1, column 6"},
+    {"prefix without payload at the end", "(a b) @",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends before the payload of the prefix at line 1, column 7"},
+    {"binding mark inside a list", "(f [x := a])",
+     "source is outside the compiled prefix S-expression LanguageDef: the "
+     "binding mark is reserved in a list after layout at line 1, column 7"},
+    {"touching bracket left open", "@(f x)[x := @a",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the meta-argument opened at line 1, column 7"},
+    {"touching braces left open", "(f x){$a",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the meta-argument opened at line 1, column 6"},
+    {"braces left open", "(g {a b",
+     "source is outside the compiled prefix S-expression LanguageDef: the input "
+     "ends inside the braces opened at line 1, column 4"},
+};
+
 static const PrimeReaderCaseV1 CASES[] = {
     {"empty document", "", true},
     {"comment at eof", " \t; no newline", true},
@@ -53,6 +115,9 @@ static const PrimeReaderCaseV1 CASES[] = {
     {"non-ASCII name", "@\"κόσμος\"", true},
     {"adjacent atoms", "(a(b)c)", true},
     {"canonical numbers", "42 -3 1.5 3/4", true},
+    {"long numerals over several lines", LONG_FORM_LINES, true},
+    {"long numerals on one line", LONG_FORM_ONE_LINE, true},
+    {"long numerals with a close missing", LONG_FORM_MISSING_CLOSE, false},
     {"missing close", "(a", false},
     {"stray close", ")", false},
     {"unterminated string", "\"unterminated", false},
@@ -62,6 +127,47 @@ static const PrimeReaderCaseV1 CASES[] = {
     {"open structural variable", "$@(open $x)", false},
     {"open structural reference", "&@(open $x)", false},
     {"unquote missing quote payload", "*@", false},
+    /* A bracket or brace touching a term is a meta-argument, read as the
+     * wrapper (meta T [...]) or (meta T {...}); a prefix binds tighter;
+     * brackets and braces end tokens; with layout before it a bracket makes
+     * a list, in which the binding mark is refused, and a brace a braces
+     * node.  The reader gives no head a meaning. */
+    {"bindings on a quoted code", "@(foo $x)[$x := @a]", true},
+    {"meta-arguments left to right", "@(f x y)[x := @a][y := @b]", true},
+    {"bindings on a variable", "$c[x := @a]", true},
+    {"tuple of bindings", "@(pair x y)[(x y) := (@y @a)]", true},
+    {"list of bindings", "@(pair x y)[(x := @y) (y := @a)]", true},
+    {"bracket ends a word", "foo[x := @a]", true},
+    {"prefix binds tighter than a bracket", "@foo[x := a]", true},
+    {"meta-argument in a value", "@(f x)[x := @(g y)[y := @b]]", true},
+    {"meta-argument inside a list", "[a b[x := c]]", true},
+    {"list after a space", "(f @(foo $x) [a b])", true},
+    {"binding mark in a list after a space", "(f @(foo $x) [$x := @a])", false},
+    {"binding mark in a bare list", "[x := a]", false},
+    {"touching bracket without a binding mark", "@(foo $x)[a b]", true},
+    {"touching bracket with another mark", "@(foo $x)[$x = @a]", true},
+    {"touching bracket ending in the mark", "@(foo $x)[$x :=]", true},
+    {"touching bracket starting with the mark", "@(foo $x)[:= @a]", true},
+    {"touching bracket left open", "@(foo $x)[$x := @a", false},
+    {"touching bracket with two values", "@(foo $x)[$x := @a b]", true},
+    {"touching bracket holds no rest", "foo[a | b]", false},
+    {"empty touching bracket", "foo[]", true},
+    {"crossing set on a lambda", "(lam x (+ x $n)){$n}", true},
+    {"crossing set on a let", "(let (pair $s $t) (pair a b) (Got $t)){$t}",
+     true},
+    {"crossing set on a quotation", "@(f $x $y){$y}", true},
+    {"brace ends a word", "foo{a}", true},
+    {"prefix binds tighter than a brace", "@foo{a}", true},
+    {"braces and brackets left to right", "foo{a}[x := b]{c}", true},
+    {"empty touching braces", "foo{}", true},
+    {"braces after a space", "(f x) {a b}", true},
+    {"braces after a comment", "foo ; note\n{a}", true},
+    {"bracket after a newline", "foo\n[a b]", true},
+    {"braces node", "{a $x (f y) [1 2]}", true},
+    {"empty braces node", "{}", true},
+    {"braces inside a list", "[{a} b]", true},
+    {"stray close brace", "}", false},
+    {"braces left open", "{a b", false},
 };
 
 static bool expect(TestCounts *counts, bool condition, const char *label) {
@@ -117,6 +223,7 @@ int main(void) {
     PrimeCompiledReaderV1Receipt receipt;
     char error[512] = {0};
     bool old_universal;
+    bool old_lists;
 
     symbol_table_init(&symbols);
     g_symbols = &symbols;
@@ -134,6 +241,8 @@ int main(void) {
     term_universe_set_persistent_arena(
         &legacy_universe, &legacy_persistent);
     old_universal = parser_set_universal_name_syntax_enabled(true);
+    /* Prime reads lists, so the legacy reader compared with it does too. */
+    old_lists = parser_set_list_syntax_enabled(true);
 
     reader = prime_compiled_reader_v1_new();
     expect(&counts,
@@ -219,8 +328,9 @@ int main(void) {
         int legacy_len = parse_metta_text_ids(
             test_case->source, &legacy_universe, &legacy);
         char label[256];
-        (void)snprintf(label, sizeof(label), "%s acceptance parity",
-                       test_case->label);
+        (void)snprintf(label, sizeof(label),
+                       "%s acceptance parity (compiled %d, legacy %d)",
+                       test_case->label, compiled_len, legacy_len);
         expect(&counts,
                (compiled_len >= 0) == test_case->accepted &&
                    (legacy_len >= 0) == test_case->accepted,
@@ -281,6 +391,40 @@ int main(void) {
                "Prime receipt retains composed derivation identity");
         free(ids);
     }
+    /* Line breaks and long numerals read as on one line. */
+    {
+        AtomId *lines = NULL;
+        AtomId *one_line = NULL;
+        int lines_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, LONG_FORM_LINES, &compiled_universe, &lines,
+            &receipt, error, sizeof(error));
+        int one_line_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, LONG_FORM_ONE_LINE, &compiled_universe, &one_line,
+            &receipt, error, sizeof(error));
+        expect(&counts,
+               lines_len == 2 && one_line_len == 2 &&
+                   ids_alpha_equal(&compiled_universe, lines, lines_len,
+                                   &compiled_universe, one_line, one_line_len),
+               "a form over several lines reads as the same form on one line");
+        free(lines);
+        free(one_line);
+    }
+    for (size_t index = 0u;
+         index < sizeof(REJECTIONS) / sizeof(REJECTIONS[0]); index++) {
+        const PrimeReaderRejectionV1 *rejection = &REJECTIONS[index];
+        AtomId *ids = NULL;
+        char label[256];
+        int len = prime_compiled_reader_v1_parse_text_ids(
+            reader, rejection->source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        (void)snprintf(label, sizeof(label), "%s is refused with its place",
+                       rejection->label);
+        if (!expect(&counts, len < 0 && !ids &&
+                                 strcmp(error, rejection->message) == 0,
+                     label))
+            fprintf(stderr, "  message: %s\n", error);
+        free(ids);
+    }
     {
         static const char source[] = "m.foo $m.foo";
         bool old_namespace = parser_set_namespace_sugar_enabled(false);
@@ -311,7 +455,62 @@ int main(void) {
                "Prime scalar boundary rejects malformed UTF-8");
     }
 
+    /* Large chronological proof tables are ordinary source expressions.
+     * Inspect the interned spine directly rather than recursively decoding it. */
+    {
+        const size_t depth = 16384u;
+        char *source = malloc(2u * depth + 2u);
+        AtomId *ids = NULL;
+        memset(source, '(', depth);
+        source[depth] = 'x';
+        memset(source + depth + 1u, ')', depth);
+        source[2u * depth + 1u] = '\0';
+        int len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        AtomId cursor = len == 1 && ids ? ids[0] : CETTA_ATOM_ID_NONE;
+        size_t walked = 0u;
+        while (walked < depth && cursor != CETTA_ATOM_ID_NONE &&
+               tu_kind(&compiled_universe, cursor) == ATOM_EXPR &&
+               tu_arity(&compiled_universe, cursor) == 1u) {
+            cursor = tu_child(&compiled_universe, cursor, 0u);
+            walked++;
+        }
+        expect(&counts, len == 1 && walked == depth &&
+                   tu_kind(&compiled_universe, cursor) == ATOM_SYMBOL &&
+                   receipt.token_len == depth + 1u &&
+                   receipt.reduce_len == depth + 1u,
+               "deep source retains every expression and receipt occurrence");
+        free(ids);
+        ids = NULL;
+        source[2u * depth] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len < 0 && !ids,
+               "deep source with a missing close is rejected");
+        memset(source, '@', depth);
+        source[depth] = 'x';
+        source[depth + 1u] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len == 1 && receipt.prefix_len == depth &&
+                   receipt.token_len == depth + 1u,
+               "deep prefix source retains every authored prefix");
+        free(ids);
+        ids = NULL;
+        source[depth] = '\0';
+        len = prime_compiled_reader_v1_parse_text_ids(
+            reader, source, &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts, len < 0 && !ids,
+               "deep prefix source without a payload is rejected");
+        free(source);
+    }
+
     prime_compiled_reader_v1_free(reader);
+    parser_set_list_syntax_enabled(old_lists);
     parser_set_universal_name_syntax_enabled(old_universal);
     term_universe_free(&legacy_universe);
     term_universe_free(&compiled_universe);

@@ -22,7 +22,10 @@
 #include "petta_typecheck.h"
 #include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
+#include "parallel_executor.h"
 #include "prime_compiled_reader.h"
+#include "prime_semantics.h"
+#include "prime_arith_oracle.h"
 #include "space.h"
 #include "eval.h"
 #include "he_type_policy.h"
@@ -231,11 +234,14 @@ typedef struct {
     size_t rules_len;
     PrimeNeedTraceId *receipts;
     size_t receipts_len;
+    PrimeNeedTraceId *producers;
+    size_t producers_len;
     PrimeNeedTraceCell *cells;
     size_t cells_len;
     PrimeNeedTraceState *states;
     size_t states_len;
     bool allocation_failed;
+    bool graph_incomplete;
 } PrimeNeedTracePrinter;
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -319,6 +325,12 @@ static const char *prime_need_trace_event_name(
         return "use-equation";
     case PRIME_NEED_RECEIPT_RESAMPLE:
         return "resample";
+    case PRIME_NEED_RECEIPT_ADMISSION_TRUE:
+        return "admission-true";
+    case PRIME_NEED_RECEIPT_ADMISSION_FALSE:
+        return "admission-false";
+    case PRIME_NEED_RECEIPT_ADMISSION_PENDING:
+        return "admission-pending";
     }
     return "unknown";
 }
@@ -336,18 +348,26 @@ static void prime_need_trace_answer(
         : 0u;
     if (receipt && receipt->session_id != 0u && receipt_id == 0u)
         trace->allocation_failed = true;
-    size_t event_count = receipt
-        ? prime_need_receipt_event_count(receipt) : 0u;
+    PrimeNeedReceiptGraph graph = {0};
+    PrimeNeedReceiptGraphStatus graph_status = receipt
+        ? prime_need_receipt_graph_collect(receipt, &graph)
+        : PRIME_NEED_RECEIPT_GRAPH_ABSENT;
+    if (graph_status == PRIME_NEED_RECEIPT_GRAPH_REFUSED ||
+        graph_status == PRIME_NEED_RECEIPT_GRAPH_INVALID)
+        trace->graph_incomplete = true;
     fprintf(trace->out,
             "(prime-need:answer %" PRIu64 " %" PRIu64 " (value ",
             trace->form, trace->answer);
     atom_print(answer, trace->out);
     fprintf(trace->out, ") (receipt %" PRIu64,
             receipt_id);
-    for (size_t i = 0u; i < event_count; i++) {
-        PrimeNeedReceiptEvent event;
-        if (!prime_need_receipt_event_at(receipt, i, &event))
+    if (graph_status == PRIME_NEED_RECEIPT_GRAPH_REFUSED ||
+        graph_status == PRIME_NEED_RECEIPT_GRAPH_INVALID)
+        fputs(" (unavailable graph-collection)", trace->out);
+    for (size_t i = 0u; i < graph.length; i++) {
+        if (!graph.nodes[i].has_event)
             continue;
+        PrimeNeedReceiptEvent event = graph.nodes[i].event;
         uint64_t event_id = prime_need_trace_id(
             &trace->events, &trace->events_len, event.event_id);
         if (event.event_id != 0u && event_id == 0u)
@@ -382,6 +402,15 @@ static void prime_need_trace_answer(
                 trace->allocation_failed = true;
             fprintf(trace->out, " (cell %" PRIu64 ")", cell_id);
         }
+        if (event.producer_update_id != 0u) {
+            uint64_t producer_id = prime_need_trace_id(
+                &trace->producers, &trace->producers_len,
+                event.producer_update_id);
+            if (producer_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (producer %" PRIu64 ") (production %s)",
+                    producer_id, event.producer_completed ? "True" : "False");
+        }
         if (event.rule_occurrence_id != 0u) {
             uint64_t rule_id = prime_need_trace_id(
                 &trace->rules, &trace->rules_len,
@@ -410,6 +439,7 @@ static void prime_need_trace_answer(
         fputc(')', trace->out);
     }
     fputs("))\n", trace->out);
+    prime_need_receipt_graph_free(&graph);
 }
 #else
 static void prime_need_trace_answer(
@@ -428,6 +458,7 @@ static void prime_need_trace_printer_free(PrimeNeedTracePrinter *trace) {
     free(trace->sources);
     free(trace->rules);
     free(trace->receipts);
+    free(trace->producers);
     free(trace->cells);
     free(trace->states);
     memset(trace, 0, sizeof(*trace));
@@ -1630,6 +1661,8 @@ static int run_rhocalc_cli(const char *filename,
 
 done:
     free(atoms);
+    if (libraries_initialized)
+        cetta_native_handle_cleanup_all(&libraries);
     if (registry_initialized) {
         eval_cleanup_owned_new_spaces(&registry, &space);
         registry_free(&registry);
@@ -1730,7 +1763,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
-    fputs("       cetta --lang prime <file.metta>\n", out);
+    fputs("       cetta --lang prime [--profile <prime-default|identity-j|identity-scoped|identity-uip|identity-univalence>] <file.metta>\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
@@ -1758,6 +1791,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
+    fputs("       cetta --lang prime --oracle-audit <file.metta>    # replay every oracle answer through the declared equations; stop on a mismatch\n", out);
+    fputs("       cetta --lang prime --oracle-residues <file.metta> # check oracle sums and products modulo three primes; stop on a mismatch\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
     fputs("       cetta --raw-vars <file.metta>          # print raw internal var epochs\n", out);
@@ -1928,9 +1963,10 @@ static bool main_try_add_builtin_type_decls_direct(Space *space,
 /* he-prime typing ops: the declared types are what STAGE the term/type
  * arguments (Atom = arrives unreduced), so argument evaluation cannot run a
  * computation before the checker has ruled on its admissibility.  Space and
- * fuel arguments evaluate normally.  The rows double as the ops' visible
- * self-description; the chainer ignores them (arrow-typed declarations
- * without a chaining-rule marker are excluded from its index). */
+ * fuel arguments evaluate normally. Verdicts are DATA too: their proof and
+ * type fields must reach the consumer unchanged, not run as runtime calls.
+ * The rows double as the ops' visible self-description; no declaration here
+ * is marked as a chaining rule. */
 static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
     /* u = %Undefined% (evaluated), A = Atom (staged), N = Number */
     static const struct { const char *name; const char *sig; } ops[] = {
@@ -1957,7 +1993,7 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
                 : sig[k] == 'N' ? atom_symbol(arena, "Number")
                                 : atom_undefined_type(arena);
         }
-        elems[n + 1] = atom_undefined_type(arena);
+        elems[n + 1] = atom_atom_type(arena);
         Atom *decl = atom_expr3(arena,
             atom_symbol_id(arena, g_builtin_syms.colon),
             atom_symbol(arena, ops[i].name),
@@ -1970,6 +2006,7 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
 static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
     static const struct { const char *name; const char *sig; } ops[] = {
         {"prime-package", "u"},
+        {"prime:elaborate", "A"},
         {"type:of", "A"},
         {"type:check", "AA"},
         {"type:analyze", "AA"},
@@ -1980,8 +2017,54 @@ static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
         {"type:must", "AA"},
         {"type:theorem", "AAA"},
         {"type:prove", "AAA"},
+        {"cost:firings", "A"},
         {"nik:check", "AAA"},
         {"nik:check", "AAAN"},
+        /* Draft scoped judgment bubbles; operands are data like `type:`. */
+        {"set:signature", "A"},
+        {"set:formed", "AA"},
+        {"set:of", "AA"},
+        {"set:check", "AAA"},
+        {"set:eq", "AAA"},
+        {"set:proves", "AAA"},
+        {"set:axiom", "AAA"},
+        {"set:define", "AAAAAAAAAA"},
+        {"set:inductive", "AAAAAAAAAA"},
+        {"set:family", "AAAAAAAAAA"},
+        {"captured", "AA"},
+        {"ctx:capture", "AA"},
+        {"set:theorem", "AAAA"},
+        {"set:recheck", "AA"},
+        {"set:known-proof", "AA"},
+        {"set:known-proposition", "AA"},
+        {"set:signature-digest", "A"},
+        {"set:numerals", "AAA"},
+        {"set:oracle", "AAAA"},
+        {"hol:signature", "A"},
+        {"hol:formed", "AA"},
+        {"hol:of", "AA"},
+        {"hol:check", "AAA"},
+        {"hol:eq", "AAA"},
+        {"hol:proves", "AAA"},
+        {"hol:axiom", "AAA"},
+        {"hol:define", "AAAAAAAAAA"},
+        {"hol:inductive", "AAAAAAAAAA"},
+        {"hol:family", "AAAAAAAAAA"},
+        {"hol:theorem", "AAAA"},
+        {"hol:recheck", "AA"},
+        {"hol:known-proof", "AA"},
+        {"hol:known-proposition", "AA"},
+        {"hol:signature-digest", "A"},
+        {"hol:numerals", "AAA"},
+        {"hol:oracle", "AAAA"},
+        {"try", "A"},
+        {"id:region", "A"},
+        {"id:policy", ""},
+        {"lang:languages", "A"},
+        {"lang:parse", "AA"},
+        {"lang:print", "AA"},
+        {"lang:native-type", "AAAA"},
+        {"lang:step", "AAA"},
     };
     for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
         const char *sig = ops[i].sig;
@@ -2259,22 +2342,45 @@ static int main_petta_compiled_file_backend(
         error_buf, error_buf_size);
 }
 
+/* Every Prime document is read here, so its forms are elaborated as they
+ * are read: their binding structure is computed once and stored in the
+ * terms (prime_semantics_elaborate_read_forms).  A form that cannot be
+ * elaborated refuses the document; it is never accepted unsealed. */
+static int main_prime_elaborate_read(TermUniverse *universe, AtomId **out_ids,
+                                     int count, char *error_buf,
+                                     size_t error_buf_size) {
+    if (count <= 0 || !out_ids ||
+        prime_semantics_elaborate_read_forms(universe, *out_ids,
+                                             (size_t)count))
+        return count;
+    const char *why = prime_semantics_elaboration_error();
+    if (error_buf && error_buf_size > 0u)
+        snprintf(error_buf, error_buf_size,
+                 "the binding structure of a form could not be elaborated%s%s",
+                 why ? ": " : "", why ? why : "");
+    return -1;
+}
+
 static int main_prime_compiled_text_backend(
     void *context, const char *text, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
     PrimeCompiledReaderV1Receipt receipt;
-    return prime_compiled_reader_v1_parse_text_ids(
+    int count = prime_compiled_reader_v1_parse_text_ids(
         context, text, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
+                                     error_buf_size);
 }
 
 static int main_prime_compiled_file_backend(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
     PrimeCompiledReaderV1Receipt receipt;
-    return prime_compiled_reader_v1_parse_file_ids(
+    int count = prime_compiled_reader_v1_parse_file_ids(
         context, filename, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
+                                     error_buf_size);
 }
 
 static void main_he_compiled_reader_free(void *context) {
@@ -2364,6 +2470,12 @@ static void cetta_main_cleanup_registry_spaces(
 static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (!cleanup) return true;
     bool ok = true;
+    /* Worker thread-local foreign attachments outlive their last episode.
+     * Join them before retiring the contexts and resources they borrowed. A
+     * busy refusal keeps those roots intact for the still-live execution. */
+    if (!cetta_parallel_executor_shutdown()) return false;
+    if (cleanup->libraries_initialized)
+        cetta_native_handle_cleanup_all(cleanup->libraries);
 
     if (cleanup->parser_rational_literals_set) {
         parser_set_rational_literals_enabled(cleanup->parser_rational_literals_old);
@@ -2431,8 +2543,6 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
-    cetta_lib_prolog_global_shutdown();
-    cetta_foreign_global_shutdown();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();
@@ -2454,6 +2564,12 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         arena_free(cleanup->arena);
         cleanup->arena_initialized = false;
     }
+
+    /* Escaped values may have kept a private library context alive until
+     * the last arena root above was released. Finalize foreign contexts only
+     * after those owners have detached, while symbol identities still live. */
+    cetta_foreign_global_shutdown();
+    if (!cetta_lib_prolog_global_shutdown()) ok = false;
 
     if (cleanup->var_intern_initialized) {
         g_var_intern = NULL;
@@ -2924,6 +3040,14 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-prime-need-trace") == 0) {
             emit_prime_need_trace = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--oracle-audit") == 0) {
+            prime_arith_oracle_set_audit(true);
+            continue;
+        }
+        if (strcmp(argv[i], "--oracle-residues") == 0) {
+            prime_arith_oracle_set_residues(true);
             continue;
         }
         if (strcmp(argv[i], "--strict") == 0) {
@@ -3786,6 +3910,24 @@ static int cetta_main(int argc, char **argv) {
     }
 
     if (!lang_is_mm2) {
+        /* The Prime scope experiment: another default profile for the
+         * documents that declare none, and the census, which counts the
+         * main document's forms under every ownership option and does not
+         * run the program. */
+        if (lang->id == CETTA_LANGUAGE_PRIME) {
+            const char *scope_default = getenv("CETTA_PRIME_SCOPE_DEFAULT");
+            if (scope_default && scope_default[0] &&
+                !prime_scope_profile_default_set(scope_default)) {
+                fprintf(stderr,
+                        "error: CETTA_PRIME_SCOPE_DEFAULT names no scope "
+                        "profile: %s\n", scope_default);
+                rc = 2;
+                goto cleanup;
+            }
+            const char *census = getenv("CETTA_PRIME_SCOPE_CENSUS");
+            prime_scope_census_set(census);
+        }
+        prime_scope_document_reading(true);
         n = inline_text
             ? parse_metta_text_ids_diagnostic(
                   inline_text, &libraries.term_universe, &atom_ids,
@@ -3793,6 +3935,7 @@ static int cetta_main(int argc, char **argv) {
             : parse_metta_file_ids_diagnostic(
                   filename, &libraries.term_universe, &atom_ids,
                   document_reader_error, sizeof(document_reader_error));
+        prime_scope_document_reading(false);
         if (n < 0 && lang->id == CETTA_LANGUAGE_HE) {
             /* HE reads one form at a time: the forms before a syntax fault
                run, and the fault is reported only if the run reaches it. */
@@ -3835,6 +3978,14 @@ static int cetta_main(int argc, char **argv) {
                 fprintf(stderr, "error: could not read %s\n", filename);
             }
             rc = 1;
+            goto cleanup;
+        }
+        /* The Prime scope census (CETTA_PRIME_SCOPE_CENSUS) is written while
+         * the main document is read; the program is not run. */
+        const char *scope_census = getenv("CETTA_PRIME_SCOPE_CENSUS");
+        if (lang->id == CETTA_LANGUAGE_PRIME && scope_census &&
+            scope_census[0]) {
+            rc = 0;
             goto cleanup;
         }
     }
@@ -3978,6 +4129,27 @@ static int cetta_main(int argc, char **argv) {
     } else
         stdlib_load(&space, &arena);
 
+    /* The standard library is written in HE; in Prime its declarations
+     * keep their HE meaning (eval_prime_set_he_signature_heads).  The space
+     * holds exactly the library at this point, so the symbols it declares a
+     * type for are read from its annotations. */
+    if (lang->id == CETTA_LANGUAGE_PRIME) {
+        CettaCount stdlib_len = space_length64(&space);
+        SymbolId *he_heads = cetta_malloc(
+            sizeof(*he_heads) * (stdlib_len ? stdlib_len : 1u));
+        size_t he_head_count = 0u;
+        for (CettaIndex i = 0u; i < stdlib_len; i++) {
+            Atom *item = space_get_at64(&space, i);
+            if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
+                atom_is_symbol_id(item->expr.elems[0],
+                                  g_builtin_syms.colon) &&
+                item->expr.elems[1]->kind == ATOM_SYMBOL)
+                he_heads[he_head_count++] = atom_symbol_current_id(item->expr.elems[1]);
+        }
+        eval_prime_set_he_signature_heads(he_heads, he_head_count);
+        free(he_heads);
+    }
+
     /* Add grounded op type declarations (HE stdlib implicit types) */
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);
@@ -3997,6 +4169,8 @@ static int cetta_main(int argc, char **argv) {
     bool stop_document_sequence = false;
     /* A PeTTa file stopped at an uncaught error: SWI-PeTTa's exit status 2. */
     bool petta_uncaught_error = false;
+    bool prime_incomplete_seen = false;
+    bool prime_oracle_check_failed = false;
     bool petta_answer_without_text = false;
     FILE *output_spool = NULL;
     if (!compile_mode) {
@@ -4305,6 +4479,8 @@ process_petta_document:
                 rc = 1;
                 goto cleanup;
             }
+            if (lang->id == CETTA_LANGUAGE_PRIME)
+                prime_arith_oracle_query_begin();
             Atom *administrative = g_durable_admin
                 ? cetta_library_durable_admin(&libraries, &eval_arena, expr) : NULL;
             if (administrative) {
@@ -4331,8 +4507,9 @@ process_petta_document:
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
                        lang->id == CETTA_LANGUAGE_PETTA ||
+                       lang->id == CETTA_LANGUAGE_PRIME ||
                        (profile && profile->id == CETTA_PROFILE_HE_EXTENDED)) {
-                /* PeTTa and HE/extended directives publish a whole stream, which
+                /* Complete directive streams are observed with a tracker, which
                  * claims there are no further answers, so it is always
                  * observed with a completion tracker.  Finite fuel reaches
                  * the search machine through the same tracker; unlimited
@@ -4340,6 +4517,10 @@ process_petta_document:
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
+                /* Prime keeps the fuel as the depth of each path; the
+                 * outcome only records whether some path ran out. */
+                detailed.depth_fuel = lang->id == CETTA_LANGUAGE_PRIME &&
+                                      !g_count_only;
                 if (lang->id == CETTA_LANGUAGE_PETTA) {
                     eval_top_with_registry_petta_plan_outcome(
                         &space, &eval_arena, &arena, &registry,
@@ -4391,36 +4572,52 @@ process_petta_document:
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
+            bool report_incomplete_and_continue = false;
             if (detailed_initialized && !emit_prime_need_trace &&
                 detailed.completion != CETTA_EVAL_COMPLETE) {
                 /* An incomplete observation is not a finished answer bag.
                  * Logical failure stays a completed empty result. */
-                fprintf(
-                    stderr,
-                    g_count_only
-                        ? "error: count observation incomplete: %s\n"
-                        : "error: observation incomplete: %s\n",
-                    eval_completion_reason(detailed.completion));
-                bool resource_fault = lang->id == CETTA_LANGUAGE_PETTA &&
-                    (detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY ||
-                     detailed.completion == CETTA_EVAL_INCOMPLETE_STACK);
-                if (resource_fault) {
-                    CettaErrorPresentation view = {
-                        .code = CETTA_DIAGNOSTIC_RESOURCE,
-                        .classification = "resource",
-                    };
-                    snprintf(view.message, sizeof(view.message), "%s",
-                        detailed.completion == CETTA_EVAL_INCOMPLETE_STACK
-                            ? "Evaluator stack exhausted (StackOverflow)"
-                            : "Evaluator capacity exhausted");
-                    run_cli_query_fault(run_cli, &view);
+                /* A Prime file run reports the query it could not finish
+                 * in its place in the output, as an incomplete verdict
+                 * rather than an answer list, and goes on with the next
+                 * query; the run then exits 1. */
+                if (lang->id == CETTA_LANGUAGE_PRIME && !g_count_only) {
+                    fprintf(output_spool, "(Incomplete %s)\n",
+                            eval_completion_reason(detailed.completion));
+                    prime_incomplete_seen = true;
+                    report_incomplete_and_continue = true;
+                } else {
+                    fprintf(
+                        stderr,
+                        g_count_only
+                            ? "error: count observation incomplete: %s\n"
+                            : "error: observation incomplete: %s\n",
+                        eval_completion_reason(detailed.completion));
+                    bool resource_fault = lang->id == CETTA_LANGUAGE_PETTA &&
+                        (detailed.completion == CETTA_EVAL_INCOMPLETE_CAPACITY ||
+                         detailed.completion == CETTA_EVAL_INCOMPLETE_STACK);
+                    if (resource_fault) {
+                        CettaErrorPresentation view = {
+                            .code = CETTA_DIAGNOSTIC_RESOURCE,
+                            .classification = "resource",
+                        };
+                        snprintf(view.message, sizeof(view.message), "%s",
+                            detailed.completion == CETTA_EVAL_INCOMPLETE_STACK
+                                ? "Evaluator stack exhausted (StackOverflow)"
+                                : "Evaluator capacity exhausted");
+                        run_cli_query_fault(run_cli, &view);
+                    }
+                    eval_outcome_free(&detailed);
+                    prime_need_trace_printer_free(&trace);
+                    rc = resource_fault ? 2 : 1;
+                    goto cleanup;
                 }
-                eval_outcome_free(&detailed);
-                prime_need_trace_printer_free(&trace);
-                rc = resource_fault ? 2 : 1;
-                goto cleanup;
             }
-            bool stop_after_error = result_set_has_error(results);
+            /* In Prime an Error is a value: it is reported as the query's
+             * answer and the run goes on with the next query. */
+            bool stop_after_error = !report_incomplete_and_continue &&
+                                    lang->id != CETTA_LANGUAGE_PRIME &&
+                                    result_set_has_error(results);
             /* SWI-PeTTa goes on after an Error value, a caught error among
              * them, and stops only at an uncaught one.  The evaluator knows
              * which it was on every path but the generic one.  An uncaught
@@ -4475,7 +4672,18 @@ process_petta_document:
                     }
                 }
             } else if (!petta_answer_without_text) {
-                write_results(output_spool, results, lang->id, profile);
+                if (!report_incomplete_and_continue)
+                    write_results(output_spool, results, lang->id, profile);
+                /* The trust records of the oracles this answer used, and
+                 * a failed check of one, which stops the run. */
+                if (lang->id == CETTA_LANGUAGE_PRIME) {
+                    prime_arith_oracle_query_report(output_spool);
+                    if (prime_arith_oracle_check_failed()) {
+                        prime_arith_oracle_report_failure(output_spool);
+                        prime_oracle_check_failed = true;
+                        stop_after_error = true;
+                    }
+                }
                 if (fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     if (detailed_initialized)
@@ -4490,6 +4698,12 @@ process_petta_document:
             if (trace.allocation_failed) {
                 fprintf(stderr,
                         "error: could not allocate Prime receipt trace identity\n");
+                stop_after_error = true;
+                prime_need_trace_failed = true;
+            }
+            if (trace.graph_incomplete) {
+                fprintf(stderr,
+                        "error: could not collect a complete Prime receipt graph\n");
                 stop_after_error = true;
                 prime_need_trace_failed = true;
             }
@@ -4551,6 +4765,25 @@ process_petta_document:
                    &libraries.term_universe, atom_ids,
                    n, block_end, NULL, NULL)) {
             block_end++;
+        }
+        /* Prime refuses an equation or a type declaration for a name it
+         * interprets itself, in its place in the output, and loads the rest
+         * of the program (cetta_prime_reserved_definition_error). */
+        Atom *refused = NULL;
+        if (lang->id == CETTA_LANGUAGE_PRIME) {
+            for (int k = i; k < block_end && !refused; k++) {
+                refused = cetta_prime_reserved_definition_error(
+                    &eval_arena,
+                    term_universe_get_atom(&libraries.term_universe,
+                                           atom_ids[k]));
+                if (refused) block_end = k;
+            }
+        }
+        if (refused && block_end == i) {
+            atom_print(refused, output_spool);
+            fputc('\n', output_spool);
+            i++;
+            continue;
         }
         if (lang->id == CETTA_LANGUAGE_HE) {
             /* HE reads a form with the tokens bound before it. */
@@ -4651,8 +4884,10 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed || he_fault_reached ? 1
+    rc = prime_need_trace_failed || prime_incomplete_seen || he_fault_reached ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
+    prime_arith_oracle_report_audit(stderr);
+    if (prime_oracle_check_failed) rc = 3;
 
 cleanup: {
     bool output_ok = fflush(stdout) == 0 && !ferror(stdout);

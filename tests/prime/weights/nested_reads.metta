@@ -1,0 +1,21 @@
+; A read handles its newly produced factors and returns Weighted data.
+; An enclosing read charges its own work's factors, not the inner result again.
+(=w (coin) H 2)
+(=w (coin) H 2)
+(=w (coin) T 5)
+(=w (bias) up 3)
+
+!(weight:read (algebra 0 1 + *)
+   (Pair (weight:read (algebra 0 1 + *) (coin)) (bias)))
+
+; The inner read adds its factors, while the outer one multiplies its own.
+(=w (route) (arrive) 2)
+(=w (arrive) End 3)
+!(weight:read (algebra 0 1 + *)
+   (Pair (weight:read (algebra 1000 0 min +) (route)) (bias)))
+
+; Reattaching an observed coefficient is an explicit new contribution.
+!(weight:read (algebra 0 1 + *)
+   (let (Weighted $value $coefficient $provenance)
+        (weight:read (algebra 0 1 + *) (coin))
+        (weight:where $value $coefficient)))

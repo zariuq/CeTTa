@@ -515,6 +515,91 @@ static bool space_module_dependency_contract(void) {
     return true;
 }
 
+/* Graded execution views compose the same physical module occurrences as
+ * ordinary equations. Opaque composed matching keeps its original read. */
+static bool graded_module_cursor_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space top, module;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&top, &universe);
+    space_init_with_universe(&module, &universe);
+    Atom *row = module_atom(&scratch, "(=w (imported-grade) 2 3)");
+    space_add(&top, row);
+    space_add(&module, row);
+    space_add(&top, module_atom(&scratch, "(graded-fact 2)"));
+    space_add(&module, module_atom(&scratch, "(graded-fact 2)"));
+    MODULE_CHECK(space_add_dependency(&top, &module));
+    MODULE_CHECK(space_has_graded_equations(&top));
+    SymbolId head = symbol_intern_cstr(g_symbols, "imported-grade");
+    MODULE_CHECK(space_equations_may_match_known_head_view(&top, head));
+    SpaceEquationCursor cursor;
+    SpaceEquationOccurrenceId own, imported;
+    SpaceEquationOccurrence resolved;
+    MODULE_CHECK(space_equation_cursor_init_view(&top, head, true, &cursor));
+    MODULE_CHECK(space_equation_cursor_next(&cursor, &own) == SPACE_EQUATION_CURSOR_ITEM);
+    MODULE_CHECK(space_equation_cursor_next(&cursor, &imported) == SPACE_EQUATION_CURSOR_ITEM);
+    MODULE_CHECK(own.read.space == &top && imported.read.space == &module);
+    MODULE_CHECK(space_equation_occurrence_resolve_view(own, true, &resolved));
+    MODULE_CHECK(atom_eq(resolved.equation, row));
+    MODULE_CHECK(space_equation_occurrence_resolve_view(imported, true, &resolved));
+    MODULE_CHECK(atom_eq(resolved.equation, row));
+    MODULE_CHECK(space_equation_cursor_next(&cursor, &own) == SPACE_EQUATION_CURSOR_END);
+    MODULE_CHECK(space_remove(&top, row));
+    MODULE_CHECK(space_has_graded_equations(&top));
+    MODULE_CHECK(space_remove(&module, row));
+    MODULE_CHECK(!space_has_graded_equations(&top));
+    space_add(&module, row);
+    MODULE_CHECK(space_has_graded_equations(&top));
+
+    SpaceReadView reads;
+    MODULE_CHECK(space_read_view_capture(&top, &reads));
+    MODULE_CHECK(!space_read_view_has_native_occurrences(&reads));
+    Atom *pattern = module_atom(&scratch, "(graded-fact $x)");
+    SpaceQueryCursor *query = space_query_cursor_new(&top, &scratch, pattern, NULL);
+    MODULE_CHECK(query && !space_query_cursor_incremental(query));
+    unsigned rows = 0u;
+    SpaceQueryCursorStep step;
+    do {
+        Bindings bindings;
+        bindings_init(&bindings);
+        step = space_query_cursor_step(query, &bindings);
+        if (step == SPACE_QUERY_CURSOR_ROW) {
+            Atom *answer = bindings_apply(&bindings, &scratch, pattern);
+            MODULE_CHECK(atom_eq(answer, module_atom(&scratch, "(graded-fact 2)")));
+            rows++;
+        }
+        bindings_free(&bindings);
+    } while (step == SPACE_QUERY_CURSOR_ROW || step == SPACE_QUERY_CURSOR_PROGRESS);
+    MODULE_CHECK(step == SPACE_QUERY_CURSOR_END && rows == 2u);
+    space_query_cursor_free(query);
+    query = space_query_cursor_new(&top, &scratch,
+        module_atom(&scratch, "(absent-import $x)"), NULL);
+    MODULE_CHECK(query != NULL);
+    space_add(&module, module_atom(&scratch, "(absent-import 8)"));
+    MODULE_CHECK(!space_read_view_is_current(&reads));
+    Bindings bindings;
+    bindings_init(&bindings);
+    MODULE_CHECK(space_query_cursor_step_with_budget(query, 0u, &bindings) ==
+                 SPACE_QUERY_CURSOR_PROGRESS);
+    MODULE_CHECK(space_query_cursor_step(query, &bindings) == SPACE_QUERY_CURSOR_INVALIDATED);
+    MODULE_CHECK(space_query_cursor_step(query, &bindings) == SPACE_QUERY_CURSOR_INVALIDATED);
+    bindings_free(&bindings);
+    space_query_cursor_free(query);
+    space_read_view_release(&reads);
+    space_free(&top);
+    space_free(&module);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    return true;
+}
+
 /* Reimport is a no-op even if the loaded module subsequently acquires a
  * new dependency. HE records the first import's flattened dependency list. */
 static bool he_repeated_import_contract(void) {
@@ -585,8 +670,9 @@ static bool he_repeated_import_contract(void) {
             module_match_answers(&top, &scratch, "(reimport-fact $x)", "");
     }
     for (uint32_t attempt = 0u; ok && attempt < 12u; attempt++) {
-        /* Compatibility retries every failed initializer, including two
-           attempts within one host request. Both retired handles stay live. */
+        /* Each failed compatibility import retries its initializer, including
+           two attempts inside one host request. Both abandoned spaces stay
+           retired until the context ends, so exposed identities remain valid. */
         CettaHEModuleRunScope request = {0};
         cetta_library_he_run_begin(ctx, &request);
         uint32_t retired = ctx->retired_module_len;
@@ -1306,6 +1392,10 @@ int main(void) {
     }
     if (!space_module_dependency_contract()) {
         fprintf(stderr, "space module dependency contract failure\n");
+        goto cleanup;
+    }
+    if (!graded_module_cursor_contract()) {
+        fprintf(stderr, "graded module cursor contract failure\n");
         goto cleanup;
     }
     if (!he_repeated_import_contract()) {

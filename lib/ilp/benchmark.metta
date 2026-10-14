@@ -8,13 +8,15 @@
 
 !(import! &self ../list.metta)
 
-; Atom arguments are staged by Prime.  These declarations let a bound program
+; Data arguments are held as written.  These declarations let a bound program
 ; be substituted into an accounting record without evaluating the hypothesis.
-(: MIL.CandidateData (-> Atom Atom))
-(: MIL.CandidateVerdict (-> Atom Atom Atom Atom))
+(: MIL.CandidateData (-> (Data Atom) Atom))
+(: MIL.CandidateVerdict (-> (Data Atom) (Data Atom) (Data Atom) Atom))
 
+; Two occurrences are the same when they are the same syntax, neither
+; evaluated: noreduce-eq reads its arguments as written.
 (= (mil:bench:same-atom $left $right)
-   (== (quote $left) (quote $right)))
+   (noreduce-eq $left $right))
 
 ; Remove exactly one occurrence.  The result records whether removal happened
 ; so absence cannot be confused with removal from a singleton bag.

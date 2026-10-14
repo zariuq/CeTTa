@@ -59,12 +59,31 @@ declarations of F and N are dropped: they state HE's contract, and in
 these dialects an Atom type would keep an argument or a body from being
 computed.
 
+A datum handed to a native as written:
+
+  (: F (-> ... Atom ... Atom))
+
+An Atom parameter of F is the datum itself, unevaluated, and PeTTa and
+Prime read an Atom parameter exactly as HE does.  The spelling therefore
+keeps F's parameter types.  Only its result becomes %Undefined%: there an
+Atom result would keep the body from running, and neither dialect
+interprets the native's answer again.
+
 A library that imports a generated realization names the HE one, relative
 to its own file, as HE resolves imports; the PeTTa spelling names the
 PeTTa realization from the top-level directory, as PeTTa resolves them:
 
   !(import! &self ../langdef/he/generated/NAME.metta)
       -> !(import! &self langdef/petta/generated/NAME.metta)
+
+HE's map-atom and foldl-atom, written out by their definitions at a call
+(as a library that forwards its caller's variable and template writes
+them, so that Prime reads them as data rather than as a literal template),
+are PeTTa's map-atom and foldl-atom (the PeTTa spelling):
+
+  (function (eval (_minimal-map-atom L V T))) -> (map-atom L V T)
+  (function (chain (context-space) $s
+     (eval (_minimal-foldl-atom L I A X O $s)))) -> (foldl-atom L I A X O)
 
 The output file is generated: it carries no comments, and a gate compares
 it with this transformation of its source.
@@ -224,6 +243,26 @@ def spell_value_handoff(call, dialect: str):
             [Symbol("case"), call, [[result, [Symbol("return"), result]]]]]
 
 
+def written_out_iteration(form):
+    """(map-atom L V T) or (foldl-atom L I A X O) of HE's definition of
+    map-atom or foldl-atom written out at a call, or None."""
+    if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"):
+        return None
+    inner = form[1]
+    if (isinstance(inner, list) and len(inner) == 2 and inner[0] == "eval"
+            and isinstance(inner[1], list) and len(inner[1]) == 4
+            and inner[1][0] == "_minimal-map-atom"):
+        return [Symbol("map-atom")] + inner[1][1:]
+    if (isinstance(inner, list) and len(inner) == 4 and inner[0] == "chain"
+            and inner[1] == [Symbol("context-space")] and is_variable(inner[2])
+            and isinstance(inner[3], list) and len(inner[3]) == 2
+            and inner[3][0] == "eval" and isinstance(inner[3][1], list)
+            and len(inner[3][1]) == 7 and inner[3][1][0] == "_minimal-foldl-atom"
+            and inner[3][1][6] == inner[2]):
+        return [Symbol("foldl-atom")] + inner[3][1][1:6]
+    return None
+
+
 def realization_import(form):
     """The PeTTa spelling of an import of a generated HE realization."""
     if (isinstance(form, list) and len(form) == 3 and form[0] == "import!"
@@ -309,6 +348,9 @@ def transform(form, dialect: str):
                 left, right, then, otherwise = (transform(item, dialect)
                                                 for item in form[1:])
                 return [Symbol("if"), [Symbol("="), left, right], then, otherwise]
+            iteration = written_out_iteration(form)
+            if iteration is not None:
+                return transform(iteration, dialect)
             unwrapped = unwrap_function(form)
             if unwrapped is not None:
                 return transform(unwrapped, dialect)
@@ -330,10 +372,10 @@ def uses(form, name: str) -> bool:
     return form == name and isinstance(form, Symbol)
 
 
-def value_handoff_heads(forms) -> set:
-    """The heads whose declarations state HE's value-handoff contract:
-    every operation all of whose equations hand a value to a native, and
-    every native so called (its HE interface)."""
+def handoff_heads(forms):
+    """The heads whose declarations state HE's handoff contract: every
+    operation all of whose equations hand a value to a native, and every
+    native so called (its HE interface), as two sets."""
     handoff, other, natives = set(), set(), set()
     for form in forms:
         if not (isinstance(form, list) and len(form) == 3 and form[0] == "="
@@ -348,7 +390,7 @@ def value_handoff_heads(forms) -> set:
         handoff.add(head)
         if isinstance(call, list) and call and isinstance(call[0], Symbol):
             natives.add(call[0])
-    return (handoff - other) | natives
+    return handoff - other, natives
 
 
 def is_declaration_of(form, heads: set) -> bool:
@@ -356,9 +398,24 @@ def is_declaration_of(form, heads: set) -> bool:
             and isinstance(form[1], Symbol) and form[1] in heads)
 
 
+def datum_handoff_declaration(form):
+    """An operation's declaration with an Atom parameter, its result made
+    %Undefined%; None when no parameter is Atom."""
+    arrow = form[2]
+    if not (isinstance(arrow, list) and len(arrow) >= 3 and arrow[0] == "->"
+            and isinstance(arrow[0], Symbol)):
+        return None
+    parameters = arrow[1:-1]
+    if not any(parameter == "Atom" and isinstance(parameter, Symbol)
+               for parameter in parameters):
+        return None
+    return [form[0], form[1], [arrow[0], *parameters, Symbol("%Undefined%")]]
+
+
 def spelling(source: str, dialect: str) -> str:
     forms = read_forms(source)
-    dropped = value_handoff_heads(forms)
+    operations, natives = handoff_heads(forms)
+    dropped = operations | natives
     description = {
         "petta": "PeTTa spelling of the library: the same program with the\n"
                  "; HE-only native wrappers spelled as PeTTa calls.",
@@ -367,8 +424,14 @@ def spelling(source: str, dialect: str) -> str:
     }[dialect]
     out = ["; Generated by tools/library_spelling.py from the shared source;",
            "; do not edit.  The " + description, ""]
-    spelled = [transform(form, dialect) for form in forms
-               if not is_declaration_of(form, dropped)]
+    spelled = []
+    for form in forms:
+        if not is_declaration_of(form, dropped):
+            spelled.append(transform(form, dialect))
+        elif is_declaration_of(form, operations):
+            declaration = datum_handoff_declaration(form)
+            if declaration is not None:
+                spelled.append(declaration)
     if dialect == "petta" and any(uses(form, name) for form in spelled
                                   for name in lib_he_names()):
         out.append("!(import! &self lib_he)")

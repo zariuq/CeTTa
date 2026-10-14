@@ -157,6 +157,17 @@ CettaMatchDecision *cetta_match_decision_retain(
 
 /* Release one lifetime owner. */
 void cetta_match_decision_free(CettaMatchDecision *decision);
+/* An unpublished independent image through the caller's complete arena map.
+ * The source is quiescent, with no borrowed selected-ref view. Stamp-current
+ * materialized-query Atom values must remain live; opaque resolver scopes
+ * refuse. Captured policy, epochs and cumulative stats stay unchanged.
+ * Scratch capacity is retained and inactive bytes are not read. The caller
+ * discards the enclosing session and partial owners on any refusal. */
+CettaMatchDecision *cetta_match_decision_copy_with_session(
+    const CettaMatchDecision *source, AtomDeepCopySession *atoms);
+/* Borrow only a completed image already registered in this session. */
+CettaMatchDecision *cetta_match_decision_copy_lookup(
+    const CettaMatchDecision *source, const AtomDeepCopySession *atoms);
 
 bool cetta_match_decision_is_current(
     const CettaMatchDecision *decision, const Space *live_space,
@@ -228,4 +239,8 @@ void cetta_match_decision_stats(
     const CettaMatchDecision *decision,
     CettaMatchDecisionStats *stats);
 
+void cetta_match_decision_storage_census(const CettaMatchDecision *decision, CettaStorageCensus *census);
+
+#include "checkpoint_compare.h"
+bool cetta_match_decision_checkpoint_compare(const CettaMatchDecision *, const CettaMatchDecision *, const CettaCheckpointCompare *);
 #endif /* CETTA_MATCH_DECISION_H */

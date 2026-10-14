@@ -133,6 +133,36 @@ static void test_provenance_and_scalars(void) {
     puts("PASS: return kinds and completed-answer provenance remain explicit, including code-shaped data");
 }
 
+static void test_unregistered_symbol_image(void) {
+    Arena source;
+    arena_init_detached(&source);
+    Atom *first = atom_symbol_data(&source, "return-image-unregistered-a");
+    Atom *other = atom_symbol_data(&source, "return-image-unregistered-b");
+#if CETTA_MANAGED_SYMBOLS
+    assert(atom_symbol_current_id(first) == SYMBOL_ID_NONE);
+    assert(atom_symbol_current_id(other) == SYMBOL_ID_NONE);
+#endif
+    CettaOwnedReturn returned = {
+        .outcome = cetta_call_completed_value(atom_expr3(&source, first, other, first)),
+    };
+    CettaOwnedReturnImage *image = cetta_owned_return_image_capture(&returned, NULL);
+    assert(image);
+    const CettaOwnedReturn *view = cetta_owned_return_image_view(image);
+    assert(atom_eq(view->outcome.term, returned.outcome.term));
+    assert(view->outcome.term->expr.elems[0] == view->outcome.term->expr.elems[2]);
+    arena_free(&source);
+    Atom *copy = view->outcome.term;
+    assert(atom_symbol_equals_cstr(copy->expr.elems[0], "return-image-unregistered-a"));
+    assert(atom_symbol_equals_cstr(copy->expr.elems[1], "return-image-unregistered-b"));
+    assert(!atom_symbols_equal(copy->expr.elems[0], copy->expr.elems[1]));
+#if CETTA_MANAGED_SYMBOLS
+    assert(atom_symbol_current_id(copy->expr.elems[0]) == SYMBOL_ID_NONE);
+    assert(atom_symbol_current_id(copy->expr.elems[1]) == SYMBOL_ID_NONE);
+#endif
+    cetta_owned_return_image_release(image);
+    puts("PASS: distinct unregistered spellings and repeated symbol aliases survive owned-image source destruction");
+}
+
 static void test_explicit_contextual_carrier(void) {
     Arena source, observation;
     arena_init_detached(&source);
@@ -655,6 +685,7 @@ int main(void) {
     g_var_intern = &variables;
     test_logical_roots();
     test_provenance_and_scalars();
+    test_unregistered_symbol_image();
     test_explicit_contextual_carrier();
     test_name_keys_and_resources();
     test_frame_schema_resource_root();
