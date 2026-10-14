@@ -25789,8 +25789,6 @@ static bool prime_eval_stack_run_borrowed_bind(
     bool head_only);
 static bool prime_eval_stack_bind_force_admitted(void);
 static bool prime_eval_stack_target_weak_head(const OutcomeSet *target);
-static bool prime_eval_stack_bind_task_managed(void);
-static void prime_eval_stack_bind_defer_retry(void);
 static uint64_t prime_eval_stack_continuation_generation(void);
 static void prime_eval_stack_bind_enter(PrimeEvalStackBindGuard *guard);
 static void prime_eval_stack_bind_leave(PrimeEvalStackBindGuard *guard);
@@ -30851,14 +30849,14 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
     uint64_t continuation_before =
         prime_eval_stack_continuation_generation();
 #endif
-    bool source_has_vars = atom_contains_vars(atom);
 #if CETTA_PRIME_EVAL_STACK
+    bool source_has_vars = atom_contains_vars(atom);
     /* Prime's heap evaluator may suspend a bind before the ordinary
      * closed-call retry below.  Select its eventual projection before
      * scheduling: bindings of a closed source are existential, so only
      * bindings reachable from the returned value or private Need closures
-     * may escape.  The synchronous evaluators retain their established
-     * first-attempt and retry contract. Private capabilities may hide lexical
+     * may escape. Synchronous evaluation also performs just one invocation.
+     * Private capabilities may hide lexical
      * variables behind promises, so absence of syntactic variables alone
      * does not establish closedness. */
     bool projected_closed_call =
@@ -30875,33 +30873,12 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
 #if CETTA_PRIME_EVAL_STACK
     if (prime_eval_stack_continuation_generation() !=
         continuation_before) {
-        /* The call goes on in the evaluation stack, which only Prime runs.
-         * When it is a bind task's own call, the task's finish frame makes
-         * the retry decision below once the frontier is complete; no other
-         * frame retries. */
-        if (!source_has_vars && !projected_closed_call &&
-            prime_eval_stack_bind_task_managed())
-            prime_eval_stack_bind_defer_retry();
+        /* The continuation owns this one invocation. An empty completed
+         * frontier has no bindings to erase and must not replay effects. */
         return;
     }
 #endif
-    /* HE and PeTTa invocations have completed even when the frontier is empty.
-     * Repeating it to erase bindings would repeat any effects as well. */
-    if (os->len == 0u && !source_has_vars && !projected_closed_call &&
-        eval_current_language_id() != CETTA_LANGUAGE_HE &&
-        eval_current_language_id() != CETTA_LANGUAGE_PETTA) {
-#if CETTA_PRIME_EVAL_STACK
-        continuation_before =
-            prime_eval_stack_continuation_generation();
-#endif
-        metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel,
-                   false, os);
-#if CETTA_PRIME_EVAL_STACK
-        if (prime_eval_stack_continuation_generation() !=
-            continuation_before)
-            return;
-#endif
-    }
+    /* A completed empty frontier is a result, in every language. */
     outcome_set_normalize_visible_frontier(a, os);
 }
 
@@ -40347,10 +40324,6 @@ typedef struct PrimeEvalStackFrame {
     /* A worker is waiting on another worker's extension of this thunk.
      * The frame does not start a second evaluation. */
     bool shared_need_wait;
-    /* BIND_FINISH: its bind's call suspended, and an empty frontier is to
-     * be retried without its bindings, as metta_eval_bind would. */
-    bool bind_retry_deferred;
-
     /* In a streaming run: how many values of `child` a relaying frame has
      * already passed to its target, and, for a STREAM_RESUME frame, the
      * frame whose remaining values it goes on consuming. */
@@ -40443,9 +40416,6 @@ typedef struct PrimeEvalStackDriver {
     bool nested;
     /* The target a frame just published into, consumed at the next step. */
     OutcomeSet *stream_pending;
-    /* The running bind task's call suspended, and an empty frontier is to
-     * be retried without its bindings (metta_eval_bind's decision). */
-    bool bind_retry_deferred;
     /* The root call itself is running, before any task: its tail loop may
      * collect as a task's does. */
     bool root_call_running;
@@ -40664,22 +40634,6 @@ static void prime_eval_stack_record_named_return(
     }
 }
 
-/* Inspect the actual receiver without waking or changing its schedule.
- * Only publication is a transparent equation relay: the same frame's
- * pattern-demand child has a different consumer. */
-static PrimeEvalStackFrame *prime_eval_stack_target_owner(
-    const OutcomeSet *target) {
-    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
-    if (driver && driver->control)
-        return prime_native_control_target_owner(driver->control, target);
-    for (PrimeEvalStackFrame *frame = driver ? driver->top : NULL;
-         frame; frame = (PrimeEvalStackFrame *)frame->continuation.next) {
-        if (frame->child_initialized && &frame->child == target)
-            return frame;
-    }
-    return NULL;
-}
-
 static bool prime_eval_stack_target_weak_head(const OutcomeSet *target) {
     PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
     if (!driver || !target) return false;
@@ -40716,17 +40670,6 @@ static bool prime_eval_stack_target_weak_head(const OutcomeSet *target) {
         }
         return false;
     }
-}
-
-static bool prime_eval_stack_bind_task_managed(void) {
-    return g_prime_eval_stack_driver != NULL &&
-           g_prime_eval_stack_driver->running_bind_task &&
-           g_prime_eval_stack_driver->bind_depth == 1u;
-}
-
-static void prime_eval_stack_bind_defer_retry(void) {
-    if (g_prime_eval_stack_driver)
-        g_prime_eval_stack_driver->bind_retry_deferred = true;
 }
 
 #endif /* CETTA_PRIME_EVAL_STACK */
@@ -46009,9 +45952,6 @@ static void prime_eval_stack_resume_bind_finish(
 #ifdef CETTA_PRIME_DEMAND_MUTATION_BIND_RETRY_ALWAYS
     /* Fault injection: every empty closed bind is retried. */
     bool retry = frame->child.len == 0u && !atom_contains_vars(frame->atom);
-#else
-    bool retry = frame->bind_retry_deferred && frame->child.len == 0u;
-#endif
     if (frame->state == PRIME_EVAL_STACK_FRAME_DEMAND && retry) {
         frame->state = PRIME_EVAL_STACK_FRAME_WAIT_CALL;
         if (prime_eval_stack_schedule_call(
@@ -46022,6 +45962,7 @@ static void prime_eval_stack_resume_bind_finish(
             return;
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
     }
+#endif
     prime_eval_stack_normalize_bind_suffix(frame);
     if (prime_eval_stack_forward_bind(frame) != OUTCOME_APPEND_COMMITTED) {
         prime_eval_stack_stream_note(frame->target);
@@ -47190,14 +47131,6 @@ static void prime_eval_stack_run_task(void) {
             task.space, task.arena, task.atom,
             task.fuel, task.target);
         driver->running_bind_task = false;
-        if (driver->bind_retry_deferred) {
-            PrimeEvalStackFrame *finish =
-                prime_eval_stack_target_owner(task.target);
-            if (finish &&
-                finish->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)
-                finish->bind_retry_deferred = true;
-            driver->bind_retry_deferred = false;
-        }
         break;
     }
     case PRIME_EVAL_STACK_TASK_CALL:
