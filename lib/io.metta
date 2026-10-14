@@ -4,20 +4,20 @@
 ; MeTTa only through io:poll or the native blocking io:wait. Requests receive
 ; host-assigned correlation IDs; each completion is observed at most once.
 
-(: io:capabilities (-> Atom))
-(: io:submit (-> Atom Atom))
-(: io:poll (-> Atom))
-(: io:poll (-> Number Atom))
-(: io:status (-> Number Atom))
-(: io:wait (-> Number Atom))
+(: io:capabilities (-> Expression))
+(: io:submit (-> Atom Expression))
+(: io:poll (-> Expression))
+(: io:poll (-> Number Expression))
+(: io:status (-> Number Expression))
+(: io:wait (-> Number Expression))
 ; The two-argument spelling is id/timeout or timeout/progress-path. One
 ; declaration describes both shapes; the native call validates the values.
-(: io:wait (-> Number Atom Atom))
-(: io:wait (-> Number Number String Atom))
-(: io:wait-ready (-> Number Atom))
-(: io:wait-ready (-> Number Number Atom))
-(: io:cancel (-> Number Atom))
-(: io:signal (-> Number Number Atom))
+(: io:wait (-> Number Atom Expression))
+(: io:wait (-> Number Number String Expression))
+(: io:wait-ready (-> Number Expression))
+(: io:wait-ready (-> Number Number Expression))
+(: io:cancel (-> Number Expression))
+(: io:signal (-> Number Number Expression))
 
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:request (-> Atom Atom Expression String Number Number Bool Atom))

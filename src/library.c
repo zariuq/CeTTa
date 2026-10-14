@@ -11970,10 +11970,7 @@ static Atom *cetta_library_dispatch_native_value(
     }
     if (ctx->active_mask & CETTA_LIBRARY_IO) {
         Atom *result = cetta_io_dispatch(ctx->io_runtime, a, head, args, nargs);
-        if (result) {
-            *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
-            return result;
-        }
+        if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_CWP) {
         Atom *result = cetta_cwp_dispatch(a, head, args, nargs);
