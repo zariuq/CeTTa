@@ -1722,6 +1722,13 @@ static bool eval_prepared_pure_interrupt_poll(void *context) {
     return eval_unwinding() || eval_cancel_check();
 }
 
+bool eval_native_interrupted(void) {
+    if (eval_unwinding()) return true;
+    if (!eval_cancel_check()) return false;
+    eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CANCELLED);
+    return true;
+}
+
 static int current_eval_fuel_limit(void) {
     return cetta_evaluator_options_effective_fuel_limit(active_eval_options_const());
 }
@@ -13519,6 +13526,7 @@ static bool symbol_name_equals(Atom *atom, const char *name) {
 
 static bool hyperpose_external_unsafe_head(Atom *head) {
     return symbol_name_has_prefix(head, "mork:") ||
+           symbol_name_has_prefix(head, "proc:") ||
            symbol_name_has_prefix(head, "mm2:") ||
            symbol_name_has_prefix(head, "prolog:") ||
            symbol_name_equals(head, "fs:write") ||
@@ -13529,11 +13537,13 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_equals(head, "http:get") ||
            symbol_name_equals(head, "http:post") ||
            symbol_name_equals(head, "system:exit") ||
+           symbol_name_equals(head, "system:write") ||
            symbol_name_has_prefix(head, "foreign:");
 }
 
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
+        head_id == g_builtin_syms.lib_system_write ||
         head_id == g_builtin_syms.lib_fs_write ||
         head_id == g_builtin_syms.lib_fs_append_text ||
         head_id == g_builtin_syms.lib_io_submit ||
@@ -13542,6 +13552,7 @@ static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
         return true;
     }
     return symbol_name_has_prefix(head, "__cetta_lib_mork_") ||
+           symbol_name_has_prefix(head, "__cetta_lib_proc_") ||
            symbol_name_has_prefix(head, "__cetta_lib_mm2_") ||
            symbol_name_has_prefix(head, "__cetta_lib_prolog_");
 }
@@ -16661,6 +16672,8 @@ static Atom *prepared_full_demand_body(Space *space, Arena *arena, Atom *body,
 /* Execute a revision-pinned, effect-free lexical map as one transactional
  * collection operation.  The ordinary relational map remains authoritative
  * unless every item produces exactly one prepared value. */
+static bool prepared_map_cached_replay_safe(Space *space, Atom *body);
+
 static PreparedFoldResult prepared_map_single_result(
     Space *s, Arena *result_arena, Atom *items, Atom *item_binder,
     Atom *body_expression, const Bindings *outer_environment,
@@ -16744,15 +16757,8 @@ static PreparedFoldResult prepared_map_single_result(
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
-    PreparedFoldSafety safety = {
-        .space = s,
-        .read = space_read_token(s),
-    };
-    bool replay_safe =
-        prepared_fold_expression_replay_safe(
-            &safety, closed_body) &&
-        space_read_token_is_current(safety.read);
-    free(safety.heads);
+    SpaceReadToken replay_read = space_read_token(s);
+    bool replay_safe = prepared_map_cached_replay_safe(s, closed_body);
     if (!replay_safe) {
         prepared_map_debug(
             "body is not replay-safe", closed_body, closed_items);
@@ -16828,7 +16834,7 @@ static PreparedFoldResult prepared_map_single_result(
     for (CettaExprIndex index = 0u;
          outcome == PREPARED_FOLD_VALUE &&
          index < closed_items->expr.len; index++) {
-        if (!space_read_token_is_current(safety.read)) {
+        if (!space_read_token_is_current(replay_read)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
         }
@@ -22201,6 +22207,18 @@ struct PreparedPureProgramCache {
     Arena execution_scratch;
     bool execution_scratch_ready;
     bool answer_collection_budget_declined;
+    /* Only construction decisions are retained, never effectful answers.
+     * Bodies are closed over the actual environment and owned here. */
+    struct {
+        Atom *body;
+        CettaLanguageId language;
+        const CettaProfile *profile;
+        uint32_t library_mask;
+        bool safe;
+    } replay[64];
+    size_t replay_len;
+    Arena replay_storage;
+    bool replay_storage_ready;
 };
 
 
@@ -22217,6 +22235,11 @@ static void prepared_pure_program_cache_clear_entries(
     }
     cache->entries = NULL;
     cache->entry_generation++;
+    cache->replay_len = 0u;
+    if (cache->replay_storage_ready) {
+        arena_free(&cache->replay_storage);
+        cache->replay_storage_ready = false;
+    }
 }
 
 static void prepared_pure_program_cache_free(
@@ -22282,6 +22305,84 @@ static bool prepared_pure_program_cache_prepare_revision(
     cache->program = space_program_token(space);
     cache->capability_revision = capability_revision;
     return cache->program.instance_id != 0u;
+}
+
+/* This bounds optimization metadata, not program admission. Larger keys
+ * use the ordinary check without retaining copies of captured data. */
+static bool prepared_map_small_replay_key(Atom *body) {
+    Atom *pending[128];
+    size_t length = 1u, nodes = 0u, bytes = 0u;
+    pending[0] = body;
+    while (length) {
+        Atom *value = pending[--length];
+        if (!value || ++nodes > 128u) return false;
+        if (value->kind == ATOM_GROUNDED && value->ground.gkind == GV_STRING) {
+            size_t size = atom_string_len(value);
+            if (size > 4096u - bytes) return false;
+            bytes += size;
+        }
+        if (value->kind == ATOM_EXPR) {
+            if (value->expr.len > 128u - length) return false;
+            for (CettaExprIndex i = 0u; i < value->expr.len; i++)
+                pending[length++] = value->expr.elems[i];
+        }
+    }
+    return true;
+}
+
+static bool prepared_map_cached_replay_safe(Space *space, Atom *body) {
+    CettaLanguageId language = eval_current_language_id();
+    /* Minimal HE callbacks may borrow no library profile. NULL is a valid,
+     * distinct preparation dependency, not an implicit default profile. */
+    const CettaProfile *profile = active_profile();
+    uint32_t library_mask = g_library_context ? g_library_context->active_mask : 0u;
+    PreparedPureProgramCache *cache = eval_execution_prepared_cache();
+    uint64_t capabilities = language == CETTA_LANGUAGE_PETTA && g_library_context
+        ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
+    if (!prepared_pure_program_cache_prepare_revision(cache, space, capabilities))
+        cache = NULL;
+    if (cache && !prepared_map_small_replay_key(body)) cache = NULL;
+    if (cache) {
+        for (size_t i = 0; i < cache->replay_len; i++)
+            if (cache->replay[i].language == language &&
+                cache->replay[i].profile == profile &&
+                cache->replay[i].library_mask == library_mask &&
+                /* Replay safety observes variable roles, not fresh names;
+                 * alpha-equivalence does not license answer memoization. */
+                atom_alpha_eq(cache->replay[i].body, body)) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_REUSE);
+                return cache->replay[i].safe;
+            }
+    }
+    PreparedFoldSafety safety = {.space = space, .read = space_read_token(space)};
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_CHECK);
+    bool safe = prepared_fold_expression_replay_safe(&safety, body);
+    bool current = space_read_token_is_current(safety.read);
+    free(safety.heads);
+    if (cache && current) {
+        /* A bounded invocation-local cache. Reset all owned keys rather
+         * than leave evicted bodies retaining handles until teardown. */
+        if (cache->replay_len == 64u) {
+            arena_free(&cache->replay_storage);
+            cache->replay_storage_ready = false;
+            cache->replay_len = 0u;
+        }
+        if (!cache->replay_storage_ready) {
+            arena_init(&cache->replay_storage);
+            arena_set_hashcons(&cache->replay_storage, NULL);
+            cache->replay_storage_ready = true;
+        }
+        Atom *key = atom_deep_copy(&cache->replay_storage, body);
+        if (key) {
+            size_t index = cache->replay_len++;
+            cache->replay[index].body = key;
+            cache->replay[index].language = language;
+            cache->replay[index].profile = profile;
+            cache->replay[index].library_mask = library_mask;
+            cache->replay[index].safe = safe;
+        }
+    }
+    return safe && current;
 }
 
 #if CETTA_PRIME_EVAL_STACK

@@ -155,11 +155,15 @@ int run_cli_finish(RunCli *c,int dialect_exit,bool output_ok,
         ? RUN_REPORT_STOP_FAULT : RUN_REPORT_STOP_OBSERVED_COMPLETE,1,0,0);
     RunReportDocStatus d={0};
     if (!run_report_doc_verify(c->document,&d)) return 1;
-    bool human_ok=fprintf(stderr,"run: status %u; queries %"PRIu64"; unsettled %"PRIu64"\n",
+    bool human_ok=!ferror(stderr);
+    if (human_ok) human_ok=fprintf(stderr,"run: status %u; queries %"PRIu64"; unsettled %"PRIu64"\n",
         d.exit_code,d.queries_declared,d.queries_unsettled)>=0;
-    human_ok &= fflush(stderr)==0 && !ferror(stderr);
+    if (human_ok) human_ok=fflush(stderr)==0 && !ferror(stderr);
     bool sent=publish(c,path,&d,dialect_exit);
-    if (!sent) { fputs("error: could not publish run report\n",stderr); return 1; }
+    if (!sent) {
+        if (!ferror(stderr)) fputs("error: could not publish run report\n",stderr);
+        return 1;
+    }
     if (!human_ok) return 1;
     return strict ? (int)d.exit_code : dialect_exit;
 }

@@ -927,14 +927,22 @@ void cetta_eval_session_clear_process_exit(CettaEvalSession *session) {
         return;
     session->process_control.exit_requested = false;
     session->process_control.exit_code = 0;
+    session->process_control.answer_policy = CETTA_EXIT_DISCARD_ANSWER_DISPLAY;
 }
 
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code) {
+    cetta_eval_session_request_process_exit_with_answer_policy(
+        session, exit_code, CETTA_EXIT_DISCARD_ANSWER_DISPLAY);
+}
+
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy) {
     if (!session || session->process_control.exit_requested)
         return;
     session->process_control.exit_requested = true;
     session->process_control.exit_code = exit_code;
+    session->process_control.answer_policy = policy;
 }
 
 bool cetta_eval_session_process_exit_requested(

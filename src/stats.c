@@ -1006,6 +1006,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-program-host-read",
     "open-equation-program-host-reuse",
     "open-equation-program-space-reuse",
+    "prepared-map-safety-check",
+    "prepared-map-safety-reuse",
 };
 
 static int64_t clamp_counter(uint64_t value) {

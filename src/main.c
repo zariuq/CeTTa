@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -50,7 +51,7 @@ static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler
 
 static void handle_sigsegv(int sig) {
     (void)sig;
-    const char msg[] = "\nStack overflow. Use tail recursion or increase the stack limit.\n";
+    const char msg[] = "\nFatal memory fault (SIGSEGV); stack overflow is one possible cause.\n";
     ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1);
     (void)r;
     _exit(2);
@@ -58,6 +59,7 @@ static void handle_sigsegv(int sig) {
 
 static bool g_count_only = false;
 static bool g_quiet_results = false;
+static bool g_no_results = false;
 static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
@@ -1201,6 +1203,7 @@ done:
 static void write_results(FILE *out, ResultSet *rs,
                           CettaLanguageId language_id,
                           const CettaProfile *profile) {
+    if (g_no_results) return;
     FILE *logical_dest = stdout;
     ResultSet visible = {0};
     Atom **visible_items = NULL;
@@ -1818,6 +1821,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
+    fputs("       cetta --no-results <file.metta>         # suppress answer display, not explicit output\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
@@ -2959,6 +2963,10 @@ static int cetta_main(int argc, char **argv) {
             g_quiet_results = true;
             continue;
         }
+        if (strcmp(argv[i], "--no-results") == 0) {
+            g_no_results = true;
+            continue;
+        }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
             continue;
@@ -4068,7 +4076,7 @@ static int cetta_main(int argc, char **argv) {
     bool petta_uncaught_error = false;
     bool petta_answer_without_text = false;
     FILE *output_spool = NULL;
-    if (!compile_mode) {
+    if (!compile_mode && !g_no_results) {
         const char *tmpdir = getenv("TMPDIR");
         if (tmpdir && tmpdir[0] != '\0') {
             char spool_path[512];
@@ -4086,6 +4094,14 @@ static int cetta_main(int argc, char **argv) {
         }
         if (!output_spool)
             output_spool = tmpfile();
+        /* Internal answer storage must not resurrect a closed standard
+         * channel. No program has run yet, and this stream is still empty. */
+        if (output_spool && fileno(output_spool) < 3) {
+            int promoted = fcntl(fileno(output_spool), F_DUPFD_CLOEXEC, 3);
+            fclose(output_spool);
+            output_spool = promoted >= 0 ? fdopen(promoted, "w+") : NULL;
+            if (promoted >= 0 && !output_spool) close(promoted);
+        }
         if (!output_spool) {
             fprintf(stderr, "error: could not create output spool\n");
             rc = 1;
@@ -4271,10 +4287,13 @@ process_petta_document:
                     rc = cetta_eval_session_process_exit_code(
                         &libraries.session);
                     result_set_free(&rs);
+                    if (libraries.session.process_control.answer_policy ==
+                            CETTA_EXIT_PUBLISH_PRIOR_ANSWERS)
+                        goto publish_answers;
                     goto cleanup;
                 }
                 write_results(output_spool, &rs, lang->id, profile);
-                if (fflush(output_spool) != 0) {
+                if (output_spool && fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     result_set_free(&rs);
                     rc = 1;
@@ -4428,6 +4447,9 @@ process_petta_document:
                 else
                     result_set_free(&rs);
                 prime_need_trace_printer_free(&trace);
+                if (libraries.session.process_control.answer_policy ==
+                        CETTA_EXIT_PUBLISH_PRIOR_ANSWERS)
+                    goto publish_answers;
                 goto cleanup;
             }
             int typecheck_exit_code = 0;
@@ -4535,7 +4557,7 @@ process_petta_document:
                 }
             } else if (!petta_answer_without_text) {
                 write_results(output_spool, results, lang->id, profile);
-                if (fflush(output_spool) != 0) {
+                if (output_spool && fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     if (detailed_initialized)
                         eval_outcome_free(&detailed);
@@ -4679,6 +4701,7 @@ petta_document_complete:
     if (petta_answer_without_text && !petta_uncaught_error)
         fputs("error: a PeTTa answer is not a finite term, so it has no "
               "text\n", stderr);
+publish_answers: ;
     bool he_fault_reached = he_source_fault && !stop_document_sequence;
     if (he_fault_reached) {
         fprintf(stderr, "error: compiled HE reader: %s\n",
@@ -4688,7 +4711,7 @@ petta_document_complete:
                 ? "error: could not parse inline MeTTa text\n"
                 : "error: could not read %s\n", filename);
     }
-    bool write_answers = !petta_uncaught_error && !petta_answer_without_text &&
+    bool write_answers = !g_no_results && !petta_uncaught_error && !petta_answer_without_text &&
         !he_fault_reached;
     if (write_answers && fseek(output_spool, 0, SEEK_SET) != 0) {
         fprintf(stderr, "error: could not rewind output spool\n");
@@ -4713,11 +4736,14 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed || he_fault_reached ? 1
+    if (!cetta_eval_session_process_exit_requested(&libraries.session))
+      rc = prime_need_trace_failed || he_fault_reached ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
 
 cleanup: {
-    bool output_ok = fflush(stdout) == 0 && !ferror(stdout);
+    bool stdout_ok = !ferror(stdout) && fflush(stdout) == 0 && !ferror(stdout);
+    bool stderr_ok = !ferror(stderr) && fflush(stderr) == 0 && !ferror(stderr);
+    bool output_ok = stdout_ok && stderr_ok;
     bool cleanup_ok = cetta_main_cleanup(&cleanup);
     if (!output_ok || !cleanup_ok) rc = 1;
     rc = run_cli_finish(run_cli, rc, output_ok, cleanup_ok, run_report_path, run_contract);

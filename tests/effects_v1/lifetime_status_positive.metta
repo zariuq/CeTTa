@@ -1,0 +1,6 @@
+!(import! &self proc)
+!(let $owner (proc:spawn ("/bin/echo" "retained") ())
+  (let $first-status (proc:status $owner)
+    (let $result (proc:await $owner)
+      (let $after (proc:status $owner)
+        (let $closed (proc:close $owner) (LifetimeStatus $first-status $result $after))))))
