@@ -34286,25 +34286,21 @@ static bool petta_machine_dispatch_goal(
             Atom *const *elems;
             CettaExprLen len;
             bool sequence = petta_semantics_sequence_view(items, &elems, &len);
-            if (sequence && len == 0u && operation == g_builtin_syms.car_atom &&
-                machine->host.raises_empty_car) {
+            PettaSequenceCallInterpretation interpretation = petta_plan_sequence_call(
+                goal.plan, operation, 1u, machine->host.raises_empty_car
+                    ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
+                    : CETTA_SEQUENCE_PETTA_VALUE);
+            CettaSequenceProjectionCall call = interpretation.call;
+            CettaSequenceProjectionView view = cetta_sequence_projection_view(
+                call, items, sequence, sequence ? elems : NULL,
+                sequence ? len : 0u);
+            if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
                 Atom *error = petta_semantics_empty_head_error(&machine->heap);
                 return error && petta_machine_raise_error(machine, error);
             }
-            if (!sequence || len == 0u) {
-                Atom *empty = atom_unit(&machine->heap);
-                return empty && petta_machine_unify(machine, empty, second);
-            }
-            if (operation == g_builtin_syms.car_atom) {
-                return petta_machine_unify(
-                    machine, elems[0], second);
-            }
-            Atom *tail = atom_is_list(items)
-                ? atom_sequence_like(
-                      &machine->heap, items, elems + 1u, len - 1u)
-                : atom_expr_suffix(&machine->heap, items, 1u);
-            return tail &&
-                   petta_machine_unify(machine, tail, second);
+            Atom *result = cetta_sequence_projection_materialize(
+                &machine->heap, &view);
+            return result && petta_machine_unify(machine, result, second);
         }
         if (operation == g_builtin_syms.decons_atom ||
             operation == g_builtin_syms.petta_decons) {

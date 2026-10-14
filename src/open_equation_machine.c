@@ -162,6 +162,10 @@ enum {
     OEM_HOST_STATE,
     /* Structural predicates and boolean unification over evaluated values. */
     OEM_HOST_OBSERVE,
+    /* Prepared structural projections; dispatch and argument preparation
+     * remain those of the containing HOST or APPLY occurrence. */
+    OEM_HOST_SEQUENCE_HEAD,
+    OEM_HOST_SEQUENCE_TAIL,
 };
 
 enum {
@@ -1669,8 +1673,9 @@ static bool oem_list_native(SymbolId head, CettaExprLen nargs) {
           form == PETTA_FORM_LIST_TO_SET ||
           form == PETTA_FORM_ALPHA_UNIQUE ||
           head == g_builtin_syms.unique_atom ||
-          head == g_builtin_syms.car_atom ||
-          head == g_builtin_syms.cdr_atom ||
+          cetta_sequence_projection_call(head, nargs,
+              CETTA_SEQUENCE_PETTA_VALUE).projection !=
+                  CETTA_SEQUENCE_PROJECTION_NONE ||
           head == g_builtin_syms.decons_atom ||
           head == g_builtin_syms.petta_decons) && nargs == 1u);
 }
@@ -1778,12 +1783,20 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
         *op_out = expr->expr.elems[0]->sym_id;
         return OEM_HOST_SORT;
     }
+    PettaSequenceCallInterpretation projection = petta_plan_sequence_call(
+        plan, atom_head_symbol_id(expr), expr->expr.len - 1u,
+        CETTA_SEQUENCE_PETTA_VALUE);
     if (expr->expr.elems[0]->kind == ATOM_SYMBOL &&
         oem_list_native(expr->expr.elems[0]->sym_id, expr->expr.len - 1u) &&
         plan->role == PETTA_PLAN_STATIC_CALL &&
-        oem_fields_are_values(expr, plan, 1u)) {
+        (projection.call.projection != CETTA_SEQUENCE_PROJECTION_NONE
+            ? projection.source_arguments_are_values
+            : oem_fields_are_values(expr, plan, 1u))) {
         *op_out = expr->expr.elems[0]->sym_id;
-        return OEM_HOST_LIST;
+        return projection.call.projection == CETTA_SEQUENCE_PROJECTION_HEAD
+            ? OEM_HOST_SEQUENCE_HEAD
+            : projection.call.projection == CETTA_SEQUENCE_PROJECTION_TAIL
+                ? OEM_HOST_SEQUENCE_TAIL : OEM_HOST_LIST;
     }
     if (oem_metatype_call(compile, expr, plan) &&
         oem_fields_are_values(expr, plan, 1u)) {
@@ -2029,7 +2042,13 @@ static bool oem_build_apply(OemCompile *compile, Atom *expr,
                oem_list_native(expr->expr.elems[0]->sym_id,
                                expr->expr.len - 1u)) {
         /* So do PeTTa's list natives. */
-        node.host_fast = (uint8_t)OEM_HOST_LIST;
+        CettaSequenceProjectionCall projection = petta_plan_sequence_call(
+            plan, expr->expr.elems[0]->sym_id, expr->expr.len - 1u,
+            CETTA_SEQUENCE_PETTA_VALUE).call;
+        node.host_fast = projection.projection == CETTA_SEQUENCE_PROJECTION_HEAD
+            ? (uint8_t)OEM_HOST_SEQUENCE_HEAD
+            : projection.projection == CETTA_SEQUENCE_PROJECTION_TAIL
+                ? (uint8_t)OEM_HOST_SEQUENCE_TAIL : (uint8_t)OEM_HOST_LIST;
         node.op = expr->expr.elems[0]->sym_id;
     } else if (oem_metatype_call(compile, expr, plan)) {
         /* And `get-metatype`. */
@@ -8452,6 +8471,48 @@ static bool oem_plain_list(const Atom *atom) {
  * improper chain, a cell anywhere else, a counted collection and, but for
  * car-atom and cdr-atom, a non-list are the host's, which answers them
  * relationally or raises as SWI does. */
+/* The compiler has selected the operation and prepared its one argument.
+ * Runtime binding and representation checks still decide whether this
+ * occurrence can be read here. No result evaluation is licensed by this view. */
+static __attribute__((noinline)) OemRun oem_sequence_projection_step(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program, Atom **locals,
+        const OemStep *step, const OemTemplate *goal) {
+    if (goal->kind != OEM_T_BUILD || goal->count != 2u)
+        return OEM_RUN_HOST;
+    Atom *list = oem_instantiate(cursor, program, locals,
+        program->template_children[goal->first + 1u]);
+    list = list ? oem_resolve_mode(cursor, list, true) : NULL;
+    if (!list)
+        return OEM_RUN_HANDOFF;
+    if (list->kind == ATOM_VAR ||
+        (petta_semantics_open_cons_built() &&
+         atom_structural_may_have_list_carrier(list)) ||
+        (list->kind == ATOM_EXPR && !oem_plain_list(list)))
+        return OEM_RUN_HOST;
+    CettaSequenceProjectionCall call = {
+        .projection = step->target == OEM_HOST_SEQUENCE_HEAD
+            ? CETTA_SEQUENCE_PROJECTION_HEAD : CETTA_SEQUENCE_PROJECTION_TAIL,
+        .policy = cursor->runtime.raises_empty_car
+            ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD : CETTA_SEQUENCE_PETTA_VALUE,
+    };
+    CettaSequenceProjectionView view = cetta_sequence_projection_view(
+        call, list, list->kind == ATOM_EXPR,
+        list->kind == ATOM_EXPR ? list->expr.elems : NULL,
+        list->kind == ATOM_EXPR ? list->expr.len : 0u);
+    /* oem_plain_list excludes LIST and every other internal tag. */
+    view.representation = CETTA_SEQUENCE_ORDINARY_EXPRESSION;
+    if (view.result == CETTA_SEQUENCE_PROJECT_RAISE)
+        return OEM_RUN_HOST;
+    Atom *result = cetta_sequence_projection_materialize(&cursor->region, &view);
+    if (!result)
+        return OEM_RUN_HANDOFF;
+    OemUnify unified = oem_meet(cursor, program, locals, step, result);
+    if (unified == OEM_UNIFY_ERROR)
+        return OEM_RUN_HANDOFF;
+    return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
 static __attribute__((noinline)) OemRun oem_list_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
@@ -8503,25 +8564,6 @@ static __attribute__((noinline)) OemRun oem_list_step(
         Atom *rest = atom_expr_suffix(&cursor->region, list, 1u);
         result = rest
             ? atom_expr2(&cursor->region, list->expr.elems[0], rest) : NULL;
-        if (!result)
-            return OEM_RUN_HANDOFF;
-        OemUnify unified = oem_meet(cursor, program, locals, step, result);
-        if (unified == OEM_UNIFY_ERROR)
-            return OEM_RUN_HANDOFF;
-        return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
-    }
-    if (step->op == g_builtin_syms.car_atom ||
-        step->op == g_builtin_syms.cdr_atom) {
-        if (list->kind == ATOM_EXPR && !oem_plain_list(list))
-            return OEM_RUN_HOST;
-        if (step->op == g_builtin_syms.car_atom && list->kind == ATOM_EXPR &&
-            list->expr.len == 0u && cursor->runtime.raises_empty_car)
-            return OEM_RUN_HOST;
-        result = list->kind != ATOM_EXPR || list->expr.len == 0u
-            ? atom_unit(&cursor->region)
-            : step->op == g_builtin_syms.car_atom
-            ? list->expr.elems[0]
-            : atom_expr_suffix(&cursor->region, list, 1u);
         if (!result)
             return OEM_RUN_HANDOFF;
         OemUnify unified = oem_meet(cursor, program, locals, step, result);
@@ -8833,6 +8875,9 @@ static __attribute__((noinline)) OemRun oem_fast_host_step(
     const OemTemplate *goal = &program->templates[step->value];
     if (step->target == OEM_HOST_OBSERVE)
         return oem_observation_step(cursor, program, locals, step, goal);
+    if (step->target == OEM_HOST_SEQUENCE_HEAD ||
+        step->target == OEM_HOST_SEQUENCE_TAIL)
+        return oem_sequence_projection_step(cursor, program, locals, step, goal);
     if (step->target == OEM_HOST_LIST)
         return oem_list_step(cursor, program, locals, step, goal);
     if (step->target == OEM_HOST_EXISTS)

@@ -12935,6 +12935,103 @@ static void test_act_incremental_compression(void) {
          " advice");
 }
 
+static void test_sequence_projection_views(Arena *arena) {
+    Atom *a = atom_symbol(arena, "projection-a");
+    Atom *b = atom_var_with_id(arena, "projection-b", fresh_var_id());
+    Atom *items = atom_expr2(arena, a, b);
+    Atom *empty = atom_unit(arena);
+    Atom *scalar = atom_int(arena, 7);
+    assert(a && b && items && empty && scalar);
+    CettaSequenceProjectionCall head = cetta_sequence_projection_call(
+        g_builtin_syms.car_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    CettaSequenceProjectionCall tail = cetta_sequence_projection_call(
+        g_builtin_syms.cdr_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    ArenaMark before = arena_mark(arena);
+    CettaSequenceProjectionView head_view = cetta_sequence_projection_view(
+        head, items, true, items->expr.elems, 2u);
+    CettaSequenceProjectionView tail_view = cetta_sequence_projection_view(
+        tail, items, true, items->expr.elems, 2u);
+    /* Reading the structural view constructs no replacement term. */
+    assert(arena_at_mark(arena, before));
+    assert(head_view.result == CETTA_SEQUENCE_PROJECT_ELEMENT);
+    assert(tail_view.result == CETTA_SEQUENCE_PROJECT_SUFFIX);
+    assert(cetta_sequence_projection_materialize(arena, &head_view) == a);
+    Atom *rest = cetta_sequence_projection_materialize(arena, &tail_view);
+    assert(rest && rest->kind == ATOM_EXPR && rest->expr.len == 1u);
+    assert(rest->expr.elems[0] == b);
+    tail_view.representation = CETTA_SEQUENCE_ORDINARY_EXPRESSION;
+    Atom *ordinary_rest = cetta_sequence_projection_materialize(arena, &tail_view);
+    assert(ordinary_rest && atom_eq(ordinary_rest, rest) && !atom_is_list(ordinary_rest));
+    Atom *list = atom_list(arena, items->expr.elems, 2u);
+    Atom *const *list_elements = NULL;
+    CettaExprLen list_length = 0u;
+    assert(list && atom_sequence_view(list, &list_elements, &list_length));
+    CettaSequenceProjectionView list_tail = cetta_sequence_projection_view(
+        tail, list, true, list_elements, list_length);
+    Atom *list_rest = cetta_sequence_projection_materialize(arena, &list_tail);
+    assert(list_rest && atom_is_list(list_rest));
+    assert(atom_sequence_view(list_rest, &list_elements, &list_length));
+    assert(list_length == 1u && list_elements[0] == b);
+
+    CettaSequenceProjectionView no_sequence = cetta_sequence_projection_view(
+        head, scalar, false, NULL, 0u);
+    CettaSequenceProjectionView empty_tail = cetta_sequence_projection_view(
+        tail, empty, true, NULL, 0u);
+    assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    assert(empty_tail.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    assert(atom_eq(cetta_sequence_projection_materialize(arena, &no_sequence), empty));
+
+    head.policy = CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD;
+    CettaSequenceProjectionView empty_head = cetta_sequence_projection_view(
+        head, empty, true, NULL, 0u);
+    assert(empty_head.result == CETTA_SEQUENCE_PROJECT_RAISE);
+    assert(!cetta_sequence_projection_materialize(arena, &empty_head));
+    no_sequence = cetta_sequence_projection_view(head, scalar, false, NULL, 0u);
+    assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    for (unsigned policy = CETTA_SEQUENCE_HE_LIBRARY_VALUE;
+         policy <= CETTA_SEQUENCE_STRICT_VALUE; policy++) {
+        head.policy = (CettaSequenceProjectionPolicy)policy;
+        empty_head = cetta_sequence_projection_view(head, empty, true, NULL, 0u);
+        no_sequence = cetta_sequence_projection_view(head, scalar, false, NULL, 0u);
+        assert(empty_head.result == CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR);
+        assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR);
+        assert(!cetta_sequence_projection_materialize(arena, &empty_head));
+    }
+
+    /* Real occurrence plans retain evaluation mode independently of whether
+     * the argument is bound. Computed arguments keep the preparation path. */
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Atom *variable_call = parse_one(arena, "(car-atom $projection-items)");
+    const PettaPlanNode *variable_plan = petta_program_plan_current(program, variable_call);
+    assert(variable_plan);
+    PettaSequenceCallInterpretation variable_interpretation = petta_plan_sequence_call(
+        variable_plan, g_builtin_syms.car_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    assert(variable_call->expr.elems[1]->kind == ATOM_VAR);
+    assert(variable_interpretation.argument == petta_plan_child(variable_plan, 1u));
+    assert(variable_interpretation.source_arguments_are_values);
+    Atom *computed_call = parse_one(arena, "(car-atom (+ 1 2))");
+    const PettaPlanNode *computed_plan = petta_program_plan_current(program, computed_call);
+    assert(computed_plan);
+    assert(!petta_plan_sequence_call(computed_plan, g_builtin_syms.car_atom, 1u,
+               CETTA_SEQUENCE_PETTA_VALUE).source_arguments_are_values);
+    assert(!petta_plan_sequence_call(NULL, g_builtin_syms.car_atom, 1u,
+               CETTA_SEQUENCE_PETTA_VALUE).source_arguments_are_values);
+    petta_program_free(program);
+
+    CettaSequenceProjectionCall wrong_arity = cetta_sequence_projection_call(
+        g_builtin_syms.car_atom, 2u, CETTA_SEQUENCE_PETTA_VALUE);
+    CettaSequenceProjectionCall unrelated = cetta_sequence_projection_call(
+        g_builtin_syms.op_plus, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    assert(wrong_arity.projection == CETTA_SEQUENCE_PROJECTION_NONE);
+    assert(unrelated.projection == CETTA_SEQUENCE_PROJECTION_NONE);
+    assert(cetta_sequence_projection_view(wrong_arity, items, true,
+               items->expr.elems, 2u).result == CETTA_SEQUENCE_PROJECT_DEFER);
+    assert(cetta_sequence_projection_view(unrelated, items, true,
+               items->expr.elems, 2u).result == CETTA_SEQUENCE_PROJECT_DEFER);
+    puts("PASS: projection views preserve identity, empty-value policy and separate materialization");
+}
+
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
@@ -13007,6 +13104,7 @@ int main(int argc, char **argv) {
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
+    test_sequence_projection_views(&persistent);
     test_boundary_requirement_calculus(&universe, &persistent);
     test_inferred_signature_authority_provenance(
         &universe, &answers);

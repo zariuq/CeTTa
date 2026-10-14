@@ -7,6 +7,7 @@
 #include "match.h"
 #include "space.h"
 #include "petta_type_policy.h"
+#include "petta_semantics.h"
 #include "term_universe.h"
 
 /*
@@ -731,6 +732,30 @@ static inline const PettaPlanNode *petta_plan_child(
     const PettaPlanNode *plan, CettaExprIndex index) {
     return plan && index < plan->child_count
         ? &plan->children[index] : NULL;
+}
+
+/* Link one projection's prepared-call meaning to its authored argument.
+ * The interpreter still installs dispatch/type/effect protocols separately.
+ * A VALUE occurrence can contain an unbound variable. */
+typedef struct {
+    CettaSequenceProjectionCall call;
+    const PettaPlanNode *argument;
+    bool source_arguments_are_values;
+} PettaSequenceCallInterpretation;
+
+static inline PettaSequenceCallInterpretation petta_plan_sequence_call(
+    const PettaPlanNode *plan, SymbolId head, CettaExprLen nargs,
+    CettaSequenceProjectionPolicy policy) {
+    const PettaPlanNode *argument = nargs == 1u ? petta_plan_child(plan, 1u) : NULL;
+    CettaSequenceProjectionCall call = cetta_sequence_projection_call(head, nargs, policy);
+    return (PettaSequenceCallInterpretation){
+        .call = call,
+        .argument = argument,
+        .source_arguments_are_values = call.projection != CETTA_SEQUENCE_PROJECTION_NONE &&
+            plan && plan->role == PETTA_PLAN_STATIC_CALL && argument &&
+            (argument->role == PETTA_PLAN_VALUE ||
+             (argument->role == PETTA_PLAN_DATA && !argument->contains_call)),
+    };
 }
 
 #endif /* CETTA_PETTA_PROGRAM_H */
