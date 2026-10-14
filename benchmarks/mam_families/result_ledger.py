@@ -18,7 +18,7 @@ import re
 
 
 METRICS = ('wall_s', 'query_ms', 'instructions', 'peak_rss_mib', 'retained_bytes')
-OBSERVERS = {'ordered_occurrences', 'set', 'count', 'exists', 'effect_history'}
+OBSERVERS = {'ordered_occurrences', 'occurrence_bag', 'set', 'count', 'exists', 'effect_history'}
 PHASES = {'whole_process', 'preparation', 'query', 'transfer', 'scheduling', 'validation'}
 QUALITIES = {'checked_samples', 'diagnostic', 'exploratory', 'pending'}
 STATUSES = {'passed', 'failed', 'pending'}

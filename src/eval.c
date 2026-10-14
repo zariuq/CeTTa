@@ -47395,9 +47395,10 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
  * result type is %Undefined%: HE evaluates it where it is answered, so a
  * value that could evaluate further is evaluated; in other languages, and
  * for a value HE would not evaluate further, it is the answer as it is. */
-static void he_library_answer(Space *s, Arena *a, CettaLanguageId language,
+static void he_library_answer(Space *s, Arena *a,
+                              CettaSequenceProjectionCall call,
                               Atom *value, int fuel, OutcomeSet *os) {
-    if (language == CETTA_LANGUAGE_HE && value &&
+    if (call.policy == CETTA_SEQUENCE_HE_LIBRARY_VALUE && value &&
         !he_stream_value_inert(s, value)) {
         metta_eval_bind(s, a, value, fuel, os);
         return;
@@ -49068,21 +49069,20 @@ petta_lowered_to_shared_form:
         Atom *const *e_elems;
         CettaExprLen e_len;
         bool sequence = atom_sequence_view(e, &e_elems, &e_len);
-        if (car && sequence && e_len == 0u && petta_eval_version_1_1()) {
+        CettaSequenceProjectionCall call = petta_plan_sequence_call(
+            NULL, head_id, nargs, petta_eval_version_1_1()
+                ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
+                : CETTA_SEQUENCE_PETTA_VALUE).call;
+        CettaSequenceProjectionView view = cetta_sequence_projection_view(
+            call, e, sequence, sequence ? e_elems : NULL,
+            sequence ? e_len : 0u);
+        if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
             petta_eval_raise(petta_semantics_empty_head_error(a));
             return;
         }
-        Atom *result;
-        if (petta_semantics_is_cons_constraint(e))
-            result = e->expr.elems[car ? 1 : 2];
-        else if (!sequence || e_len == 0)
-            result = atom_unit(a);
-        else if (car)
-            result = e_elems[0];
-        else
-            result = atom_is_list(e)
-                ? atom_sequence_like(a, e, e_elems + 1, e_len - 1)
-                : atom_expr_suffix(a, e, 1u);
+        Atom *result = petta_semantics_is_cons_constraint(e)
+            ? e->expr.elems[car ? 1 : 2]
+            : cetta_sequence_projection_materialize(a, &view);
         outcome_set_add(os, result, &_empty);
         return;
     }
@@ -49090,8 +49090,16 @@ petta_lowered_to_shared_form:
         Atom *e = expr_arg(atom, 0);
         Atom *const *e_elems;
         CettaExprLen e_len;
-        if (atom_sequence_view(e, &e_elems, &e_len) && e_len > 0)
-            he_library_answer(s, a, language_id, e_elems[0], fuel, os);
+        bool sequence = atom_sequence_view(e, &e_elems, &e_len);
+        CettaSequenceProjectionCall call = petta_plan_sequence_call(
+            NULL, head_id, nargs, language_id == CETTA_LANGUAGE_HE
+                ? CETTA_SEQUENCE_HE_LIBRARY_VALUE : CETTA_SEQUENCE_STRICT_VALUE).call;
+        CettaSequenceProjectionView view = cetta_sequence_projection_view(
+            call, e, sequence, sequence ? e_elems : NULL,
+            sequence ? e_len : 0u);
+        if (view.result == CETTA_SEQUENCE_PROJECT_ELEMENT)
+            he_library_answer(s, a, call,
+                cetta_sequence_projection_materialize(a, &view), fuel, os);
         else
             outcome_set_add(os,
                 atom_error(a, atom,
@@ -49103,10 +49111,16 @@ petta_lowered_to_shared_form:
         Atom *e = expr_arg(atom, 0);
         Atom *const *e_elems;
         CettaExprLen e_len;
-        if (atom_sequence_view(e, &e_elems, &e_len) && e_len > 0)
-            he_library_answer(s, a, language_id, atom_is_list(e)
-                ? atom_sequence_like(a, e, e_elems + 1, e_len - 1)
-                : atom_expr_suffix(a, e, 1u), fuel, os);
+        bool sequence = atom_sequence_view(e, &e_elems, &e_len);
+        CettaSequenceProjectionCall call = petta_plan_sequence_call(
+            NULL, head_id, nargs, language_id == CETTA_LANGUAGE_HE
+                ? CETTA_SEQUENCE_HE_LIBRARY_VALUE : CETTA_SEQUENCE_STRICT_VALUE).call;
+        CettaSequenceProjectionView view = cetta_sequence_projection_view(
+            call, e, sequence, sequence ? e_elems : NULL,
+            sequence ? e_len : 0u);
+        if (view.result == CETTA_SEQUENCE_PROJECT_SUFFIX)
+            he_library_answer(s, a, call,
+                cetta_sequence_projection_materialize(a, &view), fuel, os);
         else
             outcome_set_add(os,
                 atom_error(a, atom,

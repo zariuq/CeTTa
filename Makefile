@@ -43689,6 +43689,12 @@ test-petta-search-machine: test-work-observers
 test-work-observers: $(BIN)
 	@python3 tests/support/check_work_observers.py ./$(BIN)
 
+.PHONY: test-sequence-call-contract
+test-petta-search-machine: test-sequence-call-contract
+test-sequence-call-contract: $(BIN)
+	@python3 tests/support/check_sequence_call_contract.py $(BIN) \
+		--out runtime/sequence-call-contract-$$(date +%s%N)
+
 PETTA_CALLABILITY_REFRESH_TEST_OBJ = runtime/bootstrap/test_petta_callability_refresh.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_CALLABILITY_REFRESH_TEST_BIN = runtime/test_petta_callability_refresh-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 -include $(PETTA_CALLABILITY_REFRESH_TEST_OBJ:.o=.d)
