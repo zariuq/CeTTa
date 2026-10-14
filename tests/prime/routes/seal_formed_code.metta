@@ -22,18 +22,25 @@
      (let $c (lift app @let $p @5 $b) *$c)))
 
 ; ---- Formed from text by parse.
+; Returned code is data until explicitly activated. The code's seals must
+; survive both the return and the later activation.
 !(row parse-lift)
 !(let $c (lift (parse "(let $x 5 @$x)")) *$c)
 !(row parse-held)
-!(let $p (parse "(let $x 5 @$x)") $p)
+!(let $p (parse "(let $x 5 @$x)") (eval $p))
 !(row parse-crossing)
-!(let $p (parse "(let $x 5 @$x{$x})") $p)
+!(let $p (parse "(let $x 5 @$x{$x})") (eval $p))
 
 ; ---- A binder built from parts by cons-atom.
 !(row cons-let)
-!(let $t (cons-atom let ($x 5 (quote $x))) $t)
+!(let $t (cons-atom let ($x 5 (quote $x))) (eval $t))
 !(row cons-case)
-!(let $t (cons-atom case (5 (($x (quote $x))))) $t)
+!(let $t (cons-atom case (5 (($x (quote $x))))) (eval $t))
 ; Not a binder: nothing is sealed, nothing binds.
 !(row cons-data)
 !(cons-atom f ($x (quote $x)))
+
+; Returning constructed code does not itself activate it.
+!(row returned-code)
+!(let $p (parse "(let $x 5 @$x)") $p)
+!(let $t (cons-atom let ($x 5 (quote $x))) $t)

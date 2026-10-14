@@ -28,20 +28,22 @@
 !(let $f (mk-shared) (let $g $f (once-twice $g)))
 
 ; ---- Construction: cons-atom, union-atom, lift app.
+; Sequence operations consume data. Form the closure before putting it into
+; a sequence; an unevaluated (mk) is a call expression, not a closure value.
 !(row cons)
-!(let $s (cons-atom (mk) ()) (let $f (car-atom $s) (twice $f)))
+!(let $h (mk) (let $s (cons-atom $h ()) (let $f (car-atom $s) (twice $f))))
 !(row union)
-!(let $s (union-atom (a) ((mk))) (let $f (index-atom $s 1) (twice $f)))
+!(let $h (mk) (let $s (union-atom (a) ($h)) (let $f (index-atom $s 1) (twice $f))))
 !(row lift-app)
 !(let $k (lift (mk)) (let $c (lift app @Pair (lift app $k @1) (lift app $k @2)) *$c))
 !(row cons-shared)
-!(let $s (cons-atom (mk-shared) ()) (let $f (car-atom $s) (twice $f)))
+!(let $h (mk-shared) (let $s (cons-atom $h ()) (let $f (car-atom $s) (twice $f))))
 
 ; ---- Projection: patterns and sequence operations take the closure out.
 !(row project-pattern)
 !(let (Box $f) (Box (mk)) (twice $f))
 !(row project-index)
-!(let $f (index-atom ((mk) other) 0) (twice $f))
+!(let $h (mk) (let $f (index-atom ($h other) 0) (twice $f)))
 !(row project-shared)
 !(let (Box $f) (Box (mk-shared)) (twice $f))
 
@@ -93,7 +95,7 @@
 !(let $w 5 (let $u (parse (repr (mk-cross))) (let $c (lift $u) (let $g *$c (($g $w) 1)))))
 !(let $w 5 (let $u (parse (repr (mk-cross2))) (let $c (lift $u) (let $g *$c (($g $w) 1)))))
 !(row cross-text-applied)
-!(let $w 5 (let $g (parse (repr (mk-cross))) (($g $w) 1)))
+!(let $w 5 (let $h (mk-cross) (let $g (eval (parse (repr $h))) (($g $w) 1))))
 !(row cross-lift)
 !(let $w 5 (let $k (lift (mk-cross)) (let $c (lift app (lift app $k (lift $w)) @1) *$c)))
 !(let $w 5 (let $k (lift (mk-cross2)) (let $c (lift app (lift app $k (lift $w)) @1) *$c)))
