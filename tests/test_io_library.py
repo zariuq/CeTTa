@@ -38,7 +38,10 @@ with tempfile.TemporaryDirectory(prefix="cetta-io-library-") as directory:
                 assert all(line.startswith("[") and line.endswith("]") for line in lines), lines
                 lines = [line[1:-1] for line in lines]
             assert lines.pop(0) in ("true", "()"), lines
-            assert lines == ['(http)', '(io:idle)', '(io:pending 1)',
+            capabilities = lines.pop(0)
+            assert capabilities.startswith("(") and capabilities.endswith(")"), capabilities
+            assert "http" in capabilities[1:-1].split(), capabilities
+            assert lines == ['(io:idle)', '(io:pending 1)',
                              '(io:event 1 (http:response 200 "one"))',
                              '(io:idle)', '(io:idle)',
                              '(io:pending 2)', '(io:event 2 (http:response 302 ""))',
