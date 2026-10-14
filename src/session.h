@@ -73,14 +73,17 @@ typedef enum {
         CETTA_PROFILE_MASK_PETTA_BASE_FORMS
 } CettaProfileMask;
 
-/* A language's released versions.  A profile implements one version of its
+/* Registered language contracts. A profile implements one version of its
  * language; PeTTa 1.0.6 is the untyped language of PeTTa release v1.0.6,
  * and PeTTa 1.1 is the typed language PeTTa's main line adopted with its
  * checker.  A version names the libraries its programs import first. */
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
     CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2
+    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
+    CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
+    CETTA_LANGUAGE_VERSION_HE_0_0_1 = 4,
+    CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10 = 5
 } CettaLanguageVersionId;
 
 typedef struct {
@@ -97,6 +100,9 @@ typedef struct {
     CettaRelativeModulePolicy relative_imports;
     /* A recursive request for an already loading file is a successful no-op. */
     bool loading_import_is_noop;
+    /* The contract selected when neither the language nor its profile names
+     * another version. Exactly one registered version per language is default. */
+    bool is_default;
 } CettaLanguageVersion;
 
 typedef struct {
@@ -243,9 +249,15 @@ typedef struct {
     uint32_t entry_len;
 } CettaEvaluatorOptions;
 
+typedef enum {
+    CETTA_EXIT_DISCARD_ANSWER_DISPLAY = 0,
+    CETTA_EXIT_PUBLISH_PRIOR_ANSWERS = 1
+} CettaExitAnswerPolicy;
+
 typedef struct {
     bool exit_requested;
     int exit_code;
+    CettaExitAnswerPolicy answer_policy;
 } CettaProcessControl;
 
 typedef struct {
@@ -359,6 +371,8 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
 void cetta_eval_session_clear_process_exit(CettaEvalSession *session);
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code);
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy);
 bool cetta_eval_session_process_exit_requested(
     const CettaEvalSession *session);
 int cetta_eval_session_process_exit_code(const CettaEvalSession *session);

@@ -712,6 +712,7 @@ PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
+SRC += src/library_proc.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
 SRC += src/producer_reads.c
@@ -3156,6 +3157,7 @@ define cetta_exec
 $(if $(filter 1,$(SANITIZER_REPEATABLE)),env CETTA_SANITIZER_REPEATABLE=1 CETTA_WRAPPED_BIN=$1 $(CETTA_EXEC_WRAPPER),$1)
 endef
 CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
+NATIVE_MUTATION_GATE = $(CETTA_BIN_INVOKE) --lang he --profile extended --no-results tests/support/check_native_mutation_rejected.metta
 METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE = $(call cetta_exec,./$(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1))
 ifeq ($(SANITIZER_REPEATABLE),1)
 export CETTA_SANITIZER_REPEATABLE := 1
@@ -4070,8 +4072,8 @@ $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pat
 
 .PHONY: test-pattern-occurrence-mutation
 test: test-pattern-occurrence-mutation
-test-pattern-occurrence-mutation: $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN)
-	@python3 tests/support/check_native_mutation_rejected.py $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN) 'PETTA_MACHINE_STEP_EXHAUSTED && count == total'
+test-pattern-occurrence-mutation: $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
+	@$(NATIVE_MUTATION_GATE) $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN) 'PETTA_MACHINE_STEP_EXHAUSTED && count == total'
 
 PATTERN_SCOPE_MUTANT_SRC = runtime/pattern_scope_mutant-$(BUILD_OBJ_TAG).c
 PATTERN_SCOPE_MUTANT_BIN = runtime/test_pattern_scope_mutant-$(BUILD_OBJ_TAG)
@@ -4082,8 +4084,8 @@ $(PATTERN_SCOPE_MUTANT_BIN): $(PATTERN_SCOPE_MUTANT_SRC) tests/test_pattern_bind
 
 .PHONY: test-pattern-scope-mutation
 test: test-pattern-scope-mutation
-test-pattern-scope-mutation: $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN)
-	@python3 tests/support/check_native_mutation_rejected.py $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN) 'atom_eq(ordinary, shared)'
+test-pattern-scope-mutation: $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
+	@$(NATIVE_MUTATION_GATE) $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN) 'atom_eq(ordinary, shared)'
 
 test-pattern-queries: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_queries.py "$(CETTA_SCRIPT_BIN)"
@@ -5033,7 +5035,7 @@ test-relational-navigation-reference: $(RELATIONAL_NAVIGATION_TEST_BIN)
 
 .PHONY: test-relational-navigation-mutations
 test: test-relational-navigation-mutations
-test-relational-navigation-mutations: $(RELATIONAL_NAVIGATION_TEST_BIN)
+test-relational-navigation-mutations: $(RELATIONAL_NAVIGATION_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/relational-navigation-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
@@ -5050,7 +5052,7 @@ test-relational-navigation-mutations: $(RELATIONAL_NAVIGATION_TEST_BIN)
 		seek-rotation) assertion='factor == selected';; \
 		*) assertion='cursor->maximum == relational_iterator_key';; \
 		esac; \
-		python3 tests/support/check_native_mutation_rejected.py \
+		$(NATIVE_MUTATION_GATE) \
 			$(RELATIONAL_NAVIGATION_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
 	done
 $(PRODUCER_READS_TEST_BIN): tests/test_producer_reads.c src/producer_reads.c src/producer_reads.h $(BUILD_CONFIG_HEADER)
@@ -5185,7 +5187,7 @@ test-relational-plan-dialects: $(BIN)
 
 .PHONY: test-relational-plan-mutations
 test: test-relational-plan-mutations
-test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN)
+test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/relational-plan-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
@@ -5208,7 +5210,7 @@ test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN)
 		elif [ "$$kind" = count-overflow ]; then assertion='!cetta_relational_plan_count(plan'; \
 		elif [ "$$kind" = trail-restore ]; then assertion='cetta_relational_plan_count(plan, &space, &count, &expected) && count == 27u'; \
 		else assertion='actual == reference'; fi; \
-		python3 tests/support/check_native_mutation_rejected.py \
+		$(NATIVE_MUTATION_GATE) \
 			$(RELATIONAL_PLAN_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
 	done
 
@@ -5247,7 +5249,7 @@ test-mam-measurement:
 
 .PHONY: test-chain-aggregation-mutations
 test: test-chain-aggregation-mutations
-test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN)
+test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/chain-aggregation-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
@@ -5263,13 +5265,13 @@ test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN)
 		elif [ "$$kind" = seed ]; then assertion='count == 1u'; \
 		elif [ "$$kind" = count-range ]; then assertion='!space_native_flat_chain_count'; \
 		else assertion='actual.sum == expected.sum'; fi; \
-		python3 tests/support/check_native_mutation_rejected.py \
+		$(NATIVE_MUTATION_GATE) \
 			$(CHAIN_AGGREGATION_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
 	done
 
 .PHONY: test-occurrence-merge-mutations
 test: test-occurrence-merge-mutations
-test-occurrence-merge-mutations: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
+test-occurrence-merge-mutations: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/occurrence-merge-mutations-$(BUILD_OBJ_TAG); \
 	mkdir -p "$$mutation_dir"; \
@@ -5282,7 +5284,7 @@ test-occurrence-merge-mutations: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
 			"$$mutation_dir/$$kind.o" $(LDFLAGS); \
 		if [ "$$kind" = ceiling ]; then assertion=SPACE_OCCURRENCE_CURSOR_END; \
 		else assertion='index == expected'; fi; \
-		python3 tests/support/check_native_mutation_rejected.py \
+		$(NATIVE_MUTATION_GATE) \
 			$(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN) "$$mutation_dir/$$kind" "$$assertion"; \
 	done
 
@@ -5997,6 +5999,9 @@ endif
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
+	$(IO_RUNTIME_TEST_OBJ:.o=.d) \
+	$(IO_RUNTIME_BENCH_OBJ:.o=.d) \
+	$(IO_RUNTIME_MUTATION_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(SHARED_RETURN_PRODUCER_TEST_OBJ:.o=.d) \
 	$(ANSWER_STORAGE_TEST_OBJ:.o=.d) \
@@ -27581,7 +27586,7 @@ test-work-routes: $(BIN)
 # A retained computation held by handle: prefixes keep the rest, a budget
 # pauses at an answer boundary, effects happen once, a handle kept in the
 # space keeps its computation, cancel releases it.
-test-petta-work-control: $(BIN)
+test-petta-work-control: $(BIN) tests/petta/work_control.metta tests/petta/work_control.expected
 	@set -e; \
 	actual=$$($(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/work_control.metta); \
 	expected=$$(cat tests/petta/work_control.expected); \
@@ -30771,6 +30776,12 @@ test-he-shared-execution: $(BIN)
 test: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN)
+
+.PHONY: test-effects-v1
+test: test-effects-v1
+test-effects-v1: $(BIN) lib/proc.metta tests/support/check_effects_v1.py \
+  tests/support/proc_fixture_v1.c tests/support/check_native_mutation_rejected.metta
+	@python3 tests/support/check_effects_v1.py ./$(BIN)
 
 $(PREPARED_PURE_ANSWER_TEST_OBJ): tests/test_prepared_pure_answer_producer.c src/prepared_pure_machine.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -43434,7 +43445,7 @@ test-run-report:
 	@runtime/check-run-report
 
 test-run-cli: $(BIN) test-run-report
-	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime
+	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--lib-prolog,)
 
 test: test-run-cli
 
@@ -43578,6 +43589,11 @@ test-petta-program-rule-rows: $(BIN)
 # given, with the phrase in its output.  The library a version reads is
 # compared exactly.
 .PHONY: test-petta-language-versions
+.PHONY: test-language-versions
+test: test-language-versions
+test-language-versions: $(BIN)
+	@python3 tests/support/check_language_versions.py $(BIN)
+
 test: test-petta-language-versions
 test-petta-language-versions: $(BIN)
 	@set -eu; \

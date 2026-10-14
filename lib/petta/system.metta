@@ -11,6 +11,7 @@
 (= (system:getenv-or-default $name $default) (__cetta_lib_system_getenv_or_default $name $default))
 (= (system:is-flag $arg) (__cetta_lib_system_is_flag_arg $arg))
 (= (system:exit $code) (__cetta_lib_system_exit_with_code $code))
+(= (system:write $stream $bytes) (__cetta_lib_system_write $stream $bytes))
 (= (system:cwd) (__cetta_lib_system_cwd ()))
 (= (system:monotonic-ns) (__cetta_lib_system_monotonic_ns ()))
 (= (system:timed $suspension) (case (system:monotonic-ns) (($start (case (force $suspension) (($value (case (system:monotonic-ns) (($end (system:timed-result (- $end $start) $value)))))))))))

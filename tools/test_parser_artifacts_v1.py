@@ -11,14 +11,24 @@ from test_composable_syntax_v1 import form, lets, operand, origin, parts, rule, 
 from test_lbnf_values_v1 import CFLEX, headed, library_import, lower_read, output_values
 
 ROOT = Path(__file__).resolve().parents[1]
+HOST_ENDPOINTS = {
+    "he": ("he@0.0.1", "extended"),
+    "petta": ("petta@1.0.6", "extended"),
+    "prime": ("prime@0.0.1", None),
+}
 
 
 def run(binary, language, output, name, program):
     source = output / f"{language}-{name}.metta"
     source.write_text(program, encoding="utf-8")
-    command = [str(binary), "--lang", language]
-    if language != "prime":
-        command += ["--profile", "extended"]
+    return run_file(binary, language, output, name, source)
+
+
+def run_file(binary, language, output, name, source):
+    endpoint, profile = HOST_ENDPOINTS[language]
+    command = [str(binary), "--lang", endpoint]
+    if profile:
+        command += ["--profile", profile]
     result = subprocess.run(command + [str(source)], cwd=ROOT,
                             capture_output=True, text=True, timeout=180)
     (output / f"{language}-{name}.stdout").write_text(result.stdout)

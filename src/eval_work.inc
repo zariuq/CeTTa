@@ -107,6 +107,7 @@ typedef struct {
     size_t transfer_len, transfer_cap;
     Atom **completed;
     size_t completed_len, completed_next;
+    CettaEvalCompletion completed_stop;
     /* Transitions a take may make (0: no bound). */
     uint64_t budget;
     uint64_t transitions;
@@ -362,17 +363,33 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
 /* The completed route: the source evaluated whole by the dialect's own
  * evaluator, its answers kept in the work's storage. */
 static void eval_work_complete_now(EvalWork *work, Space *space, Arena *a) {
-    ResultSet results;
-    result_set_init(&results);
-    metta_eval(space, a, NULL, work->source, work->fuel, &results);
-    work->completed = results.len
-        ? calloc(results.len, sizeof(*work->completed)) : NULL;
-    for (size_t index = 0u; index < results.len; index++) {
-        Atom *kept = atom_deep_copy(&work->storage, results.items[index]);
+    if (work->budget) {
+        /* This method has no retained instruction-level residual. Refusing
+         * it is an unresolved preparation obligation, not impossibility of
+         * a resumable interpretation and not exhausted zero-answer search. */
+        work->failure = atom_symbol(&work->storage, "WorkBudgetRequiresResumableRoute");
+        work->state = EVAL_WORK_FAILED;
+        return;
+    }
+    EvalOutcome observation;
+    eval_outcome_init(&observation);
+    metta_eval_outcome(space, a, NULL, work->source, work->fuel, &observation);
+    work->completed_stop = observation.completion;
+    work->completed = observation.results.len
+        ? calloc(observation.results.len, sizeof(*work->completed)) : NULL;
+    if (observation.results.len && !work->completed) {
+        work->failure = atom_symbol(&work->storage, "Capacity");
+        work->state = EVAL_WORK_FAILED;
+        eval_outcome_free(&observation);
+        return;
+    }
+    for (size_t index = 0u; index < observation.results.len; index++) {
+        Atom *kept = atom_deep_copy(&work->storage, observation.results.items[index]);
         if (kept)
             work->completed[work->completed_len++] = kept;
+        else work->completed_stop = CETTA_EVAL_INCOMPLETE_CAPACITY;
     }
-    result_set_free(&results);
+    eval_outcome_free(&observation);
     work->route = EVAL_WORK_ROUTE_COMPLETED;
 }
 
@@ -723,8 +740,17 @@ static void eval_work_advance(Space *space, Arena *a, EvalWork *work,
                     a, work->completed[work->completed_next++]);
             }
         }
-        if (work->completed_next == work->completed_len)
-            work->state = EVAL_WORK_COMPLETE;
+        if (work->completed_next == work->completed_len) {
+            if (work->completed_stop == CETTA_EVAL_COMPLETE)
+                work->state = EVAL_WORK_COMPLETE;
+            else {
+                work->failure = atom_expr2(&work->storage,
+                    atom_symbol(&work->storage, "Incomplete"),
+                    atom_symbol(&work->storage,
+                        eval_completion_reason(work->completed_stop)));
+                work->state = EVAL_WORK_FAILED;
+            }
+        }
     }
 }
 
