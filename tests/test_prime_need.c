@@ -1736,6 +1736,59 @@ static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
     }
 }
 
+/* Compare the ancestry relation against complete path membership, including
+ * a fork and transported snapshots after the source arena is retired. */
+static void check_snapshot_lineage_transport(void) {
+    Arena source, retained;
+    arena_init_detached(&source);
+    arena_init_detached(&retained);
+    PrimeNeedSnapshot path[65], copied[65], fork;
+    prime_need_snapshot_init(&path[0]);
+    bool built = prime_need_snapshot_begin(&path[0]);
+    for (size_t i = 1u; built && i < 65u; ++i) {
+        uint64_t id = 0u;
+        built = prime_need_snapshot_allocate(&source, &path[i - 1u],
+            atom_int(&source, (int64_t)i), &path[i], &id);
+    }
+    CHECK(built, "lineage fixture builds a complete path");
+    if (!built) goto done;
+    bool exact = true;
+    for (size_t i = 0u; i < 65u; ++i)
+        for (size_t j = 0u; j < 65u; ++j)
+            exact &= prime_need_snapshot_is_ancestor(&path[i], &path[j]) == (i <= j);
+    CHECK(exact, "every path ancestry query agrees with path membership");
+    fork = path[17];
+    for (size_t i = 0u; built && i < 20u; ++i) {
+        PrimeNeedSnapshot next;
+        uint64_t id = 0u;
+        built = prime_need_snapshot_allocate(&source, &fork,
+            atom_int(&source, -(int64_t)i), &next, &id);
+        if (built) fork = next;
+    }
+    exact = built;
+    for (size_t i = 0u; built && i < 65u; ++i)
+        exact &= prime_need_snapshot_is_ancestor(&path[i], &fork) == (i <= 17u);
+    CHECK(exact, "same-depth sibling frames are not mistaken for ancestors");
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&retained);
+    bool transported = session != NULL;
+    for (size_t i = 0u; transported && i < 65u; ++i) {
+        copied[i] = path[i];
+        transported = prime_need_snapshot_copy_with_session(&retained, session, &copied[i]);
+    }
+    atom_deep_copy_session_free(session);
+    arena_free(&source);
+    exact = transported;
+    for (size_t i = 0u; transported && i < 65u; ++i)
+        for (size_t j = 0u; j < 65u; ++j)
+            exact &= prime_need_snapshot_is_ancestor(&copied[i], &copied[j]) == (i <= j);
+    CHECK(exact, "transported lineage remains exact after source retirement");
+    arena_free(&retained);
+    return;
+done:
+    arena_free(&source);
+    arena_free(&retained);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1754,6 +1807,7 @@ int main(void) {
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
 
+    check_snapshot_lineage_transport();
     check_branch_shared_prefix_compatibility();
     check_forwarded_production(&arena, &promoted_arena);
 
