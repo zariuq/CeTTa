@@ -26885,7 +26885,7 @@ static Atom *prime_need_reify_mode(
     while (len > 0u) {
         PrimeNeedReifyFrame *frame = &frames[len - 1u];
         if (frame->waiting_for_payload) {
-            if (persist_sharing) {
+            if (persist_sharing && frame->storage_key) {
                 Atom *origin = frame->payload_slot
                     ? *frame->payload_slot : NULL;
                 if (!origin || frame->storage_key == 0u)
@@ -27009,6 +27009,21 @@ static Atom *prime_need_reify_mode(
                 for (size_t i = 0u; i < len; i++)
                     if (frames[i].resolving_thunk == thunk_id)
                         goto fail;
+                /* A selected ready value is already earned. Persist its
+                 * structure, retaining only genuinely pending child demands;
+                 * storing its origin as a new demand would replay it and hide
+                 * that structure from ordinary space matching. */
+                if (persist_sharing && cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+                    cell.cached && cell.value_role == PRIME_NEED_VALUE_READY) {
+                    frame->waiting_for_payload = true;
+                    frame->resolving_thunk = thunk_id;
+                    if (!prime_need_reify_push(
+                            &frames, &len, &cap, inline_frames,
+                            (PrimeNeedReifyFrame){.source = cell.cached,
+                                .destination = frame->destination}))
+                        goto fail;
+                    continue;
+                }
                 frame->waiting_for_payload = true;
                 frame->resolving_thunk = thunk_id;
                 Atom **payload_destination = frame->destination;
@@ -32092,8 +32107,9 @@ typedef struct {
     size_t length, capacity;
 } PrimeStoredReturnContext;
 
-/* Only stored demands need a return carrier. Reuse unchanged ordinary
- * values and respect the same opaque values as structural observation. */
+/* Locate persisted demands without opening opaque values. Ordinary matched
+ * expressions also need a ready carrier at the return boundary: their
+ * structure is earned data, not a fresh call to execute. */
 static bool prime_need_match_has_stored(
     Space *space, Arena *arena, Atom *root, bool *found) {
     OutcomePreviewSeen seen;
@@ -32219,10 +32235,14 @@ static Atom *prime_need_match_result_value(
         if (!value || !prime_need_match_has_stored(
                 space, arena, value, &found))
             goto failed;
-        if (!found)
+        if (!found && (value->kind != ATOM_EXPR || atom_prime_held_is(value) ||
+                       prime_observation_value_barrier(space, arena, value)))
             continue;
-        Atom *runtime_value = atom_deep_copy_observed(
-            arena, value, prime_need_match_value_view, &context);
+        Atom *runtime_value = found ? atom_deep_copy_observed(
+            arena, value, prime_need_match_value_view, &context) : value;
+        if (!found && runtime_value && !prime_need_ready_value_ref(
+                arena, runtime_value, environment, &runtime_value))
+            goto failed;
         Atom *variable = atom_var_with_presentation(
             arena, entry.spelling, entry.name_key, entry.var_id);
         result = variable && runtime_value ? prime_semantics_subst_value(
