@@ -17,7 +17,13 @@ enum { PEERS=16, TASKS=128 };
 /* A ready index contains no observation body; enumerating pending work must
  * not copy every large observation on each fetch. CDV1 true is the marker. */
 static const unsigned char ready_marker[]={'C','D','V','1','Y'};
-typedef struct { int fd; unsigned char *reply; size_t size; uint64_t touched; } Peer;
+typedef struct {
+    int fd; unsigned char *reply; size_t size; uint64_t touched;
+    bool waiting;
+    char after_epoch[33];
+    int64_t after_revision;
+    uint64_t due;
+} Peer;
 struct CettaWorkerEndpoint {
     CettaDurableStore *store;
     int listener;
@@ -228,6 +234,61 @@ static CettaDurableStatus next_task(CettaWorkerEndpoint *e, Peer *p, const char 
     cetta_durable_observation_free(selected);
     cetta_durable_observation_free(o); return s==DURABLE_OK?sent:s;
 }
+
+static uint64_t monotonic_ms(void);
+/* Tokens describe the snapshot checked before the client drains input. Old
+ * unanswered tasks do not trigger repeated wakes; only new work or a new
+ * store epoch does. This is a notification, never a receive or receipt. */
+static CettaDurableStatus watch_task(CettaWorkerEndpoint *e, Peer *p, bool initial) {
+    CettaDurableScope scope = {DURABLE_PREFIX, "host.worker-ready", e->prefix};
+    CettaDurableObservation *o = NULL;
+    CettaDurableStatus s = cetta_durable_observe(e->store, &scope, 1, &o);
+    if (s != DURABLE_OK) return s;
+    const CettaDurableSnapshot *snapshot = view(o, 0);
+    if (!initial && !strcmp(p->after_epoch, snapshot->epoch) && p->after_revision > snapshot->revision) {
+        p->waiting = false;
+        cetta_durable_observation_free(o);
+        return reply(p, WORKER_INVALID, "", NULL, 0);
+    }
+    bool changed = !initial && strcmp(p->after_epoch, snapshot->epoch);
+    if (!initial && !changed)
+        for (size_t i = 0; i < snapshot->count; ++i)
+            if (snapshot->records[i].revision > p->after_revision) { changed = true; break; }
+    char token[64];
+    snprintf(token, sizeof(token), "%s.%" PRId64, snapshot->epoch, snapshot->revision);
+    if (initial || changed || monotonic_ms() >= p->due) {
+        p->waiting = false;
+        s = reply(p, changed ? WORKER_PENDING : WORKER_IDLE, token, NULL, 0);
+    }
+    cetta_durable_observation_free(o);
+    return s;
+}
+
+static CettaDurableStatus start_watch(CettaWorkerEndpoint *e, Peer *p, const char *token,
+                                    const unsigned char *body, size_t length) {
+    if (!*token) return watch_task(e, p, true);
+    const char *dot = strchr(token, '.');
+    if (!dot || (size_t)(dot - token) != 32 || !dot[1] || !length || length >= 24)
+        return reply(p, WORKER_INVALID, "", NULL, 0);
+    for (const char *c = token; c < dot; ++c)
+        if (!((*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f')))
+            return reply(p, WORKER_INVALID, "", NULL, 0);
+    for (const char *c = dot + 1; *c; ++c)
+        if (*c < '0' || *c > '9') return reply(p, WORKER_INVALID, "", NULL, 0);
+    char *end; errno = 0;
+    long long revision = strtoll(dot + 1, &end, 10);
+    if (errno || *end || revision < 0) return reply(p, WORKER_INVALID, "", NULL, 0);
+    char duration[24]; memcpy(duration, body, length); duration[length] = 0;
+    for (size_t i = 0; i < length; ++i)
+        if (duration[i] < '0' || duration[i] > '9') return reply(p, WORKER_INVALID, "", NULL, 0);
+    errno = 0; unsigned long long milliseconds = strtoull(duration, &end, 10);
+    if (errno || *end || milliseconds > INT64_MAX)
+        return reply(p, WORKER_INVALID, "", NULL, 0);
+    memcpy(p->after_epoch, token, 32); p->after_epoch[32] = 0;
+    p->after_revision = revision; p->due = monotonic_ms() + milliseconds;
+    p->waiting = true;
+    return watch_task(e, p, false);
+}
 CettaDurableStatus cetta_worker_endpoint_wait(CettaWorkerEndpoint *e,
         int intake_fd, unsigned timeout_ms) {
     return cetta_worker_endpoint_wait_io(e,intake_fd,-1,timeout_ms);
@@ -235,6 +296,14 @@ CettaDurableStatus cetta_worker_endpoint_wait(CettaWorkerEndpoint *e,
 CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *e,
         int intake_fd, int output_fd, unsigned timeout_ms) {
     if (!e || intake_fd < -1 || output_fd < -1 || timeout_ms > 1000) return DURABLE_INVALID;
+    uint64_t now = monotonic_ms();
+    for (unsigned i = 0; i < PEERS; ++i) {
+        Peer *p = &e->peers[i];
+        if (p->fd >= 0 && p->waiting) {
+            uint64_t remaining = p->due > now ? p->due - now : 0;
+            if (remaining < timeout_ms) timeout_ms = (unsigned)remaining;
+        }
+    }
     struct pollfd fds[PEERS+3];
     fds[0]=(struct pollfd){e->listener,POLLIN,0};
     fds[1]=(struct pollfd){intake_fd,POLLIN,0};
@@ -326,10 +395,13 @@ static CettaDurableStatus submit(CettaWorkerEndpoint *e, Peer *p, const char *id
     return s==DURABLE_OK || s==DURABLE_CONFLICT || s==DURABLE_LIMIT?sent:s;
 }
 static CettaDurableStatus request(CettaWorkerEndpoint *e, Peer *p, const unsigned char *packet, size_t size) {
+    /* A new request replaces this peer's outstanding notification wait. */
+    p->waiting = false;
     if (size<6 || size>CETTA_WORKER_PACKET_MAX || memcmp(packet,"CWP1",4) || packet[5]>64 || 6u+packet[5]>size)
         return reply(p,WORKER_INVALID,"",NULL,0);
     char id[65]; size_t n=packet[5]; memcpy(id,packet+6,n); id[n]=0;
     const unsigned char *body=packet+6+n; size_t len=size-6-n;
+    if (packet[4] == WORKER_WAIT) return start_watch(e, p, id, body, len);
     if (packet[4]==WORKER_NEXT && !n && !len) return next_task(e,p,NULL);
     if (!n || memchr(id,0,n) || !component(id)) return reply(p,WORKER_INVALID,"",NULL,0);
     if (packet[4]==WORKER_NEXT && !len) return next_task(e,p,id);
@@ -378,7 +450,12 @@ CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned t
     uint64_t now=monotonic_ms(); if (!now) return DURABLE_IO;
     for (unsigned i=0;i<PEERS;++i) {
         Peer *p=&e->peers[i];
-        if (p->fd>=0 && now-p->touched>=30000) close_peer(p);
+        if (p->fd>=0 && !p->waiting && now-p->touched>=30000) close_peer(p);
+        if (p->fd >= 0 && p->waiting) {
+            CettaDurableStatus status = watch_task(e, p, false);
+            if (status != DURABLE_OK) return status;
+            if (p->waiting && p->due > now && p->due - now < timeout) timeout = (unsigned)(p->due - now);
+        }
         fds[i+1]=(struct pollfd){p->fd,p->reply?POLLOUT:POLLIN,0};
     }
     int ready=poll(fds,PEERS+1,(int)timeout);

@@ -50,6 +50,17 @@ static void expect(int fd, int code, const char *id, const char *body) {
 static void rpc(int fd, int command, const char *id, const char *body, int code, const char *reply_id, const char *answer) {
     send_request(fd,command,id,body,strlen(body)); expect(fd,code,reply_id,answer);
 }
+static void watch_reply(int fd, int code, char token[64]) {
+    unsigned char packet[128]; ssize_t size = -1;
+    for (unsigned i = 0; i < 2000; ++i) {
+        pump(); size = recv(fd, packet, sizeof(packet), MSG_DONTWAIT);
+        if (size >= 0) break;
+        assert(errno == EAGAIN || errno == EWOULDBLOCK);
+    }
+    assert(size >= 6 && packet[4] == code && packet[5] < 64 && size == 6 + packet[5]);
+    memcpy(token, packet + 6, packet[5]); token[packet[5]] = 0;
+    assert(strchr(token, '.'));
+}
 static size_t count(const char *space) {
     CettaDurableSnapshot s; assert(cetta_durable_snapshot(store,space,&s)==DURABLE_OK);
     size_t n=s.count; cetta_durable_snapshot_free(&s); return n;
@@ -242,6 +253,21 @@ int main(void) {
     rpc(fd,WORKER_NEXT,"m1","",WORKER_TASK,"m2","two");
     rpc(fd,WORKER_NEXT,"m2","",WORKER_TASK,"m3","three");
     rpc(fd,WORKER_NEXT,"m3","",WORKER_IDLE,"","");
+    char token[64], changed[64];
+    send_request(fd, WORKER_WAIT, "", "", 0);
+    watch_reply(fd, WORKER_IDLE, token);
+    send_request(fd, WORKER_WAIT, token, "5000", 4);
+    pump(); pump();
+    unsigned char packet[128];
+    assert(recv(fd, packet, sizeof(packet), MSG_DONTWAIT) < 0 &&
+           (errno == EAGAIN || errno == EWOULDBLOCK));
+    /* Previously seen but unacknowledged tasks must not make rest spin. */
+    assert(cetta_worker_publish(store,"brain","m4","four",4)==DURABLE_OK);
+    watch_reply(fd, WORKER_PENDING, changed);
+    assert(strcmp(token, changed));
+    rpc(fd,WORKER_NEXT,"","",WORKER_TASK,"m1","one");
+    send_request(fd, WORKER_WAIT, changed, "10", 2);
+    watch_reply(fd, WORKER_IDLE, token);
     rpc(fd,WORKER_RESULT,"m2","[]",WORKER_STORED,"m2","");
     rpc(fd,WORKER_NEXT,"m1","",WORKER_TASK,"m3","three");
     rpc(fd,WORKER_NEXT,"m2","",WORKER_UNKNOWN,"m2","");

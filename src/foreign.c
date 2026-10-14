@@ -5,6 +5,7 @@
 #include "effect_policy.h"
 #include "error_presentation.h"
 #include "library.h"
+#include "host_notice.h"
 
 #include "parser.h"
 #include <ctype.h>
@@ -900,7 +901,14 @@ static PyObject *bridge_run(PyObject *self, PyObject *args) {
     return outer;
 }
 
+static PyObject *bridge_notice(PyObject *self, PyObject *unused) {
+    (void)self; (void)unused;
+    cetta_host_notice_publish();
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef CETTA_BRIDGE_METHODS[] = {
+    {"notice", bridge_notice, METH_NOARGS, "Notify native readiness without evaluating MeTTa."},
     {"run", bridge_run, METH_VARARGS, "Run MeTTa code in the current CeTTa callback context."},
     {NULL, NULL, 0, NULL}
 };

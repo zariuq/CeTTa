@@ -279,10 +279,37 @@ not leave them as unevaluated function bodies.
 library's operations. `test-io-browser` requires an Emscripten/browser toolchain.
 
 The service orchestration profile is HE with the qualified rho/rhometta library.
-The cognitive worker can independently use PeTTa. Cross-process data does not
-grant the worker durable-store or transport authority.
+The cognitive worker can independently use PeTTa. Its file and network access
+follow its OS account; cross-process messages transport values.
 
 The recording hooks are a mechanism, not a production durable dispatcher.
-Credential references, the speculative-effect gate, durable timers, Telegram
+Credential references, durable timers, Telegram
 policy, the service/worker protocol and crash recovery of that protocol belong
 to the host layer. Ordinary `io:submit` does not gain durability from this change.
+
+Native Unix notifications also use the same handles:
+
+```metta
+(io:submit (cwp:request socket code name body deadline-ms))
+(io:submit (space:request socket (request id operation arguments) deadline-ms))
+(io:submit (host:notice))
+(io:submit (fs:changed directory (selected-file-names)))
+(io:wait-ready (io:ids handle other-handle) wait-ms)
+```
+
+CWP and space requests reuse their existing wire formats. A deadline of zero
+leaves the transaction open without a deadline. Failed space transactions
+distinguish no request sent from a missing reply after sending; the client
+does not automatically replay a write. File notifications are Linux inotify
+subscriptions; omit the file-name list to observe the whole directory.
+`host:notice` observes a native generation counter. Existing embedded-host
+producers may call `cetta_bridge.notice()` after publishing their data; the
+notifier neither evaluates MeTTa nor owns the producer's queue.
+
+Selected readiness waits leave all results available for their owners and
+ignore unrelated ready results. These primitives add no execution quotas,
+command filters, automatic acknowledgements or requirements to reconsider a
+scheduled command. CWP `WAIT` (code 5) takes a revision token and an ASCII
+millisecond duration. An empty token obtains the current token; a subsequent
+wait reports newly published work or a changed store epoch without receiving
+or acknowledging a task. Previously pending tasks do not repeatedly wake it.

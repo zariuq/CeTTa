@@ -15,7 +15,7 @@
 (: io:wait (-> Number Atom Expression))
 (: io:wait (-> Number Number String Expression))
 (: io:wait-ready (-> Number Expression))
-(: io:wait-ready (-> Number Number Expression))
+(: io:wait-ready (-> Atom Number Expression))
 (: io:cancel (-> Number Expression))
 (: io:signal (-> Number Number Expression))
 

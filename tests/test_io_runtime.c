@@ -3,6 +3,7 @@
 #include "atom.h"
 #include "library_io.h"
 #include "symbol.h"
+#include "host_notice.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -14,6 +15,16 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <pthread.h>
+#include <fcntl.h>
+
+static void *publish_later(void *unused) {
+    (void)unused;
+    struct timespec delay = {0, 30000000L};
+    nanosleep(&delay, NULL);
+    cetta_host_notice_publish();
+    return NULL;
+}
 
 static unsigned checks;
 static unsigned failures;
@@ -36,6 +47,61 @@ static Atom *dispatch(CettaIoRuntime *runtime, Arena *arena,
                       const char *head_name, Atom **args, uint32_t nargs) {
     return cetta_io_dispatch(runtime, arena, atom_symbol(arena, head_name),
                              args, nargs);
+}
+
+static void test_native_notifications(CettaIoRuntime *runtime, Arena *arena) {
+    Atom *timer = atom_expr2(arena, atom_symbol(arena, "timer:after"), atom_int(arena, 0));
+    Atom *foreign = dispatch(runtime, arena, "__cetta_lib_io_submit", &timer, 1);
+    Atom *notice = atom_expr(arena, (Atom *[]){atom_symbol(arena, "host:notice")}, 1);
+    Atom *pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &notice, 1);
+    CHECK(!atom_is_error(pending), "native host notification subscription starts");
+    Atom *id = pending->expr.elems[1];
+    Atom *selected = atom_expr2(arena, atom_symbol(arena, "io:ids"), id);
+    Atom *wait_args[] = {selected, atom_int(arena, 5)};
+    Atom *ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:idle"), "unrelated ready timer cannot spin selected wait");
+    pthread_t publisher;
+    CHECK(!pthread_create(&publisher, NULL, publish_later, NULL), "foreign notifier thread starts");
+    wait_args[1] = atom_int(arena, 2000);
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    pthread_join(publisher, NULL);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "host notification wakes blocked native wait");
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "readiness notification remains unconsumed");
+    Atom *event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "host:noticed"), "owned host notice has a result");
+    id = foreign->expr.elems[1];
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "timer:fired"), "foreign completion survives selected wait");
+#ifdef __linux__
+    char directory[] = "/tmp/cetta-file-notice-XXXXXX";
+    CHECK(mkdtemp(directory) != NULL, "file notification directory exists");
+    Atom *watch = atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:changed"),
+        atom_string(arena, directory), atom_expr(arena, (Atom *[]){atom_string(arena, "wake")}, 1)}, 3);
+    pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &watch, 1);
+    CHECK(!atom_is_error(pending), "filtered directory notification starts");
+    id = pending->expr.elems[1];
+    char file[256], renamed[256];
+    snprintf(file, sizeof(file), "%s/progress", directory);
+    FILE *f = fopen(file, "w"); if (f) { fputs("heartbeat", f); fclose(f); }
+    Atom *file_args[] = {id, atom_int(arena, 5)};
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", file_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:idle"), "unselected progress writes do not wake control wait");
+    snprintf(renamed, sizeof(renamed), "%s/wake", directory); rename(file, renamed);
+    file_args[1] = atom_int(arena, 1000);
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", file_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "atomic control rename wakes native wait");
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "fs:changed"), "file notification has explicit result");
+    unlink(renamed); rmdir(directory);
+#endif
+    int pipefd[2]; CHECK(!pipe(pipefd), "notification lifecycle fixture opens");
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    CettaHostNoticeRegistration *registration = cetta_host_notice_register(pipefd[1]);
+    cetta_host_notice_unregister(registration);
+    cetta_host_notice_publish(); char byte;
+    CHECK(read(pipefd[0], &byte, 1) < 0 && errno == EAGAIN, "unregistered descriptor never receives later publication");
+    close(pipefd[0]); close(pipefd[1]);
 }
 
 static void test_process_owner(CettaIoRuntime *runtime, Arena *arena) {
@@ -240,7 +306,7 @@ int main(int argc, char **argv) {
     Atom *capabilities = dispatch(runtime, &arena,
                                   "__cetta_lib_io_capabilities", NULL, 0u);
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 3u &&
+              capabilities->expr.len == 7u &&
               atom_is_symbol(capabilities->expr.elems[0], "http") &&
               atom_is_symbol(capabilities->expr.elems[1], "proc") &&
               atom_is_symbol(capabilities->expr.elems[2], "timer"),
@@ -481,6 +547,7 @@ int main(int argc, char **argv) {
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_wait", &timeout, 1u)),
           "zero-time wait consumes nothing after completion");
 
+    test_native_notifications(runtime, &arena);
     test_process_owner(runtime, &arena);
     printf("(IoRuntimeSummary %u %u %u)\n",
            checks, checks - failures, failures);

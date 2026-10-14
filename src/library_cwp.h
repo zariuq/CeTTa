@@ -10,5 +10,6 @@
  * talking to its channel service; service reactions never import it.
  */
 Atom *cetta_cwp_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs);
+Atom *cetta_cwp_decode_reply(Arena *arena, const unsigned char *packet, size_t size);
 
 #endif
