@@ -321,8 +321,18 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_getenv_or_default, "__cetta_lib_system_getenv_or_default") \
     X(lib_system_is_flag_arg, "__cetta_lib_system_is_flag_arg") \
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
+    X(lib_system_write, "__cetta_lib_system_write") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
+    X(lib_proc_spawn, "__cetta_lib_proc_spawn") \
+    X(lib_proc_poll, "__cetta_lib_proc_poll") \
+    X(lib_proc_wait, "__cetta_lib_proc_wait") \
+    X(lib_proc_status, "__cetta_lib_proc_status") \
+    X(lib_proc_cancel, "__cetta_lib_proc_cancel") \
+    X(lib_proc_close, "__cetta_lib_proc_close") \
+    X(lib_proc_abort_signal, "__cetta_lib_proc_abort_signal") \
+    X(lib_proc_await, "__cetta_lib_proc_await") \
+    X(lib_proc_run, "__cetta_lib_proc_run") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \

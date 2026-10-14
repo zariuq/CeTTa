@@ -18,6 +18,7 @@
 #include "text_source.h"
 #include "langdef_pack.h"
 #include "library_io.h"
+#include "library_proc.h"
 #include "library_json.h"
 #include "str_natives.h"
 #include <ctype.h>
@@ -25,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,6 +131,7 @@ enum {
     CETTA_LIBRARY_IO = 1u << 10,
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
     CETTA_LIBRARY_MATH = 1u << 13,
+    CETTA_LIBRARY_PROC = 1u << 14,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -142,6 +145,7 @@ typedef struct {
 
 static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"system", CETTA_LIBRARY_SYSTEM, NULL},
+    {"proc", CETTA_LIBRARY_PROC, NULL},
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
@@ -4377,16 +4381,46 @@ static Atom *system_is_flag_arg(Arena *a, Atom *head,
     return (value[0] == '-' && value[1] == '-') ? atom_true(a) : atom_false(a);
 }
 
-static Atom *system_exit_with_code(Arena *a, Atom *head,
+static Atom *system_exit_with_code(CettaLibraryContext *ctx, Arena *a, Atom *head,
                                    Atom **args, uint32_t nargs) {
     int code = 0;
     if (nargs != 1 || !library_int_arg(args[0], &code)) {
         return library_signature_error(a, head, args, nargs,
                                        "expected integer exit code");
     }
-    fflush(stdout);
-    fflush(stderr);
-    exit(code);
+    if (code < 0 || code > 255)
+        return library_signature_error(a, head, args, nargs,
+                                       "exit code must be between 0 and 255");
+    cetta_eval_session_request_process_exit_with_answer_policy(
+        &ctx->session, code, CETTA_EXIT_PUBLISH_PRIOR_ANSWERS);
+    return atom_unit(a);
+}
+
+static Atom *system_write(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2u || args[1]->kind != ATOM_GROUNDED ||
+        args[1]->ground.gkind != GV_STRING ||
+        (!atom_is_symbol(args[0], "stdout") && !atom_is_symbol(args[0], "stderr")))
+        return library_signature_error(a, head, args, nargs,
+            "expected stdout or stderr and a byte string");
+    FILE *stream = atom_is_symbol(args[0], "stdout") ? stdout : stderr;
+    size_t length = atom_string_len(args[1]);
+    sigset_t blocked, previous, pending;
+    sigemptyset(&blocked); sigaddset(&blocked, SIGPIPE);
+    if (pthread_sigmask(SIG_BLOCK, &blocked, &previous))
+        return library_signature_error(a, head, args, nargs, "cannot protect output boundary");
+    bool already_pending = sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE);
+    bool failed = fwrite(args[1]->ground.sval, 1, length, stream) != length ||
+        fflush(stream) != 0 || ferror(stream);
+    if (!already_pending) {
+        struct timespec now = {0};
+        /* Consume only a signal raised by this write before restoring the
+         * caller's mask. The error remains sticky on the FILE stream. */
+        while (sigtimedwait(&blocked, NULL, &now) < 0 && errno == EINTR) {}
+    }
+    int restored = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (failed || restored)
+        return library_signature_error(a, head, args, nargs, "output failed");
+    return atom_unit(a);
 }
 
 static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -4419,7 +4453,7 @@ static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
     return atom_int(a, (int64_t)ns);
 }
 
-static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
+static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
                                            Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
@@ -4443,7 +4477,10 @@ static Atom *cetta_library_dispatch_system(const CettaLibraryContext *ctx,
         return system_is_flag_arg(a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_system_exit_with_code) {
-        return system_exit_with_code(a, head, args, nargs);
+        return system_exit_with_code(ctx, a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_system_write) {
+        return system_write(a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_system_cwd) {
         return system_cwd(a, head, args, nargs);
@@ -5195,11 +5232,6 @@ static Atom *fs_read_lines(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             items[nitems++] = atom_string_n(a, text.buf + start, stop - start);
         }
         start = i + 1;
-    }
-
-    if (nitems > 0 && text.buf[len - 1] == '\n' &&
-        atom_string_len(items[nitems - 1]) == 0u) {
-        nitems--;
     }
 
     result = atom_expr(a, items, nitems);
@@ -11621,6 +11653,8 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_PROC) &&
+        cetta_proc_call(ctx, a, head, args, nargs, out)) return true;
     CettaCallResultForm result_form = CETTA_CALL_RESULT_EXPRESSION;
     Atom *value = cetta_library_dispatch_native_value(
         ctx, space, a, head, args, nargs, &result_form);

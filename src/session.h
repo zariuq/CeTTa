@@ -243,9 +243,15 @@ typedef struct {
     uint32_t entry_len;
 } CettaEvaluatorOptions;
 
+typedef enum {
+    CETTA_EXIT_DISCARD_ANSWER_DISPLAY = 0,
+    CETTA_EXIT_PUBLISH_PRIOR_ANSWERS = 1
+} CettaExitAnswerPolicy;
+
 typedef struct {
     bool exit_requested;
     int exit_code;
+    CettaExitAnswerPolicy answer_policy;
 } CettaProcessControl;
 
 typedef struct {
@@ -359,6 +365,8 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
 void cetta_eval_session_clear_process_exit(CettaEvalSession *session);
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code);
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy);
 bool cetta_eval_session_process_exit_requested(
     const CettaEvalSession *session);
 int cetta_eval_session_process_exit_code(const CettaEvalSession *session);
