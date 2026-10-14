@@ -1,0 +1,28 @@
+Semantic changes for upstream to review
+=====================================
+
+Trial base: cetta-ours 609f322a plus Prime 3f84da10.
+
+1. Dialect libraries
+   Preserve the agent I/O providers, mailbox, SQLite, and Telegram helpers in
+   the generated Prime spellings. Generate from the combined shared source;
+   include newly generated files as well as the updated manifest.
+
+2. Explicit code activation in scope fixtures
+   Prime sequence constructors accept data and returned code stays inert.
+   Construct a closure before placing it in a sequence; explicitly evaluate
+   code when the test intends to activate it. Preserve the original capture
+   expectations and add controls for unactivated returned code. This changes
+   test clients, not the evaluator. All 168 route comparisons pass.
+
+3. I/O capability conformance
+   HTTP remains required; its conformance test also permits other installed
+   providers. Ordered results and one-time completion checks are unchanged.
+   This changes the test, not runtime capability selection.
+
+Remaining investigation
+-----------------------
+The combined Prime fixture corpus has 12 failures, including stored-variable
+matching, returned admission records, search clients and two timeouts. Parent
+baselines and practical agent qualification are being recorded separately.
+No agent has been switched to the trial engine.
