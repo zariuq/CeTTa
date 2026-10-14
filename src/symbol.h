@@ -437,6 +437,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_io_poll, "__cetta_lib_io_poll") \
     X(lib_io_status, "__cetta_lib_io_status") \
     X(lib_io_wait, "__cetta_lib_io_wait") \
+    X(lib_io_wait_ready, "__cetta_lib_io_wait_ready") \
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
     X(lib_io_signal, "__cetta_lib_io_signal") \
     X(lib_cwp_call, "__cetta_lib_cwp_call") \

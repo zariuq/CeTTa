@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -324,7 +325,8 @@ static char *resolve_program(const char *program, const char *path_env, const ch
 /* In the child, between fork and exec, only async-signal-safe calls. */
 static void child_stop(int fd, int stage, int error) {
     int report[2] = {stage, error};
-    ssize_t ignored = write(fd, report, sizeof(report));
+    ssize_t ignored;
+    do { ignored = write(fd, report, sizeof(report)); } while (ignored < 0 && errno == EINTR);
     (void)ignored;
     _exit(127);
 }
@@ -354,14 +356,20 @@ static void child_start(const char *program, char **argv, char **envp, const cha
 
 struct CettaProcChild {
     pid_t pid;
-    int pidfd, status, error;
-    bool finished, timed_out;
-    uint64_t started, deadline;
+    int pidfd, report, status, error;
+    bool finished, timed_out, killed;
+    uint64_t started, deadline, finished_at;
     char *out, *err;
 };
 
 CettaProcChild *cetta_proc_start(Atom *arguments, const char *cwd, Atom *environment,
     uint64_t timeout_ms, const char *out, const char *err, char *error, size_t error_size) {
+    struct sigaction child_exit;
+    if (sigaction(SIGCHLD, NULL, &child_exit) || child_exit.sa_handler == SIG_IGN ||
+        (child_exit.sa_flags & SA_NOCLDWAIT)) {
+        snprintf(error, error_size, "process start: host discards child exit status (SIGCHLD)");
+        return NULL;
+    }
     bool inherit = environment && environment->kind == ATOM_SYMBOL &&
                    !strcmp(atom_name_cstr(environment), "inherit");
     if (!arguments || arguments->kind != ATOM_EXPR || !arguments->expr.len ||
@@ -375,7 +383,7 @@ CettaProcChild *cetta_proc_start(Atom *arguments, const char *cwd, Atom *environ
     char *program = NULL;
     int output = -1, errors = -1, report[2] = {-1, -1};
     CettaProcChild *child = calloc(1, sizeof(*child));
-    if (child) child->pidfd = -1;
+    if (child) { child->pidfd = -1; child->report = -1; }
     if (!argv || !envp || !child) { errno = ENOMEM; goto failed; }
     for (size_t i = 0; i < argc; ++i) {
         argv[i] = (char *)text(arguments->expr.elems[i]);
@@ -401,27 +409,35 @@ CettaProcChild *cetta_proc_start(Atom *arguments, const char *cwd, Atom *environ
     if (!child->out || !child->err) { errno = ENOMEM; goto failed; }
     output = open(out, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (output < 0) goto failed;
-    errors = !strcmp(out, err) ? dup(output)
+    errors = !strcmp(out, err) ? fcntl(output, F_DUPFD_CLOEXEC, 3)
            : open(err, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (errors < 0 || pipe2(report, O_CLOEXEC)) goto failed;
+    if (errors < 0 || pipe2(report, O_CLOEXEC | O_NONBLOCK)) goto failed;
     struct stat a, b;
     if (!fstat(output, &a) && !fstat(errors, &b) && a.st_dev == b.st_dev && a.st_ino == b.st_ino) {
-        close(errors); errors = dup(output);
+        close(errors); errors = fcntl(output, F_DUPFD_CLOEXEC, 3);
         if (errors < 0) goto failed;
     }
     child->started = now_ms();
     child->deadline = timeout_ms ? child->started + timeout_ms : UINT64_MAX;
+    /* The child resets inherited handlers before unblocking. An immediate
+     * io:signal must never run the embedding host's handlers before exec. */
+    sigset_t blocked, previous;
+    sigfillset(&blocked);
+    int mask_error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
+    if (mask_error) { errno = mask_error; goto failed; }
     child->pid = fork();
-    if (child->pid < 0) { child->pid = 0; goto failed; }
     if (!child->pid) child_start(program, argv, inherit ? environ : envp, cwd, output, errors, report[1]);
+    int fork_error = errno;
+    (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (child->pid < 0) { child->pid = 0; errno = fork_error; goto failed; }
     setpgid(child->pid, child->pid);
     close(report[1]); report[1] = -1;
-    int stopped[2];
-    ssize_t got;
-    do { got = read(report[0], stopped, sizeof(stopped)); } while (got < 0 && errno == EINTR);
-    if (got == (ssize_t)sizeof(stopped)) { errno = stopped[1]; goto failed; }
-    if (got < 0) goto failed;
+#ifndef CETTA_PROC_NO_PIDFD
     child->pidfd = (int)syscall(SYS_pidfd_open, child->pid, 0);
+#endif
+    /* Only inspect the atomic child report after reaping. Another subsystem's
+     * fork can inherit the pipe, so waiting for EOF here can hang indefinitely. */
+    child->report = report[0]; report[0] = -1;
     goto done;
 failed:
     snprintf(error, error_size, "process start: %s", strerror(errno));
@@ -440,22 +456,45 @@ bool cetta_proc_poll(CettaProcChild *child) {
     if (!child || child->finished) return true;
     pid_t observed;
     do { observed = waitpid(child->pid, &child->status, WNOHANG); } while (observed < 0 && errno == EINTR);
-    if (observed == child->pid) child->finished = true;
+    if (observed == child->pid) {
+        int stopped[2];
+        ssize_t got;
+        do { got = read(child->report, stopped, sizeof(stopped)); } while (got < 0 && errno == EINTR);
+        if (got == (ssize_t)sizeof(stopped)) child->error = stopped[1];
+        else if (got > 0) child->error = EIO;
+        child->finished = true;
+    }
     else if (observed < 0) { child->error = errno; child->finished = true; }
-    else if (now_ms() >= child->deadline) {
+    else if (!child->killed && now_ms() >= child->deadline) {
         child->timed_out = true;
         kill(-child->pid, SIGKILL); kill(child->pid, SIGKILL);
-        do { observed = waitpid(child->pid, &child->status, 0); } while (observed < 0 && errno == EINTR);
-        if (observed < 0) child->error = errno;
-        child->finished = true;
+        child->killed = true;
+    }
+    if (child->finished) {
+        child->finished_at = now_ms();
+        if (child->report >= 0) { close(child->report); child->report = -1; }
     }
     return child->finished;
 }
 int cetta_proc_descriptor(const CettaProcChild *child) { return child ? child->pidfd : -1; }
-uint64_t cetta_proc_deadline(const CettaProcChild *child) { return child ? child->deadline : UINT64_MAX; }
+uint64_t cetta_proc_deadline(const CettaProcChild *child) { return child && !child->killed ? child->deadline : UINT64_MAX; }
 bool cetta_proc_signal(CettaProcChild *child, int number) {
-    if (!child || number < 0 || number >= NSIG || cetta_proc_poll(child)) return false;
-    return kill(-child->pid, number) == 0;
+    if (!child || number < 0 || number >= NSIG || child->finished) return false;
+    bool sent = kill(-child->pid, number) == 0;
+    /* The owned leader can move to another group. Its unreaped PID is still
+     * ours, so cancellation must reach it as well as its original group. */
+    if (number == SIGKILL) {
+        bool leader_sent = kill(child->pid, number) == 0;
+        sent = sent || leader_sent;
+        if (sent) child->killed = true;
+    }
+    return sent;
+}
+void cetta_proc_snapshot(const CettaProcChild *child, CettaProcSnapshot *out) {
+    *out = (CettaProcSnapshot){ .pid = child->pid,
+        .elapsed_ms = (child->finished ? child->finished_at : now_ms()) - child->started,
+        .status = child->status, .error = child->error,
+        .finished = child->finished, .timed_out = child->timed_out };
 }
 Atom *cetta_proc_information(Arena *arena, CettaProcChild *child) {
     Atom *parts[] = {atom_symbol(arena, "proc:running"), atom_int(arena, child->pid),
@@ -480,6 +519,7 @@ void cetta_proc_free(CettaProcChild *child) {
         while (waitpid(child->pid, &child->status, 0) < 0 && errno == EINTR) {}
     }
     if (child->pidfd >= 0) close(child->pidfd);
+    if (child->report >= 0) close(child->report);
     free(child->out); free(child->err); free(child);
 }
 

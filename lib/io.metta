@@ -4,17 +4,20 @@
 ; MeTTa only through io:poll or the native blocking io:wait. Requests receive
 ; host-assigned correlation IDs; each completion is observed at most once.
 
-(: io:capabilities (-> Expression))
-(: io:submit (-> Atom Expression))
-(: io:poll (-> Expression))
-(: io:poll (-> Number Expression))
-(: io:status (-> Number Expression))
-(: io:wait (-> Number Expression))
-(: io:wait (-> Number Number Expression))
-(: io:wait (-> Number String Expression))
-(: io:wait (-> Number Number String Expression))
-(: io:cancel (-> Number Expression))
-(: io:signal (-> Number Number Expression))
+(: io:capabilities (-> Atom))
+(: io:submit (-> Atom Atom))
+(: io:poll (-> Atom))
+(: io:poll (-> Number Atom))
+(: io:status (-> Number Atom))
+(: io:wait (-> Number Atom))
+; The two-argument spelling is id/timeout or timeout/progress-path. One
+; declaration describes both shapes; the native call validates the values.
+(: io:wait (-> Number Atom Atom))
+(: io:wait (-> Number Number String Atom))
+(: io:wait-ready (-> Number Atom))
+(: io:wait-ready (-> Number Number Atom))
+(: io:cancel (-> Number Atom))
+(: io:signal (-> Number Number Atom))
 
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:request (-> Atom Atom Expression String Number Number Bool Atom))
@@ -28,31 +31,45 @@
 (: http:response-with-metadata (-> Number String Atom Atom))
 (: http:retry-after (-> Number Atom))
 
+; Native outcomes cross as completed data. The shared value-handoff spelling
+; prevents type alternatives from re-executing an effect in PeTTa.
+(: __cetta_lib_io_capabilities (-> Atom Atom))
+(: __cetta_lib_io_submit (-> Atom Atom))
+(: __cetta_lib_io_poll (-> Atom Atom))
+(: __cetta_lib_io_status (-> Atom Atom))
+(: __cetta_lib_io_wait (-> Atom Atom))
+(: __cetta_lib_io_wait (-> Atom Atom Atom))
+(: __cetta_lib_io_wait (-> Atom Atom Atom Atom))
+(: __cetta_lib_io_wait_ready (-> Atom Atom))
+(: __cetta_lib_io_wait_ready (-> Atom Atom Atom))
+(: __cetta_lib_io_cancel (-> Atom Atom))
+(: __cetta_lib_io_signal (-> Atom Atom Atom))
+
 (= (io:capabilities)
-   (__cetta_lib_io_capabilities ()))
+   (function (chain (eval (__cetta_lib_io_capabilities ())) $result (return $result))))
 
 (= (io:submit $request)
-   (__cetta_lib_io_submit $request))
+   (function (chain (eval (__cetta_lib_io_submit $request)) $result (return $result))))
 
 (= (io:poll)
-   (__cetta_lib_io_poll ()))
+   (function (chain (eval (__cetta_lib_io_poll ())) $result (return $result))))
 
 ; Owned polling leaves every other request's completion queued. A consumed or
 ; cancelled ID answers io:unknown; an existing unfinished request answers idle.
 (= (io:poll $id)
-   (__cetta_lib_io_poll $id))
+   (function (chain (eval (__cetta_lib_io_poll $id)) $result (return $result))))
 
 ; Non-consuming metadata. Byte activity is not a completed provider answer.
 (= (io:status $id)
-   (__cetta_lib_io_status $id))
+   (function (chain (eval (__cetta_lib_io_status $id)) $result (return $result))))
 
 (= (io:cancel $id)
-   (__cetta_lib_io_cancel $id))
+   (function (chain (eval (__cetta_lib_io_cancel $id)) $result (return $result))))
 
 ; A signal leaves the completion observable. Cancel instead consumes the
 ; handle and stops its process group. Timers and processes work without HTTP.
 (= (io:signal $id $signal)
-   (__cetta_lib_io_signal $id $signal))
+   (function (chain (eval (__cetta_lib_io_signal $id $signal)) $result (return $result))))
 
 ; Native provider data, not a program to evaluate on the worker thread:
 ; (timer:after milliseconds)
@@ -72,16 +89,23 @@
    (io:submit (http:request "POST" $url $headers $body 60000 8388608)))
 
 (= (io:wait $timeout-ms)
-   (__cetta_lib_io_wait $timeout-ms))
+   (function (chain (eval (__cetta_lib_io_wait $timeout-ms)) $result (return $result))))
 
 (= (io:wait $id $timeout-ms)
-   (__cetta_lib_io_wait $id $timeout-ms))
+   (function (chain (eval (__cetta_lib_io_wait $id $timeout-ms)) $result (return $result))))
+
+; Readiness leaves every completion available to its owner. It returns
+; (io:ready (id ...)) or (io:idle); the consuming io:wait is unchanged.
+(= (io:wait-ready $timeout-ms)
+   (function (chain (eval (__cetta_lib_io_wait_ready $timeout-ms)) $result (return $result))))
+(= (io:wait-ready $id $timeout-ms)
+   (function (chain (eval (__cetta_lib_io_wait_ready $id $timeout-ms)) $result (return $result))))
 
 ; Optional progress observation uses the existing native process observer;
 ; it never changes execution or admits/refuses a command. The two-argument
 ; spelling also accepts timeout-ms and a text progress path (all providers).
 (= (io:wait $id $timeout-ms $progress)
-   (__cetta_lib_io_wait $id $timeout-ms $progress))
+   (function (chain (eval (__cetta_lib_io_wait $id $timeout-ms $progress)) $result (return $result))))
 
 ; Explicit error boundaries for clients that retain a pending operation.
 ; The generated dialect spellings preserve these boundaries; an application
@@ -98,6 +122,11 @@
    (function (case (io:status $id)
      (((io:progress $handle $phase $age $bytes $quiet)
        (return (io:progress $handle $phase $age $bytes $quiet)))
+      ((proc:running $pid $age $out $err)
+       (return (proc:running $pid $age $out $err)))
+      ((proc:finished $pid $state $code $out $err)
+       (return (proc:finished $pid $state $code $out $err)))
+      ((timer:status $phase $age) (return (timer:status $phase $age)))
       ((Error $source $reason) (return (io:no-progress)))
       ($other (return (io:no-progress)))))))
 

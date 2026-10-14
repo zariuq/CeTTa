@@ -3,6 +3,7 @@
 #include "library_io.h"
 #include "http_worker.h"
 #include "library_proc.h"
+#include "proc_owner.h"
 
 #include "symbol.h"
 
@@ -20,6 +21,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 #ifndef CETTA_BUILD_HTTP_PROVIDER_CURL
@@ -47,6 +49,8 @@ typedef struct CettaIoHeader {
 typedef struct CettaIoRequest {
     enum { IO_HTTP, IO_PROCESS, IO_TIMER } provider;
     CettaProcChild *process;
+    CettaProcSnapshot process_status;
+    char *process_out, *process_err;
     uint64_t timer_started, timer_due;
     uint64_t id;
     char *method;
@@ -88,6 +92,7 @@ struct CettaIoRuntime {
     CettaIoRequest *ready_tail;
 #ifndef __EMSCRIPTEN__
     int wakeup[2];
+    CettaProcOwner *process_owner;
     uint64_t observation_sequence;
 #endif
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
@@ -144,6 +149,8 @@ static Atom *io_public_head(Arena *arena, Atom *head) {
         return atom_symbol(arena, "io:status");
     if (id == g_builtin_syms.lib_io_wait)
         return atom_symbol(arena, "io:wait");
+    if (id == g_builtin_syms.lib_io_wait_ready)
+        return atom_symbol(arena, "io:wait-ready");
     if (id == g_builtin_syms.lib_io_cancel)
         return atom_symbol(arena, "io:cancel");
     if (id == g_builtin_syms.lib_io_signal)
@@ -207,7 +214,10 @@ static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     free(request->response);
 #ifndef __EMSCRIPTEN__
     cetta_proc_free(request->process);
+    if (runtime && request->provider == IO_PROCESS && request->id)
+        cetta_proc_owner_abandon(runtime->process_owner, request->id);
 #endif
+    free(request->process_out); free(request->process_err);
     free(request);
 }
 
@@ -747,7 +757,9 @@ static void io_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     for (CettaIoRequest *r = runtime->requests; r; r = r->next) {
         if (r->ready) continue;
 #ifndef __EMSCRIPTEN__
-        if (r->provider == IO_PROCESS && cetta_proc_poll(r->process)) io_ready_append(runtime, r);
+        if (r->provider == IO_PROCESS &&
+            cetta_proc_owner_status(runtime->process_owner, r->id, &r->process_status) &&
+            r->process_status.finished) io_ready_append(runtime, r);
 #endif
         if (r->provider == IO_TIMER && now >= r->timer_due) io_ready_append(runtime, r);
     }
@@ -759,6 +771,7 @@ CettaIoRuntime *cetta_io_runtime_new(void) {
     runtime->next_id = 1u;
 #ifndef __EMSCRIPTEN__
     if (pipe2(runtime->wakeup, O_CLOEXEC | O_NONBLOCK)) { free(runtime); return NULL; }
+    runtime->process_owner = cetta_proc_owner_new(runtime->wakeup[1]);
 #endif
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     (void)cetta_http_worker_new(NULL, NULL, &runtime->worker);
@@ -781,6 +794,7 @@ void cetta_io_runtime_free(CettaIoRuntime *runtime) {
     cetta_http_worker_free(runtime->worker);
 #endif
 #ifndef __EMSCRIPTEN__
+    cetta_proc_owner_free(runtime->process_owner);
     close(runtime->wakeup[0]); close(runtime->wakeup[1]);
 #endif
     free(runtime);
@@ -798,7 +812,10 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
     if (runtime) providers[count++] = atom_symbol(arena, "http");
 #endif
 #ifndef __EMSCRIPTEN__
-    if (runtime) { providers[count++] = atom_symbol(arena, "proc"); providers[count++] = atom_symbol(arena, "timer"); }
+    if (runtime) {
+        if (runtime->process_owner) providers[count++] = atom_symbol(arena, "proc");
+        providers[count++] = atom_symbol(arena, "timer");
+    }
 #endif
     return atom_expr(arena, providers, count);
 }
@@ -833,10 +850,18 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
         request = calloc(1, sizeof(*request));
         if (request) {
             request->provider = IO_PROCESS;
+            if (!runtime->process_owner) {
+                free(request);
+                return io_error(arena, head, args, nargs, "native process owner is unavailable");
+            }
             request->process = cetta_proc_start(input->expr.elems[1], io_text_arg(input->expr.elems[2]),
                 input->expr.elems[3], (uint64_t)timeout, io_text_arg(input->expr.elems[5]),
                 io_text_arg(input->expr.elems[6]), error, sizeof(error));
             if (!request->process) { free(request); request = NULL; }
+            else {
+                request->process_out = io_strdup(io_text_arg(input->expr.elems[5]));
+                request->process_err = io_strdup(io_text_arg(input->expr.elems[6]));
+            }
         }
     } else
 #endif
@@ -864,6 +889,15 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     }
     request->id = runtime->next_id++;
     request->runtime = runtime;
+#ifndef __EMSCRIPTEN__
+    if (request->provider == IO_PROCESS) {
+        if (!cetta_proc_owner_add(runtime->process_owner, request->id, request->process)) {
+            io_request_free(runtime, request);
+            return io_error(arena, head, args, nargs, "could not register native process");
+        }
+        request->process = NULL; /* owner alone now signals, polls and frees */
+    }
+#endif
     request->next = runtime->requests;
     runtime->requests = request;
     if (request->provider == IO_HTTP && !io_http_start(runtime, request, error, sizeof(error))) {
@@ -923,6 +957,19 @@ static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
         atom_string(arena, request->response ? request->response : ""));
 }
 
+#ifndef __EMSCRIPTEN__
+static Atom *io_process_result(Arena *arena, CettaIoRequest *request) {
+    CettaProcSnapshot *s = &request->process_status;
+    const char *kind = s->error ? "failed" : s->timed_out ? "timed-out"
+                     : WIFEXITED(s->status) ? "exited" : "signaled";
+    int code = s->error ? s->error : s->timed_out ? 0
+             : WIFEXITED(s->status) ? WEXITSTATUS(s->status) : WTERMSIG(s->status);
+    return atom_expr(arena, (Atom *[]){ atom_symbol(arena, "proc:finished"),
+        atom_int(arena, s->pid), atom_symbol(arena, kind), atom_int(arena, code),
+        atom_string(arena, request->process_out), atom_string(arena, request->process_err) }, 6);
+}
+#endif
+
 static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
     int64_t selected_id = 0;
@@ -947,10 +994,10 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     io_request_unlink(runtime, request);
     Atom *result =
 #ifndef __EMSCRIPTEN__
-                 request->provider == IO_PROCESS ? cetta_proc_outcome(arena, request->process) :
+                 request->provider == IO_PROCESS ? io_process_result(arena, request) :
 #endif
                  request->provider == IO_TIMER ? atom_expr2(arena, atom_symbol(arena, "timer:fired"),
-                    atom_int(arena, (int64_t)(io_now_ms() - request->timer_started)))
+                    atom_int(arena, (int64_t)(request->timer_due - request->timer_started)))
                  : io_http_result(arena, request);
     Atom *event = atom_expr3(
         arena, atom_symbol(arena, "io:event"),
@@ -976,8 +1023,12 @@ static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
         io_pump(runtime, id);
 #ifndef __EMSCRIPTEN__
         if (request->provider == IO_PROCESS)
-            return request->ready ? cetta_proc_outcome(arena, request->process)
-                                  : cetta_proc_information(arena, request->process);
+            return request->ready ? io_process_result(arena, request)
+                : atom_expr(arena, (Atom *[]){ atom_symbol(arena, "proc:running"),
+                    atom_int(arena, request->process_status.pid),
+                    atom_int(arena, (int64_t)request->process_status.elapsed_ms),
+                    atom_string(arena, request->process_out),
+                    atom_string(arena, request->process_err) }, 5);
 #endif
         Atom *parts[] = {atom_symbol(arena, "timer:status"), atom_symbol(arena, request->ready ? "ready" : "waiting"),
             atom_int(arena, (int64_t)(io_now_ms() - request->timer_started))};
@@ -998,7 +1049,7 @@ static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
 }
 
 static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
-                     Atom *head, Atom **args, uint32_t nargs) {
+                     Atom *head, Atom **args, uint32_t nargs, bool readiness) {
     int64_t timeout, selected_id = 0;
     const char *progress = "";
     bool selected = nargs == 3u || (nargs == 2u && !io_text_arg(args[1]));
@@ -1019,32 +1070,34 @@ static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
         while (read(runtime->wakeup[0], wake, sizeof(wake)) > 0) {}
         io_pump(runtime, selected ? selected_id : 0u);
         CettaIoRequest *target = selected ? io_request_find(runtime, selected_id) : runtime->ready_head;
-        if ((selected && !target) || (target && target->ready) || io_now_ms() >= deadline)
+        if ((selected && !target) || (target && target->ready) || io_now_ms() >= deadline) {
+            if (readiness) {
+                if (selected && !target) return atom_expr2(arena, atom_symbol(arena, "io:unknown"), atom_int(arena, selected_id));
+                size_t count = 0;
+                for (CettaIoRequest *r = runtime->ready_head; r; r = r->ready_next)
+                    if (!selected || r->id == (uint64_t)selected_id) ++count;
+                if (!count) return atom_expr(arena, (Atom *[]){ atom_symbol(arena, "io:idle") }, 1);
+                Atom **ids = cetta_malloc(count * sizeof(*ids)); size_t n = 0;
+                for (CettaIoRequest *r = runtime->ready_head; r; r = r->ready_next)
+                    if (!selected || r->id == (uint64_t)selected_id) ids[n++] = atom_int(arena, (int64_t)r->id);
+                Atom *result = atom_expr2(arena, atom_symbol(arena, "io:ready"), atom_expr(arena, ids, count));
+                free(ids); return result;
+            }
             return io_poll(runtime, arena, head, selected ? args : NULL, selected ? 1u : 0u);
+        }
         uint64_t now = io_now_ms(), due = deadline;
         if (observed) {
             if (now >= observation) { cetta_proc_observe_wait(progress, ++runtime->observation_sequence); observation = now + 30000; }
             if (observation < due) due = observation;
         }
-        size_t capacity = 1;
-        for (CettaIoRequest *r = runtime->requests; r; r = r->next)
-            if (!r->ready && r->provider == IO_PROCESS) ++capacity;
-        struct pollfd *fds = calloc(capacity, sizeof(*fds));
-        if (!fds) return io_error(arena, head, args, nargs, "out of memory preparing I/O wait");
-        size_t n = 1; fds[0] = (struct pollfd){runtime->wakeup[0], POLLIN, 0};
+        struct pollfd fd = {runtime->wakeup[0], POLLIN, 0};
         for (CettaIoRequest *r = runtime->requests; r; r = r->next) {
             if (r->ready) continue;
             if (r->provider == IO_TIMER && r->timer_due < due) due = r->timer_due;
-            if (r->provider == IO_PROCESS) {
-                if (cetta_proc_deadline(r->process) < due) due = cetta_proc_deadline(r->process);
-                int fd = cetta_proc_descriptor(r->process);
-                if (fd >= 0) fds[n++] = (struct pollfd){fd, POLLIN, 0};
-                else if (now + 20 < due) due = now + 20;
-            }
         }
         uint64_t remaining = due > now ? due - now : 0;
-        int status = poll(fds, n, remaining > INT_MAX ? INT_MAX : (int)remaining);
-        int error = errno; free(fds);
+        int status = poll(&fd, 1, remaining > INT_MAX ? INT_MAX : (int)remaining);
+        int error = errno;
         if (status < 0 && error != EINTR)
             return io_error(arena, head, args, nargs, "native I/O wait failed");
     }
@@ -1061,7 +1114,7 @@ static Atom *io_signal(CettaIoRuntime *runtime, Arena *arena, Atom *head, Atom *
         return io_error(arena, head, args, nargs, "expected (io:signal process-id signal-number)");
 #ifndef __EMSCRIPTEN__
     CettaIoRequest *r = io_request_find(runtime, id);
-    if (!r || r->provider != IO_PROCESS || !cetta_proc_signal(r->process, (int)number))
+    if (!r || r->provider != IO_PROCESS || !cetta_proc_owner_signal(runtime->process_owner, r->id, (int)number))
         return io_error(arena, head, args, nargs, "process signal failed or process already ended");
     return atom_unit(arena);
 #else
@@ -1101,7 +1154,9 @@ Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
     if (id == g_builtin_syms.lib_io_status)
         return io_status(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_wait)
-        return io_wait(runtime, arena, head, args, nargs);
+        return io_wait(runtime, arena, head, args, nargs, false);
+    if (id == g_builtin_syms.lib_io_wait_ready)
+        return io_wait(runtime, arena, head, args, nargs, true);
     if (id == g_builtin_syms.lib_io_cancel)
         return io_cancel(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_signal)

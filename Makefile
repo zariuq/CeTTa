@@ -726,7 +726,7 @@ SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c src/library_durable.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
 SRC += src/atom_wire.c src/library_space_service.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -42798,6 +42798,8 @@ IO_RUNTIME_TEST_OBJ = runtime/bootstrap/test_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)
 IO_RUNTIME_MUTATION_OBJ = runtime/bootstrap/library_io_replay_mutation.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_MUTATION_TEST_BIN = runtime/test_io_runtime_replay_mutation-$(BUILD_OBJ_TAG)
+IO_PROC_FALLBACK_OBJ = runtime/bootstrap/library_proc_no_pidfd.$(BUILD_OBJ_TAG).o
+IO_PROC_FALLBACK_TEST_BIN = runtime/test_io_process_fallback-$(BUILD_OBJ_TAG)
 IO_RUNTIME_BENCH_SRC = tests/bench_io_runtime.c
 IO_RUNTIME_BENCH_OBJ = runtime/bootstrap/bench_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_BENCH_BIN = runtime/bench_io_runtime-$(BUILD_OBJ_TAG)
@@ -42817,6 +42819,23 @@ $(IO_RUNTIME_MUTATION_OBJ): src/library_io.c src/library_io.h $(BUILD_CONFIG_HEA
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 \
 		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_PROC_FALLBACK_OBJ): src/library_proc.c src/library_proc.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PROC_NO_PIDFD=1 \
+		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_PROC_FALLBACK_TEST_BIN): \
+		$(IO_RUNTIME_TEST_OBJ) $(IO_PROC_FALLBACK_OBJ) \
+		$(filter-out src/library_proc.$(BUILD_OBJ_TAG).o \
+			src/library_proc.$(BUILD_OBJ_TAG).runtime-stats.o,\
+			$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-io-process-owner
+test-io-process-owner: $(IO_RUNTIME_TEST_BIN) $(IO_PROC_FALLBACK_TEST_BIN)
+	CETTA_IO_PROCESS_ONLY=1 $(IO_RUNTIME_TEST_BIN) unused
+	CETTA_IO_PROCESS_ONLY=1 $(IO_PROC_FALLBACK_TEST_BIN) unused
 
 $(IO_RUNTIME_TEST_BIN): $(IO_RUNTIME_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)

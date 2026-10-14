@@ -86,6 +86,97 @@ class NativeIoProviders(unittest.TestCase):
    (progn (io:cancel $id) (case (io:poll $id) (((io:unknown $id) True))) (println! PROVIDER_OK)))\n'''
             self.run_guest(code,d)
 
+    def test_deadline_runs_while_evaluator_is_busy(self):
+        for lang in ('petta', 'he'):
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                marker = Path(d) / 'descendant-wrote'
+                request = self.process(d,
+                    f"printf early; (sleep .12; touch '{marker}') & sleep .15; printf late", 50)
+                proc_import = '(library proc)' if lang == 'petta' else 'proc'
+                self.run_guest(f'''!(import! &self {proc_import})
+!(let* (((io:pending $id) (io:submit {request}))
+        ($_ (proc:run ("/bin/sh" "-c" "sleep .3") "/" inherit 0 0)))
+   (case (io:poll $id)
+     (((io:event $id (proc:finished $pid timed-out 0 $out $err))
+       (progn (assert (== (fs:read-text $out) "early")) (println! PROVIDER_OK))))))
+''', d, lang)
+                self.assertFalse(marker.exists())
+
+    def test_start_failures_are_distinct_from_exit_127(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / 'missing-interpreter'
+            script.write_text('#!/no/such/interpreter\n')
+            script.chmod(0o700)
+            log = json.dumps(str(Path(d) / 'job.log'))
+            requests = [
+                f'(proc:request ("/bin/true") "/no/such/directory" inherit 0 {log} {log})',
+                f'(proc:request ({json.dumps(str(script))}) "/" inherit 0 {log} {log})',
+            ]
+            code = '\n'.join(f'''!(let (io:pending $id) (io:submit {r})
+   (case (io:wait $id 2000)
+     (((io:event $id (proc:finished $pid failed 2 $out $err)) (println! START_ERROR_OK)))))'''
+                for r in requests)
+            code += f'''\n!(let (io:pending $id) (io:submit {self.process(d, 'exit 127')})
+   (case (io:wait $id 2000)
+     (((io:event $id (proc:finished $pid exited 127 $out $err)) (println! PROVIDER_OK)))))\n'''
+            result = self.run_guest(code, d)
+            self.assertEqual(result.stdout.count('START_ERROR_OK'), 2)
+
+    def test_readiness_is_non_consuming_and_timers_keep_due_interval(self):
+        with tempfile.TemporaryDirectory() as d:
+            request = self.process(d, 'sleep .05; printf job')
+            self.run_guest(f'''!(let* (((io:pending $job) (io:submit {request}))
+        ((io:pending $timer) (io:submit (timer:after 1)))
+        ((io:ready ($timer)) (io:wait-ready $timer 2000))
+        ((io:ready ($timer)) (io:wait-ready $timer 0))
+        ((io:event $job (proc:finished $_ exited 0 $_ $_)) (io:wait $job 2000))
+        ((io:event $timer (timer:fired 1)) (io:poll $timer)))
+   (progn (assert (== (io:wait-ready $job 0) (io:unknown $job)))
+          (println! PROVIDER_OK)))\n''', d)
+
+    def test_owned_wait_has_one_wrapper_answer(self):
+        for lang in ('petta', 'he'):
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                self.run_guest('''!(let (io:pending $id) (io:submit (timer:after 10))
+    (case (collapse (io:wait $id 1000))
+      ((((io:event $id (timer:fired 10))) (println! PROVIDER_OK))
+       ($other (println! PROVIDER_MISMATCH)))))\n''', d, lang)
+
+    def test_cancel_exit_races_and_shutdown_reap_owned_children(self):
+        with tempfile.TemporaryDirectory() as d:
+            proc_import = '!(import! &self (library proc))\n'
+            request = self.process(d, 'exit 0')
+            code = proc_import + '\n'.join(f'''!(let (io:pending $id) (io:submit {request})
+    (progn (io:cancel $id) (assert (== (io:poll $id) (io:unknown $id)))))'''
+                for _ in range(200))
+            # Let the owner finish its private reaping while the evaluator is
+            # blocked. Its own thread's children list must then be empty.
+            code += '''\n!(import! &self (library system))
+!(proc:run ("/bin/sh" "-c" "sleep .2") "/" inherit 0 0)
+!(println! (OWNER_PID (system:pid)))
+!(println! PROVIDER_OK)
+'''
+            result = self.run_guest(code, d)
+            self.assertIn('OWNER_PID', result.stdout)
+            marker = Path(d) / 'shutdown-survivor'
+            request = self.process(d,
+                f"printf running; (sleep .3; touch '{marker}') & sleep 5")
+            self.run_guest(f'''!(let (io:pending $id) (io:submit {request})
+    (progn (io:wait-ready 30) (println! PROVIDER_OK)))\n''', d)
+            time.sleep(.4)
+            self.assertFalse(marker.exists())
+
+    def test_repeated_immediate_signals_preserve_results(self):
+        with tempfile.TemporaryDirectory() as d:
+            request = self.process(d, 'sleep 5')
+            code = '\n'.join(f'''!(let (io:pending $id) (io:submit {request})
+   (progn (io:signal $id 15)
+      (case (io:wait $id 2000)
+         (((io:event $id (proc:finished $_ signaled 15 $_ $_)) (println! SIGNAL_OK))))))'''
+                for _ in range(100))
+            result = self.run_guest(code + '\n!(println! PROVIDER_OK)\n', d)
+            self.assertEqual(result.stdout.count('SIGNAL_OK'), 100)
+
     def test_timers_do_not_inherit_http_queue_capacity(self):
         with tempfile.TemporaryDirectory() as d:
             declarations='\n'.join('!(io:submit (timer:after 0))' for _ in range(80))

@@ -17,12 +17,20 @@ consumed or the runtime exits. The same output path merges both streams.
 The files' parent directories must already exist. Process groups allow
 cancellation and deadlines to stop descendants as well as the direct child.
 
-Process deadlines in this implementation are cooperative: they are checked
-when `io:poll`, `io:status` or `io:wait` pumps the native runtime. An evaluator
-blocked in an unrelated synchronous call does not supervise them. Processes
-that finish during that interval may return an ordinary exit after their
-requested deadline. An independent completion/deadline owner is still needed
-before relying on those deadlines during arbitrary evaluator work.
+An independent native owner checks process deadlines and reaps owned children
+even while the evaluator is busy. Startup does not wait for exec-pipe EOF.
+Parent-side startup errors are submission errors; child-side cwd or exec errors
+are terminal `failed` outcomes. A real exit 127 remains an ordinary exit.
+Cancellation consumes the public handle immediately while the owner retains
+the child until reap. The kill is requested immediately; wait for a retained
+signalled handle's completion when reusing its output files requires finality.
+Runtime teardown joins this owner before closing wake
+descriptors; a child stuck in an uninterruptible kernel wait can delay teardown.
+Normal leader exit preserves ordinary process semantics: background descendants
+may continue and write output. Signals, cancellation and teardown only control
+groups whose leader is still owned and unreaped; they never signal recycled IDs.
+The embedding host must retain child exit status rather than configure SIGCHLD
+auto-reaping; incompatible signal disposition produces a startup error.
 
 `io:status handle` reports `(proc:running pid elapsed-ms stdout stderr)` or
 `(proc:finished pid exited|signaled|timed-out|failed code stdout stderr)`.
@@ -32,13 +40,20 @@ stops the group and consumes the handle. Timer outcomes are
 `(timer:fired elapsed-ms)`, with non-consuming
 `(timer:status waiting|ready elapsed-ms)` status.
 
-The native wait polls process descriptors and the HTTP worker's wake pipe,
-using the nearest timer or request deadline for its timeout. Linux uses pidfd;
-when unavailable, process completion is checked at 20 ms intervals. There is
+The evaluator's native wait polls the owners' wake pipe, using the nearest
+timer deadline for its timeout. The process owner uses Linux pidfd;
+when unavailable, it checks specific owned children at 20 ms intervals. There is
 no per-process or timer quota inherited from HTTP. Waiting for a selected
 handle preserves other providers' completions. Optional progress observation
 uses `io:wait milliseconds progress-path` or
 `io:wait handle milliseconds progress-path`; it does not change execution.
+
+`io:wait-ready milliseconds` or `io:wait-ready handle milliseconds` returns
+`(io:ready (id ...))` without consuming a completion, or `(io:idle)` on timeout.
+Use it for shared readiness; then let each client consume its own handle.
+Unselected completion order is unspecified; use owned handles for coordination.
+`timer:fired` reports the timer's selected due interval, independently of how
+long the evaluator waited before consuming it. Timers have no worker effects.
 
 `fs:tail-text path bytes` seeks to the requested file tail and returns
 `(fs:tail total-bytes truncated text)`, repairing malformed UTF-8. Zero bytes
