@@ -313,3 +313,38 @@ scheduled command. CWP `WAIT` (code 5) takes a revision token and an ASCII
 millisecond duration. An empty token obtains the current token; a subsequent
 wait reports newly published work or a changed store epoch without receiving
 or acknowledging a task. Previously pending tasks do not repeatedly wake it.
+
+## Existing SQLite state
+
+The `sqlite` library accesses existing databases without imposing the durable
+space service's schema. SQL and bound parameters are caller-selected:
+
+```metta
+(sqlite:query "history.sqlite3" "SELECT id,result FROM calls WHERE id=?"
+              ("call-id") 10000)
+(sqlite:transaction "history.sqlite3" immediate
+  ((sqlite:statement "INSERT INTO notes VALUES (?,?)" ("task-id" "finding"))
+   (sqlite:statement "SELECT rowid FROM notes WHERE task=?" ("task-id"))) 10000)
+```
+
+A query returns `(sqlite:result columns rows changes last-row-id)`. A scoped
+transaction returns `(sqlite:committed results)` after all statements commit;
+an error rolls its unfinished transaction back. Connections and statements
+close before returning to the evaluator. No callback can retain a transaction
+across a model call or asynchronous wait. The busy duration is caller-selected.
+There are no row quotas or SQL filters. SQL `NULL` is `sqlite:null`; BLOBs are
+`(sqlite:blob bytes)` and TEXT, INTEGER and REAL retain their storage types.
+
+Errors carry category, SQLite code, message and outcome. A commit I/O failure
+may report `unknown-outcome`; it is never automatically replayed. The library
+does not rebuild tables, change rowids, stamp a schema version, force WAL or
+change the existing database's journal mode.
+
+When embedded Python and native CeTTa access the same database, build with
+`SQLITE_PROVIDER=system` and use the **same shared SQLite library** as Python's
+`_sqlite3`. Two independent SQLite copies in one process can interfere with
+file-lock ownership. `SQLITE_CFLAGS` and `SQLITE_LIBS` can select an SDK or
+Python environment; otherwise the build uses pkg-config or ordinary system
+linkage. `ENABLE_DURABLE=1` enables this library. The native SQLite parity test
+checks existing rowids and types, atomic rollback, unbounded result selection,
+and shared linkage with an embedded Python reader.

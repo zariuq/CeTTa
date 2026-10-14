@@ -407,11 +407,11 @@ ifeq ($(SQLITE_PROVIDER),vendored)
 DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
 DURABLE_SRC += vendor/sqlite/sqlite3.c
 else ifeq ($(SQLITE_PROVIDER),system)
-ifeq ($(shell pkg-config --exists sqlite3 && echo yes),)
-$(error SQLITE_PROVIDER=system requires the sqlite3 development package)
-endif
-DURABLE_CFLAGS += $(shell pkg-config --cflags sqlite3)
-DURABLE_LDFLAGS += $(shell pkg-config --libs sqlite3)
+# Explicit flags also support SDKs and Python environments without pkg-config.
+SQLITE_CFLAGS ?= $(shell pkg-config --cflags sqlite3 2>/dev/null)
+SQLITE_LIBS ?= $(shell pkg-config --libs sqlite3 2>/dev/null)
+DURABLE_CFLAGS += $(if $(strip $(SQLITE_CFLAGS)),$(SQLITE_CFLAGS),-Ivendor/sqlite)
+DURABLE_LDFLAGS += $(if $(strip $(SQLITE_LIBS)),$(SQLITE_LIBS),-lsqlite3)
 else
 $(error SQLITE_PROVIDER must be vendored or system)
 endif
@@ -726,7 +726,7 @@ SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
 SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -41707,7 +41707,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc shell cwp io durable llm llm/io llm/command llm/compat
+	system fs proc sqlite shell cwp io durable llm llm/io llm/command llm/compat
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor

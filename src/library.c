@@ -22,6 +22,7 @@
 #include "library_cwp.h"
 #include "library_space_service.h"
 #include "library_proc.h"
+#include "library_sqlite.h"
 #include "library_durable.h"
 #include "library_json.h"
 #include "str_natives.h"
@@ -143,6 +144,7 @@ enum {
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
     CETTA_LIBRARY_MATH = 1u << 18,
     CETTA_LIBRARY_MAILBOX = 1u << 19,
+    CETTA_LIBRARY_SQLITE = 1u << 20,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -174,6 +176,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"llm", CETTA_LIBRARY_LLM, NULL},
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
+    {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
@@ -11985,6 +11988,10 @@ static Atom *cetta_library_dispatch_native_value(
     }
     if (ctx->active_mask & CETTA_LIBRARY_PROC) {
         Atom *result = cetta_proc_dispatch(a, head, args, nargs);
+        if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_SQLITE) {
+        Atom *result = cetta_sqlite_dispatch(a, head, args, nargs);
         if (result) return result;
     }
 #if CETTA_BUILD_WITH_JSON_GSLT
