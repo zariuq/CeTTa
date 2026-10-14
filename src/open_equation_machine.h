@@ -46,6 +46,14 @@
 #include "space.h"
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
+
+/* A body entry assumes its caller installed the call protocol; a ready
+ * entry installs that protocol over already evaluated arguments. */
+typedef enum {
+    CETTA_OPEN_ENTRY_BODY_VALUE,
+    CETTA_OPEN_ENTRY_BODY_DATA,
+    CETTA_OPEN_ENTRY_READY_CALL
+} CettaOpenEquationEntryKind;
 typedef struct CettaOpenEquationCursor CettaOpenEquationCursor;
 struct PettaProgram;
 struct PettaPlanNode;
@@ -114,6 +122,9 @@ typedef struct {
      * foreign-authority changes. Without them, whole-revision validation is
      * still exact; a host can request certificates on the first rebuild. */
     bool capture_reads;
+    /* Compile this entry's complete call protocol over already evaluated
+     * arguments, rather than a body whose caller installed that protocol. */
+    bool entry_ready_call;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
@@ -384,6 +395,13 @@ typedef struct {
      * shared too.  It never references the host's `answer_arena`.  NULL:
      * every crossing copies. */
     Arena *stable;
+    /* A complete ready-call entry, with the signature alternatives and
+     * guards kept. It comes retained just like current's body entry. */
+    CettaOpenEquationProgram *(*current_ready)(void *context, Space *space,
+                                               SymbolId head, uint32_t arity);
+    /* The selected dialect treats a still-unbound evaluated head as data.
+     * This says nothing about a later interpretation after binding. */
+    bool open_head_is_data;
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.

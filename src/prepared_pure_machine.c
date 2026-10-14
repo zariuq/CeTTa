@@ -9748,6 +9748,29 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     return CETTA_PREPARED_PURE_CURSOR_EXHAUSTED;
 }
 
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor) {
+    if (!cursor || !cursor->program ||
+        cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NONE ||
+        !cetta_prepared_pure_program_is_current(cursor->program))
+        return false;
+    const CettaPreparedPureProgram *program = cursor->program;
+    for (size_t index = 0u; index < cursor->frame_len; index++) {
+        const PreparedPureAnswerFrame *frame = &cursor->frames[index];
+        if (frame->head_index >= program->head_len ||
+            frame->argument_base > cursor->argument_len ||
+            frame->arity > cursor->argument_len - frame->argument_base ||
+            !frame->matched_equation)
+            return false;
+        const PreparedPureHead *head = &program->heads[frame->head_index];
+        if (!head->compiled || head->first_equation > program->equation_len ||
+            head->equation_count > program->equation_len - head->first_equation ||
+            frame->next_equation < head->equation_count)
+            return false;
+    }
+    return true;
+}
+
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *computation, CettaOwnedReturn *returned,
     CettaEvalCompletion *completion) {
@@ -9758,6 +9781,10 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     if (step == CETTA_PREPARED_PURE_CURSOR_ANSWER) {
         returned->outcome = cetta_call_completed_value(value);
         returned->environment = NULL;
+        returned->final =
+            cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor);
+        if (returned->final)
+            *completion = CETTA_EVAL_COMPLETE;
         return CETTA_OWNED_EXECUTION_RETURN;
     }
     if (step == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED) {
@@ -9785,10 +9812,15 @@ static void prepared_pure_answer_owned_release(void *computation) {
     cetta_prepared_pure_answer_cursor_close(computation);
 }
 
+static bool prepared_pure_answer_final_is_current(void *computation) {
+    return cetta_prepared_pure_answer_cursor_frontier_is_complete(computation);
+}
+
 void cetta_prepared_pure_answer_cursor_own_execution(
     CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor) {
     cetta_owned_execution_init(execution, cursor,
         cetta_prepared_pure_answer_cursor_return, prepared_pure_answer_owned_release);
+    execution->final_is_current = prepared_pure_answer_final_is_current;
 }
 
 bool cetta_prepared_pure_answer_cursor_detach(
