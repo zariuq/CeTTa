@@ -2,11 +2,10 @@
 """Qualify independent module-authored declaration layers over one core."""
 import argparse
 from pathlib import Path
-import subprocess
 
-from test_parser_artifacts_v1 import run
+from test_parser_artifacts_v1 import run, run_file
 from test_composable_syntax_v1 import form, lets, text
-from test_lbnf_values_v1 import headed, output_values
+from test_lbnf_values_v1 import headed
 from gslt2parse_schema_v1 import Symbol
 from test_module_values_v1 import rows, reader_load
 
@@ -14,16 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def handoff_example(binary, output, language):
-    command = [str(binary), "--lang", language]
-    if language != "prime":
-        command += ["--profile", "extended"]
-    command.append(str(ROOT / "examples/module_rewrite_values_v1.metta"))
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=180)
-    (output / f"{language}-handoff.stdout").write_text(completed.stdout)
-    (output / f"{language}-handoff.stderr").write_text(completed.stderr)
-    if completed.returncode:
-        raise AssertionError((language, "handoff example execution", completed.stderr))
-    records = [v for v in output_values(completed.stdout) if headed(v, "ModuleWorkflowExampleV1", 5)]
+    values = run_file(binary, language, output, "handoff",
+                      ROOT / "examples/module_rewrite_values_v1.metta")
+    records = [v for v in values if headed(v, "ModuleWorkflowExampleV1", 5)]
     assert len(records) == 1, (language, records)
     extended, term, admission, steps, rules = records[0][1:]
     assert headed(extended, "ModuleExtendedLanguageV1", 2), extended

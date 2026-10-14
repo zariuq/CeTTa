@@ -2,14 +2,13 @@
 """Qualify derived authoring syntax through existing LanguageDef consumers."""
 import argparse
 from pathlib import Path
-import subprocess
 
 from gslt2parse_schema_v1 import StringLiteral, Symbol, Variable
 from test_composable_syntax_v1 import form, lets, text
-from test_lbnf_values_v1 import headed, output_values
+from test_lbnf_values_v1 import headed
 from module_chainer_v1 import export_rules
 from test_module_values_v1 import HOSTILE_CONSTRUCTORS, list_value, pattern, reader_load, rows
-from test_parser_artifacts_v1 import run
+from test_parser_artifacts_v1 import run, run_file
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -206,16 +205,9 @@ def controls(binary, language, output):
 
 
 def handoff_example(binary, language, output):
-    command = [str(binary), "--lang", language]
-    if language != "prime":
-        command += ["--profile", "extended"]
-    command.append(str(ROOT / "examples/module_derived_values_v1.metta"))
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=180)
-    (output / f"{language}-derived-example.stdout").write_text(completed.stdout)
-    (output / f"{language}-derived-example.stderr").write_text(completed.stderr)
-    if completed.returncode:
-        raise AssertionError((language, "derived handoff execution", completed.stderr))
-    records = [value for value in output_values(completed.stdout) if headed(value, "ModuleDerivedExampleV1", 9)]
+    values = run_file(binary, language, output, "derived-example",
+                      ROOT / "examples/module_derived_values_v1.metta")
+    records = [value for value in values if headed(value, "ModuleDerivedExampleV1", 9)]
     assert len(records) == 1, (language, records)
     core, tuple_term, tuple_admitted, nat_term, nat_admitted, step, view, first, repeated = records[0][1:]
     assert headed(core, "GSLTLanguageDefWireV1", 5), core

@@ -8,6 +8,9 @@
 #include "term_canon.h"
 #include "variant_instance.h"
 typedef struct CettaLibraryContext CettaLibraryContext;
+/* Cooperatively poll the active execution's interruption at a blocking
+ * native boundary. A true result must release owned host work and unwind. */
+bool eval_native_interrupted(void);
 struct CettaPettaTokenSpaceClauseRegistry;
 
 /*

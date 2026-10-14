@@ -12,6 +12,7 @@ static const CettaProfile CETTA_PROFILE_HE_FORMAL_VALUE = {
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
@@ -23,6 +24,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = true,
+    .version = CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
@@ -34,6 +36,7 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
@@ -45,17 +48,19 @@ static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
     .id = CETTA_PROFILE_PRIME_DEFAULT,
     .language_id = CETTA_LANGUAGE_PRIME,
     .name = "prime-default",
-    .note = "Built-in policy for the MeTTa-Prime semantic package.",
+    .note = "Frozen MeTTa-Prime 0.0.1 draft policy.",
     .he_compatible_builtin = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PRIME_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
@@ -377,40 +382,48 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_LANGUAGE_PETTA, "1.0.6",
      NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default",
-     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false},
+     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
      "typecheck-v2", "typecheck", "PeTTa's typed language",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true},
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_HE_0_0_1, CETTA_LANGUAGE_HE, "0.0.1",
+     NULL, NULL, "CeTTa HE contract; formal/default and explicit extensions",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
+    {CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10, CETTA_LANGUAGE_HE, "0.2.10",
+     "he-compat", NULL, "Rust Hyperon Experimental HE 0.2.10 compatibility lane",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_PRIME_0_0_1, CETTA_LANGUAGE_PRIME, "0.0.1",
+     NULL, NULL, "Frozen CeTTa Prime draft; not the evolving Prime runtime",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
 };
 
-const CettaLanguageVersion *cetta_language_version_from_name(
-    CettaLanguageId language_id, const char *name) {
-    if (!name)
-        return NULL;
+static const CettaLanguageVersion *language_version_find(
+    CettaLanguageId language_id, CettaLanguageVersionId id, const char *name) {
     for (size_t i = 0u;
          i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
          i++) {
-        if (CETTA_LANGUAGE_VERSIONS[i].language_id == language_id &&
-            strcmp(CETTA_LANGUAGE_VERSIONS[i].name, name) == 0)
-            return &CETTA_LANGUAGE_VERSIONS[i];
+        const CettaLanguageVersion *version = &CETTA_LANGUAGE_VERSIONS[i];
+        if (version->language_id != language_id)
+            continue;
+        if (name ? strcmp(version->name, name) == 0
+                 : id == CETTA_LANGUAGE_VERSION_NONE ? version->is_default
+                                                     : version->id == id)
+            return version;
     }
     return NULL;
+}
+
+const CettaLanguageVersion *cetta_language_version_from_name(
+    CettaLanguageId language_id, const char *name) {
+    return name ? language_version_find(language_id, CETTA_LANGUAGE_VERSION_NONE, name)
+                : NULL;
 }
 
 const CettaLanguageVersion *cetta_language_version_of(
     CettaLanguageId language_id, const CettaProfile *profile) {
     CettaLanguageVersionId id = profile && profile->language_id == language_id
         ? profile->version : CETTA_LANGUAGE_VERSION_NONE;
-    if (id == CETTA_LANGUAGE_VERSION_NONE &&
-        language_id == CETTA_LANGUAGE_PETTA)
-        id = CETTA_LANGUAGE_VERSION_PETTA_1_0_6;
-    for (size_t i = 0u;
-         i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
-         i++) {
-        if (CETTA_LANGUAGE_VERSIONS[i].id == id)
-            return &CETTA_LANGUAGE_VERSIONS[i];
-    }
-    return NULL;
+    return language_version_find(language_id, id, NULL);
 }
 
 void cetta_language_print_versions(FILE *out, CettaLanguageId language_id) {
@@ -927,14 +940,22 @@ void cetta_eval_session_clear_process_exit(CettaEvalSession *session) {
         return;
     session->process_control.exit_requested = false;
     session->process_control.exit_code = 0;
+    session->process_control.answer_policy = CETTA_EXIT_DISCARD_ANSWER_DISPLAY;
 }
 
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code) {
+    cetta_eval_session_request_process_exit_with_answer_policy(
+        session, exit_code, CETTA_EXIT_DISCARD_ANSWER_DISPLAY);
+}
+
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy) {
     if (!session || session->process_control.exit_requested)
         return;
     session->process_control.exit_requested = true;
     session->process_control.exit_code = exit_code;
+    session->process_control.answer_policy = policy;
 }
 
 bool cetta_eval_session_process_exit_requested(
