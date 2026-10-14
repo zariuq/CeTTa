@@ -33,6 +33,7 @@ typedef struct {
     int64_t poll_limit;
     int64_t chats[128]; size_t count;
     int64_t operators[16]; size_t operator_count;
+    int64_t peers[128]; size_t peer_count;
     int64_t initial_offset;
     bool run, check, channel, program_seen, offset_seen;
 } Config;
@@ -170,7 +171,7 @@ static void identity_step(Identity *d, const CettaTelegramCredential *credential
 }
 static void usage(void) {
     puts("Usage: cetta-telegram-service (--check | --run) --root DIR --state-dir DIR\n"
-         "       --worker NAME --chat ID [--chat ID ...] [--operator ID ...]\n"
+         "       --worker NAME [--chat ID ...] [--peer ID ...] [--operator ID ...]\n"
          "       [--program agent|channel] [--initial-offset N] [--poll-limit 1..100]\n"
          "       [--commands FILE] [--command-deadline-ms N]\n"
          "       (--credential-file FILE | --credential-fd FD) [--listener-fd FD]\n"
@@ -201,6 +202,11 @@ static bool arguments(int argc, char **argv, Config *c) {
             for (size_t j=0;j<c->operator_count;++j) if (c->operators[j]==n) return false;
             c->operators[c->operator_count++]=n; continue;
         }
+        if (!strcmp(option,"--peer")) {
+            if (c->peer_count==128 || !number(value,1,INT64_MAX,&n)) return false;
+            for (size_t j=0;j<c->peer_count;++j) if (c->peers[j]==n) return false;
+            c->peers[c->peer_count++]=n; continue;
+        }
         if (!strcmp(option,"--initial-offset")) {
             if (c->offset_seen || !number(value,0,INT64_MAX-1,&n)) return false;
             c->offset_seen=true; c->initial_offset=n; continue;
@@ -229,6 +235,16 @@ static bool arguments(int argc, char **argv, Config *c) {
             if (!number(value,3,INT32_MAX,&n)) return false;
             if (j==6) c->token_fd=(int)n;
             else if (j==7) c->listener=(int)n; else c->operator_fd=(int)n;
+        }
+    }
+    /* A peer is one private-chat destination and a wake sender, not an
+     * operator. Keep those two routing settings together. */
+    for (size_t i=0;i<c->peer_count;++i) {
+        bool present=false;
+        for (size_t j=0;j<c->count;++j) if (c->chats[j]==c->peers[i]) present=true;
+        if (!present) {
+            if (c->count==128) return false;
+            c->chats[c->count++]=c->peers[i];
         }
     }
     if ((!c->run && !c->check) || !c->root || c->root[0]!='/' || !c->directory || c->directory[0]!='/' ||
@@ -379,8 +395,9 @@ int main(int argc,char **argv) {
     CettaHostProgram trusted={c.channel?"telegram-channel/1":"telegram-agent/1",&program,&context};
     Atom *ids[128]; for (size_t i=0;i<c.count;++i) ids[i]=atom_int(&persistent,c.chats[i]);
     Atom *operators[16]; for (size_t i=0;i<c.operator_count;++i) operators[i]=atom_int(&persistent,c.operators[i]);
+    Atom *peers[128]; for (size_t i=0;i<c.peer_count;++i) peers[i]=atom_int(&persistent,c.peers[i]);
     Atom *args[]={atom_symbol(&persistent,"telegram:policy"),atom_int(&persistent,1),atom_expr(&persistent,ids,c.count),
-        atom_bool(&persistent,false),atom_expr(&persistent,operators,c.operator_count),atom_expr(&persistent,NULL,0)};
+        atom_bool(&persistent,false),atom_expr(&persistent,operators,c.operator_count),atom_expr(&persistent,peers,c.peer_count)};
     Atom *policy=atom_expr(&persistent,args,6);
     /* The channel client edits and deletes its own messages; ownership is
      * recorded in its receipts. The per-message agent only replies. */

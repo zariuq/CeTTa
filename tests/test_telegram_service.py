@@ -94,6 +94,11 @@ with tempfile.TemporaryDirectory(prefix='cetta-service-entry-') as temp:
 
     # Validation has no journal, listener or network side effects.
     check(['--check', *base], 0)
+    check(['--check', *base, '--peer', '84'], 0)
+    check(['--check', *base, '--peer', '42'], 0)
+    for peer_id in ('0', '-1', 'not-an-id', '9223372036854775808'):
+        check(['--check', *base, '--peer', peer_id], 64)
+    check(['--check', *base, '--peer', '84', '--peer', '84'], 64)
     for limit in ('1', '10', '100'):
         check(['--check', *base, '--poll-limit', limit], 0)
     for limit in ('0', '101', '-1', 'many'):
