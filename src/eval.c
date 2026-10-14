@@ -26724,6 +26724,7 @@ typedef struct {
     bool reifying_context;
     bool syntax_child_pending;
     bool retain_values;
+    bool persist_cell_identity;
 } PrimeNeedReifyFrame;
 
 static bool prime_need_reify_push(PrimeNeedReifyFrame **frames,
@@ -27031,7 +27032,8 @@ static Atom *prime_need_reify_mode(
                  * structure, retaining only genuinely pending child demands;
                  * storing its origin as a new demand would replay it and hide
                  * that structure from ordinary space matching. */
-                if ((persist_sharing || match_value) && cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+                if ((persist_sharing || match_value) && !frame->persist_cell_identity &&
+                    cell.cache_state == PRIME_NEED_CACHE_VALUE &&
                     cell.cached && cell.value_role == PRIME_NEED_VALUE_READY) {
                     frame->waiting_for_payload = true;
                     frame->resolving_thunk = thunk_id;
@@ -27171,6 +27173,9 @@ static Atom *prime_need_reify_mode(
                     (PrimeNeedReifyFrame){
                         .source = child,
                         .retain_values = frame->retain_values,
+                        .persist_cell_identity = persist_sharing && child_index == 1u &&
+                            frame->source->expr.len == 2u &&
+                            atom_is_symbol_id(frame->source->expr.elems[0], syms->promise),
                         .destination = destination}))
                 goto fail;
             continue;
