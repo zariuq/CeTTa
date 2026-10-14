@@ -8,17 +8,17 @@
 ; host-assigned correlation IDs; each completion is observed at most once.
 
 (: io:capabilities (-> Expression))
-(: io:submit (-> Atom Expression))
+(: io:submit (-> %Undefined% Expression))
 (: io:poll (-> Expression))
 (: io:poll (-> Number Expression))
 (: io:status (-> Number Expression))
 (: io:wait (-> Number Expression))
 ; The two-argument spelling is id/timeout or timeout/progress-path. One
 ; declaration describes both shapes; the native call validates the values.
-(: io:wait (-> Number Atom Expression))
+(: io:wait (-> Number %Undefined% Expression))
 (: io:wait (-> Number Number String Expression))
 (: io:wait-ready (-> Number Expression))
-(: io:wait-ready (-> Atom Number Expression))
+(: io:wait-ready (-> %Undefined% Number Expression))
 (: io:cancel (-> Number Expression))
 (: io:signal (-> Number Number Expression))
 

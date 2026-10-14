@@ -140,8 +140,8 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "1ac12d6296b392b65d2f883ded916651bc585732f93736a8b1936d9dca30bf3b",
-      "output_sha256": "6e07c1ba539396566a7247aa5b687c7b88c196b247656fdb75a038081ae350ca",
+      "source_sha256": "10c96818c575d91c7e3d8a52393cfde2573b311ce8fed33450273b56cf35978c",
+      "output_sha256": "26c63d6eb8ec5267be34f4cebcf47ba925b01ecb8aa0fb74431641a18de84f35",
       "edits": 15,
       "code_diagnostics": 0
     },
@@ -420,8 +420,8 @@
     {
       "source": "sqlite.metta",
       "output": "sqlite.metta",
-      "source_sha256": "5b3cc6ce61b73ccb471b6f7bdb57ce334a59aca122a8e6580195bc45d1a8dfa8",
-      "output_sha256": "5ca62fc903bba6a36c473a61c71c5933aba80ee5934bc4211a39fe4c39df7071",
+      "source_sha256": "84d1900833b66450d822aaf7ed7a5e3991bcde82e586b221a539694999f8ab85",
+      "output_sha256": "a12178105e91975d83ff2804b2d3fa0b36b1878fe16c4faa18df44d3d7fc095f",
       "edits": 2,
       "code_diagnostics": 0
     },

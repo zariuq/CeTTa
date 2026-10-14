@@ -2,6 +2,5 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-(: sqlite:transaction (-> String Atom Expression Number %Undefined%))
 (= (sqlite:query $path $sql $parameters $busy-ms) (__cetta_lib_sqlite_query $path $sql $parameters $busy-ms))
 (= (sqlite:transaction $path $mode $statements $busy-ms) (__cetta_lib_sqlite_transaction $path $mode $statements $busy-ms))

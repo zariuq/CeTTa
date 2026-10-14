@@ -4,8 +4,8 @@
 ; SQL is caller-selected data. No schema/version/journal migration, cursors,
 ; row quotas or transaction locks escape the native call. Existing databases
 ; retain their rowids and NULL/TEXT/numeric/BLOB values.
-(: sqlite:query (-> String String Expression Number Expression))
-(: sqlite:transaction (-> String Atom Expression Number Expression))
+(: sqlite:query (-> String String %Undefined% Number Expression))
+(: sqlite:transaction (-> String %Undefined% %Undefined% Number Expression))
 (: __cetta_lib_sqlite_query (-> Atom Atom Atom Atom Atom))
 (: __cetta_lib_sqlite_transaction (-> Atom Atom Atom Atom Atom))
 (= (sqlite:query $path $sql $parameters $busy-ms)
