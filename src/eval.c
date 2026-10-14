@@ -12326,7 +12326,7 @@ static bool prime_code_match_forms(Arena *a, Atom *pattern, Atom *value,
 static PrimeLetMatchStatus prime_let_match_body(
     const AbtSignature *signature, Arena *arena,
     const PrimeLetPrepared *prepared, Atom *value,
-    const Bindings *value_env, Atom **body_out,
+    const Bindings *value_env, const Bindings *caller_env, Atom **body_out,
     Bindings *matched_env_out, CettaCallResultForm result_form) {
     if (!signature || !arena || !prepared || !value || !value_env ||
         !body_out || !matched_env_out)
@@ -12334,8 +12334,17 @@ static PrimeLetMatchStatus prime_let_match_body(
     *body_out = NULL;
     bindings_init(matched_env_out);
     BindingsBuilder builder;
-    if (!bindings_builder_init(&builder, value_env))
+    /* Stateless observations (such as fold results) deliberately carry no
+     * private heap. Allocate their new lexical value cells in the caller's
+     * world before matching, rather than build a sibling of that world and
+     * discover the incompatibility when scheduling the body. */
+    if (!bindings_builder_init(&builder, caller_env ? caller_env : value_env))
         return PRIME_LET_MATCH_INVALID;
+    if (caller_env && caller_env != value_env &&
+        !bindings_builder_try_merge(&builder, value_env)) {
+        bindings_builder_free(&builder);
+        return PRIME_LET_MATCH_INVALID;
+    }
     /* The canonical pattern is the binder side.  Put it on the left so a
        variable-valued source binds the fresh lexical slot to that variable,
        rather than orienting the equality in the opposite direction. */
@@ -17882,7 +17891,7 @@ static bool prime_let_branch_prepare(PrimeLetVisitCtx *let_ctx,
 
     PrimeLetMatchStatus status = prime_let_match_body(
         let_ctx->signature, let_ctx->a, let_ctx->prepared,
-        atom, env, body_out, matched_env_out, result_form);
+        atom, env, let_ctx->outer_env, body_out, matched_env_out, result_form);
     if (status == PRIME_LET_MATCH_INVALID) {
         Bindings empty;
         bindings_init(&empty);
@@ -46394,7 +46403,7 @@ static PrimeEvalStackTake prime_eval_stack_let_value(
     Bindings matched_env;
     PrimeLetMatchStatus status = prime_let_match_body(
         signature, frame->arena, prepared,
-        value, &item->env, &body, &matched_env, item->result_form);
+        value, &item->env, &frame->env, &body, &matched_env, item->result_form);
     if (status == PRIME_LET_MATCH_INVALID) {
         Bindings empty;
         bindings_init(&empty);
@@ -67646,7 +67655,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
             Atom *body = NULL;
             Bindings matched_env;
             PrimeLetMatchStatus status = prime_let_match_body(
-                signature, a, &prepared, source, empty, &body,
+                signature, a, &prepared, source, empty, CURRENT_ENV, &body,
                 &matched_env, CETTA_CALL_RESULT_COMPLETED_VALUE);
             if (status == PRIME_LET_MATCH_INVALID) {
                 outcome_set_add(
@@ -67767,7 +67776,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
             Atom *body = NULL;
             Bindings matched_env;
             PrimeLetMatchStatus status = prime_let_match_body(
-                signature, a, &prepared, value, &values.items[0].env,
+                signature, a, &prepared, value, &values.items[0].env, CURRENT_ENV,
                 &body, &matched_env, values.items[0].result_form);
             if (status == PRIME_LET_MATCH_INVALID) {
                 outcome_set_add(
