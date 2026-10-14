@@ -259,8 +259,10 @@
          (if (< (atp:policy:cost $ranker $candidate)
                 (atp:policy:cost $ranker $head))
              (cons-atom $candidate $ordered)
-             (cons-atom
-               $head (atp:indexed:insert $candidate $tail $ranker)))){$head $tail}))
+             ; cons-atom takes written list data. Observe the recursive
+             ; insertion before passing its list to that native operation.
+             (let $inserted (atp:indexed:insert $candidate $tail $ranker)
+               (cons-atom $head $inserted)){$inserted})){$head $tail}))
 
 (= (atp:indexed:take $limit $items)
    (if (<= $limit 0)
