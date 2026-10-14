@@ -97,7 +97,7 @@
      (unify $compose-code (quote (= (compose double square 3) $body))
        (Ran (quote $body) (eval $body))
        none)))
-; 22. Contrast: the same parsed equation placed bare in a constructor field is
-;     evaluated there, so its left side (double $x) becomes (* 2 $x).
+; 22. A parsed equation is earned data even in an ordinary constructor field.
+;     The quoted variant adds an explicit seal; neither activates the equation.
 !(let $f (parse "(= (double $x) (* 2 $x))") (Bare $f))
 !(let $f (lift (parse "(= (double $x) (* 2 $x))")) (Quoted $f))
