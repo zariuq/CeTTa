@@ -292,10 +292,10 @@
        (foldl-atom $xs $init $acc $item $step)))
 
 (= (list:range $end)
-   (range-atom $end))
+   (__cetta_lib_list_range $end))
 
 (= (list:range $start $end)
-   (range-atom $start $end))
+   (__cetta_lib_list_range $start $end))
 
 (= (list:repeat $count $item)
    (repeat-atom $count $item))

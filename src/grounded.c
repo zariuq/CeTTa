@@ -3565,7 +3565,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         head_id == g_builtin_syms.foldl_atom_in_space)
         return grounded_foldl_in_space(a, head, args, nargs);
 
-    if (head_id == g_builtin_syms.range_atom)
+    if (head_id == g_builtin_syms.range_atom || head_id == g_builtin_syms.lib_list_range)
         return grounded_range_atom(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.repeat_atom)

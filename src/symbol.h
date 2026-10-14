@@ -396,6 +396,7 @@ static inline SymbolSpelling symbol_spelling(
     /* ── Library extension hooks ── */ \
     X(lib_list_from_expression, "__cetta_lib_list_from_expression") \
     X(lib_list_to_expression, "__cetta_lib_list_to_expression") \
+    X(lib_list_range, "__cetta_lib_list_range") \
     X(lib_system_args, "__cetta_lib_system_args") \
     X(lib_system_arg, "__cetta_lib_system_arg") \
     X(lib_system_arg_count, "__cetta_lib_system_arg_count") \
@@ -736,6 +737,7 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom)
 
 /* Grounded value operations without ambient observations or mutation, given
@@ -800,6 +802,7 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom) \
     X(unique_atom) \
     X(remove_all_atom) \

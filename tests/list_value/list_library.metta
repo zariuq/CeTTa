@@ -49,3 +49,8 @@
 !(assertEqual (list:from-expression [a b]) [a b])
 !(assertEqual (list:to-expression (a b)) (a b))
 !(assertEqual (== (list:from-expression ()) ()) False)
+
+; Range remains grounded when used from a scoped library.
+!(assertEqual (list:range 3) (0 1 2))
+!(assertEqual (list:range 2 5) (2 3 4))
+!(assertEqual (list:range 0) ())
