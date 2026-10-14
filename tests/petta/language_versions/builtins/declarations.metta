@@ -1,0 +1,6 @@
+!(import_prolog_function add_builtin_signatures)
+!(add_builtin_signatures &self)
+!(collapse (match &self (: $head $type) $head))
+!(get-type and)
+!(add_builtin_signatures &self)
+!(length (collapse (match &self (: $head $type) $head)))

@@ -1,0 +1,48 @@
+# file	arguments	exit	phrase (in stdout or stderr)
+closure_partial.metta	--lang petta@1.1	0	✅
+closure_partial.metta	--lang petta@1.1 --strict-det	0	✅
+closure_partial.metta	--lang petta@1.1 --profile typecheck-v3	0	✅
+closure_partial_conflict.metta	--lang petta@1.1	2	Type conflict
+closure_partial_conflict.metta	--lang petta@1.1 --profile typecheck-v3	2	Type conflict
+closure_literal_conflict.metta	--lang petta@1.1	2	Type conflict
+declared_argument_residual.metta	--lang petta@1.1	0	✅
+declared_argument_residual.metta	--lang petta@1.1 --strict-det	2	Strict mode rejected residual runtime type goal
+literal_structured_requirement.metta	--lang petta@1.1	0	✅
+literal_structured_requirement.metta	--lang petta@1.1 --strict	2	Strict mode rejected residual runtime type goal
+inferred_clause_join.metta	--lang petta@1.1	0	✅
+inferred_clause_join.metta	--lang petta@1.1 --strict	2	Strict mode requires a declared or inferable type
+pinned_field_selection.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+roman_library.metta	--lang petta@1.1	0	✅
+roman_library.metta	--lang petta@1.1 --strict-det	0	✅
+roman_library.metta	--lang petta@1.1 --profile typecheck-v3 --strict-det	0	✅
+roman_library.metta	--lang petta@1.0.6 --profile typecheck-v2	2	is not a profile of petta@1.0.6
+roman_library.metta	--lang petta@1.1 --profile extended	2	is not a profile of petta@1.1
+roman_library.metta	--lang petta@9	2	unknown source version
+dynamic_head_call.metta	--lang petta@1.1	0	✅
+dynamic_head_call.metta	--lang petta@1.1 --strict	2	Strict mode rejected residual runtime type goal
+is_member_bound_literal.metta	--lang petta@1.1 --strict-det	0	✅
+is_member_repeated_element.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+is_member_computed_list.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+is_member_unbound_probe.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+bool_certificate_semidet.metta	--lang petta@1.1 --strict-det	0	✅
+bool_certificate_nondet_callee.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+strict_missing_signature.metta	--lang petta@1.1 --strict	2	Strict mode requires a declared or inferable type for same/1
+runtime_value_mismatch.metta	--lang petta@1.1	2	Type mismatch
+spaces_remove_all.metta	--lang petta@1.1	0	✅
+runtime_type_error_caught.metta	--lang petta@1.1	0	✅
+runtime_type_error_uncaught.metta	--lang petta@1.1	2	PeTTa type error: Type mismatch: got red but expected Shade
+no_matching_overload_caught.metta	--lang petta@1.1	0	✅
+overload_result_filter.metta	--lang petta@1.1	0	✅
+missing_import_raises.metta	--lang petta@1.1	0	✅
+missing_import_quiet.metta	--lang petta@1.0.6	0	()
+typed_space_row_error.metta	--lang petta@1.1	0	✅
+untyped_function_argument.metta	--lang petta@1.1	0	✅
+decons_pattern_equality.metta	--lang petta@1.1 --strict-det	2	Determinism check failed
+and_then_short_circuit.metta	--lang petta@1.1	0	✅
+and_then_short_circuit.metta	--lang petta@1.0.6	0	✅
+and_then_destructure_typing.metta	--lang petta@1.1 --strict-det	0	✅
+branch_fact_local.metta	--lang petta@1.1 --strict	2	Strict mode rejected residual runtime type goal
+lambda_body_checked.metta	--lang petta@1.1 --strict	2	Strict mode rejected residual runtime type goal
+lambda_body_typed.metta	--lang petta@1.1 --strict	0	✅
+accepted_declaration_history.metta	--lang petta@1.1	0	✅
+accepted_declaration_history.metta	--lang petta@1.1 --profile typecheck-v3	0	✅

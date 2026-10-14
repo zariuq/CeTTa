@@ -1,0 +1,6 @@
+true
+true
+(+ - * / % min max exp pow-math sqrt-math abs-math log-math trunc-math ceil-math floor-math round-math sin-math cos-math tan-math asin-math acos-math atan-math isnan-math isinf-math min-atom max-atom < <= > >= = == != =? =alpha =@= @< @> @<= @>= and or not xor implies superpose empty is-var is-ground is-expr is-space is-member is-alpha-member size-atom length repr repra copy_term change-state! println! assert random-int random-float assertz erase heap_size collapse)
+(-> Bool Bool Bool)
+true
+134

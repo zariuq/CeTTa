@@ -365,6 +365,20 @@ typedef struct {
     bool overload;
 } OemLocalSource;
 
+typedef enum {
+    OEM_READ_RELATION, OEM_READ_PROTOCOL, OEM_READ_BODY, OEM_READ_HEAD,
+    OEM_READ_BUILTIN, OEM_READ_BUILTIN_EQUATIONS, OEM_READ_DELAY,
+    OEM_READ_IDENTITY,
+} OemHostReadKind;
+
+typedef struct {
+    OemHostReadKind kind;
+    SymbolId head;
+    uint32_t arity;
+    Atom *expression;
+    bool answer;
+} OemHostRead;
+
 struct CettaOpenEquationProgram {
     /* The compiler's reference and one per open cursor.  Cursors open and
      * close on worker threads (hyperpose), so the count is atomic: the last
@@ -372,6 +386,18 @@ struct CettaOpenEquationProgram {
     _Atomic uint32_t refs;
     Space *space;
     SpaceProgramToken token;
+    SpaceReadToken source_rows;
+    CettaCount source_row_count;
+    /* All named syntax/contract leaves consulted by this compilation,
+     * including heads that had no equation. Sorted and unique when complete.
+     * This conservative footprint licenses only disjoint named appends. */
+    SymbolId *read_heads;
+    uint32_t read_head_len, read_head_cap;
+    bool read_heads_complete;
+    OemHostRead *host_reads;
+    uint32_t host_read_len, host_read_cap;
+    uint32_t host_read_mask;
+    bool host_reads_complete;
     /* Read before compilation: equality certifies that no Space changed
      * while this immutable program was built or subsequently entered. */
     uint64_t compilation_mutation_epoch;
@@ -489,6 +515,8 @@ void cetta_open_equation_program_release(
         atomic_fetch_sub_explicit(&program->refs, 1u,
                                   memory_order_acq_rel) != 1u)
         return;
+    free(program->host_reads);
+    free(program->read_heads);
     free(program->relations);
     free(program->equations);
     free(program->ops);
@@ -519,6 +547,265 @@ bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program) {
     return program && space_program_token_is_current(program->token);
 }
+
+CettaOpenEquationRead cetta_open_equation_program_read(
+    const CettaOpenEquationProgram *program) {
+    return program ? (CettaOpenEquationRead){
+        .program = program, .program_token = program->token,
+        .rows = program->source_rows, .row_count = program->source_row_count,
+    } : (CettaOpenEquationRead){0};
+}
+
+static int oem_read_head_compare(const void *left, const void *right) {
+    SymbolId a = *(const SymbolId *)left, b = *(const SymbolId *)right;
+    return (a > b) - (a < b);
+}
+
+static bool oem_reads_head(const CettaOpenEquationProgram *program,
+                           SymbolId head) {
+    return bsearch(&head, program->read_heads, program->read_head_len,
+                    sizeof(*program->read_heads), oem_read_head_compare) != NULL;
+}
+
+bool cetta_open_equation_program_refresh(
+    const CettaOpenEquationProgram *program, Space *space,
+    CettaOpenEquationRead *read) {
+    if (!program || !space || !read || read->program != program ||
+        program->space != space || read->program_token.space != space ||
+        read->program_token.instance_id != space_instance_id(space))
+        return false;
+    SpaceProgramToken now = space_program_token(space);
+    SpaceReadToken rows = space_read_token(space);
+    CettaCount count = space_length64(space);
+    if (!space_program_token_eq(read->program_token, now)) {
+        if (!program->read_heads_complete || space->overlay_base ||
+            space_has_dependencies(space) ||
+            space->match_backend.kind != SPACE_ENGINE_NATIVE ||
+            !space_read_token_prefix_intact(read->rows) ||
+            read->row_count > count)
+            return false;
+        for (CettaIndex index = read->row_count; index < count; index++) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
+            Atom *row = space_get_at64(space, index);
+            if (!row)
+                return false;
+            if (row->kind != ATOM_EXPR || row->expr.len != 3u ||
+                row->expr.elems[0]->kind != ATOM_SYMBOL)
+                continue;
+            SymbolId form = row->expr.elems[0]->sym_id;
+            Atom *subject = row->expr.elems[1];
+            if (form == g_builtin_syms.subtype)
+                return false;
+            if (form == g_builtin_syms.equals ||
+                form == g_builtin_syms.equals_percent) {
+                if (subject->kind != ATOM_EXPR || subject->expr.len == 0u)
+                    return false;
+                subject = subject->expr.elems[0];
+            } else if (form != g_builtin_syms.colon) {
+                continue;
+            } else if (subject->kind == ATOM_EXPR) {
+                /* Compilation asks for types of named heads. A compound
+                 * subject cannot unify with a symbol, even with open fields. */
+                continue;
+            }
+            if (subject->kind != ATOM_SYMBOL ||
+                oem_reads_head(program, subject->sym_id))
+                return false;
+        }
+    }
+    if (!space_read_token_matches_live_space(rows, space) ||
+        !space_program_token_matches_live_space(now, space))
+        return false;
+    *read = (CettaOpenEquationRead){
+        .program = program, .program_token = now, .rows = rows, .row_count = count,
+    };
+    return true;
+}
+
+
+/* Compilation is an adaptive query over host authorities. Record the actual
+ * Boolean observations, including negative lookups. A foreign revision need
+ * not rebuild code when every observation still agrees. */
+static uint32_t oem_host_read_mask(const CettaOpenEquationHost *host) {
+    if (!host)
+        return 0u;
+    return (!!host->relation_admitted << OEM_READ_RELATION) |
+        (!!host->call_protocol_admitted << OEM_READ_PROTOCOL) |
+        (!!host->body_admitted << OEM_READ_BODY) |
+        (!!host->head_callable << OEM_READ_HEAD) |
+        (!!host->builtin_allowed << OEM_READ_BUILTIN) |
+        (!!host->builtin_equations << OEM_READ_BUILTIN_EQUATIONS) |
+        (!!host->may_delay << OEM_READ_DELAY) |
+        (!!host->retains_variable_identity << OEM_READ_IDENTITY);
+}
+
+static bool oem_host_query(const CettaOpenEquationHost *host, Space *space,
+                           const OemHostRead *read) {
+    switch (read->kind) {
+    case OEM_READ_RELATION:
+        return host->relation_admitted(host->context, space, read->head, read->arity);
+    case OEM_READ_PROTOCOL:
+        return host->call_protocol_admitted(host->context, space, read->head, read->arity);
+    case OEM_READ_BODY:
+        return host->body_admitted(host->context, space, read->head, read->arity);
+    case OEM_READ_HEAD:
+        return host->head_callable(host->context, space, read->expression);
+    case OEM_READ_BUILTIN:
+        return host->builtin_allowed(host->context, read->head);
+    case OEM_READ_BUILTIN_EQUATIONS:
+        return host->builtin_equations(host->context, space, read->head, read->arity);
+    case OEM_READ_DELAY:
+        return host->may_delay(host->context, read->head, read->arity);
+    case OEM_READ_IDENTITY:
+        return host->retains_variable_identity(host->context, read->head);
+    }
+    return false;
+}
+
+bool cetta_open_equation_program_host_reads_current(
+    const CettaOpenEquationProgram *program, const CettaOpenEquationHost *host) {
+    if (!program || !program->host_reads_complete ||
+        oem_host_read_mask(host) != program->host_read_mask)
+        return false;
+    for (uint32_t index = 0u; index < program->host_read_len; index++) {
+        const OemHostRead *read = &program->host_reads[index];
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_HOST_READ);
+        if (oem_host_query(host, program->space, read) != read->answer)
+            return false;
+    }
+    return true;
+}
+
+typedef struct {
+    CettaOpenEquationProgram *program;
+    const CettaOpenEquationHost *host;
+    AtomDeepCopySession *copies;
+} OemHostRecorder;
+
+static bool oem_host_record(OemHostRecorder *recorder, Space *space,
+                            OemHostRead read) {
+    CettaOpenEquationProgram *program = recorder->program;
+    bool answer = oem_host_query(recorder->host, space, &read);
+    if (space != program->space)
+        program->host_reads_complete = false;
+    if (!program->host_reads_complete)
+        return answer;
+    read.answer = answer;
+    if (!oem_reserve((void **)&program->host_reads, &program->host_read_cap,
+                     program->host_read_len + 1u, sizeof(*program->host_reads))) {
+        program->host_reads_complete = false;
+        return answer;
+    }
+    if (read.expression) {
+        if (!program->atoms_ready) {
+            arena_init_detached(&program->atoms);
+            program->atoms_ready = true;
+        }
+        if (!recorder->copies)
+            recorder->copies = atom_deep_copy_session_new(&program->atoms);
+        read.expression = recorder->copies
+            ? atom_deep_copy_session_copy(recorder->copies, read.expression) : NULL;
+        if (!read.expression) {
+            program->host_reads_complete = false;
+            return answer;
+        }
+    }
+    program->host_reads[program->host_read_len++] = read;
+    return answer;
+}
+
+#define OEM_RECORD_NAMED(NAME, KIND)                                       \
+static bool NAME(void *context, Space *space, SymbolId head, uint32_t arity) { \
+    return oem_host_record(context, space, (OemHostRead){                  \
+        .kind = KIND, .head = head, .arity = arity,                        \
+    });                                                                  \
+}
+OEM_RECORD_NAMED(oem_record_relation, OEM_READ_RELATION)
+OEM_RECORD_NAMED(oem_record_protocol, OEM_READ_PROTOCOL)
+OEM_RECORD_NAMED(oem_record_body, OEM_READ_BODY)
+OEM_RECORD_NAMED(oem_record_builtin_equations, OEM_READ_BUILTIN_EQUATIONS)
+#undef OEM_RECORD_NAMED
+static bool oem_record_head(void *context, Space *space, Atom *expression) {
+    return oem_host_record(context, space, (OemHostRead){
+        .kind = OEM_READ_HEAD, .expression = expression,
+    });
+}
+static bool oem_record_builtin(void *context, SymbolId head) {
+    OemHostRecorder *recorder = context;
+    return oem_host_record(recorder, recorder->program->space, (OemHostRead){
+        .kind = OEM_READ_BUILTIN, .head = head,
+    });
+}
+static bool oem_record_delay(void *context, SymbolId head, uint32_t arity) {
+    OemHostRecorder *recorder = context;
+    return oem_host_record(recorder, recorder->program->space, (OemHostRead){
+        .kind = OEM_READ_DELAY, .head = head, .arity = arity,
+    });
+}
+static bool oem_record_identity(void *context, SymbolId head) {
+    OemHostRecorder *recorder = context;
+    return oem_host_record(recorder, recorder->program->space, (OemHostRead){
+        .kind = OEM_READ_IDENTITY, .head = head,
+    });
+}
+
+/* Sort the finite trace once: no growing linear membership scan during
+ * compilation, and repeated expression reads share their copied syntax. */
+static int oem_host_read_compare(const void *left, const void *right) {
+    const OemHostRead *a = left, *b = right;
+    if (a->kind != b->kind)
+        return (a->kind > b->kind) - (a->kind < b->kind);
+    if (a->head != b->head)
+        return (a->head > b->head) - (a->head < b->head);
+    if (a->arity != b->arity)
+        return (a->arity > b->arity) - (a->arity < b->arity);
+    uintptr_t x = (uintptr_t)a->expression, y = (uintptr_t)b->expression;
+    return (x > y) - (x < y);
+}
+
+static void oem_host_reads_finish(OemHostRecorder *recorder) {
+    CettaOpenEquationProgram *program = recorder->program;
+    atom_deep_copy_session_free(recorder->copies);
+    recorder->copies = NULL;
+    if (!program->host_reads_complete || !program->host_read_len)
+        return;
+    qsort(program->host_reads, program->host_read_len,
+          sizeof(*program->host_reads), oem_host_read_compare);
+    uint32_t unique = 1u;
+    for (uint32_t index = 1u; index < program->host_read_len; index++) {
+        OemHostRead *previous = &program->host_reads[unique - 1u];
+        OemHostRead *next = &program->host_reads[index];
+        if (oem_host_read_compare(previous, next))
+            program->host_reads[unique++] = *next;
+        else if (previous->answer != next->answer)
+            program->host_reads_complete = false;
+    }
+    program->host_read_len = unique;
+}
+
+static CettaOpenEquationHost oem_recording_host(OemHostRecorder *recorder) {
+    CettaOpenEquationHost host = *recorder->host;
+    host.context = recorder;
+    if (host.relation_admitted)
+        host.relation_admitted = oem_record_relation;
+    if (host.call_protocol_admitted)
+        host.call_protocol_admitted = oem_record_protocol;
+    if (host.body_admitted)
+        host.body_admitted = oem_record_body;
+    if (host.head_callable)
+        host.head_callable = oem_record_head;
+    if (host.builtin_allowed)
+        host.builtin_allowed = oem_record_builtin;
+    if (host.builtin_equations)
+        host.builtin_equations = oem_record_builtin_equations;
+    if (host.may_delay)
+        host.may_delay = oem_record_delay;
+    if (host.retains_variable_identity)
+        host.retains_variable_identity = oem_record_identity;
+    return host;
+}
+
+static bool oem_record_read_names(CettaOpenEquationProgram *program, Atom *root);
 
 uint32_t cetta_open_equation_program_relation_count(
     const CettaOpenEquationProgram *program) {
@@ -1166,9 +1453,9 @@ static bool oem_fold_relation(OemCompile *compile, SymbolId foldl,
     if (!empty_lhs || !cons_lhs || !recursion)
         return oem_reject(compile, "out of memory");
     const PettaPlanNode *acc_plan =
-        petta_program_plan_transient(compile->petta, acc);
+        petta_program_plan_transient(compile->petta, acc, NULL);
     const PettaPlanNode *recursion_plan = oem_fold_recursion_plan(
-        program, petta_program_plan_transient(compile->petta, recursion));
+        program, petta_program_plan_transient(compile->petta, recursion, NULL));
     if (!acc_plan || !recursion_plan)
         return true;
     OemRelation relation = {
@@ -3648,6 +3935,11 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  Atom *rhs, const PettaPlanNode *rhs_plan,
                                  const OemLocalSource *typed,
                                  const char **reason) {
+    if (program->read_heads_complete &&
+        (!oem_record_read_names(program, lhs) ||
+         !oem_record_read_names(program, rhs) ||
+         (typed && !oem_record_read_names(program, typed->contract.signature))))
+        program->read_heads_complete = false;
     OemCompile compile = {.program = program, .host = host, .petta = petta,
                           .authored = authored, .named = named,
                           .lhs = lhs, .rhs = rhs};
@@ -4394,6 +4686,7 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
     if (!petta || !space || head == SYMBOL_ID_NONE ||
         space_has_dependencies(space))
         return NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_COMPILE);
     CettaOpenEquationProgram *program = calloc(1u, sizeof(*program));
     if (!program)
         return NULL;
@@ -4401,6 +4694,17 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
     program->space = space;
     program->compilation_mutation_epoch = space_global_mutation_epoch();
     program->token = space_program_token(space);
+    program->source_rows = space_read_token(space);
+    program->source_row_count = space_length64(space);
+    program->read_heads_complete = host && host->capture_reads;
+    program->host_reads_complete = program->read_heads_complete;
+    program->host_read_mask = oem_host_read_mask(host);
+    OemHostRecorder recorder = {.program = program, .host = host};
+    CettaOpenEquationHost observed_host;
+    if (program->host_reads_complete) {
+        observed_host = oem_recording_host(&recorder);
+        host = &observed_host;
+    }
     program->spelling = symbol_intern_cstr(g_symbols, "_");
     uint32_t entry = 0u;
     bool ok = oem_relation_index(program, head, arity,
@@ -4412,6 +4716,7 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
         else
             ok = oem_compile_relation(program, petta, index, host, &reason);
     }
+    oem_host_reads_finish(&recorder);
     if (!ok) {
         if (reason_out)
             *reason_out = reason ? reason : "compile";
@@ -4466,6 +4771,22 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
         case OEM_S_TAIL: step->kind = OEM_S_BUILTIN_CALL; break;
         default: break;
         }
+    }
+    if (!space_program_token_is_current(program->token)) {
+        if (reason_out)
+            *reason_out = "program changed during compilation";
+        cetta_open_equation_program_release(program);
+        return NULL;
+    }
+    if (program->read_heads_complete && program->read_head_len) {
+        qsort(program->read_heads, program->read_head_len,
+              sizeof(*program->read_heads), oem_read_head_compare);
+        uint32_t unique = 1u;
+        for (uint32_t i = 1u; i < program->read_head_len; i++) {
+            if (program->read_heads[i] != program->read_heads[unique - 1u])
+                program->read_heads[unique++] = program->read_heads[i];
+        }
+        program->read_head_len = unique;
     }
     return program;
 }
@@ -5965,13 +6286,22 @@ static inline __attribute__((always_inline)) OemRun oem_publish(
 
 /* ---- running ------------------------------------------------------------- */
 
-/* The current version's index of `relation` of an earlier version. */
+/* A host can establish the same compiled reads after a disjoint append.
+ * The program stays immutable, and the host owns the validation bookmark. */
+static bool oem_program_current(CettaOpenEquationCursor *cursor,
+                                 const CettaOpenEquationProgram *program) {
+    return space_program_token_is_current(program->token) ||
+        (cursor->runtime.program_current &&
+         cursor->runtime.program_current(cursor->runtime.context,
+                                          program->space, program));
+}
+
 /* Whether code of `program` may enter its own relations: nothing it was
  * compiled against changed since it was entered. */
 static __attribute__((cold, noinline)) bool oem_version_refresh(
     CettaOpenEquationCursor *cursor,
     const CettaOpenEquationProgram *program, uint64_t mutation) {
-    bool current = space_program_token_is_current(program->token);
+    bool current = oem_program_current(cursor, program);
     if (current && cursor->authority_epoch != 0u) {
         current = false;
         for (uint32_t index = 0u; index < cursor->version_len; index++) {
@@ -6011,7 +6341,7 @@ static const CettaOpenEquationProgram *oem_enter_current(
     for (uint32_t index = 0u; index < cursor->version_len; index++) {
         const CettaOpenEquationProgram *version = cursor->versions[index];
         if (cursor->version_epochs[index] == cursor->authority_epoch &&
-            space_program_token_is_current(version->token) &&
+            oem_program_current(cursor, version) &&
             version->relations[0].head == head &&
             version->relations[0].arity == arity &&
             version->relations[0].body_is_data == body_is_data)
@@ -6029,7 +6359,7 @@ static const CettaOpenEquationProgram *oem_enter_current(
         program->relations[0].head != head ||
         program->relations[0].arity != arity ||
         program->relations[0].body_is_data != body_is_data ||
-        !space_program_token_is_current(program->token) ||
+        !oem_program_current(cursor, program) ||
         !oem_reserve((void **)&cursor->versions, &cursor->version_cap,
                      cursor->version_len + 1u, sizeof(*cursor->versions))) {
         cetta_open_equation_program_release(program);
@@ -8184,6 +8514,9 @@ static __attribute__((noinline)) OemRun oem_list_step(
         step->op == g_builtin_syms.cdr_atom) {
         if (list->kind == ATOM_EXPR && !oem_plain_list(list))
             return OEM_RUN_HOST;
+        if (step->op == g_builtin_syms.car_atom && list->kind == ATOM_EXPR &&
+            list->expr.len == 0u && cursor->runtime.raises_empty_car)
+            return OEM_RUN_HOST;
         result = list->kind != ATOM_EXPR || list->expr.len == 0u
             ? atom_unit(&cursor->region)
             : step->op == g_builtin_syms.car_atom
@@ -9041,6 +9374,64 @@ done:
     if (frames != inline_frames)
         free(frames);
     return result;
+}
+
+static bool oem_record_read_names(CettaOpenEquationProgram *program, Atom *root) {
+    if (!root)
+        return false;
+    Atom *inline_stack[32];
+    Atom **stack = inline_stack;
+    size_t len = 0u, capacity = 32u;
+    OemAtomMap visited;
+    oem_atom_map_init(&visited);
+    bool ok = true;
+    stack[len++] = root;
+    while (len && ok) {
+        Atom *atom = stack[--len];
+        if (atom->kind == ATOM_SYMBOL) {
+            ok = oem_reserve((void **)&program->read_heads,
+                             &program->read_head_cap, program->read_head_len + 1u,
+                             sizeof(*program->read_heads));
+            if (ok)
+                program->read_heads[program->read_head_len++] = atom->sym_id;
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR || oem_atom_map_find(&visited, atom))
+            continue;
+        if (!oem_atom_map_begin(&visited, atom) ||
+            !cetta_expr_len_mul_fits_size(atom->expr.len, sizeof(*stack)) ||
+            (size_t)atom->expr.len > SIZE_MAX - len) {
+            ok = false;
+            break;
+        }
+        size_t needed = len + (size_t)atom->expr.len;
+        if (needed > capacity) {
+            size_t grown_capacity = capacity;
+            while (grown_capacity < needed && grown_capacity <= SIZE_MAX / 2u)
+                grown_capacity *= 2u;
+            if (grown_capacity < needed ||
+                grown_capacity > SIZE_MAX / sizeof(*stack)) {
+                ok = false;
+                break;
+            }
+            Atom **grown = malloc(grown_capacity * sizeof(*grown));
+            if (!grown) {
+                ok = false;
+                break;
+            }
+            memcpy(grown, stack, len * sizeof(*stack));
+            if (stack != inline_stack)
+                free(stack);
+            stack = grown;
+            capacity = grown_capacity;
+        }
+        for (CettaExprIndex child = atom->expr.len; child-- > 0u;)
+            stack[len++] = atom->expr.elems[child];
+    }
+    if (stack != inline_stack)
+        free(stack);
+    oem_atom_map_free(&visited);
+    return ok;
 }
 
 /* Check each represented node once. List tags are accepted only as the

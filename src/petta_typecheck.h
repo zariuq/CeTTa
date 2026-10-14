@@ -34,6 +34,9 @@ typedef PettaAnalysisCallable PettaTypecheckCallable;
 #define PETTA_TYPECHECK_CALLABLE_UNKNOWN PETTA_ANALYSIS_CALLABLE_UNKNOWN
 
 typedef struct {
+    /* When present, declaration judgments read the admitted program catalog.
+     * Raw annotation atoms remain independently observable as space data. */
+    PettaProgram *declarations;
     void *context;
     PettaTypecheckCallable (*callable)(
         void *context, Atom *value, CettaExprLen arity);
@@ -161,6 +164,14 @@ bool petta_typecheck_program_mutation_under_authority(
     Space *target_space, Atom *proposed,
     PettaTypecheckMutation mutation,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+/* The row type of the SpaceOf schema of `target_space` that definitely
+ * refutes the data row `row`, copied into `arena`; NULL when no declared
+ * schema refutes it.  PeTTa's runtime row check raises
+ * literal_type_mismatch(Row, RowType) for such an addition. */
+Atom *petta_typecheck_refuted_row_type(
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space,
+    Atom *row, Arena *arena);
 bool petta_typecheck_program_mutation_selected(
     PettaProgram *program, Space *program_space, Registry *registry,
     Space *target_space, Atom *proposed,

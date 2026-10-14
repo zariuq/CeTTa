@@ -27,6 +27,7 @@
 #include "eval.h"
 #include "he_type_policy.h"
 #include "library.h"
+#include "native_handle.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -1311,6 +1312,9 @@ done:
 
 typedef struct {
     const char *lang_name;
+    /* `lang_name` without its `@version`, and that version's name. */
+    char lang_base[64];
+    const char *version_name;
     const char *profile_name;
     CettaSyntaxId syntax;
     const CettaLanguageSpec *lang;
@@ -1320,6 +1324,8 @@ typedef struct {
 
 static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->lang_name = lang_name;
+    endpoint->lang_base[0] = '\0';
+    endpoint->version_name = NULL;
     endpoint->profile_name = NULL;
     endpoint->syntax = CETTA_SYNTAX_AUTO;
     endpoint->lang = NULL;
@@ -1327,13 +1333,74 @@ static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->langdef_manifest_path[0] = '\0';
 }
 
+/* The one place a language's spelling is read: `language@version` names a
+ * language and one of its released versions (`petta@1.0.6`, `petta@1.1`). */
+static bool endpoint_split_version(CettaCliEndpoint *endpoint,
+                                   const char *role) {
+    endpoint->version_name = NULL;
+    const char *at = endpoint->lang_name
+        ? strchr(endpoint->lang_name, '@') : NULL;
+    if (!at)
+        return true;
+    size_t length = (size_t)(at - endpoint->lang_name);
+    if (length == 0u || length >= sizeof endpoint->lang_base || !at[1]) {
+        fprintf(stderr, "error: %s language '%s' is not language@version\n",
+                role, endpoint->lang_name);
+        return false;
+    }
+    memcpy(endpoint->lang_base, endpoint->lang_name, length);
+    endpoint->lang_base[length] = '\0';
+    endpoint->version_name = at + 1;
+    return true;
+}
+
+/* A named version selects its default profile when none is named, and
+ * admits only profiles of that version. */
+static bool endpoint_resolve_version(CettaCliEndpoint *endpoint,
+                                     const char *role) {
+    if (!endpoint->version_name)
+        return true;
+    const CettaLanguageVersion *version = cetta_language_version_from_name(
+        endpoint->lang->id, endpoint->version_name);
+    if (!version) {
+        fprintf(stderr, "error: unknown %s version '%s' of language '%s'\n",
+                role, endpoint->version_name, endpoint->lang->canonical);
+        cetta_language_print_versions(stderr, endpoint->lang->id);
+        return false;
+    }
+    if (!endpoint->profile && version->default_profile) {
+        endpoint->profile = cetta_profile_from_name_for_language(
+            endpoint->lang->id, version->default_profile);
+        if (!endpoint->profile) {
+            fprintf(stderr,
+                    "error: %s language %s@%s needs profile '%s', which this build lacks\n",
+                    role, endpoint->lang->canonical, version->name,
+                    version->default_profile);
+            return false;
+        }
+    }
+    if (cetta_language_version_of(endpoint->lang->id, endpoint->profile) !=
+        version) {
+        fprintf(stderr, "error: %s profile '%s' is not a profile of %s@%s\n",
+                role, endpoint->profile ? endpoint->profile->name : "default",
+                endpoint->lang->canonical, version->name);
+        return false;
+    }
+    return true;
+}
+
 static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
                              const char *exec_path) {
     char langdef_error[256] = {0};
 
-    endpoint->lang = cetta_language_lookup(endpoint->lang_name);
+    if (!endpoint_split_version(endpoint, role))
+        return false;
+    const char *lang_name = endpoint->version_name
+        ? endpoint->lang_base : endpoint->lang_name;
+    endpoint->lang = cetta_language_lookup(lang_name);
     if (!endpoint->lang) {
-        if (cetta_langdef_resolve_named_manifest_v1(
+        if (!endpoint->version_name &&
+            cetta_langdef_resolve_named_manifest_v1(
                 exec_path, endpoint->lang_name,
                 endpoint->langdef_manifest_path,
                 sizeof(endpoint->langdef_manifest_path),
@@ -1374,6 +1441,8 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
             return false;
         }
     }
+    if (!endpoint_resolve_version(endpoint, role))
+        return false;
     if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_PRIME)
         endpoint->profile = cetta_profile_prime_default();
     return true;
@@ -1724,7 +1793,9 @@ static void print_usage(FILE *out) {
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang prime <file.metta>\n", out);
+    fputs("       cetta --lang petta@1.0.6 <file.metta> # default PeTTa version\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+    fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
 #endif
@@ -2379,6 +2450,11 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         if (fclose(cleanup->output_spool) != 0) ok = false;
         cleanup->output_spool = NULL;
     }
+
+    /* Handles may retain computations over registry-owned spaces and
+     * document providers. Close them before either dependency is released. */
+    if (cleanup->libraries_initialized)
+        cetta_native_handle_cleanup_all(cleanup->libraries);
 
     free(cleanup->atoms);
     cleanup->atoms = NULL;
@@ -4440,7 +4516,7 @@ process_petta_document:
                 bool python_error = formal && formal->kind == ATOM_EXPR &&
                     formal->expr.len >= 3u &&
                     atom_is_symbol(formal->expr.elems[0], "python_error");
-                if (run_cli || python_error) {
+                if (run_cli || python_error || atom_is_symbol(formal, "car_atom_empty")) {
                     CettaErrorPresentation view;
                     cetta_error_present(exception, diagnostic_details, &view);
                     run_cli_query_fault(run_cli, &view);
@@ -4448,8 +4524,14 @@ process_petta_document:
                         view.classification, view.message,
                         view.truncated ? " [truncated]" : "");
                 } else {
-                    fputs("error: uncaught PeTTa error: ", stderr);
-                    write_results(stderr, results, lang->id, profile);
+                    char message[1024];
+                    if (exception && petta_semantics_error_message(
+                            &eval_arena, exception, message, sizeof message)) {
+                        fprintf(stderr, "PeTTa type error: %s\n", message);
+                    } else {
+                        fputs("error: uncaught PeTTa error: ", stderr);
+                        write_results(stderr, results, lang->id, profile);
+                    }
                 }
             } else if (!petta_answer_without_text) {
                 write_results(output_spool, results, lang->id, profile);

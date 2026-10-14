@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "petta_program.h"
 #include "term_universe.h"
 #include "var_index.h"
 #include "eval.h"
@@ -226,7 +227,8 @@ static void petta_source_plan_scope_enter(
 
 static const PettaPlanNode *petta_eval_translation_plan_current(
     CettaLibraryContext *library_context,
-    Space *space, Atom *expression);
+    Space *space, Atom *expression,
+    const Arena *const *source_arenas, size_t source_arena_count);
 static bool active_builtin_allowed(const char *syntax_name);
 /* Current evaluation root space and persistent fallback. */
 static __thread Space *g_eval_root_space = NULL;
@@ -2652,6 +2654,13 @@ static Atom *registry_lookup_atom(Atom *atom) {
     return registry_lookup_ref(g_registry, atom);
 }
 
+/* Version-specific evaluation laws are captured by each machine instance. */
+static bool petta_eval_version_1_1(void) {
+    const CettaLanguageVersion *version = cetta_language_version_of(
+        CETTA_LANGUAGE_PETTA, active_eval_session()->profile);
+    return version && version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1;
+}
+
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static bool petta_import_parse_failure(Atom *error) {
     return error && error->kind == ATOM_EXPR &&
@@ -2738,6 +2747,21 @@ static Atom *eval_petta_program_mutation_error(
                 ? checked.diagnostic : "program mutation analysis failed");
     }
     if (checked.verdict == PETTA_TYPECHECK_REFUTED) {
+        /* A data row that contradicts its typed space's schema meets PeTTa's
+         * runtime row check: literal_type_mismatch(Row, RowType), raised at
+         * the operation like any error. */
+        Atom *row_type = mutation == PETTA_TYPECHECK_MUTATION_ADD
+            ? petta_typecheck_refuted_row_type(
+                  program, g_eval_root_space ? g_eval_root_space : space,
+                  g_registry, space, atom, arena)
+            : NULL;
+        Atom *row_error = row_type
+            ? petta_semantics_type_mismatch_error(arena, atom, row_type)
+            : NULL;
+        if (row_error) {
+            petta_eval_raise(row_error);
+            return row_error;
+        }
         return petta_typecheck_error_atom(
             arena, source, 2,
             checked.diagnostic[0]
@@ -3704,7 +3728,7 @@ static Atom *count_size_collapse_for_native_call(Space *space, Arena *arena,
     Atom *source, int fuel, CettaCallOutcome *outcome);
 static Atom *materialize_runtime_token(Space *s, Arena *a, Atom *atom);
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel);
-static Space *petta_create_named_space_on_add(
+static Space *petta_ensure_named_space(
     Space *root, Arena *a, Atom *space_ref);
 static Atom *space_arg_error(Arena *a, Atom *call, const char *message);
 static Atom *space_backend_error_if_set(Arena *a, Atom *call);
@@ -6832,6 +6856,9 @@ static const char *whole_call_extension_builtin_name(SymbolId head_id) {
     if (head_id == g_builtin_syms.work_budget) return "work-budget";
     if (head_id == g_builtin_syms.work_cancel) return "work-cancel";
     if (head_id == g_builtin_syms.work_record) return "work-record";
+    if (head_id == g_builtin_syms.work_route) return "work-route";
+    if (head_id == g_builtin_syms.work_count) return "work-count";
+    if (head_id == g_builtin_syms.work_exists) return "work-exists";
     return NULL;
 }
 
@@ -7485,8 +7512,8 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
         return mork_handle_error;
 
     Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
-    if (!target && is_add)
-        target = petta_create_named_space_on_add(s, a, space_ref);
+    if (!target)
+        target = petta_ensure_named_space(s, a, space_ref);
     if (!target) {
         return space_arg_error(a, call,
                                is_add
@@ -14767,8 +14794,9 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
         /* A computed branch is translated by the worker at its actual entry
            event.  A literal branch instead arrives with the earlier plan
            transported from its enclosing source occurrence. */
+        const Arena *sources[] = {&branch->persistent_arena};
         execution_plan = petta_eval_translation_plan_current(
-            run->library_context, branch->space, branch->branch);
+            run->library_context, branch->space, branch->branch, sources, 1u);
         if (!execution_plan) {
             branch->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
             branch->execution_finished = true;
@@ -19349,7 +19377,18 @@ static ImportDestination resolve_import_destination(Arena *a, Atom *target, Atom
         return dest;
     }
     SymbolId bind_key;
-    if (!g_registry || !atom_is_registry_token(target)) {
+    if (g_registry && active_language_id() == CETTA_LANGUAGE_PETTA &&
+        target && target->kind == ATOM_SYMBOL) {
+        /* PeTTa imports into a named location, including one already in use.
+         * HE's fresh-name rule below belongs to its module loader. */
+        if (registry_lookup_id(g_registry, target->sym_id)) {
+            dest.space = resolve_registry_space_payload(g_registry, target);
+            if (!dest.space)
+                *error_out = atom_symbol(a, "import! destination is not a space");
+            return dest;
+        }
+        bind_key = target->sym_id;
+    } else if (!g_registry || !atom_is_registry_token(target)) {
         /* HE names a new space by any symbol: `m` binds `&m`, and this
            spelling may bind it again. */
         if (!g_registry || active_language_id() != CETTA_LANGUAGE_HE ||
@@ -19780,10 +19819,11 @@ static void space_algebra_add_meet(Space *ns, Space *sa, Space *sb) {
 /*
  * A PeTTa space name is an authored location.  The reference realizes plain
  * symbols as Prolog predicate namespaces; CeTTa realizes plain symbols and
- * &-prefixed names as native registered spaces.  The first add creates the
- * location, and later reads and writes use the selected space backend.
+ * &-prefixed names as native registered spaces.  A first mutation creates the
+ * location, including a removal from the initially empty space. Later reads
+ * and writes use the selected space backend.
  */
-static Space *petta_create_named_space_on_add(
+static Space *petta_ensure_named_space(
     Space *root, Arena *a, Atom *space_ref) {
     if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         !root || !a || !g_registry || !space_ref ||
@@ -23894,8 +23934,8 @@ bool eval_space_mutation_contract_kind(
     }
     Space *target = resolve_single_space_arg_write(
         root, arena, space_ref, fuel);
-    if (!target && is_add)
-        target = petta_create_named_space_on_add(root, arena, space_ref);
+    if (!target)
+        target = petta_ensure_named_space(root, arena, space_ref);
     if (!target) {
         const char *message = is_add
             ? "add-atom expects a space as the first argument"
@@ -28897,6 +28937,17 @@ static bool match_query_is_connective(Atom *pattern) {
             atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe));
 }
 
+/* A later binding may turn a query variable, or its head, into a query
+ * connective. It must be interpreted after that binding, not flattened as
+ * one atomic leg of an earlier match. */
+static bool match_query_can_flatten(Atom *pattern) {
+    if (!pattern || pattern->kind == ATOM_VAR ||
+        match_query_is_connective(pattern))
+        return false;
+    return pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        pattern->expr.elems[0]->kind != ATOM_VAR;
+}
+
 static bool match_query_push_seed_or_unit(BindingSet *out,
                                           const Bindings *seed) {
     if (seed)
@@ -29345,7 +29396,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     break;
                 Atom *inner_pattern =
                     resolve_registry_refs(a, residual_body->expr.elems[2]);
-                if (match_query_is_connective(inner_pattern))
+                if (!match_query_can_flatten(inner_pattern))
                     break;
                 same_space_patterns[nsame++] = inner_pattern;
                 residual_body = residual_body->expr.elems[3];
@@ -29425,7 +29476,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match)) {
             Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
             Atom *inner_pat = resolve_registry_refs(a, body->expr.elems[2]);
-            if (match_query_is_connective(inner_pat))
+            if (!match_query_can_flatten(inner_pat))
                 break;
             Space *inner_sp = g_registry
                 ? resolve_registry_space_payload(g_registry, inner_ref)
@@ -37841,6 +37892,7 @@ typedef struct {
 
 typedef struct {
     SpaceProgramToken token;
+    CettaOpenEquationRead reads;
     uint64_t admission_revision;
     CettaLibPrologReadToken foreign;
     uint32_t active_mask;
@@ -37925,19 +37977,25 @@ static bool petta_eval_machine_boundary_requirement_satisfied(
         return true;
     if (requirement == PETTA_TYPECHECK_BOUNDARY_NONVAR) {
         if (requirement_name)
-            *requirement_name = "nonvar";
+            *requirement_name =
+                "is unbound: a -[committed]-> function requires bound "
+                "arguments";
         return value && value->kind != ATOM_VAR;
     }
     if (requirement == PETTA_TYPECHECK_BOUNDARY_PROPER_LIST) {
         CettaExprLen ignored = 0u;
         if (requirement_name)
-            *requirement_name = "proper-list";
+            *requirement_name =
+                "is not a proper list: its -[committed]-> proof "
+                "requires a bound proper list";
         return petta_semantics_logical_list_length(value, &ignored);
     }
     if (requirement ==
         PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION) {
         if (requirement_name)
-            *requirement_name = "nonempty-expression";
+            *requirement_name =
+                "is the empty expression: car-atom expects a non-empty "
+                "expression";
         /* Only the empty expression refutes this requirement.  A machine
          * placeholder or a non-expression atom is not evidence of emptiness;
          * ordinary car-atom semantics may still handle it or defer it. */
@@ -38083,10 +38141,11 @@ petta_eval_machine_validate_ready_call(
             if (diagnostic && diagnostic_size > 0u) {
                 snprintf(
                     diagnostic, diagnostic_size,
-                    "PeTTa type error: argument %u of %s/%u violates %s boundary",
+                    "PeTTa type error: argument %u of %s/%u %s",
                     (unsigned)position + 1u,
                     symbol_bytes(g_symbols, head), (unsigned)arity,
-                    requirement_name ? requirement_name : "committed");
+                    requirement_name ? requirement_name
+                                     : "violates its committed boundary");
             }
             return PETTA_MACHINE_BOUNDARY_REFUTED;
         }
@@ -38889,8 +38948,10 @@ static bool petta_eval_machine_analysis_judge_value(
     Atom *value, Atom *requirement,
     PettaAnalysisCallableFn callable, void *callable_context,
     PettaAnalysisResult *result) {
-    (void)opaque;
+    PettaEvalMachineContext *context = opaque;
     PettaTypecheckHooks hooks = {
+        .declarations = context && context->library_context
+            ? context->library_context->petta_program : NULL,
         .context = callable_context,
         .callable = callable,
     };
@@ -38905,12 +38966,19 @@ static bool petta_eval_machine_analysis_has_runtime_classifier(
         space, requirement);
 }
 
-static Atom *petta_eval_machine_analysis_error_atom(
-    void *opaque, Arena *arena, Atom *source,
-    int exit_code, const char *diagnostic) {
+/* PeTTa's runtime type errors, as its guards throw them. */
+static Atom *petta_eval_machine_analysis_type_error_atom(
+    void *opaque, Arena *arena, Atom *value, Atom *requirement,
+    PettaAnalysisReason reason) {
     (void)opaque;
-    return petta_typecheck_error_atom(
-        arena, source, exit_code, diagnostic);
+    (void)reason;
+    return petta_semantics_type_mismatch_error(arena, value, requirement);
+}
+
+static Atom *petta_eval_machine_analysis_overload_error_atom(
+    void *opaque, Arena *arena, Atom *function) {
+    (void)opaque;
+    return petta_semantics_no_matching_overload_error(arena, function);
 }
 
 static const char *petta_eval_machine_analysis_reason_name(
@@ -38929,7 +38997,8 @@ static const PettaAnalysisService petta_typecheck_v2_analysis_service = {
     .judge_value = petta_eval_machine_analysis_judge_value,
     .type_has_runtime_classifier =
         petta_eval_machine_analysis_has_runtime_classifier,
-    .error_atom = petta_eval_machine_analysis_error_atom,
+    .type_error_atom = petta_eval_machine_analysis_type_error_atom,
+    .overload_error_atom = petta_eval_machine_analysis_overload_error_atom,
     .reason_name = petta_eval_machine_analysis_reason_name,
     .validate_ready_call = petta_eval_machine_validate_ready_call,
 };
@@ -40149,7 +40218,7 @@ static Space *petta_static_import_target(Arena *arena, Atom *reference) {
     const char *name = atom_name_cstr(reference);
     if (name && strcmp(name, "&self") == 0)
         return g_eval_root_space;
-    return petta_create_named_space_on_add(g_eval_root_space, arena,
+    return petta_ensure_named_space(g_eval_root_space, arena,
                                            reference);
 }
 
@@ -40763,7 +40832,8 @@ static bool petta_eval_machine_candidate_snapshot_lease(
 
 static const PettaPlanNode *petta_eval_translation_plan_current(
         CettaLibraryContext *library_context,
-        Space *space, Atom *expression) {
+        Space *space, Atom *expression,
+    const Arena *const *source_arenas, size_t source_arena_count) {
     if (!library_context || !library_context->petta_program ||
         !space || !expression) {
         return NULL;
@@ -40777,19 +40847,34 @@ static const PettaPlanNode *petta_eval_translation_plan_current(
             library_context->petta_program, space)) {
         return NULL;
     }
+    CettaLibPrologReadToken foreign =
+        cetta_lib_prolog_read_token(library_context->lib_prolog);
+    PettaTranslationEnvironment environment = {
+        .source_arenas = source_arenas,
+        .source_arena_count = source_arena_count,
+        .host_identity = library_context,
+        .foreign_instance = foreign.instance_id,
+        .foreign_revision = foreign.revision,
+        .admission_revision = cetta_library_petta_admission_revision(library_context),
+        .symbol_table_instance = symbol_table_instance_id(g_symbols),
+        .profile_identity = library_context->session.profile
+            ? (uint64_t)library_context->session.profile->id + 1u : 0u,
+        .features = library_context->active_mask,
+    };
     return petta_program_plan_transient(
-        library_context->petta_program, expression);
+        library_context->petta_program, expression, &environment);
 }
 
 static const PettaPlanNode *petta_eval_machine_translate_source(
-        void *context, Space *space, Atom *expression) {
+        void *context, Space *space, Atom *expression,
+    const Arena *const *source_arenas, size_t source_arena_count) {
     PettaEvalMachineContext *eval_context = context;
     if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
         !eval_context) {
         return NULL;
     }
     return petta_eval_translation_plan_current(
-        eval_context->library_context, space, expression);
+        eval_context->library_context, space, expression, source_arenas, source_arena_count);
 }
 
 static PettaSpecializeResult petta_eval_machine_prepare_call(
@@ -41126,7 +41211,10 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         (head->sym_id == g_builtin_syms.work_take ||
          head->sym_id == g_builtin_syms.work_budget ||
          head->sym_id == g_builtin_syms.work_cancel ||
-         head->sym_id == g_builtin_syms.work_record))
+         head->sym_id == g_builtin_syms.work_record ||
+         head->sym_id == g_builtin_syms.work_route ||
+         head->sym_id == g_builtin_syms.work_count ||
+         head->sym_id == g_builtin_syms.work_exists))
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     /*
      * Assertion is strict in its condition, but its failure reporting and
@@ -43332,6 +43420,8 @@ static PettaMachineHost petta_eval_machine_host(
         .bounded_collections =
             eval_current_language_id() == CETTA_LANGUAGE_PETTA,
         .dependent_type_domains = eval_dependent_telescope_enabled(),
+        .raises_empty_car = eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+            petta_eval_version_1_1(),
         .permit_transition = frontier_admitted
             ? petta_eval_machine_permit_controller_transition
             : petta_eval_machine_permit_transition,
@@ -46812,6 +46902,54 @@ static PettaOpenProgramCache *petta_eval_open_program_cache(
     return library->petta_open_programs;
 }
 
+static CettaOpenEquationHost petta_eval_open_compile_host(
+    PettaEvalMachineContext *eval_context, Space *space, bool body_is_data) {
+    CettaLanguageId language = eval_current_language_id();
+    bool count_fusion = petta_machine_let_count_fusion_enabled();
+    SymbolId reify_head = eval_reify_head();
+    CettaOpenEquationHost host = {
+        .context = eval_context,
+        .relation_admitted = petta_eval_open_relation_admitted,
+        .call_protocol_admitted = petta_eval_open_call_protocol_admitted,
+        .body_admitted = petta_eval_open_body_admitted,
+        .entry_body_is_data = body_is_data,
+        /* An HE equation's head is a pattern its call's values meet. */
+        .head_callable = language == CETTA_LANGUAGE_HE
+            ? NULL : petta_eval_open_head_callable,
+        .builtin_allowed = petta_eval_machine_builtin_allowed,
+        .builtin_equations = language == CETTA_LANGUAGE_PETTA &&
+            (active_profile_is_petta_extended() ||
+             !petta_builtin_self_space(g_registry, space))
+            ? petta_eval_open_builtin_equations : NULL,
+        .may_delay = petta_eval_open_may_delay,
+        .retains_variable_identity = eval_current_pattern_module_enabled()
+            ? petta_eval_open_retains_variable_identity : NULL,
+        .count_fusion = count_fusion,
+        .reify_head = reify_head,
+        .bounded_collections = language == CETTA_LANGUAGE_PETTA,
+        .evaluates_instances = language == CETTA_LANGUAGE_HE,
+    };
+    return host;
+}
+
+static bool petta_eval_open_foreign_reads_current(
+    PettaOpenProgramCacheEntry *entry, CettaLibraryContext *library,
+    CettaLibPrologReadToken now, PettaEvalMachineContext *eval_context,
+    Space *space, bool body_is_data) {
+    if (entry->foreign.instance_id != now.instance_id)
+        return false;
+    if (entry->foreign.revision == now.revision)
+        return true;
+    if (!entry->program)
+        return false;
+    CettaOpenEquationHost host = petta_eval_open_compile_host(
+        eval_context, space, body_is_data);
+    if (!cetta_open_equation_program_host_reads_current(entry->program, &host))
+        return false;
+    CettaLibPrologReadToken after = cetta_lib_prolog_read_token(library->lib_prolog);
+    return after.instance_id == now.instance_id && after.revision == now.revision;
+}
+
 static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     PettaEvalMachineContext *eval_context, Space *space, SymbolId head,
     uint32_t arity, bool body_is_data, bool create) {
@@ -46836,21 +46974,43 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
         if (entry->head != head || entry->arity != arity ||
             entry->body_is_data != body_is_data)
             continue;
-        if (space_program_token_eq(entry->token, token) &&
+        if (entry->token.space == space &&
+            entry->token.instance_id == token.instance_id &&
             entry->admission_revision == revision &&
             entry->foreign.instance_id == foreign.instance_id &&
-            entry->foreign.revision == foreign.revision &&
             entry->active_mask == library->active_mask &&
             entry->symbol_table_instance == symbols &&
             entry->language == language && entry->profile == profile &&
             entry->reify_head == reify_head &&
-            entry->count_fusion == count_fusion)
-            return entry;
+            entry->count_fusion == count_fusion) {
+            bool program_same = space_program_token_eq(entry->token, token);
+            bool foreign_same = entry->foreign.revision == foreign.revision;
+            /* Exact read stamps need no callbacks or certificate refresh.
+             * Revalidation below may query the host; it checks the final
+             * stamp again before publishing its updated read bookmark. */
+            if (program_same && foreign_same)
+                return entry;
+            if ((program_same ||
+                 (entry->program && cetta_open_equation_program_refresh(
+                     entry->program, space, &entry->reads))) &&
+                petta_eval_open_foreign_reads_current(entry, library, foreign,
+                    eval_context, space, body_is_data) &&
+                space_program_token_matches_live_space(token, space)) {
+                if (!program_same)
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_SPACE_REUSE);
+                if (!foreign_same)
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_HOST_REUSE);
+                entry->token = token;
+                entry->foreign = foreign;
+                return entry;
+            }
+        }
         if (entry->token.space == space)
             reusable = entry;
     }
     if (!create)
         return NULL;
+    bool capture_reads = reusable != NULL;
     if (reusable) {
         cetta_open_equation_program_release(reusable->program);
     } else {
@@ -46875,29 +47035,12 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
         }
         reusable = &cache->entries[cache->len++];
     }
+    /* Collect a certificate only after this relation has needed a rebuild.
+     * Stable programs retain their original preparation path and cost. */
+    CettaOpenEquationHost host = petta_eval_open_compile_host(
+        eval_context, space, body_is_data);
+    host.capture_reads = capture_reads;
     const char *reason = NULL;
-    CettaOpenEquationHost host = {
-        .context = eval_context,
-        .relation_admitted = petta_eval_open_relation_admitted,
-        .call_protocol_admitted = petta_eval_open_call_protocol_admitted,
-        .body_admitted = petta_eval_open_body_admitted,
-        .entry_body_is_data = body_is_data,
-        /* An HE equation's head is a pattern its call's values meet. */
-        .head_callable = language == CETTA_LANGUAGE_HE
-            ? NULL : petta_eval_open_head_callable,
-        .builtin_allowed = petta_eval_machine_builtin_allowed,
-        .builtin_equations = language == CETTA_LANGUAGE_PETTA &&
-            (active_profile_is_petta_extended() ||
-             !petta_builtin_self_space(g_registry, space))
-            ? petta_eval_open_builtin_equations : NULL,
-        .may_delay = petta_eval_open_may_delay,
-        .retains_variable_identity = eval_current_pattern_module_enabled()
-            ? petta_eval_open_retains_variable_identity : NULL,
-        .count_fusion = count_fusion,
-        .reify_head = reify_head,
-        .bounded_collections = language == CETTA_LANGUAGE_PETTA,
-        .evaluates_instances = language == CETTA_LANGUAGE_HE,
-    };
     *reusable = (PettaOpenProgramCacheEntry){
         .token = token,
         .admission_revision = revision,
@@ -46915,6 +47058,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
             eval_context->library_context->petta_program, space, head,
             arity, &host, &reason),
     };
+    reusable->reads = cetta_open_equation_program_read(reusable->program);
     /* CETTA_OPEN_EQUATIONS_DEBUG names each relation the open tier
      * declines to compile, with the first reason. */
     if (!reusable->program && reason) {
@@ -46948,6 +47092,29 @@ static CettaOpenEquationProgram *petta_eval_open_program_acquire(
     return program;
 }
 
+
+static bool petta_eval_open_program_current(
+    void *context, Space *space, const CettaOpenEquationProgram *program) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || !eval_context->library_context || !program)
+        return false;
+    pthread_mutex_lock(&g_petta_open_programs_lock);
+    PettaOpenProgramCache *cache =
+        eval_context->library_context->petta_open_programs;
+    bool current = false;
+    for (size_t index = 0u; cache && index < cache->len; index++) {
+        PettaOpenProgramCacheEntry *entry = &cache->entries[index];
+        if (entry->program == program) {
+            PettaOpenProgramCacheEntry *validated =
+                petta_eval_open_program_lookup_locked(eval_context, space,
+                    entry->head, entry->arity, entry->body_is_data, false);
+            current = validated && validated->program == program;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_petta_open_programs_lock);
+    return current;
+}
 
 static bool petta_eval_open_relation_ready(
     PettaEvalMachineContext *eval_context) {
@@ -47053,6 +47220,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .context = eval_context,
         .interrupt = eval_prepared_pure_interrupt_poll,
         .current = petta_eval_open_current_program,
+        .program_current = petta_eval_open_program_current,
         .relation_admitted = petta_eval_open_relation_admitted,
         .resolve_space = petta_eval_machine_resolve_space,
         .boolean_value = petta_eval_machine_boolean_value,
@@ -47072,6 +47240,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .withdraws_reducible_collections =
             he && !raises && g_he_shared_execution_rereads,
         .raises_he_errors = raises,
+        .raises_empty_car = eval_current_language_id() == CETTA_LANGUAGE_PETTA && petta_eval_version_1_1(),
         .completes_producers = raises,
         .stable = stable_arena,
     };
@@ -47538,7 +47707,7 @@ tail_call: ;
             return;
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target)
-            target = petta_create_named_space_on_add(s, a, space_ref);
+            target = petta_ensure_named_space(s, a, space_ref);
         if (!target ||
             !space_engine_supports_exec(target->match_backend.kind) ||
             space_is_ordered(target))
@@ -48280,6 +48449,8 @@ prime_need_strict_argument_ready:
             petta_form == PETTA_FORM_STREAM_INTERSECTION ||
             petta_form == PETTA_FORM_STREAM_SUBTRACTION ||
             petta_form == PETTA_FORM_LENGTH ||
+            petta_form == PETTA_FORM_AND_THEN ||
+            petta_form == PETTA_FORM_OR_ELSE ||
             petta_form == PETTA_FORM_SECOND_FROM_PAIR ||
             petta_form == PETTA_FORM_CALL ||
             petta_form == PETTA_FORM_EVAL ||
@@ -48890,13 +49061,17 @@ petta_lowered_to_shared_form:
     if ((head_id == g_builtin_syms.car_atom ||
          head_id == g_builtin_syms.cdr_atom) && nargs == 1 &&
         language_id == CETTA_LANGUAGE_PETTA) {
-        /* PeTTa's car-atom and cdr-atom are total: an open cell gives its
-         * head or tail, a flat list splits, and anything else gives (). */
+        /* PeTTa splits open cells and flat lists. Version 1.1 raises on an
+         * empty head; non-sequences and empty tails still produce (). */
         Atom *e = expr_arg(atom, 0);
         bool car = head_id == g_builtin_syms.car_atom;
         Atom *const *e_elems;
         CettaExprLen e_len;
         bool sequence = atom_sequence_view(e, &e_elems, &e_len);
+        if (car && sequence && e_len == 0u && petta_eval_version_1_1()) {
+            petta_eval_raise(petta_semantics_empty_head_error(a));
+            return;
+        }
         Atom *result;
         if (petta_semantics_is_cons_constraint(e))
             result = e->expr.elems[car ? 1 : 2];
@@ -51274,12 +51449,24 @@ petta_lowered_to_shared_form:
                     ? error
                     : petta_typecheck_error_atom(
                           a, atom, 2,
-                          "imported module could not be parsed");
+                          "Syntax error: imported module could not be parsed");
                 if (source_failure)
                     outcome_set_add(os, source_failure, &_empty);
             } else
 #endif
-            if (language_id != CETTA_LANGUAGE_PETTA ||
+            if (language_id == CETTA_LANGUAGE_PETTA &&
+                !has_library_reference &&
+                petta_eval_version_1_1() &&
+                cetta_library_import_error_is_missing_module(error)) {
+                /* PeTTa 1.1 resolves an import before loading it and
+                 * raises existence_error(source_sink, File) for a file
+                 * that does not exist; release 1.0.6 caught it as no
+                 * outcome. */
+                Atom *missing = petta_semantics_missing_import_error(
+                    a, expr_arg(atom, 1));
+                if (missing)
+                    petta_eval_raise(missing);
+            } else if (language_id != CETTA_LANGUAGE_PETTA ||
                 has_library_reference) {
                 outcome_set_add(os, atom_error(a, atom, error), &_empty);
             }

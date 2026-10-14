@@ -67,9 +67,19 @@ struct ArenaFinalizer {
     struct ArenaFinalizer *next;
 };
 
-struct ArenaRetainedOwner {
-    ArenaFinalizer finalizer;
-    struct ArenaRetainedOwner *next_owner;
+/* One hold per distinct (owner, release) pair.  The holds are finalizers on
+ * the arena's chain; `holds` lists them in acquisition order and `slots`
+ * indexes them, with the same discipline as the frame-identity set below: a
+ * reset pops holds newest first, so the popped hold is always the last record
+ * and survivors' probe chains never pass through it. */
+struct ArenaRetainedOwnerSet {
+    ArenaFinalizer **holds;   /* acquisition order                    */
+    uint32_t *slots;          /* index slot -> record position + 1    */
+    uint32_t *index;          /* record position -> its index slot    */
+    uint32_t len;
+    uint32_t cap;
+    uint32_t slot_cap;        /* power of two, or zero                */
+    uint32_t slot_mask;
 };
 
 typedef struct {
@@ -872,8 +882,12 @@ static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     while (a->finalizers != stop) {
         ArenaFinalizer *node = a->finalizers;
         a->finalizers = node->next;
-        if (a->retained_owners && node == &a->retained_owners->finalizer)
-            a->retained_owners = a->retained_owners->next_owner;
+        ArenaRetainedOwnerSet *owners = a->retained_owners;
+        if (owners && owners->len &&
+            node == owners->holds[owners->len - 1u]) {
+            owners->len--;
+            owners->slots[owners->index[owners->len]] = 0u;
+        }
         node->fn(node->ptr);
         free(node);
     }
@@ -888,24 +902,152 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     arena_account_external_bytes(a, sizeof(*node));
 }
 
+enum {
+    ARENA_RETAINED_OWNER_SET_MIN_CAPACITY = 8u,
+    ARENA_RETAINED_OWNER_SET_MAX_CAPACITY = UINT32_C(0x80000000),
+};
+
+static size_t arena_retained_owner_set_bytes(const ArenaRetainedOwnerSet *set) {
+    if (!set)
+        return 0u;
+    return sizeof(*set) + (size_t)set->cap * sizeof(*set->holds) +
+           (size_t)set->cap * sizeof(*set->index) +
+           (size_t)set->slot_cap * sizeof(*set->slots);
+}
+
+static uint32_t arena_retained_owner_slot(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *)) {
+    uint64_t mixed = (uint64_t)(uintptr_t)owner ^
+        ((uint64_t)(uintptr_t)release << 17u ^
+         (uint64_t)(uintptr_t)release >> 47u);
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    return (uint32_t)mixed & set->slot_mask;
+}
+
+static bool arena_retained_owner_set_index_reserve(ArenaRetainedOwnerSet *set,
+                                                   uint32_t needed) {
+    if (needed > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u)
+        return false;
+    uint32_t wanted = ARENA_RETAINED_OWNER_SET_MIN_CAPACITY;
+    while (wanted < needed * 2u) {
+        if (wanted > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u)
+            return false;
+        wanted *= 2u;
+    }
+    if (set->slot_cap >= wanted)
+        return true;
+    free(set->slots);
+    set->slots = cetta_malloc((size_t)wanted * sizeof(*set->slots));
+    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    set->slot_cap = wanted;
+    set->slot_mask = wanted - 1u;
+    /* Reinsert in acquisition order, which keeps every probe chain made of
+     * records older than the record it leads to. */
+    for (uint32_t i = 0u; i < set->len; i++) {
+        uint32_t slot = arena_retained_owner_slot(
+            set, set->holds[i]->ptr, set->holds[i]->fn);
+        while (set->slots[slot])
+            slot = (slot + 1u) & set->slot_mask;
+        set->slots[slot] = i + 1u;
+        set->index[i] = slot;
+    }
+    return true;
+}
+
+static bool arena_retained_owner_set_records_reserve(ArenaRetainedOwnerSet *set,
+                                                     uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t capacity = set->cap ? set->cap
+                                 : ARENA_RETAINED_OWNER_SET_MIN_CAPACITY;
+    while (capacity < needed) {
+        if (capacity > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2u;
+    }
+    if ((size_t)capacity > SIZE_MAX / sizeof(*set->holds))
+        return false;
+    set->holds = cetta_realloc(set->holds, (size_t)capacity * sizeof(*set->holds));
+    set->index = cetta_realloc(set->index, (size_t)capacity * sizeof(*set->index));
+    set->cap = capacity;
+    return true;
+}
+
+/* The newest hold is the likeliest repeat (one owner retained by a run of
+ * borrows), so it is checked before the index. */
+static bool arena_retained_owner_set_find(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *)) {
+    if (!set || set->len == 0u)
+        return false;
+    const ArenaFinalizer *newest = set->holds[set->len - 1u];
+    if (newest->ptr == owner && newest->fn == release)
+        return true;
+    if (!set->slot_cap)
+        return false;
+    uint32_t slot = arena_retained_owner_slot(set, owner, release);
+    for (uint32_t entry; (entry = set->slots[slot]) != 0u;
+         slot = (slot + 1u) & set->slot_mask) {
+        const ArenaFinalizer *held = set->holds[entry - 1u];
+        if (held->ptr == owner && held->fn == release)
+            return true;
+    }
+    return false;
+}
+
 bool arena_retain_owner(Arena *a, void *owner,
                         void (*retain)(void *), void (*release)(void *)) {
     if (!a || !owner || !retain || !release)
         return false;
-    for (ArenaRetainedOwner *held = a->retained_owners; held; held = held->next_owner) {
-        if (held->finalizer.ptr == owner && held->finalizer.fn == release)
-            return true;
+    if (!a->retained_owners) {
+        a->retained_owners = cetta_malloc(sizeof(*a->retained_owners));
+        *a->retained_owners = (ArenaRetainedOwnerSet){0};
+        arena_account_external_bytes(
+            a, arena_retained_owner_set_bytes(a->retained_owners));
     }
-    ArenaRetainedOwner *held = cetta_malloc(sizeof(*held));
+    ArenaRetainedOwnerSet *set = a->retained_owners;
+    if (arena_retained_owner_set_find(set, owner, release))
+        return true;
+    size_t before = arena_retained_owner_set_bytes(set);
+    if (set->len >= ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u ||
+        !arena_retained_owner_set_records_reserve(set, set->len + 1u) ||
+        !arena_retained_owner_set_index_reserve(set, set->len + 1u))
+        return false;
+    ArenaFinalizer *held = cetta_malloc(sizeof(*held));
     retain(owner);
-    *held = (ArenaRetainedOwner){
-        .finalizer = {.fn = release, .ptr = owner, .next = a->finalizers},
-        .next_owner = a->retained_owners,
-    };
-    a->finalizers = &held->finalizer;
-    a->retained_owners = held;
-    arena_account_external_bytes(a, sizeof(*held));
+    *held = (ArenaFinalizer){.fn = release, .ptr = owner, .next = a->finalizers};
+    a->finalizers = held;
+    uint32_t position = set->len;
+    uint32_t slot = arena_retained_owner_slot(set, owner, release);
+    while (set->slots[slot])
+        slot = (slot + 1u) & set->slot_mask;
+    set->slots[slot] = position + 1u;
+    set->holds[position] = held;
+    set->index[position] = slot;
+    set->len = position + 1u;
+    arena_account_external_bytes(
+        a, arena_retained_owner_set_bytes(set) - before + sizeof(*held));
     return true;
+}
+
+/* Called after every hold has been popped from the finalizer chain. */
+static void arena_release_retained_owner_set(Arena *a) {
+    ArenaRetainedOwnerSet *set = a->retained_owners;
+    if (!set)
+        return;
+    size_t bytes = arena_retained_owner_set_bytes(set);
+    free(set->holds);
+    free(set->slots);
+    free(set->index);
+    free(set);
+    a->retained_owners = NULL;
+    a->external_bytes = a->external_bytes >= bytes ? a->external_bytes - bytes
+                                                   : 0u;
 }
 
 /* ── Arena frame-identity ownership ─────────────────────────────────────── */
@@ -1185,6 +1327,7 @@ void arena_free(Arena *a) {
     arena_free_block_list(a->spare, a->recycle_blocks);
     arena_symbol_cache_free(a);
     arena_release_frame_identities(a);
+    arena_release_retained_owner_set(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -1255,6 +1398,20 @@ void arena_account_external_bytes(Arena *a, size_t size) {
     arena_runtime_note_usage(a);
 }
 
+static size_t arena_ownership_index_bytes(const Arena *a) {
+    return arena_retained_owner_set_bytes(a->retained_owners) +
+        arena_frame_identity_set_bytes(a->frame_identities);
+}
+
+/* A mark restores allocations with the region's lifetime.  Index capacity
+ * has the arena's lifetime instead and remains charged across rollback. */
+static size_t arena_mark_external_bytes(const Arena *a, ArenaMark mark) {
+    size_t transient = mark.external_bytes >= mark.ownership_index_bytes
+        ? mark.external_bytes - mark.ownership_index_bytes : 0u;
+    size_t indexes = arena_ownership_index_bytes(a);
+    return transient > SIZE_MAX - indexes ? SIZE_MAX : transient + indexes;
+}
+
 ArenaMark arena_mark(const Arena *a) {
     ArenaMark mark = {0};
     if (!a) {
@@ -1264,6 +1421,7 @@ ArenaMark arena_mark(const Arena *a) {
     mark.used = a->head ? a->head->used : 0;
     mark.live_bytes = a->live_bytes;
     mark.external_bytes = a->external_bytes;
+    mark.ownership_index_bytes = arena_ownership_index_bytes(a);
     mark.symbol_cache_bytes = a->symbol_cache_bytes;
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
@@ -1279,7 +1437,7 @@ bool arena_at_mark(const Arena *a, ArenaMark mark) {
     return a->head == mark.head &&
         (a->head ? a->head->used : 0u) == mark.used &&
         a->live_bytes == mark.live_bytes &&
-        a->external_bytes == mark.external_bytes &&
+        a->external_bytes == arena_mark_external_bytes(a, mark) &&
         a->finalizers == mark.finalizers &&
         (a->frame_identities ? a->frame_identities->len : 0u) ==
             mark.frame_identity_len;
@@ -1326,7 +1484,7 @@ void arena_reset(Arena *a, ArenaMark mark) {
         a->head->used = mark.used;
     }
     a->live_bytes = mark.live_bytes;
-    a->external_bytes = mark.external_bytes;
+    a->external_bytes = arena_mark_external_bytes(a, mark);
     arena_runtime_note_usage(a);
 }
 

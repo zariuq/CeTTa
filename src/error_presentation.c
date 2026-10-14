@@ -22,6 +22,7 @@ static void classify(CettaErrorPresentation *out, Atom *kind, bool python) {
     KIND("permission_error", CETTA_DIAGNOSTIC_IO, "The operation was refused")
     KIND("resource_error", CETTA_DIAGNOSTIC_RESOURCE, "A required resource was exhausted")
     KIND("instantiation_error", CETTA_DIAGNOSTIC_INVALID_INPUT, "An argument is insufficiently instantiated")
+    KIND("car_atom_empty", CETTA_DIAGNOSTIC_INVALID_INPUT, "car-atom expects a non-empty expression")
     if (python) {
         KIND("TypeError", CETTA_DIAGNOSTIC_TYPE, "Python received an incompatible argument")
         KIND("ValueError", CETTA_DIAGNOSTIC_INVALID_INPUT, "Python rejected an argument value")

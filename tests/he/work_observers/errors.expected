@@ -1,0 +1,8 @@
+[(42)]
+[(taken (42) complete)]
+[(counted 1 complete enumerate)]
+[((exists True more-possible) (taken (42) complete))]
+[((Error (+ 1 "S") (BadArgType 2 Number String)) (Error (+ 2 "S") (BadArgType 2 Number String)))]
+[(taken ((Error (+ 1 "S") (BadArgType 2 Number String)) (Error (+ 2 "S") (BadArgType 2 Number String))) complete)]
+[(counted 2 complete enumerate)]
+[((exists True more-possible) (taken ((Error (+ 1 "S") (BadArgType 2 Number String)) (Error (+ 2 "S") (BadArgType 2 Number String))) complete))]

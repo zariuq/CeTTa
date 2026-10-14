@@ -287,7 +287,7 @@ bool symbol_id_is_builtin(SymbolId id) {
            (id <= g_builtin_syms.native_handle ||
             id == g_builtin_syms.empty_form ||
             (id >= g_builtin_syms.work_new &&
-             id <= g_builtin_syms.work_record));
+             id <= g_builtin_syms.work_exists));
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {

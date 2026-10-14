@@ -367,6 +367,10 @@ typedef enum {
 } PettaResolvedCallClass;
 
 PettaProgram *petta_program_new(void);
+/* Select live callability at creation, before any source is registered.
+ * New calls then revalidate source translation when named relations change;
+ * an already retained invocation continues with its captured plan. */
+bool petta_program_enable_callability_refresh(PettaProgram *program);
 /* Declaration admission is fixed for this owned program and retained by its
  * revision views. The ordinary constructor admits only base equations. */
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
@@ -466,8 +470,23 @@ const PettaPlanNode *petta_program_plan_current(
  * being one VALUE place, and equal plans are one program object, so the
  * program keeps a plan per distinct code shape rather than per event.
  */
+/* Exact context read by runtime translation. The source arena only licenses
+ * weak pointer reuse until its next reset; it never grants ownership. */
+typedef struct {
+    const Arena *const *source_arenas;
+    size_t source_arena_count;
+    const void *host_identity;
+    uint64_t foreign_instance;
+    uint64_t foreign_revision;
+    uint64_t admission_revision;
+    uint64_t symbol_table_instance;
+    uint64_t profile_identity;
+    uint64_t features;
+} PettaTranslationEnvironment;
+
 const PettaPlanNode *petta_program_plan_transient(
-    PettaProgram *program, Atom *atom);
+    PettaProgram *program, Atom *atom,
+    const PettaTranslationEnvironment *environment);
 
 /*
  * A declaration block is the maximal run of non-executable top-level forms
@@ -662,6 +681,10 @@ void petta_program_inferred_signatures_rebase_under_authority(
  * without copying transitive annotation atoms into the caller's Space.
  * Returned types are fresh copies owned by `arena`; the caller owns only the
  * pointer array. */
+/* Alias, Newtype, Foreign and SpaceOf declarations compete for one
+ * source-ordered meaning. Ordinary value and arrow declarations do not. */
+bool petta_program_type_is_exclusive_kind(const Atom *type);
+
 uint32_t petta_program_declared_types(
     PettaProgram *program, Atom *subject,
     Arena *arena, Atom ***types_out);

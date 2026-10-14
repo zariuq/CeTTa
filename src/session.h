@@ -73,6 +73,32 @@ typedef enum {
         CETTA_PROFILE_MASK_PETTA_BASE_FORMS
 } CettaProfileMask;
 
+/* A language's released versions.  A profile implements one version of its
+ * language; PeTTa 1.0.6 is the untyped language of PeTTa release v1.0.6,
+ * and PeTTa 1.1 is the typed language PeTTa's main line adopted with its
+ * checker.  A version names the libraries its programs import first. */
+typedef enum {
+    CETTA_LANGUAGE_VERSION_NONE = 0,
+    CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
+    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2
+} CettaLanguageVersionId;
+
+typedef struct {
+    CettaLanguageVersionId id;
+    CettaLanguageId language_id;
+    const char *name;
+    /* The profile a program runs under when it names none; NULL: the
+     * language's own default. */
+    const char *default_profile;
+    /* The directory, inside the language's library directory, whose
+     * libraries are read before the language's own; NULL: none. */
+    const char *library_overlay;
+    const char *note;
+    CettaRelativeModulePolicy relative_imports;
+    /* A recursive request for an already loading file is a successful no-op. */
+    bool loading_import_is_noop;
+} CettaLanguageVersion;
+
 typedef struct {
     CettaProfileId id;
     CettaLanguageId language_id;
@@ -82,6 +108,7 @@ typedef struct {
     bool enable_cetta_extensions;
     bool enable_dependent_telescope;
     bool rust_he_compat_semantics;
+    CettaLanguageVersionId version;
 } CettaProfile;
 
 typedef enum {
@@ -255,6 +282,11 @@ bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
                                          const CettaProfile *profile);
 const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
                                                          const char *name);
+const CettaLanguageVersion *cetta_language_version_from_name(
+    CettaLanguageId language_id, const char *name);
+const CettaLanguageVersion *cetta_language_version_of(
+    CettaLanguageId language_id, const CettaProfile *profile);
+void cetta_language_print_versions(FILE *out, CettaLanguageId language_id);
 uint32_t cetta_profile_mask(const CettaProfile *profile);
 uint32_t cetta_language_builtin_mask(CettaLanguageId language_id,
                                      const CettaProfile *profile);
