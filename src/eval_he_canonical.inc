@@ -1692,7 +1692,7 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
         while (count < 16u && body->kind == ATOM_EXPR && body->expr.len == 4u &&
                 atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match)) {
             Atom *pattern = resolve_registry_refs(a, body->expr.elems[2]);
-            if (match_query_is_connective(pattern))
+            if (!match_query_can_flatten(pattern))
                 break;
             Space *space = g_registry ? resolve_registry_space_payload(g_registry,
                 resolve_registry_refs(a, body->expr.elems[1])) : NULL;

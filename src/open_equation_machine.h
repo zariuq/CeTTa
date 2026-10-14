@@ -110,6 +110,10 @@ typedef struct {
      * each match leg keeps its own source, which the host evaluates for a
      * row whose values could (`value_reducible`). */
     bool evaluates_instances;
+    /* Collect reusable read certificates when this host expects program or
+     * foreign-authority changes. Without them, whole-revision validation is
+     * still exact; a host can request certificates on the first rebuild. */
+    bool capture_reads;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
@@ -128,6 +132,30 @@ void cetta_open_equation_program_release(CettaOpenEquationProgram *program);
 /* The space revision the program was compiled from is still current. */
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program);
+/* A host-owned validation bookmark for this immutable program. The host
+ * serializes refreshes and retains the program and live Space while using it.
+ * Initialize from the program, then update only through refresh. */
+typedef struct {
+    const CettaOpenEquationProgram *program;
+    SpaceProgramToken program_token;
+    SpaceReadToken rows;
+    CettaCount row_count;
+} CettaOpenEquationRead;
+CettaOpenEquationRead cetta_open_equation_program_read(
+    const CettaOpenEquationProgram *program);
+/* Whole-program equality is sufficient. Otherwise admit only ordinary native
+ * appends whose equation/type subjects miss every name read by compilation.
+ * Missing head lookups are dependencies too. Prefix rewrites, wildcard
+ * subjects, subtype changes and opaque storage changes decline. On failure
+ * the bookmark is unchanged; no program, answer or source occurrence changes. */
+bool cetta_open_equation_program_refresh(
+    const CettaOpenEquationProgram *program, Space *space,
+    CettaOpenEquationRead *read);
+/* Revalidate the compiler's complete host-query observation. The caller
+ * separately validates Space reads, host identity/configuration and a stable
+ * authority revision around this read-only check. No code is recompiled. */
+bool cetta_open_equation_program_host_reads_current(
+    const CettaOpenEquationProgram *program, const CettaOpenEquationHost *host);
 /* The relations the program holds, in first-entry order: the entry relation
  * first, then every relation its equations call. */
 uint32_t cetta_open_equation_program_relation_count(
@@ -233,6 +261,11 @@ typedef struct {
     CettaOpenEquationProgram *(*current)(void *context, Space *space,
                                          SymbolId head, uint32_t arity,
                                          bool body_is_data);
+    /* Validate this exact immutable program under the current host authority
+     * and its captured Space dependencies. NULL uses whole-program revision
+     * equality. This neither changes entered calls nor restarts a cursor. */
+    bool (*program_current)(void *context, Space *space,
+                             const CettaOpenEquationProgram *program);
     /* Full calls that can enter an ordinary body without a typed protocol.
      * Dynamic applications consult this before using a checked-body entry. */
     bool (*relation_admitted)(void *context, Space *space, SymbolId head,
@@ -334,6 +367,8 @@ typedef struct {
      * which have no case and no superpose.  Once the cursor has changed a
      * space, a handoff is a fault: the host cannot run the call again. */
     bool raises_he_errors;
+    /* Empty-head access follows the version captured when the cursor opens. */
+    bool raises_empty_car;
     /* With `raises_he_errors`, a conjunction's rows complete before its
      * template runs: a leg with more than one row and legs after it goes to
      * the host, which completes the conjunction from that leg on. */

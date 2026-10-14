@@ -114,9 +114,15 @@ typedef struct {
         PettaAnalysisResult *result);
     bool (*type_has_runtime_classifier)(
         void *host_context, Space *space, Atom *requirement);
-    Atom *(*error_atom)(
-        void *host_context, Arena *arena, Atom *source,
-        int exit_code, const char *diagnostic);
+    /* The errors the language raises at run time: `value` does not satisfy
+     * `requirement`, or no declared overload of `function` applies to a
+     * call.  The machine raises them as any error, so catch delimits them
+     * and only an uncaught one ends the run. */
+    Atom *(*type_error_atom)(
+        void *host_context, Arena *arena, Atom *value, Atom *requirement,
+        PettaAnalysisReason reason);
+    Atom *(*overload_error_atom)(
+        void *host_context, Arena *arena, Atom *function);
     const char *(*reason_name)(
         void *host_context, PettaAnalysisReason reason);
     PettaMachineBoundaryResult (*validate_ready_call)(
@@ -293,6 +299,8 @@ typedef struct {
     /* Explicit dependent domains belong to the active language profile,
      * not to the shared declaration cache or residual-type analysis. */
     bool dependent_type_domains;
+    /* The 1.1 PeTTa law: car-atom of () raises; earlier versions return (). */
+    bool raises_empty_car;
     /* HE gives `if` equations only for True and False, so a condition that
      * is neither leaves the call itself, branches unevaluated, as its value.
      * PeTTa takes any other condition value as false. */
@@ -428,7 +436,8 @@ typedef struct {
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
     const PettaPlanNode *(*translate_source)(
-        void *context, Space *space, Atom *expression);
+        void *context, Space *space, Atom *expression,
+        const Arena *const *source_arenas, size_t source_arena_count);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
@@ -758,6 +767,11 @@ bool petta_machine_init(
 /* Its driver takes every answer of this machine before anything consumes
  * them, as a collection or a completed evaluation does. */
 void petta_machine_set_answers_collected_whole(PettaMachine *machine);
+/* Change capture admission only at a suspended work boundary. Existing
+ * producers still have to satisfy the provider capture contract. */
+void petta_machine_set_branch_capture(
+    PettaMachine *machine,
+    CettaBranchAdmission (*admit)(void *context, Space *space));
 bool petta_machine_init_with_plan(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,

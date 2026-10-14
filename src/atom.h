@@ -508,7 +508,7 @@ typedef struct ArenaBlock {
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
 
-typedef struct ArenaRetainedOwner ArenaRetainedOwner;
+typedef struct ArenaRetainedOwnerSet ArenaRetainedOwnerSet;
 typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
 
 typedef struct {
@@ -543,7 +543,11 @@ typedef struct {
      */
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
-    ArenaRetainedOwner *retained_owners;
+    /* Owners this arena holds a reference to, one per distinct (owner,
+     * release) pair, in acquisition order with a hash index.  Each hold
+     * is also a finalizer, so a reset releases exactly the holds
+     * acquired after its mark. */
+    ArenaRetainedOwnerSet *retained_owners;
     /* Frame-identity ownership for this arena's live allocation region.  The
      * set holds one reference for each distinct full generational identity
      * reachable from syntax allocated here, so allocating many variable
@@ -566,6 +570,9 @@ typedef struct {
     size_t live_bytes;
     size_t external_bytes;
     size_t symbol_cache_bytes;
+    /* Portion of external_bytes held by ownership indexes, whose capacity
+     * survives rollback even when the indexed holds are released. */
+    size_t ownership_index_bytes;
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;

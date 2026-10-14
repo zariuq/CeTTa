@@ -56,10 +56,10 @@
       (head (PBBoundaryJoin PBNonemptyExpression PBNonemptyExpression PBNonemptyExpression))
       (body))
     (rule petta-boundary-consumer-car-atom
-      (head (PBConsumerRequirement PBCarAtom PFirst PBNonemptyExpression))
+      (head (PBConsumerRequirement PBCarAtom PFirst PBNone))
       (body))
     (rule petta-boundary-consumer-cdr-atom
-      (head (PBConsumerRequirement PBCdrAtom PFirst PBNonemptyExpression))
+      (head (PBConsumerRequirement PBCdrAtom PFirst PBNone))
       (body))
     (rule petta-boundary-consumer-and-left
       (head (PBConsumerRequirement PBAnd PFirst PBNonvar))
@@ -183,8 +183,5 @@
       (body))
     (rule petta-boundary-open-none
       (head (PBBoundaryVisible PBOpen PBNone))
-      (body))
-    (rule petta-boundary-open-nonempty-expression
-      (head (PBBoundaryVisible PBOpen PBNonemptyExpression))
       (body))
   ))

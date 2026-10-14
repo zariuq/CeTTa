@@ -999,6 +999,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "bindings-frame-storage-bytes-peak",
     "open-equation-joint-rows-completed",
     "open-equation-joint-rows-declined",
+    "petta-translation-value-node",
+    "petta-translation-value-reuse",
+    "open-equation-program-compile",
+    "open-equation-program-append-row",
+    "open-equation-program-host-read",
+    "open-equation-program-host-reuse",
+    "open-equation-program-space-reuse",
 };
 
 static int64_t clamp_counter(uint64_t value) {

@@ -50,6 +50,9 @@
 (: work-budget (-> %Undefined% Number Expression))
 (: work-cancel (-> %Undefined% Expression))
 (: work-record (-> %Undefined% Expression))
+(: work-route (-> %Undefined% Atom Expression))
+(: work-count (-> %Undefined% Expression))
+(: work-exists (-> %Undefined% Expression))
 (: search-policy (-> Atom Atom))
 (: new-space (-> SpaceType))
 (: new-space (-> Atom SpaceType))
@@ -302,10 +305,17 @@
   (@return "Unit"))
 
 (@doc work-record
-  (@desc "The route a retained computation runs on, as data: (route-record (route R) (law L) (modes M) (observer O) (footprint F) (work W) (retained B) (owner H) (state S) (taken N)). The route is general for the general machine and completed for a computation evaluated whole; work counts machine transitions and retained the bytes its residual holds.")
+  (@desc "The route a retained computation runs on, as data: (route-record (route R) (strategy G) (law L) (modes M) (observer O) (footprint F) (work W) (retained B) (owner H) (state S) (taken N) (transfers T)). The route is general for the general machine and completed for a computation evaluated whole; work counts machine transitions and retained the bytes its residual holds.")
   (@params (
     (@param "Work handle")))
   (@return "Route record"))
+
+(@doc work-route
+  (@desc "Chooses depth-first, fifo, ratio or completed for unstarted work. Suspended depth-first work can transfer its remaining search to fifo or ratio when its captured state admits independent continuations. The delivered prefix stays delivered and repeated equal answers remain separate; the remaining answer order may change. A refused route leaves the computation intact. Use collapse to retain a refusal as data in HE.")
+  (@params (
+    (@param "Work handle")
+    (@param "Route symbol")))
+  (@return "Unit, or a route refusal"))
 
 (@doc search-policy
   (@desc "Search-policy literal constructor for explicit controlled-search calls. The current native CeTTa lane is recursive-dependent-proof, and it supports result-order control through (search-policy recursive-dependent-proof), (search-policy recursive-dependent-proof (order reverse)), (search-policy recursive-dependent-proof (order lex)), and (search-policy recursive-dependent-proof (order shortlex)). The lex mode orders results by canonical rendered-atom bytes. The shortlex mode orders results by canonical rendered-atom length first, then bytewise lexical order. ATP and solver lanes are named here for future explicit oracle work, but are not executed by the native evaluator yet.")
@@ -834,3 +844,14 @@
                   (chain (cons-atom $head-mapped $tail-mapped) $res
                     (return $res))))))
           (empty))))))
+
+
+(@doc work-count
+  (@desc "Consumes remaining answer occurrences until completion or the work budget, returning (counted N state law). N counts only occurrences consumed by this call. A paused call keeps the remaining computation. Qualified factor counts publish atomically after validating their read; mutation during a paused count reports failure. A count preserves duplicate answers and executes effects as normal evaluation does.")
+  (@params ((@param "Work handle")))
+  (@return "(counted N state law)"))
+
+(@doc work-exists
+  (@desc "Observes whether retained work has a next answer, keeping that actual answer for its next take or count. Returns (exists True state), (exists False complete), or (exists unknown state) when suspended or failed. Repeated observations do not repeat the witness's effects. A later take delivers the saved witness before continuing the producer.")
+  (@params ((@param "Work handle")))
+  (@return "(exists decision state)"))

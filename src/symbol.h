@@ -532,7 +532,10 @@ static inline SymbolSpelling symbol_spelling(
     X(work_take, "work-take") \
     X(work_budget, "work-budget") \
     X(work_cancel, "work-cancel") \
-    X(work_record, "work-record")
+    X(work_record, "work-record") \
+    X(work_route, "work-route") \
+    X(work_count, "work-count") \
+    X(work_exists, "work-exists")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

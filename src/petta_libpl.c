@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "petta_libpl.h"
+#include "petta_builtin_registry.h"
 
 #include "eval.h"
 #include "grounded.h"
@@ -765,6 +766,52 @@ static foreign_t petta_libpl_standard_swrite(
             strlen(rendered), rendered);
 }
 
+/* Publish the same schemes used by the checker as ordinary declarations.
+ * The existing import boundary controls visibility, and ordinary add-atom
+ * owns space mutation, type admission and program invalidation. */
+static foreign_t petta_libpl_standard_add_builtin_signatures(
+    term_t arguments, int supplied_arity, control_t control) {
+    (void)control;
+    Arena *arena = g_petta_libpl_active_arena;
+    if (!arguments || supplied_arity != 2 || !arena)
+        return false;
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *space = petta_libpl_from_term(
+        arena, arguments, &variables, &unknown, 0u);
+    petta_libpl_var_map_free(&variables);
+    petta_libpl_back_map_free(&unknown);
+    if (!space)
+        return false;
+    for (size_t index = 0u; index < petta_builtin_spec_count(); index++) {
+        const PettaBuiltinSpec *spec = petta_builtin_spec_at(index);
+        if (!spec->has_signature)
+            continue;
+        Atom *signature = petta_builtin_signature(arena, spec);
+        if (!signature)
+            return false;
+        Atom *declaration_parts[] = {
+            atom_symbol(arena, ":"), atom_symbol(arena, spec->name), signature,
+        };
+        Atom *declaration = atom_expr(arena, declaration_parts, 3u);
+        Atom *call_parts[] = {
+            atom_symbol(arena, "add-atom"), space, declaration,
+        };
+        Atom *call = atom_expr(arena, call_parts, 3u);
+        ResultSet results = {0};
+        bool evaluated = call && eval_petta_from_lib_prolog(arena, call, &results);
+        Atom *raised = !evaluated && results.len == 1u ? results.items[0] : NULL;
+        bool added = evaluated && results.len == 1u &&
+            atom_eq(results.items[0], petta_semantics_success_value(arena));
+        result_set_free(&results);
+        if (raised)
+            return petta_libpl_raise(raised);
+        if (!added)
+            return false;
+    }
+    return PL_unify_atom_chars(arguments + 1u, "true");
+}
+
 /*
  * The embedded engine does not load PeTTa's metta.pl.  Standard predicates
  * that are neither CeTTa-native nor supplied by SWI therefore live in this
@@ -774,6 +821,12 @@ static foreign_t petta_libpl_standard_swrite(
 static bool petta_libpl_install_standard_bridges(
     CettaLibPrologRuntime *runtime) {
     static const PettaLibplStandardBridge bridges[] = {
+        {
+            .name = "add_builtin_signatures",
+            .function_arity = 1u,
+            .implementation =
+                (pl_function_t)petta_libpl_standard_add_builtin_signatures,
+        },
         {
             .name = "==",
             .function_arity = 2u,

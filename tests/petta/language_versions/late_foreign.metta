@@ -1,0 +1,6 @@
+(: caller (-> Number %Undefined%))
+(= (caller $x) (succ $x))
+!(caller 41)
+!(import_prolog_function succ)
+!(succ 41)
+!(caller 41)

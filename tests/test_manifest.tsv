@@ -430,6 +430,7 @@ tests/test_map_filter_atom.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_atoms_bidir.metta	he	metta	extended	main	native	test	golden	-
+tests/test_match_bound_query.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_chain_cross_space_pathmap_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_match_chain_imported_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_chain_inner_space.metta	he	metta	extended	main	native	test	golden	-
@@ -695,5 +696,7 @@ tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	extende
 tests/test_with_space_snapshot_passthrough.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_work_control.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_observers.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_routes.metta	he	metta	extended	main	native	test	golden	-
 tests/test_xor.metta	he	metta	extended	main	native	test	golden	-
 tests/test_zero_arity_function_overload.metta	he	metta	extended	main	native	test	golden	-
