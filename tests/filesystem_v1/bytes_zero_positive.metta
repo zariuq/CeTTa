@@ -1,0 +1,6 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:open-read (system:arg 0))
+  (let $zero (fs:read-chunk $owner 0)
+    (let $first (fs:read-chunk $owner 1)
+      (let $closed (fs:close $owner) (BytesZero $zero $first)))))

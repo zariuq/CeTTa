@@ -89,6 +89,63 @@ typedef struct {
     void (*release)(void *);
 } NativeHandleIdentifier;
 
+/* Large byte values travel through many publication arenas. Retain their
+ * immutable storage instead of copying every byte at each boundary. Small
+ * strings remain inline arena allocations; neither form changes Atom's ABI. */
+typedef struct {
+    _Atomic(size_t) references;
+    size_t length;
+    char bytes[];
+} AtomStringStorage;
+
+typedef struct {
+    Atom atom;
+    AtomStringStorage *storage;
+} RetainedStringAtom;
+
+enum { ATOM_STRING_RETAINED_MIN_BYTES = 4096u };
+
+static bool arena_retained_owner_set_find(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *));
+
+static void atom_string_storage_retain(void *ptr) {
+    AtomStringStorage *storage = ptr;
+    size_t before = atomic_fetch_add_explicit(&storage->references, 1u,
+                                              memory_order_relaxed);
+    if (before == SIZE_MAX)
+        abort();
+}
+
+static void atom_string_storage_release(void *ptr) {
+    AtomStringStorage *storage = ptr;
+    if (atomic_fetch_sub_explicit(&storage->references, 1u,
+                                  memory_order_acq_rel) == 1u)
+        free(storage);
+}
+
+static Atom *atom_string_retain_storage(Arena *arena, const Atom *value,
+                                        AtomStringStorage *storage) {
+    bool held = arena_retained_owner_set_find(arena->retained_owners, storage,
+                                              atom_string_storage_release);
+    if (!arena_retain_owner(arena, storage, atom_string_storage_retain,
+                            atom_string_storage_release))
+        return NULL;
+    /* Count each reachable buffer once in this arena's allocation pressure,
+     * including a restored survivor. Sharing across arenas is conservative
+     * pressure accounting, not a claim of unique physical allocation. */
+    if (!held)
+        arena_account_external_bytes(arena, sizeof(*storage) + storage->length + 1u);
+    RetainedStringAtom *copy = arena_alloc(arena, sizeof(*copy));
+    copy->atom = *value;
+    copy->atom.arena_id = arena->identity;
+    copy->atom.name_key = NULL;
+    copy->atom.structural_facts |= ATOM_STRUCTURAL_STRING_STORAGE;
+    copy->atom.ground.sval = storage->bytes;
+    copy->storage = storage;
+    return &copy->atom;
+}
+
 static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
 static void cetta_bigint_free_owned(CettaBigInt *big);
 static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
@@ -139,6 +196,13 @@ typedef struct {
     const AtomDeepCopyRegion *region;
 } AtomDeepCopyMemo;
 
+typedef struct AtomDeepCopyInventory {
+    const void *kind;
+    void *value;
+    AtomDeepCopyInventoryRelease release;
+    struct AtomDeepCopyInventory *next;
+} AtomDeepCopyInventory;
+
 struct AtomDeepCopySession {
     Arena *dst;
     AtomDeepCopyMemo memo;
@@ -148,6 +212,7 @@ struct AtomDeepCopySession {
     void *map_context;
     bool failed;
     AtomDeepCopyRegion region;
+    AtomDeepCopyInventory *inventories;
 };
 
 bool atom_deep_copy_session_retain_frame(
@@ -510,8 +575,13 @@ static void provenance_register_arena(const Arena *arena) {
     pthread_mutex_unlock(&g_provenance_arena_mutex);
 }
 
+typedef struct {
+    const Arena *arena;
+    uint32_t older_identity;
+} ProvenanceOwners;
+
 static const Arena *provenance_transient_owner_of(const void *ptr,
-                                                  const Arena *allowed_owner) {
+                                                  ProvenanceOwners allowed_owner) {
     const Arena *owner = NULL;
     if (!ptr)
         return NULL;
@@ -519,7 +589,9 @@ static const Arena *provenance_transient_owner_of(const void *ptr,
     for (ProvenanceArenaNode *node = g_provenance_arenas; node;
          node = node->next) {
         const Arena *arena = node->arena;
-        if (arena == allowed_owner)
+        if (arena == allowed_owner.arena ||
+            (allowed_owner.older_identity != 0u &&
+             arena->identity == allowed_owner.older_identity))
             continue;
         if (arena_owns_ptr(arena, ptr)) {
             owner = arena;
@@ -546,7 +618,7 @@ static void provenance_fail(Atom *root, const char *site, const char *what,
 }
 
 static void provenance_check_ptr(Atom *root, const char *site,
-                                 const Arena *allowed_owner,
+                                 ProvenanceOwners allowed_owner,
                                  const char *what, const void *ptr) {
     const Arena *owner = provenance_transient_owner_of(ptr, allowed_owner);
     if (owner)
@@ -636,7 +708,7 @@ static void provenance_atom_stack_push(
 }
 
 static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
-                                  const Arena *allowed_owner,
+                                  ProvenanceOwners allowed_owner,
                                   uint32_t depth) {
     (void)depth;
     if (!atom)
@@ -767,16 +839,18 @@ void cetta_provenance_assert_not_transient(Atom *atom, const char *site) {
 
 void cetta_provenance_assert_not_transient_except(Atom *atom, const char *site,
                                                  const Arena *allowed_owner) {
-    provenance_check_atom(atom, atom, site, allowed_owner, 0);
+    provenance_check_atom(atom, atom, site,
+                          (ProvenanceOwners){.arena = allowed_owner}, 0);
 }
 
 void cetta_provenance_assert_state_cell_not_transient(const StateCell *cell,
                                                      const char *site) {
     if (!cell)
         return;
-    provenance_check_ptr(NULL, site, NULL, "StateCell", cell);
-    provenance_check_atom(cell->value, cell->value, site, NULL, 0);
-    provenance_check_atom(cell->content_type, cell->content_type, site, NULL, 0);
+    provenance_check_ptr(NULL, site, (ProvenanceOwners){0}, "StateCell", cell);
+    provenance_check_atom(cell->value, cell->value, site, (ProvenanceOwners){0}, 0);
+    provenance_check_atom(cell->content_type, cell->content_type, site,
+                          (ProvenanceOwners){0}, 0);
 }
 #else
 static void provenance_unregister_arena(const Arena *arena) {
@@ -787,6 +861,21 @@ static void provenance_register_arena(const Arena *arena) {
     (void)arena;
 }
 #endif
+
+/* Copy elision admits the destination's explicitly linked older generation.
+ * Publication diagnostics above still admit only their named arena: a
+ * borrowing licence must not become a persistent ownership certificate. */
+static inline void provenance_assert_settled(Atom *atom, const char *site,
+                                             const Arena *destination) {
+#if CETTA_PROVENANCE_ASSERT
+    provenance_check_atom(atom, atom, site,
+        (ProvenanceOwners){destination, destination->older_identity}, 0);
+#else
+    (void)atom;
+    (void)site;
+    (void)destination;
+#endif
+}
 
 enum {
     HASHCONS_SMALL_INT_MIN = -128,
@@ -1841,6 +1930,11 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
             break;
         }
         expected = atom_flags_for_grounded_kind(atom->ground.gkind);
+        /* Interning copies a string's bytes into independent global storage;
+         * its arena-retention representation is not an admissibility change. */
+        if (atom->ground.gkind == GV_STRING)
+            expected_structural_facts |= atom->structural_facts &
+                ATOM_STRUCTURAL_STRING_STORAGE;
         if (atom->ground.gkind == GV_FLOAT && isnan(atom->ground.fval))
             expected_structural_facts |= ATOM_STRUCTURAL_HAS_NAN;
         break;
@@ -2150,6 +2244,7 @@ static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
         memcpy(bytes, atom->ground.sval, len);
         bytes[len] = '\0';
         owned->ground.sval = bytes;
+        owned->structural_facts &= ~ATOM_STRUCTURAL_STRING_STORAGE;
     } else if (atom->kind == ATOM_GROUNDED &&
                atom->ground.gkind == GV_BIGINT) {
         owned->ground.bigint = cetta_bigint_clone_owned(atom->ground.bigint);
@@ -3404,7 +3499,8 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
-                                      ATOM_STRUCTURAL_FRONT_SLACK))
+                                      ATOM_STRUCTURAL_FRONT_SLACK |
+                                      ATOM_STRUCTURAL_STRING_STORAGE))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -4598,6 +4694,18 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
     temp.ground.sval = bytes ? bytes : "";
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    if (len >= ATOM_STRING_RETAINED_MIN_BYTES) {
+        if (len > SIZE_MAX - sizeof(AtomStringStorage) - 1u)
+            cetta_oom(SIZE_MAX);
+        AtomStringStorage *storage = cetta_malloc(sizeof(*storage) + len + 1u);
+        atomic_init(&storage->references, 1u);
+        storage->length = len;
+        memcpy(storage->bytes, bytes, len);
+        storage->bytes[len] = '\0';
+        Atom *value = atom_string_retain_storage(a, &temp, storage);
+        atom_string_storage_release(storage);
+        return value;
+    }
     Atom *at = arena_alloc(a, sizeof(Atom));
     at->kind = temp.kind;
     at->flags = temp.flags;
@@ -4620,6 +4728,16 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
 Atom *atom_string(Arena *a, const char *val) {
     return atom_string_n(a, val, val ? strlen(val) : 0u);
 }
+
+#ifdef CETTA_TEST_HOOKS
+size_t atom_string_storage_references_test(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_STRING ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_STRING_STORAGE))
+        return 0u;
+    return atomic_load_explicit(&((const RetainedStringAtom *)atom)->storage->references,
+                                memory_order_acquire);
+}
+#endif
 
 bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out) {
     if (!bytes_out ||
@@ -6563,6 +6681,12 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
                                       : atom_bool(dst, src->ground.bval);
             break;
         case GV_STRING:
+            if ((!share || !g_hashcons) && !dst->hashcons &&
+                (src->structural_facts & ATOM_STRUCTURAL_STRING_STORAGE)) {
+                out = atom_string_retain_storage(dst, src,
+                    ((const RetainedStringAtom *)src)->storage);
+                break;
+            }
             out = share && g_hashcons
                 ? hashcons_get(g_hashcons,
                                atom_string_n(dst, src->ground.sval,
@@ -6744,7 +6868,7 @@ static Atom *atom_deep_copy_impl(
                     atom_deep_copy_stack_free(stack, stack_cap);
                     return NULL;
                 }
-                cetta_provenance_assert_not_transient_except(
+                provenance_assert_settled(
                     child,
                     "atom_deep_copy_impl.destination-closed-child",
                     dst);
@@ -6866,7 +6990,7 @@ Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
     if (!dst || !src)
         return NULL;
     if (atom_settled_for_arena(dst, src)) {
-        cetta_provenance_assert_not_transient_except(
+        provenance_assert_settled(
             src, "atom_deep_copy_single.destination-closed", dst);
         return src;
     }
@@ -6886,6 +7010,7 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->map_context = NULL;
     session->failed = false;
     session->region = (AtomDeepCopyRegion){0};
+    session->inventories = NULL;
     atom_deep_copy_memo_init(&session->memo);
     return session;
 }
@@ -6962,7 +7087,7 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
     if (!session->map && atom_settled_for_arena(session->dst, src)) {
         if (!atom_deep_copy_memo_store(&session->memo, src, src))
             return NULL;
-        cetta_provenance_assert_not_transient_except(
+        provenance_assert_settled(
             src, "atom_deep_copy_session_copy.destination-closed",
             session->dst);
         return src;
@@ -6990,9 +7115,42 @@ bool atom_deep_copy_session_settled(
            atom_settled_for_arena(session->dst, atom);
 }
 
+void *atom_deep_copy_session_inventory(const AtomDeepCopySession *session,
+                                      const void *kind) {
+    for (AtomDeepCopyInventory *entry = session ? session->inventories : NULL;
+         entry; entry = entry->next)
+        if (entry->kind == kind) return entry->value;
+    return NULL;
+}
+
+bool atom_deep_copy_session_failed(const AtomDeepCopySession *session) {
+    return !session || session->failed;
+}
+
+bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
+    const void *kind, void *inventory, AtomDeepCopyInventoryRelease release) {
+    if (!session || !kind || !inventory || !release ||
+        atom_deep_copy_session_inventory(session, kind))
+        return false;
+    AtomDeepCopyInventory *entry = cetta_malloc(sizeof(*entry));
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+                           sizeof(*entry));
+    *entry = (AtomDeepCopyInventory){kind, inventory, release, session->inventories};
+    session->inventories = entry;
+    return true;
+}
+
 void atom_deep_copy_session_free(AtomDeepCopySession *session) {
     if (!session)
         return;
+    while (session->inventories) {
+        AtomDeepCopyInventory *entry = session->inventories;
+        session->inventories = entry->next;
+        entry->release(entry->value);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
+                               sizeof(*entry));
+        free(entry);
+    }
     atom_deep_copy_memo_free(&session->memo);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         sizeof(*session));

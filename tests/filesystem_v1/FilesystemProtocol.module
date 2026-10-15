@@ -1,0 +1,39 @@
+Module FilesystemProtocol {
+  Theory Payloads() {
+    Empty Exports { Payload; Fault; Reason; }
+  }
+  Theory Vocabulary(p: Payloads) {
+    p Terms {
+      FsData . Observation ::= "data(" Payload ")";
+      FsEnded . Observation ::= "end";
+      FsFault . Observation ::= "fault(" Fault ")";
+      FsInterrupted . Observation ::= "interrupted(" Reason ")";
+      FsPaused . Observation ::= "paused";
+      FsObserve . Scan ::= "observe(" Observation ")";
+      FsDelivered . Scan ::= "delivered(" Payload ")";
+      FsComplete . Scan ::= "complete";
+      FsFailed . Scan ::= "failed(" Fault ")";
+      FsUnfinished . Scan ::= "unfinished(" Reason ")";
+      FsPending . Scan ::= "pending";
+    }
+  }
+  Theory Protocol(p: Payloads) {
+    Vocabulary(p) Rewrites {
+      ObserveData: (FsObserve (FsData value)) ~> (FsDelivered value);
+      ObserveEnd: (FsObserve (FsEnded)) ~> (FsComplete);
+      ObserveFault: (FsObserve (FsFault fault)) ~> (FsFailed fault);
+      ObserveInterruption: (FsObserve (FsInterrupted reason)) ~> (FsUnfinished reason);
+      ObservePause: (FsObserve (FsPaused)) ~> (FsPending);
+    }
+  }
+  Theory Samples() {
+    Payloads() Terms {
+      EmptyBytes . Payload ::= "empty-bytes";
+      SampleBytes . Payload ::= "sample-bytes";
+      PermissionFault . Fault ::= "permission";
+      Cancelled . Reason ::= "cancelled";
+    }
+  }
+  Theory Example() { Protocol(Samples()) }
+  theory Example()
+}

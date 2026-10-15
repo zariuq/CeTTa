@@ -76,7 +76,35 @@ pass=0
 fail=0
 seen=0
 
-while IFS=$'\t' read -r path lang syntax profile build space_engine lane expect notes; do
+while IFS= read -r row || [ -n "$row" ]; do
+    if [ -z "$row" ] || [[ "$row" == \#* ]]; then
+        continue
+    fi
+    # Tab is IFS whitespace: read collapses adjacent tabs, losing an empty
+    # profile and silently shifting every subsequent selection field.
+    # Split the first eight separators literally; notes retain their bytes.
+    columns=()
+    remaining="$row"
+    for ((column = 0; column < 8; column++)); do
+        if [[ "$remaining" != *$'\t'* ]]; then
+            break
+        fi
+        columns+=("${remaining%%$'\t'*}")
+        remaining="${remaining#*$'\t'}"
+    done
+    if [ "${#columns[@]}" -ne 8 ]; then
+        echo "FAIL: malformed GC differential manifest row" >&2
+        fail=$((fail + 1))
+        continue
+    fi
+    path="${columns[0]}"
+    lang="${columns[1]}"
+    syntax="${columns[2]}"
+    profile="${columns[3]}"
+    build="${columns[4]}"
+    space_engine="${columns[5]}"
+    lane="${columns[6]}"
+    expect="${columns[7]}"
     if [ "$path" = "path" ]; then
         continue
     fi

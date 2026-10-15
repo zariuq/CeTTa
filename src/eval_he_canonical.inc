@@ -261,6 +261,19 @@ static void he_canonical_pop(void) {
     g_he_canonical_driver->free_frames = frame;
 }
 
+/* Retire only input roots whose consumer has finished. CALL phase one is a
+ * non-invocation relay: publication reads its answers, not its original call,
+ * type or prefix. A typed dispatch frontend can do the same after its sole
+ * delivery owns the complete invocation and its independent return target.
+ * Invocation/control frames with remaining publication work retain theirs. */
+static void he_canonical_retire_input_roots(HeCanonicalFrame *frame) {
+    frame->atom = NULL;
+    frame->type = NULL;
+    memset(frame->live, 0, sizeof(frame->live));
+    bindings_free(&frame->env);
+    bindings_init(&frame->env);
+}
+
 static void he_canonical_publish(HeCanonicalFrame *frame,
     OutcomeSet *source, bool invocation) {
     for (CettaCount i = 0u; i < source->len; i++) {
@@ -1005,6 +1018,21 @@ static void he_canonical_control_body(HeCanonicalFrame *frame,
     bindings_free(&merged);
 }
 
+typedef struct {
+    HeCanonicalFrame *frame;
+    CettaCount index;
+} HeCanonicalConsumedSource;
+
+/* A control's source frontier is closed before its bodies run. Once index
+ * advances, that occurrence is never inspected again. The selected body or
+ * published answer already owns what it needs; keep the publication frame's
+ * environment and original call intact, but retire the consumed source slot.
+ * A symbolic if retains its source until both alternatives are scheduled. */
+static void he_canonical_consumed_source_release(HeCanonicalConsumedSource *source) {
+    if (source->frame->index > source->index)
+        outcome_free_fields(&source->frame->child.items[source->index]);
+}
+
 static void he_canonical_resume_control(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     SymbolId head = atom_head_symbol_id(frame->atom);
@@ -1077,6 +1105,8 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         return;
     }
     Outcome *source = &frame->child.items[frame->index];
+    __attribute__((cleanup(he_canonical_consumed_source_release)))
+    HeCanonicalConsumedSource consumed = {frame, frame->index};
     Atom *value = outcome_atom_materialize(a, source);
     bool single = frame->child.len == 1u;
     if (head == g_builtin_syms.let && frame->phase == 1u) {
@@ -1568,6 +1598,21 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
             delivery->live[2] = frame->type;
             outcome_set_add_existing(&delivery->child, call);
             delivery->phase = 6u;
+            if (delivery->typed) {
+                /* All applicability, head and argument alternatives are
+                 * consumed. Only the delivery publishes this invocation. */
+                frame->phase = 8u;
+                outcome_set_free(&frame->work);
+                outcome_set_free(&frame->child);
+                outcome_set_free(&frame->paths);
+                if (frame->types) {
+                    eval_gc_root_frame_leave(&frame->type_root);
+                    free(frame->types);
+                    frame->types = NULL;
+                    frame->type_count = 0u;
+                }
+                he_canonical_retire_input_roots(frame);
+            }
         }
         return;
     }
@@ -1578,16 +1623,21 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
             return;
         }
         frame->typed = frame->child.len == 1u;
-        he_canonical_dispatch_call(frame, &frame->child.items[frame->index++]);
+        CettaCount consumed = frame->index++;
+        he_canonical_dispatch_call(frame, &frame->child.items[consumed]);
+        outcome_free_fields(&frame->child.items[consumed]);
         return;
     }
     if (frame->phase == 6u) {
         frame->phase = 7u;
         he_canonical_dispatch_call(frame, &frame->child.items[0]);
+        outcome_free_fields(&frame->child.items[0]);
         return;
     }
     if (frame->phase == 7u) {
         he_relay_finish(frame, &frame->paths, true, false);
+        he_canonical_pop();
+    } else if (frame->phase == 8u) {
         he_canonical_pop();
     }
 }
@@ -2091,8 +2141,10 @@ static void he_canonical_resume(HeCanonicalFrame *frame) {
             OutcomeSet *sink = he_relay_sink(frame, &frame->child);
             if (he_shared_execution_try(frame->space, frame->arena,
                     frame->atom, frame->type, frame->fuel, &frame->env,
-                    frame->preserve_bindings, sink))
+                    frame->preserve_bindings, sink)) {
+                he_canonical_retire_input_roots(frame);
                 break;
+            }
             metta_call_impl(frame->space, frame->arena, frame->atom,
                 frame->type, frame->fuel, frame->preserve_bindings,
                 &frame->env,
@@ -2100,6 +2152,7 @@ static void he_canonical_resume(HeCanonicalFrame *frame) {
                 -1,
 #endif
                 sink);
+            he_canonical_retire_input_roots(frame);
         }
         break;
     }

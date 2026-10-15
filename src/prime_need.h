@@ -43,6 +43,14 @@ typedef enum {
     PRIME_NEED_CACHE_STABLE_FAULT,
 } PrimeNeedCacheState;
 
+/* A completed demand may still require structural observation. A ready
+ * value protects returned syntax from execution; embedded Need references
+ * remain demands. EMPTY/EVALUATING cells have no completed value role. */
+typedef enum {
+    PRIME_NEED_VALUE_DEMAND_RESULT = 0,
+    PRIME_NEED_VALUE_READY,
+} PrimeNeedValueRole;
+
 typedef struct PrimeNeedFrame PrimeNeedFrame;
 typedef struct PrimeNeedArenaAudit PrimeNeedArenaAudit;
 #if CETTA_PRIME_NEED_HEAP_INDEX
@@ -71,6 +79,9 @@ typedef struct {
     PrimeNeedCacheState cache_state;
     Atom *origin;
     Atom *cached;
+    /* READY: the cached value is data.  Demand reads it; only an explicit
+     * evaluation runs it as code. */
+    PrimeNeedValueRole value_role;
     uint64_t authority_id;
     uint64_t evaluator_id;
     uint64_t storage_key;
@@ -219,10 +230,27 @@ bool prime_need_snapshot_allocate_persisted_closure(
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 #endif
+/* A cell born resolved to a ready value: the Need cell of sequencing
+ * (`return value`), allocated and demanded at once, so its origin and its
+ * cached value are the value itself. */
+bool prime_need_snapshot_allocate_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+bool prime_need_snapshot_allocate_ready_value_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#endif
 bool prime_need_snapshot_start_evaluation(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, PrimeNeedSnapshot *out);
 bool prime_need_snapshot_resolve_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
+/* The same owner-checked completion, for an already produced value whose
+ * callable-looking syntax must stay data during structural observation. */
+bool prime_need_snapshot_resolve_ready_value(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
 bool prime_need_snapshot_resolve_stable_fault(

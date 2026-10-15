@@ -45,6 +45,11 @@
      (case (__cetta_lib_system_cwd ())
        (($result (return $result))))))
 
+; The canonical directory of the top-level entry file, independent of imports.
+(= (system:entry-directory)
+   (function (case (__cetta_lib_system_entry_directory ())
+     (($result (return $result))))))
+
 (= (system:monotonic-ns)
    (function
      (case (__cetta_lib_system_monotonic_ns ())

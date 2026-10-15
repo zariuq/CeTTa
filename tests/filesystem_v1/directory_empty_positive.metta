@@ -1,0 +1,5 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:open-directory (system:arg 0))
+  (let $end (fs:next-entry $owner)
+    (let $closed (fs:close $owner) (DirectoryEmpty $end $closed))))

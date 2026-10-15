@@ -187,6 +187,10 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * It certifies carrier lifetime only: it grants neither a shallow-copy or
  * hash-cons licence nor permission to use a closed registry resource. */
 #define ATOM_STRUCTURAL_OWNER_CLOSED UINT32_C(0x00000400)
+/* A string leaf carries a retained immutable byte owner after its Atom.
+ * This is a representation fact of that leaf alone, never an inherited
+ * occurrence bit. String equality, hashing and printing still use bytes. */
+#define ATOM_STRUCTURAL_STRING_STORAGE UINT32_C(0x00000800)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -196,7 +200,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
-                       ATOM_STRUCTURAL_OWNER_CLOSED ==
+                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -204,7 +208,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
-                    ATOM_STRUCTURAL_OWNER_CLOSED),
+                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE),
                "structural fact bits overlap");
 
 /*
@@ -852,6 +856,9 @@ Atom *atom_bool(Arena *a, bool val);
  * a NUL-terminated C string. */
 #define CETTA_STRING_BYTES_MAX 0x7FFFFFFFu
 Atom *atom_string_n(Arena *a, const char *bytes, size_t len);
+#ifdef CETTA_TEST_HOOKS
+size_t atom_string_storage_references_test(const Atom *atom);
+#endif
 Atom *atom_string(Arena *a, const char *val);
 static inline size_t atom_string_len(const Atom *atom) {
     return atom->ground.slen;
@@ -1318,7 +1325,17 @@ Atom *atom_deep_copy_session_forwarded(
  * it is owned by the destination arena and closed for it. */
 bool atom_deep_copy_session_settled(
     const AtomDeepCopySession *session, const Atom *atom);
+bool atom_deep_copy_session_failed(const AtomDeepCopySession *session);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
+/* Companion graph owners share one relocation inventory per copy episode.
+ * Keys identify a caller's inventory kind, not content. Installed inventories
+ * own their entries and release them when the session ends, including failure.
+ * No inventory or source-pointer key survives into another episode. */
+typedef void (*AtomDeepCopyInventoryRelease)(void *inventory);
+void *atom_deep_copy_session_inventory(const AtomDeepCopySession *session,
+                                      const void *kind);
+bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
+    const void *kind, void *inventory, AtomDeepCopyInventoryRelease release);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.
    Safe only for arenas whose contents outlive the global hash-cons table. */
