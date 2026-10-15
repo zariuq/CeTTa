@@ -166,8 +166,21 @@ matching expected task projections throughout:
 The recursive tests share one CPU for pacing. Their comparable retention
 does not establish bounded memory for an indefinitely recursive agent loop.
 Those evaluator soaks precede the isolated native request-ID compatibility
-fix. The evaluator sources remain unchanged; the RPC change receives separate
-sustained-use and sanitizer checks before the final bundle is installed.
+fix. The evaluator sources remain unchanged. The final RPC change passes
+another 20-minute sustained-use comparison with real named-space services:
+
+  variant                 successful turns       peak client RSS
+  stable PeTTa            5,964                  32.36 MiB
+  merged PeTTa            5,962                  31.78 MiB
+  merged Prime            5,951                  38.82 MiB
+
+Each run includes a 200 ms timer between calls; these counts are a paced
+robustness comparison, not maximum RPC throughput. The final bundle also
+passes fresh 414-turn and 92-projection replay comparisons, seven semantic
+memory controls and three hierarchy checks. Both language profiles pass the
+mailbox crash/replay driver under ASan/UBSan. The final TSan build passes the
+205 parallel and 143 resource checks without a race warning. Distinct request
+IDs are checked within one evaluator decision as well as in fresh processes.
 The 10,000-step prepared example passes but still retains substantial memory;
 this does not establish optimal prepared-machine complexity.
 
@@ -176,9 +189,27 @@ concurrent initializers atomically seed defaults and preserve custom files
 (godelclaw trial commit 045f84f). Terminal fixture stability is c6161aa.
 No runtime admission or model budget is added.
 
-The first agent is undergoing its live observation on the release bundle.
-The second stays on the stable engine until that observation completes.
-Live results and publication status follow after qualification finishes.
+Live deployment (2026-10-15)
+----------------------------
+The first agent ran the combined evaluator for a full hour before the second
+agent moved. Both cognitive processes now run the final bundle, whose source
+is 23cd130c, with the ordinary PeTTa language profile and no SWI-Prolog link.
+The later integration commits change only qualification tests and notes.
+The native request-ID repair is 3316d65e; evaluator changes end at b114ba98.
+
+Both post-switch boot probes and native Telegram getMe checks pass. The
+agents report their task/context restored. A final sibling exchange succeeds
+with both on the new bundle; the operator verifies physical message records
+and their acknowledgements, rather than relying solely on model reports.
+Observed logs contain no runtime crashes, withheld commands or mailbox errors.
+The previous engine bundle remains available for rollback. Independent
+transport and storage services retain their existing compatible builds.
+
+The release line is cetta-ours; CeTTa main is left for separate reconciliation.
+The framework's engine pin selects 23cd130c. This integration makes Prime
+features available to explicit Prime programs; it does not automatically
+select an ECAN policy or change the model's ordering of tool calls. ECAN
+remains in its own repository.
 
 Reproduction entry points
 -------------------------
