@@ -2990,6 +2990,63 @@ static Atom *petta_rewrite_specialized_body(
             selectors, depth + 1u);
     }
 
+    /* A let* binding list and a case's branch list are data holding code:
+     * each binding's value and each branch's body is an occurrence, each
+     * pattern is not.  The walk below reads an expression's first element
+     * as its head, which would leave the first binding's value and the first
+     * branch's body unrouted. */
+    CettaExprIndex pair_list = 0u;
+    if (head == g_builtin_syms.let_star && atom->expr.len == 3u)
+        pair_list = 1u;
+    else if (head == g_builtin_syms.case_text && atom->expr.len == 3u)
+        pair_list = 2u;
+    Atom *pairs = pair_list ? atom->expr.elems[pair_list] : NULL;
+    if (pairs && pairs->kind == ATOM_EXPR &&
+        cetta_expr_len_mul_fits_size(pairs->expr.len, sizeof(Atom *))) {
+        bool all_pairs = true;
+        for (CettaExprIndex index = 0u;
+             all_pairs && index < pairs->expr.len; index++) {
+            Atom *pair = pairs->expr.elems[index];
+            all_pairs = pair->kind == ATOM_EXPR && pair->expr.len == 2u;
+        }
+        if (all_pairs) {
+            Atom **routed = arena_alloc(
+                &context->scratch,
+                sizeof(*routed) * (size_t)pairs->expr.len);
+            if (!routed && pairs->expr.len > 0u) {
+                context->capacity = true;
+                return NULL;
+            }
+            for (CettaExprIndex index = 0u; index < pairs->expr.len;
+                 index++) {
+                Atom *pair = pairs->expr.elems[index];
+                Atom *value = petta_rewrite_specialized_body(
+                    context, pair->expr.elems[1], source, specialized,
+                    selectors, depth + 1u);
+                routed[index] = value
+                    ? atom_expr2(&context->scratch, pair->expr.elems[0],
+                                 value)
+                    : NULL;
+                if (!routed[index])
+                    return NULL;
+            }
+            /* The let*'s body, or the case's key. */
+            CettaExprIndex code_index = pair_list == 1u ? 2u : 1u;
+            Atom *code = petta_rewrite_specialized_body(
+                context, atom->expr.elems[code_index], source, specialized,
+                selectors, depth + 1u);
+            Atom *routed_pairs = atom_expr(
+                &context->scratch, routed, pairs->expr.len);
+            if (!code || !routed_pairs)
+                return NULL;
+            return pair_list == 1u
+                ? atom_expr3(&context->scratch, atom->expr.elems[0],
+                             routed_pairs, code)
+                : atom_expr3(&context->scratch, atom->expr.elems[0],
+                             code, routed_pairs);
+        }
+    }
+
     if (!cetta_expr_len_mul_fits_size(
             atom->expr.len, sizeof(Atom *))) {
         context->capacity = true;

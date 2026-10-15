@@ -1064,6 +1064,13 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* A read-only expression header over borrowed coordinates. The header and
+ * vector are valid only for the consuming call; neither may be retained or
+ * returned as an owned result. Structural summaries grant no ownership. */
+typedef struct { Atom root; } AtomExprBorrowedView;
+bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
+                                  Atom **elems, CettaExprLen len);
+
 /* The part of an expression's summary a fixed head gives it, folded once:
  * atom_expr_headed then builds, from children headed by that head, exactly
  * the expression atom_expr builds. */

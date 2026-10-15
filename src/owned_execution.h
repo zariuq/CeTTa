@@ -43,6 +43,9 @@ static inline CettaOwnedFrameLink *cetta_owned_frame_pop(
 typedef struct {
     CettaCallOutcome outcome;
     const Bindings *environment;
+    /* This producer's retained stream has no return after this occurrence.
+     * It does not certify a suspended payload or confer force authority. */
+    bool final;
 } CettaOwnedReturn;
 
 typedef enum {
@@ -57,6 +60,10 @@ typedef CettaOwnedExecutionStep (*CettaOwnedExecutionNext)(
     void *computation, CettaOwnedReturn *returned,
     CettaEvalCompletion *completion);
 typedef void (*CettaOwnedExecutionRelease)(void *computation);
+/* A read-only check of a final certificate after the consumer accepts.
+ * It cannot step the producer. False preserves ordinary continuation, so a
+ * changed source is reported without replaying the accepted occurrence. */
+typedef bool (*CettaOwnedExecutionFinalIsCurrent)(void *computation);
 /* False retains the pending return and complete computation at this boundary.
  * The consumer must commit its state only when accepting the return. */
 typedef bool (*CettaOwnedReturnConsumer)(
@@ -66,6 +73,8 @@ typedef struct {
     void *computation;
     CettaOwnedExecutionNext next;
     CettaOwnedExecutionRelease release;
+    /* NULL is for certificates independent of mutable external authority. */
+    CettaOwnedExecutionFinalIsCurrent final_is_current;
     CettaOwnedReturn pending;
     /* Completion is authoritative at a terminal boundary. PAUSED never
      * certifies exhaustion, even if no incomplete reason has been recorded. */

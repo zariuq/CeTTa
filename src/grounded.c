@@ -3601,11 +3601,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             ? petta_semantics_sequence_view(argument, &elems, &len)
             : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
-         * tail, and anything but a non-empty list gives (). */
+         * tail, and anything but a non-empty list gives ().  PeTTa's typed
+         * line raises on car-atom of the empty sequence. */
         if (grounded_current_language_is_petta()) {
             if (petta_semantics_is_cons_constraint(argument))
                 return argument->expr.elems[
                     head_id == g_builtin_syms.car_atom ? 1u : 2u];
+            CettaSequenceProjectionView view = cetta_sequence_projection_view(
+                cetta_sequence_projection_call(head_id, nargs,
+                    eval_current_petta_typed_line &&
+                            eval_current_petta_typed_line()
+                        ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
+                        : CETTA_SEQUENCE_PETTA_VALUE),
+                argument, sequence, elems, len);
+            if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
+                g_grounded_raised = true;
+                return petta_semantics_empty_head_error(a);
+            }
             if (!sequence || len == 0u)
                 return atom_unit(a);
         }

@@ -56,40 +56,56 @@ typedef struct {
 } PullAllocation;
 void *__real_malloc(size_t size);
 void *__real_realloc(void *pointer, size_t size);
+void *__real_calloc(size_t count, size_t width);
+/* Teardown refuses, and counts, every allocation. */
 void *__wrap_malloc(size_t size) {
     if (forbid_allocations) {
         teardown_allocation_attempts++;
         return NULL;
     }
-    if (fault_armed && fault_kind == 6u && size == 16u * sizeof(PullAllocation) &&
-        ++fault_calls == fault_at) {
-        fault_observed = true;
-        return NULL;
-    }
-    void *result = __real_malloc(size);
-    if (fault_armed && fault_kind == 7u && size == 16u * sizeof(PullAllocation))
-        pull_allocation = result;
-    return result;
+    return __real_malloc(size);
 }
 void *__wrap_realloc(void *pointer, size_t size) {
     if (forbid_allocations) {
         teardown_allocation_attempts++;
         return NULL;
     }
+    return __real_realloc(pointer, size);
+}
+void *__wrap_calloc(size_t count, size_t width) {
+    if (forbid_allocations) {
+        teardown_allocation_attempts++;
+        return NULL;
+    }
+    return __real_calloc(count, width);
+}
+
+/* Faults go to the requests the producer machinery recovers from, told apart
+ * by their sizes; no other allocation reaches these. */
+void *__real_cetta_fallible_malloc(size_t size);
+void *__real_cetta_fallible_realloc(void *pointer, size_t size);
+void *__real_cetta_fallible_calloc(size_t count, size_t width);
+void *__wrap_cetta_fallible_malloc(size_t size) {
+    if (fault_armed && fault_kind == 6u && size == 16u * sizeof(PullAllocation) &&
+        ++fault_calls == fault_at) {
+        fault_observed = true;
+        return NULL;
+    }
+    void *result = __real_cetta_fallible_malloc(size);
+    if (fault_armed && fault_kind == 7u && size == 16u * sizeof(PullAllocation))
+        pull_allocation = result;
+    return result;
+}
+void *__wrap_cetta_fallible_realloc(void *pointer, size_t size) {
     if (fault_armed && fault_kind == 7u && pull_allocation &&
         pointer == pull_allocation && size == 32u * sizeof(PullAllocation) &&
         ++fault_calls == fault_at) {
         fault_observed = true;
         return NULL;
     }
-    return __real_realloc(pointer, size);
+    return __real_cetta_fallible_realloc(pointer, size);
 }
-void *__real_calloc(size_t count, size_t width);
-void *__wrap_calloc(size_t count, size_t width) {
-    if (forbid_allocations) {
-        teardown_allocation_attempts++;
-        return NULL;
-    }
+void *__wrap_cetta_fallible_calloc(size_t count, size_t width) {
     bool controller = count == 1u && width == 2u * sizeof(void *) + 2u * sizeof(size_t);
     bool frames = count >= 16u && width == sizeof(RoundAllocation);
     bool schedule = count == 1u && width == sizeof(ScheduleAllocation);
@@ -102,7 +118,7 @@ void *__wrap_calloc(size_t count, size_t width) {
         fault_observed = true;
         return NULL;
     }
-    return __real_calloc(count, width);
+    return __real_cetta_fallible_calloc(count, width);
 }
 
 typedef struct {

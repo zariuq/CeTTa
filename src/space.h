@@ -940,6 +940,14 @@ bool space_remove_occurrence_mask_stable(
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
+/* Native candidate selection through borrowed expression coordinates. Reads
+ * finish before return; only candidate coordinates escape. False leaves the
+ * caller on its ordinary query route. Order and duplicate row occurrences
+ * remain those of space_match_candidates64. */
+bool space_match_candidates_expression_coordinates64(
+    Space *s, Atom **coordinates, CettaExprLen length,
+    CettaIndex **out, CettaIndex *count);
+
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
 /* Native flat-match aggregations; false leaves the caller on ordinary search.

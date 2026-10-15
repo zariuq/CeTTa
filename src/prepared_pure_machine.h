@@ -381,6 +381,12 @@ void cetta_prepared_pure_answer_cursor_own_execution(
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 
+/* Read the retained equation frontier without interpreting or polling it.
+ * Untried equations, no-rule observations, handoff and stale source authority
+ * refuse completion. A withdrawn answer restores an unfinished equation. */
+bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
+
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer
  * needs a treatment the producer does not own. */

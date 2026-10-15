@@ -2701,11 +2701,28 @@ static Atom *registry_lookup_atom(Atom *atom) {
     return registry_lookup_ref(g_registry, atom);
 }
 
-/* Version-specific evaluation laws are captured by each machine instance. */
-static bool petta_eval_version_1_1(void) {
-    const CettaLanguageVersion *version = cetta_language_version_of(
-        CETTA_LANGUAGE_PETTA, active_eval_session()->profile);
-    return version && version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1;
+/* Version-specific evaluation laws are captured by each machine instance:
+ * those of PeTTa's typed line hold in 1.1 and 1.1.c. */
+static bool petta_eval_typed_line(void) {
+    return cetta_language_version_petta_typed_line(cetta_language_version_of(
+        CETTA_LANGUAGE_PETTA, active_eval_session()->profile));
+}
+
+bool eval_current_petta_typed_line(void) {
+    return petta_eval_typed_line();
+}
+
+/* petta@1.1.c runs declarations as call contracts. */
+static bool petta_eval_contracts(void) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        cetta_profile_petta_contracts(active_eval_session()->profile);
+}
+
+/* Under call contracts no run-time dispatch recovers a contract's error:
+ * a failed check raises the same error whatever route reached the call. */
+static bool petta_eval_contract_raise(Atom *raised) {
+    return raised && petta_eval_contracts() &&
+        petta_semantics_contract_error(raised);
 }
 
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -18403,13 +18420,17 @@ typedef struct {
     /* PeTTa's foldall: the step's answers in order become the state until
      * one is an error, and an error from the generator ends the fold. */
     bool petta_foldall;
+    /* A contract's error the step raised under call contracts: no handler
+     * of the fold's takes it, so it ends the fold and propagates. */
+    Atom *raised;
 } ReduceStreamCtx;
 
 /* One PeTTa foldall step: SWI calls it through reduce, whose catch turns a
  * raise into failure, inside foldall/4's failure-driven loop.  Each answer
  * the step gives before any raise becomes the state in turn; without one
- * the state stays. */
-static void petta_foldall_step(ReduceStreamCtx *reduce, Atom *item) {
+ * the state stays.  A contract's error under call contracts passes that
+ * handler: the step returns false and the fold raises it. */
+static bool petta_foldall_step(ReduceStreamCtx *reduce, Atom *item) {
     ArenaMark scratch_mark = arena_mark(&reduce->stream_scratch);
     Atom *bound_atom = cetta_fold_bind_step_atom(
         &reduce->stream_scratch, reduce->step_expr, reduce->acc_var,
@@ -18420,7 +18441,13 @@ static void petta_foldall_step(ReduceStreamCtx *reduce, Atom *item) {
                     reduce->fuel, &results);
     /* The step runs through reduce/2, which takes an error it raises for
      * no further answer: the state is its last answer before the error. */
-    (void)petta_eval_take_raise();
+    Atom *raised = petta_eval_take_raise();
+    if (petta_eval_contract_raise(raised)) {
+        reduce->raised = atom_deep_copy(reduce->a, raised);
+        rb_set_free(&results);
+        arena_reset(&reduce->stream_scratch, scratch_mark);
+        return false;
+    }
     Atom *state = NULL;
     for (CettaCount index = 0u; index < results.len; index++) {
         Atom *candidate = outcome_atom_materialize(
@@ -18433,6 +18460,7 @@ static void petta_foldall_step(ReduceStreamCtx *reduce, Atom *item) {
         reduce->acc = atom_deep_copy(reduce->a, state);
     rb_set_free(&results);
     arena_reset(&reduce->stream_scratch, scratch_mark);
+    return true;
 }
 
 static bool reduce_stream_visit(Arena *work_a, Atom *item, const Bindings *env, void *ctx) {
@@ -18466,8 +18494,7 @@ static bool reduce_stream_visit(Arena *work_a, Atom *item, const Bindings *env, 
     if (reduce->petta_foldall) {
         if (atom_is_error(observed_item))
             return false;
-        petta_foldall_step(reduce, observed_item);
-        return true;
+        return petta_foldall_step(reduce, observed_item);
     }
     Atom *next_acc = NULL;
     Atom *error = NULL;
@@ -18523,11 +18550,19 @@ static bool reduce_stream_results(Space *s, Arena *a, Arena *work_a, Atom *call,
 
     metta_eval_bind_visit(s, work_a, stream_expr, fuel, order, reduce_stream_visit, &reduce);
     /* PeTTa's foldall runs its generator through reduce/2: an error the
-     * generator raises ends it, and the fold has the state so far. */
-    if (petta_foldall)
-        (void)petta_eval_take_raise();
+     * generator raises ends it, and the fold has the state so far.  A
+     * contract's error under call contracts propagates instead. */
+    if (petta_foldall) {
+        Atom *raised = petta_eval_take_raise();
+        if (!reduce.raised && petta_eval_contract_raise(raised))
+            reduce.raised = raised;
+    }
 
     arena_free(&reduce.stream_scratch);
+    if (reduce.raised) {
+        petta_eval_raise(reduce.raised);
+        return false;
+    }
     if (!reduce.ok)
         return false;
     Atom *final_acc = reduce.acc;
@@ -38619,7 +38654,7 @@ typedef struct {
     const CettaProfile *profile;
     SymbolId reify_head;
     bool count_fusion;
-    bool body_is_data;
+    CettaOpenEquationEntryKind entry_kind;
     SymbolId head;
     uint32_t arity;
     /* NULL records that the relation declined. */
@@ -43754,6 +43789,7 @@ static bool petta_eval_machine_admits_root(
            form == PETTA_FORM_MAP_ATOM ||
            form == PETTA_FORM_MAPLIST ||
            form == PETTA_FORM_FOLDL ||
+           (form == PETTA_FORM_FOLDALL && expression->expr.len == 4u) ||
            form == PETTA_FORM_LENGTH ||
            form == PETTA_FORM_LIST_TO_SET ||
            form == PETTA_FORM_ALPHA_UNIQUE ||
@@ -44140,7 +44176,8 @@ static PettaMachineHost petta_eval_machine_host(
             eval_current_language_id() == CETTA_LANGUAGE_PETTA,
         .dependent_type_domains = eval_dependent_telescope_enabled(),
         .raises_empty_car = eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-            petta_eval_version_1_1(),
+            petta_eval_typed_line(),
+        .call_contracts = petta_eval_contracts(),
         .permit_transition = frontier_admitted
             ? petta_eval_machine_permit_controller_transition
             : petta_eval_machine_permit_transition,
@@ -45269,7 +45306,7 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
                 }
                 break;
             }
-    controller_failure:
+    controller_failure:;
             const char *typecheck_diagnostic =
                 petta_machine_typecheck_diagnostic(&machine);
             if (typecheck_diagnostic) {
@@ -47647,6 +47684,7 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .reify_head = reify_head,
         .bounded_collections = language == CETTA_LANGUAGE_PETTA,
         .evaluates_instances = language == CETTA_LANGUAGE_HE,
+        .call_contracts = petta_eval_contracts(),
     };
     return host;
 }
@@ -47671,7 +47709,7 @@ static bool petta_eval_open_foreign_reads_current(
 
 static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     PettaEvalMachineContext *eval_context, Space *space, SymbolId head,
-    uint32_t arity, bool body_is_data, bool create) {
+    uint32_t arity, CettaOpenEquationEntryKind entry_kind, bool create) {
     PettaOpenProgramCache *cache = petta_eval_open_program_cache(eval_context);
     if (!cache)
         return NULL;
@@ -47691,7 +47729,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     for (size_t index = 0u; index < cache->len; index++) {
         PettaOpenProgramCacheEntry *entry = &cache->entries[index];
         if (entry->head != head || entry->arity != arity ||
-            entry->body_is_data != body_is_data)
+            entry->entry_kind != entry_kind)
             continue;
         if (entry->token.space == space &&
             entry->token.instance_id == token.instance_id &&
@@ -47713,7 +47751,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
                  (entry->program && cetta_open_equation_program_refresh(
                      entry->program, space, &entry->reads))) &&
                 petta_eval_open_foreign_reads_current(entry, library, foreign,
-                    eval_context, space, body_is_data) &&
+                    eval_context, space, entry_kind == CETTA_OPEN_ENTRY_BODY_DATA) &&
                 space_program_token_matches_live_space(token, space)) {
                 if (!program_same)
                     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_SPACE_REUSE);
@@ -47757,8 +47795,9 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
     /* Collect a certificate only after this relation has needed a rebuild.
      * Stable programs retain their original preparation path and cost. */
     CettaOpenEquationHost host = petta_eval_open_compile_host(
-        eval_context, space, body_is_data);
+        eval_context, space, entry_kind == CETTA_OPEN_ENTRY_BODY_DATA);
     host.capture_reads = capture_reads;
+    host.entry_ready_call = entry_kind == CETTA_OPEN_ENTRY_READY_CALL;
     const char *reason = NULL;
     *reusable = (PettaOpenProgramCacheEntry){
         .token = token,
@@ -47772,7 +47811,7 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
         .count_fusion = count_fusion,
         .head = head,
         .arity = arity,
-        .body_is_data = body_is_data,
+        .entry_kind = entry_kind,
         .program = cetta_open_equation_program_compile(
             eval_context->library_context->petta_program, space, head,
             arity, &host, &reason),
@@ -47797,12 +47836,13 @@ static PettaOpenProgramCacheEntry *petta_eval_open_program_lookup_locked(
  * caller, who releases it; NULL when there is none.  `*cached_out`, when
  * given, tells a relation the tier declined (an entry without a program)
  * from one never looked up. */
-static CettaOpenEquationProgram *petta_eval_open_program_acquire(
+static CettaOpenEquationProgram *petta_eval_open_program_acquire_entry(
     PettaEvalMachineContext *eval_context, Space *space, SymbolId head,
-    uint32_t arity, bool body_is_data, bool create, bool *cached_out) {
+    uint32_t arity, CettaOpenEquationEntryKind entry_kind, bool create,
+    bool *cached_out) {
     pthread_mutex_lock(&g_petta_open_programs_lock);
     PettaOpenProgramCacheEntry *entry = petta_eval_open_program_lookup_locked(
-        eval_context, space, head, arity, body_is_data, create);
+        eval_context, space, head, arity, entry_kind, create);
     CettaOpenEquationProgram *program = entry ? entry->program : NULL;
     cetta_open_equation_program_retain(program);
     if (cached_out)
@@ -47811,6 +47851,14 @@ static CettaOpenEquationProgram *petta_eval_open_program_acquire(
     return program;
 }
 
+
+static CettaOpenEquationProgram *petta_eval_open_program_acquire(
+    PettaEvalMachineContext *context, Space *space, SymbolId head,
+    uint32_t arity, bool body_is_data, bool create, bool *cached) {
+    return petta_eval_open_program_acquire_entry(context, space, head, arity,
+        body_is_data ? CETTA_OPEN_ENTRY_BODY_DATA : CETTA_OPEN_ENTRY_BODY_VALUE,
+        create, cached);
+}
 
 static bool petta_eval_open_program_current(
     void *context, Space *space, const CettaOpenEquationProgram *program) {
@@ -47826,7 +47874,7 @@ static bool petta_eval_open_program_current(
         if (entry->program == program) {
             PettaOpenProgramCacheEntry *validated =
                 petta_eval_open_program_lookup_locked(eval_context, space,
-                    entry->head, entry->arity, entry->body_is_data, false);
+                    entry->head, entry->arity, entry->entry_kind, false);
             current = validated && validated->program == program;
             break;
         }
@@ -47858,6 +47906,17 @@ static CettaOpenEquationProgram *petta_eval_open_current_program(
         return NULL;
     return petta_eval_open_program_acquire(eval_context, space, head, arity,
                                            body_is_data, true, NULL);
+}
+
+static CettaOpenEquationProgram *petta_eval_open_current_ready_call(
+    void *context, Space *space, SymbolId head, uint32_t arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !petta_eval_open_relation_ready(eval_context) || !space ||
+        !petta_eval_open_call_protocol_admitted(context, space, head, arity))
+        return NULL;
+    return petta_eval_open_program_acquire_entry(eval_context, space, head, arity,
+        CETTA_OPEN_ENTRY_READY_CALL, true, NULL);
 }
 
 /* The search machine's ready path for a ground add-atom, for a running
@@ -47939,6 +47998,8 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .context = eval_context,
         .interrupt = eval_prepared_pure_interrupt_poll,
         .current = petta_eval_open_current_program,
+        .current_ready = petta_eval_open_current_ready_call,
+        .open_head_is_data = !he,
         .program_current = petta_eval_open_program_current,
         .relation_admitted = petta_eval_open_relation_admitted,
         .resolve_space = petta_eval_machine_resolve_space,
@@ -47959,7 +48020,8 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .withdraws_reducible_collections =
             he && !raises && g_he_shared_execution_rereads,
         .raises_he_errors = raises,
-        .raises_empty_car = eval_current_language_id() == CETTA_LANGUAGE_PETTA && petta_eval_version_1_1(),
+        .raises_empty_car = eval_current_language_id() == CETTA_LANGUAGE_PETTA && petta_eval_typed_line(),
+        .call_contracts = petta_eval_contracts(),
         .completes_producers = raises,
         .stable = stable_arena,
     };
@@ -48929,6 +48991,8 @@ prime_need_strict_argument_ready:
                 outcome_set_add_existing(os, &body.items[index]);
             if (raised && petta_form == PETTA_FORM_CATCH)
                 outcome_set_add(os, raised, CURRENT_ENV);
+            else if (petta_eval_contract_raise(raised))
+                petta_eval_raise(raised);
             outcome_set_free(&body);
             return;
         }
@@ -49793,7 +49857,7 @@ petta_lowered_to_shared_form:
         CettaExprLen e_len;
         bool sequence = atom_sequence_view(e, &e_elems, &e_len);
         CettaSequenceProjectionCall call = petta_plan_sequence_call(
-            NULL, head_id, nargs, petta_eval_version_1_1()
+            NULL, head_id, nargs, petta_eval_typed_line()
                 ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
                 : CETTA_SEQUENCE_PETTA_VALUE).call;
         CettaSequenceProjectionView view = cetta_sequence_projection_view(
@@ -52291,7 +52355,7 @@ petta_lowered_to_shared_form:
 #endif
             if (language_id == CETTA_LANGUAGE_PETTA &&
                 !has_library_reference &&
-                petta_eval_version_1_1() &&
+                petta_eval_typed_line() &&
                 cetta_library_import_error_is_missing_module(error)) {
                 /* PeTTa 1.1 resolves an import before loading it and
                  * raises existence_error(source_sink, File) for a file

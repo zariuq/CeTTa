@@ -4139,6 +4139,20 @@ const PettaPlanNode *petta_program_plan_current(
     return plan;
 }
 
+const PettaPlanNode *petta_program_plan_current_in(
+    PettaProgram *program, Arena *plans, Atom *atom) {
+    if (!program || !plans || !atom)
+        return NULL;
+    PettaCallabilityDomain callability = {0};
+    bool ok = petta_program_collect_callability(program, &callability);
+    const PettaPlanNode *plan = ok
+        ? petta_plan_build_in(program, plans, &callability, atom, false, false,
+                             NULL, 0u)
+        : NULL;
+    free(callability.named_heads);
+    return plan;
+}
+
 typedef struct PettaTransientPlan {
     uint64_t hash;
     uint64_t epoch;

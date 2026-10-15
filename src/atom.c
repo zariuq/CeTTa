@@ -4893,6 +4893,29 @@ Atom *atom_expr_headed(Arena *a, const AtomExprHead *head, Atom **elems,
     return atom_expr(a, elems, len);
 }
 
+bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
+                                  Atom **elems, CettaExprLen len) {
+    if (!out || (len != 0u && !elems))
+        return false;
+    for (CettaExprIndex index = 0u; index < len; index++)
+        if (!elems[index])
+            return false;
+    uint32_t facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, elems, len, &facts);
+    /* Splicing a LIST/rest representation needs a constructed value. */
+    if (atom_list_rest_parts_splice(elems, len, facts))
+        return false;
+    flags &= ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASHCONS_ELIGIBLE);
+    facts &= ~(ATOM_STRUCTURAL_OWNER_CLOSED |
+               ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_FRONT_SLACK);
+    out->root = (Atom){
+        .kind = ATOM_EXPR, .flags = flags, .structural_facts = facts,
+        .var_id = atom_single_variable_id_of(flags, elems, len),
+        .sym_id = SYMBOL_ID_NONE, .expr = {.elems = elems, .len = len},
+    };
+    return true;
+}
+
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     if (!a->hashcons && a->older_identity == 0u && elems) {
         switch (len) {
@@ -6169,14 +6192,16 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                         goto completed;
                 }
                 if (g_state_cell_pairs_len == g_state_cell_pairs_cap) {
-                    uint32_t cap = g_state_cell_pairs_cap
-                        ? g_state_cell_pairs_cap * 2u : 8u;
-                    if (cap < g_state_cell_pairs_cap ||
-                        cap > SIZE_MAX / sizeof(*g_state_cell_pairs))
+                    uint32_t cap = 8u;
+                    size_t bytes;
+                    if ((g_state_cell_pairs_cap &&
+                         __builtin_mul_overflow(g_state_cell_pairs_cap, 2u,
+                                                &cap)) ||
+                        __builtin_mul_overflow(cap, sizeof(*g_state_cell_pairs),
+                                               &bytes))
                         cetta_oom(SIZE_MAX);
                     g_state_cell_pairs = cetta_realloc(
-                        g_state_cell_pairs,
-                        sizeof(*g_state_cell_pairs) * cap);
+                        g_state_cell_pairs, bytes);
                     g_state_cell_pairs_cap = cap;
                 }
                 g_state_cell_pairs[g_state_cell_pairs_len++] =
