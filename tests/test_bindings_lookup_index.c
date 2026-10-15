@@ -1129,6 +1129,35 @@ static void test_manufactured_slot_presentation(void) {
     arena_free(&survivor);
 }
 
+static void test_manufactured_presentation_reuses_private_capacity(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    Arena arena;
+    arena_init(&arena);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize private presentation test");
+    Atom *variables[4];
+    for (uint32_t i = 0u; i < 4u; i++)
+        variables[i] = bindings_builder_new_variable(&builder, &arena, identity);
+    CHECK(variables[2] && variables[3] &&
+          bindings_builder_add_var_fresh(&builder, variables[2], atom_int(&arena, 3)),
+          "populate geometrically grown presentation");
+    const BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame_const(
+        builder.current.frame_index, var_epoch_suffix(variables[2]->var_id));
+    const BindingsFrameSchema *private_schema = frame ? frame->schema : NULL;
+    CHECK(private_schema && private_schema->cap >= 4u &&
+          bindings_builder_add_var_fresh(&builder, variables[3], atom_int(&arena, 4)),
+          "populate another variable within private capacity");
+    frame = bindings_frame_index_find_frame_const(
+        builder.current.frame_index, var_epoch_suffix(variables[3]->var_id));
+    CHECK(frame && frame->schema == private_schema &&
+          binding_is_int(&builder.current, variables[2]->var_id, 3) &&
+          binding_is_int(&builder.current, variables[3]->var_id, 4),
+          "private presentation update avoids a whole-schema copy");
+    bindings_builder_free(&builder);
+    arena_free(&arena);
+}
+
 static void test_frame_index_cycle_bridge(Arena *arena) {
     const uint32_t epoch = 702u;
     VarId source_id = UINT64_C(88001);
@@ -3054,6 +3083,7 @@ int main(void) {
     test_frame_slot_promotion_lifetime();
     test_manufactured_slot_lifecycle();
     test_manufactured_slot_presentation();
+    test_manufactured_presentation_reuses_private_capacity();
     test_frame_index_cycle_bridge(&arena);
     test_frame_only_merge_occurs_check(&arena);
     test_frame_schema_branch_lifetime(&arena);
