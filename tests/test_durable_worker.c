@@ -139,6 +139,18 @@ int main(void) {
     assert(cetta_worker_endpoint_new(store,pair[0],getuid(),"brain",&endpoint)==DURABLE_INVALID && !endpoint);
     close(pair[0]); close(pair[1]);
     assert(cetta_worker_endpoint_new(store,listener(),getuid(),"brain",&endpoint)==DURABLE_OK);
+    /* Active clients must not be reset at an arbitrary sixteen-peer limit.
+     * Keep them open while admitting another client, then reuse every one. */
+    int held[40];
+    for (size_t i = 0u; i < 40u; i++) {
+        held[i] = client();
+        rpc(held[i], WORKER_NEXT, "", "", WORKER_IDLE, "", "");
+    }
+    for (size_t i = 0u; i < 40u; i++) {
+        rpc(held[i], WORKER_NEXT, "", "", WORKER_IDLE, "", "");
+        close(held[i]);
+    }
+    pump();
     int fd=client(); rpc(fd,WORKER_NEXT,"","",WORKER_IDLE,"","");
     rpc(fd,WORKER_RECEIPT,"missing","",WORKER_UNKNOWN,"missing","");
     rpc(fd,WORKER_RESULT,"missing","{}",WORKER_UNKNOWN,"missing","");
@@ -186,7 +198,7 @@ int main(void) {
     int peers[16];
     for (unsigned i=0;i<16;++i) { peers[i]=client(); pump(); }
     int excess=client(); pump(); char byte;
-    assert(recv(excess,&byte,1,MSG_DONTWAIT)==0); close(excess);
+    rpc(excess,WORKER_NEXT,"","",WORKER_IDLE,"",""); close(excess);
     rpc(peers[0],WORKER_NEXT,"","",WORKER_IDLE,"","");
     for (unsigned i=0;i<16;++i) close(peers[i]);
     stop();

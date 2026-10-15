@@ -34,7 +34,7 @@ CettaDurableStatus cetta_worker_publish(CettaDurableStore *store,
 CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store,
     int listener, uid_t uid, const char *worker, CettaWorkerEndpoint **out);
 void cetta_worker_endpoint_free(CettaWorkerEndpoint *endpoint);
-/* Bounded round-robin pump, at most 16 peers, one request per peer per call.
+/* Round-robin pump over expandable peer storage, one request per peer per call.
  * timeout 0..1000 ms. A slow/non-reading peer does not block other peers.
  * Idle or stalled peers close after 30 s of monotonic time. Return storage
  * faults to host health policy; never report STORED after an unknown commit.

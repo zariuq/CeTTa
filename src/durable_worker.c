@@ -13,7 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { PEERS=16, TASKS=128 };
+enum { INITIAL_PEERS=16, TASKS=128 };
 /* A ready index contains no observation body; enumerating pending work must
  * not copy every large observation on each fetch. CDV1 true is the marker. */
 static const unsigned char ready_marker[]={'C','D','V','1','Y'};
@@ -29,9 +29,23 @@ struct CettaWorkerEndpoint {
     int listener;
     uid_t uid;
     char worker[65], prefix[66];
-    Peer peers[PEERS];
-    unsigned next;
+    Peer *peers;
+    struct pollfd *pollfds;
+    size_t peer_capacity, next;
 };
+static bool reserve_peers(CettaWorkerEndpoint *e) {
+    size_t capacity = e->peer_capacity ? e->peer_capacity * 2u : INITIAL_PEERS;
+    if (capacity <= e->peer_capacity || capacity > SIZE_MAX / sizeof(Peer) ||
+        capacity > SIZE_MAX / sizeof(struct pollfd) - 3u) return false;
+    Peer *peers = malloc(capacity * sizeof(*peers));
+    struct pollfd *fds = malloc((capacity + 3u) * sizeof(*fds));
+    if (!peers || !fds) { free(peers); free(fds); return false; }
+    if (e->peer_capacity) memcpy(peers, e->peers, e->peer_capacity * sizeof(*peers));
+    for (size_t i = e->peer_capacity; i < capacity; i++) peers[i] = (Peer){.fd=-1};
+    free(e->peers); free(e->pollfds);
+    e->peers = peers; e->pollfds = fds; e->peer_capacity = capacity;
+    return true;
+}
 static bool component(const char *s) {
     size_t n=s?strnlen(s,65):0;
     if (!n || n>64) return false;
@@ -297,20 +311,20 @@ CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *e,
         int intake_fd, int output_fd, unsigned timeout_ms) {
     if (!e || intake_fd < -1 || output_fd < -1 || timeout_ms > 1000) return DURABLE_INVALID;
     uint64_t now = monotonic_ms();
-    for (unsigned i = 0; i < PEERS; ++i) {
+    for (size_t i = 0; i < e->peer_capacity; ++i) {
         Peer *p = &e->peers[i];
         if (p->fd >= 0 && p->waiting) {
             uint64_t remaining = p->due > now ? p->due - now : 0;
             if (remaining < timeout_ms) timeout_ms = (unsigned)remaining;
         }
     }
-    struct pollfd fds[PEERS+3];
+    struct pollfd *fds = e->pollfds;
     fds[0]=(struct pollfd){e->listener,POLLIN,0};
     fds[1]=(struct pollfd){intake_fd,POLLIN,0};
     fds[2]=(struct pollfd){output_fd,POLLOUT,0};
-    for (unsigned i=0;i<PEERS;++i)
+    for (size_t i=0;i<e->peer_capacity;++i)
         fds[i+3]=(struct pollfd){e->peers[i].fd,e->peers[i].reply?POLLOUT:POLLIN,0};
-    int n=poll(fds,PEERS+3,(int)timeout_ms);
+    int n=poll(fds,e->peer_capacity+3u,(int)timeout_ms);
     return n<0 && errno!=EINTR?DURABLE_IO:DURABLE_OK;
 }
 static CettaDurableStatus result(CettaWorkerEndpoint *e, Peer *p, const char *id,
@@ -430,25 +444,26 @@ CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store, int liste
         getsockopt(listener,SOL_SOCKET,SO_ACCEPTCONN,&accept,&len) || !accept ||
         getsockname(listener,(struct sockaddr *)&address,&address_size) || address.ss_family!=AF_UNIX) return DURABLE_INVALID;
     CettaWorkerEndpoint *e=calloc(1,sizeof(*e)); if (!e) return DURABLE_NOMEM;
+    if (!reserve_peers(e)) { free(e); return DURABLE_NOMEM; }
     int flags=fcntl(listener,F_GETFL);
     if (flags<0 || fcntl(listener,F_SETFL,flags|O_NONBLOCK)<0 || fcntl(listener,F_SETFD,FD_CLOEXEC)<0) {
-        free(e); return DURABLE_IO;
+        free(e->peers); free(e->pollfds); free(e); return DURABLE_IO;
     }
     e->store=store; e->listener=listener; e->uid=uid; strcpy(e->worker,worker); key(e->prefix,worker,"");
-    for (unsigned i=0;i<PEERS;++i) e->peers[i].fd=-1;
     *out=e; return DURABLE_OK;
 }
 void cetta_worker_endpoint_free(CettaWorkerEndpoint *e) {
     if (!e) return;
-    for (unsigned i=0;i<PEERS;++i) close_peer(&e->peers[i]);
-    close(e->listener); free(e);
+    for (size_t i=0;i<e->peer_capacity;++i) close_peer(&e->peers[i]);
+    close(e->listener); free(e->peers); free(e->pollfds); free(e);
 }
 CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned timeout, size_t *requests) {
     if (!e || !requests || timeout>1000) return DURABLE_INVALID;
     *requests=0;
-    struct pollfd fds[PEERS+1]={{e->listener,POLLIN,0}};
+    struct pollfd *fds = e->pollfds;
+    fds[0] = (struct pollfd){e->listener,POLLIN,0};
     uint64_t now=monotonic_ms(); if (!now) return DURABLE_IO;
-    for (unsigned i=0;i<PEERS;++i) {
+    for (size_t i=0;i<e->peer_capacity;++i) {
         Peer *p=&e->peers[i];
         if (p->fd>=0 && !p->waiting && now-p->touched>=30000) close_peer(p);
         if (p->fd >= 0 && p->waiting) {
@@ -458,22 +473,14 @@ CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned t
         }
         fds[i+1]=(struct pollfd){p->fd,p->reply?POLLOUT:POLLIN,0};
     }
-    int ready=poll(fds,PEERS+1,(int)timeout);
+    int ready=poll(fds,e->peer_capacity+1u,(int)timeout);
     if (ready<0) return errno==EINTR?DURABLE_OK:DURABLE_IO;
     if (fds[0].revents&(POLLERR|POLLHUP|POLLNVAL)) return DURABLE_IO;
-    if (fds[0].revents&POLLIN) {
-        int fd=accept4(e->listener,NULL,NULL,SOCK_NONBLOCK|SOCK_CLOEXEC);
-        if (fd>=0) {
-            struct ucred peer; socklen_t n=sizeof(peer); unsigned slot=0;
-            while (slot<PEERS && e->peers[slot].fd>=0) ++slot;
-            if (slot==PEERS || getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&n) || peer.uid!=e->uid) close(fd);
-            else e->peers[slot]=(Peer){.fd=fd,.touched=now};
-        } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) return DURABLE_IO;
-    }
+    bool accept_ready = (fds[0].revents & POLLIN) != 0;
     CettaDurableStatus status=DURABLE_OK;
     unsigned char packet[CETTA_WORKER_PACKET_MAX];
-    for (unsigned i=0;i<PEERS;++i) {
-        unsigned index=(e->next+i)%PEERS; Peer *p=&e->peers[index];
+    for (size_t i=0;i<e->peer_capacity;++i) {
+        size_t index=(e->next+i)%e->peer_capacity; Peer *p=&e->peers[index];
         short revents=fds[index+1].revents;
         if (p->fd<0 || !revents) continue;
         if (revents&(POLLERR|POLLNVAL)) { close_peer(p); continue; }
@@ -491,6 +498,19 @@ CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned t
         }
         if (p->fd>=0 && (revents&POLLHUP) && !p->reply) close_peer(p);
     }
-    e->next=(e->next+1)%PEERS;
+    /* Reap closed peers before accepting. Admission can expand storage but
+     * cannot invalidate a descriptor/event pair still being dispatched. */
+    if (accept_ready) {
+        size_t slot = 0u;
+        while (slot < e->peer_capacity && e->peers[slot].fd >= 0) ++slot;
+        if (slot == e->peer_capacity && !reserve_peers(e)) return DURABLE_NOMEM;
+        int fd=accept4(e->listener,NULL,NULL,SOCK_NONBLOCK|SOCK_CLOEXEC);
+        if (fd>=0) {
+            struct ucred peer; socklen_t n=sizeof(peer);
+            if (getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&n) || peer.uid!=e->uid) close(fd);
+            else e->peers[slot]=(Peer){.fd=fd,.touched=now};
+        } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) return DURABLE_IO;
+    }
+    e->next=(e->next+1)%e->peer_capacity;
     return status;
 }
