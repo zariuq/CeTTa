@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 # The last field requires the shared machine. Intrinsic demands and closed
 # calls can select their existing qualified realizations.
@@ -123,7 +125,18 @@ CASES = [
      "one\ntwo\n[()]\n[(State 2), (State 2)]\n[2]\n", False),
 ]
 
+for name, expected in (
+        ("control_source_single_positive", "consumed-once\n[(Done 3)]\n"),
+        ("control_source_branching_positive", "[(one one 7), (one one 7), (two two 8)]\n"),
+        ("control_caller_context_negative", "[(Kept 9)]\n")):
+    CASES.append((name, (ROOT / "tests/filesystem_v1" / (name + ".metta")).read_text(),
+                  expected, False))
+
 PROFILE_CASES = [
+    ("original-call-fallback-after-input-retirement", "(: sentinel (-> Number Number))\n"
+     "(= (sentinel $x) NotReducible)\n!(sentinel 8)\n"
+     "!(let $value (sentinel 8) (Observed $value))\n",
+     "[(sentinel 8)]\n[(Observed (sentinel 8))]\n"),
     ("dependent-binder-demand", "(: Fact Type)\n(: fact Fact)\n"
      "(: WitnessOf (-> $p Type))\n"
      "(: remember (-> (: $p Fact) (WitnessOf $p)))\n"

@@ -3,6 +3,7 @@
 #include "native_sha256.h"
 
 #include "string_ops.h"
+#include "str_stream.h"
 #include "utf8.h"
 
 #include <ctype.h>
@@ -557,6 +558,14 @@ static Atom *str_sha256(Arena *a, Atom *const *args, CettaStrRefusal *r) {
 }
 
 static const CettaStrNative str_natives[] = {
+    {"utf8-new", 1u, 0u, cetta_str_utf8_new, CETTA_STR_RESULT_STRUCTURE},
+    {"utf8-feed", 3u, 1u << 0, cetta_str_utf8_feed, CETTA_STR_RESULT_STRUCTURE},
+    {"line-segments", 2u, 0u, cetta_str_line_segments, CETTA_STR_RESULT_STRUCTURE},
+    {"line-new", 0u, 0u, cetta_str_line_new, CETTA_STR_RESULT_STRUCTURE},
+    {"collect-lines", 3u, (1u << 0) | (1u << 1), cetta_str_collect_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"feed-lines", 3u, 1u << 0, cetta_str_feed_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"advance-lines", 3u, 1u << 0, cetta_str_advance_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"find-ascii-uncased", 2u, 0u, cetta_str_find_ascii_uncased, CETTA_STR_RESULT_STRUCTURE},
     {"byte-length", 1u, 0u, str_byte_length, CETTA_STR_RESULT_ATOM},
     {"byte-slice", 3u, 0u, str_byte_slice, CETTA_STR_RESULT_ATOM},
     {"concat", 2u, 0u, str_concat, CETTA_STR_RESULT_ATOM},

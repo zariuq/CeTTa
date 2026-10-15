@@ -1,0 +1,7 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:walk-open (system:arg 0))
+  (let $one (fs:walk-next $owner no-follow ("skip"))
+    (let $two (fs:walk-next $owner no-follow ("skip"))
+      (let $end (fs:walk-next $owner no-follow ("skip"))
+        (let $closed (fs:close $owner) (WalkExclusions $one $two $end $closed))))))

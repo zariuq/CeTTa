@@ -1,0 +1,12 @@
+(= (FoldPayload $first $second) (println! forbidden-fold-payload))
+(: fold-example:data (-> Atom %Undefined%))
+(: fold-example:step (-> Atom %Undefined%))
+(= (fold-example:step $state)
+  (let ($head $fields) (decons-atom $state) (cons-atom $head $fields)))
+(= (fold-example:data $initial)
+  (let $space (context-space)
+    (case (_minimal-foldl-llist (LCons tick LNil)
+        $initial $acc $tick
+        (fold-example:step $acc) $space)
+      (((return $result) (function (return (FoldDataInert $result))))))))
+!(fold-example:data (FoldPayload 7 9))

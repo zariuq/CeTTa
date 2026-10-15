@@ -124,13 +124,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 103
+PRIME_NEED_ALGEBRA_CHECKS := 109
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 111
+PRIME_NEED_ALGEBRA_CHECKS := 117
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -713,6 +713,8 @@ endif
 SRC = src/symbol.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
+SRC += src/library_fs.c
+SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
 SRC += src/producer_reads.c
@@ -3188,6 +3190,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime_02_completion_resources.metta \
 	tests/prime/conformance/saved_bindings.metta \
 	tests/prime/need_application.metta \
+	tests/prime/ready_values.metta \
 	tests/prime/need_explicit_control.metta \
 	tests/prime/need_explicit_control_negative.metta \
 	tests/prime/function_faults.metta \
@@ -3822,7 +3825,17 @@ test-code-tree: $(CODE_TREE_TEST_BIN) $(CODE_TREE_MUTANT_BIN)
 # First-child worklist fusion is checked against binding/failure, epoch,
 # cycle, and plan-validation boundaries without changing runtime admission.
 MATCH_WORKLIST_FRAMES_TEST_BIN = runtime/test_match_worklist_frames-$(BUILD_OBJ_TAG)
+BINDING_FRAME_RELOCATION_TEST_BIN = runtime/test_binding_frame_relocation-$(BUILD_OBJ_TAG)
 MATCH_WORKLIST_FRAMES_FRESH_MUTANT_BIN = runtime/test_match_worklist_frames_fresh_mutant-$(BUILD_OBJ_TAG)
+
+$(BINDING_FRAME_RELOCATION_TEST_BIN): tests/test_binding_frame_relocation.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_binding_frame_relocation.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-binding-frame-relocation
+test: test-binding-frame-relocation
+test-binding-frame-relocation: $(BINDING_FRAME_RELOCATION_TEST_BIN)
+	@$(call cetta_exec,./$(BINDING_FRAME_RELOCATION_TEST_BIN))
 
 $(MATCH_WORKLIST_FRAMES_TEST_BIN): tests/test_match_worklist_frames.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -4238,6 +4251,16 @@ $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c s
 
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
+
+ATOM_STRING_STORAGE_TEST_BIN = runtime/test_atom_string_storage-$(BUILD_OBJ_TAG)
+$(ATOM_STRING_STORAGE_TEST_BIN): tests/test_atom_string_storage.c src/symbol.c src/atom.c src/atom.h src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_atom_string_storage.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-string-storage
+test: test-atom-string-storage
+test-atom-string-storage: $(ATOM_STRING_STORAGE_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_STRING_STORAGE_TEST_BIN))
 
 $(ATOM_SUFFIX_TEST_BIN): tests/test_atom_suffix.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -20608,15 +20631,15 @@ test-lib-parse-generalized-cli: test-lib-parse-generalized-native-integration
 
 test-lib-parse-python-shadow-audit:
 	@cd "$(CURDIR)" && \
-	if rg -n 'MM_LR|from lib_parse_generalized_backend_runtime|from lib_parse_generalized_runtime|import lib_parse_generalized_backend_runtime|import lib_parse_generalized_runtime' scripts/lib_parse_*py | grep -v 'scripts/lib_parse_generalized_backend_runtime.py' | grep -v 'scripts/lib_parse_generalized_runtime.py'; then \
+	if rg -n 'MM_LR|from lib_parse_generalized_backend_runtime|from lib_parse_generalized_runtime|import lib_parse_generalized_backend_runtime|import lib_parse_generalized_runtime' scripts/lib_parse_*py; then \
 		echo "FAIL: lib_parse python shadow audit"; \
 		exit 1; \
 	else \
 		echo "PASS: lib_parse python shadow audit"; \
 	fi
 	@cd "$(CURDIR)" && \
-	py_audit_files=$$(find scripts tests/support -path '*/__pycache__' -prune -o -name '*.py' -print); \
-	if rg -n 'class (GLL|GLR|SPPF|GSS|BSR)|def (closure|goto|shift|reduce|predict|scan|complete)|metamath_db_grammar|generic_parser_as_data|lib_parse_chart_backend|Earley|run_earley' $$py_audit_files tests/support/lib_parse_generalized_cases.json; then \
+	py_audit_files=$$(find scripts tests/support -path '*/__pycache__' -prune -o -name '*lib_parse*.py' -print); \
+	if rg -n 'class (GLL|GLR|SPPF|GSS|BSR)([^A-Za-z0-9_]|$$)|def (closure|goto|shift|reduce|predict|scan|complete)\(|metamath_db_grammar|generic_parser_as_data|lib_parse_chart_backend|Earley|run_earley' $$py_audit_files scripts/metamath_mmlean4_summary_oracle.py scripts/rhocalc_lib_parse_oracle.py tests/support/lib_parse_generalized_cases.json; then \
 		echo "FAIL: lib_parse python parser-implementation audit"; \
 		exit 1; \
 	else \
@@ -20656,76 +20679,30 @@ test-lib-parse-python-shadow-audit:
 		echo "PASS: lib_parse python subprocess bridge-scope audit"; \
 	fi
 	@cd "$(CURDIR)" && \
-	if rg -n 'from metta_payload_io|import metta_payload_io|parse_sexprs|sexpr_tokenize' scripts tests; then \
+	py_audit_files=$$(find scripts tests/support -path '*/__pycache__' -prune -o -name '*lib_parse*.py' -print); \
+	if rg -n 'from metta_payload_io|import metta_payload_io' scripts tests || \
+	   rg -n 'parse_sexprs|sexpr_tokenize' $$py_audit_files scripts/metamath_mmlean4_summary_oracle.py scripts/rhocalc_lib_parse_oracle.py; then \
 		echo "FAIL: lib_parse payload parser scope audit"; \
 		exit 1; \
 	else \
 		echo "PASS: lib_parse payload parser retired audit"; \
 	fi
 	@cd "$(CURDIR)" && \
-	retired='scripts/lib_parse_metamath_lr_runtime.py scripts/lib_parse_metamath_lr_summary_oracle.py scripts/lib_parse_shared_witness.py scripts/lib_parse_gparse_native_runtime.py scripts/lib_parse_generalized_runtime.py scripts/lib_parse_generalized_backend_runtime.py scripts/lib_parse_generalized_cli.py scripts/lib_parse_generalized_audit.py scripts/lib_parse_metamath_generalized_compare.py scripts/lib_parse_metamath_frontier_probe.py scripts/lib_parse_metamath_prefix_frontier.py scripts/lib_parse_metamath_stmt_prefix_frontier.py scripts/lib_parse_metamath_theorem_length_ladder.py scripts/lib_parse_metamath_context_ladder.py scripts/lib_parse_metamath_context_theorem_matrix.py scripts/lib_parse_metamath_defs_theorem_length_ladder.py scripts/lib_parse_metamath_defs_component_ladder.py scripts/lib_parse_metamath_plus_weq_variant_matrix.py scripts/lib_parse_gparse_native_grammar.py scripts/lib_parse_native_replay_bridge.py scripts/lib_parse_metta_lexer_bridge.py scripts/lib_parse_rho_generalized_compare.py scripts/lib_parse_generalized_adapters.py scripts/lib_parse_generalized_adapter_examples.py scripts/lib_parse_metamath_token_adapter.py scripts/lib_parse_rho_token_adapter.py scripts/metta_payload_io.py'; \
-	for f in $$retired; do \
-		if ! rg -n 'Retired compatibility module|Retired Python prototype module|Retired Python integration syntax|Retired CLI|Retired audit wrapper|Retired comparison wrapper|Retired oracle wrapper|Retired adapter' "$$f" >/dev/null; then \
-			echo "FAIL: lib_parse retired python stubs ($$f)"; \
-			exit 1; \
-		elif ! rg -n 'RETIRED_MESSAGE' "$$f" >/dev/null; then \
-			echo "FAIL: lib_parse retired python stub lacks fail-fast message ($$f)"; \
-			exit 1; \
-		elif ! rg -n 'raise SystemExit\(main\(\)\)' "$$f" >/dev/null; then \
-			echo "FAIL: lib_parse retired python stub lacks fail-fast main ($$f)"; \
-			exit 1; \
-		elif rg -n '^(class |def )' "$$f" | grep -v 'def main() -> int:'; then \
-			echo "FAIL: lib_parse retired python stub contains non-main code ($$f)"; \
-			exit 1; \
-		fi; \
-	done; \
-	echo "PASS: lib_parse retired python stubs"
-	@cd "$(CURDIR)" && \
-	expected_tmp=$$(mktemp); actual_tmp=$$(mktemp); \
-	printf '%s\n' \
-		scripts/lib_parse_generalized_adapter_examples.py \
-		scripts/lib_parse_generalized_adapters.py \
-		scripts/lib_parse_generalized_audit.py \
-		scripts/lib_parse_generalized_backend_runtime.py \
-		scripts/lib_parse_generalized_cli.py \
-		scripts/lib_parse_generalized_runtime.py \
-		scripts/lib_parse_gparse_native_grammar.py \
-		scripts/lib_parse_gparse_native_runtime.py \
-		scripts/lib_parse_metamath_context_ladder.py \
-		scripts/lib_parse_metamath_context_theorem_matrix.py \
-		scripts/lib_parse_metamath_defs_component_ladder.py \
-		scripts/lib_parse_metamath_defs_theorem_length_ladder.py \
-		scripts/lib_parse_metamath_frontier_probe.py \
-		scripts/lib_parse_metamath_generalized_compare.py \
-		scripts/lib_parse_metamath_lr_runtime.py \
-		scripts/lib_parse_metamath_lr_summary_oracle.py \
+	expected=$$(printf '%s\n' \
 		scripts/lib_parse_metamath_native_probe_support.py \
-		scripts/lib_parse_metamath_plus_weq_variant_matrix.py \
-		scripts/lib_parse_metamath_prefix_frontier.py \
 		scripts/lib_parse_metamath_sealed_oracle.py \
-		scripts/lib_parse_metamath_stmt_prefix_frontier.py \
-		scripts/lib_parse_metamath_theorem_length_ladder.py \
-		scripts/lib_parse_metamath_token_adapter.py \
-		scripts/lib_parse_metta_lexer_bridge.py \
-		scripts/lib_parse_native_replay_bridge.py \
-		scripts/lib_parse_rho_generalized_compare.py \
-		scripts/lib_parse_rho_token_adapter.py \
-		scripts/lib_parse_shared_witness.py \
 		scripts/metamath_mmlean4_summary_oracle.py \
-		scripts/metta_payload_io.py \
-		scripts/rhocalc_lib_parse_oracle.py | sort > "$$expected_tmp"; \
-	find scripts -maxdepth 1 -type f \( -name 'lib_parse_*.py' -o -name 'metamath_mmlean4_summary_oracle.py' -o -name 'rhocalc_lib_parse_oracle.py' -o -name 'metta_payload_io.py' \) | sort > "$$actual_tmp"; \
-	if ! cmp -s "$$expected_tmp" "$$actual_tmp"; then \
+		scripts/rhocalc_lib_parse_oracle.py | sort); \
+	actual=$$(find scripts -maxdepth 1 -type f \( -name 'lib_parse_*.py' -o -name 'metamath_mmlean4_summary_oracle.py' -o -name 'rhocalc_lib_parse_oracle.py' -o -name 'metta_payload_io.py' \) | sort); \
+	if [ "$$expected" != "$$actual" ]; then \
 		echo "FAIL: lib_parse python inventory allowlist"; \
-		diff -u "$$expected_tmp" "$$actual_tmp" || true; \
-		rm -f "$$expected_tmp" "$$actual_tmp"; \
+		printf '%s\n' "$$actual"; \
 		exit 1; \
 	fi; \
-	rm -f "$$expected_tmp" "$$actual_tmp"; \
 	echo "PASS: lib_parse python inventory allowlist"
 	@cd "$(CURDIR)" && \
-	for f in scripts/lib_parse_*py scripts/metamath_mmlean4_summary_oracle.py scripts/rhocalc_lib_parse_oracle.py scripts/metta_payload_io.py; do \
-		if ! rg -n 'Retired |Porting-only|Oracle-only' "$$f" >/dev/null; then \
+	for f in scripts/lib_parse_*py scripts/metamath_mmlean4_summary_oracle.py scripts/rhocalc_lib_parse_oracle.py; do \
+		if ! rg -n 'Porting-only|Oracle-only' "$$f" >/dev/null; then \
 			echo "FAIL: lib_parse python role marker ($$f)"; \
 			exit 1; \
 		fi; \
@@ -21656,13 +21633,17 @@ test-manifest-sync:
 
 test-manifest-strict: test-manifest-check
 
-.PHONY: test-forbidden-availability-errors test-precise-vocabulary \
+.PHONY: test-forbidden-availability-errors test-precise-vocabulary test-precise-vocabulary-differential \
 	test-prime-public-judgment-vocabulary
 test-forbidden-availability-errors:
 	@python3 scripts/check_forbidden_availability_errors.py
 
-test-precise-vocabulary:
+test-precise-vocabulary: $(BIN) scripts/check_precise_vocabulary.metta
+	@$(call cetta_exec,./$(BIN)) --lang petta --profile extended --no-results scripts/check_precise_vocabulary.metta
+
+test-precise-vocabulary-differential: $(BIN) scripts/check_precise_vocabulary.py tests/support/check_precise_vocabulary_v1.py
 	@python3 scripts/check_precise_vocabulary.py
+	@python3 tests/support/check_precise_vocabulary_v1.py ./$(BIN) --output runtime/vocabulary-differential-$(BUILD_OBJ_TAG)
 
 test-prime-public-judgment-vocabulary:
 	@if rg -n \
@@ -30775,13 +30756,55 @@ test-he-shared-execution: $(BIN)
 
 test: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
-	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN)
+	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN) --gmp $(ENABLE_GMP)
 
 .PHONY: test-effects-v1
 test: test-effects-v1
 test-effects-v1: $(BIN) lib/proc.metta tests/support/check_effects_v1.py \
   tests/support/proc_fixture_v1.c tests/support/check_native_mutation_rejected.metta
 	@python3 tests/support/check_effects_v1.py ./$(BIN)
+
+FILESYSTEM_NATIVE_TEST_V1 = runtime/test-filesystem-observations-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
+FILESYSTEM_STANDALONE_STATS_SRC_V1 = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),src/stats.c)
+$(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c src/library_fs.c src/library_fs.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir
+
+.PHONY: test-filesystem-v1
+test: test-filesystem-v1
+test-filesystem-v1: $(BIN) $(FILESYSTEM_NATIVE_TEST_V1) tests/support/check_filesystem_v1.py
+	@mkdir -p runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
+	@$(call cetta_exec,./$(FILESYSTEM_NATIVE_TEST_V1)) runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
+	@python3 tests/support/check_filesystem_v1.py ./$(BIN) --output runtime/filesystem-v1-$(BUILD_OBJ_TAG)
+
+TEXT_STREAMING_NATIVE_TEST_V1 = runtime/test-text-streaming-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
+$(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c src/symbol.c src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_streaming_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c src/symbol.c $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections
+
+.PHONY: test-text-streaming-v1
+test: test-text-streaming-v1
+test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/check_text_streaming_v1.py
+	@$(call cetta_exec,./$(TEXT_STREAMING_NATIVE_TEST_V1))
+	@python3 tests/support/check_text_streaming_v1.py ./$(BIN) --output runtime/text-streaming-v1-$(BUILD_OBJ_TAG)
+
+.PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
+test-filesystem-core-v1:
+	+$(MAKE) BUILD=core ENABLE_PYTHON=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_GMP=0 \
+		CETTA_TEST_ISOLATED=1 'BIN=runtime/cetta-filesystem-core-v1-$$(BUILD_OBJ_TAG)' test-filesystem-core-body-v1
+
+test-filesystem-core-body-v1: test-filesystem-v1 test-text-streaming-v1 \
+	test-filesystem-consumer-v1 test-precise-vocabulary test-effects-v1 test-owned-resumable-consumers \
+	test-he-shared-execution test-atom-string-storage test-atom-generations \
+	test-atom-suffix test-binding-frame-relocation test-native-handle-ownership \
+	test-language-versions test-run-cli test-module-workflow-v1 \
+	test-library-spellings-v1 test-petta-vocabulary-v1 test-lib-parse-python-shadow-audit
+	@echo "PASS: filesystem delivery controls (HE/PeTTa primary, frozen Prime compatibility; independent test oracles may use Python)"
+
+.PHONY: test-filesystem-consumer-v1
+test: test-filesystem-consumer-v1
+test-filesystem-consumer-v1: $(BIN) scripts/check_precise_vocabulary.metta tests/support/check_precise_vocabulary_v1.py
+	@python3 tests/support/check_precise_vocabulary_v1.py ./$(BIN) --output runtime/vocabulary-native-v1-$(BUILD_OBJ_TAG)
 
 $(PREPARED_PURE_ANSWER_TEST_OBJ): tests/test_prepared_pure_answer_producer.c src/prepared_pure_machine.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)

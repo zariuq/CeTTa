@@ -748,6 +748,16 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
     return aggregate;
 }
 
+/* Current machine coverage, not a restriction on HE. A head rejected here
+ * retains the canonical interpreter. Keep the root precheck and the full
+ * admission walk on the same predicate, including the library exception. */
+static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
+    bool intrinsic, bool collection, bool library_stream) {
+    return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
+        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+                           space_head_declares_type(space, head));
+}
+
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                                          Atom *source) {
     if (!he_execution_push(admission, source))
@@ -902,10 +912,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
-        if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            !library_stream &&
-            (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-             space_head_declares_type(admission->space, head)))
+        if (he_execution_head_requires_canonical(admission->space, head,
+                intrinsic, collection, library_stream))
             return false;
         /* A streamed call of a relation must always meet an equation. */
         if (admission->stream && expression && !intrinsic &&
@@ -1981,6 +1989,15 @@ static bool he_shared_execution_candidate(Space *space, Atom *source,
         (is_grounded_op(source_head) || symbol_id_is_builtin(source_head)) &&
         source_head != g_builtin_syms.match &&
         !he_execution_collection(source_head))
+        return false;
+    /* Typed ordinary heads are refused by full admission before their
+     * closure is visited. Do not first walk their argument/flow trees just
+     * to rediscover that refusal. This is an uncached fallback selection;
+     * the canonical call still observes the current declarations and body. */
+    if (source_head != g_builtin_syms.match &&
+        he_execution_head_requires_canonical(space, source_head, false,
+            he_execution_collection(source_head),
+            he_library_stream_aggregate(space, source) != SYMBOL_ID_NONE))
         return false;
     /* Such a root gains on the machine only when something in it computes;
      * a match that only builds data is the canonical frame's single query. */
