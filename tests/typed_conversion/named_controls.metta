@@ -1,4 +1,4 @@
-!(import! &self /home/aimama/aihub/hyperon/cetta-prime-2.0-draft-20260910/lib/typed_conversion.metta)
+!(import! &self ../../lib/typed_conversion.metta)
 !(K open-yes (tc:answer 40 LNil (Cons (Sort (LevelConst 0)) Nil) Nil check (idx 0) (Sort (LevelConst 0)) Miss (Sort (LevelConst 1))))
 !(K open-no (tc:answer 20 LNil Nil Nil of (idx 0)))
 !(K weaken (tc:answer 40 LNil (Cons (Sort (LevelConst 0)) (Cons (Sort (LevelConst 0)) Nil)) Nil check (idx 1) (Sort (LevelConst 1)) Miss (Sort (LevelConst 2))))

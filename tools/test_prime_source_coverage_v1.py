@@ -5,12 +5,14 @@ Positive documents are admitted by megalodon_declaration_import_v1, which
 checks every declaration through the NIK authority. Sources the exporter
 rejects are reported as rejected or unsupported and are not counted as
 admitted. The HOTG family document is replayed by the existing native
-projection qualifier when --family is set.
+projection qualifier when --family is set. METTAPEDIA_ROOT selects the
+external source checkout; by default it is the sibling MeTTapedia checkout.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -21,7 +23,8 @@ import test_megalodon_native_projection_v1 as native_tests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-THEORY = Path("/home/aimama/aihub/Mettapedia/megalodon/theory")
+METTAPEDIA = Path(os.environ.get("METTAPEDIA_ROOT", ROOT.parent / "MeTTapedia")).expanduser()
+THEORY = METTAPEDIA / "megalodon" / "theory"
 REJECTED = (
     THEORY / "category/CategoryNov2022.mg",
     THEORY / "mizar/mml/card_1.mg",
