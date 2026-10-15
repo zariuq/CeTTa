@@ -84,6 +84,10 @@ def qualify(binary, service_binary, language="petta"):
             first = re.findall(r'"([0-9a-f]{32})"', run('!(space:request-id)\n'))
             second = re.findall(r'"([0-9a-f]{32})"', run('!(space:request-id)\n'))
             assert len(first) == len(second) == 1 and first != second
+            together = re.findall(r'"([0-9a-f]{32})"', run(
+                '!(let $first (space:request-id) (let $second (space:request-id) '
+                '(println! (FreshIDs $first $second))))\n'))
+            assert len(together) == 2 and len(set(together)) == 2
             if language == "petta":
                 assert re.search(r'"[0-9a-f]{32}"', run('!(__cetta_lib_space_id)\n'))
             # Publication has committed, but the sender's turn has not returned.
