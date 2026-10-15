@@ -65938,7 +65938,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_case_dispatch(
                             bindings_builder_free(&branch);
                             continue;
                         }
-                        if (match_atoms_builder(value_form, pattern_form,
+                        if (match_atoms_builder(pattern_form, value_form,
                                                 &branch, a)) {
                             bool kept = true;
                             if ((pattern_form != pattern ||
@@ -66006,7 +66006,13 @@ static __attribute__((noinline)) MettaDispatchResult metta_case_dispatch(
             bindings_free(&b);
             return METTA_DISPATCH_HANDLED;
         }
-        bool unified = match_atoms(target_form, pattern_form, &b, a);
+        /* Prime's pattern owns the fresh matching variables. Keep caller
+         * code-variable representatives on the value side, as let does;
+         * reversing these operands can rename a body without its sealed
+         * binder when contextual code is reconstructed. */
+        bool unified = language_id == CETTA_LANGUAGE_PRIME
+            ? match_atoms(pattern_form, target_form, &b, a)
+            : match_atoms(target_form, pattern_form, &b, a);
         Atom *then_written = then_br;
         if (unified && (pattern_form != pattern || target_form != target)) {
             bool kept = true;
