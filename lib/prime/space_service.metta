@@ -6,12 +6,19 @@
 ; is (space:uncertain ID REASON); inspect the receipt before retrying writes.
 ; The service owns storage. A client needs neither MORK nor PathMap linkage.
 
+; Observe public arguments before handing inert request data to the host.
+(: space:call (-> String %Undefined% Number Expression))
+(: __cetta_lib_space_call (-> Atom Atom Atom Atom))
+(: space:request-id (-> String))
+
 (= (space:call $socket $request $timeout)
    (function
-     (case (__cetta_lib_space_call $socket $request $timeout)
-       (($result (return $result)))){$result}))
+     (chain (eval (__cetta_lib_space_call $socket $request $timeout))
+       $result (return $result)){$result}))
 
-(= (space:request-id) (__cetta_lib_space_id))
+(= (space:request-id)
+   (function
+     (chain (eval (__cetta_lib_space_id ())) $result (return $result)){$result}))
 
 (= (space:list $socket)
    (function
