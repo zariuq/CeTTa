@@ -1,0 +1,21 @@
+true
+true
+((: (rule ax) B))
+true
+true
+((: (rule ax) B))
+()
+()
+true
+true
+((: (ax ax) B))
+true
+((: (lift (rule ax)) Z))
+((: (rule ax) B))
+true
+true
+true
+((: (rule ax) B) (: (rule ax) B))
+true
+true
+()

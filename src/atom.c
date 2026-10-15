@@ -6074,14 +6074,16 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                         goto completed;
                 }
                 if (g_state_cell_pairs_len == g_state_cell_pairs_cap) {
-                    uint32_t cap = g_state_cell_pairs_cap
-                        ? g_state_cell_pairs_cap * 2u : 8u;
-                    if (cap < g_state_cell_pairs_cap ||
-                        cap > SIZE_MAX / sizeof(*g_state_cell_pairs))
+                    uint32_t cap = 8u;
+                    size_t bytes;
+                    if ((g_state_cell_pairs_cap &&
+                         __builtin_mul_overflow(g_state_cell_pairs_cap, 2u,
+                                                &cap)) ||
+                        __builtin_mul_overflow(cap, sizeof(*g_state_cell_pairs),
+                                               &bytes))
                         cetta_oom(SIZE_MAX);
                     g_state_cell_pairs = cetta_realloc(
-                        g_state_cell_pairs,
-                        sizeof(*g_state_cell_pairs) * cap);
+                        g_state_cell_pairs, bytes);
                     g_state_cell_pairs_cap = cap;
                 }
                 g_state_cell_pairs[g_state_cell_pairs_len++] =

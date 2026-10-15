@@ -1,0 +1,16 @@
+g1
+(step 1 0)
+g2
+(step 2 1)
+(1)
+(1)
+(1)
+(1)
+(16)
+3
+120
+(Pair (baz) (Pair (foo bar) init))
+(ok)
+()
+4
+(4)

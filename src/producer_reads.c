@@ -1,4 +1,5 @@
 #include "producer_reads.h"
+#include "fallible_alloc.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -54,7 +55,7 @@ static bool producer_reads_grow(CettaProducerReads *reads) {
     size_t capacity = old_capacity ? old_capacity * 2u : 16u;
     if (capacity > SIZE_MAX / sizeof(CettaProducerReadSlot))
         return false;
-    CettaProducerReadSlot *slots = calloc(capacity, sizeof(*slots));
+    CettaProducerReadSlot *slots = cetta_fallible_calloc(capacity, sizeof(*slots));
     if (!slots)
         return false;
     if (reads->hashed) {

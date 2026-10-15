@@ -149,7 +149,7 @@ def main():
         binary = out / name
         with (out / (name + ".build.log")).open("w") as log:
             subprocess.run(shlex.split(args.compile) + ["-Isrc", driver,
-                           str(path), "-Wl,--wrap=calloc", "-o", str(binary)] +
+                           str(path), "src/fallible_alloc.c", "-Wl,--wrap=calloc", "-o", str(binary)] +
                            shlex.split(args.ldflags), stdout=log, stderr=log, check=True)
         reject(binary, out, name, rejection)
 
