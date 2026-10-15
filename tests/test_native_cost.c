@@ -115,7 +115,76 @@ static void test_refused_storage(void) {
     puts("PASS: refused receipt storage leaves ordered prefixes intact and continues numeric accounting");
 }
 
+static void test_scoped_reads(void) {
+    CettaNativeCostLedger first, second, unrelated;
+    cetta_native_cost_init(&first);
+    cetta_native_cost_init(&second);
+    cetta_native_cost_init(&unrelated);
+    assert(current_scope == NULL);
+    CettaNativeCostScope outer, middle, inner;
+    cetta_native_cost_scope_enter(&outer, &first, 10u);
+    cetta_native_cost_scope_enter(&middle, &second, 11u);
+    cetta_native_cost_scope_enter(&inner, &first, 12u);
+    uint64_t next = atomic_load(&next_event_identity);
+    assert(next > 0u && next < UINT64_MAX - 4u);
+    CettaNativeCostEvent charge;
+    CettaNativeCostSnapshot before = cetta_native_cost_read(&first, 30u, &charge);
+    assert(before.work == 0u && before.counts[CETTA_COST_READ] == 0u);
+    assert(first.total.work == 1u && second.total.work == 1u);
+    assert(unrelated.total.work == 0u && unrelated.length == 0u);
+    assert(current_scope == &inner && inner.previous == &middle && middle.previous == &outer);
+    assert(inner.occurrence == 12u && middle.occurrence == 11u && outer.occurrence == 10u);
+    assert(charge.identity == next && atomic_load(&next_event_identity) == next + 1u);
+    assert(charge.origin == first.identity && charge.occurrence == 30u);
+    assert(first.length == 1u && second.length == 1u);
+    assert(first.events[0].identity == charge.identity && second.events[0].identity == charge.identity);
+    assert(first.events[0].origin == first.identity && second.events[0].origin == first.identity);
+
+    CettaNativeCostSnapshot absent = cetta_native_cost_read(NULL, 31u, &charge);
+    assert(absent.work == 0u && absent.trace_incomplete);
+    assert(first.total.work == 2u && second.total.work == 2u);
+    assert(charge.identity == next + 1u && charge.origin == 0u && charge.occurrence == 31u);
+    assert(first.length == 2u && second.length == 2u);
+    assert(first.events[1].identity == charge.identity && second.events[1].identity == charge.identity);
+    assert(first.events[1].origin == 0u && second.events[1].origin == 0u);
+    assert(current_scope == &inner && inner.occurrence == 12u);
+
+    CettaNativeCostSnapshot later = cetta_native_cost_read(&first, 30u, &charge);
+    assert(later.work == 2u && later.counts[CETTA_COST_READ] == 2u);
+    assert(first.total.work == 3u && second.total.work == 3u);
+    assert(charge.identity == next + 2u && atomic_load(&next_event_identity) == next + 3u);
+    CettaNativeCostEvent prefix = first.events[2];
+    assert(prefix.identity == charge.identity && prefix.repetitions == 1u);
+
+    uint64_t saved = atomic_exchange(&next_event_identity, UINT64_MAX);
+    size_t attempts = event_storage_attempts;
+    CettaNativeCostSnapshot exhausted = cetta_native_cost_read(&first, 32u, &charge);
+    assert(exhausted.work == 3u && !exhausted.trace_incomplete);
+    assert(charge.identity == 0u && atomic_load(&next_event_identity) == UINT64_MAX);
+    assert(first.total.work == 4u && second.total.work == 4u);
+    assert(first.total.trace_incomplete && second.total.trace_incomplete);
+    assert(first.length == 3u && second.length == 3u);
+    assert(!memcmp(&first.events[2], &prefix, sizeof(prefix)));
+    assert(event_storage_attempts == attempts && current_scope == &inner);
+    atomic_store(&next_event_identity, saved);
+    cetta_native_cost_scope_leave(&inner);
+    cetta_native_cost_scope_leave(&middle);
+    cetta_native_cost_scope_leave(&outer);
+    assert(current_scope == NULL);
+
+    attempts = event_storage_attempts;
+    CettaNativeCostSnapshot alone = cetta_native_cost_read(NULL, 33u, &charge);
+    assert(alone.work == 0u && alone.trace_incomplete);
+    assert(charge.identity == saved && charge.origin == 0u);
+    assert(atomic_load(&next_event_identity) == saved + 1u && current_scope == NULL);
+    assert(event_storage_attempts == attempts && unrelated.total.work == 0u);
+    cetta_native_cost_free(&unrelated);
+    cetta_native_cost_free(&second);
+    cetta_native_cost_free(&first);
+}
+
 int main(void) {
+    test_scoped_reads();
     assert(CETTA_COST_QUANTUM == 0 && CETTA_COST_STORAGE_PROBE == 27);
     assert(CETTA_COST_COEFFICIENT_HANDLE == 28 && CETTA_COST_KIND_COUNT == 29);
     assert(!strcmp(cetta_native_cost_name(CETTA_COST_COEFFICIENT_HANDLE),

@@ -356,6 +356,122 @@ static void test_entry_interpretation_precedes_equations(void) {
     destroy(&fixture);
 }
 
+/* Enabling retained services adds origin tracking, but it must not discard
+ * the embedding evaluator's checked fact that the closed entry arguments are
+ * already values.  In particular, a structured value remains available to a
+ * structural let instead of becoming a fresh demand with no projected
+ * origin. */
+static void test_entry_value_certificate_survives_service_roles(void) {
+    const char *equations[] = {
+        "(= (prepared-rigid $x $pair)"
+        "   (let (Pair $x $y) $pair (Rigid $x $y)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 1u,
+         "(prepared-rigid same (Pair same tail))");
+    cetta_prepared_pure_program_free(fixture.program);
+    fixture.program = cetta_prepared_pure_program_compile_closed(
+        &fixture.space,
+        parse(&fixture.source, "(prepared-rigid same (Pair same tail))"),
+        CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+        atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, NULL,
+        true, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity(),
+        });
+    assert(fixture.program);
+    CettaPreparedPureClosedExecution *execution =
+        cetta_prepared_pure_closed_open(
+            fixture.program, &fixture.scratch, &fixture);
+    assert(execution);
+    assert(cetta_prepared_pure_closed_enable_service(execution, &fixture));
+    CettaPreparedClosedState before, after;
+    assert(cetta_prepared_pure_closed_read(execution, &before));
+    Atom *replacement = parse(
+        &fixture.source, "(prepared-rigid next (Pair next later))");
+    assert(!cetta_prepared_pure_program_rebind_closed_entry_call(
+        fixture.program, replacement));
+    assert(cetta_prepared_pure_closed_read(execution, &after));
+    assert(after.status == before.status && after.performed == before.performed &&
+           after.frames == before.frames && after.values == before.values &&
+           after.frame_storage == before.frame_storage);
+    uint64_t spent = 0u, total = 0u;
+    Atom *answer = NULL;
+    CettaPreparedClosedStep status = CETTA_PREPARED_CLOSED_SUSPENDED;
+    for (size_t slice = 0u;
+         slice < 1024u && status == CETTA_PREPARED_CLOSED_SUSPENDED;
+         slice++) {
+        status = cetta_prepared_pure_closed_step(
+            execution, &fixture.scratch, &fixture, 1u, &spent, &answer);
+        assert(spent <= 1u);
+        total += spent;
+    }
+    assert(status == CETTA_PREPARED_CLOSED_ANSWER && total > 0u && answer);
+    assert(atom_eq(answer, parse(&fixture.source, "(Rigid same tail)")));
+    assert(cetta_prepared_pure_closed_close(execution, &fixture));
+    assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+        fixture.program, replacement));
+    execution = cetta_prepared_pure_closed_open(
+        fixture.program, &fixture.scratch, &fixture);
+    assert(execution);
+    assert(cetta_prepared_pure_closed_enable_service(execution, &fixture));
+    answer = NULL;
+    status = CETTA_PREPARED_CLOSED_SUSPENDED;
+    for (size_t slice = 0u;
+         slice < 1024u && status == CETTA_PREPARED_CLOSED_SUSPENDED;
+         slice++)
+        status = cetta_prepared_pure_closed_step(
+            execution, &fixture.scratch, &fixture, 1u, &spent, &answer);
+    assert(status == CETTA_PREPARED_CLOSED_ANSWER && answer);
+    assert(atom_eq(answer, parse(&fixture.source, "(Rigid next later)")));
+    assert(cetta_prepared_pure_closed_close(execution, &fixture));
+    destroy(&fixture);
+
+    /* A false certificate retains demand: the callable structured argument
+     * is evaluated before the entry projection observes it. */
+    const char *projected_equations[] = {
+        "(= (entry $x) (Box $x))", "(= (payload $x) evaluated)",
+    };
+    init(&fixture, projected_equations, 2u, "(entry seed)");
+    cetta_prepared_pure_program_free(fixture.program);
+    Atom *projected_call = parse(
+        &fixture.source, "(entry (payload source))");
+    fixture.program = cetta_prepared_pure_program_compile_closed(
+        &fixture.space, projected_call,
+        CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+        atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, NULL,
+        false, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity(),
+        });
+    assert(fixture.program);
+    execution = cetta_prepared_pure_closed_open(
+        fixture.program, &fixture.scratch, &fixture);
+    assert(execution);
+    assert(cetta_prepared_pure_closed_enable_service(execution, &fixture));
+    answer = NULL;
+    status = CETTA_PREPARED_CLOSED_SUSPENDED;
+    for (size_t slice = 0u;
+         slice < 1024u && status == CETTA_PREPARED_CLOSED_SUSPENDED;
+         slice++)
+        status = cetta_prepared_pure_closed_step(
+            execution, &fixture.scratch, &fixture, 1u, &spent, &answer);
+    assert(status == CETTA_PREPARED_CLOSED_SERVICE && !answer);
+    CettaPreparedServiceRequest request;
+    assert(cetta_prepared_pure_closed_service_request(
+        execution, &fixture, &request));
+    assert(request.call && request.operand_count == 0u &&
+           request.ready_arguments == 0u);
+    assert(atom_eq(request.call,
+                   parse(&fixture.source, "(Box (payload source))")));
+    assert(cetta_prepared_pure_closed_close(execution, &fixture));
+    destroy(&fixture);
+}
+
 /* A handler can be projected only while the entire pure attempt remains
  * private. A streamed producer must not lose it when exporting alternatives. */
 static void test_single_result_projection(void) {
@@ -1317,7 +1433,10 @@ typedef struct {
     unsigned next, releases, accepted, attempts, calls;
     unsigned length;
     CettaEvalCompletion completion;
-    bool reject;
+    bool reject, warmed;
+    Arena *observation_arena;
+    Atom *context_variable;
+    int64_t context_values[4];
 } OwnedSequenceFixture;
 
 static CettaOwnedExecutionStep owned_sequence_next(void *context,
@@ -1347,8 +1466,15 @@ static bool owned_sequence_accept(void *context, const CettaOwnedReturn *returne
     assert(returned->outcome.term == expected.outcome.term);
     assert(returned->outcome.delayed == expected.outcome.delayed);
     assert(returned->environment == expected.environment);
+    assert(returned->final == expected.final);
     if (fixture->reject)
         return false;
+    if (fixture->context_variable) {
+        Atom *value = bindings_apply_if_vars(returned->environment,
+            fixture->observation_arena, fixture->context_variable);
+        assert(value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT);
+        assert(value->ground.ival == fixture->context_values[fixture->accepted]);
+    }
     fixture->accepted++;
     return true;
 }
@@ -1406,6 +1532,76 @@ static void test_owned_return_sequencing(void) {
     cetta_owned_execution_cancel(&execution);
     assert(sibling.releases == 1u && sibling.accepted == 0u && fixture.releases == 1u);
     bindings_free(&environment);
+    arena_free(&arena);
+}
+
+/* A refusal may prepare private consumer state without publishing the
+ * occurrence. The next attempt must see that state and the original loan. */
+static bool owned_sequence_warming_accept(void *context,
+    const CettaOwnedReturn *returned) {
+    OwnedSequenceFixture *fixture = context;
+    fixture->reject = !fixture->warmed;
+    fixture->warmed = true;
+    return owned_sequence_accept(context, returned);
+}
+
+static void test_owned_stateful_return_boundary(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Bindings left, right;
+    bindings_init(&left);
+    bindings_init(&right);
+    Atom *variable = parse(&arena, "$x");
+    assert(bindings_add_var(&left, variable, atom_int(&arena, 7)));
+    assert(bindings_add_var(&right, variable, atom_int(&arena, 11)));
+    Atom *written = parse(&arena, "(println! $x)");
+    Atom *condition = parse(&arena, "(pending-goal $x)");
+    OwnedSequenceFixture fixture = {
+        .values = {
+            {.outcome = cetta_call_completed_value(written), .environment = &left},
+            {.outcome = cetta_call_completed_value(written), .environment = &right},
+            {.outcome = cetta_call_value(written), .environment = &left},
+            {.outcome = cetta_call_suspended(written, condition), .environment = &right},
+        },
+        .observation_arena = &arena, .context_variable = variable,
+        .context_values = {7, 11, 7, 11},
+    };
+    CettaOwnedExecution execution;
+    cetta_owned_execution_init(&execution, &fixture, owned_sequence_next,
+                              owned_sequence_release);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_warming_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.warmed && fixture.calls == 1u && fixture.attempts == 1u);
+    assert(execution.has_pending && fixture.accepted == 0u && execution.accepted == 0u);
+    assert(execution.pending.outcome.term == written && execution.pending.environment == &left);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_warming_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.calls == 1u && fixture.attempts == 2u && fixture.accepted == 1u);
+    assert(!execution.has_pending && execution.accepted == 1u);
+    assert(cetta_owned_execution_sequence(&execution, 3u,
+        owned_sequence_warming_accept, &fixture) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(fixture.calls == 4u && fixture.attempts == 5u && fixture.accepted == 4u);
+    assert(execution.accepted == 4u && !execution.has_pending);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_warming_accept, &fixture) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(fixture.calls == 5u && fixture.attempts == 5u);
+    cetta_owned_execution_cancel(&execution);
+    assert(fixture.releases == 1u);
+
+    /* Combining two allowances is not equivalent to retrying a stateful
+     * refusal: the larger single call must still stop at its first refusal. */
+    OwnedSequenceFixture unsliced = {.values = {fixture.values[0], fixture.values[1]},
+                                    .length = 2u};
+    cetta_owned_execution_init(&execution, &unsliced, owned_sequence_next,
+                              owned_sequence_release);
+    assert(cetta_owned_execution_sequence(&execution, 2u,
+        owned_sequence_warming_accept, &unsliced) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(unsliced.warmed && unsliced.calls == 1u && unsliced.attempts == 1u &&
+           unsliced.accepted == 0u && execution.has_pending);
+    cetta_owned_execution_cancel(&execution);
+    assert(unsliced.releases == 1u && unsliced.accepted == 0u);
+    bindings_free(&right);
+    bindings_free(&left);
     arena_free(&arena);
 }
 
@@ -1471,6 +1667,23 @@ static void test_owned_final_delivery(void) {
            !execution.terminal && execution.completion == CETTA_EVAL_INCOMPLETE_FUEL);
     cetta_owned_execution_cancel(&execution);
     assert(incomplete.releases == 1u);
+    /* Exhausting the producer does not discharge a returned condition or
+     * activate the conditional payload. Its unchanged packet is accepted
+     * once, with no extra poll to discover a second answer. */
+    Atom *condition = parse(&arena, "(pending-goal $x)");
+    OwnedSequenceFixture conditional = {
+        .length = 1u,
+        .values = {{.outcome = cetta_call_suspended(value, condition), .final = true}},
+    };
+    cetta_owned_execution_init(&execution, &conditional, owned_sequence_next,
+                              owned_sequence_release);
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        owned_sequence_accept, &conditional) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(conditional.calls == 1u && conditional.attempts == 1u && conditional.accepted == 1u);
+    assert(conditional.values[0].outcome.kind == CETTA_CALL_SUSPENDED &&
+           conditional.values[0].outcome.delayed == condition);
+    cetta_owned_execution_cancel(&execution);
+    assert(conditional.releases == 1u);
     arena_free(&arena);
 }
 
@@ -2072,6 +2285,7 @@ int main(void) {
     test_allocation_limit_before_construction();
     test_constructor_cost_adapters();
     test_entry_interpretation_precedes_equations();
+    test_entry_value_certificate_survives_service_roles();
     test_single_result_projection();
     test_cursor_frontier_between_answers();
     test_cursor_last_call_replaces_caller();
@@ -2100,6 +2314,7 @@ int main(void) {
     test_continuation_unbounded_generator_limit();
     test_context_reconstruction_observes_interrupt();
     test_owned_return_sequencing();
+    test_owned_stateful_return_boundary();
     test_owned_final_delivery();
     test_cursor_final_frontier();
     test_owned_cursor_final_answer();

@@ -2,8 +2,8 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self llm)
-!(import! &self io)
+!(import! &self (library llm))
+!(import! &self (library io))
 (: llm:v1:headers-value (-> Atom %Undefined%))
 (= (llm:v1:headers-value $items) (if (== $items ()) () (let* (($head (car-atom $items)) ($tail (cdr-atom $items)) ($header (llm:v1:header-value $head)) ($rest (llm:v1:headers-value $tail))) (cons-atom $header $rest))))
 (: llm:v1:header-value (-> Atom %Undefined%))

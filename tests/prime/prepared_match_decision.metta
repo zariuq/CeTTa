@@ -29,10 +29,24 @@
 (= (decision-arity (node $x $y)) arity-two)
 !(decision-arity (node 1 2))
 
-; An unready callable argument must be demanded once by the decision program,
-; not rediscovered by a full scan of every strict equation.
+; A top-level pending computation is settled by Prime before prepared entry.
+; Its completed value then reaches the decision program as data.
 (= (decision-producer) (right 9))
 !(decision-head (decision-producer))
+
+; A ready outer equation can pass a genuinely pending inner computation to the
+; decision program.  This path must demand it once instead of rediscovering it
+; by a full scan of every strict equation.
+(= (decision-source-producer $n) (right $n))
+(= (decision-source-entry $n)
+   (decision-head (decision-source-producer $n)))
+!(decision-source-entry 9)
+
+; Parsed code is completed data until the program explicitly activates it.
+!(let $code (parse "(decision-producer)")
+   (decision-head $code))
+!(let $code (parse "(decision-producer)")
+   (decision-head (eval $code)))
 
 ; The direct demand must preserve branch-local effect and update-cell identity.
 !(bind! &decision-counter (new-state 0))

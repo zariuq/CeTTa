@@ -92,3 +92,23 @@
 !(match &self (sc:choice $f) (Pair $f $f))
 !(let (Box $f) (sc:box) (let (Box $g) (sc:box) (add-atom &self (sc:distinct $f $g))))
 !(match &self (sc:distinct $f $g) (Pair ($f 1) ($g 2)))
+
+; An already produced callable-shaped datum retains its value role through
+; storage and matching. Only explicit activation executes that datum.
+!(let $code (cons-atom + (1 2))
+   (add-atom &prime-need:stored (CompletedCode $code)))
+!(match &prime-need:stored (CompletedCode $code) $code)
+!(match &prime-need:stored (CompletedCode $code) (Pair $code (eval $code)))
+!(let $code (cons-atom println! (StoredCodeMustRemainData))
+   (add-atom &prime-need:stored (CompletedEffect $code)))
+!(match &prime-need:stored (CompletedEffect $code) $code)
+!(match &prime-need:stored (CompletedEffect $code) (Pair $code $code))
+
+; A second crossing retains the same distinction. Equal stored rows remain
+; two occurrences; collecting them does not activate either returned datum.
+!(match &prime-need:stored (CompletedCode $code)
+   (add-atom &prime-need:stored (CompletedAgain $code)))
+!(match &prime-need:stored (CompletedAgain $code) $code)
+!(match &prime-need:stored (CompletedAgain $code) (eval $code))
+!(add-atom &prime-need:stored (CompletedCode (+ 1 2)))
+!(reify (match &prime-need:stored (CompletedCode $code) $code))

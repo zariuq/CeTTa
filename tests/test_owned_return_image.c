@@ -108,12 +108,13 @@ static void test_provenance_and_scalars(void) {
     };
     CettaOwnedReturnImage *images[sizeof(outcomes) / sizeof(outcomes[0])];
     for (size_t i = 0u; i < sizeof(images) / sizeof(images[0]); ++i) {
-        CettaOwnedReturn returned = {.outcome = outcomes[i]};
+        CettaOwnedReturn returned = {.outcome = outcomes[i], .final = i % 2u != 0u};
         images[i] = cetta_owned_return_image_capture(&returned, NULL);
         assert(images[i]);
         const CettaOwnedReturn *view = cetta_owned_return_image_view(images[i]);
         assert(view->outcome.kind == outcomes[i].kind &&
                view->outcome.result_form == outcomes[i].result_form &&
+               view->final == returned.final &&
                !view->environment);
         assert(!outcomes[i].term || atom_eq(view->outcome.term, outcomes[i].term));
         if (i == 6u)
@@ -402,14 +403,137 @@ static void test_deep_name_keys_and_refusal(void) {
     }
     assert_int(term, 73);
     cetta_owned_return_image_release(image);
+    arena_init_detached(&source);
     Bindings prime;
     bindings_init(&prime);
     assert(bindings_need_mut(&prime) && prime.prime_ext);
+    StateCell cell = {.value = atom_int(&source, 0)};
+    PrimeNeedBranchState base, state;
+    assert(prime_need_branch_state_begin(&source, &base));
+    assert(prime_need_branch_state_write(&source, &base, &cell,
+        cell.value, atom_int(&source, 1), &state));
+    *bindings_branch_state_mut(&prime) = state;
     returned = (CettaOwnedReturn){.outcome = cetta_call_failure(), .environment = &prime};
     assert(!cetta_owned_return_image_capture(&returned, NULL));
+    assert(bindings_branch_state_view(&prime)->top == state.top && cell.value->ground.ival == 0);
     bindings_free(&prime);
-    puts("PASS: 100000 structured-name links use explicit work; allocation and unqualified Prime-state refusal preserve the loan");
+    arena_free(&source);
+    puts("PASS: 100000 structured-name links use explicit work; allocation and unqualified mutable-state refusal preserve the loan");
 }
+
+static void test_distinct_prime_worlds(void) {
+    Arena source;
+    arena_init_detached(&source);
+    PrimeNeedSnapshot root, allocated, evaluating, pending;
+    prime_need_snapshot_init(&root);
+    assert(prime_need_snapshot_begin(&root));
+    Atom *origin = parse(&source, "(source-computation)");
+    uint64_t id = 0u, pending_id = 0u;
+    assert(prime_need_snapshot_allocate(&source, &root, origin, &allocated, &id));
+    assert(prime_need_snapshot_allocate(&source, &allocated,
+        parse(&source, "(println! must-remain-pending)"), &pending, &pending_id));
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    assert(prime_need_snapshot_start_evaluation(&source, &pending, id,
+        evaluator, &evaluating));
+    Atom *variable = atom_var_with_id(&source, "retained-world", fresh_var_id());
+    Bindings worlds[2];
+    CettaOwnedReturnImage *images[2];
+    uint64_t factors_ids[2], handlers[2];
+    for (unsigned index = 0u; index < 2u; ++index) {
+        bindings_init(&worlds[index]);
+        Atom *number = atom_int(&source, index ? 11 : 7);
+        Atom *cached = atom_expr3(&source, atom_symbol(&source, "Pair"), number, number);
+        CettaWeightLedger factors, claimed, selected;
+        factors_ids[index] = prime_need_fresh_source_occurrence();
+        handlers[index] = prime_need_fresh_source_occurrence();
+        assert(cetta_weight_ledger_append(&source, bindings_weight_view(&worlds[index]),
+            factors_ids[index], 0u, cached, &factors));
+        assert(cetta_weight_ledger_handle(&source, &factors,
+            bindings_weight_view(&worlds[index]), handlers[index], &claimed, &selected));
+        *bindings_weight_mut(&worlds[index]) = claimed;
+        cached = factors.last->value;
+        assert(prime_need_snapshot_resolve_ready_value(&source, &evaluating,
+            id, evaluator, cached, bindings_need_mut(&worlds[index])));
+        assert(bindings_add_var(&worlds[index], variable, cached));
+        CettaOwnedReturn returned = {
+            .outcome = cetta_call_completed_value(atom_int(&source, 999)),
+            .environment = &worlds[index], .final = index == 1u,
+        };
+        images[index] = cetta_owned_return_image_capture(&returned, NULL);
+        assert(images[index]);
+    }
+    VarId variable_id = variable->var_id;
+    bindings_free(&worlds[0]);
+    bindings_free(&worlds[1]);
+    arena_free(&source);
+    for (unsigned index = 0u; index < 2u; ++index) {
+        const CettaOwnedReturn *view = cetta_owned_return_image_view(images[index]);
+        assert_int(view->outcome.term, 999);
+        assert(view->final == (index == 1u));
+        assert(bindings_need_view(view->environment)->owner != &source &&
+            bindings_weight_view(view->environment)->owner != &source);
+        PrimeNeedCellView cached, unevaluated;
+        assert(prime_need_snapshot_lookup(bindings_need_view(view->environment), id, &cached));
+        assert(cached.cache_state == PRIME_NEED_CACHE_VALUE &&
+               cached.value_role == PRIME_NEED_VALUE_READY);
+        assert(cached.cached->expr.elems[1] == cached.cached->expr.elems[2]);
+        assert_int(cached.cached->expr.elems[1], index ? 11 : 7);
+        assert(bindings_lookup_value_id((Bindings *)view->environment,
+            variable_id).skeleton == cached.cached);
+        assert(bindings_weight_view(view->environment)->last->value == cached.cached);
+        assert(bindings_weight_view(view->environment)->claim_count == 1u &&
+            cetta_weight_ledger_handler(bindings_weight_view(view->environment),
+                factors_ids[index]) == handlers[index]);
+        assert(prime_need_snapshot_lookup(bindings_need_view(view->environment),
+            pending_id, &unevaluated));
+        assert(unevaluated.cache_state == PRIME_NEED_CACHE_EMPTY &&
+               atom_symbol_equals_cstr(unevaluated.origin->expr.elems[0], "println!"));
+    }
+    PrimeNeedSnapshot mixed = *bindings_need_view(
+        cetta_owned_return_image_view(images[0])->environment);
+    assert(!prime_need_snapshot_merge(&mixed, bindings_need_view(
+        cetta_owned_return_image_view(images[1])->environment)));
+    cetta_owned_return_image_release(images[0]);
+    PrimeNeedCellView survivor;
+    assert(prime_need_snapshot_lookup(bindings_need_view(
+        cetta_owned_return_image_view(images[1])->environment), id, &survivor));
+    assert_int(survivor.cached->expr.elems[1], 11);
+    cetta_owned_return_image_release(images[1]);
+    puts("PASS: equal returned data retains distinct immutable Prime worlds, aliases, pending cells and factor roots after source destruction");
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static void test_recording_requires_its_own_transport(void) {
+    Arena source;
+    arena_init_detached(&source);
+    Bindings recorded;
+    bindings_init(&recorded);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){2u, 8192u, 2u, 1u});
+    assert(group && prime_need_recording_reserve(group, NULL, 1u, 8192u,
+        bindings_receipt_mut(&recorded)));
+    PrimeNeedRecordingStatus before = prime_need_recording_status(group);
+    PrimeNeedReceipt receipt = *bindings_receipt_view(&recorded);
+    CettaOwnedReturn returned = {
+        .outcome = cetta_call_completed_value(atom_int(&source, 9)),
+        .environment = &recorded,
+    };
+    assert(!cetta_owned_return_image_capture(&returned, NULL));
+    PrimeNeedRecordingStatus after = prime_need_recording_status(group);
+    assert(bindings_receipt_view(&recorded)->recording == receipt.recording &&
+        before.owner_links == after.owner_links && before.omitted == after.omitted &&
+        before.nodes == after.nodes && before.reserved_nodes == after.reserved_nodes &&
+        before.payload_charge == after.payload_charge &&
+        before.reserved_payload_bytes == after.reserved_payload_bytes &&
+        before.metadata_bound == after.metadata_bound &&
+        before.retained_bound == after.retained_bound &&
+        before.incomplete == after.incomplete && before.overflow == after.overflow);
+    bindings_free(&recorded);
+    arena_free(&source);
+    prime_need_recording_release(group);
+    puts("PASS: recorded returns refuse generic image capture without retaining, truncating or changing their recording owner");
+}
+#endif
 
 typedef struct {
     CettaOwnedReturnImagePolicy policy;
@@ -690,6 +814,10 @@ int main(void) {
     test_name_keys_and_resources();
     test_frame_schema_resource_root();
     test_deep_name_keys_and_refusal();
+    test_distinct_prime_worlds();
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    test_recording_requires_its_own_transport();
+#endif
     test_saved_environment_and_consumers();
     test_prepared_search_returns(false);
     test_prepared_search_returns(true);

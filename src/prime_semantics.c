@@ -7791,7 +7791,7 @@ static void prime_free_names_walk(PrimeFreeNames *f, Atom *term,
 }
 
 /* `names` copied to fresh slots throughout `body`, and in `own` when they
- * are listed there.  A copy is an instance, as a clause variable renamed for
+ * are listed there.  A copy is an instance, as an equation variable renamed for
  * one call is: it carries a frame identity of its own, held by the arena
  * that holds the copy, so it prints with an instance suffix and two copies
  * that print alike are one slot.  Its base is fresh too, so renaming a term
@@ -8184,7 +8184,7 @@ bool prime_quote_seal_active(void) {
  *              per-closure        a template's own slots move to the scope
  *                                 that creates it: an enclosing template
  *                                 copies them at its activation, once per
- *                                 closure, and at a query or clause root
+ *                                 closure, and at a query or equation root
  *                                 they are its variables.  The fresh slots
  *                                 of the pattern binders in a template stay
  *                                 with it: they are made at each of its
@@ -8478,7 +8478,7 @@ static PrimeVarEntry *prime_var_map_get(PrimeVarMap *m, VarId id,
     return &m->items[at];
 }
 
-/* One template scope of a form (the root, a query or a clause, is scope
+/* One template scope of a form (the root, a query or an equation, is scope
  * 0): the names written directly in it, the crossing set written on it, and
  * the names it owns.  Scopes are numbered in the order the walk meets them,
  * outer before inner. */
@@ -10603,7 +10603,7 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
         }
     } else {
         /* unify, an equation, and every other form: names refer to the
-         * slots in force; an equation head's names are the clause's. */
+         * slots in force; an equation head owns those names. */
         result = prime_lex_resolve_children(e, term, false);
     }
 done:

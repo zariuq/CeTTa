@@ -3,3 +3,4 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (= (proc:run $argv $cwd $env $timeout $max) (__cetta_lib_proc_run $argv $cwd $env $timeout $max))
+(= (proc:run $argv $cwd $env $timeout $max $options) (__cetta_lib_proc_run $argv $cwd $env $timeout $max $options))

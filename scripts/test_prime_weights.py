@@ -323,8 +323,8 @@ def retained_query_owners(gate):
     # A closed wrapper computes its empty source once. Separate authored
     # alternatives still activate independently, including equal answers.
     cases=[
-        ('direct complete-empty', '', '(match &kb Missing Hit)', [], 6, 0),
-        ('matched but empty body', '', '(match &kb A (empty))', [], 12, 0),
+        ('direct complete-empty', '', '(match &kb Missing Hit)', [], 3, 0),
+        ('matched but empty body', '', '(match &kb A (empty))', [], 3, 0),
         ('empty nested equation', '(= (wrapped) (match &kb Missing Hit)) ',
          '(wrapped)', [], None, 1),
         ('empty and successful alternatives',
@@ -339,9 +339,8 @@ def retained_query_owners(gate):
         assert [contribution(x) for x in final['values']]==expected,final
         counts=receipt(final['cost'])['counts']
         if visits is not None:
-            # The enclosing readout owns its own retry. Only the direct
-            # complete-empty match may skip its binding-projection retry;
-            # a matched row whose body failed does not confer that licence.
+            # One traversal of the three-row source, even when a matched
+            # body produces no answer. Projection must not replay the read.
             assert counts['index-visit']==visits,(name,counts)
         assert counts['equation-activation']==activations,(name,counts)
         gate.passed_case('complete-empty certificate belongs to its exact return edge: '+name)
@@ -349,17 +348,21 @@ def retained_query_owners(gate):
     body=read('(match &kb Missing Hit)')
     pattern='(Observation $p (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))'
     _,whole=gate.run('empty-query owner whole',source+f'!(select 7 {control(1000)} {body})')
-    for cut in (0,1,7,13,15,17,23,30):
+    total=whole[-1]['work']
+    assert total>13,whole
+    for cut in sorted({0,1,7,13,total-2,total-1,total,total+7}):
         trees,parts=gate.run('empty-query owner split '+str(cut),source+
             f'!(let {pattern} (select 7 {control(cut)} {body}) '
             f'(State $p $w $c $t (select 7 {control(1000-cut)} $r)))')
         first=trees[-1][0]
-        assert first[:5]==['State',[],cut,'False','suspended'],first
+        assert first[:5]==['State',[],min(cut,total),
+                           'False' if cut<total else 'True',
+                           'suspended' if cut<total else 'closed'],first
         for field in ('values','work','closed','satisfied','status'):
             assert parts[-1][field]==whole[-1][field],(cut,field,parts,whole)
     gate.passed_case('empty-query completion and exact work survive preparation/end/return cuts')
 
-    for cut in (13,17,30):
+    for cut in sorted({13,total-2,total-1}):
         trees,parts=gate.run('captured absence invalidated '+str(cut),source+
             f'!(let {pattern} (select 7 {control(cut)} {body}) '
             f'(let $_ (add-atom &kb Missing) '

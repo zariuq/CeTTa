@@ -22,6 +22,7 @@ void cetta_http_result_free(CettaHttpResult *r) {
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
+#include <unistd.h>
 
 #if LIBCURL_VERSION_NUM < 0x075500
 #error "HTTP worker requires libcurl 7.85 or newer with thread-safe initialization and asynchronous DNS"
@@ -61,6 +62,7 @@ struct CettaHttpWorker {
     CettaHttpWorkerHooks hooks;
     size_t count, request_bytes, response_bytes, unacknowledged;
     uint64_t generation;
+    int wakeup_fd;
     bool initialized, available, stopping;
 };
 
@@ -80,6 +82,15 @@ static uint64_t milliseconds(void) {
 static void changed(CettaHttpWorker *w) {
     ++w->generation;
     pthread_cond_broadcast(&w->changed);
+    if (w->wakeup_fd >= 0) { ssize_t ignored = write(w->wakeup_fd, "w", 1); (void)ignored; }
+}
+
+void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *w, int descriptor) {
+    if (!w) return;
+    pthread_mutex_lock(&w->mutex);
+    w->wakeup_fd = descriptor;
+    changed(w);
+    pthread_mutex_unlock(&w->mutex);
 }
 
 static void wake(CettaHttpWorker *w) {
@@ -209,14 +220,19 @@ static void clear_easy(CettaHttpWorker *w, Job *j, bool added) {
 
 static void finish(CettaHttpWorker *w, Job *j, CURLcode code, bool cancelled) {
     long response=0, request_size=0;
+    curl_off_t retry_after=-1;
     bool known=false;
     if (j->easy) {
         curl_easy_getinfo(j->easy,CURLINFO_RESPONSE_CODE,&response);
+        struct curl_header *retry_header=NULL;
+        if (curl_easy_header(j->easy,"Retry-After",0,CURLH_HEADER,-1,&retry_header)==CURLHE_OK)
+            curl_easy_getinfo(j->easy,CURLINFO_RETRY_AFTER,&retry_after);
         known=curl_easy_getinfo(j->easy,CURLINFO_REQUEST_SIZE,&request_size)==CURLE_OK && request_size>=0;
     }
     clear_easy(w,j,j->result.started);
     pthread_mutex_lock(&w->mutex);
     j->result.transport_code=code; j->result.status=response; j->result.cancelled=cancelled;
+    j->result.retry_after=(int64_t)retry_after;
     j->result.request_size_known=known; j->result.request_size=request_size;
     j->state=OBSERVING; j->retry_at=0;
     pthread_mutex_unlock(&w->mutex);
@@ -397,6 +413,7 @@ CettaHttpWorkerStatus cetta_http_worker_new(const CettaHttpWorkerLimits *limits,
                    hooks->record_attempts>1000))) return HTTP_WORKER_INVALID;
     CettaHttpWorker *w=calloc(1,sizeof(*w));
     if (!w) return HTTP_WORKER_NOMEM;
+    w->wakeup_fd = -1;
     w->limits=l; if (hooks) w->hooks=*hooks;
     if (!w->hooks.record_attempts) w->hooks.record_attempts=5;
     if (pthread_mutex_init(&w->mutex,NULL)) { free(w); return HTTP_WORKER_NOMEM; }
@@ -606,6 +623,7 @@ size_t cetta_http_worker_free(CettaHttpWorker *w) {
 }
 #else
 
+void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *w,int fd) { (void)w; (void)fd; }
 bool cetta_http_worker_progress(CettaHttpWorker *w,uint64_t id,CettaHttpProgress *out) {
     (void)w; (void)id; (void)out; return false;
 }

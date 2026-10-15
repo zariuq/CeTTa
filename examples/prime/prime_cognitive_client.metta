@@ -153,8 +153,9 @@
 !(bind! &hoisted-log (new-space))
 !(bind! &eager-log (new-space))
 (= (client:logged-score $log $edge)
-   (let () (add-atom $log (valued (client:middle $edge)))
-     (client:score $edge)))
+   (let $middle (client:middle $edge)
+     (let () (add-atom $log (valued $middle))
+       (client:score $edge))))
 !(let $edges (client:alice-edges)
    (collapse
      (let $edge (superpose $edges)

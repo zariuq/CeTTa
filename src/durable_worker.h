@@ -9,6 +9,7 @@
 #define CETTA_WORKER_PACKET_MAX (6u+CETTA_WORKER_ID_MAX+CETTA_WORKER_BODY_MAX)
 typedef enum {
     WORKER_NEXT=1, WORKER_RESULT=2, WORKER_RECEIPT=3, WORKER_SUBMIT=4,
+    WORKER_WAIT=5,
     WORKER_IDLE=64, WORKER_TASK, WORKER_STORED, WORKER_PENDING, WORKER_UNKNOWN,
     WORKER_CONFLICT, WORKER_INVALID, WORKER_UNAVAILABLE, WORKER_LIMIT
 } CettaWorkerCode;
@@ -33,13 +34,23 @@ CettaDurableStatus cetta_worker_publish(CettaDurableStore *store,
 CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store,
     int listener, uid_t uid, const char *worker, CettaWorkerEndpoint **out);
 void cetta_worker_endpoint_free(CettaWorkerEndpoint *endpoint);
-/* Bounded round-robin pump, at most 16 peers, one request per peer per call.
+/* Round-robin pump over expandable peer storage, one request per peer per call.
  * timeout 0..1000 ms. A slow/non-reading peer does not block other peers.
  * Idle or stalled peers close after 30 s of monotonic time. Return storage
  * faults to host health policy; never report STORED after an unknown commit.
  * Disconnection is not cancellation of any durable task/result/effect. */
 CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *endpoint,
     unsigned timeout_ms, size_t *requests);
+/* Event-loop wait only: observe listener/peer readiness plus an optional host
+ * intake fd. No I/O, storage, close or evaluator work; step handles the wake.
+ * Readiness remains pending until consumed, including arrivals before poll.
+ * No concurrent endpoint calls. timeout is 0..1000 ms; -1 omits intake. */
+CettaDurableStatus cetta_worker_endpoint_wait(CettaWorkerEndpoint *endpoint,
+    int intake_fd, unsigned timeout_ms);
+/* As above, also wait for a host-owned output fd to become writable.
+ * -1 omits either descriptor. The caller owns nonblocking output buffering. */
+CettaDurableStatus cetta_worker_endpoint_wait_io(CettaWorkerEndpoint *endpoint,
+    int intake_fd, int output_fd, unsigned timeout_ms);
 
 /* Packet: "CWP1", code byte, ID-length byte, ID bytes, remaining body bytes.
  * One packet per seqpacket message. NEXT has no ID/body; RESULT requires both;

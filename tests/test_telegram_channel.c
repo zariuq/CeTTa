@@ -137,14 +137,6 @@ static void decided(const char *key,const char *expected) {
     Atom *v=record("telegram.decisions",key);
     if (!v || !atom_eq(v,parse(expected))) { fprintf(stderr,"decision %s: ",key); if (v) atom_print(v,stderr); fprintf(stderr,"\nexpected %s\n",expected); abort(); }
 }
-static void control_request(const char *id,const char *lane,const char *batch,char key[80]) {
-    Atom *args[]={atom_symbol(&persistent,"host:telegram-control"),atom_int(&persistent,1),
-        atom_string(&persistent,"bot"),atom_string(&persistent,id),atom_string(&persistent,lane),
-        atom_string(&persistent,"release-worker"),atom_string(&persistent,batch)};
-    Atom *request=atom_expr(&persistent,args,7);
-    snprintf(key,80,"control/%s",id);
-    put("telegram.controls",id,request); put("host.inbox",key,request);
-}
 static const char *ok_message="{\"ok\":true,\"result\":{\"message_id\":9,\"chat\":{\"id\":42}}}";
 /* A normalized update, as the intake stores it. */
 static Atom *json_update(const char *json) {
@@ -238,13 +230,16 @@ int main(int argc,char **argv) {
     space_add(&program,parse("(= (test:buttons $r) (case $r (((tg:some (tg-cmd:reply $a $b (telegram:keyboard $rows))) (test:count $rows)) ($other none))))"));
     /* Commands: a declared name, optionally addressed to this bot, with its
      * arguments. Anything else is ordinary input. */
-    pure(parse("(tg-cmd:parse \"/engine cetta\")"),"(tg-cmd:call \"/engine\" delegated \"cetta\")");
-    pure(parse("(tg-cmd:parse \"  /help  \")"),"(tg-cmd:call \"/help\" help \"\")");
-    pure(parse("(tg-cmd:parse \"/engine@AdaTestBot  a   b\")"),"(tg-cmd:call \"/engine\" delegated \"a b\")");
-    pure(parse("(tg-cmd:parse \"/engine@OtherBot cetta\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"/unknown\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"please /help\")"),"tg:none");
-    pure(parse("(tg-cmd:parse \"\")"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/engine cetta\" True)"),"(tg-cmd:call \"/engine\" delegated \"cetta\")");
+    pure(parse("(tg-cmd:parse \"  /help  \" True)"),"(tg-cmd:call \"/help\" help \"\")");
+    /* In a group every bot reads the message: only an addressed command counts. */
+    pure(parse("(tg-cmd:parse \"/help\" False)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/help@AdaTestBot\" False)"),"(tg-cmd:call \"/help\" help \"\")");
+    pure(parse("(tg-cmd:parse \"/engine@AdaTestBot  a   b\" True)"),"(tg-cmd:call \"/engine\" delegated \"a b\")");
+    pure(parse("(tg-cmd:parse \"/engine@OtherBot cetta\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"/unknown\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"please /help\" True)"),"tg:none");
+    pure(parse("(tg-cmd:parse \"\" True)"),"tg:none");
     pure(parse("(tg-cmd:answer-text \"[\\\"answer\\\",\\\"engine: cetta\\\"]\")"),"(tg:some \"engine: cetta\")");
     pure(parse("(tg-cmd:answer-text \"[\\\"answer\\\",\\\"\\\"]\")"),"(tg:some \"(empty answer)\")");
     pure(parse("(tg-cmd:answer-text \"[]\")"),"tg:none");
@@ -288,14 +283,13 @@ int main(int argc,char **argv) {
     pure(parse("(tg-cmd:identity \"{\\\"ok\\\":true,\\\"result\\\":{\\\"id\\\":123456789}}\" \"123456789\")"),"tg:none");
     pure(parse("(tg-cmd:identity \"not json\" \"123456789\")"),"tg:none");
     pure(parse("(tg-cmd:observation \"11\" \"/engine\" \"cetta\" \"42.0\")"),"\"[\\\"command\\\",\\\"11\\\",\\\"/engine\\\",\\\"cetta\\\",\\\"42.0\\\"]\"");
-    pure(parse("(tg-cmd:stopped-text)"),"\"Stopped. Nothing Ada submits is sent until /start.\"");
     pure(parse("(tg-channel:result-json (tg-agent:delivered 9))"),"\"[\\\"delivered\\\",9]\"");
     pure(parse("(tg-channel:result-json (tg-agent:failed 400))"),"\"[\\\"failed\\\",400]\"");
     pure(parse("(tg-channel:result-json (tg-agent:not-sent))"),"\"[\\\"not-sent\\\"]\"");
     pure(parse("(tg-channel:result-json (tg-agent:uncertain transport))"),"\"[\\\"uncertain\\\",\\\"transport\\\"]\"");
     pure(parse("(tg-channel:advances (tg-agent:failed 400))"),"True");
     pure(parse("(tg-channel:advances (tg-agent:not-sent))"),"True");
-    pure(parse("(tg-channel:advances (tg-agent:uncertain http-status))"),"False");
+    pure(parse("(tg-channel:advances (tg-agent:uncertain http-status))"),"True");
     const char *send="(telegram:send-text 1 42 0 0 \"x\" \"plain\")";
     char check[512];
     /* Refused connection, nothing issued: provably not sent. */
@@ -352,26 +346,12 @@ int main(int argc,char **argv) {
     published(receipt_request,"[\"delivery\",\"42.0.00000000000000000001\",1,2,[\"failed\",400]]",receipt);
     blocked(sub3); accept_batch(decide(sub2,1),1,commit);
     lane("42.0","(tg-agent:sending \"42.0.00000000000000000002\" 0 1)");
-    /* Uncertain delivery holds the lane: nothing may overtake it. */
+    /* Uncertain delivery is retained without blocking the next message. */
     snprintf(key,sizeof(key),"%s/0",commit);
     completed(key,"observed","not json",effect); accept_batch(decide(effect,1),1,commit);
-    lane("42.0","(tg-agent:held \"42.0.00000000000000000002\" 0 1 (tg-agent:uncertain malformed-api-result))");
+    lane("42.0","(tg-agent:idle)");
     snprintf(receipt_request,sizeof(receipt_request),"%s/0",commit);
     published(receipt_request,"[\"delivery\",\"42.0.00000000000000000002\",0,1,[\"uncertain\",\"malformed-api-result\"]]",receipt);
-    blocked(sub3);
-    /* The operator releases the lane: the uncertain action stays uncertain,
-     * the client is told which one, and the next submission proceeds. */
-    char control[80];
-    control_request("wrong-batch","42.0","42.0.00000000000000000099",control);
-    accept_batch(decide(control,1),0,commit);
-    assert(atom_is_symbol(record("telegram.control-results","wrong-batch")->expr.elems[2],"refused"));
-    lane("42.0","(tg-agent:held \"42.0.00000000000000000002\" 0 1 (tg-agent:uncertain malformed-api-result))");
-    control_request("release-1","42.0","42.0.00000000000000000002",control);
-    accept_batch(decide(control,1),1,commit); lane("42.0","(tg-agent:idle)");
-    assert(atom_is_symbol(record("telegram.control-results","release-1")->expr.elems[2],"released"));
-    snprintf(receipt_request,sizeof(receipt_request),"%s/0",commit);
-    published(receipt_request,"[\"released\",\"42.0\",\"42.0.00000000000000000002\",0]",receipt);
-    control_request("release-1","42.0","42.0.00000000000000000002",control); blocked(control);
     accept_batch(decide(sub3,1),1,commit); lane("42.0","(tg-agent:sending \"42.0.00000000000000000003\" 0 1)");
     char lane_action[64]; snprintf(lane_action,sizeof(lane_action),"%s/0",commit);
 
@@ -445,23 +425,31 @@ int main(int argc,char **argv) {
     command_is("13","tg-cmd:edited");
     snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
     intent_is(reply_key,"(telegram:edit-text 1 42 9 \"late\" \"plain\")","(tg-channel:command-sent 1 \"bot\" \"13\" edit)");
-    /* /stop: answered at once, the agent is told, a chat's pending action
-     * waits and a new submission is rejected. /start lets the action go. */
+    /* /stop holds the agent's sends at once and asks the agent to stop: a
+     * chat's pending action waits and a new submission is rejected. The
+     * agent's answer is the reply, so the reply says what the agent did.
+     * /start lets the action go and is answered by the agent the same way. */
     incoming_text(14,42,"operator","/stop",cmd); accept_batch(decide(cmd,1),2,commit);
-    command_is("14","tg-cmd:served");
+    command_is("14","tg-cmd:waiting");
     assert(atom_eq(record("telegram.lifecycle","latch"),parse("(tg-cmd:latch stopped)")));
-    snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
-    intent_is(reply_key,"(telegram:send-text 1 42 0 114 \"Stopped. Nothing Ada submits is sent until /start.\" \"plain\")",
-        "(tg-channel:command-sent 1 \"bot\" \"14\" reply)");
-    admission(reply_key,TELEGRAM_SEND); admission(lane_action,TELEGRAM_WAIT);
-    snprintf(request,sizeof(request),"%s/1",commit); published(request,"[\"command\",\"14\",\"/stop\",\"\",\"42.0\"]",task);
+    admission(lane_action,TELEGRAM_WAIT);
+    snprintf(request,sizeof(request),"%s/0",commit); published(request,"[\"command\",\"14\",\"/stop\",\"\",\"42.0\"]",task);
     submitted("84.1.00000000000000000001","[[\"send\",\"x\",\"plain\"]]",sub); accept_batch(decide(sub,1),1,commit);
     decided("84.1.00000000000000000001","(tg-channel:decision 1 rejected stopped)");
-    /* The agent's reply to a /stop only acknowledges it. */
-    result(task,"[\"answer\",\"stopping\"]",worker_input); accept_batch(decide(worker_input,1),0,commit);
+    result(task,"[\"answer\",\"Stopped. Cognition is paused.\"]",worker_input); accept_batch(decide(worker_input,1),1,commit);
+    command_is("14","tg-cmd:answered");
+    snprintf(reply_key,sizeof(reply_key),"%s/0",commit);
+    intent_is(reply_key,"(telegram:send-text 1 42 0 114 \"Stopped. Cognition is paused.\" \"plain\")",
+        "(tg-channel:command-sent 1 \"bot\" \"14\" reply)");
+    admission(reply_key,TELEGRAM_SEND);
+    deadline("14",timer_input); accept_batch(decide(timer_input,1),0,commit); command_is("14","tg-cmd:answered");
     incoming_text(15,42,"operator","/start",cmd); accept_batch(decide(cmd,1),2,commit);
+    command_is("15","tg-cmd:waiting");
     assert(atom_eq(record("telegram.lifecycle","latch"),parse("(tg-cmd:latch running)")));
     admission(lane_action,TELEGRAM_SEND);
+    snprintf(request,sizeof(request),"%s/0",commit); published(request,"[\"command\",\"15\",\"/start\",\"\",\"42.0\"]",task);
+    result(task,"[\"answer\",\"Started.\"]",worker_input); accept_batch(decide(worker_input,1),1,commit);
+    command_is("15","tg-cmd:answered");
     /* The same text from someone who is not an operator is ordinary input. */
     incoming_text(16,42,"ordinary","/help",cmd); accept_batch(decide(cmd,1),1,commit);
     assert(!record("telegram.commands","16"));
@@ -518,7 +506,7 @@ int main(int argc,char **argv) {
     /* Committed work survives a reopen. */
     cetta_durable_close(store); assert(cetta_durable_open(db,NULL,&store)==DURABLE_OK);
     lane("42.0","(tg-agent:sending \"42.0.00000000000000000003\" 0 1)");
-    printf("Telegram channel: %u pure policy checks; deliveries without waiting, acknowledgment-only answers, keyed submissions, lane order, receipts, definitive failure progress, held uncertainty, operator release, rejections, commands answered by the service or raced against their deadline, menus, taps raced against their deadline, and stop/start at dispatch passed\n",policy_checks);
+    printf("Telegram channel: %u pure policy checks; deliveries without waiting, acknowledgment-only answers, keyed submissions, lane order, receipts, definitive failure progress, uncertainty without replay or lane blocking, rejections, commands answered by the service or raced against their deadline, menus, taps raced against their deadline, and stop/start at dispatch passed\n",policy_checks);
     cetta_durable_close(store); unlink(db); char path[300]; snprintf(path,sizeof(path),"%s-wal",db); unlink(path); snprintf(path,sizeof(path),"%s-shm",db); unlink(path); rmdir(dir);
     cetta_library_context_free(&context); eval_set_library_context(NULL); registry_free(&registry); space_free(&program);
     arena_free(&scratch); arena_free(&persistent); var_intern_free(&vars); symbol_table_free(&symbols); g_symbols=NULL; g_var_intern=NULL;

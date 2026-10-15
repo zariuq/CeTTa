@@ -362,7 +362,8 @@ bool cetta_prepared_pure_program_returns_optional(
     const CettaPreparedPureProgram *program);
 
 /* Rebind the runtime arguments of a previously compiled closed entry call.
- * The head and arity must match the compiled entry descriptor. */
+ * The head, arity and argument role promised at compilation must still hold;
+ * this low-level operation cannot recheck a dialect's value predicate. */
 bool cetta_prepared_pure_program_rebind_closed_entry_call(
     CettaPreparedPureProgram *program, Atom *expression);
 

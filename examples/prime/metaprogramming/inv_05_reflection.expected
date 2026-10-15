@@ -23,3 +23,4 @@
 [(Ran (quote (double (square 3))) 18)]
 [(Bare (= (* 2 $x) (* 2 $x)))]
 [(Quoted (quote (= (double $x) (* 2 $x))))]
+[(Returned (= (double $x) (* 2 $x)))]

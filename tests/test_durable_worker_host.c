@@ -97,7 +97,11 @@ static CettaHostDecision *resume(const char *id, const char *outbox) {
     CettaHostDecision *d=NULL; assert(cetta_host_begin(store,&spec,&d)==DURABLE_OK);
     assert(cetta_host_evaluate(d,&trusted,parse("(resume)"),10000)==DURABLE_OK);
     const EvalOutcome *o=cetta_host_outcome(d);
-    if (o->results.len!=1) fprintf(stderr,"resume completion=%d results=%zu\n",o->completion,(size_t)o->results.len);
+    if (o->completion!=CETTA_EVAL_COMPLETE || o->effect_denials || o->results.len!=1) {
+        fprintf(stderr,"resume completion=%d denials=%zu results=%zu\n",o->completion,
+            (size_t)o->effect_denials,(size_t)o->results.len);
+        for (size_t i=0;i<o->results.len;++i) { atom_print(o->results.items[i],stderr); fputc('\n',stderr); }
+    }
     assert(o->completion==CETTA_EVAL_COMPLETE && !o->effect_denials && o->results.len==1);
     return d;
 }
@@ -120,25 +124,30 @@ int main(int argc, char **argv) {
         char id[65]; assert(cetta_worker_register(store,argv[3],"brain",id)==DURABLE_OK); _exit(0);
     }
     assert(argc==1);
+    /* Projected records belong to this decision's context. &self inside an
+     * authored equation is its lexical module, not the new snapshot. Atom
+     * parameters keep the match template unevaluated until its variables bind. */
+    space_add(&program,parse("(: test:match (-> Atom Atom %Undefined%))"));
+    space_add(&program,parse("(= (test:match $pattern $template) (chain (context-space) $space (match $space $pattern $template)))"));
     space_add(&program,parse("(= (prepare) "
-        "(match &self (host:record 0 \"chat/1\" (request $observation)) "
-        "(match &self (host:record-version 2 \"route\" $revision $position) "
+        "(test:match (host:record 0 \"chat/1\" (request $observation)) "
+        "(test:match (host:record-version 2 \"route\" $revision $position) "
         "(host:transition (waiting \"chat/1\" $revision) () "
         "((durable:worker:request 0 \"brain\" $observation (resume \"chat/1\")))))))"));
     /* All policy comes from this trusted program. Worker text only supplies
      * the eventual message string, after exact task/origin/continuation joins.
      * The route revision captured in the continuation detects an old draft. */
     space_add(&program,parse("(= (resume) "
-        "(match &self (host:record 0 $input (host:worker-result 1 \"brain\" $id $taskrev $text)) "
-        "(match &self (host:record-version 2 $taskkey $taskrev $taskpos) "
-        "(match &self (host:record 3 $taskkey (host:worker-origin 1 $epoch $outkey $outrev $outpos)) "
-        "(match &self (host:record-version 4 $outkey $outrev $outpos) "
-        "(match &self (host:record 4 $outkey (host:intent 1 \"worker.request\" \"1\" "
+        "(test:match (host:record 0 $input (host:worker-result 1 \"brain\" $id $taskrev $text)) "
+        "(test:match (host:record-version 2 $taskkey $taskrev $taskpos) "
+        "(test:match (host:record 3 $taskkey (host:worker-origin 1 $epoch $outkey $outrev $outpos)) "
+        "(test:match (host:record-version 4 $outkey $outrev $outpos) "
+        "(test:match (host:record 4 $outkey (host:intent 1 \"worker.request\" \"1\" "
             "(worker:request 1 \"brain\" $observation) (resume $token))) "
-        "(match &self (host:record 2 $taskkey $observation) "
-        "(match &self (host:record 1 \"actor\" (host:actor 1 \"worker-test/1\" (waiting $token $saved))) "
-        "(match &self (host:record-version 5 \"route\" $current $position) "
-        "(if (and (== $saved $current) (== (collapse (match &self (host:record 6 $key $value) True)) ())) "
+        "(test:match (host:record 2 $taskkey $observation) "
+        "(test:match (host:record 1 \"actor\" (host:actor 1 \"worker-test/1\" (waiting $token $saved))) "
+        "(test:match (host:record-version 5 \"route\" $current $position) "
+        "(if (and (== $saved $current) (== (collapse (test:match (host:record 6 $key $value) True)) ())) "
             "(host:transition (done $text) () ((host:send 0 (sendMessage \"allowed\" $text) finished))) "
             "(host:transition (stale $token) () ())))))))))))"));
     assert(!cetta_worker_validate("brain",parse("(worker:request 1 \"other\" \"x\")"),parse("reply")));

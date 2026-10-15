@@ -13,6 +13,14 @@ The draft is where Prime's semantics is being settled against its formal
 metatheory, so its interfaces may still change. See
 [MeTTa Prime draft](#metta-prime-draft---lang-prime) below.
 
+The `godelclaw/CeTTa` branch `cetta-ours` combines Prime with the native
+process, timer, mailbox, memory and Telegram libraries used by
+[GödelClaw](https://github.com/godelclaw/godelclaw). GödelClaw pins its engine
+revision in `CETTA_REF`; its cognitive loops use `--lang petta`, while Prime
+programs select `--lang prime`. See the
+[integration changes and qualification results](verification/agent-trial/upstream-review.txt).
+The integration adds no automatic tool admission rule or model budget.
+
 ## Requirements
 
 For the default build:
@@ -96,6 +104,7 @@ CeTTa checkout or a different source branch.
 | Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
 | Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
+| Shell helper library | `lib/shell.metta` | [Shell module](lib/shell.metta) |
 | Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |
 | Managed spellings and registered-name reclamation | `ENABLE_MANAGED_SYMBOLS=1` | [Symbol lifetime experiment](verification/gc/README.md) |
 | Native memory collection, packed cosine search and journaled space owner | `space-service value-worker` targets | [Local setup and qualification](docs/memory/README.md) |
@@ -115,6 +124,43 @@ make BUILD=core ENABLE_HTTP=1 ENABLE_DURABLE=1 \
 The service is a separate executable so it need not link Python; both builds
 use the same source. Managed symbols are still an experimental memory feature,
 not a complete collector for every legacy numeric symbol ID.
+
+## JSON ingestion
+
+`lib/json.metta` uses a build-time predictive parser for the authored
+RFC-8259 grammar. Regular lexical spans use generated DFA tables; container
+actions construct values while reading the input. Ordinary parsing and
+stringifying do not materialize forests, render certificates, hash a parse
+tree, or reparse emitted output.
+
+Canonical `json:*` values preserve exact number text, ordered duplicate
+members, Unicode scalars, occurrence IDs and source spans. Historical
+`json-parse` values retain their compatibility representation, including NUL
+bytes. Parse failures report a byte position and expectation, and preserve
+the caller's arena and output. Parsing, value conversion, Boolean respelling
+and writing use explicit continuations, with no default nesting cap. C callers
+can request explicit work, depth and byte budgets independently of the grammar.
+
+`json:parse-reference`, `json:parse-legacy-reference` and
+`json:stringify-reference` explicitly select the prepared GLL reference.
+`json:capabilities` identifies the default as `PredictiveDfaV1`; its remaining
+digests describe that reference. Diagnostic preparation is lazy.
+
+The compiler reads the lowered syntax, lexical profile, occurrence-value
+language and elaboration plan. It checks semantic layouts and FIRST/FOLLOW
+conflicts after lexical folding and erasing value-inert whitespace. It
+supports this JSON elaboration fragment and refuses unsupported changes;
+it is not a general parser generator with GLL fallback islands.
+
+The C entry `cetta_json_direct_v1_lines` consumes JSONL one row at a time.
+Its callback borrows the row's value until returning; retaining it requires
+copying it. Completed rows remain delivered if a subsequent row fails.
+
+Run `make test-json-direct-v1` for differential, malformed-input, concurrency,
+streaming and generator-conflict checks. The qualification binary also
+accepts `--bench FILE`, `--check FILE`, `--corpus DIRECTORY` and
+`--corpus-fast DIRECTORY`. Reference resource exhaustion is reported
+separately in corpus checks; complete-file agreement requires every row.
 
 ## Bridge Setup
 
@@ -785,6 +831,17 @@ Libraries:
 - `lib/mork.metta`: narrow MORK-facing helper interface
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
   extension libraries used by the current profile interfaces
+  - `fs:read-text` preserves all bytes. `fs:read-text-result path max-bytes errors`
+    returns structured success or filesystem failure; `max-bytes` is caller-owned
+    (0 means unlimited), and `errors` is `"raw"` or `"replace"` for malformed UTF-8.
+    `fs:line-window` streams numbered line windows. `fs:tree-page` and
+    `fs:grep-page` return explicit continuation offsets; callers choose skipped
+    directories. Search uses PCRE2 (build with `libpcre2-dev`, run with
+    `libpcre2-8`); unavailable support returns an explicit error.
+    `fs:update-text` supports write, append and exact edits with atomic replacement,
+    permissions, SHA-256 receipts and collision-free backups in a caller-selected
+    directory. `fs:is-file` distinguishes regular files from directories.
+    Oversized files return `("limit" max-bytes)`, never silently truncated text.
 
 Useful workloads:
 

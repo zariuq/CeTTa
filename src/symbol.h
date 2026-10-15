@@ -406,6 +406,7 @@ static inline SymbolSpelling symbol_spelling(
     /* ── Library extension hooks ── */ \
     X(lib_list_from_expression, "__cetta_lib_list_from_expression") \
     X(lib_list_to_expression, "__cetta_lib_list_to_expression") \
+    X(lib_list_range, "__cetta_lib_list_range") \
     X(lib_system_args, "__cetta_lib_system_args") \
     X(lib_system_arg, "__cetta_lib_system_arg") \
     X(lib_system_arg_count, "__cetta_lib_system_arg_count") \
@@ -415,6 +416,10 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
+    X(lib_system_host, "__cetta_lib_system_host") \
+    X(lib_system_read_line, "__cetta_lib_system_read_line") \
+    X(lib_fs_tail_text, "__cetta_lib_fs_tail_text") \
+    X(lib_fs_entries, "__cetta_lib_fs_entries") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
@@ -423,6 +428,12 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_try_canonical_from_file, "__cetta_lib_fs_try_canonical_from_file") \
     X(lib_fs_try_canonical_under, "__cetta_lib_fs_try_canonical_under") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
+    X(lib_fs_read_text_result, "__cetta_lib_fs_read_text_result") \
+    X(lib_fs_line_window, "__cetta_lib_fs_line_window") \
+    X(lib_fs_tree_page, "__cetta_lib_fs_tree_page") \
+    X(lib_fs_grep_page, "__cetta_lib_fs_grep_page") \
+    X(lib_fs_update_text, "__cetta_lib_fs_update_text") \
+    X(lib_fs_is_file, "__cetta_lib_fs_is_file") \
     X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
@@ -437,9 +448,13 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_io_poll, "__cetta_lib_io_poll") \
     X(lib_io_status, "__cetta_lib_io_status") \
     X(lib_io_wait, "__cetta_lib_io_wait") \
+    X(lib_io_wait_ready, "__cetta_lib_io_wait_ready") \
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
+    X(lib_io_signal, "__cetta_lib_io_signal") \
     X(lib_cwp_call, "__cetta_lib_cwp_call") \
     X(lib_proc_run, "__cetta_lib_proc_run") \
+    X(lib_sqlite_query, "__cetta_lib_sqlite_query") \
+    X(lib_sqlite_transaction, "__cetta_lib_sqlite_transaction") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
     X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
@@ -795,6 +810,7 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom)
 
 /* Grounded value operations without ambient observations or mutation, given
@@ -859,6 +875,7 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom) \
     X(unique_atom) \
     X(remove_all_atom) \

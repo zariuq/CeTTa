@@ -6,6 +6,7 @@
 [(Unpacked a b)]
 [(Same same)]
 [(Rigid same tail)]
+[(Rigid other tail)]
 [(Box 42)]
 [True]
 [False]

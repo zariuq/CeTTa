@@ -95,12 +95,12 @@
                ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:help-text) reply))))
             (stop
              (host:transition (tg-channel:intake)
-               ((host:put 1 $key (tg-cmd:served $now)) (host:put 2 "latch" (tg-cmd:latch stopped)))
-               ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:stopped-text) reply) $ask)))
+               ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)) (host:put 2 "latch" (tg-cmd:latch stopped)))
+               ($ask (durable:timer:after 2 $now $deadline $key (tg-channel:deadline 1 $source $key)))))
             (start
              (host:transition (tg-channel:intake)
-               ((host:put 1 $key (tg-cmd:served $now)) (host:put 2 "latch" (tg-cmd:latch running)))
-               ((tg-channel:command-reply $source $key $chat $thread $message (tg-cmd:started-text) reply) $ask)))
+               ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)) (host:put 2 "latch" (tg-cmd:latch running)))
+               ($ask (durable:timer:after 2 $now $deadline $key (tg-channel:deadline 1 $source $key)))))
             (delegated
              (host:transition (tg-channel:intake)
                ((host:put 1 $key (tg-cmd:waiting $now $chat $thread $message)))
@@ -187,13 +187,9 @@
        (if (telegram:contains $code (6 7 35 60)) (tg-agent:not-sent) (tg-agent:outcome $outcome $action)))
       ($other (tg-agent:outcome $outcome $action)))))
 
-; A definitive outcome (delivered, failed with a 4xx, or never started)
-; advances the lane and is reported. Only uncertain delivery holds the lane:
-; the next message to that chat must not overtake one that may have arrived.
-(= (tg-channel:advances $result)
-   (case $result
-     (((tg-agent:uncertain $reason) False)
-      ($other True))))
+; Every terminal observation advances the lane. An uncertain message keeps
+; its own outcome and is never retried; later messages can still be sent.
+(= (tg-channel:advances $result) True)
 
 ; Completion views: 2 original intent, 3 outcome, 4 writable delivery key
 ; (grant 2). Channel 0 = the client worker, for the receipt only.

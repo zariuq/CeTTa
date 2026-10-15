@@ -4,6 +4,7 @@
 #include "mm2_lower.h"
 #include "native_sha256.h"
 #include "space.h"
+#include "space_path_index.h"
 #include "symbol.h"
 #include "term_universe.h"
 #include "mork_space_bridge_runtime.h"
@@ -57,6 +58,7 @@ typedef struct {
     uint64_t max_facts, max_live_bytes, max_journal_bytes, journal_bytes, checkpoint_bytes;
     uint64_t max_query_bytes, max_snapshot_bytes;
     unsigned query_ms;
+    size_t watchers, max_watchers;
     char uuid[33], boot[33];
     int journal, directory, lock;
     bool poisoned, restoring;
@@ -68,6 +70,8 @@ typedef struct {
     Bytes input, output;
     size_t output_sent;
     uint64_t deadline;
+    uint64_t watch_source, watch_revision, watch_due;
+    bool watching;
 } Client;
 
 static volatile sig_atomic_t stopping;
@@ -467,6 +471,10 @@ static bool boot_matches(Service *s, Atom *a) {
     const char *boot = NULL; return text(a,&boot) && !strcmp(boot,s->boot);
 }
 static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting) {
+    bool profile=!counting && (atom_is_symbol(part(request,2),"query-profile") ||
+                              atom_is_symbol(part(request,2),"query-first-profile"));
+    bool first=!counting && (atom_is_symbol(part(request,2),"query-first") ||
+                            atom_is_symbol(part(request,2),"query-first-profile"));
     uint64_t limit = 0, lease = 0;
     if (!counting && (!integer(part(request,7),&limit) || !integer(part(request,8),&lease) ||
         !limit || limit > QUERY_ROWS || lease < 1 || lease > 300000)) return error(a,request,"limit");
@@ -520,7 +528,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
             }
         }
         bindings_free(&bindings); arena_free(&scratch);
-        if (failure) break;
+        if (failure || (first && q.count)) break;
     }
     space_occurrence_cursor_release(&cursor);
     if (!failure && step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) failure="backend";
@@ -533,10 +541,21 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     s->snapshots[slot] = q; s->snapshot_bytes += q.size; ++s->next_cursor;
     Atom *args[] = {atom_string(a,s->boot),atom_int(a,q.id),atom_int(a,q.source),
         atom_int(a,q.revision),atom_int(a,q.count),atom_int(a,lease)};
-    return reply(a,request,true,form(a,"snapshot",args,6));
+    /* A first-occurrence selection is explicitly different from an
+     * exhaustive snapshot. It preserves the native occurrence order. */
+    Atom *view=form(a,first ? "selection" : "snapshot",args,6);
+    if (profile) {
+        CettaSpacePathIndexInfo info={0};
+        space_path_indexes_info(st->space,&info);
+        Atom *metrics[]={atom_int(a,examined),atom_int(a,info.index_count),
+            atom_int(a,info.source_rows),atom_int(a,info.keyed_rows),atom_int(a,info.uncertain_rows)};
+        Atom *values[]={view,form(a,"query-work",metrics,5)};
+        view=form(a,"profile",values,2);
+    }
+    return reply(a,request,true,view);
 }
 static bool compact(Service *s);
-static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
+static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes raw) {
     const char *id = NULL;
     if (!request || request->kind != ATOM_EXPR || request->expr.len < 3 ||
         !atom_is_symbol(part(request,0),"request") || !token(part(request,1),&id)) return NULL;
@@ -551,9 +570,10 @@ static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
         Atom *caps[] = {atom_symbol(a,"conditional-batches"),atom_symbol(a,"snapshot-pages"),
             atom_symbol(a,"bounded-receipts"),atom_symbol(a,"journal-checkpoint"),atom_symbol(a,"no-eval"),
             atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index"),
-            atom_symbol(a,"tensor-ctn1-native"),atom_symbol(a,"tensor-f32-native")};
+            atom_symbol(a,"tensor-ctn1-native"),atom_symbol(a,"tensor-f32-native"),
+            atom_symbol(a,"revision-waits"),atom_symbol(a,"first-occurrence")};
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,9)};
+            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,11)};
         return reply(a,request,true,form(a,"service",args,5));
     }
     if (atom_is_symbol(part(request,2),"fetch") || atom_is_symbol(part(request,2),"close")) {
@@ -622,6 +642,25 @@ static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
     if (!integer(part(request,4),&store_id)) return error(a,request,"invalid-space");
     Store *st = find_store(s,store_id);
     if (!st) return error(a,request,"missing-space");
+    if (atom_is_symbol(part(request,2),"watch") && request->expr.len == 7) {
+        uint64_t revision, duration;
+        if (!integer(part(request,5),&revision) || revision > st->revision ||
+            !integer(part(request,6),&duration) || duration > INT_MAX)
+            return error(a,request,"invalid-watch");
+        if (revision != st->revision || !duration) {
+            Atom *args[]={atom_string(a,s->uuid),atom_int(a,st->id),atom_int(a,st->revision)};
+            return reply(a,request,true,form(a,revision != st->revision ? "changed" : "unchanged",args,3));
+        }
+        /* Registration and revision comparison run on the storage owner.
+         * No commit can occur between the check and the saved wait. This is
+         * a read notification, never an application receive or a receipt. */
+        if (s->watchers >= s->max_watchers) return error(a,request,"watch-capacity");
+        client->watching=true; ++s->watchers;
+        client->watch_source=st->id; client->watch_revision=revision;
+        client->watch_due=now_ms()+duration;
+        client->deadline=client->watch_due+30000;
+        return NULL;
+    }
     if (atom_is_symbol(part(request,2),"describe") && request->expr.len == 5)
         return reply(a,request,true,describe(s,a,st));
     if (atom_is_symbol(part(request,2),"verify") && request->expr.len == 5) {
@@ -633,7 +672,8 @@ static Atom *dispatch(Service *s, Arena *a, Atom *request, Bytes raw) {
                       atom_int(a,st->revision),atom_int(a,space_length64(st->space))};
         return reply(a,request,true,form(a,"verified",args,4));
     }
-    if (atom_is_symbol(part(request,2),"query") && request->expr.len == 9)
+    if ((atom_is_symbol(part(request,2),"query") || atom_is_symbol(part(request,2),"query-first") ||
+         atom_is_symbol(part(request,2),"query-profile") || atom_is_symbol(part(request,2),"query-first-profile")) && request->expr.len == 9)
         return query(s,a,request,st,false);
     if (atom_is_symbol(part(request,2),"count") && request->expr.len == 6)
         return query(s,a,request,st,true);
@@ -877,17 +917,15 @@ static bool compact(Service *s) {
     else { close(fd); unlinkat(s->directory,"checkpoint.new",0); }
     return ok;
 }
-static void client_close(Client *c) {
+static void client_close(Service *s,Client *c) {
+    if (c->watching) --s->watchers;
     if (c->fd>=0) close(c->fd);
     bytes_free(&c->input); bytes_free(&c->output);
     *c=(Client){.fd=-1};
 }
-static bool respond(Service *s,Client *c) {
-    Arena a; arena_init_detached(&a); Atom *request=NULL;
-    bool ok=decode(&a,c->input,&request);
-    Atom *answer=ok ? dispatch(s,&a,request,c->input) : NULL;
-    Bytes b={0}; ok=answer && wire(answer,&b);
-    if (!ok && answer && !s->poisoned) ok=wire(error(&a,request,"reply-limit"),&b);
+static bool client_reply(Service *s,Client *c,Arena *a,Atom *request,Atom *answer) {
+    Bytes b={0}; bool ok=answer && wire(answer,&b);
+    if (!ok && answer && !s->poisoned) ok=wire(error(a,request,"reply-limit"),&b);
     if (ok) {
         c->output.size=b.size+8; c->output.data=malloc(c->output.size);
         if (!c->output.data) ok=false;
@@ -898,7 +936,30 @@ static bool respond(Service *s,Client *c) {
             c->deadline=now_ms()+30000;
         }
     }
-    bytes_free(&b); arena_free(&a); return ok;
+    bytes_free(&b); return ok;
+}
+static bool respond(Service *s,Client *c) {
+    Arena a; arena_init_detached(&a); Atom *request=NULL;
+    bool ok=decode(&a,c->input,&request);
+    Atom *answer=ok ? dispatch(s,c,&a,request,c->input) : NULL;
+    if (c->watching) ok=true;
+    else ok=client_reply(s,c,&a,request,answer);
+    arena_free(&a); return ok;
+}
+static bool client_wake(Service *s,Client *c) {
+    if (!c->watching) return true;
+    Store *st=find_store(s,c->watch_source);
+    if (st && st->revision==c->watch_revision && now_ms()<c->watch_due) return true;
+    Arena a; arena_init_detached(&a); Atom *request=NULL,*answer=NULL;
+    bool ok=decode(&a,c->input,&request);
+    if (ok && !st) answer=error(&a,request,"missing-space");
+    else if (ok) {
+        Atom *args[]={atom_string(&a,s->uuid),atom_int(&a,st->id),atom_int(&a,st->revision)};
+        answer=reply(&a,request,true,form(&a,st->revision!=c->watch_revision ? "changed" : "unchanged",args,3));
+    }
+    c->watching=false; --s->watchers;
+    ok=ok && client_reply(s,c,&a,request,answer);
+    arena_free(&a); return ok;
 }
 static bool client_read(Service *s,Client *c) {
     while (c->header_read<8) {
@@ -979,11 +1040,12 @@ int main(int argc,char **argv) {
     s->max_facts=1000000; s->max_live_bytes=64*1024*1024;
     s->max_query_bytes=QUERY_BYTES; s->max_snapshot_bytes=SNAPSHOT_BYTES;
     s->max_journal_bytes=32*1024*1024; s->query_ms=5000;
+    s->max_watchers=CLIENTS/2;
     for (int i=1;i<argc;++i) {
         if (!strcmp(argv[i],"--help")) {
             puts("cetta-space-service --socket ABSOLUTE_PATH --data PRIVATE_DIRECTORY\n"
                  "  [--max-facts N] [--max-live-bytes N] [--max-journal-bytes N] [--query-ms N]\n"
-                 "  [--max-query-bytes N] [--max-snapshot-bytes N]");
+                 "  [--max-query-bytes N] [--max-snapshot-bytes N] [--max-watchers N]");
             free(s); return 0;
         }
         if (i+1>=argc) goto invalid;
@@ -998,6 +1060,7 @@ int main(int argc,char **argv) {
             else if (!strcmp(option,"--max-query-bytes")) s->max_query_bytes=n;
             else if (!strcmp(option,"--max-snapshot-bytes")) s->max_snapshot_bytes=n;
             else if (!strcmp(option,"--query-ms") && n<=60000) s->query_ms=(unsigned)n;
+            else if (!strcmp(option,"--max-watchers") && n<CLIENTS) s->max_watchers=(size_t)n;
             else goto invalid;
         }
     }
@@ -1016,13 +1079,31 @@ int main(int argc,char **argv) {
     struct sigaction action={.sa_handler=stop}; sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL); sigaction(SIGTERM,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
+    /* Check the stop flag with these signals blocked, then unblock them
+     * atomically in ppoll. A stop between the check and poll must not wait
+     * for the ordinary 30-second idle deadline. */
+    sigset_t stop_signals, wait_signals;
+    sigemptyset(&stop_signals);
+    sigaddset(&stop_signals,SIGINT); sigaddset(&stop_signals,SIGTERM);
+    if (sigprocmask(SIG_BLOCK,&stop_signals,&wait_signals)) goto done;
     Client clients[CLIENTS]; for (size_t i=0;i<CLIENTS;++i) clients[i]=(Client){.fd=-1};
     fprintf(stderr,"space-service: ready\n");
     while (!stopping && !s->poisoned) {
         struct pollfd pollfds[CLIENTS+1]={{listener,POLLIN,0}};
-        for (size_t i=0;i<CLIENTS;++i) pollfds[i+1]=(struct pollfd){clients[i].fd,
-            clients[i].output.data ? POLLOUT : POLLIN,0};
-        int n=poll(pollfds,CLIENTS+1,100);
+        uint64_t current=now_ms(), deadline=current+30000;
+        for (size_t i=0;i<CLIENTS;++i) {
+            Client *c=&clients[i];
+            if (c->fd>=0 && !client_wake(s,c)) client_close(s,c);
+            pollfds[i+1]=(struct pollfd){c->fd,c->output.data ? POLLOUT : POLLIN,0};
+            if (c->fd>=0 && c->deadline<deadline) deadline=c->deadline;
+            if (c->watching && c->watch_due<deadline) deadline=c->watch_due;
+        }
+        for (size_t i=0;i<SNAPSHOTS;++i)
+            if (s->snapshots[i].id && s->snapshots[i].expires<deadline) deadline=s->snapshots[i].expires;
+        current=now_ms();
+        int timeout=deadline>current ? (int)(deadline-current) : 0;
+        struct timespec wait_time={timeout/1000,(timeout%1000)*1000000L};
+        int n=ppoll(pollfds,CLIENTS+1,&wait_time,&wait_signals);
         if (n<0 && errno==EINTR) continue;
         if (n<0) { s->poisoned=true; break; }
         if (pollfds[0].revents&POLLIN) {
@@ -1039,15 +1120,23 @@ int main(int argc,char **argv) {
             short events=pollfds[i+1].revents;
             bool ok=true;
             if (events&POLLOUT) ok=client_write(c);
-            else if (events&POLLIN) ok=client_read(s,c);
+            else if (events&POLLIN) {
+                if (c->watching) {
+                    /* A watch occupies this RPC connection until its reply.
+                     * Detect a closed peer and refuse pipelined requests. */
+                    char byte; ssize_t got=recv(c->fd,&byte,1,MSG_PEEK);
+                    ok=got<0 && (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR);
+                } else ok=client_read(s,c);
+            }
             if (!ok || (events&(POLLERR|POLLNVAL)) ||
-                ((events&POLLHUP) && !(events&POLLIN)) || now_ms()>=c->deadline) client_close(c);
+                ((events&POLLHUP) && !(events&POLLIN)) || now_ms()>=c->deadline) client_close(s,c);
         }
         expire(s);
         if (!s->poisoned && s->journal_bytes-s->checkpoint_bytes>s->max_journal_bytes && !compact(s))
             s->poisoned=true;
     }
-    for (size_t i=0;i<CLIENTS;++i) client_close(&clients[i]);
+    for (size_t i=0;i<CLIENTS;++i) client_close(s,&clients[i]);
+    (void)sigprocmask(SIG_SETMASK,&wait_signals,NULL);
     struct stat current;
     if (!lstat(path,&current) && current.st_dev==socket_identity.st_dev &&
         current.st_ino==socket_identity.st_ino) unlink(path);

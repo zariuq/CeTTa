@@ -1,23 +1,38 @@
 ; Run a program as a child process. No shell is involved: ARGV is the
 ; program and its arguments. The child starts in CWD with ENV as its whole
-; environment, since nothing of this process's environment is inherited, and
+; environment. ENV is an explicit list or `inherit` for the parent environment, and
 ; with only standard input (empty), output and error open. It runs in a
 ; process group of its own, and the whole group is killed when TIMEOUT-MS
-; runs out. Each of its output and its error is kept up to MAX-BYTES bytes
-; and read to the end past that.
+; runs out. A zero timeout means no deadline. A zero MAX-BYTES keeps all output;
+; otherwise excess output is drained and its loss is marked in the result.
 ;
 ;   (proc:run ("program" "argument" ...) "cwd" (("NAME" "value") ...)
 ;             timeout-ms max-bytes)
+;   (proc:run argv cwd env timeout-ms max-bytes "merged")
+;   (proc:run argv cwd env timeout-ms max-bytes
+;             (proc:options "merged-file" "progress-file"))
+;
+; The optional mode is separate (the default), merged (one pipe for both
+; streams), or merged-file. File capture returns when the direct child exits,
+; even if a background descendant still has the output open. The snapshot
+; does not disturb a descendant's output position. An optional progress file
+; and the service watchdog are refreshed during a blocking wait; they observe
+; work without changing its execution.
 ;
 ; A program named without a / is looked up on the PATH of ENV. The answer is
 ;   (proc:exited CODE "output" "error")
 ;   (proc:signaled SIGNAL "output" "error")
 ;   (proc:timed-out "output" "error")
-;   (proc:failed "reason")          the program could not be started
+;   (proc:failed "reason")          starting, waiting or capture failed
 ; Bytes that are not UTF-8 read as U+FFFD. Under speculative evaluation the
 ; operation is refused.
 
 (= (proc:run $argv $cwd $env $timeout $max)
    (function
      (case (__cetta_lib_proc_run $argv $cwd $env $timeout $max)
+       (($result (return $result))))))
+
+(= (proc:run $argv $cwd $env $timeout $max $options)
+   (function
+     (case (__cetta_lib_proc_run $argv $cwd $env $timeout $max $options)
        (($result (return $result))))))

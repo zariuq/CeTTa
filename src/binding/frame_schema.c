@@ -147,21 +147,30 @@ bool bindings_frame_schema_find_slot(
     return true;
 }
 
-BindingsFrameSchema *bindings_frame_schema_clone(
-        const BindingsFrameSchema *source) {
-    if (!source)
+BindingsFrameSchema *bindings_frame_schema_clone_capacity(
+        const BindingsFrameSchema *source, uint32_t capacity) {
+    if (!source || capacity < source->cap)
         return NULL;
-    BindingsFrameSchema *copy = bindings_frame_schema_alloc(source->cap);
+    BindingsFrameSchema *copy = bindings_frame_schema_alloc(capacity);
     if (source->len > 0u) {
         memcpy(copy->source_ids, source->source_ids,
                (size_t)source->len * sizeof(*copy->source_ids));
+    }
+    /* Manufactured frames can grow positional slots without changing their
+     * published source inventory. Their presentation is still owned here. */
+    if (source->cap > 0u) {
         memcpy(copy->spellings, source->spellings,
-               (size_t)source->len * sizeof(*copy->spellings));
+               (size_t)source->cap * sizeof(*copy->spellings));
         memcpy(copy->name_keys, source->name_keys,
-               (size_t)source->len * sizeof(*copy->name_keys));
+               (size_t)source->cap * sizeof(*copy->name_keys));
     }
     bindings_frame_schema_publish(copy, source->len);
     return copy;
+}
+
+BindingsFrameSchema *bindings_frame_schema_clone(
+        const BindingsFrameSchema *source) {
+    return source ? bindings_frame_schema_clone_capacity(source, source->cap) : NULL;
 }
 
 static const char bindings_frame_schema_copy_kind;
@@ -204,7 +213,7 @@ BindingsFrameSchema *bindings_frame_schema_copy_with_session(
     if(known){bindings_frame_schema_retain(known);return known;}
     BindingsFrameSchema *image=bindings_frame_schema_clone(source);
     if(!image)return NULL;
-    for(uint32_t i=0u;i<source->len;i++) {
+    for(uint32_t i=0u;i<source->cap;i++) {
         if(!source->name_keys[i])continue;
         image->name_keys[i]=atom_deep_copy_session_copy(atoms,source->name_keys[i]);
         if(!image->name_keys[i])goto fail;

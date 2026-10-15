@@ -31,6 +31,17 @@ static uint64_t now_ms(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
 }
+
+Atom *cetta_cwp_decode_reply(Arena *arena, const unsigned char *packet, size_t size) {
+    if (!packet || size < 6 || memcmp(packet, "CWP1", 4) || size < 6u + packet[5])
+        return unavailable(arena, "malformed");
+    size_t name = packet[5], body = size - 6 - name;
+    if (memchr(packet + 6, 0, name + body)) return unavailable(arena, "malformed");
+    Atom *parts[] = {atom_symbol(arena, "cwp:reply"), atom_int(arena, packet[4]),
+        atom_string_n(arena, (const char *)packet + 6, name),
+        atom_string_n(arena, (const char *)packet + 6 + name, body)};
+    return atom_expr(arena, parts, 4);
+}
 /* Wait for the socket to be ready, never past the deadline. */
 static bool ready(int fd, short events, uint64_t deadline) {
     for (;;) {
@@ -83,18 +94,7 @@ static Atom *cwp_call(Arena *arena, Atom **args, uint32_t nargs) {
     while ((got = recv(fd, packet, CWP_REPLY_MAX, 0)) < 0 && (errno == EAGAIN || errno == EINTR))
         if (!ready(fd, POLLIN, deadline)) break;
     if (got < 0) { result = unavailable(arena, "timeout"); goto done; }
-    if (got < 6 || memcmp(packet, "CWP1", 4) || (size_t)got < 6u + packet[5]) {
-        result = unavailable(arena, "malformed"); goto done;
-    }
-    size_t reply_name = packet[5], reply_body = (size_t)got - 6 - reply_name;
-    if (memchr(packet + 6, 0, reply_name + reply_body)) { result = unavailable(arena, "malformed"); goto done; }
-    char *reply_text = arena_alloc(arena, reply_name + reply_body + 2);
-    memcpy(reply_text, packet + 6, reply_name); reply_text[reply_name] = 0;
-    memcpy(reply_text + reply_name + 1, packet + 6 + reply_name, reply_body);
-    reply_text[reply_name + 1 + reply_body] = 0;
-    Atom *parts[] = {atom_symbol(arena, "cwp:reply"), atom_int(arena, packet[4]),
-                     atom_string(arena, reply_text), atom_string(arena, reply_text + reply_name + 1)};
-    result = atom_expr(arena, parts, 4u);
+    result = cetta_cwp_decode_reply(arena, packet, (size_t)got);
 done:
     if (fd >= 0) close(fd);
     free(packet);

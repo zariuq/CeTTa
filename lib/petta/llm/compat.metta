@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self llm)
+!(import! &self (library llm))
 (: llm:v1:compat-ready (-> Atom %Undefined%))
 (= (llm:v1:compat-ready $items) (if (== $items ()) True (let* (($head (car-atom $items)) ($tail (cdr-atom $items)) ($kind (llm:v1:get $head "kind")) ($current (if (== $kind (JsonString "message")) (let* (($json (llm:v1:get $head "parts")) ($parts (llm:v1:array $json))) (llm:v1:compat-ready $parts)) (if (== $kind (JsonString "tool-call")) (let $status (llm:v1:get $head "status") (if (== $status (JsonString "completed")) True (llm:v1:failure unfinished-tool-call))) True))) ($rest (llm:v1:compat-ready $tail))) (llm:v1:validated ($current $rest) True))))
 (: llm:v1:compat-call (-> Atom %Undefined%))

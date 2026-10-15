@@ -17,6 +17,9 @@
 
 struct PrimeNeedFrame {
     const PrimeNeedFrame *parent;
+    /* An ancestor at depth with its lowest set bit cleared. This backedge
+     * stays on the parent path and bounds unindexed lineage walks. */
+    const PrimeNeedFrame *lineage_skip;
     /* The newest frame at or below this one that records a named cell
      * (prime_need_snapshot_allocate_named).  Named cells are few and are
      * looked up again and again from deep in a long history: following this
@@ -936,7 +939,8 @@ static const PrimeNeedFrame *prime_need_frame_at_depth(
     const PrimeNeedFrame *frame, uint64_t depth, size_t *steps_out) {
     size_t steps = 0u;
     while (frame && frame->depth > depth) {
-        frame = frame->parent;
+        frame = frame->lineage_skip && frame->lineage_skip->depth >= depth
+            ? frame->lineage_skip : frame->parent;
         steps++;
     }
     if (steps_out)
@@ -1273,6 +1277,8 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->serial = serial;
     frame->thunk_id = thunk_id;
     frame->depth = base->top ? base->top->depth + 1u : 1u;
+    frame->lineage_skip = prime_need_frame_at_depth(
+        frame->parent, frame->depth & (frame->depth - 1u), NULL);
     frame->authority_id = authority_id;
     frame->evaluator_id = evaluator_id;
     frame->storage_key = storage_key;
@@ -2071,6 +2077,8 @@ bool prime_need_snapshot_copy_with_session(Arena *dst,
             (uint64_t)sizeof(*frame));
         *frame = *source;
         frame->parent = parent;
+        frame->lineage_skip = prime_need_frame_at_depth(
+            parent, frame->depth & (frame->depth - 1u), NULL);
         frame->named_top = NULL;
         frame->owner = image_owner;
         frame->origin = origin;

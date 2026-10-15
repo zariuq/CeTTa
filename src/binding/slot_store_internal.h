@@ -253,13 +253,15 @@ static inline VarId bindings_frame_slot_source_id(const BindingsFrameIndexEntry 
 
 static inline SymbolId bindings_frame_slot_spelling(const BindingsFrameIndexEntry *frame,
                                            uint32_t slot) {
-    return slot < frame->schema->len ? frame->schema->spellings[slot]
+    return slot < frame->schema->len ||
+        (slot < frame->schema->cap && frame->schema->spellings[slot] != SYMBOL_ID_NONE)
+        ? frame->schema->spellings[slot]
         : symbol_intern_cstr(g_symbols, "__petta_machine");
 }
 
 static inline Atom *bindings_frame_slot_name_key(const BindingsFrameIndexEntry *frame,
                                         uint32_t slot) {
-    return slot < frame->schema->len ? frame->schema->name_keys[slot] : NULL;
+    return slot < frame->schema->cap ? frame->schema->name_keys[slot] : NULL;
 }
 
 static inline bool bindings_frame_index_find_slot(

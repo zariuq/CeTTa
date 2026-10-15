@@ -4,6 +4,7 @@
 #include "stats.h"
 #include "term_universe.h"
 #include "variant_shape.h"
+#include "binding/slot_store_internal.h"
 #include "tests/test_runtime_stats_stubs.h"
 
 #include <math.h>
@@ -1073,6 +1074,88 @@ static void test_manufactured_slot_lifecycle(void) {
           "projected dynamic slots retain aliases and syntax after source release");
     bindings_free(&projected);
     arena_free(&survivor);
+}
+
+static void test_manufactured_slot_presentation(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    Arena source, survivor;
+    arena_init(&source);
+    arena_init(&survivor);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize presentation test");
+    Atom *first = bindings_builder_new_variable(&builder, &source, identity);
+    Atom *second = bindings_builder_new_variable(&builder, &source, identity);
+    Atom *key = atom_expr2(&source, atom_symbol(&source, "GrownSlotName"),
+                          atom_int(&source, 2));
+    Atom *presented = atom_var_with_name_key(&source, key, second->var_id);
+    Bindings before;
+    CHECK(bindings_clone(&before, &builder.current), "capture frame before presentation");
+    uint32_t mark = bindings_builder_save(&builder);
+    CHECK(first && bindings_builder_add_var_fresh(&builder, presented, atom_int(&source, 91)),
+          "named variables bind in grown manufactured slots");
+    const BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame_const(
+        builder.current.frame_index, var_epoch_suffix(second->var_id));
+    const BindingsFrameIndexEntry *old = bindings_frame_index_find_frame_const(
+        before.frame_index, var_epoch_suffix(second->var_id));
+    CHECK(frame && frame->schema->len == 1u && frame->slot_len == 2u &&
+          frame->schema->cap >= 2u && bindings_frame_slot_name_key(frame, 1u) == key &&
+          bindings_frame_slot_name_key(old, 1u) == NULL,
+          "presentation growth preserves the source inventory and captured branches");
+    Atom *conflict_key = atom_expr2(&source, atom_symbol(&source, "GrownSlotName"),
+                                   atom_int(&source, 3));
+    Atom *conflict = atom_var_with_name_key(&source, conflict_key, second->var_id);
+    CHECK(!bindings_builder_add_var_fresh(&builder, conflict, atom_int(&source, 91)),
+          "grown-slot presentation rejects conflicting names for the same identity");
+    Bindings saved;
+    CHECK(bindings_clone(&saved, &builder.current) &&
+          bindings_promote_logical_atoms_to_arena(&saved, &survivor),
+          "promotion copies grown-slot presentation into the surviving arena");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(!bindings_lookup_value_id(&builder.current, second->var_id).skeleton &&
+          binding_is_int(&saved, second->var_id, 91),
+          "rollback restores values without changing captured identities");
+    VarId second_id = second->var_id;
+    bindings_free(&before);
+    bindings_builder_free(&builder);
+    arena_free(&source);
+    frame = bindings_frame_index_find_frame_const(saved.frame_index, var_epoch_suffix(second_id));
+    Atom *owned_key = frame ? bindings_frame_slot_name_key(frame, 1u) : NULL;
+    CHECK(owned_key && owned_key->kind == ATOM_EXPR && owned_key->expr.len == 2u &&
+          owned_key->expr.elems[1]->ground.ival == 2 &&
+          bindings_logical_atoms_closed_for_arena(&saved, &survivor),
+          "grown-slot name metadata survives retirement of its original arena");
+    bindings_free(&saved);
+    arena_free(&survivor);
+}
+
+static void test_manufactured_presentation_reuses_private_capacity(void) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    Arena arena;
+    arena_init(&arena);
+    CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize private presentation test");
+    Atom *variables[4];
+    for (uint32_t i = 0u; i < 4u; i++)
+        variables[i] = bindings_builder_new_variable(&builder, &arena, identity);
+    CHECK(variables[2] && variables[3] &&
+          bindings_builder_add_var_fresh(&builder, variables[2], atom_int(&arena, 3)),
+          "populate geometrically grown presentation");
+    const BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame_const(
+        builder.current.frame_index, var_epoch_suffix(variables[2]->var_id));
+    const BindingsFrameSchema *private_schema = frame ? frame->schema : NULL;
+    CHECK(private_schema && private_schema->cap >= 4u &&
+          bindings_builder_add_var_fresh(&builder, variables[3], atom_int(&arena, 4)),
+          "populate another variable within private capacity");
+    frame = bindings_frame_index_find_frame_const(
+        builder.current.frame_index, var_epoch_suffix(variables[3]->var_id));
+    CHECK(frame && frame->schema == private_schema &&
+          binding_is_int(&builder.current, variables[2]->var_id, 3) &&
+          binding_is_int(&builder.current, variables[3]->var_id, 4),
+          "private presentation update avoids a whole-schema copy");
+    bindings_builder_free(&builder);
+    arena_free(&arena);
 }
 
 static void test_frame_index_cycle_bridge(Arena *arena) {
@@ -2999,6 +3082,8 @@ int main(void) {
     test_shared_carrier_promotion();
     test_frame_slot_promotion_lifetime();
     test_manufactured_slot_lifecycle();
+    test_manufactured_slot_presentation();
+    test_manufactured_presentation_reuses_private_capacity();
     test_frame_index_cycle_bridge(&arena);
     test_frame_only_merge_occurs_check(&arena);
     test_frame_schema_branch_lifetime(&arena);

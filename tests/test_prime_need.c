@@ -1736,6 +1736,67 @@ static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
     }
 }
 
+/* Compare lineage queries with independently retained parent indices, then
+ * repeat after transporting every prefix and destroying the source arena. */
+static void check_snapshot_prefix_transport(void) {
+    enum { COUNT = 257 };
+    PrimeNeedSnapshot source[COUNT], copied[COUNT];
+    size_t parent[COUNT] = {0};
+    Arena input, output;
+    arena_init_detached(&input);
+    arena_init_detached(&output);
+    AtomDeepCopySession *session = NULL;
+    bool input_alive = true;
+    prime_need_snapshot_init(&source[0]);
+    bool admitted = prime_need_snapshot_begin(&source[0]);
+    for (size_t i = 1u; admitted && i < COUNT; i++) {
+        parent[i] = i <= 128u ? i - 1u :
+            (size_t)(((uint64_t)i * UINT64_C(2654435761)) >> 16u) % i;
+        uint64_t cell = 0u;
+        admitted = prime_need_snapshot_allocate(&input, &source[parent[i]],
+            atom_int(&input, (int64_t)i), &source[i], &cell);
+    }
+    CHECK(admitted, "lineage forest retains its independent parent inventory");
+    if (!admitted) goto done;
+    bool exact = true;
+    for (size_t a = 0u; a < COUNT; a++) {
+        for (size_t b = 0u; b < COUNT; b++) {
+            size_t walk = b;
+            while (walk && walk != a) walk = parent[walk];
+            if (prime_need_snapshot_is_ancestor(&source[a], &source[b]) != (walk == a))
+                exact = false;
+        }
+    }
+    CHECK(exact, "lineage queries preserve all ancestor and sibling distinctions");
+    session = atom_deep_copy_session_new(&output);
+    AtomDeepCopyArenaPair pair = {&input, &output};
+    admitted = session && atom_deep_copy_session_set_arena_map(session, &pair, 1u);
+    for (size_t i = 0u; admitted && i < COUNT; i++) {
+        copied[i] = source[i];
+        admitted = prime_need_snapshot_copy_with_session(&output, session, &copied[i]);
+    }
+    CHECK(admitted, "complete lineage copies share their transported prefixes");
+    if (!admitted) goto done;
+    atom_deep_copy_session_free(session);
+    session = NULL;
+    arena_free(&input);
+    input_alive = false;
+    exact = true;
+    for (size_t a = 0u; a < COUNT; a++) {
+        for (size_t b = 0u; b < COUNT; b++) {
+            size_t walk = b;
+            while (walk && walk != a) walk = parent[walk];
+            if (prime_need_snapshot_is_ancestor(&copied[a], &copied[b]) != (walk == a))
+                exact = false;
+        }
+    }
+    CHECK(exact, "copied lineage queries survive destruction of every source frame");
+done:
+    atom_deep_copy_session_free(session);
+    arena_free(&output);
+    if (input_alive) arena_free(&input);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1754,6 +1815,7 @@ int main(void) {
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
 
+    check_snapshot_prefix_transport();
     check_branch_shared_prefix_compatibility();
     check_forwarded_production(&arena, &promoted_arena);
 

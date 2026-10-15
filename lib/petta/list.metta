@@ -45,6 +45,6 @@
 (= (list:map $xs $var $body) (if (list:is-list $xs) (let $items (list:to-expression $xs) (let $mapped (map-atom $items $var (eval $body)) (list:from-expression $mapped))) (map-atom $xs $var (eval $body))))
 (= (list:filter $xs $var $body) (if (list:is-list $xs) (let $items (list:to-expression $xs) (let $kept (filter-atom $items $var (eval $body)) (list:from-expression $kept))) (filter-atom $xs $var (eval $body))))
 (= (list:foldl $xs $init $acc $item $step) (if (list:is-list $xs) (let $items (list:to-expression $xs) (foldl-atom $items $init $acc $item $step)) (foldl-atom $xs $init $acc $item $step)))
-(= (list:range $end) (range-atom $end))
-(= (list:range $start $end) (range-atom $start $end))
+(= (list:range $end) (__cetta_lib_list_range $end))
+(= (list:range $start $end) (__cetta_lib_list_range $start $end))
 (= (list:repeat $count $item) (repeat-atom $count $item))

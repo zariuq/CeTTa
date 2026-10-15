@@ -1,7 +1,13 @@
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include "library_io.h"
 #include "http_worker.h"
+#include "library_proc.h"
+#include "proc_owner.h"
+#include "ipc_client.h"
+#include "library_cwp.h"
+#include "atom_wire.h"
+#include "host_notice.h"
 
 #include "symbol.h"
 
@@ -12,6 +18,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <errno.h>
+#include <math.h>
+#include <time.h>
+#ifndef __EMSCRIPTEN__
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#ifdef __linux__
+#include <sys/inotify.h>
+#endif
+#endif
 
 #ifndef CETTA_BUILD_HTTP_PROVIDER_CURL
 #define CETTA_BUILD_HTTP_PROVIDER_CURL 0
@@ -36,6 +54,20 @@ typedef struct CettaIoHeader {
 } CettaIoHeader;
 
 typedef struct CettaIoRequest {
+    enum { IO_HTTP, IO_PROCESS, IO_TIMER, IO_CWP, IO_SPACE, IO_NOTICE, IO_FILE } provider;
+    int file_fd;
+    char *file_directory, *file_name;
+    char **file_names;
+    size_t file_name_count;
+    uint32_t file_mask;
+    uint64_t notice_generation;
+    CettaIpcClient *ipc;
+    char *space_request_id;
+    size_t space_request_id_size;
+    CettaProcChild *process;
+    CettaProcSnapshot process_status;
+    char *process_out, *process_err;
+    uint64_t timer_started, timer_due;
     uint64_t id;
     char *method;
     char *url;
@@ -49,6 +81,8 @@ typedef struct CettaIoRequest {
     size_t response_len;
     size_t response_cap;
     long status;
+    int64_t retry_after;
+    bool response_metadata;
     int transport_code;
     char transport_message[256];
     bool response_too_large;
@@ -72,6 +106,12 @@ struct CettaIoRuntime {
     CettaIoRequest *requests;
     CettaIoRequest *ready_head;
     CettaIoRequest *ready_tail;
+#ifndef __EMSCRIPTEN__
+    int wakeup[2];
+    CettaProcOwner *process_owner;
+    CettaHostNoticeRegistration *notice_registration;
+    uint64_t observation_sequence;
+#endif
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     CettaHttpWorker *worker;
     uint64_t generation;
@@ -95,10 +135,15 @@ static const char *io_text_arg(Atom *arg) {
 }
 
 static bool io_nonnegative_int_arg(Atom *arg, int64_t *out) {
-    if (!arg || !out || arg->kind != ATOM_GROUNDED ||
-        arg->ground.gkind != GV_INT || arg->ground.ival < 0)
-        return false;
-    *out = arg->ground.ival;
+    if (!arg || !out || arg->kind != ATOM_GROUNDED) return false;
+    if (arg->ground.gkind == GV_INT) {
+        if (arg->ground.ival < 0) return false;
+        *out = arg->ground.ival;
+    } else if (arg->ground.gkind == GV_FLOAT) {
+        double value = arg->ground.fval;
+        if (!isfinite(value) || value < 0 || value >= 0x1p63 || trunc(value) != value) return false;
+        *out = (int64_t)value;
+    } else return false;
     return true;
 }
 
@@ -121,8 +166,12 @@ static Atom *io_public_head(Arena *arena, Atom *head) {
         return atom_symbol(arena, "io:status");
     if (id == g_builtin_syms.lib_io_wait)
         return atom_symbol(arena, "io:wait");
+    if (id == g_builtin_syms.lib_io_wait_ready)
+        return atom_symbol(arena, "io:wait-ready");
     if (id == g_builtin_syms.lib_io_cancel)
         return atom_symbol(arena, "io:cancel");
+    if (id == g_builtin_syms.lib_io_signal)
+        return atom_symbol(arena, "io:signal");
     return head;
 }
 
@@ -159,7 +208,7 @@ static void io_header_list_free(CettaIoHeader *header) {
 static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     if (!request) return;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (runtime && runtime->worker && request->id)
+    if (runtime && runtime->worker && request->id && request->provider == IO_HTTP)
         cetta_http_worker_abandon(runtime->worker, request->id);
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
     if (request->abort_scheduled) {
@@ -180,10 +229,23 @@ static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     io_header_list_free(request->headers);
     free(request->body);
     free(request->response);
+#ifndef __EMSCRIPTEN__
+    cetta_proc_free(request->process);
+    cetta_ipc_client_free(request->ipc);
+    if (runtime && request->provider == IO_PROCESS && request->id)
+        cetta_proc_owner_abandon(runtime->process_owner, request->id);
+#endif
+    free(request->process_out); free(request->process_err);
+    free(request->space_request_id);
+#ifndef __EMSCRIPTEN__
+    if (request->provider == IO_FILE && request->file_fd >= 0) close(request->file_fd);
+#endif
+    free(request->file_directory); free(request->file_name);
+    for (size_t i = 0; i < request->file_name_count; ++i) free(request->file_names[i]);
+    free(request->file_names);
     free(request);
 }
 
-#if CETTA_BUILD_WITH_HTTP || defined(CETTA_IO_MUTATION_REPLAY_COMPLETION)
 static void io_ready_append(CettaIoRuntime *runtime, CettaIoRequest *request) {
     request->ready = true;
     request->ready_next = NULL;
@@ -193,7 +255,6 @@ static void io_ready_append(CettaIoRuntime *runtime, CettaIoRequest *request) {
         runtime->ready_head = request;
     runtime->ready_tail = request;
 }
-#endif
 
 static void io_ready_remove(CettaIoRuntime *runtime,
                             CettaIoRequest *request) {
@@ -408,6 +469,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     }
     CettaIoRequest *request = cetta_malloc(sizeof(*request));
     memset(request, 0, sizeof(*request));
+    request->retry_after = -1;
     request->method = io_strdup(method);
     request->url = io_strdup(url);
     request->body = io_strdup(body);
@@ -416,7 +478,7 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
     request->follow_redirects = follow_redirects;
     if (atom->expr.len==9u) {
         Atom *options=atom->expr.elems[8]; int64_t connect, first, idle;
-        if (!options || options->kind!=ATOM_EXPR || options->expr.len!=4u ||
+        if (!options || options->kind!=ATOM_EXPR || (options->expr.len!=4u && options->expr.len!=5u) ||
             !atom_is_symbol(options->expr.elems[0],"http:timeouts") ||
             !io_nonnegative_int_arg(options->expr.elems[1],&connect) ||
             !io_nonnegative_int_arg(options->expr.elems[2],&first) ||
@@ -431,6 +493,14 @@ static CettaIoRequest *io_parse_http_request(Atom *atom, char *error,
             io_request_free(NULL,request); return NULL;
         }
 #endif
+        if (options->expr.len==5u) {
+            Atom *metadata=options->expr.elems[4];
+            if (!atom_is_symbol(metadata,"retry-after")) {
+                snprintf(error,error_size,"expected retry-after response metadata option");
+                io_request_free(NULL,request); return NULL;
+            }
+            request->response_metadata=true;
+        }
         request->connect_timeout_ms=(uint32_t)connect;
         request->first_byte_timeout_ms=(uint32_t)first;
         request->idle_timeout_ms=(uint32_t)idle;
@@ -539,6 +609,7 @@ static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
         snprintf(request->transport_message, sizeof(request->transport_message),
                  "%s", curl_easy_strerror((CURLcode)result.transport_code));
         request->status = result.status;
+        request->retry_after = result.retry_after;
         request->response_too_large = result.response_too_large;
         request->response_budget_exceeded = result.response_budget_exceeded;
         request->response_has_nul = result.body_size && memchr(result.body, 0, result.body_size);
@@ -699,18 +770,84 @@ static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
 
 #endif
 
+static uint64_t io_now_ms(void) {
+    struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+}
+
+#ifdef __linux__
+static void io_file_pump(CettaIoRequest *request) {
+    union { struct inotify_event alignment; char bytes[4096]; } buffer;
+    ssize_t size;
+    while ((size = read(request->file_fd, buffer.bytes, sizeof(buffer.bytes))) > 0) {
+        for (size_t offset = 0; offset + sizeof(struct inotify_event) <= (size_t)size;) {
+            struct inotify_event *event = (struct inotify_event *)(buffer.bytes + offset);
+            if (event->len > (size_t)size - offset - sizeof(*event)) return;
+            bool selected = !request->file_name_count ||
+                (event->mask & (IN_Q_OVERFLOW | IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED));
+            for (size_t i = 0; !selected && i < request->file_name_count; ++i)
+                if (event->len && !strcmp(request->file_names[i], event->name)) selected = true;
+            if (selected) {
+                request->file_mask = event->mask;
+                request->file_name = io_strdup(event->len ? event->name : "");
+                return;
+            }
+            offset += sizeof(*event) + event->len;
+        }
+    }
+}
+#endif
+
+static void io_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
+    if (!runtime) return;
+    io_http_pump(runtime, selected_id);
+    uint64_t now = io_now_ms();
+    for (CettaIoRequest *r = runtime->requests; r; r = r->next) {
+        if (r->ready) continue;
+#ifndef __EMSCRIPTEN__
+#ifdef __linux__
+        if (r->provider == IO_FILE) {
+            io_file_pump(r);
+            if (r->file_name) io_ready_append(runtime, r);
+        }
+#endif
+        if (r->provider == IO_CWP || r->provider == IO_SPACE) {
+            cetta_ipc_client_pump(r->ipc);
+            if (cetta_ipc_client_ready(r->ipc)) io_ready_append(runtime, r);
+        }
+        if (r->provider == IO_NOTICE &&
+            cetta_host_notice_generation() != r->notice_generation) io_ready_append(runtime, r);
+        if (r->provider == IO_PROCESS &&
+            cetta_proc_owner_status(runtime->process_owner, r->id, &r->process_status) &&
+            r->process_status.finished) io_ready_append(runtime, r);
+#endif
+        if (r->provider == IO_TIMER && now >= r->timer_due) io_ready_append(runtime, r);
+    }
+}
+
 CettaIoRuntime *cetta_io_runtime_new(void) {
     CettaIoRuntime *runtime = cetta_malloc(sizeof(*runtime));
     memset(runtime, 0, sizeof(*runtime));
     runtime->next_id = 1u;
+#ifndef __EMSCRIPTEN__
+    if (pipe2(runtime->wakeup, O_CLOEXEC | O_NONBLOCK)) { free(runtime); return NULL; }
+    runtime->process_owner = cetta_proc_owner_new(runtime->wakeup[1]);
+    runtime->notice_registration = cetta_host_notice_register(runtime->wakeup[1]);
+#endif
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     (void)cetta_http_worker_new(NULL, NULL, &runtime->worker);
+#ifndef __EMSCRIPTEN__
+    cetta_http_worker_set_wakeup_fd(runtime->worker, runtime->wakeup[1]);
+#endif
 #endif
     return runtime;
 }
 
 void cetta_io_runtime_free(CettaIoRuntime *runtime) {
     if (!runtime) return;
+#ifndef __EMSCRIPTEN__
+    cetta_host_notice_unregister(runtime->notice_registration);
+#endif
     CettaIoRequest *request = runtime->requests;
     while (request) {
         CettaIoRequest *next = request->next;
@@ -720,6 +857,10 @@ void cetta_io_runtime_free(CettaIoRuntime *runtime) {
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     cetta_http_worker_free(runtime->worker);
 #endif
+#ifndef __EMSCRIPTEN__
+    cetta_proc_owner_free(runtime->process_owner);
+    close(runtime->wakeup[0]); close(runtime->wakeup[1]);
+#endif
     free(runtime);
 }
 
@@ -728,21 +869,99 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
     if (!io_zero_arg_ok(args, nargs))
         return io_error(arena, head, args, nargs,
                         "expected: (io:capabilities)");
+    Atom *providers[7]; size_t count = 0;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (runtime && runtime->worker) {
-        Atom *http = atom_symbol(arena, "http");
-        return atom_expr(arena, &http, 1u);
-    }
+    if (runtime && runtime->worker) providers[count++] = atom_symbol(arena, "http");
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
-    if (runtime) {
-        Atom *http = atom_symbol(arena, "http");
-        return atom_expr(arena, &http, 1u);
-    }
-#else
-    (void)runtime;
+    if (runtime) providers[count++] = atom_symbol(arena, "http");
 #endif
-    return atom_expr(arena, NULL, 0u);
+#ifndef __EMSCRIPTEN__
+    if (runtime) {
+        if (runtime->process_owner) providers[count++] = atom_symbol(arena, "proc");
+        providers[count++] = atom_symbol(arena, "timer");
+        providers[count++] = atom_symbol(arena, "cwp");
+        providers[count++] = atom_symbol(arena, "space");
+        if (runtime->notice_registration) providers[count++] = atom_symbol(arena, "host-notice");
+#ifdef __linux__
+        providers[count++] = atom_symbol(arena, "file-watch");
+#endif
+    }
+#endif
+    return atom_expr(arena, providers, count);
 }
+
+#ifndef __EMSCRIPTEN__
+static CettaIoRequest *io_parse_ipc(Atom *input, char *error, size_t error_size) {
+    bool cwp = atom_is_symbol(input->expr.elems[0], "cwp:request");
+    int64_t timeout, code = 0;
+    if (input->expr.len != (cwp ? 6u : 4u) ||
+        !io_nonnegative_int_arg(input->expr.elems[cwp ? 5 : 3], &timeout)) goto invalid;
+    const char *path = io_text_arg(input->expr.elems[1]);
+    if (!path) goto invalid;
+    CettaIoRequest *request = calloc(1, sizeof(*request));
+    if (!request) return NULL;
+    request->provider = cwp ? IO_CWP : IO_SPACE;
+    unsigned char *bytes = NULL; size_t size = 0;
+    if (cwp) {
+        const char *name = io_text_arg(input->expr.elems[3]), *body = io_text_arg(input->expr.elems[4]);
+        if (!name || !body || !io_nonnegative_int_arg(input->expr.elems[2], &code) ||
+            code < 1 || code > 63 || strlen(name) > 64 || strlen(body) > 65536) goto failed;
+        for (const unsigned char *p = (const unsigned char *)name; *p; ++p)
+            if (*p < 33 || *p > 126) goto failed;
+        size = 6 + strlen(name) + strlen(body); bytes = malloc(size);
+        if (!bytes) goto failed;
+        memcpy(bytes, "CWP1", 4); bytes[4] = (unsigned char)code; bytes[5] = (unsigned char)strlen(name);
+        memcpy(bytes + 6, name, strlen(name)); memcpy(bytes + 6 + strlen(name), body, strlen(body));
+    } else {
+        Atom *value = input->expr.elems[2];
+        if (!value || value->kind != ATOM_EXPR || value->expr.len < 3 ||
+            !atom_is_symbol(value->expr.elems[0], "request")) goto failed;
+        Atom *id = value->expr.elems[1];
+        if (!id || id->kind != ATOM_GROUNDED || id->ground.gkind != GV_STRING) goto failed;
+        request->space_request_id_size = id->ground.slen;
+        request->space_request_id = malloc(id->ground.slen + 1);
+        if (!request->space_request_id) goto failed;
+        memcpy(request->space_request_id, id->ground.sval, id->ground.slen);
+        request->space_request_id[id->ground.slen] = 0;
+        if (cetta_atom_wire_encode(value, &bytes, &size) != ATOM_WIRE_OK) goto failed;
+    }
+    request->ipc = cetta_ipc_client_new(path, cwp ? CETTA_IPC_CWP : CETTA_IPC_CSP,
+        bytes, size, (uint64_t)timeout, cwp ? 6 + 255 + 65536 : CETTA_ATOM_WIRE_BYTES);
+    free(bytes);
+    if (request->ipc) return request;
+    io_request_free(NULL, request);
+    goto invalid;
+failed:
+    free(bytes); io_request_free(NULL, request);
+invalid:
+    snprintf(error, error_size, "expected native cwp:request or space:request with valid framing and nonnegative deadline");
+    return NULL;
+}
+
+static Atom *io_ipc_result(Arena *arena, CettaIoRequest *request) {
+    const char *error = cetta_ipc_client_error(request->ipc);
+    if (request->provider == IO_CWP) {
+        if (error) return atom_expr2(arena, atom_symbol(arena, "cwp:unavailable"), atom_symbol(arena, error));
+        size_t size; const unsigned char *bytes = cetta_ipc_client_reply(request->ipc, &size);
+        return cetta_cwp_decode_reply(arena, bytes, size);
+    }
+    Atom *id = atom_string_n(arena, request->space_request_id, request->space_request_id_size);
+    if (!error) {
+        size_t size; const unsigned char *bytes = cetta_ipc_client_reply(request->ipc, &size);
+        Atom *reply = NULL;
+        if (cetta_atom_wire_decode(arena, bytes, size, &reply) == ATOM_WIRE_OK &&
+            reply && reply->kind == ATOM_EXPR && reply->expr.len == 4 &&
+            atom_is_symbol(reply->expr.elems[0], "reply") &&
+            reply->expr.elems[1]->kind == ATOM_GROUNDED &&
+            reply->expr.elems[1]->ground.gkind == GV_STRING && atom_string_equal(id, reply->expr.elems[1]) &&
+            (atom_is_symbol(reply->expr.elems[2], "ok") || atom_is_symbol(reply->expr.elems[2], "error"))) return reply;
+        error = "malformed-reply";
+    }
+    return atom_expr3(arena, atom_symbol(arena,
+        cetta_ipc_client_sent(request->ipc) ? "space:uncertain" : "space:unavailable"),
+        id, atom_symbol(arena, error));
+}
+#endif
 
 static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
                        Atom *head, Atom **args, uint32_t nargs) {
@@ -750,12 +969,93 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     if (nargs != 1u)
         return io_error(arena, head, args, nargs,
                         "expected: (io:submit request)");
-    size_t pending = 0;
-    for (CettaIoRequest *r = runtime ? runtime->requests : NULL; r; r = r->next) ++pending;
-    if (pending >= cetta_http_worker_default_limits().jobs)
-        return io_error(arena, head, args, nargs, "HTTP queue capacity exceeded");
-    CettaIoRequest *request =
-        io_parse_http_request(args[0], error, sizeof(error));
+    if (!runtime || !runtime->next_id || runtime->next_id > (uint64_t)INT64_MAX)
+        return io_error(arena, head, args, nargs, "I/O runtime or request identity is unavailable");
+    CettaIoRequest *request = NULL;
+#ifndef __EMSCRIPTEN__
+    Atom *input = args[0];
+#ifdef __linux__
+    if (input && input->kind == ATOM_EXPR && input->expr.len &&
+        atom_is_symbol(input->expr.elems[0], "fs:changed")) {
+        const char *directory = input->expr.len >= 2 ? io_text_arg(input->expr.elems[1]) : NULL;
+        Atom *names = input->expr.len == 3 ? input->expr.elems[2] : NULL;
+        if (!directory || input->expr.len > 3 || (names && names->kind != ATOM_EXPR))
+            return io_error(arena, head, args, nargs, "expected (fs:changed directory [names])");
+        request = calloc(1, sizeof(*request));
+        if (!request) return io_error(arena, head, args, nargs, "file-watch allocation failed");
+        request->provider = IO_FILE; request->file_fd = -1;
+        request->file_directory = io_strdup(directory);
+        if (names) {
+            request->file_names = calloc(names->expr.len, sizeof(char *));
+            if (names->expr.len && !request->file_names) {
+                io_request_free(NULL, request);
+                return io_error(arena, head, args, nargs, "file-watch allocation failed");
+            }
+            for (size_t i = 0; i < names->expr.len; ++i) {
+                const char *name = io_text_arg(names->expr.elems[i]);
+                if (!name) { io_request_free(NULL, request); return io_error(arena, head, args, nargs, "file-watch names must be text"); }
+                request->file_names[request->file_name_count++] = io_strdup(name);
+            }
+        }
+        request->file_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        if (request->file_fd < 0 || inotify_add_watch(request->file_fd, directory,
+            IN_CREATE | IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF) < 0) {
+            io_request_free(NULL, request);
+            return io_error(arena, head, args, nargs, "file-watch directory is unavailable");
+        }
+    } else
+#endif
+    if (input && input->kind == ATOM_EXPR && input->expr.len == 1 &&
+        atom_is_symbol(input->expr.elems[0], "host:notice")) {
+        if (!runtime->notice_registration) return io_error(arena, head, args, nargs, "host notifier is unavailable");
+        request = calloc(1, sizeof(*request));
+        if (request) { request->provider = IO_NOTICE; request->notice_generation = cetta_host_notice_generation(); }
+    } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
+        (atom_is_symbol(input->expr.elems[0], "cwp:request") ||
+         atom_is_symbol(input->expr.elems[0], "space:request"))) {
+        request = io_parse_ipc(input, error, sizeof(error));
+    } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
+        atom_is_symbol(input->expr.elems[0], "timer:after")) {
+        int64_t delay;
+        if (input->expr.len != 2 || !io_nonnegative_int_arg(input->expr.elems[1], &delay))
+            return io_error(arena, head, args, nargs, "expected (timer:after nonnegative-milliseconds)");
+        request = calloc(1, sizeof(*request));
+        if (request) {
+            request->provider = IO_TIMER;
+            request->timer_started = io_now_ms();
+            request->timer_due = request->timer_started + (uint64_t)delay;
+        }
+    } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
+               atom_is_symbol(input->expr.elems[0], "proc:request")) {
+        int64_t timeout;
+        if (input->expr.len != 7 || !io_nonnegative_int_arg(input->expr.elems[4], &timeout))
+            return io_error(arena, head, args, nargs, "expected (proc:request argv cwd env timeout-ms stdout-file stderr-file)");
+        request = calloc(1, sizeof(*request));
+        if (request) {
+            request->provider = IO_PROCESS;
+            if (!runtime->process_owner) {
+                free(request);
+                return io_error(arena, head, args, nargs, "native process owner is unavailable");
+            }
+            request->process = cetta_proc_start(input->expr.elems[1], io_text_arg(input->expr.elems[2]),
+                input->expr.elems[3], (uint64_t)timeout, io_text_arg(input->expr.elems[5]),
+                io_text_arg(input->expr.elems[6]), error, sizeof(error));
+            if (!request->process) { free(request); request = NULL; }
+            else {
+                request->process_out = io_strdup(io_text_arg(input->expr.elems[5]));
+                request->process_err = io_strdup(io_text_arg(input->expr.elems[6]));
+            }
+        }
+    } else
+#endif
+    {
+        size_t pending = 0;
+        for (CettaIoRequest *r = runtime ? runtime->requests : NULL; r; r = r->next)
+            if (r->provider == IO_HTTP) ++pending;
+        if (pending >= cetta_http_worker_default_limits().jobs)
+            return io_error(arena, head, args, nargs, "HTTP queue capacity exceeded");
+        request = io_parse_http_request(args[0], error, sizeof(error));
+    }
     if (!request)
         return io_error(arena, head, args, nargs,
                         error[0] ? error : "unsupported I/O request");
@@ -772,9 +1072,18 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     }
     request->id = runtime->next_id++;
     request->runtime = runtime;
+#ifndef __EMSCRIPTEN__
+    if (request->provider == IO_PROCESS) {
+        if (!cetta_proc_owner_add(runtime->process_owner, request->id, request->process)) {
+            io_request_free(runtime, request);
+            return io_error(arena, head, args, nargs, "could not register native process");
+        }
+        request->process = NULL; /* owner alone now signals, polls and frees */
+    }
+#endif
     request->next = runtime->requests;
     runtime->requests = request;
-    if (!io_http_start(runtime, request, error, sizeof(error))) {
+    if (request->provider == IO_HTTP && !io_http_start(runtime, request, error, sizeof(error))) {
         io_request_unlink(runtime, request);
         io_request_free(runtime, request);
         return io_error(arena, head, args, nargs,
@@ -819,11 +1128,30 @@ static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
             4u);
         return atom_error(arena, io_http_source(arena, request), reason);
     }
+    if (request->response_metadata) {
+        Atom *items[] = {atom_symbol(arena,"http:response-with-metadata"), atom_int(arena,request->status),
+            atom_string(arena,request->response?request->response:""),
+            atom_expr2(arena,atom_symbol(arena,"http:retry-after"),atom_int(arena,request->retry_after))};
+        return atom_expr(arena,items,4u);
+    }
     return atom_expr3(
         arena, atom_symbol(arena, "http:response"),
         atom_int(arena, request->status),
         atom_string(arena, request->response ? request->response : ""));
 }
+
+#ifndef __EMSCRIPTEN__
+static Atom *io_process_result(Arena *arena, CettaIoRequest *request) {
+    CettaProcSnapshot *s = &request->process_status;
+    const char *kind = s->error ? "failed" : s->timed_out ? "timed-out"
+                     : WIFEXITED(s->status) ? "exited" : "signaled";
+    int code = s->error ? s->error : s->timed_out ? 0
+             : WIFEXITED(s->status) ? WEXITSTATUS(s->status) : WTERMSIG(s->status);
+    return atom_expr(arena, (Atom *[]){ atom_symbol(arena, "proc:finished"),
+        atom_int(arena, s->pid), atom_symbol(arena, kind), atom_int(arena, code),
+        atom_string(arena, request->process_out), atom_string(arena, request->process_err) }, 6);
+}
+#endif
 
 static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
                      Atom *head, Atom **args, uint32_t nargs) {
@@ -833,7 +1161,7 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
         !io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0))
         return io_error(arena, head, args, nargs,
                         "expected: (io:poll) or (io:poll positive-id)");
-    io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
+    io_pump(runtime, selected ? selected_id : 0u);
     CettaIoRequest *request = selected
         ? io_request_find(runtime, (uint64_t)selected_id)
         : runtime ? runtime->ready_head : NULL;
@@ -847,7 +1175,19 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     }
     io_ready_remove(runtime, request);
     io_request_unlink(runtime, request);
-    Atom *result = io_http_result(arena, request);
+    Atom *result =
+#ifndef __EMSCRIPTEN__
+                 request->provider == IO_PROCESS ? io_process_result(arena, request) :
+                 request->provider == IO_CWP || request->provider == IO_SPACE ? io_ipc_result(arena, request) :
+                 request->provider == IO_NOTICE ? atom_expr2(arena, atom_symbol(arena, "host:noticed"),
+                    atom_int(arena, (int64_t)cetta_host_notice_generation())) :
+                 request->provider == IO_FILE ? atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:changed"),
+                    atom_string(arena, request->file_directory), atom_string(arena, request->file_name),
+                    atom_int(arena, request->file_mask)}, 4) :
+#endif
+                 request->provider == IO_TIMER ? atom_expr2(arena, atom_symbol(arena, "timer:fired"),
+                    atom_int(arena, (int64_t)(request->timer_due - request->timer_started)))
+                 : io_http_result(arena, request);
     Atom *event = atom_expr3(
         arena, atom_symbol(arena, "io:event"),
         atom_int(arena, (int64_t)request->id), result);
@@ -868,6 +1208,24 @@ static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
         return io_error(arena,head,args,nargs,"expected (io:status positive-id)");
     CettaIoRequest *request=io_request_find(runtime,(uint64_t)id);
     if (!request) return atom_expr2(arena,atom_symbol(arena,"io:unknown"),atom_int(arena,id));
+    if (request->provider != IO_HTTP) {
+        io_pump(runtime, id);
+#ifndef __EMSCRIPTEN__
+        if (request->provider == IO_CWP || request->provider == IO_SPACE || request->provider == IO_NOTICE || request->provider == IO_FILE)
+            return atom_expr3(arena, atom_symbol(arena, "ipc:status"), atom_int(arena, id),
+                atom_symbol(arena, request->ready ? "ready" : "waiting"));
+        if (request->provider == IO_PROCESS)
+            return request->ready ? io_process_result(arena, request)
+                : atom_expr(arena, (Atom *[]){ atom_symbol(arena, "proc:running"),
+                    atom_int(arena, request->process_status.pid),
+                    atom_int(arena, (int64_t)request->process_status.elapsed_ms),
+                    atom_string(arena, request->process_out),
+                    atom_string(arena, request->process_err) }, 5);
+#endif
+        Atom *parts[] = {atom_symbol(arena, "timer:status"), atom_symbol(arena, request->ready ? "ready" : "waiting"),
+            atom_int(arena, (int64_t)(io_now_ms() - request->timer_started))};
+        return atom_expr(arena, parts, 3u);
+    }
     CettaHttpProgress progress={0};
     bool available=false;
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
@@ -882,40 +1240,112 @@ static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
         atom_int(arena,(int64_t)progress.quiet_ms)},6u);
 }
 
+static bool io_selected(CettaIoRequest *request, bool selected, uint64_t id, Atom *ids) {
+    if (!request) return false;
+    if (ids) {
+        for (size_t i = 1; i < ids->expr.len; ++i) {
+            int64_t member;
+            if (io_nonnegative_int_arg(ids->expr.elems[i], &member) && (uint64_t)member == request->id) return true;
+        }
+        return false;
+    }
+    return !selected || request->id == id;
+}
+
 static Atom *io_wait(CettaIoRuntime *runtime, Arena *arena,
-                     Atom *head, Atom **args, uint32_t nargs) {
+                     Atom *head, Atom **args, uint32_t nargs, bool readiness) {
     int64_t timeout, selected_id = 0;
-    bool selected = nargs == 2u;
-    if ((nargs != 1u && nargs != 2u) ||
+    const char *progress = "";
+    bool selected = nargs == 3u || (nargs == 2u && !io_text_arg(args[1]));
+    Atom *ids = readiness && nargs >= 2 && args[0] && args[0]->kind == ATOM_EXPR &&
+        args[0]->expr.len && atom_is_symbol(args[0]->expr.elems[0], "io:ids") ? args[0] : NULL;
+    if (ids) {
+        for (size_t i = 1; i < ids->expr.len; ++i) {
+            int64_t id;
+            if (!io_nonnegative_int_arg(ids->expr.elems[i], &id) || !id)
+                return io_error(arena, head, args, nargs, "readiness IDs must be positive integers");
+        }
+    }
+    if (nargs < 1u || nargs > 3u ||
         !io_nonnegative_int_arg(args[selected ? 1u : 0u], &timeout) ||
-        timeout > INT_MAX || (selected &&
-        (!io_nonnegative_int_arg(args[0], &selected_id) || selected_id == 0)))
-        return io_error(arena, head, args, nargs, "expected a nonnegative timeout in milliseconds");
-#if CETTA_BUILD_HTTP_PROVIDER_CURL
-    if (!runtime || !runtime->worker)
-        return io_error(arena, head, args, nargs, "HTTP provider is unavailable");
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    uint64_t deadline = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u + timeout;
+        (selected && !ids && (!io_nonnegative_int_arg(args[0], &selected_id) || !selected_id)))
+        return io_error(arena, head, args, nargs, "expected timeout-ms or id timeout-ms, with optional progress path");
+    if (nargs == 3u || (nargs == 2u && !selected)) {
+        progress = io_text_arg(args[nargs - 1]);
+        if (!progress) return io_error(arena, head, args, nargs, "progress path must be text");
+    }
+#ifndef __EMSCRIPTEN__
+    if (!runtime) return io_error(arena, head, args, nargs, "I/O runtime is unavailable");
+    uint64_t deadline = io_now_ms() + (uint64_t)timeout, observation = 0;
+    bool observed = progress[0] || getenv("NOTIFY_SOCKET");
     for (;;) {
-        io_http_pump(runtime, selected ? (uint64_t)selected_id : 0u);
-        CettaIoRequest *request = selected
-            ? io_request_find(runtime, (uint64_t)selected_id)
-            : runtime->ready_head;
-        if ((selected && !request) || (request && request->ready))
-            return io_poll(runtime, arena, head, selected ? args : NULL,
-                           selected ? 1u : 0u);
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        uint64_t current = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
-        if (current >= deadline)
-            return io_poll(runtime, arena, head, selected ? args : NULL,
-                           selected ? 1u : 0u);
-        runtime->generation = cetta_http_worker_wait(runtime->worker,
-            runtime->generation, (uint32_t)(deadline-current));
+        char wake[256];
+        while (read(runtime->wakeup[0], wake, sizeof(wake)) > 0) {}
+        io_pump(runtime, selected ? selected_id : 0u);
+        CettaIoRequest *target = selected && !ids ? io_request_find(runtime, selected_id) : runtime->ready_head;
+        if (ids) {
+            while (target && !io_selected(target, selected, selected_id, ids)) target = target->ready_next;
+        }
+        if ((selected && !ids && !target) || (target && target->ready) || io_now_ms() >= deadline) {
+            if (readiness) {
+                if (selected && !ids && !target) return atom_expr2(arena, atom_symbol(arena, "io:unknown"), atom_int(arena, selected_id));
+                size_t count = 0;
+                for (CettaIoRequest *r = runtime->ready_head; r; r = r->ready_next)
+                    if (io_selected(r, selected, selected_id, ids)) ++count;
+                if (!count) return atom_expr(arena, (Atom *[]){ atom_symbol(arena, "io:idle") }, 1);
+                Atom **ready_ids = cetta_malloc(count * sizeof(*ready_ids)); size_t n = 0;
+                for (CettaIoRequest *r = runtime->ready_head; r; r = r->ready_next)
+                    if (io_selected(r, selected, selected_id, ids)) ready_ids[n++] = atom_int(arena, (int64_t)r->id);
+                Atom *result = atom_expr2(arena, atom_symbol(arena, "io:ready"), atom_expr(arena, ready_ids, count));
+                free(ready_ids); return result;
+            }
+            return io_poll(runtime, arena, head, selected ? args : NULL, selected ? 1u : 0u);
+        }
+        uint64_t now = io_now_ms(), due = deadline;
+        if (observed) {
+            if (now >= observation) { cetta_proc_observe_wait(progress, ++runtime->observation_sequence); observation = now + 30000; }
+            if (observation < due) due = observation;
+        }
+        size_t capacity = 1;
+        for (CettaIoRequest *r = runtime->requests; r; r = r->next)
+            if (!r->ready && (r->ipc || r->provider == IO_FILE)) ++capacity;
+        struct pollfd *fds = calloc(capacity, sizeof(*fds));
+        if (!fds) return io_error(arena, head, args, nargs, "out of memory preparing socket wait");
+        size_t n = 1; fds[0] = (struct pollfd){runtime->wakeup[0], POLLIN, 0};
+        for (CettaIoRequest *r = runtime->requests; r; r = r->next) {
+            if (r->ready) continue;
+            if (r->provider == IO_TIMER && r->timer_due < due) due = r->timer_due;
+            if (r->ipc) {
+                fds[n++] = (struct pollfd){cetta_ipc_client_fd(r->ipc), cetta_ipc_client_events(r->ipc), 0};
+                if (cetta_ipc_client_deadline(r->ipc) < due) due = cetta_ipc_client_deadline(r->ipc);
+            }
+            if (r->provider == IO_FILE) fds[n++] = (struct pollfd){r->file_fd, POLLIN, 0};
+        }
+        uint64_t remaining = due > now ? due - now : 0;
+        int status = poll(fds, n, remaining > INT_MAX ? INT_MAX : (int)remaining);
+        int error = errno; free(fds);
+        if (status < 0 && error != EINTR)
+            return io_error(arena, head, args, nargs, "native I/O wait failed");
     }
 #else
+    (void)runtime; (void)selected_id; (void)progress;
+    return io_error(arena, head, args, nargs, "blocking I/O wait requires a native host");
+#endif
+}
+
+static Atom *io_signal(CettaIoRuntime *runtime, Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
+    int64_t id, number;
+    if (nargs != 2 || !io_nonnegative_int_arg(args[0], &id) ||
+        !io_nonnegative_int_arg(args[1], &number) || number > INT_MAX)
+        return io_error(arena, head, args, nargs, "expected (io:signal process-id signal-number)");
+#ifndef __EMSCRIPTEN__
+    CettaIoRequest *r = io_request_find(runtime, id);
+    if (!r || r->provider != IO_PROCESS || !cetta_proc_owner_signal(runtime->process_owner, r->id, (int)number))
+        return io_error(arena, head, args, nargs, "process signal failed or process already ended");
+    return atom_unit(arena);
+#else
     (void)runtime;
-    return io_error(arena, head, args, nargs, "blocking I/O wait requires the native HTTP provider");
+    return io_error(arena, head, args, nargs, "process signals require a native host");
 #endif
 }
 
@@ -950,8 +1380,12 @@ Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
     if (id == g_builtin_syms.lib_io_status)
         return io_status(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_wait)
-        return io_wait(runtime, arena, head, args, nargs);
+        return io_wait(runtime, arena, head, args, nargs, false);
+    if (id == g_builtin_syms.lib_io_wait_ready)
+        return io_wait(runtime, arena, head, args, nargs, true);
     if (id == g_builtin_syms.lib_io_cancel)
         return io_cancel(runtime, arena, head, args, nargs);
+    if (id == g_builtin_syms.lib_io_signal)
+        return io_signal(runtime, arena, head, args, nargs);
     return NULL;
 }

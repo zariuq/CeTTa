@@ -26,6 +26,9 @@ typedef enum {
  * compatibility codec over that value, not its definition.
  * Historical strings and keys use their full stored byte lengths in both
  * directions, including U+0000.
+ * Conversion and emission use explicit heap continuations. Zero work and
+ * depth limits mean no caller budget; zero byte_limit uses the engine's
+ * representable string size. Nonzero limits remain explicit resource policy.
  */
 bool cetta_json_value_v1_to_legacy(
     Arena *arena,
@@ -64,6 +67,12 @@ bool cetta_json_value_v1_stringify(
     CettaJsonValueV1Status *status,
     char *error_buf,
     size_t error_buf_size);
+
+/* Strict emission without per-value reference parsing or certification. */
+bool cetta_json_value_v1_emit(Atom *value, bool legacy_input,
+    uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
+    uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size);
 
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status);
 

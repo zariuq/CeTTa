@@ -28,6 +28,10 @@ with tempfile.TemporaryDirectory(prefix="cetta-io-library-") as directory:
 !(io:wait 5000)
 !(io:submit (http:request "GET" "http://127.0.0.1:{port}/redirect/2" () "" 2000 1024 False))
 !(io:wait 5000)
+(= (fixture:computed-request)
+   (http:request "GET" "http://127.0.0.1:{port}/one" () "" 2000 1024))
+!(io:submit (fixture:computed-request))
+!(io:wait 5000)
 ''')
         for language in ("he", "petta"):
             result = subprocess.run([binary, "--lang", language, str(program)],
@@ -38,12 +42,16 @@ with tempfile.TemporaryDirectory(prefix="cetta-io-library-") as directory:
                 assert all(line.startswith("[") and line.endswith("]") for line in lines), lines
                 lines = [line[1:-1] for line in lines]
             assert lines.pop(0) in ("true", "()"), lines
-            assert lines == ['(http)', '(io:idle)', '(io:pending 1)',
+            capabilities = lines.pop(0)
+            assert capabilities.startswith("(") and capabilities.endswith(")"), capabilities
+            assert "http" in capabilities[1:-1].split(), capabilities
+            assert lines == ['(io:idle)', '(io:pending 1)',
                              '(io:event 1 (http:response 200 "one"))',
                              '(io:idle)', '(io:idle)',
                              '(io:pending 2)', '(io:event 2 (http:response 302 ""))',
                              '(io:pending 3)', '(io:event 3 (http:response 200 "one"))',
-                             '(io:pending 4)', '(io:event 4 (http:response 302 ""))'], (language, lines)
+                             '(io:pending 4)', '(io:event 4 (http:response 302 ""))',
+                             '(io:pending 5)', '(io:event 5 (http:response 200 "one"))'], (language, lines)
         print("I/O library: HE and PeTTa submit/wait/poll, redirect default/opt-in, exact correlation and one-time consumption passed")
     finally:
         server.terminate()

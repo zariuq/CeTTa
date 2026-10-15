@@ -586,12 +586,17 @@ def physical_matches(gate):
         combined={'values':trees[-1][0][1]+split[-1]['values']}
         assert world_observations(combined)==expected,(budget,trees,split,expected)
         gate.passed_case(f'prepared match residual survives pause/reconfigured width at {budget}')
-    pattern=' '.join(f'$v{i}' for i in range(512))
-    values=' '.join(str(i) for i in range(512))
+    # A 33-node slice can finish before the second worker is scheduled.
+    # Use a substantial explicitly selected slice for the overlap witness;
+    # the smaller slice/cut behavior is checked independently below.
+    size=4096
+    pattern=' '.join(f'$v{i}' for i in range(size))
+    values=' '.join(str(i) for i in range(size))
     rows=[f'(Fact ({values}))',
-          f'(exec Left (I (read (Fact ({pattern})))) (O (+ (Left $v511))))',
-          f'(exec Right (I (read (Fact ({pattern})))) (O (+ (Right $v511))))']
-    _,results=gate.run('physical resource matcher overlap',source(rows)+f'!(select 100 {controlled(2)} &jobs)')
+          f'(exec Left (I (read (Fact ({pattern})))) (O (+ (Left $v{size-1}))))',
+          f'(exec Right (I (read (Fact ({pattern})))) (O (+ (Right $v{size-1}))))']
+    overlap_policy=controlled(2).replace('(workers 2)', '(workers 2) (quantum 8192)')
+    _,results=gate.run('physical resource matcher overlap',source(rows)+f'!(select 100 {overlap_policy} &jobs)')
     result=results[-1];check_cost(result)
     waves=result.get('parallel-waves',[])
     assert result['closed']=='True' and len(worlds(result))==2,result

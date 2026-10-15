@@ -9,15 +9,18 @@
 ;   (tg-cmd:bot USERNAME)    optional: accept /command@USERNAME
 ; NAME is "/" and 1..32 of a-z, 0-9 and "_". KIND is one of
 ;   help       the service lists the declared commands;
-;   stop       the service stops dispatching the agent's sends, answers at
-;              once and tells the agent;
-;   start      the service resumes dispatch, answers at once and tells the
-;              agent;
+;   stop       the service stops dispatching the agent's sends at once and
+;              asks the agent to stop; the agent's answer is the reply, as
+;              for a delegated command, so the reply says what the agent did;
+;   start      the service resumes dispatch at once and asks the agent to
+;              start; the agent's answer is the reply;
 ;   delegated  the agent answers. The service owns a deadline: if the agent
 ;              has not answered by then, the service replies with its own
 ;              notice and edits it when the answer arrives.
 ; An operator's message whose text is a declared command, optionally with
-; arguments, is a command. Anything else is ordinary input.
+; arguments, is a command. Anything else is ordinary input. In a group every
+; bot reads the same message, so there only /command@USERNAME is a command;
+; a bare /command is one only in a private chat.
 
 ; The message text as a plain string. A command is printable text without
 ; quotes or backslashes, so the JSON literal of such a text, without its
@@ -42,21 +45,34 @@
      ((($kind) (tg:some $kind))
       ($other tg:none))))
 
-; /name or /name@bot, when bot is the declared username.
-(= (tg-cmd:addressee $head)
+; Whether the message comes from a private chat.
+(= (tg-cmd:private $update)
+   (case (telegram:field $update "message")
+     (((tg:some $message)
+       (case (telegram:field $message "chat")
+         (((tg:some $chat)
+           (case (telegram:field $chat "type")
+             (((tg:some (JsonStringV1 $scalars)) (== (tg-cmd:plain (JsonStringV1 $scalars)) (tg:some "private")))
+              ($other False))))
+          ($other False))))
+      ($other False))))
+
+; /name in a private chat, or /name@bot anywhere when bot is the declared
+; username.
+(= (tg-cmd:addressee $head $private)
    (case (str:split "@" $head)
-     ((($name) (tg:some $name))
+     ((($name) (if $private (tg:some $name) tg:none))
       (($name $bot)
        (if (== (collapse (match &self (tg-cmd:bot $bot) True)) (True)) (tg:some $name) tg:none))
       ($other tg:none))))
 
-(= (tg-cmd:parse $text)
+(= (tg-cmd:parse $text $private)
    (let $words (str:split-whitespace $text)
      (if (== $words ()) tg:none
        (let $head (car-atom $words)
          (let $rest (cdr-atom $words)
            (if (not (str:starts-with $head "/")) tg:none
-             (case (tg-cmd:addressee $head)
+             (case (tg-cmd:addressee $head $private)
                (((tg:some $name)
                  (case (tg-cmd:kind $name)
                    (((tg:some $kind) (tg-cmd:call $name $kind (str:join " " $rest)))
@@ -67,7 +83,7 @@
 (= (tg-cmd:of $kind $role $update)
    (if (and (== $kind "message") (== $role operator))
      (case (tg-cmd:text $update)
-       (((tg:some $text) (tg-cmd:parse $text))
+       (((tg:some $text) (tg-cmd:parse $text (tg-cmd:private $update)))
         ($none tg:none)))
      tg:none))
 
@@ -84,15 +100,6 @@
 (= (tg-cmd:help-text)
    (str:join "\n" (collapse (match &self (tg-cmd:command $name $kind $help)
                               (format-args "{} — {}" ($name $help))))))
-
-(= (tg-cmd:stopped-text)
-   (let $agent (tg-cmd:agent-name)
-     (let $start (tg-cmd:named start)
-       (format-args "Stopped. Nothing {} submits is sent until {}." ($agent $start)))))
-
-(= (tg-cmd:started-text)
-   (let $agent (tg-cmd:agent-name)
-     (format-args "Started. {}'s messages go out again." ($agent))))
 
 (= (tg-cmd:fallback-text)
    (let $agent (tg-cmd:agent-name)

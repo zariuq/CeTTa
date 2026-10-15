@@ -24,3 +24,4 @@ a
 [(1 [a]) (2 [b c])]
 2
 [(undefined-function x) (+ 1 2)]
+(Range (0 1 2) (2 3 4) ())

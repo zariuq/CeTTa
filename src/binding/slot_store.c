@@ -498,10 +498,9 @@ bool bindings_frame_index_ensure_presentation_slot(
         bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id)) {
         return false;
     }
-    if (slot >= frame->schema->len)
-        return name_key == NULL;
-    SymbolId existing_spelling = frame->schema->spellings[slot];
-    Atom *existing_key = frame->schema->name_keys[slot];
+    SymbolId existing_spelling = slot < frame->schema->cap
+        ? frame->schema->spellings[slot] : SYMBOL_ID_NONE;
+    Atom *existing_key = bindings_frame_slot_name_key(frame, slot);
     if (existing_key && name_key &&
         !atom_eq(existing_key, name_key)) {
         return false;
@@ -517,16 +516,27 @@ bool bindings_frame_index_ensure_presentation_slot(
     if (!frame || slot >= frame->slot_len ||
         bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id))
         return false;
-    BindingsFrameSchema *schema = bindings_frame_schema_clone(
-        frame->schema);
-    if (!schema)
-        return false;
+    BindingsFrameSchema *schema = frame->schema;
+    /* Presentation is private while this schema is exclusively owned. Grow
+     * geometrically and copy only shared snapshots, rather than copying the
+     * entire manufactured-slot extent for every fresh variable binding. */
+    if (schema->cap < frame->slot_len ||
+        atomic_load_explicit(&schema->references, memory_order_acquire) != 1u) {
+        uint32_t capacity = schema->cap ? schema->cap : 1u;
+        while (capacity < frame->slot_len) {
+            capacity = capacity > UINT32_MAX / 2u
+                ? frame->slot_len : capacity * 2u;
+        }
+        schema = bindings_frame_schema_clone_capacity(frame->schema, capacity);
+        if (!schema)
+            return false;
+        bindings_frame_schema_release(frame->schema);
+        frame->schema = schema;
+    }
     if (needs_spelling)
         schema->spellings[slot] = spelling;
     if (needs_key)
         schema->name_keys[slot] = name_key;
-    bindings_frame_schema_release(frame->schema);
-    frame->schema = schema;
     if (bindings->frame_index->schema_revision != UINT64_MAX)
         bindings->frame_index->schema_revision++;
     return true;

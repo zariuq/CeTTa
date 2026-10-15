@@ -76,7 +76,7 @@
                          ($rows (new-space)) ($count (size-atom $briefs))
                          ($stamp (get-state &memory-view))
                          ($projection (index:new $stamp $count 128))
-                         ($positions (range-atom $count))
+                         ($positions (list:range $count))
                          ($built (collapse (let $i (superpose $positions)
                            (let $row (index-atom $briefs $i)
                              (let $saved-row (add-atom $rows (Row $i $row))
@@ -131,7 +131,7 @@
 ; Matching the indexed key/value happens once; Boolean composition uses masks.
 (= (memory:selected-hits $rows $indices $scores)
    (let* (($selected (tensor:to-expr $indices)) ($values (tensor:to-expr $scores))
-          ($positions (range-atom (size-atom $selected))))
+          ($positions (list:range (size-atom $selected))))
      (collapse (let $i (superpose $positions)
        (let* (($score (index-atom $values $i))
               ($row-id (index-atom $selected $i))
@@ -225,7 +225,12 @@
 
 (= (memory:dispatch $request)
    (case $request
-     (((execution-profile) (let $provider (tensor:matvec-provider) (TensorExecution $provider f64 lane4)))
+     (((reset)
+       (let $removed (collapse (let $row (memory:matches All) (remove-atom &memory-records $row)))
+         (let $profile (change-state! &memory-profile Missing)
+           (let $invalidated (memory:invalidate)
+             (let $dirty (memory:clear-dirty) (Reset))))))
+      ((execution-profile) (let $provider (tensor:matvec-provider) (TensorExecution $provider f64 lane4)))
       ((scan-tier $tier)
        (if (or (== $tier wide) (== $tier f32))
          (let* (($changed (change-state! &memory-scan-tier $tier)) ($reset (memory:invalidate)))
@@ -247,7 +252,7 @@
       ((records $ids) (collapse (memory:record (superpose $ids))))
       ((ids $filter) (collapse (case (memory:matches $filter)
          (((Memory $id $rev $p $v $doc $meta) $id)))))
-      ((query $profile $query $k $filter)
+      ((MemoryQuery $profile $query $k $filter)
        (case (get-state &memory-profile)
          (((Profile $profile $dimensions)
            (if (== (tensor:shape $query) ($dimensions))
@@ -256,10 +261,10 @@
           ($_ (MemoryFailure query profile-mismatch)))))
       ((query-reference $profile $query $k $filter) (memory:query $profile $query $k $filter))
       ((query-many $profile $queries $k $filter)
-       (let $positions (range-atom (size-atom $queries))
+       (let $positions (list:range (size-atom $queries))
          (collapse (let $i (superpose $positions)
            (let* (($query (index-atom $queries $i))
-                  ($found (memory:dispatch (query $profile $query $k $filter))))
+                  ($found (memory:dispatch (MemoryQuery $profile $query $k $filter))))
              ($i $found))))))
       ((upsert $profile $dimensions $row)
        (case (memory:validate $profile $dimensions $row)
@@ -283,4 +288,17 @@
          ((() (MemoryFailure $id missing))
           (($row) (memory:update $revision $metadata $row))
           ($_ (MemoryFailure $id duplicate-id)))))
-      ($unknown (MemoryFailure request unsupported)))))
+      ($unknown (memory:legacy-request $unknown)))))
+
+; The legacy wire tag is data even if an embedding application defines its
+; own query command. PeTTa prepares function-headed case patterns, so match
+; the raw head here rather than evaluating that command as a pattern.
+(= (memory:legacy-request $request)
+   (if (== (get-metatype $request) Expression)
+     (if (== (size-atom $request) 5)
+       (let ($head $profile $vector $k $filter) $request
+         (if (== $head query)
+           (memory:dispatch (MemoryQuery $profile $vector $k $filter))
+           (MemoryFailure request unsupported)))
+       (MemoryFailure request unsupported))
+     (MemoryFailure request unsupported)))

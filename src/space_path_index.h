@@ -10,6 +10,7 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
     CETTA_SPACE_PATH_INTEGER_KEY,
+    CETTA_SPACE_PATH_STRING_HASH_KEY,
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
@@ -44,10 +45,18 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
     if (pattern->expr.len == 3u && pattern->expr.elems[2] &&
         pattern->expr.elems[2]->kind == ATOM_VAR &&
         !atom_has_vars(pattern->expr.elems[0]) &&
-        !atom_has_vars(pattern->expr.elems[1]))
+        !atom_has_vars(pattern->expr.elems[1]) &&
+        !(pattern->expr.elems[1] && pattern->expr.elems[1]->kind == ATOM_GROUNDED &&
+          pattern->expr.elems[1]->ground.gkind == GV_STRING))
         return false;
     for (CettaExprIndex position = 0u; position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
+        /* The primary trie puts strings on its uncertain branch. A rigid
+         * string prefix therefore needs the same maintained path index as
+         * a rigid coordinate after a variable. Hash collisions remain
+         * candidates and are rejected only by the exact matcher. */
+        if (child && child->kind == ATOM_GROUNDED && child->ground.gkind == GV_STRING)
+            return true;
         if (!atom_has_vars(child))
             continue;
         if (child->kind == ATOM_EXPR)
@@ -61,7 +70,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
              suffix < pattern->expr.len; suffix++) {
             child = pattern->expr.elems[suffix];
             if (child && (child->kind == ATOM_EXPR || child->kind == ATOM_SYMBOL ||
-                    (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+                    (child->kind == ATOM_GROUNDED &&
+                     (child->ground.gkind == GV_INT || child->ground.gkind == GV_STRING))))
                 return true;
         }
         return false;

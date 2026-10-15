@@ -522,6 +522,9 @@ struct CettaPreparedPureProgram {
     bool total_structural_equality;
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
     bool closed_program;
+    /* Checked by the embedding evaluator before compilation.  Rebinding a
+     * cached entry preserves this role as part of the cache key. */
+    bool entry_arguments_are_values;
     bool answer_producer;
     bool allow_callable_templates;
     bool service_source_nodes;
@@ -947,7 +950,8 @@ static bool prepared_pure_roles_begin(CettaPreparedPureProgram *p) {
         e->memo_value_origins[i]=(PreparedPureDemandOrigin){0};
     }
     for (size_t i=0u;i<p->entry_argument_count;i++) {
-        e->entry_ready[i]=prepared_pure_leaf_ready(p,p->entry_arguments[i]);
+        e->entry_ready[i]=p->entry_arguments_are_values ||
+            prepared_pure_leaf_ready(p,p->entry_arguments[i]);
         e->entry_origins[i]=(PreparedPureDemandOrigin){.source_argument_index=(uint32_t)i+1u};
     }
     for (size_t i=0u;i<p->slot_len;i++) e->slot_origins[i]=(PreparedPureDemandOrigin){0};
@@ -9110,6 +9114,7 @@ prepared_pure_program_compile_closed_mode(
     program->total_structural_equality = total_structural_equality;
     program->match_decision_semantics = match_decision_semantics;
     program->closed_program = true;
+    program->entry_arguments_are_values = entry_arguments_are_values;
     program->answer_producer = answer_producer;
     program->optional_result = optional_result;
     program->service_source_nodes = service_source_nodes;
@@ -12966,8 +12971,11 @@ bool cetta_prepared_pure_closed_service_restore(
         cut->memo_keys_length>execution->memo_origins_capacity ||
         cut->memo_keys_length>execution->memo_value_origins_capacity ||
         cut->entry_arguments_length>execution->entry_origins_capacity) {ok=false;goto done;}
+    /* Insertion grows at its declared load threshold, which can exceed one
+     * half. Restoration needs an empty probe bucket, not a stricter load
+     * policy than the table that captured this valid prefix. */
     if (cut->memo_keys_length &&
-        (!p->memo_buckets || p->memo_bucket_cap<cut->memo_keys_length*2u)) {
+        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_keys_length)) {
         ok=false;goto done;
     }
 #define RESTORE(field,length) do { \

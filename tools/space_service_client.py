@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import socket
+import select
 import struct
 import time
 import uuid
@@ -280,6 +281,15 @@ class Client:
         started = False
         self.deadline = time.monotonic() + self.timeout
         try:
+            # An idle owner can close a previously successful connection.
+            # Detect EOF before sending; never retry a packet already sent.
+            if self.connection is not None:
+                try:
+                    readable = select.select([self.connection], [], [], 0)[0]
+                    if readable and not self.connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+                        self.close()
+                except (OSError, ValueError):
+                    self.close()
             if self.connection is None:
                 connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 connection.settimeout(self.timeout)
@@ -289,11 +299,11 @@ class Client:
                     connection.close()
                     raise
                 self.connection = connection
-            started = True
             remaining = self.deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("request deadline")
             self.connection.settimeout(remaining)
+            started = True
             self.connection.sendall(packet)
             header = self._read(8)
             if header[:4] != b"CSP1":
@@ -342,6 +352,16 @@ class Space:
         self.revision, self.count = value[6:]
         return value
 
+    def watch(self, revision: int, wait_ms: int = 30000):
+        """Wait for a source revision change; this never consumes a value.
+
+        Use a dedicated client while waiting and a timeout longer than the
+        requested lease. An owner restart invalidates the connection: reopen
+        and inspect durable state. The captured revision closes the race
+        between a read and registration, even if a write already happened.
+        """
+        return self.client.call("watch", self.uuid, self.id, revision, wait_ms)
+
     def batch(self, *operations, request_id: str | None = None):
         value = self.client.call("batch", self.uuid, self.id, self.revision,
                                  E("ops", *operations), request_id=request_id)
@@ -356,6 +376,19 @@ class Space:
 
     def query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000):
         return self.client.call("query", self.uuid, self.id, pattern, template, limit, lease_ms)
+
+    def query_first(self, pattern, template, lease_ms: int = 30000):
+        """Select the first matching occurrence; this is not an exhaustive view."""
+        return self.client.call("query-first", self.uuid, self.id, pattern, template, 1, lease_ms)
+
+    def profile_query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000, first=False):
+        """Return (profile, view, query-work) with candidates actually examined.
+
+        The remaining counters describe all retained path indexes, not a
+        claim that a particular index alone answered this query.
+        """
+        return self.client.call("query-first-profile" if first else "query-profile",
+                                self.uuid,self.id,pattern,template,1 if first else limit,lease_ms)
 
     def fetch(self, snapshot, offset: int = 0, count: int = 128):
         return self.client.call("fetch", snapshot[1], snapshot[2], offset, count)

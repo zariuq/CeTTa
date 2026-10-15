@@ -3,6 +3,7 @@
 #include "atom.h"
 #include "library_io.h"
 #include "symbol.h"
+#include "host_notice.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,6 +11,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <pthread.h>
+#include <fcntl.h>
+
+static void *publish_later(void *unused) {
+    (void)unused;
+    struct timespec delay = {0, 30000000L};
+    nanosleep(&delay, NULL);
+    cetta_host_notice_publish();
+    return NULL;
+}
 
 static unsigned checks;
 static unsigned failures;
@@ -32,6 +47,137 @@ static Atom *dispatch(CettaIoRuntime *runtime, Arena *arena,
                       const char *head_name, Atom **args, uint32_t nargs) {
     return cetta_io_dispatch(runtime, arena, atom_symbol(arena, head_name),
                              args, nargs);
+}
+
+static void test_native_notifications(CettaIoRuntime *runtime, Arena *arena) {
+    Atom *timer = atom_expr2(arena, atom_symbol(arena, "timer:after"), atom_int(arena, 0));
+    Atom *foreign = dispatch(runtime, arena, "__cetta_lib_io_submit", &timer, 1);
+    Atom *notice = atom_expr(arena, (Atom *[]){atom_symbol(arena, "host:notice")}, 1);
+    Atom *pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &notice, 1);
+    CHECK(!atom_is_error(pending), "native host notification subscription starts");
+    Atom *id = pending->expr.elems[1];
+    Atom *selected = atom_expr2(arena, atom_symbol(arena, "io:ids"), id);
+    Atom *wait_args[] = {selected, atom_int(arena, 5)};
+    Atom *ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:idle"), "unrelated ready timer cannot spin selected wait");
+    pthread_t publisher;
+    CHECK(!pthread_create(&publisher, NULL, publish_later, NULL), "foreign notifier thread starts");
+    wait_args[1] = atom_int(arena, 2000);
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    pthread_join(publisher, NULL);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "host notification wakes blocked native wait");
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", wait_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "readiness notification remains unconsumed");
+    Atom *event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "host:noticed"), "owned host notice has a result");
+    id = foreign->expr.elems[1];
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "timer:fired"), "foreign completion survives selected wait");
+#ifdef __linux__
+    char directory[] = "/tmp/cetta-file-notice-XXXXXX";
+    CHECK(mkdtemp(directory) != NULL, "file notification directory exists");
+    Atom *watch = atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:changed"),
+        atom_string(arena, directory), atom_expr(arena, (Atom *[]){atom_string(arena, "wake")}, 1)}, 3);
+    pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &watch, 1);
+    CHECK(!atom_is_error(pending), "filtered directory notification starts");
+    id = pending->expr.elems[1];
+    char file[256], renamed[256];
+    snprintf(file, sizeof(file), "%s/progress", directory);
+    FILE *f = fopen(file, "w"); if (f) { fputs("heartbeat", f); fclose(f); }
+    Atom *file_args[] = {id, atom_int(arena, 5)};
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", file_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:idle"), "unselected progress writes do not wake control wait");
+    snprintf(renamed, sizeof(renamed), "%s/wake", directory); rename(file, renamed);
+    file_args[1] = atom_int(arena, 1000);
+    ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", file_args, 2);
+    CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "atomic control rename wakes native wait");
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "fs:changed"), "file notification has explicit result");
+    unlink(renamed); rmdir(directory);
+#endif
+    int pipefd[2]; CHECK(!pipe(pipefd), "notification lifecycle fixture opens");
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    CettaHostNoticeRegistration *registration = cetta_host_notice_register(pipefd[1]);
+    cetta_host_notice_unregister(registration);
+    cetta_host_notice_publish(); char byte;
+    CHECK(read(pipefd[0], &byte, 1) < 0 && errno == EAGAIN, "unregistered descriptor never receives later publication");
+    close(pipefd[0]); close(pipefd[1]);
+}
+
+static void test_process_owner(CettaIoRuntime *runtime, Arena *arena) {
+    char directory[] = "/tmp/cetta-process-owner-XXXXXX";
+    CHECK(mkdtemp(directory) != NULL, "process fixture directory exists");
+    char output[256];
+    snprintf(output, sizeof(output), "%s/output", directory);
+    Atom *request = atom_expr(arena, (Atom *[]){
+        atom_symbol(arena, "proc:request"),
+        atom_expr(arena, (Atom *[]){ atom_string(arena, "/bin/sh"),
+            atom_string(arena, "-c"), atom_string(arena, "sleep 5") }, 3),
+        atom_string(arena, "/"), atom_symbol(arena, "inherit"), atom_int(arena, 0),
+        atom_string(arena, output), atom_string(arena, output) }, 7);
+    Atom *timed = atom_expr(arena, (Atom *[]){
+        atom_symbol(arena, "proc:request"),
+        atom_expr(arena, (Atom *[]){ atom_string(arena, "/bin/sh"),
+            atom_string(arena, "-c"), atom_string(arena, "printf early; sleep .15; printf late") }, 3),
+        atom_string(arena, "/"), atom_symbol(arena, "inherit"), atom_int(arena, 50),
+        atom_string(arena, output), atom_string(arena, output) }, 7);
+    Atom *pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &timed, 1);
+    CHECK(pending && pending->kind == ATOM_EXPR && pending->expr.len == 2,
+          "busy evaluator deadline candidate submitted");
+    if (pending && pending->kind == ATOM_EXPR && pending->expr.len == 2) {
+        struct timespec pause = {0, 300000000L};
+        nanosleep(&pause, NULL);
+        Atom *id = pending->expr.elems[1];
+        Atom *event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
+        Atom *result = event && event->kind == ATOM_EXPR && event->expr.len == 3 ? event->expr.elems[2] : NULL;
+        CHECK(result && result->kind == ATOM_EXPR && result->expr.len == 6 &&
+              atom_is_symbol(result->expr.elems[2], "timed-out"), "deadline survives unavailable evaluator");
+        FILE *file = fopen(output, "r"); char bytes[32] = {0};
+        size_t size = file ? fread(bytes, 1, sizeof(bytes), file) : 0;
+        if (file) fclose(file);
+        CHECK(size == 5 && !memcmp(bytes, "early", 5), "deadline retains prefix and prevents late output");
+    }
+    for (unsigned i = 0; i < 100; ++i) {
+        Atom *pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &request, 1);
+        CHECK(pending && pending->kind == ATOM_EXPR && pending->expr.len == 2 &&
+              atom_is_symbol(pending->expr.elems[0], "io:pending"), "cancel candidate submitted");
+        if (!pending || pending->kind != ATOM_EXPR || pending->expr.len != 2) break;
+        Atom *id = pending->expr.elems[1];
+        Atom *status = dispatch(runtime, arena, "__cetta_lib_io_status", &id, 1);
+        CHECK(status && status->kind == ATOM_EXPR && status->expr.len == 5 &&
+              atom_is_symbol(status->expr.elems[0], "proc:running"), "candidate is a live child");
+        if (!status || status->kind != ATOM_EXPR || status->expr.len != 5) break;
+        pid_t pid = (pid_t)status->expr.elems[1]->ground.ival;
+        CHECK(!atom_is_error(dispatch(runtime, arena, "__cetta_lib_io_cancel", &id, 1)),
+              "cancel returns without consuming internal child ownership");
+        for (unsigned tries = 0; tries < 2000 && kill(pid, 0) == 0; ++tries)
+            pause_one_ms();
+        errno = 0;
+        pid_t reaped = waitpid(pid, NULL, WNOHANG);
+        CHECK(reaped == -1 && errno == ECHILD, "owner reaped cancellation while evaluator was blocked");
+        /* Recover the fixture even if a regression leaves the child running. */
+        if (reaped == 0) {
+            kill(-pid, SIGKILL); kill(pid, SIGKILL);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+        }
+    }
+    pid_t foreign = fork();
+    if (!foreign) _exit(37);
+    if (foreign > 0) {
+        struct timespec pause = {0, 50000000L};
+        nanosleep(&pause, NULL);
+        int status = 0;
+        CHECK(waitpid(foreign, &status, 0) == foreign && WIFEXITED(status) && WEXITSTATUS(status) == 37,
+              "owner never steals another subsystem's child");
+    } else CHECK(false, "foreign child fixture started");
+    struct sigaction ignored = {.sa_handler = SIG_IGN}, previous;
+    sigemptyset(&ignored.sa_mask);
+    if (!sigaction(SIGCHLD, &ignored, &previous)) {
+        CHECK(atom_is_error(dispatch(runtime, arena, "__cetta_lib_io_submit", &request, 1)),
+              "host that discards exit status gets an explicit startup error");
+        sigaction(SIGCHLD, &previous, NULL);
+    } else CHECK(false, "SIGCHLD fixture installed");
+    unlink(output); rmdir(directory);
 }
 
 static Atom *http_request_full(Arena *arena, const char *method,
@@ -149,13 +295,22 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
     arena_init(&arena);
     CettaIoRuntime *runtime = cetta_io_runtime_new();
+    if (getenv("CETTA_IO_PROCESS_ONLY")) {
+        test_process_owner(runtime, &arena);
+        printf("(IoProcessSummary %u %u %u)\n", checks, checks - failures, failures);
+        cetta_io_runtime_free(runtime);
+        arena_free(&arena); symbol_table_free(&symbols); g_symbols = NULL;
+        return failures == 0u ? 0 : 1;
+    }
 
     Atom *capabilities = dispatch(runtime, &arena,
                                   "__cetta_lib_io_capabilities", NULL, 0u);
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 1u &&
-              atom_is_symbol(capabilities->expr.elems[0], "http"),
-          "native provider advertises HTTP");
+              capabilities->expr.len == 7u &&
+              atom_is_symbol(capabilities->expr.elems[0], "http") &&
+              atom_is_symbol(capabilities->expr.elems[1], "proc") &&
+              atom_is_symbol(capabilities->expr.elems[2], "timer"),
+          "native providers advertise HTTP, processes and timers");
 
     if (getenv("CETTA_IO_REPLAY_ONLY")) {
         char replay_url[512];
@@ -392,6 +547,8 @@ int main(int argc, char **argv) {
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_wait", &timeout, 1u)),
           "zero-time wait consumes nothing after completion");
 
+    test_native_notifications(runtime, &arena);
+    test_process_owner(runtime, &arena);
     printf("(IoRuntimeSummary %u %u %u)\n",
            checks, checks - failures, failures);
     cetta_io_runtime_free(runtime);

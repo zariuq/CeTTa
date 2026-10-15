@@ -3,4 +3,10 @@ b
 c
 a
 b
+lambda-false
+lambda-false
+lambda-true
+lambda-true
 [()]
+[()]
+[(1 2)]

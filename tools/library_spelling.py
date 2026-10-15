@@ -24,6 +24,10 @@ not):
 
 A spelling that still uses a name lib_he defines imports lib_he first.
 
+Raw syntax reification keeps its argument untouched. PeTTa implements
+langdef:quote-syntax by quoting a quote form; its unspecified result lets
+the wrapper body run, while its Atom parameter remains source data.
+
 Explicit interpretation of held syntax in the current space:
 
   (metta BODY %Undefined% &self) -> (eval BODY)
@@ -322,10 +326,20 @@ def transform(form, dialect: str):
     if isinstance(form, tuple):
         return ("!", transform(form[1], dialect))
     if isinstance(form, list):
+        if (len(form) == 2 and form[0] == "langdef:quote-syntax"
+                and isinstance(form[0], Symbol)):
+            return form
         handoff = value_handoff_call(form)
         if handoff is not None:
             return spell_value_handoff(transform(handoff, dialect), dialect)
         if dialect == "petta":
+            # HE module names designate MeTTa libraries. PeTTa also imports
+            # Python modules by bare name (notably math and io), so preserve
+            # the library identity explicitly rather than choosing Python.
+            if (len(form) == 3 and form[0] == Symbol("import!")
+                    and isinstance(form[2], Symbol)
+                    and "/" not in form[2] and "." not in form[2]):
+                return [form[0], form[1], [Symbol("library"), form[2]]]
             if (len(form) == 4 and form[0] == "metta"
                     and isinstance(form[0], Symbol)
                     and form[2] == Symbol("%Undefined%")
@@ -405,6 +419,21 @@ def datum_handoff_declaration(form):
     return [form[0], form[1], [arrow[0], *parameters, Symbol("%Undefined%")]]
 
 
+def raw_syntax_reification(form):
+    """PeTTa's implementation of the unary raw-syntax library operation."""
+    declaration = [Symbol(":"), Symbol("langdef:quote-syntax"),
+                   [Symbol("->"), Symbol("Atom"), Symbol("Atom")]]
+    if form != declaration or not isinstance(form, list):
+        return None
+    if not (isinstance(form[0], Symbol) and isinstance(form[1], Symbol)
+            and all(isinstance(word, Symbol) for word in form[2])):
+        return None
+    name, value = form[1], Symbol("$syntax")
+    definition = [Symbol("="), [name, value],
+                  [Symbol("quote"), [Symbol("quote"), value]]]
+    return [datum_handoff_declaration(form), definition]
+
+
 def spelling(source: str, dialect: str) -> str:
     forms = read_forms(source)
     operations, natives = handoff_heads(forms)
@@ -419,7 +448,10 @@ def spelling(source: str, dialect: str) -> str:
            "; do not edit.  The " + description, ""]
     spelled = []
     for form in forms:
-        if not is_declaration_of(form, dropped):
+        reification = raw_syntax_reification(form) if dialect == "petta" else None
+        if reification is not None:
+            spelled.extend(reification)
+        elif not is_declaration_of(form, dropped):
             spelled.append(transform(form, dialect))
         elif is_declaration_of(form, operations):
             declaration = datum_handoff_declaration(form)

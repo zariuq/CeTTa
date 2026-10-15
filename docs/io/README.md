@@ -1,4 +1,68 @@
-# Native HTTP owner and durable recording boundary
+# Native I/O providers and durable recording boundary
+
+Processes and timers share `io:submit`, owned `io:poll` and `io:wait` with HTTP.
+They work on native hosts without Python, SWI-Prolog or HTTP enabled:
+
+```metta
+(io:submit (timer:after 1000))
+(io:submit (proc:request ("sh" "-c" "make test") "/workspace" inherit
+                        0 "/workspace/build.log" "/workspace/build.log"))
+```
+
+Process submission returns after spawning, rather than waiting for the command
+to finish. Its environment may be `inherit` or explicit name/value pairs. A
+zero process timeout has no deadline. Standard input is `/dev/null`; stdout
+and stderr go to the named files and remain readable after the handle is
+consumed or the runtime exits. The same output path merges both streams.
+The files' parent directories must already exist. Process groups allow
+cancellation and deadlines to stop descendants as well as the direct child.
+
+An independent native owner checks process deadlines and reaps owned children
+even while the evaluator is busy. Startup does not wait for exec-pipe EOF.
+Parent-side startup errors are submission errors; child-side cwd or exec errors
+are terminal `failed` outcomes. A real exit 127 remains an ordinary exit.
+Cancellation consumes the public handle immediately while the owner retains
+the child until reap. The kill is requested immediately; wait for a retained
+signalled handle's completion when reusing its output files requires finality.
+Runtime teardown joins this owner before closing wake
+descriptors; a child stuck in an uninterruptible kernel wait can delay teardown.
+Normal leader exit preserves ordinary process semantics: background descendants
+may continue and write output. Signals, cancellation and teardown only control
+groups whose leader is still owned and unreaped; they never signal recycled IDs.
+The embedding host must retain child exit status rather than configure SIGCHLD
+auto-reaping; incompatible signal disposition produces a startup error.
+
+`io:status handle` reports `(proc:running pid elapsed-ms stdout stderr)` or
+`(proc:finished pid exited|signaled|timed-out|failed code stdout stderr)`.
+Polling or waiting consumes a terminal outcome once. `io:signal handle number`
+signals the group and leaves its completion available; `io:cancel handle`
+stops the group and consumes the handle. Timer outcomes are
+`(timer:fired elapsed-ms)`, with non-consuming
+`(timer:status waiting|ready elapsed-ms)` status.
+
+The evaluator's native wait polls the owners' wake pipe, using the nearest
+timer deadline for its timeout. The process owner uses Linux pidfd;
+when unavailable, it checks specific owned children at 20 ms intervals. There is
+no per-process or timer quota inherited from HTTP. Waiting for a selected
+handle preserves other providers' completions. Optional progress observation
+uses `io:wait milliseconds progress-path` or
+`io:wait handle milliseconds progress-path`; it does not change execution.
+
+`io:wait-ready milliseconds` or `io:wait-ready handle milliseconds` returns
+`(io:ready (id ...))` without consuming a completion, or `(io:idle)` on timeout.
+Use it for shared readiness; then let each client consume its own handle.
+Unselected completion order is unspecified; use owned handles for coordination.
+`timer:fired` reports the timer's selected due interval, independently of how
+long the evaluator waited before consuming it. Timers have no worker effects.
+
+`fs:tail-text path bytes` seeks to the requested file tail and returns
+`(fs:tail total-bytes truncated text)`, repairing malformed UTF-8. Zero bytes
+requests the whole file. `fs:entries path` lists names without a page limit.
+`fs:update-text` operation `replace` atomically updates a state file without
+a backup, creating its parent directories. The existing `write` operation
+continues to preserve a backup. `system:wall-time`, `system:format-time`,
+`system:pid`, `system:pid-alive?` and `system:read-line` expose native host
+utilities; `format-time` takes a format, epoch seconds and `local` or `utc`.
 
 With `ENABLE_HTTP=1`, native requests run on one curl owner thread per I/O
 runtime. The evaluator can sleep or compute without polling to drive transfers.
@@ -215,10 +279,72 @@ not leave them as unevaluated function bodies.
 library's operations. `test-io-browser` requires an Emscripten/browser toolchain.
 
 The service orchestration profile is HE with the qualified rho/rhometta library.
-The cognitive worker can independently use PeTTa. Cross-process data does not
-grant the worker durable-store or transport authority.
+The cognitive worker can independently use PeTTa. Its file and network access
+follow its OS account; cross-process messages transport values.
 
 The recording hooks are a mechanism, not a production durable dispatcher.
-Credential references, the speculative-effect gate, durable timers, Telegram
+Credential references, durable timers, Telegram
 policy, the service/worker protocol and crash recovery of that protocol belong
 to the host layer. Ordinary `io:submit` does not gain durability from this change.
+
+Native Unix notifications also use the same handles:
+
+```metta
+(io:submit (cwp:request socket code name body deadline-ms))
+(io:submit (space:request socket (request id operation arguments) deadline-ms))
+(io:submit (host:notice))
+(io:submit (fs:changed directory (selected-file-names)))
+(io:wait-ready (io:ids handle other-handle) wait-ms)
+```
+
+CWP and space requests reuse their existing wire formats. A deadline of zero
+leaves the transaction open without a deadline. Failed space transactions
+distinguish no request sent from a missing reply after sending; the client
+does not automatically replay a write. File notifications are Linux inotify
+subscriptions; omit the file-name list to observe the whole directory.
+`host:notice` observes a native generation counter. Existing embedded-host
+producers may call `cetta_bridge.notice()` after publishing their data; the
+notifier neither evaluates MeTTa nor owns the producer's queue.
+
+Selected readiness waits leave all results available for their owners and
+ignore unrelated ready results. These primitives add no execution quotas,
+command filters, automatic acknowledgements or requirements to reconsider a
+scheduled command. CWP `WAIT` (code 5) takes a revision token and an ASCII
+millisecond duration. An empty token obtains the current token; a subsequent
+wait reports newly published work or a changed store epoch without receiving
+or acknowledging a task. Previously pending tasks do not repeatedly wake it.
+
+## Existing SQLite state
+
+The `sqlite` library accesses existing databases without imposing the durable
+space service's schema. SQL and bound parameters are caller-selected:
+
+```metta
+(sqlite:query "history.sqlite3" "SELECT id,result FROM calls WHERE id=?"
+              ("call-id") 10000)
+(sqlite:transaction "history.sqlite3" immediate
+  ((sqlite:statement "INSERT INTO notes VALUES (?,?)" ("task-id" "finding"))
+   (sqlite:statement "SELECT rowid FROM notes WHERE task=?" ("task-id"))) 10000)
+```
+
+A query returns `(sqlite:result columns rows changes last-row-id)`. A scoped
+transaction returns `(sqlite:committed results)` after all statements commit;
+an error rolls its unfinished transaction back. Connections and statements
+close before returning to the evaluator. No callback can retain a transaction
+across a model call or asynchronous wait. The busy duration is caller-selected.
+There are no row quotas or SQL filters. SQL `NULL` is `sqlite:null`; BLOBs are
+`(sqlite:blob bytes)` and TEXT, INTEGER and REAL retain their storage types.
+
+Errors carry category, SQLite code, message and outcome. A commit I/O failure
+may report `unknown-outcome`; it is never automatically replayed. The library
+does not rebuild tables, change rowids, stamp a schema version, force WAL or
+change the existing database's journal mode.
+
+When embedded Python and native CeTTa access the same database, build with
+`SQLITE_PROVIDER=system` and use the **same shared SQLite library** as Python's
+`_sqlite3`. Two independent SQLite copies in one process can interfere with
+file-lock ownership. `SQLITE_CFLAGS` and `SQLITE_LIBS` can select an SDK or
+Python environment; otherwise the build uses pkg-config or ordinary system
+linkage. `ENABLE_DURABLE=1` enables this library. The native SQLite parity test
+checks existing rowids and types, atomic rollback, unbounded result selection,
+and shared linkage with an embedded Python reader.

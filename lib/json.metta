@@ -1,4 +1,6 @@
-; JSON backed by the authored RFC-8259 LanguageDef and prepared ParserPack.
+; JSON values from the RFC-8259 grammar. Ordinary ingestion and emission do
+; not build parse forests or certify each input. Reference operations below
+; explicitly select the authored ParserPack for diagnostics and qualification.
 ;
 ; The json:* operations expose the canonical occurrence-preserving V1 value.
 ; Canonical failures are ordinary JsonFailureV1 evidence so HE, PeTTa, and
@@ -28,14 +30,18 @@
 
 (: __cetta_lib_json_capabilities_v1 (-> Atom Atom))
 (: __cetta_lib_json_parse_v1 (-> String Atom))
+(: __cetta_lib_json_parse_v1 (-> String Atom Atom))
 (: __cetta_lib_json_to_legacy_v1 (-> Atom Atom))
 (: __cetta_lib_json_stringify_v1 (-> Atom Atom))
+(: __cetta_lib_json_stringify_v1 (-> Atom Atom Atom))
 (: __cetta_lib_json_members_v1 (-> Atom Atom))
 (: __cetta_lib_json_get_all_v1 (-> Atom String Atom))
 (: __cetta_lib_json_get_first_v1 (-> Atom String Atom))
 (: __cetta_lib_json_get_last_v1 (-> Atom String Atom))
 (: __cetta_lib_json_parse (-> String Atom))
+(: __cetta_lib_json_parse (-> String Atom Atom))
 (: __cetta_lib_json_stringify (-> Atom Atom))
+(: __cetta_lib_json_stringify (-> Atom Atom Atom))
 (: __cetta_lib_json_object_get (-> Atom String Atom))
 
 (: json:capabilities (-> Atom))
@@ -48,6 +54,24 @@
 (= (json:parse $text)
    (function
      (chain (eval (__cetta_lib_json_parse_v1 $text)) $result
+       (return $result))))
+
+(: json:parse-reference (-> %Undefined% Atom))
+(= (json:parse-reference $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse_v1 $text JsonReferenceV1)) $result
+       (return $result))))
+
+(: json:parse-legacy-reference (-> %Undefined% Atom))
+(= (json:parse-legacy-reference $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse $text JsonReferenceV1)) $result
+       (return $result))))
+
+(: json:stringify-reference (-> %Undefined% Atom))
+(= (json:stringify-reference $value)
+   (function
+     (chain (eval (__cetta_lib_json_stringify_v1 $value JsonReferenceV1)) $result
        (return $result))))
 
 (: json:stringify (-> %Undefined% Atom))

@@ -117,7 +117,11 @@ done:
 Atom *cetta_space_service_dispatch(Arena *a, Atom *head, Atom **args, uint32_t n) {
     if (!a || !head) return NULL;
     if (atom_is_symbol(head,"__cetta_lib_space_id")) {
-        if (n) return atom_error(a,head,atom_string(a,"request-id takes no arguments"));
+        /* Unit gives explicit evaluators an ordinary native call. Keep the
+         * original zero-argument form for existing clients. */
+        if (n && !(n == 1 && args[0]->kind == ATOM_EXPR &&
+                   args[0]->expr.len == 0))
+            return atom_error(a,head,atom_string(a,"request-id takes no arguments or unit"));
         unsigned char bytes[16]; size_t used=0;
         while (used<sizeof(bytes)) {
             ssize_t got=getrandom(bytes+used,sizeof(bytes)-used,0);

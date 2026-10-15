@@ -244,7 +244,7 @@
 ; Reify raw syntax as code without running it or forming Prime lambdas
 ; inside it. Existing scope records and variable identities are preserved.
 ; This differs from lifting an already formed Prime value into code.
-(: langdef:quote-syntax (-> Atom Atom Atom))
+(: langdef:quote-syntax (-> Atom Atom))
 
 (= (langdef:load-deterministic-equations $sources)
    (function

@@ -528,6 +528,7 @@ tests/test_json_gslt_hostile_constructors.metta	he	metta	extended	core	native	te
 tests/test_json_gslt_invalid_number.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_legacy_nul.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_library.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_json_direct_reference.metta	he	metta	extended	core	native	test-opt-in-feature	golden	explicit JSON reference operations
 tests/test_let.metta	he	metta	extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lib_parse_abt_bridge.metta	he	metta	extended	main	native	test	golden	-

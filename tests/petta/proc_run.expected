@@ -11,7 +11,9 @@ true
 ")
 (proc:exited 0 "/
 " "")
-(proc:exited 0 "aaaaaaaaaa" "")
+(proc:exited 0 "aaaaaaaaaa
+[output truncated: kept 10 of 20000 bytes]
+" "")
 (proc:timed-out "started
 " "")
 (proc:signaled 9 "" "")
@@ -25,3 +27,6 @@ true
 " "")
 (Error (proc:run) "argv must be a list of one or more strings")
 (Error (proc:run) "env must be a list of (\"NAME\" \"value\") pairs")
+(proc:exited 0 "firstsecond" "")
+(proc:exited 0 "large-allowance
+" "")

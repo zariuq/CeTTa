@@ -18,3 +18,7 @@
 !(proc:run ("/bin/ls" "/proc/self/fd") "/" () 5000 1000)
 !(proc:run () "/" () 5000 100)
 !(proc:run ("/bin/echo") "/" (("A=B" "c")) 5000 100)
+; Explicitly chosen inheritance, merged pipes, unlimited capture and larger
+; caller-selected limits all remain available without mandatory ceilings.
+!(proc:run ("/bin/sh" "-c" "printf first; printf second >&2") "/" inherit 0 0 "merged")
+!(proc:run ("/bin/echo" "large-allowance") "/" () 7200000 100000000)

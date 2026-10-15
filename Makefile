@@ -126,13 +126,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 657
+PRIME_NEED_ALGEBRA_CHECKS := 661
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 665
+PRIME_NEED_ALGEBRA_CHECKS := 669
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -402,15 +402,16 @@ endif
 ifeq ($(ENABLE_DURABLE),1)
 DURABLE_SRC += src/durable_store.c src/durable_value.c src/supervisor.c
 DURABLE_SRC += src/durable_host.c src/durable_dispatch.c src/durable_inbox.c src/durable_timer.c src/telegram_intake.c src/durable_worker.c src/durable_service.c src/telegram_action.c src/telegram_agent.c src/telegram_scheduler.c src/telegram_control.c
+DURABLE_SRC += src/durable_activity.c
 ifeq ($(SQLITE_PROVIDER),vendored)
 DURABLE_CFLAGS += -Ivendor/sqlite -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DQS=0 -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_DEFAULT_MEMSTATUS=0
 DURABLE_SRC += vendor/sqlite/sqlite3.c
 else ifeq ($(SQLITE_PROVIDER),system)
-ifeq ($(shell pkg-config --exists sqlite3 && echo yes),)
-$(error SQLITE_PROVIDER=system requires the sqlite3 development package)
-endif
-DURABLE_CFLAGS += $(shell pkg-config --cflags sqlite3)
-DURABLE_LDFLAGS += $(shell pkg-config --libs sqlite3)
+# Explicit flags also support SDKs and Python environments without pkg-config.
+SQLITE_CFLAGS ?= $(shell pkg-config --cflags sqlite3 2>/dev/null)
+SQLITE_LIBS ?= $(shell pkg-config --libs sqlite3 2>/dev/null)
+DURABLE_CFLAGS += $(if $(strip $(SQLITE_CFLAGS)),$(SQLITE_CFLAGS),-Ivendor/sqlite)
+DURABLE_LDFLAGS += $(if $(strip $(SQLITE_LIBS)),$(SQLITE_LIBS),-lsqlite3)
 else
 $(error SQLITE_PROVIDER must be vendored or system)
 endif
@@ -707,11 +708,14 @@ JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.gener
 JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
 JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
 JSON_GSLT_VALUE_TARGET_SOURCE_V1 = langdef/json/occurrence_preserving_value_v1.metta
+JSON_PREDICTIVE_OUTPUTS_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/lexical_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.h $(JSON_GSLT_GENERATED_DIR_V1)/predictive_v1.generated.inc
+JSON_DFA_EMITTER_V1 = runtime/emit-regular-span-dfa-v1
 JSON_GSLT_RUNTIME_SRC =
 ifeq ($(ENABLE_JSON_GSLT),1)
 JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
+	native/json_direct_v1.c \
 	native/json_runtime_v1.c \
 	native/json_nik_v1.c \
 	native/json_elaboration_plan_v1.c \
@@ -741,8 +745,8 @@ SRC += src/library_supervise.c $(DURABLE_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/http_worker.c src/telegram_transport.c src/library_durable.c
-SRC += src/atom_wire.c src/library_space_service.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
+SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
@@ -6434,6 +6438,10 @@ $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membe
 
 test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
+
+.PHONY: test-space-unregistered-head
+test-space-unregistered-head: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN) --unregistered-head)
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_DEPS) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
@@ -18815,6 +18823,10 @@ test-git-module: $(BIN) prepare-git-test-fixture
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
+.PHONY: test-git-subprocess-output
+test-git-subprocess-output: $(BIN)
+	CETTA_BIN="$(abspath $(BIN))" python3 tests/test_git_subprocess_output.py -v
+
 test-git-module-profiles: test-git-module $(BIN) prepare-git-test-fixture
 	@pass=0; fail=0; \
 	printf '%s\n' \
@@ -22989,22 +23001,8 @@ test-prime-relational-plan: $(BIN)
 		echo "FAIL: Prime guarded relation plan laundered bounded/open execution"; \
 		exit 1; \
 	fi; \
-	dependent=tests/prime/crossdialect/native/dtt_typed_corpus.metta; \
-	dependent_expected=$$(cat tests/profile_he_prime_dtt_typed_corpus.expected); \
-	dependent_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
-		$(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
-	dependent_probe=$$($(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
-	dependent_slot_reference=$$(CETTA_PETTA_EQUATION_SLOT_FRAME_REFERENCE=1 \
-		$(CETTA_BIN_INVOKE) --lang prime "$$dependent" 2>&1); \
-	if [ "$$dependent_canonical" != "$$dependent_expected" ] || \
-	   [ "$$dependent_probe" != "$$dependent_expected" ] || \
-	   [ "$$dependent_slot_reference" != "$$dependent_expected" ]; then \
-		echo "FAIL: Prime relation plan changed dependent telescope dispatch"; \
-		diff <(printf '%s\n' "$$dependent_canonical") \
-		     <(printf '%s\n' "$$dependent_probe") | head -40; \
-		exit 1; \
-	fi; \
 	for relational_case in \
+		tests/prime/scoped/grouped_dependent_telescope.metta \
 		tests/prime/relational_first_demand.metta \
 		tests/prime/profiles/megalodon_hotg/scoped/judgment_continuations.metta \
 		tests/prime/authored_frontier_chaining.metta; do \
@@ -24235,7 +24233,9 @@ PRIME_INSTANCE_RENUMBER = perl -pe 'my %m; my $$n = 0; s{(\$$[^\s()\#]*)\#(\d+)}
 # file here.
 test-prime-route-agreement: $(BIN)
 	@pass=0; fail=0; \
-	for f in tests/prime/routes/*.metta; do \
+	for f in tests/prime/routes/*.metta \
+		tests/prime/need_lexical_scope.metta tests/prime/need_storage_boundary.metta \
+		tests/prime/practical/atp_direct_example.metta; do \
 		exp="$${f%.metta}.expected"; \
 		for route in default reference fuel; do \
 			flags=""; envs=""; \
@@ -25661,12 +25661,15 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-compile-attempt" { print $$3 }'); \
 	declines=$$(printf '%s\n' "$$stats" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-compile-decline" { print $$3 }'); \
-	if [ "$${hits:-0}" -lt 100 ] || [ "$${stores:-999999}" -gt 8 ] || \
-	   [ "$${compiles:-999999}" -gt 8 ]; then \
-		echo "FAIL: Prime generated-control cache hits=$$hits stores=$$stores compiles=$$compiles declines=$$declines"; \
+	publications=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-capsule-publication" { print $$3 }'); \
+	if [ "$${hits:-0}" -lt 128 ] || [ "$${stores:-0}" -lt 2 ] || \
+	   [ "$${stores:-999999}" -gt 8 ] || [ "$${compiles:-0}" -lt 3 ] || \
+	   [ "$${compiles:-999999}" -gt 8 ] || [ "$${publications:-0}" -lt 130 ]; then \
+		echo "FAIL: Prime retained-worker cache hits=$$hits stores=$$stores compiles=$$compiles declines=$$declines publications=$$publications"; \
 		exit 1; \
 	fi; \
-	echo "PASS: Prime automatically reuses LanguageDef-derived control programs and preserves unselected branches"
+	echo "PASS: Prime reuses quiescent LanguageDef-derived workers, invalidates them across equation-space revisions, and preserves unselected branches"
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
@@ -29772,6 +29775,23 @@ test-lib-proc: $(BIN)
 		exit 1; \
 	fi; \
 	echo "PASS: lib/proc runs a child process within its bounds"
+
+.PHONY: test-lib-shell
+test-petta-semantics: test-lib-shell
+test-lib-shell: $(BIN)
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang petta tests/petta/shell_run.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/petta/shell_run.expected)" ]; then \
+		echo "FAIL: lib/shell"; \
+		diff <(cat tests/petta/shell_run.expected) <(printf '%s\n' "$$actual") | head -30; \
+		exit 1; \
+	fi; \
+	echo "PASS: native shell preserves output, exit status and selectable deadlines"
+
+.PHONY: test-native-io-providers
+test-native-io-providers: $(BIN)
+	CETTA_BIN="$(abspath $(BIN))" CETTA_TEST_HTTP="$(ENABLE_HTTP)" \
+		python3 tests/support/test_native_io_providers.py
 
 .PHONY: test-petta-match-cell-rows
 test-petta-semantics: test-petta-match-cell-rows
@@ -41011,6 +41031,15 @@ test-language-def-contextual-runner-v1: \
 
 # C-only deterministic source embedding for build-time language packages.
 # Generated artifacts stay under runtime/generated and are never checked in.
+$(JSON_DFA_EMITTER_V1): tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.h src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -std=c11 -Wall -Werror -ffunction-sections -fdata-sections -Isrc -Iexperiments/gslt2parse_foundation/native tools/emit_regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c src/lib_parse_native_grammar.c -Wl,--gc-sections -o $@
+
+$(JSON_PREDICTIVE_OUTPUTS_V1) &: tools/json_predictive_v1.py tools/gslt2parse_schema_v1.py $(JSON_DFA_EMITTER_V1) $(JSON_GSLT_LANGUAGE_SOURCE_V1) $(JSON_GSLT_PROFILE_SOURCE_V1) $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) native/json_elaboration_plan_v1.c
+	python3 tools/json_predictive_v1.py --syntax $(JSON_GSLT_LANGUAGE_SOURCE_V1) --profile $(JSON_GSLT_PROFILE_SOURCE_V1) --target $(JSON_GSLT_VALUE_TARGET_SOURCE_V1) --elaboration native/json_elaboration_plan_v1.c --dfa-compiler $(JSON_DFA_EMITTER_V1) --output $(JSON_GSLT_GENERATED_DIR_V1)
+
+native/json_direct_v1.$(BUILD_OBJ_TAG).o native/json_direct_v1.$(BUILD_OBJ_TAG).stage0.o native/json_direct_v1.$(BUILD_OBJ_TAG).runtime-stats.o: $(JSON_PREDICTIVE_OUTPUTS_V1)
+
 $(JSON_SOURCE_EMBED_TOOL_V1): $(JSON_SOURCE_EMBED_TOOL_V1_SRC)
 	@mkdir -p $(dir $@)
 	@set -eu; \
@@ -41091,6 +41120,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_nik_v1.c \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
+	native/json_direct_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
@@ -41140,6 +41170,8 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	native/json_nik_v1.h \
 	native/json_runtime_v1.h \
 	native/json_value_v1.h \
+	native/json_direct_v1.h \
+	$(JSON_PREDICTIVE_OUTPUTS_V1) \
 	$(LANGUAGE_DEF_CORE_V1_HEADER) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.h \
@@ -41172,6 +41204,26 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
+
+JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
+$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-direct-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread $(if $(filter 1,$(ENABLE_GMP)),$(GMP_LDFLAGS),); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-json-direct-v1-body
+test-json-direct-v1-body: $(JSON_DIRECT_V1_TEST_BIN)
+	@$(JSON_DIRECT_V1_TEST_BIN)
+	@python3 tests/test_json_predictive_v1.py
+
+.PHONY: test-json-direct-v1
+test-json-direct-v1:
+	@$(MAKE) --no-print-directory BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-json-direct-v1-body
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
@@ -42970,7 +43022,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc cwp io durable llm llm/io llm/command llm/compat
+	system fs proc sqlite shell cwp io durable llm llm/io llm/command llm/compat
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
@@ -44061,6 +44113,8 @@ IO_RUNTIME_TEST_OBJ = runtime/bootstrap/test_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)
 IO_RUNTIME_MUTATION_OBJ = runtime/bootstrap/library_io_replay_mutation.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_MUTATION_TEST_BIN = runtime/test_io_runtime_replay_mutation-$(BUILD_OBJ_TAG)
+IO_PROC_FALLBACK_OBJ = runtime/bootstrap/library_proc_no_pidfd.$(BUILD_OBJ_TAG).o
+IO_PROC_FALLBACK_TEST_BIN = runtime/test_io_process_fallback-$(BUILD_OBJ_TAG)
 IO_RUNTIME_BENCH_SRC = tests/bench_io_runtime.c
 IO_RUNTIME_BENCH_OBJ = runtime/bootstrap/bench_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_BENCH_BIN = runtime/bench_io_runtime-$(BUILD_OBJ_TAG)
@@ -44079,6 +44133,23 @@ $(IO_RUNTIME_BENCH_OBJ): $(IO_RUNTIME_BENCH_SRC) src/library_io.h $(BUILD_CONFIG
 $(IO_RUNTIME_MUTATION_OBJ): src/library_io.c src/library_io.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 $(DEPFLAGS))
+
+$(IO_PROC_FALLBACK_OBJ): src/library_proc.c src/library_proc.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PROC_NO_PIDFD=1 \
+		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_PROC_FALLBACK_TEST_BIN): \
+		$(IO_RUNTIME_TEST_OBJ) $(IO_PROC_FALLBACK_OBJ) \
+		$(filter-out src/library_proc.$(BUILD_OBJ_TAG).o \
+			src/library_proc.$(BUILD_OBJ_TAG).runtime-stats.o,\
+			$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-io-process-owner
+test-io-process-owner: $(IO_RUNTIME_TEST_BIN) $(IO_PROC_FALLBACK_TEST_BIN)
+	CETTA_IO_PROCESS_ONLY=1 $(IO_RUNTIME_TEST_BIN) unused
+	CETTA_IO_PROCESS_ONLY=1 $(IO_PROC_FALLBACK_TEST_BIN) unused
 
 $(IO_RUNTIME_TEST_BIN): $(IO_RUNTIME_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -44262,6 +44333,7 @@ test-io-json-bridge:
 
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
+		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
 		tests/test_json_gslt_hostile_constructors.petta.expected \
@@ -44299,7 +44371,14 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
 	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
-	echo "(JsonGsltLibrarySummary 21 21 0)"
+	$(BIN) --lang he tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.petta.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_direct_reference.metta > "$$actual"; \
+	diff -u tests/test_json_direct_reference.expected "$$actual"; \
+	python3 tests/test_json_deep_v1.py "$(BIN)"; \
+	echo "(JsonGsltLibrarySummary 24 24 0)"
 
 .PHONY: test-json-gslt-library
 test-json-gslt-library:
@@ -44352,6 +44431,7 @@ test-json-gslt-sanitizers:
 .PHONY: test-json-gslt
 .NOTPARALLEL: test-json-gslt
 test-json-gslt: \
+		test-json-direct-v1 \
 		test-language-def-parser-pack-v1 \
 		test-parser-pack-forest-encoding-v1 \
 		test-json-nik-v1 \
@@ -44782,6 +44862,25 @@ test-telegram-actions:
 	@exit 1
 endif
 
+.PHONY: activity-service test-durable-activity
+ifeq ($(ENABLE_DURABLE),1)
+ACTIVITY_SERVICE_BIN = runtime/activity-service-$(BUILD_OBJ_TAG)
+ACTIVITY_SERVICE_OBJ = runtime/bootstrap/activity-service.$(BUILD_OBJ_TAG).o
+-include $(ACTIVITY_SERVICE_OBJ:.o=.d)
+$(ACTIVITY_SERVICE_OBJ): examples/durable-activities/service.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(ACTIVITY_SERVICE_BIN): $(ACTIVITY_SERVICE_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+activity-service: $(ACTIVITY_SERVICE_BIN)
+test-durable-activity: $(ACTIVITY_SERVICE_BIN)
+	CETTA_ACTIVITY_SERVICE=./$(ACTIVITY_SERVICE_BIN) python3 tests/test_durable_activity.py
+else
+activity-service:
+	@echo "activity-service requires ENABLE_DURABLE=1" >&2
+	@exit 1
+endif
+
 .PHONY: test-telegram-agent
 ifeq ($(ENABLE_DURABLE)$(ENABLE_JSON_GSLT),11)
 TELEGRAM_AGENT_TEST_BIN = runtime/test-telegram-agent-$(BUILD_OBJ_TAG)
@@ -44996,8 +45095,8 @@ endif
 # be caught: a selection that takes its k answers only after running every
 # alternative (PREFIX_NO_STOP); a computed head kept as written in the data
 # tuple it heads, so that every observer computes its pending fields again
-# (HEAD_ELEMENT_AS_WRITTEN); and an empty bind retried on the stack where the
-# synchronous bind would not retry it (BIND_RETRY_ALWAYS).
+# (HEAD_ELEMENT_AS_WRITTEN); and an empty completed bind executed again
+# instead of returning its empty frontier (BIND_RETRY_ALWAYS).
 PRIME_DEMAND_MUTATION_DIR ?= runtime/prime-demand-mutations
 .PHONY: test-prime-demand-mutations
 test-prime: test-prime-demand-mutations
