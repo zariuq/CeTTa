@@ -13,6 +13,14 @@ The draft is where Prime's semantics is being settled against its formal
 metatheory, so its interfaces may still change. See
 [MeTTa Prime draft](#metta-prime-draft---lang-prime) below.
 
+The `godelclaw/CeTTa` branch `cetta-ours` combines Prime with the native
+process, timer, mailbox, memory and Telegram libraries used by
+[GödelClaw](https://github.com/godelclaw/godelclaw). GödelClaw pins its engine
+revision in `CETTA_REF`; its cognitive loops use `--lang petta`, while Prime
+programs select `--lang prime`. See the
+[integration changes and qualification results](verification/agent-trial/upstream-review.txt).
+The integration adds no automatic tool admission rule or model budget.
+
 ## Requirements
 
 For the default build:

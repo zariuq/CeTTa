@@ -100,6 +100,21 @@ Trial base: cetta-ours 609f322a plus Prime 3f84da10.
     Avoid copying millions of slots on each new binding. The Hopper workload
     returns to approximately its parent runtime and retains its exact output.
 
+18. Qualification tool portability (e8d6e3a9)
+    Resolve proof fixtures and the engine relative to the checkout, with
+    explicit environment overrides for external proof corpora and scratch
+    output. Preserve the caller's process settings. This changes developer
+    tools and fixtures, not language semantics or agent policy. The path and
+    import controls pass; the whole external proof corpus is not claimed.
+
+19. Prime native request identities (3316d65e)
+    Give the native request-ID producer the unit-argument spelling used by
+    other host operations, retaining its original zero-argument API. Prime
+    otherwise leaves that zero-argument native expression inert. Explicitly
+    observe the public RPC arguments and return completed native values.
+    The same mailbox crash/replay driver now passes in PeTTa and Prime,
+    including fresh ID generation and post-commit send/receive interruptions.
+
 Qualification snapshot (2026-10-15)
 -----------------------------------
 All 276 combined Prime corpus fixtures pass, alongside 192 route comparisons,
@@ -124,8 +139,11 @@ suites, including snapshot recovery in a fresh process, pass in its own repo.
 
 The initial alternating timing comparison used shared SQLite on stable but
 vendored SQLite on the merged core build. Its 12.3% median difference cannot
-be attributed to the evaluator. The comparison and final soaks are being
-repeated with the actual agent build and the same shared SQLite library.
+be attributed to the evaluator. All six matched-provider alternating replay
+runs pass. A same-CPU comparison consumes 80.86 CPU seconds on stable and
+82.50 on the merged build, with matching output and about 719/720 MiB peak
+RSS. This establishes approximate parity on that workload, not an LLM
+latency improvement or a precise general performance bound.
 ECAN at 5,500 items remains near its earlier timings (about 6 ms for 100
 stimuli, 165 ms for decay and 3 ms per top-ten selection). These are native
 synthetic measurements, not complete LLM turn measurements.
@@ -138,10 +156,18 @@ reported green. Its inherited failures include SWI-only fixtures and old host
 path probes; native memory, hierarchy, mail, jobs and CeTTa worker checks are
 qualified separately with their actual service binaries.
 
-Final two-hour soaks are in progress for both independent top-level turns and
-one recursive query. The earlier recursive-query comparison retained about
-1.6 GiB on both engines; bounded top-level arenas do not establish bounded
-memory for an indefinitely recursive agent loop.
+All four final matched-provider soaks complete for at least two hours, with
+matching expected task projections throughout:
+
+  workload                 stable                 merged
+  separate top-level turns 23,062; 115.12 MiB peak 23,354; 114.81 MiB peak
+  one recursive query      1,495; 1,417.46 MiB     1,495; 1,417.30 MiB
+
+The recursive tests share one CPU for pacing. Their comparable retention
+does not establish bounded memory for an indefinitely recursive agent loop.
+Those evaluator soaks precede the isolated native request-ID compatibility
+fix. The evaluator sources remain unchanged; the RPC change receives separate
+sustained-use and sanitizer checks before the final bundle is installed.
 The 10,000-step prepared example passes but still retains substantial memory;
 this does not establish optimal prepared-machine complexity.
 
@@ -150,4 +176,28 @@ concurrent initializers atomically seed defaults and preserve custom files
 (godelclaw trial commit 045f84f). Terminal fixture stability is c6161aa.
 No runtime admission or model budget is added.
 
-No agent has been switched to the trial engine. No trial commits are pushed.
+The first agent is undergoing its live observation on the release bundle.
+The second stays on the stable engine until that observation completes.
+Live results and publication status follow after qualification finishes.
+
+Reproduction entry points
+-------------------------
+Use the same build feature selections as the engine being qualified. Focused
+Make targets include test-prime-fast-fixtures, test-prime-weights,
+test-prime-native-cost, test-prime-native-parallel,
+test-prime-native-resources, test-bindings-lookup-index and
+test-native-io-providers. Run the parallel/resource checks on the TSan build
+as well as the ordinary build; sanitizer success is workload-specific.
+
+tests/test_agent_mailbox_recovery.py takes the CLI and space-service binaries
+as its two arguments; --lang prime selects the second language profile. Its
+Python driver starts and interrupts test processes;
+the send, receive and acknowledgement path itself executes in MeTTa/C.
+tests/test_telegram_commands_service.py takes the Telegram service binary.
+Its --load-timeout and --catchup-timeout options control setup allowances,
+without changing the individual command-response assertions.
+
+Recorded-turn inputs stay private. Their comparison substitutes deterministic
+tool effects and compares the resulting task views; it cannot establish the
+quality of fresh model decisions. The native suites above are public controls
+that can run without those private inputs or live agent credentials.
