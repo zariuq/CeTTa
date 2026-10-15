@@ -17,6 +17,41 @@ static bool lookup_frame_value(const Bindings *bindings, VarId id, BindingValue 
 static unsigned checks, failures;
 #define CHECK(c, m) do { checks++; if (!(c)) { failures++; fprintf(stderr,"FAIL: %s\n",m); } } while (0)
 
+static void binding_predicate_controls(Arena *arena) {
+    Atom *written = atom_expr3(arena, atom_symbol(arena, "+"),
+                              atom_int(arena, 1), atom_int(arena, 2));
+    BindingValue materialized = binding_value_from_atom(written);
+    BindingValue contextual = binding_value_from_context(written, UINT32_MAX);
+    BindingValue persistent = binding_value_from_persistent_context(written, UINT32_MAX);
+    size_t before = arena_accounted_live_bytes(arena);
+    CHECK(!binding_value_context_is_persistent(materialized) &&
+          !binding_value_is_contextual(materialized) &&
+          !binding_value_kind_is_contextual(materialized.kind),
+          "materialized syntax has neither contextual nor persistent context tags");
+    CHECK(!binding_value_context_is_persistent(contextual) &&
+          binding_value_is_contextual(contextual) &&
+          binding_value_kind_is_contextual(contextual.kind),
+          "a contextual value retains context without acquiring a persistent context tag");
+    CHECK(binding_value_context_is_persistent(persistent) &&
+          binding_value_is_contextual(persistent) &&
+          binding_value_kind_is_contextual(persistent.kind),
+          "a persistent contextual value is also contextual");
+    CHECK(!binding_value_context_is_persistent((BindingValue){
+              .skeleton = NULL, .epoch = UINT32_MAX, .kind = BINDING_VALUE_MATERIALIZED}),
+          "a null skeleton and nonzero epoch do not create persistent provenance");
+    CHECK(binding_value_context_is_persistent((BindingValue){
+              .skeleton = NULL, .epoch = UINT32_MAX,
+              .kind = BINDING_VALUE_CONTEXTUAL_PERSISTENT}),
+          "a null skeleton retains its persistent contextual tag");
+    CHECK(arena_accounted_live_bytes(arena) == before &&
+          materialized.skeleton == written && contextual.skeleton == written &&
+          persistent.skeleton == written && contextual.epoch == UINT32_MAX &&
+          persistent.epoch == UINT32_MAX && written->kind == ATOM_EXPR &&
+          written->expr.len == 3u && written->expr.elems[1]->ground.ival == 1 &&
+          written->expr.elems[2]->ground.ival == 2,
+          "tag inspection leaves the complete value and written callable syntax inert");
+}
+
 typedef struct {
     BindingsTermCursorContextV1 bindings;
     unsigned resolutions;
@@ -2848,6 +2883,10 @@ int main(int argc, char **argv) {
     VarInternTable vars; var_intern_init(&vars); g_var_intern=&vars;
     Arena arena; arena_init(&arena);
     test_runtime_stats_reset_counters();
+    if (argc > 1 && strcmp(argv[1], "--binding-predicates") == 0) {
+        binding_predicate_controls(&arena);
+        goto report;
+    }
     if (argc > 1 && strcmp(argv[1], "--cursor-children") == 0) {
         term_cursor_children(&arena);
         goto report;
@@ -2893,6 +2932,7 @@ int main(int argc, char **argv) {
     term_cursor_children(&arena);
     activation_cursor_resolution(&arena);
     alias_root_query_controls(&arena);
+    binding_predicate_controls(&arena);
 report:
     printf("MatchWorklistFrames checks=%u failures=%u\n",checks,failures);
     arena_free(&arena); bindings_thread_cache_free(); g_var_intern=NULL; var_intern_free(&vars);

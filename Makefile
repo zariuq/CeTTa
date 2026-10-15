@@ -44839,3 +44839,19 @@ test-petta-program-rule-rows: $(BIN)
 		exit 1; \
 	fi; \
 	echo 'PASS: a program reads rules among facts, a rule added while running, and a rule holding a space'
+
+ORDERED_MODULE_CETTA_V1 ?= $(abspath cetta)
+ORDERED_MODULE_READER_CETTA_V1 ?= $(abspath ../cetta-prime-nik-20260811/runtime/cetta-module-composed-qualified)
+ORDERED_MODULE_READER_ARTIFACT_V1 ?= $(abspath ../cetta-prime-nik-20260811/runtime/generated/parser-artifacts-core.nogmp.json-gslt/433dd5b991f597e56f89414f238079d7f397a5105a0791dc1a1b9c06b3240937/module-core-reader.tpp)
+ORDERED_MODULE_OUTPUT_V1 ?= runtime/ordered-module-qualified
+
+.PHONY: check-ordered-module-fused-generated-v1 test-ordered-module-realizations-v1
+check-ordered-module-fused-generated-v1:
+	@python3 tools/generate_ordered_module_fused_v1.py --check
+
+test-ordered-module-realizations-v1: check-ordered-module-fused-generated-v1
+	@python3 tools/test_module_ordered_realizations_v1.py \
+		--cetta "$(ORDERED_MODULE_CETTA_V1)" \
+		--reader-cetta "$(ORDERED_MODULE_READER_CETTA_V1)" \
+		--reader-artifact "$(ORDERED_MODULE_READER_ARTIFACT_V1)" \
+		--output "$(ORDERED_MODULE_OUTPUT_V1)"
