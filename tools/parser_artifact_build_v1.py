@@ -183,7 +183,8 @@ class Inputs:
         syntax, raw_name, selected, failure, chosen, closed = (prefix + part for part in
             ("syntax", "raw", "selected", "failure", "chosen", "closed"))
         strategy = self.rows[name].get("strategy", "auto")
-        if self.rows[name]["format"] in ("syntax", "lbnf", "module", "join"):
+        if (self.rows[name]["format"] in ("syntax", "lbnf", "module", "join")
+                and not (self.rows[name]["format"] == "module" and "profile" in self.rows[name])):
             return lets([(syntax, self.syntax(name))],
                         form("langdef:compile-parser", syntax, strategy))
         raw = self.parser_source(name)
@@ -195,6 +196,34 @@ class Inputs:
     def parser_source(self, name):
         row = self.rows[name]
         kind = row["format"]
+        if kind == "module" and "profile" in row:
+            prefix = f"$build{self.scope}_module_"
+            self.scope += 1
+            reader, document, theory, core, closed = (prefix + role for role in
+                ("reader", "document", "theory", "core", "closed"))
+            bindings = [(reader, self.parser(row["reader"]))]
+            catalog_list = "LNil"
+            catalog = []
+            for index, (location, path) in enumerate(row.get("catalog", {}).items()):
+                variable = prefix + f"catalog{index}"
+                bindings.append((variable, form("module:read-file", reader,
+                    text("build-import:" + location), text(source_path(self.manifest, path)))))
+                catalog.append(form("ModuleCatalogEntryV1", text(location), variable))
+            for item in reversed(catalog):
+                catalog_list = form("LCons", item, catalog_list)
+            # A typed module core and an explicitly authored lexical profile
+            # use the ordinary value-entry compiler, not the historical BNFC
+            # projection (whose default trivia policy would erase spaces).
+            bindings += [
+                (document, form("module:read-file", reader, text("build-module:" + name),
+                                text(source_path(self.manifest, row["source"])))),
+                (theory, form("module:assemble", document, text(row["theory"]),
+                              "LNil", catalog_list, "OriginViewV1", text("build-instance:" + name))),
+                (core, form("module:core", theory, text(name))),
+                (closed, form("langdef:close-parser", reader)),
+            ]
+            return lets(bindings, form("langdef:load-authored-parser-values", core,
+                    render(one_form(source_path(self.manifest, row["profile"])))))
         if kind in ("syntax", "lbnf", "module", "join"):
             syntax = f"$build{self.scope}_syntax"
             self.scope += 1

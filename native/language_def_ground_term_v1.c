@@ -745,18 +745,11 @@ static bool ground_term_admit_iterative(
                 stack.len--;
                 continue;
             }
-            switch (frame->expected_type->carrier) {
-            case CETTA_LD_CARRIER_AST_V1:
-                if (frame->term->kind != ATOM_EXPR ||
-                    frame->term->expr.len == 0u ||
-                    !frame->term->expr.elems ||
-                    !frame->term->expr.elems[0] ||
-                    frame->term->expr.elems[0]->kind != ATOM_SYMBOL) {
-                    (void)ground_term_fail(
-                        context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
-                        "CarrierAst values require an expression with a constructor head");
-                    goto done;
-                }
+            /* A built-in carrier adds grounded leaves; it does not remove
+             * the language's declared constructors at that sort. */
+            if (frame->term->kind == ATOM_EXPR && frame->term->expr.len &&
+                frame->term->expr.elems && frame->term->expr.elems[0] &&
+                frame->term->expr.elems[0]->kind == ATOM_SYMBOL) {
                 if (frame->term->expr.len - 1u > UINT32_MAX) {
                     (void)ground_term_fail(
                         context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -772,6 +765,13 @@ static bool ground_term_admit_iterative(
                     goto done;
                 frame->entered = true;
                 continue;
+            }
+            switch (frame->expected_type->carrier) {
+            case CETTA_LD_CARRIER_AST_V1:
+                (void)ground_term_fail(
+                    context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
+                    "CarrierAst values require an expression with a constructor head");
+                goto done;
             case CETTA_LD_CARRIER_BUILTIN_INT_V1:
                 if (frame->term->kind != ATOM_GROUNDED ||
                     frame->term->ground.gkind != GV_INT) {
@@ -985,7 +985,7 @@ static bool ground_term_to_pattern_at(
                 context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
                 "term is not a grounded string");
         value = term->ground.sval;
-        len = strlen(value);
+        len = atom_string_len(term);
         if (len > UINT32_MAX)
             return ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -1047,32 +1047,6 @@ static bool ground_term_pattern_is_leaf(
         pattern->as.apply.arguments.len == 0u &&
         (pattern->as.apply.head.len == 0u ||
          pattern->as.apply.head.bytes != NULL);
-}
-
-static bool ground_term_pattern_text_to_c_string(
-    LdGroundTermContextV1 *context,
-    const CettaLdTextV1 *text,
-    char **out) {
-    char *result;
-
-    if (!text || !out || (text->len > 0u && !text->bytes))
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
-            "Pattern atom text has invalid storage");
-    if (text->len > 0u && memchr(text->bytes, '\0', text->len))
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_NONCANONICAL_BUILTIN,
-            "Pattern atom text contains an embedded NUL byte");
-    result = malloc((size_t)text->len + 1u);
-    if (!result)
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
-            "Pattern atom text allocation failed");
-    if (text->len > 0u)
-        memcpy(result, text->bytes, text->len);
-    result[text->len] = '\0';
-    *out = result;
-    return true;
 }
 
 static bool ground_term_pattern_parse_int64(
@@ -1209,7 +1183,6 @@ static Atom *ground_term_from_pattern_at(
         return result;
     }
     case CETTA_LD_CARRIER_BUILTIN_STRING_V1: {
-        char *value = NULL;
         Atom *result;
 
         if (!ground_term_pattern_is_leaf(pattern)) {
@@ -1218,11 +1191,8 @@ static Atom *ground_term_from_pattern_at(
                 "String carrier requires a nullary Pattern atom");
             return NULL;
         }
-        if (!ground_term_pattern_text_to_c_string(
-                context, &pattern->as.apply.head, &value))
-            return NULL;
-        result = atom_string(arena, value);
-        free(value);
+        result = atom_string_n(arena, (const char *)pattern->as.apply.head.bytes,
+                               pattern->as.apply.head.len);
         if (!result)
             (void)ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -1310,7 +1280,7 @@ static bool ground_term_type_supports_pattern_codec(
             break;
         case CETTA_LD_CARRIER_BUILTIN_STRING_V1:
         case CETTA_LD_CARRIER_BUILTIN_INT_V1:
-            continue;
+            break;
         case CETTA_LD_CARRIER_BUILTIN_BOOL_V1:
             (void)ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
@@ -1338,6 +1308,15 @@ static bool ground_term_type_supports_pattern_codec(
                 goto done;
             if (rule->result_type != type)
                 continue;
+            /* Admission permits constructors in builtin carriers too. The
+             * untagged leaf codec cannot distinguish a nullary constructor
+             * from a string with the same text; do not claim a full codec. */
+            if (type->carrier != CETTA_LD_CARRIER_AST_V1) {
+                (void)ground_term_fail(
+                    context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                    "builtin-plus-constructor carrier needs a tagged Pattern interpretation");
+                goto done;
+            }
             if (!rule->constructor_profile) {
                 (void)ground_term_fail(
                     context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,

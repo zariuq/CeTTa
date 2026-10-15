@@ -204,6 +204,7 @@ static void ld_grammar_rule_free(CettaLdGrammarRuleV1 *rule) {
         ld_term_param_free(&rule->params[index]);
     free(rule->params);
     ld_syntax_item_list_free(&rule->syntax_pattern);
+    ld_optional_text_free(&rule->algebra.unit);
     memset(rule, 0, sizeof(*rule));
 }
 
@@ -309,6 +310,14 @@ static void ld_premise_free(CettaLdPremiseV1 *premise) {
             free(premise->as.for_all.body);
         }
         break;
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        for (uint32_t i = 0; i < premise->as.scoped_step.binder_len; ++i)
+            ld_type_expr_free(&premise->as.scoped_step.binders[i]);
+        free(premise->as.scoped_step.binders);
+        ld_type_expr_free(&premise->as.scoped_step.result_type);
+        ld_pattern_free(&premise->as.scoped_step.source);
+        ld_pattern_free(&premise->as.scoped_step.target);
+        break;
     }
     memset(premise, 0, sizeof(*premise));
 }
@@ -327,6 +336,23 @@ static void ld_relation_rule_free(CettaLdRelationRuleV1 *rule) {
     ld_premise_list_free(&rule->premises);
     ld_pattern_free(&rule->left);
     ld_pattern_free(&rule->right);
+    for (index = 0; index < rule->bindings.dependency_len; ++index) {
+        CettaLdRuleDependencyV1 *dependency = &rule->bindings.dependencies[index];
+        ld_text_free(&dependency->name);
+        for (uint32_t j = 0; j < dependency->sort_len; ++j)
+            ld_type_expr_free(&dependency->sorts[j]);
+        free(dependency->sorts);
+    }
+    free(rule->bindings.dependencies);
+    for (index = 0; index < rule->bindings.occurrence_len; ++index) {
+        CettaLdRuleOccurrenceV1 *occurrence = &rule->bindings.occurrences[index];
+        ld_text_free(&occurrence->name);
+        free(occurrence->premise_index); free(occurrence->quantifiers); free(occurrence->argument);
+        for (uint32_t j = 0; j < occurrence->path_len; ++j) free(occurrence->path[j]);
+        free(occurrence->path);
+        ld_pattern_list_free(&occurrence->arguments);
+    }
+    free(rule->bindings.occurrences);
     memset(rule, 0, sizeof(*rule));
 }
 
@@ -720,7 +746,8 @@ static bool ld_term_param_decode(CettaLdTermParamV1 *out,
             ld_term_param_free(&result);
             return false;
         }
-    } else if (ld_application(term, "TermAbstractionNamed", 3u)) {
+    } else if (ld_application(term, "TermAbstractionNamed", 3u) ||
+               ld_application(term, "TermAbstraction", 3u)) {
         result.kind = CETTA_LD_PARAM_ABSTRACTION_NAMED_V1;
         if (!ld_optional_text_decode(
                 &result.names.binder, ld_argument(term, 0u),
@@ -732,7 +759,8 @@ static bool ld_term_param_decode(CettaLdTermParamV1 *out,
             ld_term_param_free(&result);
             return false;
         }
-    } else if (ld_application(term, "TermMultiAbstractionNamed", 3u)) {
+    } else if (ld_application(term, "TermMultiAbstractionNamed", 3u) ||
+               ld_application(term, "TermMultiAbstraction", 3u)) {
         result.kind = CETTA_LD_PARAM_MULTI_ABSTRACTION_NAMED_V1;
         if (!ld_text_list_decode(&result.names.binders,
                                  ld_argument(term, 0u),
@@ -837,10 +865,7 @@ static bool ld_eval_policy_decode(CettaLdOptionalTermEvalPolicyV1 *out,
         memset(out, 0, sizeof(*out));
         return true;
     }
-    if (!ld_application(term, "EvalSome", 1u))
-        return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
-                       "malformed evaluation policy option");
-    policy = ld_argument(term, 0u);
+    policy = ld_application(term, "EvalSome", 1u) ? ld_argument(term, 0u) : term;
     out->present = true;
     if (cetta_op_lang_v1_symbol_is(policy, "EvalRewrite"))
         out->value = CETTA_LD_EVAL_REWRITE_V1;
@@ -863,7 +888,8 @@ static bool ld_grammar_rule_decode(CettaLdGrammarRuleV1 *out,
     if (!out || !ld_take_work(context, depth))
         return false;
     memset(&result, 0, sizeof(result));
-    if (!ld_application(term, "GrammarRule", 5u))
+    bool complete = ld_application(term, "GrammarRuleV2", 6u);
+    if (!complete && !ld_application(term, "GrammarRule", 5u))
         return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
                        "expected GrammarRule in LanguageDef term list");
     if (!ld_text_decode(&result.label, ld_argument(term, 0u),
@@ -881,6 +907,22 @@ static bool ld_grammar_rule_decode(CettaLdGrammarRuleV1 *out,
                                context, depth + 1u)) {
         ld_grammar_rule_free(&result);
         return false;
+    }
+    if (complete) {
+        const CettaOpLangV1SExpr *algebra = ld_argument(term, 5u);
+        if (!cetta_op_lang_v1_symbol_is(algebra, "AlgebraNone")) {
+            const CettaOpLangV1SExpr *flatten = ld_argument(algebra, 0u);
+            if (!ld_application(algebra, "CollectionAlgebra", 2u) ||
+                (!cetta_op_lang_v1_symbol_is(flatten, "True") &&
+                 !cetta_op_lang_v1_symbol_is(flatten, "False")) ||
+                !ld_optional_text_decode(&result.algebra.unit, ld_argument(algebra, 1u),
+                    "BNone", "BSome", context, depth + 1u)) {
+                ld_grammar_rule_free(&result);
+                return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE, "malformed collection algebra");
+            }
+            result.algebra.present = true;
+            result.algebra.flatten = cetta_op_lang_v1_symbol_is(flatten, "True");
+        }
     }
     *out = result;
     return true;
@@ -924,6 +966,18 @@ static bool ld_premise_decode(CettaLdPremiseV1 *out,
                               const CettaOpLangV1SExpr *term,
                               LdDecodeContext *context,
                               uint32_t depth);
+
+static bool ld_types_decode(CettaLdTypeExprV1 **out, uint32_t *count,
+        const CettaOpLangV1SExpr *term, LdDecodeContext *context, uint32_t depth) {
+    uint32_t len;
+    if (!ld_list_len(term, &len, context)) return false;
+    CettaLdTypeExprV1 *items = calloc(len ? len : 1u, sizeof(*items));
+    if (!items) return ld_fail(context, CETTA_LD_CORE_V1_ALLOCATION_FAILURE, "cannot allocate type list");
+    *out = items; *count = len;
+    for (uint32_t i = 0; i < len; ++i, term = ld_list_tail(term))
+        if (!ld_type_expr_decode(&items[i], ld_list_head(term), context, depth + 1u)) return false;
+    return true;
+}
 
 static bool ld_premise_list_decode(CettaLdPremiseListV1 *out,
                                    const CettaOpLangV1SExpr *term,
@@ -995,6 +1049,15 @@ static bool ld_premise_decode(CettaLdPremiseV1 *out,
                                     context, depth + 1u)) {
             ld_premise_free(&result);
             return false;
+        }
+    } else if (ld_application(term, "ScopedStep", 4u)) {
+        result.kind = CETTA_LD_PREMISE_SCOPED_STEP_V1;
+        if (!ld_types_decode(&result.as.scoped_step.binders, &result.as.scoped_step.binder_len,
+                ld_argument(term, 0u), context, depth + 1u) ||
+            !ld_type_expr_decode(&result.as.scoped_step.result_type, ld_argument(term, 1u), context, depth + 1u) ||
+            !ld_pattern_decode(&result.as.scoped_step.source, ld_argument(term, 2u), context, depth + 1u) ||
+            !ld_pattern_decode(&result.as.scoped_step.target, ld_argument(term, 3u), context, depth + 1u)) {
+            ld_premise_free(&result); return false;
         }
     } else if (ld_application(term, "ForAll", 3u)) {
         result.kind = CETTA_LD_PREMISE_FOR_ALL_V1;
@@ -1083,6 +1146,61 @@ static bool ld_type_binding_list_decode(CettaLdTypeBindingV1 **items_out,
     return true;
 }
 
+static bool ld_bindings_decode(CettaLdRuleBindingSpecV1 *out,
+        const CettaOpLangV1SExpr *term, LdDecodeContext *context, uint32_t depth) {
+    if (!ld_take_work(context, depth)) return false;
+    if (cetta_op_lang_v1_symbol_is(term, "RuleBindingNone")) return true;
+    if (!ld_application(term, "RuleBindingSome", 1u) ||
+        !ld_application(ld_argument(term, 0u), "RuleBindingSpec", 2u))
+        return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE, "malformed rule binding specification");
+    term = ld_argument(term, 0u);
+    const CettaOpLangV1SExpr *dependencies = ld_argument(term, 0u), *occurrences = ld_argument(term, 1u);
+    uint32_t len;
+    out->present = true;
+    if (!ld_list_len(dependencies, &len, context)) return false;
+    out->dependencies = calloc(len ? len : 1u, sizeof(*out->dependencies));
+    if (!out->dependencies) return ld_fail(context, CETTA_LD_CORE_V1_ALLOCATION_FAILURE, "cannot allocate rule dependencies");
+    out->dependency_len = len;
+    for (uint32_t i = 0; i < len; ++i, dependencies = ld_list_tail(dependencies)) {
+        CettaLdRuleDependencyV1 *dependency = &out->dependencies[i];
+        const CettaOpLangV1SExpr *row = ld_list_head(dependencies);
+        if (!ld_application(row, "RuleDependency", 2u))
+            return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE, "malformed rule dependency");
+        if (!ld_text_decode(&dependency->name, ld_argument(row, 0u), context, depth + 1u) ||
+            !ld_types_decode(&dependency->sorts, &dependency->sort_len, ld_argument(row, 1u), context, depth + 1u)) return false;
+    }
+    if (!ld_list_len(occurrences, &len, context)) return false;
+    out->occurrences = calloc(len ? len : 1u, sizeof(*out->occurrences));
+    if (!out->occurrences) return ld_fail(context, CETTA_LD_CORE_V1_ALLOCATION_FAILURE, "cannot allocate rule occurrences");
+    out->occurrence_len = len;
+    for (uint32_t i = 0; i < len; ++i, occurrences = ld_list_tail(occurrences)) {
+        CettaLdRuleOccurrenceV1 *occurrence = &out->occurrences[i];
+        const CettaOpLangV1SExpr *row = ld_list_head(occurrences);
+        if (!ld_application(row, "RuleOccurrence", 4u))
+            return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE, "malformed rule occurrence");
+        if (!ld_text_decode(&occurrence->name, ld_argument(row, 0u), context, depth + 1u)) return false;
+        const CettaOpLangV1SExpr *site = ld_argument(row, 1u);
+        if (cetta_op_lang_v1_symbol_is(site, "RuleLeft")) occurrence->site = CETTA_LD_RULE_LEFT_V1;
+        else if (cetta_op_lang_v1_symbol_is(site, "RuleRight")) occurrence->site = CETTA_LD_RULE_RIGHT_V1;
+        else if (ld_application(site, "RulePremise", 3u)) {
+            occurrence->site = CETTA_LD_RULE_PREMISE_V1;
+            if (!ld_natural_decode(&occurrence->premise_index, ld_argument(site, 0u), context, depth + 1u) ||
+                !ld_natural_decode(&occurrence->quantifiers, ld_argument(site, 1u), context, depth + 1u) ||
+                !ld_natural_decode(&occurrence->argument, ld_argument(site, 2u), context, depth + 1u)) return false;
+        } else return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE, "malformed occurrence site");
+        const CettaOpLangV1SExpr *path = ld_argument(row, 2u);
+        uint32_t path_len;
+        if (!ld_list_len(path, &path_len, context)) return false;
+        occurrence->path = calloc(path_len ? path_len : 1u, sizeof(*occurrence->path));
+        if (!occurrence->path) return ld_fail(context, CETTA_LD_CORE_V1_ALLOCATION_FAILURE, "cannot allocate occurrence path");
+        occurrence->path_len = path_len;
+        for (uint32_t j = 0; j < path_len; ++j, path = ld_list_tail(path))
+            if (!ld_natural_decode(&occurrence->path[j], ld_list_head(path), context, depth + 1u)) return false;
+        if (!ld_pattern_list_decode(&occurrence->arguments, ld_argument(row, 3u), context, depth + 1u)) return false;
+    }
+    return true;
+}
+
 static bool ld_relation_rule_decode(CettaLdRelationRuleV1 *out,
                                     const CettaOpLangV1SExpr *term,
                                     const char *tag,
@@ -1093,7 +1211,8 @@ static bool ld_relation_rule_decode(CettaLdRelationRuleV1 *out,
     if (!out || !tag || !ld_take_work(context, depth))
         return false;
     memset(&result, 0, sizeof(result));
-    if (!ld_application(term, tag, 5u)) {
+    bool complete = ld_application(term, !strcmp(tag, "Equation") ? "ScopedEquationV1" : "ScopedRewriteRuleV1", 6u);
+    if (!complete && !ld_application(term, tag, 5u)) {
         ld_set_error(context, "expected %s in LanguageDef wire", tag);
         context->status = CETTA_LD_CORE_V1_MALFORMED_WIRE;
         return false;
@@ -1109,8 +1228,8 @@ static bool ld_relation_rule_decode(CettaLdRelationRuleV1 *out,
                                 context, depth + 1u) ||
         !ld_pattern_decode(&result.left, ld_argument(term, 3u),
                            context, depth + 1u) ||
-        !ld_pattern_decode(&result.right, ld_argument(term, 4u),
-                           context, depth + 1u)) {
+        !ld_pattern_decode(&result.right, ld_argument(term, 4u), context, depth + 1u) ||
+        (complete && !ld_bindings_decode(&result.bindings, ld_argument(term, 5u), context, depth + 1u))) {
         ld_relation_rule_free(&result);
         return false;
     }
@@ -1176,7 +1295,8 @@ bool cetta_language_def_core_v1_decode(
         .error_buf = error_buf,
         .error_buf_size = error_buf_size,
     };
-    if (!ld_application(wire->root, "GSLTLanguageDefWireV1", 5u)) {
+    if (!ld_application(wire->root, "GSLTLanguageDefWireV1", 5u) &&
+        !ld_application(wire->root, "LanguageDefV2", 5u)) {
         (void)ld_fail(&context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
                       "typed decoder received the wrong wire root");
         goto done;
@@ -1395,11 +1515,11 @@ static bool ld_optional_syntax_op_decode(CettaLdSyntaxPatternOpV1 **out,
 
     if (!out || !ld_take_work(context, depth))
         return false;
-    if (cetta_op_lang_v1_symbol_is(term, "OpNone")) {
+    if (cetta_op_lang_v1_symbol_is(term, "OpNone") || cetta_op_lang_v1_symbol_is(term, "None")) {
         *out = NULL;
         return true;
     }
-    if (!ld_application(term, "OpSome", 1u))
+    if (!ld_application(term, "OpSome", 1u) && !ld_application(term, "Some", 1u))
         return ld_fail(context, CETTA_LD_CORE_V1_MALFORMED_WIRE,
                        "malformed optional syntax operation");
     value = calloc(1u, sizeof(*value));
@@ -1493,22 +1613,22 @@ static bool ld_syntax_item_decode(CettaLdSyntaxItemV1 *out,
     if (!out || !ld_take_work(context, depth))
         return false;
     memset(&result, 0, sizeof(result));
-    if (ld_application(term, "SyntaxTerminal", 1u)) {
+    if (ld_application(term, "SyntaxTerminal", 1u) || ld_application(term, "Terminal", 1u)) {
         result.kind = CETTA_LD_SYNTAX_TERMINAL_V1;
         if (!ld_text_decode(&result.as.text, ld_argument(term, 0u),
                             context, depth + 1u))
             return false;
-    } else if (ld_application(term, "SyntaxNonTerminal", 1u)) {
+    } else if (ld_application(term, "SyntaxNonTerminal", 1u) || ld_application(term, "NonTerminal", 1u)) {
         result.kind = CETTA_LD_SYNTAX_NONTERMINAL_V1;
         if (!ld_text_decode(&result.as.text, ld_argument(term, 0u),
                             context, depth + 1u))
             return false;
-    } else if (ld_application(term, "SyntaxSeparator", 1u)) {
+    } else if (ld_application(term, "SyntaxSeparator", 1u) || ld_application(term, "Separator", 1u)) {
         result.kind = CETTA_LD_SYNTAX_SEPARATOR_V1;
         if (!ld_text_decode(&result.as.text, ld_argument(term, 0u),
                             context, depth + 1u))
             return false;
-    } else if (ld_application(term, "SyntaxDelimiter", 2u)) {
+    } else if (ld_application(term, "SyntaxDelimiter", 2u) || ld_application(term, "Delimiter", 2u)) {
         result.kind = CETTA_LD_SYNTAX_DELIMITER_V1;
         if (!ld_text_decode(&result.as.delimiter.left,
                             ld_argument(term, 0u),

@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "native/langdef_module.h"
+#include "native/prepared_artifact_v1.h"
 #include "eval.h"
 #include "lang.h"
 #include "native/grammar_canonical_bnf_v1.h"
@@ -921,6 +922,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         text = atom_name_cstr(value);
         if (!text)
             goto unsupported;
+        if (strlen(text) != symbol_len(g_symbols, value->sym_id)) goto unsupported_symbol;
         node->kind = CETTA_OP_LANG_V1_SEXPR_SYMBOL;
         node->as.symbol = authored_parser_structured_text_copy(
             context, text, strlen(text));
@@ -940,6 +942,14 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         if (!node->as.string.bytes)
             goto failed;
         node->as.string.len = (uint32_t)length;
+        return node;
+    }
+    if (value->kind == ATOM_GROUNDED && value->ground.gkind == GV_BIGINT) {
+        const char *digits = atom_bigint_cstr(value);
+        if (!digits || !*digits || strspn(digits, "0123456789") != strlen(digits)) goto unsupported;
+        node->kind = CETTA_OP_LANG_V1_SEXPR_NATURAL;
+        node->as.natural = authored_parser_structured_text_copy(context, digits, strlen(digits));
+        if (!node->as.natural) goto failed;
         return node;
     }
     if (value->kind == ATOM_GROUNDED &&
@@ -963,6 +973,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         text = atom_name_cstr(value->expr.elems[0]);
         if (!text)
             goto unsupported;
+        if (strlen(text) != symbol_len(g_symbols, value->expr.elems[0]->sym_id)) goto unsupported_symbol;
         node->kind = CETTA_OP_LANG_V1_SEXPR_APPLICATION;
         node->as.application.head = authored_parser_structured_text_copy(
             context, text, strlen(text));
@@ -989,6 +1000,11 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         return node;
     }
 
+    goto unsupported;
+unsupported_symbol:
+    langdef_set_error(context->error, context->error_size,
+        "structured parser value contains a NUL-bearing wire symbol");
+    goto failed;
 unsupported:
     langdef_set_error(
         context->error, context->error_size,
@@ -1283,12 +1299,9 @@ static Atom *authored_parser_store_source(Arena *arena, const CettaOpLangV1SExpr
             value = atom_symbol(arena, node->as.symbol);
         else if (node->kind == CETTA_OP_LANG_V1_SEXPR_STRING)
             value = atom_string_n(arena, (const char *)node->as.string.bytes, node->as.string.len);
-        else if (node->kind == CETTA_OP_LANG_V1_SEXPR_NATURAL) {
-            char *end = NULL; errno = 0;
-            unsigned long long number = strtoull(node->as.natural, &end, 10);
-            if (errno || !end || *end || number > INT64_MAX) goto failed;
-            value = atom_int(arena, (int64_t)number);
-        } else goto failed;
+        else if (node->kind == CETTA_OP_LANG_V1_SEXPR_NATURAL)
+            value = atom_bigint(arena, node->as.natural);
+        else goto failed;
         if (!value) goto failed;
         while (depth) {
             Frame *frame = &frames[depth - 1u];
@@ -1600,31 +1613,7 @@ failed:
 
 static bool authored_parser_publish_artifact(const char *path, const uint8_t *bytes,
     size_t length, char *error, size_t error_size) {
-    if (!path || strlen(path) > SIZE_MAX - 24u) return false;
-    size_t template_len = strlen(path) + 24u;
-    char *temporary = malloc(template_len);
-    if (!temporary) return false;
-    (void)snprintf(temporary, template_len, "%s.partial.XXXXXX", path);
-    int fd = mkstemp(temporary);
-    bool ok = fd >= 0;
-    size_t written = 0u;
-    while (ok && written < length) {
-        size_t remaining = length - written;
-        if (remaining > (size_t)SSIZE_MAX) remaining = SSIZE_MAX;
-        ssize_t count = write(fd, bytes + written, remaining);
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) { ok = false; break; }
-        written += (size_t)count;
-    }
-    if (ok && fsync(fd)) ok = false;
-    if (fd >= 0 && close(fd)) ok = false;
-    if (ok && rename(temporary, path)) ok = false;
-    if (!ok) {
-        langdef_set_error(error, error_size, "parser artifact publication failed: %s", strerror(errno));
-        if (fd >= 0) (void)unlink(temporary);
-    }
-    free(temporary);
-    return ok;
+    return cetta_prepared_artifact_v1_publish(path, bytes, length, error, error_size);
 }
 #endif
 
@@ -1667,7 +1656,7 @@ bool cetta_langdef_text_arg(Atom *atom, const char **out) {
     }
     if (atom->kind == ATOM_SYMBOL) {
         *out = atom_name_cstr(atom);
-        return *out != NULL;
+        return *out && strlen(*out) == symbol_len(g_symbols, atom->sym_id);
     }
     return false;
 }
@@ -3788,6 +3777,7 @@ static Atom *langdef_context_trace_atom(
                 evidence_arguments, 4u);
             break;
         case CETTA_LD_PREMISE_FOR_ALL_V1:
+        case CETTA_LD_PREMISE_SCOPED_STEP_V1:
             return NULL;
         }
     }
@@ -4046,7 +4036,7 @@ static Atom *authored_parser_incomplete(
 static Atom *authored_parser_parse_values(
     const CettaAuthoredParserV1 *resource,
     bool predictive,
-    const uint8_t *bytes, size_t len, Arena *arena) {
+    const uint8_t *bytes, size_t len, uint32_t forest_item_limit, Arena *arena) {
     PPNativeV1Result parsed;
     CettaParserTokenScanV1 scan;
     Atom *result = NULL;
@@ -4139,6 +4129,21 @@ static Atom *authored_parser_parse_values(
         Atom *args[] = {atom_expr(arena, values, parsed.semantic_result_len),
             langdef_expr(arena, "ParserSpanV1", span_args, 4u)};
         result = langdef_expr(arena, "ParserAcceptedV1", args, 2u);
+    }
+    if (forest_item_limit && (parsed.outcome == PPNATIVE_V1_COMPLETED || parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST)) {
+        bool encoded = resource->compiled.tokenized
+            ? cetta_parser_token_runtime_v1_materialize(&resource->token_runtime, &scan,
+                &parsed, forest_item_limit, error, sizeof(error))
+            : ppnative_v1_materialize_canonical_forest(&parsed, &resource->compiled.pack,
+                resource->compiled.start_state, forest_item_limit, error, sizeof(error));
+        if (!encoded) {
+            Atom *args[] = {atom_int(arena, parsed.forest.farthest_scalar),
+                atom_int(arena, parsed.forest.farthest_byte), atom_string(arena, error)};
+            result = langdef_expr(arena, "ParserIncompleteV1", args, 3u);
+        } else {
+            Atom *args[] = {result, atom_deep_copy(arena, parsed.canonical_forest)};
+            result = langdef_expr(arena, "ParserWithForestV1", args, 2u);
+        }
     }
     goto done;
 failed:
@@ -8408,6 +8413,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
     }
 
     if (atom_is_symbol(head, "__cetta_lib_parser_parse_text") ||
+        atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest") ||
         atom_is_symbol(head, "__cetta_lib_parser_parse_file")) {
         uint64_t id;
         CettaAuthoredParserV1 *resource;
@@ -8415,16 +8421,29 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         uint8_t *owned_bytes = NULL;
         const uint8_t *bytes;
         size_t len;
-        if (nargs != 2u ||
+        bool with_forest = atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest");
+        bool file = atom_is_symbol(head, "__cetta_lib_parser_parse_file");
+        uint32_t forest_limit = 0;
+        if (nargs != (with_forest ? 3u : 2u) ||
             !cetta_native_handle_arg(args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
             !(resource = authored_parser_resource_get(ctx, id)) ||
-            !cetta_langdef_text_arg(args[1], &input)) {
+            !(file ? cetta_langdef_text_arg(args[1], &input) :
+              args[1] && args[1]->kind == ATOM_GROUNDED && args[1]->ground.gkind == GV_STRING
+                ? (input = args[1]->ground.sval) != NULL : cetta_langdef_text_arg(args[1], &input))) {
             Atom *args[] = {atom_string(arena, "expected a live parser and text or path")};
             return langdef_expr(arena, "ParserFailureV1", args, 1u);
         }
+        if (with_forest) {
+            if (!args[2] || args[2]->kind != ATOM_GROUNDED || args[2]->ground.gkind != GV_INT ||
+                args[2]->ground.ival <= 0 || (uint64_t)args[2]->ground.ival > UINT32_MAX) {
+                Atom *args[] = {atom_string(arena, "expected a positive packed-forest item allowance")};
+                return langdef_expr(arena, "ParserFailureV1", args, 1u);
+            }
+            forest_limit = (uint32_t)args[2]->ground.ival;
+        }
         bytes = (const uint8_t *)input;
-        len = strlen(input);
-        if (atom_is_symbol(head, "__cetta_lib_parser_parse_file")) {
+        len = !file && args[1]->kind == ATOM_GROUNDED ? atom_string_len(args[1]) : strlen(input);
+        if (file) {
             if (!cetta_langdef_slurp(input, &owned_bytes, &len, error, sizeof(error))) {
                 Atom *args[] = {atom_string(arena, error)};
                 return langdef_expr(arena, "ParserFailureV1", args, 1u);
@@ -8433,7 +8452,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         }
         CettaParserInstanceV1 *instance = cetta_native_handle_get(ctx, AUTHORED_PARSER_HANDLE_KIND, id);
         Atom *result = authored_parser_parse_values(resource,
-            authored_parser_instance_predictive(instance), bytes, len, arena);
+            authored_parser_instance_predictive(instance), bytes, len, forest_limit, arena);
         free(owned_bytes);
         return result;
     }
@@ -9815,6 +9834,34 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         bool ok = cetta_module_value_v1_assemble(arena, args[0], args[1], args[2], args[3],
             policy, args[5], 1000000u, &value, &refusal);
         return ok ? value : refusal ? refusal : langdef_error(arena, head, "Module assembly failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_write_portable_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 1u) return langdef_error(arena, head, "Portable writing expects one data value.");
+        bool ok = cetta_module_portable_v1_write(arena, args[0], 1000000u, &value, &refusal);
+        return ok ? value : refusal;
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_read_portable_v1")) {
+        const char *input = NULL;
+        if (nargs != 3u)
+            return langdef_error(arena, head, "Portable module reading expects a namespace, text/file selector and source.");
+        CettaOpLangV1Document document;
+        CettaOpLangV1Status status;
+        cetta_op_lang_v1_document_init(&document);
+        bool ok;
+        if (atom_is_symbol(args[1], "file") && cetta_langdef_text_arg(args[2], &input))
+            ok = cetta_op_lang_v1_parse_document_file(&document, input, 4000000u, 8000000u, &status, error, sizeof(error));
+        else if (atom_is_symbol(args[1], "text") && args[2]->kind == ATOM_GROUNDED && args[2]->ground.gkind == GV_STRING)
+            ok = cetta_op_lang_v1_parse_document_bytes(&document, (const uint8_t *)args[2]->ground.sval,
+                atom_string_len(args[2]), 4000000u, 8000000u, &status, error, sizeof(error));
+        else ok = false;
+        Atom *value = NULL, *refusal = NULL;
+        Atom *data = ok ? authored_parser_store_source(arena, document.root) : NULL;
+        ok = data && cetta_module_portable_v1_read(arena, args[0], data, 1000000u, &value, &refusal);
+        cetta_op_lang_v1_document_free(&document);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, error[0] ? error : "Portable module read failed.");
     }
 
     if (atom_is_symbol(head, "__cetta_lib_module_document_v1") ||

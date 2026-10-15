@@ -439,6 +439,8 @@ bool cetta_syntax_gslt_data_arg_v1(const char *operation, uint32_t index) {
         return false;
     }
     if (!strcmp(operation, "module_assemble_v1")) return index < 6u;
+    if (!strcmp(operation, "module_read_portable_v1")) return index == 0u;
+    if (!strcmp(operation, "module_write_portable_v1")) return index == 0u;
     if (!strcmp(operation, "module_core_v1") || !strcmp(operation, "module_rewrite_rules_v1")) return index < 2u;
     if (!strcmp(operation, "module_attach_layer_v1")) return index < 5u;
     if (!strcmp(operation, "module_join_layers_over_v1")) return index < 3u;

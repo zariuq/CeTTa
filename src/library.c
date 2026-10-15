@@ -20,6 +20,7 @@
 #include "library_io.h"
 #include "library_proc.h"
 #include "library_fs.h"
+#include "library_re.h"
 #include "library_json.h"
 #include "str_natives.h"
 #include <ctype.h>
@@ -133,6 +134,7 @@ enum {
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
     CETTA_LIBRARY_MATH = 1u << 13,
     CETTA_LIBRARY_PROC = 1u << 14,
+    CETTA_LIBRARY_RE = 1u << 15,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -149,6 +151,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
+    {"re", CETTA_LIBRARY_RE, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -11680,6 +11683,8 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
+        cetta_re_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&
         cetta_fs_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_PROC) &&

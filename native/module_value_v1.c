@@ -300,7 +300,92 @@ static Atom *item(ModuleWorkV1 *work, Atom *node) {
     return out;
 }
 
+static Atom *core_pattern(ModuleWorkV1 *w, Atom *node);
+static Atom *core_rows(ModuleWorkV1 *w, Atom *node, unsigned kind) {
+    ModuleValuesV1 rows = {0}; Atom *out = NULL, *list = ast_list(node);
+    while (module_form_v1(list, "LCons", 2u)) {
+        Atom *row = list->expr.elems[1], *args[2], *value = NULL;
+        if (kind < 2u && ast_args(w, row, "CoreParameter", args, 2u)) {
+            Atom *name = module_text_v1(w, args[0]), *sort = module_text_v1(w, args[1]);
+            Atom *fields[] = {name, module_make_v1(w->arena, "TBase", &sort, 1u)};
+            value = module_make_v1(w->arena, kind ? "TypeBinding" : "TermSimple", fields, 2u);
+        } else if (kind == 2u && ast_args(w, row, "CoreTerminal", args, 1u)) {
+            Atom *value_text = module_text_v1(w, args[0]);
+            value = module_make_v1(w->arena, "Terminal", &value_text, 1u);
+        } else if (kind == 2u && ast_args(w, row, "CoreArgument", args, 1u)) {
+            Atom *name = module_text_v1(w, args[0]);
+            value = module_make_v1(w->arena, "NonTerminal", &name, 1u);
+        } else if (kind == 3u && ast_args(w, row, "CoreCongruence", args, 2u)) {
+            Atom *fields[] = {core_pattern(w, args[0]), core_pattern(w, args[1])};
+            value = module_make_v1(w->arena, "Congruence", fields, 2u);
+        } else if (kind == 3u && ast_args(w, row, "CoreRelation", args, 2u)) {
+            Atom *fields[] = {module_text_v1(w, args[0]), core_rows(w, args[1], 4u)};
+            value = module_make_v1(w->arena, "RelationQuery", fields, 2u);
+        } else if (kind == 4u) value = core_pattern(w, row);
+        if (!module_push_v1(w, &rows, value)) goto done;
+        list = list->expr.elems[2];
+    }
+    if (atom_is_symbol(list, "LNil")) out = module_list_v1(w->arena, &rows);
+done:
+    module_clear_v1(&rows); return out;
+}
+
+static Atom *core_pattern(ModuleWorkV1 *w, Atom *node) {
+    if (!module_spend_v1(w) || w->depth >= 512u) return NULL;
+    Atom *args[2], *out = NULL;
+    ++w->depth;
+    if (ast_args(w, node, "CoreVariable", args, 1u)) {
+        Atom *name = module_text_v1(w, args[0]);
+        out = module_make_v1(w->arena, "FVar", &name, 1u);
+    } else if (ast_args(w, node, "CoreConstructor", args, 2u)) {
+        Atom *fields[] = {module_text_v1(w, args[0]), core_rows(w, args[1], 4u)};
+        out = module_make_v1(w->arena, "PApp", fields, 2u);
+    }
+    --w->depth; return out;
+}
+
+static Atom *core_declaration(ModuleWorkV1 *w, Atom *node, unsigned kind) {
+    Atom *args[5], *value = NULL;
+    if (kind == 0u && ast_args(w, node, "CoreTypedTerm", args, 4u)) {
+        Atom *fields[] = {module_text_v1(w, args[0]), module_text_v1(w, args[3]),
+            core_rows(w, args[1], 0u), core_rows(w, args[2], 2u),
+            atom_symbol(w->arena, "EvalNone"), atom_symbol(w->arena, "AlgebraNone")};
+        value = module_make_v1(w->arena, "GrammarRuleV2", fields, 6u);
+    } else if (kind == 3u) {
+        bool carrier = ast_args(w, node, "CoreCarrierType", args, 2u);
+        if (!carrier && !ast_args(w, node, "CoreAstType", args, 1u)) return NULL;
+        Atom *name = module_text_v1(w, args[0]);
+        const char *tag = "CarrierAst";
+        if (carrier) {
+            Atom *carrier_name = module_text_v1(w, args[1]);
+            if (!carrier_name) return NULL;
+            const char *s = carrier_name->ground.sval;
+            if (!strcmp(s, "String")) tag = "CarrierBuiltinString";
+            else if (!strcmp(s, "Int")) tag = "CarrierBuiltinInt";
+            else if (!strcmp(s, "Bool")) tag = "CarrierBuiltinBool";
+            else { module_fail_v1(w, "unresolved-carrier-interpretation", "This carrier needs an explicit interpretation."); return NULL; }
+        }
+        Atom *fields[] = {name, atom_symbol(w->arena, tag)};
+        value = module_make_v1(w->arena, "TypeDecl", fields, 2u);
+    } else if (kind == 1u || kind == 2u) {
+        bool conditional = ast_args(w, node, kind == 2u ? "CoreConditionalRewrite" : "CoreConditionalEquation", args, 5u);
+        if (!conditional && !ast_args(w, node, kind == 2u ? "CoreTypedRewrite" : "CoreTypedEquation", args, 4u)) return NULL;
+        Atom *fields[] = {module_text_v1(w, args[0]), core_rows(w, args[1], 1u),
+            conditional ? core_rows(w, args[2], 3u) : atom_symbol(w->arena, "LNil"),
+            core_pattern(w, args[conditional ? 3u : 2u]), core_pattern(w, args[conditional ? 4u : 3u]),
+            atom_symbol(w->arena, "RuleBindingNone")};
+        value = module_make_v1(w->arena, kind == 2u ? "ScopedRewriteRuleV1" : "ScopedEquationV1", fields, 6u);
+    }
+    if (!value) return NULL;
+    static const char *tags[] = {"ModuleCoreTermV1", "ModuleCoreEquationV1", "ModuleCoreRewriteV1", "ModuleCoreTypeV1"};
+    Atom *body = module_make_v1(w->arena, tags[kind], &value, 1u);
+    Atom *fields[] = {module_site_v1(w, node->expr.elems[3], atom_symbol(w->arena, tags[kind])), body};
+    return module_make_v1(w->arena, "ModuleDeclarationV1", fields, 2u);
+}
+
 static Atom *definition(ModuleWorkV1 *work, Atom *node) {
+    Atom *typed = core_declaration(work, node, 0u);
+    if (typed) return typed;
     Atom *args[3];
     bool internal = ast_args(work, node, "Internal", args, 3u);
     if (internal || ast_args(work, node, "Rule", args, 3u)) {
@@ -370,6 +455,8 @@ static Atom *pattern(ModuleWorkV1 *work, Atom *node) {
 }
 
 static Atom *law(ModuleWorkV1 *work, Atom *node, bool rewrite) {
+    Atom *typed = core_declaration(work, node, rewrite ? 2u : 1u);
+    if (typed) return typed;
     ModuleValuesV1 premises = {0};
     Atom *site = module_form_v1(node, "LbnfAstNodeV1", 4u) ? node->expr.elems[3] : NULL;
     Atom *name = NULL, *args[3], *out = NULL;
@@ -453,6 +540,7 @@ static Atom *project_rows(ModuleWorkV1 *work, Atom *node, unsigned kind) {
                 module_clear_v1(&indices);
             }
         } else if (kind == 5u) row = builder(work, value);
+        else if (kind == 7u) row = core_declaration(work, value, 3u);
         else if (kind == 6u && ast_args(work, value, "VarDecl", args, 2u)) {
             Atom *fields[] = {module_text_v1(work, args[0]), path(work, args[1])};
             row = module_make_v1(work->arena, "ModuleParameterV1", fields, 2u);
@@ -483,6 +571,9 @@ static Atom *builder(ModuleWorkV1 *work, Atom *node) {
     } else if (ast_args(work, node, "TheoryInstFree", args, 1u)) {
         Atom *name = path(work, args[0]);
         out = module_make_v1(work->arena, "ModuleFreeV1", &name, 1u);
+    } else if (ast_args(work, node, "TheoryInstAddTypes", args, 2u)) {
+        Atom *fields[] = {builder(work, args[0]), project_rows(work, args[1], 7u)};
+        out = module_make_v1(work->arena, "ModuleAddTypesV1", fields, 2u);
     } else if (ast_args(work, node, "TheoryInstRec", args, 3u)) {
         Atom *fields[] = {module_text_v1(work, args[0]), builder(work, args[1]), builder(work, args[2])};
         out = module_make_v1(work->arena, "ModuleLetV1", fields, 3u);

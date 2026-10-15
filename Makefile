@@ -679,6 +679,14 @@ REGULAR_TOKEN_COMPILER_SOURCE_V1 = langdef/bnf/regular_token_value_compiler_v1.m
 LBNF_BOOTSTRAP_SOURCE_V1 = langdef/bnf/lbnf_source_v1.metta
 BNFC_LEXICAL_POLICY_SOURCE_V1 = langdef/bnf/bnfc_lexical_policy_v1.metta
 LDPP_COMPILER_EMBEDDED_C_V1 = runtime/generated/bnf/language_def_parser_compiler_v1.source.c
+EQUATION_PREPARE_V1_TOOL = runtime/bootstrap/prepare-equation-plan-v1-$(BUILD_OBJ_TAG)
+EQUATION_PREPARE_V1_SRC = tools/prepare_equation_plan_v1.c \
+	native/deterministic_equation_plan_v1.c native/deterministic_equation_descent_v1.c \
+	native/gslt_composition_v1.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c \
+	src/parser.c src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c
+EQUATION_PREPARED_V1_DIR = runtime/generated/bnf/prepared-$(BUILD_OBJ_TAG)
+EQUATION_PREPARED_V1_OUTPUTS = $(addprefix $(EQUATION_PREPARED_V1_DIR)/,regular.ceq parser.ceq token-parser.ceq lexical.ceq regex-selection.ceq)
+REGEX_SELECTION_COMPILER_SOURCE_V1 = langdef/regex/selection_compiler_v1.metta
 JSON_GSLT_GENERATED_DIR_V1 = runtime/generated/json
 JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.generated.c
 JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
@@ -811,8 +819,8 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/parser_token_runtime_v1.c \
 	native/parser_token_ast_v1.c \
 	native/lbnf_document_v1.c \
-	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c \
-	native/regular_token_compiler_v1.c \
+	native/module_value_v1.c native/module_theory_v1.c native/module_language_v1.c native/module_fields_v1.c native/module_portable_v1.c \
+	native/regular_token_compiler_v1.c native/regular_pattern_v1.c native/regex_compiler_v1.c native/regex_selection_v1.c native/regex_source_v1.c src/library_re.c \
 	$(LDPP_COMPILER_EMBEDDED_C_V1) \
 	native/language_def_contextual_runner_v1.c \
 	native/language_def_pattern_atom_v1.c \
@@ -6085,7 +6093,21 @@ endif
 
 FORCE:
 
-$(BUILD_CONFIG_HEADER): $(BUILD_CONFIG_STAMP)
+OP_LANG_PREPARED_HEADER_V1 = runtime/generated/cetta_term_reader_v1.generated.h
+OP_LANG_PREPARE_TOOL_V1 = runtime/bootstrap/emit-operational-reader-v1
+$(OP_LANG_PREPARE_TOOL_V1): tools/emit_operational_reader_v1.c native/operational_language_def_v1.c \
+		native/operational_language_def_v1.h native/prepared_artifact_v1.h \
+		src/lib_parse_native_grammar.c src/lib_parse_native_grammar.h src/gslt_dense_bitset_v1.c \
+		native/cetta_standalone_alloc_v1.c src/native_sha256.c
+	@mkdir -p $(dir $@)
+	$(CC) -Isrc -I. -std=c11 -O2 -Wall -Werror -ffunction-sections -fdata-sections -o $@ \
+		tools/emit_operational_reader_v1.c src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c \
+		native/cetta_standalone_alloc_v1.c src/native_sha256.c -Wl,--gc-sections
+$(OP_LANG_PREPARED_HEADER_V1): $(OP_LANG_PREPARE_TOOL_V1)
+	@mkdir -p $(dir $@)
+	$(OP_LANG_PREPARE_TOOL_V1) $@
+
+$(BUILD_CONFIG_HEADER): $(BUILD_CONFIG_STAMP) | $(OP_LANG_PREPARED_HEADER_V1)
 
 $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
@@ -6291,7 +6313,7 @@ $(PARSER_BAKED_SELECTION_STAMP): FORCE
 		mv "$$tmp_out" "$@"; \
 	fi
 
-$(PARSER_BAKED_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(PARSER_BAKED_HEADER) $(BUILD_CONFIG_HEADER) $(PARSER_BAKED_SELECTION_STAMP)
+$(PARSER_BAKED_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(PARSER_BAKED_HEADER) $(PARSER_BAKED_STAMP) $(BUILD_CONFIG_HEADER) $(PARSER_BAKED_SELECTION_STAMP)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -DCETTA_PARSER_BAKED_HEADER='"$(PARSER_BAKED_HEADER)"')
 
 -include $(PARSER_COMPILER_CATALOG_OBJ:.o=.d) $(PARSER_BAKED_OBJ:.o=.d)
@@ -24928,6 +24950,14 @@ test-petta-process-text: $(BIN)
 	trap 'rm -f "$$actual" "$$failure"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/process_metta_string.metta > "$$actual"; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		sed 's/^!//' tests/petta/process_metta_string.metta | diff -u - "$$actual" || exit 1; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/process_metta_string_failure.metta > "$$failure" || exit 1; \
+		sed 's/^!//' tests/petta/process_metta_string_failure.metta | diff -u - "$$failure" || exit 1; \
+		echo "PASS: absent PeTTa foreign registration leaves process-text calls and their quoted bodies inert"; \
+		exit 0; \
+	fi; \
 	if ! diff -u tests/petta/process_metta_string.expected "$$actual"; then \
 		echo "FAIL: native PeTTa process_metta_string"; \
 		exit 1; \
@@ -28872,6 +28902,9 @@ test-petta-semantics: test-petta-rational-terms
 # and exit statuses).
 test-petta-rational-terms: $(BIN)
 	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: Prolog-imported rational terms require embedded Prolog"; exit 0; \
+	fi; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
@@ -38954,7 +38987,7 @@ $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-operational-language-def-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections,--wrap=cetta_lp_native_gll_prepare,--wrap=cetta_lp_native_glr_prepare -o "$$tmp_out" $^; \
 	mv "$$tmp_out" $@
 
 .PHONY: test-operational-language-def-v1
@@ -39771,13 +39804,32 @@ $(JSON_GSLT_EMBEDDED_C_V1): \
 		$(JSON_GSLT_VALUE_TARGET_SOURCE_V1); \
 	mv "$$tmp_out" $@
 
-# Embed the authored compiler source; this does not generate compiler code.
-$(LDPP_COMPILER_EMBEDDED_C_V1): $(JSON_SOURCE_EMBED_TOOL_V1) $(LDPP_COMPILER_SOURCE_V1) $(LDPT_COMPILER_SOURCE_V1) $(REGULAR_TOKEN_COMPILER_SOURCE_V1) $(LBNF_BOOTSTRAP_SOURCE_V1) $(BNFC_LEXICAL_POLICY_SOURCE_V1)
+$(EQUATION_PREPARE_V1_TOOL): $(EQUATION_PREPARE_V1_SRC) native/prepared_bytes_v1.h native/prepared_artifact_v1.h native/deterministic_equation_plan_v1.h native/deterministic_equation_descent_v1.h native/gslt_composition_v1.h src/atom.h src/symbol.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ $(EQUATION_PREPARE_V1_SRC) -Wl,--gc-sections $(LDFLAGS)
+
+$(EQUATION_PREPARED_V1_OUTPUTS) &: $(EQUATION_PREPARE_V1_TOOL) $(LDPP_COMPILER_SOURCE_V1) $(LDPT_COMPILER_SOURCE_V1) $(REGULAR_TOKEN_COMPILER_SOURCE_V1) $(BNFC_LEXICAL_POLICY_SOURCE_V1) $(REGEX_SELECTION_COMPILER_SOURCE_V1)
+	@mkdir -p $(EQUATION_PREPARED_V1_DIR)
+	$(EQUATION_PREPARE_V1_TOOL) regular-token-v1 $(EQUATION_PREPARED_V1_DIR)/regular.ceq $(REGULAR_TOKEN_COMPILER_SOURCE_V1)
+	$(EQUATION_PREPARE_V1_TOOL) parser-compiler-v1 $(EQUATION_PREPARED_V1_DIR)/parser.ceq $(LDPP_COMPILER_SOURCE_V1)
+	$(EQUATION_PREPARE_V1_TOOL) parser-compiler-v1 $(EQUATION_PREPARED_V1_DIR)/token-parser.ceq $(LDPP_COMPILER_SOURCE_V1) $(LDPT_COMPILER_SOURCE_V1)
+	$(EQUATION_PREPARE_V1_TOOL) bnfc-lexical-v1 $(EQUATION_PREPARED_V1_DIR)/lexical.ceq $(BNFC_LEXICAL_POLICY_SOURCE_V1)
+	$(EQUATION_PREPARE_V1_TOOL) regex-selection-compiler-v1 $(EQUATION_PREPARED_V1_DIR)/regex-selection.ceq $(REGEX_SELECTION_COMPILER_SOURCE_V1)
+
+# Authored compiler plans are admitted by the C build host, then embedded as
+# prepared programs. Source bytes remain available for explicit source-driven
+# compiler experiments and source identity, not ordinary compiler loading.
+$(LDPP_COMPILER_EMBEDDED_C_V1): Makefile $(JSON_SOURCE_EMBED_TOOL_V1) $(LDPP_COMPILER_SOURCE_V1) $(LDPT_COMPILER_SOURCE_V1) $(REGULAR_TOKEN_COMPILER_SOURCE_V1) $(LBNF_BOOTSTRAP_SOURCE_V1) $(BNFC_LEXICAL_POLICY_SOURCE_V1) $(EQUATION_PREPARED_V1_OUTPUTS)
 	@mkdir -p $(dir $@) $(BOOTSTRAP_TMPDIR)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/ldpp-compiler-source-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(JSON_SOURCE_EMBED_TOOL_V1) "$$tmp_out" \
+		cetta_regex_selection_compiler_v1_prepared $(EQUATION_PREPARED_V1_DIR)/regex-selection.ceq \
+		cetta_regular_token_compiler_v1_prepared $(EQUATION_PREPARED_V1_DIR)/regular.ceq \
+		cetta_ldpp_compiler_v1_program $(EQUATION_PREPARED_V1_DIR)/parser.ceq \
+		cetta_ldpt_compiler_v1_program $(EQUATION_PREPARED_V1_DIR)/token-parser.ceq \
+		cetta_bnfc_lexical_policy_v1_program $(EQUATION_PREPARED_V1_DIR)/lexical.ceq \
 		cetta_ldpp_compiler_v1_source $(LDPP_COMPILER_SOURCE_V1) \
 		cetta_ldpt_compiler_v1_source $(LDPT_COMPILER_SOURCE_V1) \
 		cetta_regular_token_compiler_v1_source $(REGULAR_TOKEN_COMPILER_SOURCE_V1) \
@@ -39848,6 +39900,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES = \
 REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN = runtime/test_regular_token_value_compiler_v1-$(BUILD_OBJ_TAG)
 REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_C_SOURCES = \
 	tests/support/test_regular_token_value_compiler_v1.c \
+	native/regular_pattern_v1.c \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
 LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_SRC) \
@@ -39865,6 +39918,8 @@ LANGUAGE_DEF_PARSER_PACK_V1_CORE_HEADERS = \
 	native/parser_token_ast_v1.h \
 	native/lbnf_document_v1.h \
 	native/regular_token_compiler_v1.h \
+	native/regular_pattern_v1.h native/prepared_bytes_v1.h \
+	native/prepared_artifact_v1.h \
 	native/deterministic_equation_plan_v1.h \
 	native/deterministic_equation_descent_v1.h \
 	native/gslt_composition_v1.h \
@@ -40179,6 +40234,60 @@ test-regular-token-value-compiler-v1: $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN
 
 test: test-regular-token-value-compiler-v1
 
+REGEX_SELECTION_V1_TEST_BIN = runtime/test_regex_selection_v1-$(BUILD_OBJ_TAG)
+REGEX_SELECTION_V1_TEST_SOURCES = tests/support/test_regex_selection_v1.c \
+	native/regex_selection_v1.c native/regex_compiler_v1.c \
+	$(filter-out tools/prepare_equation_plan_v1.c,$(EQUATION_PREPARE_V1_SRC)) \
+	$(LDPP_COMPILER_EMBEDDED_C_V1)
+$(REGEX_SELECTION_V1_TEST_BIN): $(REGEX_SELECTION_V1_TEST_SOURCES) \
+		native/regex_selection_v1.h native/regex_compiler_v1.h native/prepared_bytes_v1.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o $@ $(REGEX_SELECTION_V1_TEST_SOURCES) -Wl,--gc-sections $(LDFLAGS)
+.PHONY: test-regex-selection-v1 test-regex-workflow-v1
+test-regex-selection-v1: $(REGEX_SELECTION_V1_TEST_BIN)
+	@$(REGEX_SELECTION_V1_TEST_BIN)
+test-regex-workflow-v1: $(BIN)
+	python3 tools/test_regex_workflow_v1.py --cetta $(BIN)
+test: test-regex-selection-v1 test-regex-workflow-v1
+
+REGEX_SELECTION_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/capture-example.crp
+REGEX_SELECTION_BAKED_V1_C = $(EQUATION_PREPARED_V1_DIR)/capture-example.generated.c
+REGEX_SELECTION_BAKED_V1_BIN = runtime/test-regex-selection-baked-v1-$(BUILD_OBJ_TAG)
+$(REGEX_SELECTION_BAKED_V1_IMAGE): $(REGEX_SELECTION_V1_TEST_BIN)
+	@mkdir -p $(dir $@)
+	$(REGEX_SELECTION_V1_TEST_BIN) --freeze $@
+$(REGEX_SELECTION_BAKED_V1_C): $(REGEX_SELECTION_BAKED_V1_IMAGE) $(JSON_SOURCE_EMBED_TOOL_V1)
+	$(JSON_SOURCE_EMBED_TOOL_V1) $@ cetta_regex_selection_baked_example_v1 $<
+$(REGEX_SELECTION_BAKED_V1_BIN): tests/support/test_regex_selection_baked_v1.c $(REGEX_SELECTION_BAKED_V1_C) \
+		native/regex_selection_v1.c native/regex_selection_v1.h native/prepared_bytes_v1.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_regex_selection_baked_v1.c \
+		$(REGEX_SELECTION_BAKED_V1_C) native/regex_selection_v1.c -lm -pthread
+.PHONY: test-regex-selection-baked-v1
+test-regex-selection-baked-v1: $(REGEX_SELECTION_BAKED_V1_BIN)
+	@$(REGEX_SELECTION_BAKED_V1_BIN)
+test: test-regex-selection-baked-v1
+
+REGULAR_PATTERN_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/example.crp
+REGULAR_PATTERN_BAKED_V1_C = $(EQUATION_PREPARED_V1_DIR)/example.generated.c
+REGULAR_PATTERN_BAKED_V1_TEST_BIN = runtime/test-regular-pattern-baked-v1-$(BUILD_OBJ_TAG)
+$(REGULAR_PATTERN_BAKED_V1_IMAGE): $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN)
+	@mkdir -p $(dir $@)
+	$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN) $@
+$(REGULAR_PATTERN_BAKED_V1_C): $(REGULAR_PATTERN_BAKED_V1_IMAGE) $(JSON_SOURCE_EMBED_TOOL_V1)
+	$(JSON_SOURCE_EMBED_TOOL_V1) $@ cetta_regular_pattern_baked_example_v1 $<
+$(REGULAR_PATTERN_BAKED_V1_TEST_BIN): tests/support/test_regular_pattern_baked_v1.c $(REGULAR_PATTERN_BAKED_V1_C) \
+		native/regular_pattern_v1.c native/regular_pattern_v1.h native/prepared_bytes_v1.h \
+		experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ \
+		tests/support/test_regular_pattern_baked_v1.c $(REGULAR_PATTERN_BAKED_V1_C) \
+		native/regular_pattern_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c \
+		src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c -Wl,--gc-sections $(LDFLAGS)
+.PHONY: test-regular-pattern-baked-v1
+test-regular-pattern-baked-v1: $(REGULAR_PATTERN_BAKED_V1_TEST_BIN)
+	@$(REGULAR_PATTERN_BAKED_V1_TEST_BIN)
+test: test-regular-pattern-baked-v1
+
 .PHONY: test-lbnf-token-values-v1
 test-lbnf-token-values-v1: $(BIN) tests/langdef/bnf/token_parser_values_v1.metta \
 		tools/test_lbnf_token_values_v1.py lib/langdef.metta lib/petta/langdef.metta
@@ -40240,7 +40349,7 @@ test: test-module-values-v1
 test-module-chainer-export-v1:
 	python3 -m unittest discover -s tools -p test_module_chainer_export_v1.py
 
-test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-admission-v1 test-module-chainer-export-v1
+test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-admission-v1 test-module-chainer-export-v1 test-module-portable-v1
 	python3 tools/test_module_values_v1.py --cetta "./$(BIN)" \
 		--output runtime/module-workflow-public
 	python3 tools/test_module_layers_v1.py --cetta "./$(BIN)" \
@@ -40251,6 +40360,12 @@ test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-
 		--output runtime/module-workflow-interpretations
 	python3 tools/test_module_binding_v1.py --cetta "./$(BIN)" \
 		--output runtime/module-workflow-binding
+
+.PHONY: test-module-portable-v1
+test-module-portable-v1: $(BIN)
+	python3 tools/test_module_portable_v1.py --cetta "./$(BIN)" --output runtime/module-portable-v1
+
+test: test-module-portable-v1
 
 test-module-chainer-v1: $(BIN) test-module-chainer-export-v1
 	@test -n "$(strip $(PETTA_CHAINER_ROOT))" || \
@@ -41933,8 +42048,8 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
-LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re
+LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		tests/support/test_library_spelling_v1.py \

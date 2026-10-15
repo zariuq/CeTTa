@@ -4,6 +4,7 @@
 #include "finite_horn_gslt_v1.h"
 #include "gslt_composition_v1.h"
 #include "src/symbol.h"
+#include "prepared_bytes_v1.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -11,6 +12,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+
+static atomic_uint_fast64_t source_loads, source_admissions, prepared_restores, prepared_audits;
+
+CettaDeterministicEquationPreparationV1 cetta_deterministic_equation_plan_v1_preparation(void) {
+    return (CettaDeterministicEquationPreparationV1){
+        atomic_load(&source_loads), atomic_load(&source_admissions), atomic_load(&prepared_restores), atomic_load(&prepared_audits)};
+}
 
 typedef struct {
     const char *name;
@@ -34,6 +43,14 @@ struct CettaDeterministicEquationPlanV1 {
     /* The primitives the plan was admitted with, and runs with. */
     CettaDeterministicVocabularyV1 vocabulary;
 };
+
+bool cetta_deterministic_equation_plan_v1_declares_operator(
+    const CettaDeterministicEquationPlanV1 *plan, Atom *head, uint32_t arity) {
+    if (!plan || !head || head->kind != ATOM_SYMBOL) return false;
+    for (size_t i = 0; i < plan->operator_count; ++i)
+        if (plan->operators[i].arity == arity && atom_is_symbol(head, plan->operators[i].name)) return true;
+    return false;
+}
 
 typedef struct {
     VarId variable;
@@ -75,10 +92,8 @@ static int equation_rule_compare(const void *left_opaque,
     const DeterministicEquationRuleV1 *left = left_opaque;
     const DeterministicEquationRuleV1 *right = right_opaque;
 
-    if (left->head < right->head)
-        return -1;
-    if (left->head > right->head)
-        return 1;
+    int names = symbol_compare(g_symbols, left->head, right->head);
+    if (names) return names;
     if (left->arity < right->arity)
         return -1;
     if (left->arity > right->arity)
@@ -424,6 +439,8 @@ static bool equation_plan_from_source(
     uint32_t selected = 0u;
     CettaGsltCompositionV1 composition = {0};
 
+    atomic_fetch_add(&source_admissions, 1u);
+
     plan = calloc(1u, sizeof(*plan));
     if (!plan) {
         if (status)
@@ -644,6 +661,7 @@ bool cetta_deterministic_equation_plan_v1_load(
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
     FHGSLTPackage *source = NULL;
+    atomic_fetch_add(&source_loads, 1u);
 
     if (error && error_size)
         error[0] = '\0';
@@ -675,6 +693,7 @@ bool cetta_deterministic_equation_plan_v1_load_inputs(
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
     FHGSLTPackage *source = NULL;
+    atomic_fetch_add(&source_loads, 1u);
 
     if (error && error_size)
         error[0] = '\0';
@@ -798,8 +817,8 @@ static uint32_t plan_lower_bound(
     while (lower < upper) {
         uint32_t middle = lower + (upper - lower) / 2u;
         const DeterministicEquationRuleV1 *rule = &plan->rules[middle];
-        if (rule->head < head ||
-            (rule->head == head && rule->arity < arity))
+        int names = symbol_compare(g_symbols, rule->head, head);
+        if (names < 0 || (names == 0 && rule->arity < arity))
             lower = middle + 1u;
         else
             upper = middle;
@@ -1793,4 +1812,209 @@ bool cetta_deterministic_equation_plan_v1_declares(
             return true;
     }
     return false;
+}
+
+typedef struct { Atom **items; size_t len, capacity; } PreparedVariablesV1;
+
+static bool prepared_variable(PreparedVariablesV1 *v, Atom *a) {
+    if (v->len == v->capacity) {
+        size_t cap = v->capacity ? v->capacity * 2u : 16u;
+        if (cap < v->capacity || cap > SIZE_MAX / sizeof(*v->items)) return false;
+        void *p = realloc(v->items, cap * sizeof(*v->items));
+        if (!p) return false;
+        v->items = p; v->capacity = cap;
+    }
+    v->items[v->len++] = a;
+    return true;
+}
+
+enum { PREPARED_SYMBOL = 1, PREPARED_VARIABLE, PREPARED_STRING,
+    PREPARED_INT, PREPARED_BIGINT, PREPARED_FLOAT, PREPARED_BOOL, PREPARED_EXPR };
+
+static void prepared_write_atom(CettaPreparedWriterV1 *w,
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *a,
+    PreparedVariablesV1 *variables, unsigned depth) {
+    if (!a || depth >= 512u || w->failed) { w->failed = true; return; }
+    if (a->kind == ATOM_SYMBOL || a->kind == ATOM_VAR) {
+        cpw_u64(w, a->kind == ATOM_SYMBOL ? PREPARED_SYMBOL : PREPARED_VARIABLE);
+        if (a->kind == ATOM_VAR) {
+            size_t i = 0;
+            for (; i < variables->len && variables->items[i]->var_id != a->var_id; ++i) {}
+            if (i == variables->len && !prepared_variable(variables, (Atom *)a)) w->failed = true;
+            cpw_u64(w, i);
+        }
+        const char *name = atom_name_cstr((Atom *)a);
+        cpw_text(w, name, strlen(name));
+    } else if (a->kind == ATOM_EXPR) {
+        cpw_u64(w, PREPARED_EXPR); cpw_u64(w, a->expr.len);
+        CettaDeterministicPrimitiveClassV1 klass = CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+        if (a->expr.len && a->expr.elems[0]->kind == ATOM_SYMBOL && plan->vocabulary.classify)
+            klass = plan->vocabulary.classify(plan->vocabulary.context,
+                atom_name_cstr(a->expr.elems[0]), (uint32_t)(a->expr.len - 1u));
+        cpw_u64(w, klass);
+        for (CettaExprIndex i = 0; i < a->expr.len; ++i)
+            prepared_write_atom(w, plan, a->expr.elems[i], variables, depth + 1u);
+    } else if (a->kind == ATOM_GROUNDED) {
+        switch (a->ground.gkind) {
+        case GV_STRING:
+            cpw_u64(w, PREPARED_STRING); cpw_text(w, a->ground.sval, atom_string_len((Atom *)a)); break;
+        case GV_INT:
+            cpw_u64(w, PREPARED_INT); cpw_u64(w, (uint64_t)a->ground.ival); break;
+        case GV_BIGINT: {
+            const char *s = atom_bigint_cstr(a);
+            cpw_u64(w, PREPARED_BIGINT); cpw_text(w, s, strlen(s)); break;
+        }
+        case GV_FLOAT: {
+            uint64_t bits; _Static_assert(sizeof(double) == sizeof(bits), "binary64 required");
+            memcpy(&bits, &a->ground.fval, sizeof(bits));
+            cpw_u64(w, PREPARED_FLOAT); cpw_u64(w, bits); break;
+        }
+        case GV_BOOL: cpw_u64(w, PREPARED_BOOL); cpw_u64(w, a->ground.bval); break;
+        default: w->failed = true;
+        }
+    } else w->failed = true;
+}
+
+static char *prepared_read_name(CettaPreparedReaderV1 *r, Arena *arena) {
+    size_t n = 0; const char *s = cpr_text(r, &n);
+    if (!s || memchr(s, 0, n)) { r->failed = true; return NULL; }
+    char *out = arena_alloc(arena, n + 1u);
+    if (!out) { r->failed = true; return NULL; }
+    memcpy(out, s, n); out[n] = 0; return out;
+}
+
+static Atom *prepared_read_atom(CettaPreparedReaderV1 *r,
+    CettaDeterministicEquationPlanV1 *plan, PreparedVariablesV1 *variables, unsigned depth) {
+    if (depth >= 512u || r->failed) { r->failed = true; return NULL; }
+    Arena *arena = &plan->source_arena;
+    uint64_t tag = cpr_u64(r);
+    if (tag == PREPARED_SYMBOL || tag == PREPARED_VARIABLE) {
+        uint64_t id = tag == PREPARED_VARIABLE ? cpr_u64(r) : 0u;
+        char *name = prepared_read_name(r, arena);
+        if (!name) return NULL;
+        if (tag == PREPARED_SYMBOL) return atom_symbol(arena, name);
+        if (id > variables->len) { r->failed = true; return NULL; }
+        if (id == variables->len && !prepared_variable(variables, atom_var(arena, name))) { r->failed = true; return NULL; }
+        if (strcmp(atom_name_cstr(variables->items[id]), name)) { r->failed = true; return NULL; }
+        return variables->items[id];
+    }
+    if (tag == PREPARED_STRING) {
+        size_t n = 0; const char *s = cpr_text(r, &n);
+        if (!s || n > UINT32_MAX) { r->failed = true; return NULL; }
+        return atom_string_n(arena, s, n);
+    }
+    if (tag == PREPARED_BIGINT) {
+        char *s = prepared_read_name(r, arena);
+        const char *p = s;
+        if (p && *p == '-') ++p;
+        if (!p || !*p) { r->failed = true; return NULL; }
+        for (; *p; ++p) if (*p < '0' || *p > '9') { r->failed = true; return NULL; }
+        return atom_bigint(arena, s);
+    }
+    if (tag == PREPARED_INT || tag == PREPARED_FLOAT || tag == PREPARED_BOOL) {
+        uint64_t n = cpr_u64(r);
+        if (tag == PREPARED_INT) { int64_t i; memcpy(&i, &n, sizeof(i)); return atom_int(arena, i); }
+        if (tag == PREPARED_FLOAT) { double d; memcpy(&d, &n, sizeof(d)); return atom_float(arena, d); }
+        if (n > 1u) { r->failed = true; return NULL; }
+        return atom_bool(arena, n != 0u);
+    }
+    if (tag != PREPARED_EXPR) { r->failed = true; return NULL; }
+    uint64_t n = cpr_u64(r), klass = cpr_u64(r);
+    if (r->failed || n > UINT32_MAX || n > (r->len - r->at) / 8u || n > SIZE_MAX / sizeof(Atom *) ||
+        klass > CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_STRUCTURE) { r->failed = true; return NULL; }
+    Atom **items = arena_alloc(arena, (n ? (size_t)n : 1u) * sizeof(*items));
+    if (!items) { r->failed = true; return NULL; }
+    for (size_t i = 0; i < n; ++i) {
+        items[i] = prepared_read_atom(r, plan, variables, depth + 1u);
+        if (!items[i]) return NULL;
+    }
+    CettaDeterministicPrimitiveClassV1 actual = CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE;
+    if (n && items[0]->kind == ATOM_SYMBOL && plan->vocabulary.classify)
+        actual = plan->vocabulary.classify(plan->vocabulary.context, atom_name_cstr(items[0]), (uint32_t)(n - 1u));
+    if ((uint64_t)actual != klass) { r->failed = true; return NULL; }
+    return atom_expr(arena, items, (CettaExprLen)n);
+}
+
+bool cetta_deterministic_equation_plan_v1_store(
+    const CettaDeterministicEquationPlanV1 *plan, const char *abi,
+    uint8_t **bytes, size_t *length, char *error, size_t error_size) {
+    if (!plan || !abi || !*abi || !bytes || !length) return equation_error(error, error_size, "bad prepared equation export arguments");
+    CettaPreparedWriterV1 w = {0};
+    cpw_bytes(&w, "CEQ1", 4u); cpw_text(&w, abi, strlen(abi));
+    cpw_u64(&w, plan->rule_count); cpw_u64(&w, plan->operator_count);
+    for (uint32_t i = 0; i < plan->rule_count; ++i) {
+        PreparedVariablesV1 variables = {0};
+        const DeterministicEquationRuleV1 *rule = &plan->rules[i];
+        cpw_text(&w, rule->name, strlen(rule->name));
+        prepared_write_atom(&w, plan, rule->left, &variables, 0u);
+        prepared_write_atom(&w, plan, rule->right, &variables, 0u);
+        free(variables.items);
+    }
+    for (size_t i = 0; i < plan->operator_count; ++i) {
+        cpw_text(&w, plan->operators[i].name, strlen(plan->operators[i].name));
+        cpw_u64(&w, plan->operators[i].arity);
+    }
+    if (w.failed) { free(w.data); return equation_error(error, error_size, "cannot encode prepared equation plan"); }
+    *bytes = w.data; *length = w.len; return true;
+}
+
+bool cetta_deterministic_equation_plan_v1_restore(
+    const uint8_t *bytes, size_t length, const char *abi,
+    const CettaDeterministicVocabularyV1 *vocabulary, bool audit,
+    CettaDeterministicEquationPlanV1 **out, char *error, size_t error_size) {
+    if (!bytes || !abi || !out) return equation_error(error, error_size, "bad prepared equation restore arguments");
+    CettaPreparedReaderV1 r = {.data = bytes, .len = length};
+    CettaDeterministicEquationPlanV1 *p = NULL;
+    if (!cpr_literal(&r, "CEQ1", 4u) || !cpr_abi(&r, abi)) goto fail;
+    uint64_t rules = cpr_u64(&r), operators = cpr_u64(&r);
+    if (r.failed || !rules || rules > UINT32_MAX || rules > length / 24u ||
+        rules > SIZE_MAX / sizeof(*p->rules) || operators > length / 16u ||
+        operators > SIZE_MAX / sizeof(*p->operators)) goto fail;
+    p = calloc(1u, sizeof(*p));
+    if (!p) goto fail;
+    arena_init(&p->source_arena);
+    arena_set_runtime_kind(&p->source_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    if (vocabulary) p->vocabulary = *vocabulary;
+    p->rules = calloc((size_t)rules, sizeof(*p->rules));
+    p->operators = calloc(operators ? (size_t)operators : 1u, sizeof(*p->operators));
+    if (!p->rules || !p->operators) goto fail;
+    for (uint32_t i = 0; i < rules; ++i) {
+        PreparedVariablesV1 variables = {0};
+        DeterministicEquationRuleV1 *rule = &p->rules[i];
+        rule->name = prepared_read_name(&r, &p->source_arena);
+        rule->left = prepared_read_atom(&r, p, &variables, 0u);
+        rule->right = rule->left ? prepared_read_atom(&r, p, &variables, 0u) : NULL;
+        free(variables.items);
+        if (!rule->name || !rule->right || r.failed || !rule_left_view(rule->left, &rule->head, &rule->arity)) goto fail;
+        if (i && equation_rule_compare(&p->rules[i - 1u], rule) > 0) goto fail;
+        ++p->rule_count;
+    }
+    for (size_t i = 0; i < operators; ++i) {
+        p->operators[i].name = prepared_read_name(&r, &p->source_arena);
+        uint64_t arity = cpr_u64(&r);
+        if (!p->operators[i].name || arity > UINT32_MAX || r.failed) goto fail;
+        p->operators[i].arity = (size_t)arity; ++p->operator_count;
+    }
+    if (r.failed || r.at != r.len) goto fail;
+    if (audit) {
+        atomic_fetch_add(&prepared_audits, 1u);
+        CettaDescentRuleV1 *descent = calloc(p->rule_count, sizeof(*descent));
+        if (!descent) goto fail;
+        bool ok = true, resource_failure = false;
+        for (uint32_t i = 0; ok && i < p->rule_count; ++i) {
+            DeterministicEquationRuleV1 *rule = &p->rules[i];
+            ok = pattern_is_left_linear(rule->left) && right_variables_bound(rule->left, rule->right);
+            for (uint32_t j = 0; ok && j < i; ++j) ok = !patterns_overlap(p->rules[j].left, rule->left);
+            descent[i] = (CettaDescentRuleV1){rule->name, rule->left, rule->right};
+        }
+        if (ok) ok = cetta_deterministic_equation_descends_v1(descent, p->rule_count,
+            &p->vocabulary, &resource_failure, error, error_size);
+        free(descent);
+        if (!ok) goto fail;
+    }
+    atomic_fetch_add(&prepared_restores, 1u);
+    *out = p; return true;
+fail:
+    cetta_deterministic_equation_plan_v1_free(p);
+    return equation_error(error, error_size, "invalid prepared equation image or primitive ABI");
 }

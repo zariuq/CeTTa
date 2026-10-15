@@ -976,6 +976,9 @@ static bool cr_eval_premises(CrContextV1 *context, uint32_t recursive_fuel,
     case CETTA_LD_PREMISE_FOR_ALL_V1:
         /* This is exactly the current engineBasePremises behavior. */
         return true;
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        return cr_fail(context, CETTA_LD_CR_V1_UNSUPPORTED_PROFILE,
+                       "scoped-step premises need a licensed scoped interpreter");
     }
     return cr_fail(context, CETTA_LD_CR_V1_INTERNAL_FAILURE,
                    "unknown contextual premise kind");
@@ -1083,6 +1086,8 @@ static bool cr_premise_scope_profile(CrContextV1 *context, CrBindingsV1 *capture
         return true;
     case CETTA_LD_PREMISE_FOR_ALL_V1:
         return cr_premise_scope_profile(context, captures, premise->as.for_all.body);
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        return false;
     }
     return false;
 }
@@ -1107,6 +1112,8 @@ static bool cr_premise_supported(const CettaLdPremiseV1 *premise) {
         return true;
     case CETTA_LD_PREMISE_FOR_ALL_V1:
         return cr_premise_supported(premise->as.for_all.body);
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        return false;
     }
     return false;
 }
@@ -1134,9 +1141,17 @@ bool cetta_ld_cr_v1_compile(CettaLdCrV1Program *out,
                            "%s", "missing contextual runner argument");
         return false;
     }
+    for (uint32_t i = 0u; i < language->term_len; ++i) {
+        if (language->terms[i].algebra.present) {
+            if (status) *status = CETTA_LD_CR_V1_UNSUPPORTED_PROFILE;
+            if (error_buf && error_buf_size) snprintf(error_buf, error_buf_size,
+                "collection algebra requires an established contextual interpretation");
+            return false;
+        }
+    }
     for (rule_index = 0u; rule_index < language->rewrite_len; rule_index++) {
         const CettaLdRelationRuleV1 *rule = &language->rewrites[rule_index];
-        if (!cr_pattern_supported(&rule->left) ||
+        if (rule->bindings.present || !cr_pattern_supported(&rule->left) ||
             !cr_pattern_supported(&rule->right)) {
             if (status)
                 *status = CETTA_LD_CR_V1_UNSUPPORTED_PROFILE;
