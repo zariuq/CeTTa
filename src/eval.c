@@ -26944,6 +26944,14 @@ static Atom *prime_need_reify_mode(
             frame->syntax_child_pending = false;
         }
         if (!frame->entered) {
+            /* Structural summaries propagate through contexts and compounds.
+             * Ordinary pattern subgraphs contain no private carrier to
+             * resolve; keep them without a traversal or reconstruction. */
+            if (match_value && !atom_has_registry_refs(frame->source)) {
+                *frame->destination = frame->source;
+                len--;
+                continue;
+            }
             /* Return forwards an already produced value without exporting
              * its live child cells. Written quotation remains source syntax;
              * explicit suspension values retain their original identity. */
