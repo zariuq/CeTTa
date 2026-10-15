@@ -41,6 +41,8 @@ Optional:
 - SWI-Prolog: when `pkg-config` finds `swipl`, the build links the Prolog
   interoperation library automatically (`ENABLE_LIB_PROLOG=auto`)
 - libcurl: `make ENABLE_HTTP=1` enables the HTTP operations
+- Native Sign in with ChatGPT: `ENABLE_HTTP=1 ENABLE_SIWC=1` with cJOSE,
+  Jansson and OpenSSL; see [native sign-in](docs/siwc/README.md)
 
 For the optional bridge builds:
 
@@ -101,6 +103,7 @@ CeTTa checkout or a different source branch.
 | Interface | Build selection | Guide |
 | --- | --- | --- |
 | Native HTTP and asynchronous I/O | `ENABLE_HTTP=1` (libcurl) | [I/O boundary](docs/io/README.md) |
+| Native Sign in with ChatGPT | `ENABLE_HTTP=1 ENABLE_SIWC=1` (cJOSE/Jansson/OpenSSL) | [Sign-in, sessions and qualification](docs/siwc/README.md) |
 | Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
 | Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |

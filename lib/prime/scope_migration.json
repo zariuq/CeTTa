@@ -410,6 +410,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "siwc.metta",
+      "output": "siwc.metta",
+      "source_sha256": "7476b18d45c471aa69d8c6d2eff3fdd770069923765840c4b5a7a9485013ebb1",
+      "output_sha256": "a93bf0c72c7b7ce3bca6fd148093eb896c8b7d057fa7bce4cbdbdbdf8bc5f6a2",
+      "edits": 1,
+      "code_diagnostics": 0
+    },
+    {
       "source": "space_service.metta",
       "output": "space_service.metta",
       "source_sha256": "bed80dd7b925983c3b9a7e6724e20e8d5f9b8c8ca7ac89ee76668a3b67500486",

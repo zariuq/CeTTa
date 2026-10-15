@@ -146,6 +146,7 @@ enum {
     CETTA_LIBRARY_MATH = 1u << 18,
     CETTA_LIBRARY_MAILBOX = 1u << 19,
     CETTA_LIBRARY_SQLITE = 1u << 20,
+    CETTA_LIBRARY_SIWC = 1u << 21,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -183,6 +184,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
     {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
+    {"siwc", CETTA_LIBRARY_SIWC, NULL},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif

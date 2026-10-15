@@ -119,6 +119,8 @@ ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_HTTP ?= 0
+ENABLE_SIWC ?= 0
+SIWC_TEST ?= 0
 ENABLE_JSON_GSLT ?= 1
 CETTA_EMCC ?= emcc
 CETTA_BROWSER ?= google-chrome
@@ -461,6 +463,28 @@ HTTP_CFLAGS :=
 HTTP_LDFLAGS :=
 HTTP_VERSION :=
 HTTP_CONFIG_ID := disabled
+SIWC_CFLAGS :=
+SIWC_LDFLAGS :=
+SIWC_CONFIG_ID := disabled
+SIWC_SRC := src/siwc_stub.c
+ifneq ($(filter $(ENABLE_SIWC),0 1),$(ENABLE_SIWC))
+$(error ENABLE_SIWC must be 0 or 1)
+endif
+ifneq ($(filter $(SIWC_TEST),0 1),$(SIWC_TEST))
+$(error SIWC_TEST must be 0 or 1)
+endif
+ifeq ($(ENABLE_SIWC),1)
+ifneq ($(ENABLE_HTTP),1)
+$(error ENABLE_SIWC=1 requires ENABLE_HTTP=1)
+endif
+ifneq ($(shell pkg-config --atleast-version=0.8.1 cjose 2>/dev/null && printf 1),1)
+$(error ENABLE_SIWC=1 requires cjose >= 0.8.1 and its Jansson/OpenSSL development dependencies)
+endif
+SIWC_CFLAGS := $(shell pkg-config --cflags cjose) $(if $(filter 1,$(SIWC_TEST)),-DCETTA_SIWC_TEST,)
+SIWC_LDFLAGS := $(shell pkg-config --libs --static cjose)
+SIWC_CONFIG_ID := $(strip $(shell { printf '%s\n' "$(SIWC_CFLAGS)" "$(SIWC_LDFLAGS)"; pkg-config --modversion cjose; } | sha256sum | cut -c1-16))
+SIWC_SRC := src/siwc.c src/siwc_crypto.c src/siwc_store.c
+endif
 ifeq ($(ENABLE_HTTP),1)
 HTTP_EMSCRIPTEN_CC := $(if $(findstring emcc,$(notdir $(firstword $(CC)))),1,0)
 ifeq ($(HTTP_EMSCRIPTEN_CC),1)
@@ -568,6 +592,9 @@ endif
 ifeq ($(HTTP_ENABLED),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).http-config-$(HTTP_CONFIG_ID)
 endif
+ifeq ($(ENABLE_SIWC),1)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).siwc-config-$(SIWC_CONFIG_ID)
+endif
 ifeq ($(ENABLE_JSON_GSLT),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).json-gslt
 endif
@@ -654,10 +681,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -DCETTA_MANAGED_SYMBOLS=$(ENABLE_MANAGED_SYMBOLS) -DCETTA_SYMBOL_READ_COVERAGE=$(ENABLE_SYMBOL_READ_COVERAGE) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(SIWC_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -DCETTA_MANAGED_SYMBOLS=$(ENABLE_MANAGED_SYMBOLS) -DCETTA_SYMBOL_READ_COVERAGE=$(ENABLE_SYMBOL_READ_COVERAGE) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(DURABLE_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(SIWC_LDFLAGS) $(DURABLE_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -747,6 +774,7 @@ SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c src/library_cwp.c src/library_proc.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
 SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
+SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
@@ -6671,6 +6699,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_SIWC %s\n' "$(ENABLE_SIWC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
@@ -6707,6 +6736,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_SIWC %s\n' "$(ENABLE_SIWC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_DURABLE %s\n' "$(ENABLE_DURABLE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
@@ -6751,7 +6781,7 @@ define compile_c_object
 endef
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(call compile_c_object,-Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB)
+	$(call compile_c_object,-Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(SIWC_CFLAGS) $(DURABLE_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB)
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -44664,6 +44694,16 @@ else
 test-io-library:
 	@echo "test-io-library requires the native HTTP provider" >&2
 	@exit 1
+endif
+
+ifeq ($(ENABLE_SIWC),1)
+SIWC_TEST_DRIVER = runtime/test-siwc-$(SIWC_CONFIG_ID)
+$(SIWC_TEST_DRIVER): tests/siwc_driver.c src/siwc.c src/siwc.h src/siwc_crypto.c src/siwc_crypto.h src/siwc_store.c src/siwc_store.h
+	@mkdir -p $(dir $@)
+	$(CC) -O1 -g -Wall -Wextra -Werror -std=c11 -pthread -Isrc $(HTTP_CFLAGS) $(SIWC_CFLAGS) -DCETTA_SIWC_TEST tests/siwc_driver.c src/siwc.c src/siwc_crypto.c src/siwc_store.c $(SIWC_LDFLAGS) $(HTTP_LDFLAGS) -o $@
+.PHONY: test-siwc
+test-siwc: $(SIWC_TEST_DRIVER)
+	SIWC_DRIVER=$(abspath $(SIWC_TEST_DRIVER)) python3 -m unittest discover -s tests -p test_siwc.py -v
 endif
 
 .PHONY: test-speculative-eval
