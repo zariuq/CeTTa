@@ -13,16 +13,141 @@ Trial base: cetta-ours 609f322a plus Prime 3f84da10.
    Construct a closure before placing it in a sequence; explicitly evaluate
    code when the test intends to activate it. Preserve the original capture
    expectations and add controls for unactivated returned code. This changes
-   test clients, not the evaluator. All 168 route comparisons pass.
+   test clients, not the evaluator. The final combined route suite covers 192 comparisons.
 
 3. I/O capability conformance
    HTTP remains required; its conformance test also permits other installed
    providers. Ordered results and one-time completion checks are unchanged.
    This changes the test, not runtime capability selection.
 
-Remaining investigation
------------------------
-The combined Prime fixture corpus has 12 failures, including stored-variable
-matching, returned admission records, search clients and two timeouts. Parent
-baselines and practical agent qualification are being recorded separately.
-No agent has been switched to the trial engine.
+4. Sparse Need lineage (7b3eeb77)
+   Add immutable ancestor skip links to sparse frames, rebuilt on copying.
+   Avoid walking the whole lineage for every ancestral cell lookup. No
+   default indexing policy, evaluation budget or admission rule changes.
+
+5. Public computed arguments (3a0a8f9c)
+   Evaluate public I/O requests and SQLite statement/parameter expressions
+   before crossing the native Atom boundary. Native workers still consume
+   inert values. Regenerate the dialect spellings from shared library source.
+
+6. Earned values and complete empty frontiers (4dda3627, 23eb9835)
+   Forward matched expressions as ready data and persist their structure;
+   preserve genuinely pending child demands rather than replaying the outer
+   expression. A completed empty frontier is final, including private closure
+   carriers. Remove default bind retries that repeated effects and predicates.
+   The explicit fault-injection retry remains solely in mutation builds.
+
+7. Caller world at let matching (2ce7355b)
+   Seed lexical value cells in the caller and merge the selected value world
+   before allocating them. Stateless fold/collapse returns must not create a
+   sibling heap that later makes valid caller demands incompatible.
+
+8. Grown-slot presentation (92776437)
+   Preserve names for manufactured slots beyond the immutable source-ID
+   inventory. Expand presentation capacity without renumbering live slots;
+   copy, transport, promote and compare those entries. Test branch capture,
+   rollback, conflicting keys and source-arena retirement.
+
+9. Captured computed pattern values (20d0b008)
+   Match implicit carriers through the selected branch's ready data. Preserve
+   explicit suspensions, use no cross-snapshot source-inspection memo, and
+   execute no syntax while matching. Cover one-time effects and alternatives.
+
+10. Explicit promise persistence (0a3e28cb)
+    A ready implicit value can export its structure. An explicit promise must
+    retain its storage identity even after forcing; otherwise its descriptor
+    cannot be rebuilt and storage falsely reports capacity exhaustion. The
+    selected world's cache and effects remain shared after registry storage.
+
+11. Client observations (5c0d8d3f, ae00486d, 3b4fd497, 00a46187)
+    Explicitly evaluate an equation when reflection intends to install it.
+    Observe recursive ATP insertion before passing list data to cons-atom.
+    Compute held values before testing their storage through add-atom.
+    Keep the original proof, list and holding expectations for these clients.
+
+12. Qualification (ea3d4d62, 2fe13037)
+    Use substantial work and an explicit quantum for the parallel-overlap
+    witness, so ordinary busy scheduling cannot erase its observation.
+    Preserve separate small-slice and cut tests. Add native mailbox crash,
+    service restart, identity replay and acknowledgement qualification.
+
+13. Worker peer storage (717bf24c)
+    Replace the worker endpoint's fixed peer array with expandable storage.
+    Reap closed peers before accepting more. Keep UID checks, framing errors
+    and slow-reader handling. Forty simultaneous valid clients now survive
+    and can each complete a request; the previous implementation reset them.
+
+14. Prepared memo restoration (26d0e245)
+    Accept valid captured memo tables above half occupancy. Normal insertion
+    grows at 70%, so restoration cannot require a stricter 50% condition.
+    Retain the empty bucket needed for terminating probes. The existing
+    10,000-step example now completes with its original expected result.
+
+15. Pattern traversal (c8e6806a)
+    Use the existing compositional carrier summary to skip carrier-free
+    subgraphs when presenting values for matching. Do not evaluate syntax.
+
+16. Caller variable representatives (3b01a6c9)
+    Prime unification matches fresh pattern variables against the caller's
+    value, as let already does. Target-first matching could rename a returned
+    code body without its sealed binder. Preserve HE/PeTTa operand ordering.
+    Nested typed lambdas and recursive hypotheses retain their binders; the
+    previously failing ancestor example now satisfies its original output.
+
+17. Private presentation capacity (b114ba98)
+    Grow manufactured-frame presentation geometrically and reuse it while
+    exclusively owned. Shared snapshots still copy before modification.
+    Avoid copying millions of slots on each new binding. The Hopper workload
+    returns to approximately its parent runtime and retains its exact output.
+
+Qualification snapshot (2026-10-15)
+-----------------------------------
+All 276 combined Prime corpus fixtures pass, alongside 192 route comparisons,
+eight scope-spectrum checks, three quote-profile checks, 436 weight checks,
+49 cost checks, 143 resource checks and 205 parallel checks. The binding suite
+passes 421 checks, snapshot and ownership controls, and its mutation tests.
+
+ASan/UBSan checks pass for binding ownership, native I/O providers, mailbox
+crash/replay, parser canaries, noisy Git clone/build output, and the repaired
+Prime fixtures. Telegram operator commands pass with their original UI
+response deadlines, including stop/start and addressed group commands. The
+ASan load-generation allowance is longer than the ordinary build's allowance;
+load volume and individual UI response assertions are unchanged. TSan passes
+the parallel/resource suite and worker endpoint tests, including 40 peers.
+
+All 92 recorded task projections agree with the stable agent engine. A further
+414 recorded turns (1,087 commands) agree through native parsing, task context,
+sequential dispatch and replay caching with deterministic shadow effects.
+Historical effects are not re-executed; this is not an LLM quality evaluation.
+Both agent boot probes pass without a SWI dependency. All four native ECAN
+suites, including snapshot recovery in a fresh process, pass in its own repo.
+
+Three alternating recorded-turn pairs retain identical output. Merged wall
+time increases are 12.3%, 17.2% and 5.8% (median paired increase 12.3%); peak
+memory is approximately 716-718 MiB for this heavy batch. Empty-program import
+baselines take approximately 10 ms and produce no turn witnesses. ECAN at
+5,500 items remains near its earlier timings (about 6 ms for 100 stimuli,
+165 ms for decay and 3 ms per top-ten selection). These are synthetic native
+measurements, not measurements of complete LLM turns.
+
+The full 778-test framework run retains the stable baseline's 19 failures and
+three errors. One additional terminal-qualification race is fixed in the test:
+wait for the shell's final prompt redraw before asserting exact observation.
+Its focused qualification and mutation control pass. The broad suite is not
+reported green. Its inherited failures include SWI-only fixtures and old host
+path probes; native memory, hierarchy, mail, jobs and CeTTa worker checks are
+qualified separately with their actual service binaries.
+
+Final two-hour soaks are in progress for both independent top-level turns and
+one recursive query. The earlier recursive-query comparison retained about
+1.6 GiB on both engines; bounded top-level arenas do not establish bounded
+memory for an indefinitely recursive agent loop.
+The 10,000-step prepared example passes but still retains substantial memory;
+this does not establish optimal prepared-machine complexity.
+
+A framework startup race discovered during qualification is fixed separately:
+concurrent initializers atomically seed defaults and preserve custom files
+(godelclaw trial commit 045f84f). Terminal fixture stability is c6161aa.
+No runtime admission or model budget is added.
+
+No agent has been switched to the trial engine. No trial commits are pushed.
