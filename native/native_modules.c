@@ -10,9 +10,11 @@
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
+#include "native/hol_light/hol_cetta_module.h"
 
 #define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
 #define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
+#define CETTA_NATIVE_IMPORT_HOL (1u << 28)
 
 static Atom *native_module_error(Arena *a, Atom *source, const char *message) {
     return atom_error(a, source, atom_string(a, message));
@@ -1202,10 +1204,20 @@ static bool langdef_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+static bool hol_module_call(CettaLibraryContext *ctx, Space *space,
+                            Arena *arena, Atom *head, Atom **args,
+                            uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_hol_dispatch(ctx, space, arena, head, args, nargs);
+    if (!result) return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL},
     {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
+    {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call},
 #if CETTA_BUILD_WITH_DURABLE
     {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},
 #endif

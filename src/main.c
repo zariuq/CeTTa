@@ -28,6 +28,7 @@
 #include "he_type_policy.h"
 #include "library.h"
 #include "native_handle.h"
+#include "native/hol_light/hol_cli.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -1447,6 +1448,8 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
         return false;
     if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_PRIME)
         endpoint->profile = cetta_profile_prime_default();
+    if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_HOL_LIGHT)
+        endpoint->profile = cetta_profile_from_name_for_language(CETTA_LANGUAGE_HOL_LIGHT, "standard");
     return true;
 }
 
@@ -1790,13 +1793,15 @@ done:
 }
 
 static void print_usage(FILE *out) {
-    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>\n", out);
+    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang he@0.0.1 [--profile extended] <file.metta> # default CeTTa HE contract\n", out);
     fputs("       cetta --lang he@0.2.10 <file.metta> # Rust-HE compatibility profile\n", out);
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
+    fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
+    fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
     fputs("       cetta --lang petta@1.0.6 <file.metta> # default PeTTa version\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
@@ -3428,6 +3433,24 @@ static int cetta_main(int argc, char **argv) {
                                     syntax, output_syntax);
         free(inline_buf);
         return translate_rc;
+    }
+
+    if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {
+        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
+            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
+            gslt_realization_requested || langdef_proof_execution_requested ||
+            mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
+            fputs("error: hol-light reads a HOLR proof file; evaluator-specific options do not apply\n", stderr);
+            free(inline_buf);
+            return 2;
+        }
+        HolAxiomPolicy policy = profile && profile->id == CETTA_PROFILE_HOL_OPEN ? HOL_AXIOMS_OPEN :
+            profile && profile->id == CETTA_PROFILE_HOL_SEALED ? HOL_AXIOMS_SEALED : HOL_AXIOMS_STANDARD;
+        uint64_t fuel = fuel_override_requested ? (fuel_override < 0 ? 0 : (uint64_t)fuel_override) : 0;
+        int hol_rc = cetta_hol_run_file(filename, policy, fuel, count_only, g_no_results, emit_runtime_stats);
+        free(inline_buf);
+        return hol_rc;
     }
 
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {

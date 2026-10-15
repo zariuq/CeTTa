@@ -19,7 +19,6 @@
 typedef struct ResultSet ResultSet;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
-#define CETTA_MAX_NATIVE_HANDLES 64
 
 typedef struct {
     char display_name[PATH_MAX];
@@ -215,8 +214,7 @@ typedef struct CettaLibraryContext {
         char resource_dir[PATH_MAX];
     } *retired_modules;
     uint32_t retired_module_len, retired_module_cap;
-    CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
-    uint32_t native_handle_len;
+    CettaNativeHandleRegistry *native_handle_registry;
     uint64_t native_handle_next_id;
     SymbolId *petta_translator_rules;
     uint32_t petta_translator_rule_len;
