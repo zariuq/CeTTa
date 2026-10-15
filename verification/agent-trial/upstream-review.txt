@@ -122,13 +122,13 @@ Historical effects are not re-executed; this is not an LLM quality evaluation.
 Both agent boot probes pass without a SWI dependency. All four native ECAN
 suites, including snapshot recovery in a fresh process, pass in its own repo.
 
-Three alternating recorded-turn pairs retain identical output. Merged wall
-time increases are 12.3%, 17.2% and 5.8% (median paired increase 12.3%); peak
-memory is approximately 716-718 MiB for this heavy batch. Empty-program import
-baselines take approximately 10 ms and produce no turn witnesses. ECAN at
-5,500 items remains near its earlier timings (about 6 ms for 100 stimuli,
-165 ms for decay and 3 ms per top-ten selection). These are synthetic native
-measurements, not measurements of complete LLM turns.
+The initial alternating timing comparison used shared SQLite on stable but
+vendored SQLite on the merged core build. Its 12.3% median difference cannot
+be attributed to the evaluator. The comparison and final soaks are being
+repeated with the actual agent build and the same shared SQLite library.
+ECAN at 5,500 items remains near its earlier timings (about 6 ms for 100
+stimuli, 165 ms for decay and 3 ms per top-ten selection). These are native
+synthetic measurements, not complete LLM turn measurements.
 
 The full 778-test framework run retains the stable baseline's 19 failures and
 three errors. One additional terminal-qualification race is fixed in the test:
