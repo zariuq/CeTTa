@@ -3686,6 +3686,16 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
     return &value->atom;
 }
 
+bool atom_native_handle_identifier_matches(const Atom *atom, const void *owner,
+                                           void (*retain)(void *),
+                                           void (*release)(void *)) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_INT ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
+        return false;
+    const NativeHandleIdentifier *value = (const NativeHandleIdentifier *)atom;
+    return value->owner == owner && value->retain == retain && value->release == release;
+}
+
 Atom *atom_int_copy(Arena *a, const Atom *source) {
     if (!a || !source || source->kind != ATOM_GROUNDED ||
         source->ground.gkind != GV_INT)
@@ -6074,15 +6084,15 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                         goto completed;
                 }
                 if (g_state_cell_pairs_len == g_state_cell_pairs_cap) {
-                    uint32_t cap = g_state_cell_pairs_cap
-                        ? g_state_cell_pairs_cap * 2u : 8u;
-                    if (cap < g_state_cell_pairs_cap ||
+                    uint64_t cap = g_state_cell_pairs_cap
+                        ? (uint64_t)g_state_cell_pairs_cap * 2u : 8u;
+                    if (cap > UINT32_MAX ||
                         cap > SIZE_MAX / sizeof(*g_state_cell_pairs))
                         cetta_oom(SIZE_MAX);
                     g_state_cell_pairs = cetta_realloc(
                         g_state_cell_pairs,
-                        sizeof(*g_state_cell_pairs) * cap);
-                    g_state_cell_pairs_cap = cap;
+                        sizeof(*g_state_cell_pairs) * (size_t)cap);
+                    g_state_cell_pairs_cap = (uint32_t)cap;
                 }
                 g_state_cell_pairs[g_state_cell_pairs_len++] =
                     (StateCellPair){ca, cb};
