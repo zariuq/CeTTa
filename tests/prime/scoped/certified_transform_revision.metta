@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Revision controls for a certified transformation whose evidence is the
 ; hosted zero-addition theorem. The native package is rechecked by the

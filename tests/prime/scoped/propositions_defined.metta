@@ -1,9 +1,9 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Propositions as definitions: falsum and negation are defined, and the
 ; introduction of double negation is a two-line proof, as in the Coq ladder.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
 !(hol:define &thy neg (-> prop prop) (= (neg $p) (imp $p falsum)))
 !(hol:known-proposition &thy neg)

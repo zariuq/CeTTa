@@ -253,6 +253,9 @@ typedef struct {
     /* Revision-pinned source layout used to activate a relational equation
      * without rediscovering its sides or copying its complete syntax. */
     PettaEquationActivationLayout activation_layout;
+    /* The right side has a variable the left side lacks: the body binds
+     * variables of its own. */
+    bool rhs_binds_variables;
     /* Stable only within the captured Space revision.  The executor treats
      * this as evidence provenance, never as a replacement for the equation
      * or its authoritative matcher. */
@@ -309,6 +312,8 @@ typedef struct {
     size_t len;
     PettaEquationCandidate *owned_items;
     PettaCandidateSnapshotStorage *storage;
+    /* Allocation capacity of owned_items; zero for a borrowed or pinned view. */
+    size_t owned_capacity;
 } PettaCandidateSnapshotLease;
 
 /* Index selections may complete a plan locally without altering the catalog. */
@@ -324,13 +329,20 @@ typedef struct PettaEquationProjection PettaEquationProjection;
  * when that retains less storage than sharing the retired generation. */
 PettaEquationProjection *petta_program_equation_projection_take(
     PettaCandidateSnapshotLease *catalog, PettaEquationSelectionEntry *entries,
-    size_t first, size_t len);
+    size_t entries_capacity, size_t first, size_t len);
 bool petta_program_equation_projection_retain(PettaEquationProjection *projection);
 void petta_program_equation_projection_release(PettaEquationProjection *projection);
 PettaEquationCandidate petta_program_equation_projection_get(
     const PettaEquationProjection *projection, size_t index);
 size_t petta_program_equation_projection_retained_bytes(
     const PettaEquationProjection *projection);
+/* Quiescent ownership observation; borrowed source terms/plans retain their
+ * declared enclosing program/Space lifetime. Linked projection back-pointers
+ * do not make sibling projections owned by a catalog. */
+void petta_program_equation_projection_storage_census(
+    const PettaEquationProjection *projection, CettaStorageCensus *census);
+void petta_program_candidate_snapshot_lease_storage_census(
+    const PettaCandidateSnapshotLease *lease, CettaStorageCensus *census);
 
 /*
  * Physical work performed while reconciling the declaration-ordered PeTTa
@@ -416,6 +428,13 @@ bool petta_program_is_equation(Atom *atom);
 /* True exactly when adding atom can change the program-owned equation or
  * declaration catalog.  Ordinary data remains solely a Space occurrence. */
 bool petta_program_atom_affects_metadata(Atom *atom);
+/* Whether the stored form `id` may affect the program's metadata: a
+ * three-part expression headed by a rule form or a type declaration's colon.
+ * It reads the id's record without decoding the form, so a loader can store
+ * a fact without building it; petta_program_atom_affects_metadata decides
+ * the rest. */
+bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
+                                               AtomId id);
 /* Observe one already-admitted Space addition.  Data outside the program
  * projection is accepted without copying; equations and declarations are
  * retained in the program-owned catalog. */
@@ -523,6 +542,8 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
     const AtomId *atoms, int atom_count);
 void petta_program_declaration_block_free(
     PettaDeclarationBlock *block);
+/* The plan of the block's index-th form: an equation's, and NULL for any
+ * other form, which is stored as it is. */
 const PettaPlanNode *petta_program_declaration_block_plan_at(
     const PettaDeclarationBlock *block, int index);
 
@@ -610,6 +631,11 @@ bool petta_program_candidate_snapshot_lease_clone(
  * realization; neither may refuse evaluation.
  */
 typedef struct PettaProgramRevisionView PettaProgramRevisionView;
+
+/* Count the retained view's own allocations once, including a detached
+ * revision. Source syntax remains borrowed from the enclosing universe. */
+void petta_program_revision_view_storage_census(
+    const PettaProgramRevisionView *view, CettaStorageCensus *census);
 
 typedef struct {
     const PettaProgramRevisionView *view;

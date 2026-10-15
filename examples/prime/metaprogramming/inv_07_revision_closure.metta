@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Revision-aware definitions.
 ;
@@ -9,7 +9,7 @@
 ; own equation is unchanged is a change; restoring the body restores reuse; an
 ; unrelated definition changes nothing.
 
-!(bind! &theory (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &theory (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &theory (: A prop))
 !(add-atom &theory (: B prop))
 

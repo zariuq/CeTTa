@@ -1,0 +1,26 @@
+; Rules found among facts when the program is compiled from a space.
+(row k1 v1)
+(= (lookup $k) (match &self (row $k $v) $v))
+(row k2 v2)
+(row k3 v3)
+(= (twice $x) ($x $x))
+(row k4 v4)
+; Look-alikes that are not rules: wrong arity, another head, a nested `=`.
+(= only-two)
+(= (fake $x) $x extra)
+(== (eqfake $x) $x)
+((= (nested $x) $x))
+(row k5 v5)
+!(lookup k3)
+!(twice (lookup k5))
+!(collapse (fake 1))
+!(collapse (eqfake 1))
+!(collapse (nested 1))
+; A rule added while the program runs is compiled at the next call.
+!(add-atom &self (= (late $x) (lookup $x)))
+!(late k1)
+; A rule whose body holds a space value.
+!(bind! &aux (new-space))
+!(add-atom &aux (row a1 b1))
+!(add-atom &self (= (aux-space) &aux))
+!(match (aux-space) (row a1 $v) $v)

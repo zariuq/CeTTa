@@ -76,8 +76,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "c0db99f7cbde429c01267b78c92cc48a255810ade22c7f8159029b11835fb2d2",
-      "output_sha256": "d6eed4e35915868f2d4a2ebe3863c9d651167a67a78ad874f31707e8ae937a00",
+      "source_sha256": "642fdd4d5eaa692204b497db24b296641c591aa0064e3ffcc3a90063b5145e4f",
+      "output_sha256": "070d2d8836661426c6baa1c09d44ecacad4428699350dc34a019a425312b0af8",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -148,8 +148,8 @@
     {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "82713c41d37f98c98025678fe98f9cbb27b39a705969259a8856fb49a04d7933",
-      "output_sha256": "6fb53a7972ad7a1eddbe770dce2bda35105c2013a0d658d46e887d92e70a1265",
+      "source_sha256": "daa0f2b701d7c579b2e140d23d3b6836cddf78cec295b2a1ee1d311fc0ef92f0",
+      "output_sha256": "46ded79d0bd41f8204547dc98be0ed248b43ec2275e19d64b2b6ef8bcd5fed2d",
       "edits": 48,
       "code_diagnostics": 0
     },
@@ -332,9 +332,9 @@
     {
       "source": "native_history.metta",
       "output": "native_history.metta",
-      "source_sha256": "4b848a7e0997191b94148e3c7763f23b9813c3c4ebeb1a9fc5d3882add3fa5a9",
-      "output_sha256": "f1f9c3d357f242f2bd3ab540c0ff111f4789242250c2bf23d195ace095239a13",
-      "edits": 12,
+      "source_sha256": "bdc8560631ef27ba6200828f87517a8d1d103dc1a421cdb8155f5a67190fce5c",
+      "output_sha256": "005548bf4674f24b977e610122939ea8651b42920b705dbbd95da62dcbc4311a",
+      "edits": 18,
       "code_diagnostics": 0
     },
     {
@@ -452,8 +452,8 @@
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "0823402692e63750e6f3fba1c94128d10a5098e95fea57f8c94c8ada06dd10ff",
-      "output_sha256": "28100d6384f13df7cf6027335f35294de89848b72a30ebc7aeca679682f23765",
+      "source_sha256": "17a33612e3294b9e52b586f26bf475305e812ece3782ed419390edb5257eb149",
+      "output_sha256": "3b161c1ebd464618f75f2418f8215924b669b2b37bab46d650aa284c73f54ece",
       "edits": 16,
       "code_diagnostics": 0
     },

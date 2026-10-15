@@ -364,6 +364,30 @@ bool cetta_native_handle_use_is_current(const CettaNativeHandleUse *use) {
     return current;
 }
 
+bool cetta_native_handle_use_exchange(CettaLibraryContext *ctx,
+        const char *kind, Atom *handle, CettaNativeHandleUse *use,
+        void *replacement, void **previous) {
+    uint64_t id = 0u;
+    if (!replacement || !previous || (use && previous == &use->resource) ||
+        !cetta_native_handle_arg(handle,kind,&id)) return false;
+    pthread_mutex_lock(&native_handle_mutex);
+    CettaNativeHandleSlot *slot = native_handle_slot(ctx,kind,id);
+    if (!native_handle_use_owned(use) ||
+        use->mode != CETTA_NATIVE_HANDLE_USE_EXCLUSIVE || !use->owner->slot ||
+        native_handle_owner(slot) != use->owner ||
+        !atom_native_handle_identifier_has_owner(handle->expr.elems[2],use->owner) ||
+        use->owner->use_count != 1u || replacement == use->resource) {
+        pthread_mutex_unlock(&native_handle_mutex);
+        return false;
+    }
+    void *old = use->resource;
+    use->owner->resource = replacement;
+    use->resource = replacement;
+    *previous = old;
+    pthread_mutex_unlock(&native_handle_mutex);
+    return true;
+}
+
 bool cetta_native_handle_use_move(CettaNativeHandleUse *destination,
         CettaNativeHandleUse *source) {
     pthread_mutex_lock(&native_handle_mutex);

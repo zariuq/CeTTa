@@ -1,9 +1,9 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Binary trees with two recursive positions: the derived induction principle
 ; carries two hypotheses in the node case, and mirroring is an involution.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
 !(hol:inductive &thy tree (u 0) (: leaf tree) (: node (-> tree elem tree tree)))
 !(pf:equality &thy tree refl@tree subst@tree)

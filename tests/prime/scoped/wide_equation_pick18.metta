@@ -1,8 +1,8 @@
 ; An equation with 18 pattern variables: its telescope is held at its own
 ; size, so the definition is admitted and computes, and conversion with
 ; anything but its reduct is refuted.
-(hol:profile core)
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+(hol:profile base)
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:define &s pick18 (-> nat nat nat nat nat nat nat nat nat nat nat nat nat nat nat nat nat nat nat)
    (= (pick18 $a1 $a2 $a3 $a4 $a5 $a6 $a7 $a8 $a9 $a10 $a11 $a12 $a13 $a14 $a15 $a16 $a17 $a18) $a18))

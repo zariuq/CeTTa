@@ -1,11 +1,11 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; FORK-HOST: one higher-order statement, or its first-order instances?
 ; A polymorphic universal is declared once and instantiated at sets,
 ; propositions and functions; its first-order leaves can be checked one by
 ; one, but only the higher-order form is the single theorem.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
 !(add-atom &s (: set (u 0)))
 !(add-atom &s (: prop (u 0)))
 !(add-atom &s (: In (-> set (-> set prop))))
@@ -19,7 +19,7 @@
 ; First-order reading: the universal checked leaf by leaf at enumerated witnesses.
 (= (witnesses) (superpose (Empty (Power Empty) (UnivOf Empty))))
 !(let $w (witnesses)
-   (hol:proves (pf:all-elim (pf:known universeIn) $w) (In $w (UnivOf $w))))
+   (set:proves (pf:all-elim (pf:known universeIn) $w) (In $w (UnivOf $w))))
 ; Higher-order statement: the same claim once, for every witness.
-!(hol:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (pf:var 0)))
+!(set:proves (pf:all-intro (pf:all-elim (pf:known universeIn) (pf:var 0)))
              (all set (lam x (In x (UnivOf x)))))

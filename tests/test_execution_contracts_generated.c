@@ -321,6 +321,7 @@ static void test_generated_fold_control_program(void) {
     bool saw_bind = false;
     bool saw_branch = false;
     bool saw_eval = false;
+    bool saw_bind_sequence = false;
 #define COUNT_FOLD_CONTROL(field, arity, control) do { \
     rows++; \
     if (strcmp(#field, "let") == 0) { \
@@ -338,11 +339,16 @@ static void test_generated_fold_control_program(void) {
         assert((control) == CETTA_GSLT_FOLD_CONTROL_EVALUATE); \
         saw_eval = true; \
     } \
+    if (strcmp(#field, "let_star") == 0) { \
+        assert((arity) == 2u); \
+        assert((control) == CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE); \
+        saw_bind_sequence = true; \
+    } \
 } while (0);
     CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(COUNT_FOLD_CONTROL)
 #undef COUNT_FOLD_CONTROL
-    assert(rows == 4u);
-    assert(saw_bind && saw_branch && saw_eval);
+    assert(rows == 5u);
+    assert(saw_bind && saw_branch && saw_eval && saw_bind_sequence);
 }
 
 static void test_generated_sequence_representations(void) {

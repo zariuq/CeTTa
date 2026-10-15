@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Conversion compares terms at their types. At a function type both sides are
 ; applied to a fresh variable, at a pair type their projections are compared,

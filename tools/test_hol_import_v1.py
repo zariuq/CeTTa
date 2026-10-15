@@ -1,4 +1,5 @@
-"""Import Prime's native higher-order logic in Prime, HE and PeTTa.
+"""Import Prime's native higher-order logic and its set theories in Prime, HE
+and PeTTa.
 
 Each dialect runs its own program against the same checker: Prime with the
 importing space as the theory space, HE and PeTTa (extended profiles) with
@@ -35,12 +36,12 @@ def main() -> None:
                                 capture_output=True, text=True, timeout=args.timeout)
         output = result.stdout + result.stderr
         if result.returncode == 0 and output.rstrip("\n") == expected.rstrip("\n"):
-            print(f"PASS: import hol in {dialect}")
+            print(f"PASS: import hol and set in {dialect}")
         else:
             failures += 1
-            print(f"FAIL: import hol in {dialect} (exit {result.returncode})")
+            print(f"FAIL: import hol and set in {dialect} (exit {result.returncode})")
             print(output[-2000:])
-    print(f"hol import: {len(RUNS) - failures} passed, {failures} failed")
+    print(f"hol and set import: {len(RUNS) - failures} passed, {failures} failed")
     if failures:
         raise SystemExit(1)
 

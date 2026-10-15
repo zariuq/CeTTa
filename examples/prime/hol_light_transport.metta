@@ -16,12 +16,12 @@
 ; Two target theory spaces: the logic alone, with a declared base type for
 ; ind, and the HOTG theory, where ind is read as set.
 !(bind! &logic (let $s (new-space)
-  (let $p (add-atom $s (hol:profile core))
+  (let $p (add-atom $s (hol:profile base))
     (let $r (add-atom $s (hol:rule hol-equality))
       (let $t (add-atom $s (: hl-ind (u 0))) $s)))))
 !(bind! &sets (let $s (new-space)
-  (let $p (add-atom $s (hol:profile megalodon-hotg))
-    (let $r (add-atom $s (hol:rule hol-equality)) $s))))
+  (let $p (add-atom $s (set:profile megalodon-hotg))
+    (let $r (add-atom $s (set:rule hol-equality)) $s))))
 
 (= (example:ind) (Tyapp "ind" HOL:Nil))
 (= (example:bool) (Tyapp "bool" HOL:Nil))
@@ -81,7 +81,7 @@
 !(LogicDefinitions (collapse (match &logic (hol-light:transport-defined $d) $d)))
 
 ; Into the HOTG theory: the same derivations, now statements about sets.
-!(let $name (example:sets "congruence") (SetCongruence $name (hol:known-proposition &sets $name)))
+!(let $name (example:sets "congruence") (SetCongruence $name (set:known-proposition &sets $name)))
 !(let $name (example:sets "antisymmetry") (SetAntisymmetry $name))
 !(let $name (example:sets "truth") (SetTruth $name))
 !(SetCommitments (hol-light:transport-commitments &sets))
@@ -101,7 +101,7 @@
   (let (HOL:State $o $c $a $cache $r) &derivations
     (HOL:State $o $c $a (example:forge-entries $cache) $r)))
 !(bind! &forged (let $s (new-space)
-  (let $p (add-atom $s (hol:profile core))
+  (let $p (add-atom $s (hol:profile base))
     (let $r (add-atom $s (hol:rule hol-equality))
       (let $t (add-atom $s (: hl-ind (u 0))) $s)))))
 !(let $state (example:forged-state)
@@ -119,4 +119,4 @@
 ; Negative control: a theorem checked in the logic alone is not cited in the
 ; HOTG space; a bridge must check it there.
 !(let $name (example:logic "truth")
-   (try (hol:proves &sets (pf:known $name) hl:T)))
+   (try (set:proves &sets (pf:known $name) hl:T)))

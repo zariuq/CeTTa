@@ -558,7 +558,7 @@ class Projection:
             tuple(self.host_article(article) for article in articles))))
 
     def render(self) -> str:
-        return "(hol:profile core)\n" + "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
+        return "(hol:profile base)\n" + "\n".join("!" + sx.render(command) for command in self.commands) + "\n"
 
 
 def dependent_use(instance: Instance) -> str:

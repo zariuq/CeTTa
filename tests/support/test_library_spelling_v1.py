@@ -62,6 +62,21 @@ class HeldBodySpelling(unittest.TestCase):
         self.assertEqual(spell("!(import! &self ./local.metta)"), "!(import! &self ./local.metta)")
         self.assertEqual(spell("!(import! &self math)", "prime"), "!(import! &self math)")
 
+    def test_raw_syntax_reification_preserves_the_guest_program(self):
+        source = "(langdef:quote-syntax (lam z (metta body %Undefined% &self)))"
+        for dialect in ("petta", "prime"):
+            with self.subTest(dialect=dialect):
+                self.assertEqual(spell(source, dialect), source)
+
+    def test_petta_raw_syntax_body_has_a_running_result_contract(self):
+        source = "(: langdef:quote-syntax (-> Atom Atom))"
+        petta = read_forms(spelling(source, "petta"))
+        self.assertEqual(petta[0], read_forms(
+            "(: langdef:quote-syntax (-> Atom %Undefined%))")[0])
+        self.assertEqual(petta[1], read_forms(
+            "(= (langdef:quote-syntax $syntax) (quote (quote $syntax)))")[0])
+        self.assertEqual(declarations(source, "prime"), [source])
+
     def test_current_space_interpretation(self):
         self.assertEqual(spell("(metta $body %Undefined% &self)"), "(eval $body)")
         self.assertEqual(spell("(metta $body %Undefined% (context-space))"),

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A theorem keeps the logical capabilities and named propositions its proof
 ; actually uses. Withdrawing one invalidates direct and transitive reuse,

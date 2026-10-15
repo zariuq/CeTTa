@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Why it matters: generated code (from a model, a search or a user) can be
 ; admitted only after the kernel checks it against a declared interface, so

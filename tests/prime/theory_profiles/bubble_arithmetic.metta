@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A bubble whose definitional equality includes the recursion equations of
 ; addition: a space where `add` is admitted with its equations.  There a
@@ -9,7 +9,7 @@
 ; space identifies n with n + 1, and the recursion equations alone do not
 ; make 0 + n compute at a variable.
 
-!(bind! &arith (let $s (new-space) (let $_ (add-atom $s (hol:profile core)) $s)))
+!(bind! &arith (let $s (new-space) (let $_ (add-atom $s (hol:profile base)) $s)))
 !(hol:inductive &arith nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:define &arith add (-> nat nat nat)
    (= (add $n zero) $n)
@@ -26,7 +26,7 @@
 ; 3. The bubble's equation as an exported proof.
 !(type:check &arith (lam k (refl k)) (-> (k : nat) (id nat k (add k zero))))
 
-!(bind! &plain (let $s (new-space) (let $_ (add-atom $s (hol:profile core)) $s)))
+!(bind! &plain (let $s (new-space) (let $_ (add-atom $s (hol:profile base)) $s)))
 !(hol:inductive &plain nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(add-atom &plain (: add (-> nat nat nat)))
 !(add-atom &plain (: add-zero (-> (k : nat) (id nat k (add k zero)))))

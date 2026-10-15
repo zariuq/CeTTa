@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Retained proof of zero-addition. The theorem is hosted by the kernel
 ; proof package. The same predicate is the family the iterator consumes.

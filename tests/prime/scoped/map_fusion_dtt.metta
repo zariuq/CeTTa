@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Map fusion as a computing dependent proof.  The list type is declared by
 ; its constructors; the declaration derives the induction principle and the
@@ -7,7 +7,7 @@
 ; by conversion on constructors and the step case is one application of the
 ; identity eliminator to the hypothesis.  The proof is a term of the
 ; declared type, checked by the type: language against the theory space.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: elem (u 0)))
 !(add-atom &thy (: f (-> elem elem)))
 !(add-atom &thy (: g (-> elem elem)))
@@ -62,7 +62,7 @@
    (-> (xs : list) (id list (mapf f (mapf g xs)) (mapf (comp f g) xs))))
 ; the computation rules are facts of the theory space: with the same
 ; constants declared but no equations, the base case no longer converts
-!(bind! &bare (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &bare (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &bare (: elem (u 0)))
 !(add-atom &bare (: f (-> elem elem)))
 !(add-atom &bare (: g (-> elem elem)))

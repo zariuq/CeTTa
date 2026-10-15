@@ -10,8 +10,8 @@
 ; are cofinal; the kernel itself assumes neither.
 
 !(bind! &common (new-space))
-!(bind! &hotg (let $s (new-space) (let $_ (add-atom $s (hol:profile megalodon-hotg)) $s)))
-!(bind! &hol (let $s (new-space) (let $_ (add-atom $s (hol:profile core)) $s)))
+!(bind! &hotg (let $s (new-space) (let $_ (add-atom $s (set:profile megalodon-hotg)) $s)))
+!(bind! &hol (let $s (new-space) (let $_ (add-atom $s (hol:profile base)) $s)))
 
 ; 1. The kernel's universes, under three profiles.
 !(type:check &common (u 0) (u 1))
@@ -22,6 +22,6 @@
 !(type:check &common (u 0) (u 0))
 
 ; 2. The set face: a universe around a set.
-!(hol:of &hotg (UnivOf Empty))
-!(hol:proves &hotg (pf:by universeIn) (In Empty (UnivOf Empty)))
+!(set:of &hotg (UnivOf Empty))
+!(set:proves &hotg (pf:by universeIn) (In Empty (UnivOf Empty)))
 !(set:of &common (UnivOf Empty))

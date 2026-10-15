@@ -63,7 +63,8 @@ typedef CettaOwnedExecutionStep (*CettaOwnedExecutionNext)(
     CettaEvalCompletion *completion);
 typedef void (*CettaOwnedExecutionRelease)(void *computation);
 /* False retains the pending return and complete computation at this boundary.
- * The consumer must commit its state only when accepting the return. */
+ * A consumer publishes the occurrence only on acceptance. Refusal may update
+ * private retry state; the same consumer state must survive resumption. */
 typedef bool (*CettaOwnedReturnConsumer)(
     void *consumer, const CettaOwnedReturn *returned);
 

@@ -35,13 +35,16 @@ counter() {
 }
 
 queries=$(counter prime-need-capture-projection-query)
+empty_skips=$(counter prime-need-capture-empty-binding-skip)
 exact=$(counter prime-need-capture-projection-exact)
 fallback=$(counter prime-need-capture-projection-fallback)
 scanned=$(counter prime-need-capture-scan-atom)
 cells=$(counter prime-need-capture-referenced-cell)
 ids=$(counter prime-need-capture-referenced-id)
 
-if ((queries == 0 || exact != queries || fallback != 0)); then
+# An empty logical environment follows the exact body projection directly;
+# it has no bound values for the capture projection to retain.
+if ((queries + empty_skips == 0 || exact != queries || fallback != 0)); then
     echo "FAIL: evaluator-created closure summaries did not remain exact" >&2
     exit 1
 fi
@@ -51,4 +54,4 @@ if ((scanned == 0 || cells == 0 || ids == 0)); then
 fi
 
 printf '%s\n' \
-    "PrimeNeedCaptureStatsSummary PASS queries=${queries} exact=${exact} fallback=${fallback} scanned=${scanned} cells=${cells} ids=${ids}"
+    "PrimeNeedCaptureStatsSummary PASS queries=${queries} exact=${exact} empty_skips=${empty_skips} fallback=${fallback} scanned=${scanned} cells=${cells} ids=${ids}"

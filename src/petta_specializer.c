@@ -24,6 +24,11 @@ typedef struct {
     Atom *value;
     CettaExprIndex *path;
     size_t path_len;
+    /* The path is a position in the equation's head pattern.  It is also a
+     * position in every call that pattern matches only when it crosses no
+     * `cons` pattern: a list the call passes as a flat expression keeps its
+     * head at another position than the pattern's cell does. */
+    bool positional;
 } PettaSpecializationBinding;
 
 typedef struct {
@@ -558,7 +563,7 @@ static PettaSpecializerPatternNode *petta_pattern_build(
 static bool petta_binding_vector_push_unique(
     PettaSpecializationBindings *bindings,
     VarId variable, Atom *value,
-    CettaExprIndex *path, size_t path_len) {
+    CettaExprIndex *path, size_t path_len, bool positional) {
     if (!bindings || !value || (!path && path_len > 0u))
         return false;
     for (size_t index = 0u; index < bindings->len; index++) {
@@ -590,8 +595,27 @@ static bool petta_binding_vector_push_unique(
             .value = value,
             .path = path,
             .path_len = path_len,
+            .positional = positional,
         };
     return true;
+}
+
+/* Whether a head-pattern path crosses a `cons` cell pattern. */
+static bool petta_pattern_path_crosses_cons(
+    Atom *pattern, const CettaExprIndex *path, size_t path_len) {
+    Atom *node = pattern;
+    for (size_t index = 0u; index < path_len; index++) {
+        if (!node || node->kind != ATOM_EXPR ||
+            path[index] >= node->expr.len)
+            return true;
+        Atom *head = node->expr.elems[0];
+        if (head && head->kind == ATOM_SYMBOL &&
+            (strcmp(symbol_bytes(g_symbols, atom_symbol_current_id(head)), "cons") == 0 ||
+             strcmp(symbol_bytes(g_symbols, atom_symbol_current_id(head)), "cons-atom") == 0))
+            return true;
+        node = node->expr.elems[path[index]];
+    }
+    return false;
 }
 
 static bool petta_find_variable_path(
@@ -2430,6 +2454,7 @@ static bool petta_record_set_selectors(
         selector->value = atom_deep_copy(
             context->persistent, candidate->value);
         selector->path_len = candidate->path_len;
+        selector->positional = candidate->positional;
         if (candidate->path_len > 0u) {
             if (candidate->path_len >
                 SIZE_MAX / sizeof(*selector->path)) {
@@ -2478,6 +2503,12 @@ petta_find_record_for_call(
              selector_index++) {
             PettaSpecializationBinding *selector =
                 &record->selectors[selector_index];
+            /* A selector read through a `cons` pattern is not a position of
+             * the call; only the full analysis matches it. */
+            if (!selector->positional) {
+                matches = false;
+                break;
+            }
             Atom *actual = petta_atom_at_path(
                 call, selector->path, selector->path_len);
             if (!petta_value_specializable(context, actual) ||
@@ -3647,9 +3678,11 @@ static bool petta_specializer_analyze_call(
                 atom_print(specializable, stderr);
                 fputc('\n', stderr);
             }
+            bool positional = !petta_pattern_path_crosses_cons(
+                fresh->expr.elems[1], path, path_len);
             if (!petta_binding_vector_push_unique(
                     &candidates, binding->var_id,
-                    specializable, path, path_len)) {
+                    specializable, path, path_len, positional)) {
                 context->capacity = true;
                 ok = false;
                 break;

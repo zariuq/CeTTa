@@ -14,3 +14,14 @@
 
 ; 3. The whole result is observed: the same sources, once each.
 !(collapse (w))
+
+; 4. A collected stream calls a captured predicate.  Each rejected input
+; completes with no answer; neither its effect nor its invocation is replayed.
+!(let $predicate (lam x (let () (println! lambda-false) False))
+   (collapse (let $x (superpose (1 2))
+      (if ($predicate $x) $x (empty)))))
+
+; 5. A successful captured predicate also runs once for each source occurrence.
+!(let $predicate (lam x (let () (println! lambda-true) True))
+   (collapse (let $x (superpose (1 2))
+      (if ($predicate $x) $x (empty)))))

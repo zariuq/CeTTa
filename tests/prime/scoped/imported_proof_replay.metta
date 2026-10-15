@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Proofs imported from intuitionistic derivations, replayed on the kernel.
 ;

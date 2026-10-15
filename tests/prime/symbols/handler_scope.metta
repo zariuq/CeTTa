@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A shared producer forced inside and outside a measuring handler.  The
 ; handler, cost:firings, owns the productions it forces; those it forced

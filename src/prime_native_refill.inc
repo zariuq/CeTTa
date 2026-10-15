@@ -54,6 +54,7 @@ typedef struct {
     _Atomic uint64_t next_order;
     uint32_t workers;
     bool metered;
+    bool compact_cost;
 } PrimeNativeRefillRun;
 
 static _Atomic uint64_t prime_native_refill_next_identity = 1u;
@@ -112,6 +113,24 @@ static bool prime_native_refill_join_pending(PrimeNativeControl *owner) {
     history->imported=true;
     owner->refill_pending=NULL;
     return true;
+}
+
+/* A completed compact account already owns the imported work and span.
+ * These quiescent private slices are no longer needed by its observation.
+ * Pending imports and explicitly requested schedule receipts stay owned. */
+static void prime_native_refill_retire_imported(PrimeNativeControl *owner) {
+    if (!owner->event_cost.compact || owner->policy.receipts) return;
+    PrimeNativeRefillHistory **link = &owner->refill_history;
+    while (*link) {
+        PrimeNativeRefillHistory *history = *link;
+        if (!history->imported || history == owner->refill_pending) {
+            link = &history->next;
+            continue;
+        }
+        *link = history->next;
+        history->next = NULL;
+        prime_native_refill_history_free(history);
+    }
 }
 
 static void prime_native_refill_receipt(PrimeNativeControl *owner,
@@ -190,8 +209,12 @@ static bool prime_native_refill_task(CettaParallelWorker *worker, void *raw, voi
             atomic_store_explicit(&item->state, PRIME_REFILL_RETAINED, memory_order_release);
             return false;
         }
-        if (refill->metered && !parallel->slice_cost.identity)
-            cetta_native_cost_init(&parallel->slice_cost);
+        if (refill->metered && !parallel->slice_cost.identity) {
+            if (refill->compact_cost)
+                cetta_native_cost_init_compact(&parallel->slice_cost);
+            else
+                cetta_native_cost_init(&parallel->slice_cost);
+        }
         segment = &refill->history->segments[item->offset + item->length];
         segment->identity = refill->metered ? parallel->slice_cost.identity :
             cetta_identity_try_take(&prime_native_refill_next_identity);
@@ -326,7 +349,8 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
     }
     PrimeNativeRefillRun refill={.run={.library=g_library_context,
         .receipts=owner->policy.receipts},.items=items,.count=count,.quantum=quantum,
-        .history=history,.worker_previous=previous,.workers=workers,.metered=metered};
+        .history=history,.worker_previous=previous,.workers=workers,.metered=metered,
+        .compact_cost=!cetta_native_cost_events_requested()};
     atomic_init(&refill.next_order,0u);
     size_t offset=0u;
     for (size_t i=0u;i<count;i++) {
@@ -390,9 +414,9 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
     if (history) {
         history->overlap=atomic_load_explicit(&refill.run.overlap,memory_order_relaxed);
         history->spent=spent;history->executor_ok=ran;history->cancelled=cancelled;
-        /* Keep failed joins and successful imports alike. This immutable
-         * recorded history owns its ledgers until parent disposal; it holds
-         * no borrowed task, frame, service or arena pointers. */
+        /* Failed joins retain their complete private inputs for retry.
+         * Successful imports remain for requested receipts; a compact
+         * observer can retire them after this run returns. */
         history->next=owner->refill_history;owner->refill_history=history;
         history->imported=!metered;
         if (metered) owner->refill_pending=history;

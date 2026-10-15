@@ -2,6 +2,8 @@
 ; Source revision: ngeiswei/chaining opt-bfc-mm2 @ 9a3287210880ca162beed379942a036a6f3cf8a6.
 ; The MM2 program's decFn-first physical join plan remains MORK-specific.
 ; Prime represents computation zero here with an empty superposition.
+; Backward proof search refines the shared target across recursive premises.
+(scope:profile mercury-implicit per-call reference)
 
 (= (ofc $depth $hypcnt $target (: $proof $type))
    (if (< 0 $hypcnt)

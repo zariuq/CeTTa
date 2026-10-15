@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Why it matters: a search procedure (hand-written, learned or generated) may
 ; propose proofs, but only the small checker decides what is proved, so a

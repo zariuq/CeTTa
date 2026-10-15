@@ -1345,6 +1345,9 @@ done:
 
 typedef struct {
     const char *lang_name;
+    /* `lang_name` without its `@version`, and that version's name. */
+    char lang_base[64];
+    const char *version_name;
     const char *profile_name;
     CettaSyntaxId syntax;
     const CettaLanguageSpec *lang;
@@ -1354,6 +1357,8 @@ typedef struct {
 
 static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->lang_name = lang_name;
+    endpoint->lang_base[0] = '\0';
+    endpoint->version_name = NULL;
     endpoint->profile_name = NULL;
     endpoint->syntax = CETTA_SYNTAX_AUTO;
     endpoint->lang = NULL;
@@ -1361,13 +1366,74 @@ static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->langdef_manifest_path[0] = '\0';
 }
 
+/* The one place a language's spelling is read: `language@version` names a
+ * language and one of its released versions (`petta@1.0.6`, `petta@1.1`). */
+static bool endpoint_split_version(CettaCliEndpoint *endpoint,
+                                   const char *role) {
+    endpoint->version_name = NULL;
+    const char *at = endpoint->lang_name
+        ? strchr(endpoint->lang_name, '@') : NULL;
+    if (!at)
+        return true;
+    size_t length = (size_t)(at - endpoint->lang_name);
+    if (length == 0u || length >= sizeof endpoint->lang_base || !at[1]) {
+        fprintf(stderr, "error: %s language '%s' is not language@version\n",
+                role, endpoint->lang_name);
+        return false;
+    }
+    memcpy(endpoint->lang_base, endpoint->lang_name, length);
+    endpoint->lang_base[length] = '\0';
+    endpoint->version_name = at + 1;
+    return true;
+}
+
+/* A named version selects its default profile when none is named, and
+ * admits only profiles of that version. */
+static bool endpoint_resolve_version(CettaCliEndpoint *endpoint,
+                                     const char *role) {
+    if (!endpoint->version_name)
+        return true;
+    const CettaLanguageVersion *version = cetta_language_version_from_name(
+        endpoint->lang->id, endpoint->version_name);
+    if (!version) {
+        fprintf(stderr, "error: unknown %s version '%s' of language '%s'\n",
+                role, endpoint->version_name, endpoint->lang->canonical);
+        cetta_language_print_versions(stderr, endpoint->lang->id);
+        return false;
+    }
+    if (!endpoint->profile && version->default_profile) {
+        endpoint->profile = cetta_profile_from_name_for_language(
+            endpoint->lang->id, version->default_profile);
+        if (!endpoint->profile) {
+            fprintf(stderr,
+                    "error: %s language %s@%s needs profile '%s', which this build lacks\n",
+                    role, endpoint->lang->canonical, version->name,
+                    version->default_profile);
+            return false;
+        }
+    }
+    if (cetta_language_version_of(endpoint->lang->id, endpoint->profile) !=
+        version) {
+        fprintf(stderr, "error: %s profile '%s' is not a profile of %s@%s\n",
+                role, endpoint->profile ? endpoint->profile->name : "default",
+                endpoint->lang->canonical, version->name);
+        return false;
+    }
+    return true;
+}
+
 static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
                              const char *exec_path) {
     char langdef_error[256] = {0};
 
-    endpoint->lang = cetta_language_lookup(endpoint->lang_name);
+    if (!endpoint_split_version(endpoint, role))
+        return false;
+    const char *lang_name = endpoint->version_name
+        ? endpoint->lang_base : endpoint->lang_name;
+    endpoint->lang = cetta_language_lookup(lang_name);
     if (!endpoint->lang) {
-        if (cetta_langdef_resolve_named_manifest_v1(
+        if (!endpoint->version_name &&
+            cetta_langdef_resolve_named_manifest_v1(
                 exec_path, endpoint->lang_name,
                 endpoint->langdef_manifest_path,
                 sizeof(endpoint->langdef_manifest_path),
@@ -1408,6 +1474,8 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
             return false;
         }
     }
+    if (!endpoint_resolve_version(endpoint, role))
+        return false;
     if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_PRIME)
         endpoint->profile = cetta_profile_prime_default();
     return true;
@@ -1799,6 +1867,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
+    fputs("       cetta --curried-arrows <file.metta>    # HE he/extended: read function types curried (partial and over-application)\n", out);
     fputs("       cetta --fuel <-1|n> <file.metta>       # -1 unlimited, n positive\n", out);
     fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
@@ -2735,7 +2804,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(
                 block, index);
-        if (!source || !plan) {
+        if (!source) {
             ok = false;
             break;
         }
@@ -2773,12 +2842,17 @@ static bool main_load_planned_declaration_block(
     if (!block) return false;
     bool ok = space_add_atom_ids_batch(
         space, atom_ids, (CettaCount)atom_count);
+    /* A fact is only stored: the program reads equations and type
+     * declarations, so nothing else is decoded for it. */
     for (int index = 0; ok && index < atom_count; index++) {
+        if (!petta_program_form_id_may_affect_metadata(universe,
+                                                       atom_ids[index]))
+            continue;
         Atom *source = term_universe_get_atom(
             universe, atom_ids[index]);
         const PettaPlanNode *plan =
             petta_program_declaration_block_plan_at(block, index);
-        ok = source && plan &&
+        ok = source &&
              petta_program_note_add(program, space, source, plan);
     }
     petta_program_declaration_block_free(block);
@@ -2928,6 +3002,7 @@ static int cetta_main(int argc, char **argv) {
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
+    bool curried_arrows_cli = false;
     int fuel_override = -1;
     bool fuel_override_requested = false;
     uint32_t num_threads = 1u;
@@ -3098,6 +3173,10 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--prefer-rationals") == 0) {
             prefer_rationals_cli = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--curried-arrows") == 0) {
+            curried_arrows_cli = true;
             continue;
         }
         if (strcmp(argv[i], "--fuel") == 0) {
@@ -3329,7 +3408,7 @@ static int cetta_main(int argc, char **argv) {
             list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
             import_mode_overridden || petta_strict || petta_strict_det ||
             emit_prime_need_trace || prime_rewrite_frontier ||
-            prefer_rationals_cli || eval_hashcons ||
+            prefer_rationals_cli || curried_arrows_cli || eval_hashcons ||
             fuel_override_requested ||
             num_threads_requested || rho_reduction_limit_requested ||
             rho_scheduler_requested ||
@@ -3725,6 +3804,11 @@ static int cetta_main(int argc, char **argv) {
         cetta_eval_session_record_generic_setting(
             &libraries.session, "prefer-rationals",
             CETTA_EVAL_OPTION_VALUE_SYMBOL, "true", 0);
+    }
+    if (curried_arrows_cli) {
+        cetta_eval_session_record_generic_setting(
+            &libraries.session, "curried-arrows",
+            CETTA_EVAL_OPTION_VALUE_SYMBOL, "on", 0);
     }
     if (num_threads_requested) {
         char repr[32];
@@ -4660,8 +4744,19 @@ process_petta_document:
                         view.classification, view.message,
                         view.truncated ? " [truncated]" : "");
                 } else {
-                    fputs("error: uncaught PeTTa error: ", stderr);
-                    write_results(stderr, results, lang->id, profile);
+                    char message[1024];
+                    if (exception &&
+                        petta_semantics_error_message(
+                            &eval_arena, exception,
+                            message, sizeof message)) {
+                        /* An uncaught error of PeTTa's typecheck
+                         * vocabulary reads as the reference prints it,
+                         * under the heading of a PeTTa type error. */
+                        fprintf(stderr, "PeTTa type error: %s\n", message);
+                    } else {
+                        fputs("error: uncaught PeTTa error: ", stderr);
+                        write_results(stderr, results, lang->id, profile);
+                    }
                     for (uint32_t i = 0u; i < results->len; i++) {
                         char *report = cetta_foreign_python_error_report(
                             results->items[i]);
@@ -4792,9 +4887,12 @@ process_petta_document:
                     &registry, &libraries.term_universe, &eval_arena, &arena,
                     atom_ids[form]);
         }
-        bool prime_relational_plan =
-            libraries.prime_relational_plan_enabled;
-        bool loaded = prime_relational_plan
+        /* Prime and HE also read each declaration into the program their
+         * compiled relations come from. */
+        bool planned =
+            libraries.prime_relational_plan_enabled ||
+            (lang->id == CETTA_LANGUAGE_HE && libraries.petta_program);
+        bool loaded = planned
             ? main_load_planned_declaration_block(
                   libraries.petta_program, &space,
                   &libraries.term_universe, atom_ids + i,

@@ -3,7 +3,8 @@
 ; no substitution reaches it.  Code formed while the program runs is sealed
 ; exactly as code the reader formed: from text by parse, by lift app, and a
 ; binder built from parts by cons-atom.  A crossing set lets a name into the
-; quotation instead.
+; quotation instead. Constructed terms are values: explicit activation after
+; construction tests the seal without granting construction execution authority.
 
 ; ---- Read from this file.
 !(row reader)

@@ -13,6 +13,14 @@
 
 static unsigned passed, failed;
 static unsigned reference_limits;
+static unsigned number_validation_calls;
+static bool number_validation_bytes;
+
+static bool reject_number_lexeme(const uint8_t *bytes, size_t length) {
+    number_validation_calls++;
+    number_validation_bytes = length == 2u && bytes[0] == '1' && bytes[1] == '2';
+    return false;
+}
 static CettaLanguageId test_language = CETTA_LANGUAGE_HE;
 CettaLanguageId eval_current_language_id(void) { return test_language; }
 #define CHECK(c) do { if (c) passed++; else { failed++; fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); } } while (0)
@@ -115,7 +123,7 @@ static void deep_values(void) {
                      leaf->expr.elems[1]->ground.bval));
                 uint8_t *encoded = NULL; size_t encoded_size = 0;
                 CettaJsonValueV1Status codec;
-                CHECK(ok && cetta_json_value_v1_emit(value, legacy, 0u, 0u, 0u, &encoded,
+                CHECK(ok && cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, value, legacy, 0u, 0u, 0u, &encoded,
                     &encoded_size, &codec, error, sizeof(error)) && encoded_size == size && !memcmp(encoded, text, size));
                 free(encoded);
                 CettaJsonLibraryRuntimeV1 *library = cetta_json_library_runtime_v1_new(error, sizeof(error));
@@ -161,7 +169,7 @@ static void deep_values(void) {
                     : cetta_json_value_v1_to_legacy(&arena, value, 0u, 0u, &converted, &codec, error, sizeof(error));
                 CHECK(ok && converted_ok);
                 encoded = NULL; encoded_size = 0;
-                CHECK(converted_ok && cetta_json_value_v1_emit(converted, !legacy, 0u, 0u, 0u, &encoded,
+                CHECK(converted_ok && cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, converted, !legacy, 0u, 0u, 0u, &encoded,
                     &encoded_size, &codec, error, sizeof(error)) && encoded_size == size && !memcmp(encoded, text, size));
                 free(encoded);
                 ArenaMark mark = arena_mark(&arena);
@@ -206,12 +214,26 @@ static void unit(const CettaJsonRuntimeV1 *runtime) {
         error, sizeof(error)) && value_status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT && limited == sentinel &&
         arena.live_bytes == before_conversion.live_bytes);
     uint8_t *limited_text = NULL; size_t limited_size = 17u;
-    CHECK(!cetta_json_value_v1_emit(canonical, false, 0u, 4u, 0u, &limited_text, &limited_size,
+    CHECK(!cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, canonical, false, 0u, 4u, 0u, &limited_text, &limited_size,
         &value_status, error, sizeof(error)) && value_status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT &&
         !limited_text && limited_size == 17u);
-    CHECK(!cetta_json_value_v1_emit(canonical, false, 0u, 0u, 2u, &limited_text, &limited_size,
+    CHECK(!cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, canonical, false, 0u, 0u, 2u, &limited_text, &limited_size,
         &value_status, error, sizeof(error)) && value_status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT &&
         !limited_text && limited_size == 17u);
+    Atom *number_items[] = {atom_symbol(&arena, "JsonNumberV1"), atom_string(&arena, "12")};
+    Atom *number_value = atom_expr(&arena, number_items, 2u);
+    CHECK(!cetta_json_value_v1_emit(NULL, number_value, false, 0u, 0u, 0u,
+        &limited_text, &limited_size, &value_status, error, sizeof(error)) &&
+        value_status == CETTA_JSON_VALUE_V1_BAD_ARGUMENT && !limited_text && limited_size == 17u);
+    CHECK(!cetta_json_value_v1_emit(reject_number_lexeme, number_value, false, 0u, 0u, 0u,
+        &limited_text, &limited_size, &value_status, error, sizeof(error)) &&
+        value_status == CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT &&
+        number_validation_calls == 1u && number_validation_bytes && !limited_text && limited_size == 17u);
+    number_items[1] = atom_string(&arena, "01");
+    number_value = atom_expr(&arena, number_items, 2u);
+    CHECK(!cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, number_value, false, 0u, 0u, 0u,
+        &limited_text, &limited_size, &value_status, error, sizeof(error)) &&
+        value_status == CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT && !limited_text && limited_size == 17u);
     const char *numbers[]={"0","-1","0.1","1e-1","01","1.","NaN","1e+",""," 0"};
     for(unsigned i=0;i<10;i++) CHECK(cetta_json_direct_v1_number_valid((const uint8_t *)numbers[i],strlen(numbers[i]))==(i<4));
     char *wide=malloc(24010); size_t n=0;
@@ -237,7 +259,7 @@ static void unit(const CettaJsonRuntimeV1 *runtime) {
         CHECK(!cetta_json_direct_v1_lines(stream,true,false,32,consume,&c,&failed_line,error,sizeof(error)));
         CHECK(c.rows==2 && c.last==3 && failed_line==4 && c.copy!=NULL);
         uint8_t *encoded=NULL; size_t len=0; CettaJsonValueV1Status s;
-        CHECK(cetta_json_value_v1_emit(c.copy,true,1000,32,1000,&encoded,&len,&s,error,sizeof(error)) &&
+        CHECK(cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, c.copy,true,1000,32,1000,&encoded,&len,&s,error,sizeof(error)) &&
               len==strlen("{\"x\":\"\\u0000\"}") && !memcmp(encoded,"{\"x\":\"\\u0000\"}",len));
         free(encoded); fclose(stream);
     }

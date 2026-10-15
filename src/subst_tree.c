@@ -695,6 +695,52 @@ bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
     return stree_bucket_insert_id(bucket, universe, atom_id, atom_idx);
 }
 
+/* The leaf node of an atom already in the tree: the insertion walk, which
+ * finds every node of an indexed atom and allocates none. */
+static SubstNode *stree_leaf_node_id(SubstTree *t, const TermUniverse *universe,
+                                     AtomId atom_id, SubstBucket **bucket_out) {
+    if (!t || !universe || atom_id == CETTA_ATOM_ID_NONE)
+        return NULL;
+    SymbolId head = tu_head_sym(universe, atom_id);
+    SubstBucket *bucket = head != SYMBOL_ID_NONE
+                        ? &t->buckets[stree_head_hash(head)]
+                        : &t->wildcard;
+    if (!bucket->root)
+        return NULL;
+    *bucket_out = bucket;
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    return snode_insert_atom_id(bucket->root, universe, atom_id, 0u, &budget);
+}
+
+bool stree_remove_id(SubstTree *t, const TermUniverse *universe,
+                     AtomId atom_id, CettaIndex idx) {
+    SubstBucket *bucket = NULL;
+    SubstNode *leaf = stree_leaf_node_id(t, universe, atom_id, &bucket);
+    for (CettaIndex i = 0u; leaf && i < leaf->nleaves; i++) {
+        if (leaf->leaves[i].idx != idx)
+            continue;
+        if (leaf->leaves[i].owns_identity)
+            cetta_frame_identity_release(leaf->leaves[i].epoch);
+        leaf->leaves[i] = leaf->leaves[--leaf->nleaves];
+        bucket->count--;
+        return true;
+    }
+    return false;
+}
+
+bool stree_relabel_id(SubstTree *t, const TermUniverse *universe,
+                      AtomId atom_id, CettaIndex from, CettaIndex to) {
+    SubstBucket *bucket = NULL;
+    SubstNode *leaf = stree_leaf_node_id(t, universe, atom_id, &bucket);
+    for (CettaIndex i = 0u; leaf && i < leaf->nleaves; i++) {
+        if (leaf->leaves[i].idx != from)
+            continue;
+        leaf->leaves[i].idx = to;
+        return true;
+    }
+    return false;
+}
+
 /* ── Result Set ────────────────────────────────────────────────────────── */
 
 void smset_init(SubstMatchSet *s) {

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A rule admitted without changing the rule space.  `two` first has a raw
 ; rule; `hol:define` then admits the same rule, adding evidence and no second

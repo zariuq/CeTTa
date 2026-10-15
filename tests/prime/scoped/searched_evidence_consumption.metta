@@ -1,8 +1,8 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Search discovers the proof term; native replay earns its dependent use.
 ; This closed-premise arrow fragment is supported by both current engines.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))

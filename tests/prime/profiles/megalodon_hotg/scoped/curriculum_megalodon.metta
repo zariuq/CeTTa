@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; The Megalodon ladder (01-07): the logical constants as definitions, as the
 ; ladder writes them (True and False are MeTTa's Boolean atoms, so they are
@@ -9,13 +9,13 @@
 ; laws prove are theorems here, and choice for Eps stays an axiom.
 !(import! &self pf)
 !(import! &self ../../../../../lib/prime/curriculum.metta)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(hol:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
-!(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
-!(hol:define &thy not (-> prop prop) (= (not $A) (imp $A falsum)))
-!(hol:define &thy and (-> prop prop prop) (= (and $A $B) (all prop (lam p (imp (imp $A (imp $B p)) p)))))
-!(hol:define &thy or (-> prop prop prop) (= (or $A $B) (all prop (lam p (imp (imp $A p) (imp (imp $B p) p))))))
-!(hol:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(set:define &thy truth prop (= truth (all prop (lam p (imp p p)))))
+!(set:define &thy falsum prop (= falsum (all prop (lam p p))))
+!(set:define &thy not (-> prop prop) (= (not $A) (imp $A falsum)))
+!(set:define &thy and (-> prop prop prop) (= (and $A $B) (all prop (lam p (imp (imp $A (imp $B p)) p)))))
+!(set:define &thy or (-> prop prop prop) (= (or $A $B) (all prop (lam p (imp (imp $A p) (imp (imp $B p) p))))))
+!(set:define &thy iff (-> prop prop prop) (= (iff $A $B) (and (imp $A $B) (imp $B $A))))
 
 ; ---- 01 basics
 !(pf:theorem &thy TrueI truth (pf:fix p (pf:assume h h)))
@@ -40,19 +40,19 @@
 
 ; ---- 03 sets: Leibniz equality on a type, its symmetry, existence
 !(pf:theory &thy ((: A (u 0))))
-!(hol:define &thy leq (-> A A prop) (= (leq $x $y) (all (-> A A prop) (lam Q (imp (Q $x $y) (Q $y $x))))))
+!(set:define &thy leq (-> A A prop) (= (leq $x $y) (all (-> A A prop) (lam Q (imp (Q $x $y) (Q $y $x))))))
 !(pf:theorem &thy leq-refl (all A (lam x (leq x x))) (pf:fix x (pf:fix Q (pf:assume h h))))
 !(pf:theorem &thy leq-sym (all A (lam x (all A (lam y (imp (leq x y) (leq y x))))))
    (pf:fix x (pf:fix y (pf:assume h (pf:fix Q (pf:assume qyx
      (pf:imp-elim (pf:all-elim h (lam a (lam b (Q b a)))) qyx)))))))
-!(hol:define &thy ex (-> (-> A prop) prop) (= (ex $Q) (all prop (lam P (imp (all A (lam x (imp ($Q x) P))) P)))))
+!(set:define &thy ex (-> (-> A prop) prop) (= (ex $Q) (all prop (lam P (imp (all A (lam x (imp ($Q x) P))) P)))))
 !(pf:theorem &thy exI (all (-> A prop) (lam Q (all A (lam x (imp (Q x) (ex Q))))))
    (pf:fix Q (pf:fix x (pf:assume q (pf:fix P (pf:assume k (pf:by k q)))))))
 !(pf:theorem &thy exE (all (-> A prop) (lam Q (all prop (lam P (imp (ex Q) (imp (all A (lam x (imp (Q x) P))) P))))))
    (pf:fix Q (pf:fix P (pf:assume h (pf:assume k (pf:by h k))))))
 
 ; ---- 04-07 sets: the signature's set operations with the ladder's axioms
-!(hol:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
+!(set:define &thy Subq (-> set set prop) (= (Subq $X $Y) (all set (lam x (imp (In x $X) (In x $Y))))))
 !(pf:theorem &thy Subq-refl (all set (lam X (Subq X X))) (pf:fix X (pf:fix x (pf:assume h h))))
 !(pf:theorem &thy Subq-trans (all set (lam X (all set (lam Y (all set (lam Z (imp (Subq X Y) (imp (Subq Y Z) (Subq X Z)))))))))
    (pf:fix X (pf:fix Y (pf:fix Z (pf:assume xy (pf:assume yz (pf:fix x (pf:assume h (pf:by yz (pf:by xy h))))))))))
@@ -86,6 +86,6 @@
    (pf:fix X (pf:fix P (pf:fix x (pf:assume h (pf:by SepE h))))))
 !(pf:theorem &thy repl-elem (all set (lam X (all (-> set set) (lam F (all set (lam x (imp (In x X) (In (F x) (Repl X F)))))))))
    (pf:fix X (pf:fix F (pf:fix x (pf:assume h (pf:by ReplI h))))))
-!(hol:axiom &thy EpsI (all (-> set prop) (lam P (all set (lam x (imp (P x) (P (Eps_set P))))))))
+!(set:axiom &thy EpsI (all (-> set prop) (lam P (all set (lam x (imp (P x) (P (Eps_set P))))))))
 !(pf:theorem &thy choice-witness (all (-> set prop) (lam P (imp (all prop (lam R (imp (all set (lam x (imp (P x) R))) R))) (P (Eps_set P)))))
    (pf:fix P (pf:assume h (pf:by h (pf:fix x (pf:assume px (pf:by EpsI px)))))))

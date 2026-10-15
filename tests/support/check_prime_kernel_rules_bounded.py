@@ -33,7 +33,7 @@ SLACK_KB = 4 * 1024
 TIMEOUT_SECONDS = 300
 
 PREAMBLE = (
-    "(hol:profile core)\n"
+    "(hol:profile base)\n"
     "!(hol:inductive &self pos (u 0) (: one pos) (: bit0 (-> pos pos)) "
     "(: bit1 (-> pos pos)))\n"
     "!(hol:define &self psucc (-> pos pos)\n"

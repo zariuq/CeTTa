@@ -687,7 +687,76 @@ static void use_fork_reentrant_case(void) {
     puts("acquired use: demoted and forked reentrant finalization passed");
 }
 
+static void use_exchange_case(void) {
+    CettaLibraryContext *context = calloc(1, sizeof(*context));
+    assert(context); context->native_handle_next_id = 1;
+    Arena arena, other; arena_init_detached(&arena); arena_init_detached(&other);
+    unsigned before = atomic_load(&released);
+    uint64_t id = new_resource(context);
+    Atom *holder = cetta_native_handle_owned_atom(context, &arena, kind, id);
+    Atom *alias = atom_deep_copy(&other, holder);
+    CettaNativeHandleUse use = {0}, lifetime = {0}, empty = {0};
+    int *image = malloc(sizeof(*image)); assert(image); *image = 17;
+    void *sentinel = image, *previous = sentinel;
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,NULL, image, &previous));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&empty, image, &previous));
+    assert(previous == sentinel);
+    assert(cetta_native_handle_acquire_owned(context,kind,holder,
+        CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use));
+    CettaLibraryContext *other_context = calloc(1,sizeof(*other_context));
+    assert(other_context); other_context->native_handle_next_id = 1;
+    uint64_t other_id = 0;
+    /* A separately held borrowed registry view can name the same payload.
+     * It still cannot act for this owner's exclusive use. */
+    assert(cetta_native_handle_alloc(other_context,kind,use.resource,NULL,&other_id));
+    assert(other_id == id);
+    Atom *other_holder = cetta_native_handle_owned_atom(other_context,&other,kind,other_id);
+    CettaNativeHandleUse other_use = {0};
+    assert(cetta_native_handle_acquire_owned(other_context,kind,other_holder,
+        CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&other_use));
+    assert(cetta_native_handle_use_resource(&other_use) == use.resource);
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&other_use,image,&previous));
+    assert(!cetta_native_handle_use_exchange(other_context,kind,other_holder,&use,image,&previous));
+    Atom *textual = cetta_native_handle_atom(&arena,kind,id);
+    assert(!cetta_native_handle_use_exchange(context,kind,textual,&use,image,&previous));
+    assert(previous == sentinel && cetta_native_handle_use_release(&other_use));
+    assert(cetta_native_handle_close(other_context,kind,other_id));
+    cetta_native_handle_cleanup_all(other_context); free(other_context);
+    CettaNativeHandleUse forged = use;
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&forged,image,&previous));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,NULL,&previous));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,image,NULL));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,use.resource,&previous));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,image,&use.resource));
+    assert(cetta_native_handle_use_fork_lifetime(&lifetime,&use));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&lifetime,image,&previous));
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,image,&previous));
+    assert(previous == sentinel && *(int *)cetta_native_handle_use_resource(&use) == 42);
+    assert(cetta_native_handle_use_release(&lifetime));
+    assert(cetta_native_handle_use_exchange(context,kind,holder,&use,image,&previous));
+    assert(previous != image && *(int *)previous == 42);
+    assert(cetta_native_handle_use_resource(&use) == image);
+    assert(cetta_native_handle_get_owned(context,kind,holder) == image);
+    assert(cetta_native_handle_get_owned(context,kind,alias) == image);
+    assert(cetta_native_handle_use_is_current(&use) && atomic_load(&released) == before);
+    release_resource(previous);
+    assert(atomic_load(&released) == before + 1u);
+    assert(cetta_native_handle_close(context,kind,id));
+    previous = sentinel;
+    int *declined = malloc(sizeof(*declined)); assert(declined);
+    assert(!cetta_native_handle_use_exchange(context,kind,holder,&use,declined,&previous));
+    assert(previous == sentinel && cetta_native_handle_use_resource(&use) == image);
+    assert(atomic_load(&released) == before + 1u);
+    free(declined);
+    assert(cetta_native_handle_use_release(&use));
+    assert(atomic_load(&released) == before + 2u);
+    arena_free(&arena); arena_free(&other);
+    cetta_native_handle_cleanup_all(context); free(context);
+    puts("acquired use: exclusive payload exchange preserves aliases and refuses live borrows");
+}
+
 static void acquired_use_return_operations_cases(void) {
+    use_exchange_case();
     use_demote_case();
     use_detached_fork_case();
     use_thread_fork_case();

@@ -431,8 +431,8 @@ static bool relational_count_storage(const void *payload, CettaContinuationStora
 
 static const CettaContinuationProvider relational_count_provider = {
     .representation_name = "owned-relational-count-cursor",
-    .ownership = {relational_count_capture, relational_count_restore,
-                  relational_count_destroy, relational_count_storage},
+    .ownership = {.capture=relational_count_capture, .restore=relational_count_restore,
+                  .destroy=relational_count_destroy, .storage=relational_count_storage},
 };
 
 CettaContinuationMachine cetta_relational_count_continuation_machine(

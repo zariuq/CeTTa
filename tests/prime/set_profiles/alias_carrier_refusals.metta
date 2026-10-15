@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 !(add-atom &self (hol:rule hol-equality))
 !(hol:define ReviewAlias (u 0) (= ReviewAlias prop))
 !(hol:define FunAlias (u 0) (= FunAlias (-> prop prop)))

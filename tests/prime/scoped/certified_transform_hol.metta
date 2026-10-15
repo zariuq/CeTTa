@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Ordinary arithmetic through the certified-transformation library.
 ; Addition recurses on its second argument, so `add zero n = n` is not

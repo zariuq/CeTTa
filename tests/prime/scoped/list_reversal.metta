@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The first theorem of the Isabelle tutorial, rev (rev xs) = xs, written the
 ; way it reads there: four lemmas by induction, each an equational chain.
@@ -8,7 +8,7 @@
 ; every other equality step is derived.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: list (u 0))
                   (: nil list) (: cons (-> elem list list))
                   (: append (-> list list list)) (: rev (-> list list))))

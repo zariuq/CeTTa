@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The HOL4 ladder (HOL01-HOL06): propositional logic, induction on naturals
 ; and lists, definitions of functions, datatypes and an inductive relation,
@@ -6,7 +6,7 @@
 ; excluded-middle axiom, and the LCF primitives as the checker's own rules.
 !(import! &self pf)
 !(import! &self ../../../lib/prime/curriculum.metta)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy num (u 0) (: zero num) (: suc (-> num num)))
 !(hol:inductive &thy list (u 0) (: nil list) (: cons (-> num list list)))
 !(pf:equality &thy num refl@num subst@num)

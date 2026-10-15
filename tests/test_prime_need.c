@@ -19,7 +19,499 @@ static unsigned failures = 0u;
         }                                                                      \
     } while (0)
 
+static bool same_cell_metadata(const PrimeNeedCellView *left,
+                               const PrimeNeedCellView *right) {
+    if (left->cache_state != right->cache_state ||
+        left->origin != right->origin || left->cached != right->cached ||
+        left->authority_id != right->authority_id ||
+        left->evaluator_id != right->evaluator_id ||
+        left->storage_key != right->storage_key ||
+        left->import_key != right->import_key ||
+        left->source_occurrence_id != right->source_occurrence_id ||
+        left->source_argument_index != right->source_argument_index)
+        return false;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    if (left->capture_known != right->capture_known ||
+        left->capture_var_ids != right->capture_var_ids ||
+        left->capture_var_count != right->capture_var_count)
+        return false;
+    for (size_t index = 0u; index < left->capture_var_count; index++)
+        if (left->capture_var_ids[index] != right->capture_var_ids[index])
+            return false;
+#endif
+    return true;
+}
+
+static bool same_snapshot_metadata(const PrimeNeedSnapshot *left,
+                                   const PrimeNeedSnapshot *right) {
+    if (left->top != right->top || left->session_id != right->session_id ||
+        left->max_storage_key != right->max_storage_key ||
+        left->owner != right->owner || left->closure_owner != right->closure_owner)
+        return false;
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    if (left->heap_index != right->heap_index || left->lineage_index != right->lineage_index)
+        return false;
+#endif
+    return true;
+}
+
+static void capability_record_controls(Arena *arena,
+                                       const PrimeNeedSnapshot *snapshot,
+                                       const PrimeNeedSnapshot *absent,
+                                       uint64_t thunk_id) {
+    PrimeNeedSnapshot before = *snapshot;
+    PrimeNeedCellView original = {0}, observed = {0};
+    Atom *ref = prime_need_ref(arena, snapshot, thunk_id);
+    const CettaPrimeNeedCapability *record = atom_prime_need_capability_value(ref);
+    uint64_t session = 0u, thunk = 0u, authority = 0u;
+    uint32_t rights = 0u;
+    bool ready = ref && record && prime_need_snapshot_lookup(snapshot, thunk_id, &original);
+    CHECK(ready && ref->kind == ATOM_GROUNDED &&
+              ref->ground.gkind == GV_PRIME_NEED_CAPABILITY &&
+              prime_need_ref_parse_rights(ref, &session, &thunk, &authority, &rights) &&
+              session == record->session_id && session == snapshot->session_id &&
+              thunk == record->thunk_id && thunk == thunk_id &&
+              authority == record->authority_id && authority == original.authority_id &&
+              rights == record->rights && rights == CETTA_PRIME_NEED_RIGHT_ALL,
+          "borrowed capability readback retains all original identity and rights fields");
+    if (!ready)
+        return;
+
+    Atom wrong_kind = *ref;
+    Atom wrong_ground = *ref;
+    wrong_kind.kind = ATOM_SYMBOL;
+    wrong_ground.ground.gkind = GV_INT;
+    CHECK(!atom_prime_need_capability_value(&wrong_kind) &&
+              !atom_prime_need_capability_value(&wrong_ground) &&
+              !prime_need_ref_parse_rights(&wrong_kind, NULL, NULL, NULL, NULL) &&
+              !prime_need_ref_parse_rights(&wrong_ground, NULL, NULL, NULL, NULL),
+          "capability payload bits under another Atom or grounded tag grant no identity");
+
+    for (unsigned malformed = 0u; malformed < 6u; malformed++) {
+        CettaPrimeNeedCapability damaged = *record;
+        Atom raw = *ref;
+        raw.ground.prime_need_capability = &damaged;
+        switch (malformed) {
+        case 0u: damaged.session_id = 0u; break;
+        case 1u: damaged.thunk_id = 0u; break;
+        case 2u: damaged.authority_id = 0u; break;
+        case 3u: damaged.rights = 0u; break;
+        case 4u: damaged.rights = CETTA_PRIME_NEED_RIGHT_ALL | 4u; break;
+        default: damaged.rights = CETTA_PRIME_NEED_RIGHT_ALL | UINT32_C(0x80000000); break;
+        }
+        session = UINT64_MAX;
+        thunk = UINT64_MAX;
+        authority = UINT64_MAX;
+        rights = UINT32_MAX;
+        CHECK(!prime_need_ref_parse_rights(&raw, &session, &thunk, &authority, &rights) &&
+                  session == UINT64_MAX && thunk == UINT64_MAX &&
+                  authority == UINT64_MAX && rights == UINT32_MAX &&
+                  !prime_need_ref_belongs_to_with_rights(
+                      &raw, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT, NULL),
+              "malformed native capability record leaves parse outputs and membership ungranted");
+    }
+
+    CHECK(!prime_need_ref_restrict(arena, ref, snapshot, 0u) &&
+              !prime_need_ref_belongs_to_with_rights(ref, snapshot, 0u, NULL),
+          "zero rights are refused both as attenuation and as a membership request");
+    CHECK(!prime_need_ref_restrict(arena, ref, snapshot, CETTA_PRIME_NEED_RIGHT_ALL | 4u) &&
+              !prime_need_ref_belongs_to_with_rights(
+                  ref, snapshot, CETTA_PRIME_NEED_RIGHT_ALL | 4u, NULL),
+          "unknown requested rights cannot be masked into valid capability authority");
+
+    Atom *inspect = prime_need_ref_restrict(arena, ref, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT);
+    Atom *force = prime_need_ref_restrict(arena, ref, snapshot, CETTA_PRIME_NEED_RIGHT_FORCE);
+    Atom *inspect_again = prime_need_ref_restrict(
+        arena, inspect, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT);
+    const CettaPrimeNeedCapability *again = atom_prime_need_capability_value(inspect_again);
+    CHECK(inspect && inspect_again && again &&
+              again->session_id == record->session_id && again->thunk_id == record->thunk_id &&
+              again->authority_id == record->authority_id &&
+              again->rights == CETTA_PRIME_NEED_RIGHT_INSPECT &&
+              prime_need_ref_belongs_to_with_rights(
+                  inspect_again, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+              !prime_need_ref_belongs_to_with_rights(
+                  inspect_again, snapshot, CETTA_PRIME_NEED_RIGHT_FORCE, NULL),
+          "repeated attenuation retains suspension identity without restoring force");
+    CHECK(force && !prime_need_ref_restrict(
+                  arena, force, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT) &&
+              !prime_need_ref_restrict(arena, force, snapshot, CETTA_PRIME_NEED_RIGHT_ALL) &&
+              !prime_need_ref_restrict(arena, inspect, snapshot, CETTA_PRIME_NEED_RIGHT_FORCE),
+          "neither one-right capability can acquire the other right through restriction");
+
+    thunk = UINT64_MAX;
+    CHECK(absent->session_id == snapshot->session_id &&
+              !prime_need_ref_belongs_to_with_rights(
+                  inspect, absent, CETTA_PRIME_NEED_RIGHT_INSPECT, &thunk) &&
+              thunk == UINT64_MAX && !prime_need_ref_restrict(
+                  arena, ref, absent, CETTA_PRIME_NEED_RIGHT_INSPECT),
+          "a retained same-session snapshot without the cell refuses membership and attenuation");
+
+    bool inert = true;
+    for (unsigned index = 0u; index < 8u; index++) {
+        inert = inert && prime_need_ref_parse_rights(
+            inspect, &session, &thunk, &authority, &rights) &&
+            prime_need_ref_belongs_to_with_rights(
+                inspect, snapshot, CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+            !prime_need_ref_belongs_to_with_rights(
+                inspect, snapshot, CETTA_PRIME_NEED_RIGHT_FORCE, NULL);
+    }
+    CHECK(inert && same_snapshot_metadata(&before, snapshot) &&
+              prime_need_snapshot_lookup(snapshot, thunk_id, &observed) &&
+              same_cell_metadata(&original, &observed) &&
+              observed.cache_state == PRIME_NEED_CACHE_EMPTY &&
+              observed.source_occurrence_id != 0u && observed.source_argument_index == 2u,
+          "repeated inspection preserves original producer, occurrence metadata, cache and snapshot");
+}
+
+static bool history_readback_controls(const PrimeNeedSnapshot *empty,
+                                     const PrimeNeedSnapshot *allocated,
+                                     const PrimeNeedSnapshot *evaluating,
+                                     const PrimeNeedSnapshot *completed,
+                                     uint64_t thunk_id, Atom *origin,
+                                     Atom *value, uint64_t evaluator,
+                                     PrimeNeedCacheState completed_state) {
+    PrimeNeedHistoryIterator iterator;
+    PrimeNeedHistoryView view = {0};
+    const PrimeNeedFrame *top = completed->top;
+    if (!prime_need_snapshot_history_begin(empty, &iterator) ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_DONE ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_DONE ||
+        !prime_need_snapshot_history_begin(completed, &iterator))
+        return false;
+    const PrimeNeedCacheState states[] = {
+        completed_state, PRIME_NEED_CACHE_EVALUATING, PRIME_NEED_CACHE_EMPTY,
+    };
+    uint64_t serials[3];
+    for (size_t i = 0; i < 3u; i++) {
+        if (prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_ENTRY ||
+            view.session_id != completed->session_id || view.thunk_id != thunk_id ||
+            view.depth != 3u - i || view.cell.origin != origin ||
+            view.cell.cache_state != states[i] || view.cell.authority_id == 0u ||
+            view.cell.evaluator_id != (i == 1u ? evaluator : 0u) ||
+            view.cell.cached != (i == 0u ? value : NULL))
+            return false;
+        serials[i] = view.serial;
+    }
+    if (!(serials[0] > serials[1] && serials[1] > serials[2]) ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_DONE ||
+        completed->top != top ||
+        !prime_need_snapshot_history_begin(allocated, &iterator) ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_ENTRY ||
+        view.serial != serials[2] ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_DONE ||
+        !prime_need_snapshot_history_begin(evaluating, &iterator) ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_ENTRY ||
+        view.serial != serials[1])
+        return false;
+    PrimeNeedHistoryView sentinel = view;
+    iterator.remaining++;
+    if (prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_INVALID ||
+        prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_INVALID ||
+        view.serial != sentinel.serial || view.cell.origin != sentinel.cell.origin)
+        return false;
+    PrimeNeedSnapshot foreign = *completed;
+    foreign.session_id++;
+    return !prime_need_snapshot_history_begin(&foreign, &iterator) &&
+        prime_need_snapshot_history_next(&iterator, &view) == PRIME_NEED_HISTORY_INVALID &&
+        view.serial == sentinel.serial && view.cell.origin == sentinel.cell.origin &&
+        !prime_need_snapshot_history_begin(NULL, &iterator) &&
+        !prime_need_snapshot_history_begin(completed, NULL);
+}
+
+static bool history_transport_controls(const PrimeNeedSnapshot *before,
+                                       const PrimeNeedSnapshot *after) {
+    PrimeNeedHistoryIterator left, right;
+    PrimeNeedHistoryView a, b;
+    if (!prime_need_snapshot_history_begin(before, &left) ||
+        !prime_need_snapshot_history_begin(after, &right))
+        return false;
+    for (;;) {
+        PrimeNeedHistoryStep first = prime_need_snapshot_history_next(&left, &a);
+        PrimeNeedHistoryStep second = prime_need_snapshot_history_next(&right, &b);
+        if (first != second || first == PRIME_NEED_HISTORY_INVALID)
+            return false;
+        if (first == PRIME_NEED_HISTORY_DONE)
+            return true;
+        if (a.session_id != b.session_id || a.serial != b.serial ||
+            a.thunk_id != b.thunk_id || a.depth != b.depth ||
+            a.cell.cache_state != b.cell.cache_state ||
+            a.cell.authority_id != b.cell.authority_id ||
+            a.cell.evaluator_id != b.cell.evaluator_id ||
+            a.cell.storage_key != b.cell.storage_key ||
+            a.cell.import_key != b.cell.import_key ||
+            a.cell.source_occurrence_id != b.cell.source_occurrence_id ||
+            a.cell.source_argument_index != b.cell.source_argument_index ||
+            !atom_eq(a.cell.origin, b.cell.origin) ||
+            ((a.cell.cached == NULL) != (b.cell.cached == NULL)) ||
+            (a.cell.cached && !atom_eq(a.cell.cached, b.cell.cached)))
+            return false;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        if (a.cell.capture_known != b.cell.capture_known ||
+            a.cell.capture_var_count != b.cell.capture_var_count)
+            return false;
+        for (size_t i = 0; i < a.cell.capture_var_count; i++)
+            if (a.cell.capture_var_ids[i] != b.cell.capture_var_ids[i])
+                return false;
+#endif
+    }
+}
+
+static bool history_latest(const PrimeNeedSnapshot *snapshot, uint64_t thunk,
+                           PrimeNeedHistoryView *out) {
+    PrimeNeedHistoryIterator iterator;
+    PrimeNeedHistoryView row;
+    if (!out || !prime_need_snapshot_history_begin(snapshot, &iterator))
+        return false;
+    for (;;) {
+        PrimeNeedHistoryStep step = prime_need_snapshot_history_next(&iterator, &row);
+        if (step != PRIME_NEED_HISTORY_ENTRY)
+            return false;
+        if (row.thunk_id == thunk) {
+            *out = row;
+            return true;
+        }
+    }
+}
+
+static bool history_cell_matches_lookup(const PrimeNeedSnapshot *snapshot,
+                                       uint64_t thunk) {
+    PrimeNeedHistoryView row;
+    PrimeNeedCellView cell;
+    if (!history_latest(snapshot, thunk, &row) ||
+        !prime_need_snapshot_lookup(snapshot, thunk, &cell) ||
+        row.session_id != snapshot->session_id ||
+        row.cell.cache_state != cell.cache_state ||
+        row.cell.origin != cell.origin || row.cell.cached != cell.cached ||
+        row.cell.authority_id != cell.authority_id ||
+        row.cell.evaluator_id != cell.evaluator_id ||
+        row.cell.storage_key != cell.storage_key || row.cell.import_key != cell.import_key ||
+        row.cell.source_occurrence_id != cell.source_occurrence_id ||
+        row.cell.source_argument_index != cell.source_argument_index)
+        return false;
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    if (row.cell.capture_known != cell.capture_known ||
+        row.cell.capture_var_ids != cell.capture_var_ids ||
+        row.cell.capture_var_count != cell.capture_var_count)
+        return false;
+#endif
+    return true;
+}
+
+static void interleaved_history_controls(Arena *arena, Arena *destination,
+                                        Arena *temporary) {
+    PrimeNeedSnapshot stages[9] = {0};
+    uint64_t numbered = 0u;
+    const uint64_t named = PRIME_NEED_NAMED_CELL_BIT | UINT64_C(701);
+    Atom *numbered_origin = atom_expr2(arena, atom_symbol(arena, "HistoryOrigin"),
+                                      atom_int(arena, 1));
+    Atom *named_origin = atom_expr2(arena, atom_symbol(arena, "HistoryOrigin"),
+                                   atom_int(arena, 1));
+    Atom *value = atom_expr2(arena, atom_symbol(arena, "HistoryValue"), atom_int(arena, 7));
+    Atom *fault = atom_symbol(arena, "HistoryFault");
+    bool ready = numbered_origin && named_origin && value && fault &&
+        numbered_origin != named_origin && atom_eq(numbered_origin, named_origin) &&
+        prime_need_snapshot_begin(&stages[0]) &&
+        prime_need_snapshot_allocate(arena, &stages[0], numbered_origin, &stages[1], &numbered) &&
+        prime_need_snapshot_allocate_named(arena, &stages[1], named_origin, named, &stages[2]) &&
+        prime_need_snapshot_start_evaluation(arena, &stages[2], numbered, 23u, &stages[3]) &&
+        prime_need_snapshot_start_evaluation(arena, &stages[3], named, 29u, &stages[4]) &&
+        prime_need_snapshot_retry_evaluation(arena, &stages[4], numbered, 23u, &stages[5]) &&
+        prime_need_snapshot_resolve_stable_fault(arena, &stages[5], named, 29u, fault, &stages[6]) &&
+        prime_need_snapshot_start_evaluation(arena, &stages[6], numbered, 31u, &stages[7]) &&
+        prime_need_snapshot_resolve_value(arena, &stages[7], numbered, 31u, value, &stages[8]);
+    CHECK(ready, "interleaved numbered and named cells retain retry and stable-fault histories");
+
+    const uint64_t cells[] = {numbered, numbered, named, numbered, named, numbered, named, numbered};
+    const PrimeNeedCacheState states[] = {PRIME_NEED_CACHE_VALUE, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_STABLE_FAULT, PRIME_NEED_CACHE_EMPTY, PRIME_NEED_CACHE_EVALUATING,
+        PRIME_NEED_CACHE_EVALUATING, PRIME_NEED_CACHE_EMPTY, PRIME_NEED_CACHE_EMPTY};
+    PrimeNeedHistoryIterator iterator;
+    PrimeNeedHistoryView row = {0};
+    bool ordered = ready && prime_need_snapshot_history_begin(&stages[8], &iterator);
+    uint64_t previous_serial = UINT64_MAX;
+    for (size_t i = 0u; ordered && i < 8u; i++) {
+        ordered = prime_need_snapshot_history_next(&iterator, &row) == PRIME_NEED_HISTORY_ENTRY &&
+            row.session_id == stages[8].session_id && row.depth == 8u - i &&
+            row.thunk_id == cells[i] && row.cell.cache_state == states[i] &&
+            row.serial != 0u && row.serial < previous_serial &&
+            row.cell.origin == (cells[i] == numbered ? numbered_origin : named_origin);
+        previous_serial = row.serial;
+    }
+    CHECK(ordered && prime_need_snapshot_history_next(&iterator, &row) == PRIME_NEED_HISTORY_DONE,
+          "complete history preserves every interleaved update and distinct equal producer nodes");
+    PrimeNeedHistoryView untouched = {.serial = UINT64_MAX};
+    CHECK(ready && history_cell_matches_lookup(&stages[8], numbered) &&
+              history_cell_matches_lookup(&stages[8], named) &&
+              !history_latest(&stages[8], 0u, &untouched) && untouched.serial == UINT64_MAX,
+          "first matching history records agree with indexed and named latest-cell lookup");
+    PrimeNeedHistoryView earlier, later;
+    CHECK(ready && history_latest(&stages[4], numbered, &earlier) &&
+              history_latest(&stages[8], numbered, &later) && earlier.serial != later.serial &&
+              earlier.cell.cache_state == PRIME_NEED_CACHE_EVALUATING &&
+              later.cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+              history_cell_matches_lookup(&stages[4], named),
+          "saved prefixes retain their own latest evaluations after a descendant completes");
+    PrimeNeedSnapshot image = stages[8];
+    CHECK(ready && prime_need_snapshot_promote(destination, &image) &&
+              history_transport_controls(&stages[8], &image) &&
+              history_cell_matches_lookup(&image, numbered) &&
+              history_cell_matches_lookup(&image, named),
+          "promotion preserves the complete interleaved history and latest-cell observations");
+    PrimeNeedSnapshot sibling = {0};
+    Atom *equal_value = atom_deep_copy(arena, value);
+    CHECK(ready && equal_value && atom_eq(value, equal_value) &&
+              prime_need_snapshot_resolve_value(arena, &stages[7], numbered, 31u,
+                                                equal_value, &sibling) &&
+              history_latest(&sibling, numbered, &earlier) &&
+              history_latest(&stages[8], numbered, &later) && earlier.serial != later.serial &&
+              atom_eq(earlier.cell.cached, later.cell.cached) &&
+              !history_transport_controls(&sibling, &stages[8]) &&
+              !prime_need_snapshot_is_ancestor(&sibling, &stages[8]) &&
+              !prime_need_snapshot_is_ancestor(&stages[8], &sibling),
+          "equal sibling results retain different producer updates and incomparable histories");
+
+    PrimeNeedSnapshot suffix = {0}, suffix_image = {0};
+    PrimeNeedHistoryView suffix_top = {0}, suffix_prefix = {0};
+    bool suffix_ready = ready &&
+        prime_need_snapshot_start_evaluation(temporary, &stages[1], numbered, 41u, &suffix);
+    if (suffix_ready)
+        suffix_image = suffix;
+    CHECK(suffix_ready &&
+              prime_need_snapshot_promote_suffix(destination, temporary, &suffix_image) &&
+              history_transport_controls(&suffix, &suffix_image) &&
+              prime_need_snapshot_excludes_arena(&suffix_image, temporary) &&
+              !prime_need_snapshot_excludes_arena(&suffix_image, arena) &&
+              prime_need_snapshot_history_begin(&suffix_image, &iterator) &&
+              prime_need_snapshot_history_next(&iterator, &suffix_top) == PRIME_NEED_HISTORY_ENTRY &&
+              prime_need_snapshot_history_next(&iterator, &suffix_prefix) == PRIME_NEED_HISTORY_ENTRY &&
+              prime_need_snapshot_history_next(&iterator, &row) == PRIME_NEED_HISTORY_DONE &&
+              suffix_top.cell.origin != suffix_prefix.cell.origin &&
+              suffix_prefix.cell.origin == numbered_origin &&
+              atom_eq(suffix_top.cell.origin, suffix_prefix.cell.origin),
+          "suffix promotion preserves origin content across copied and retained addresses");
+
+    PrimeNeedSnapshot named_left = {0}, named_right = {0};
+    PrimeNeedHistoryView named_left_row = {0}, named_right_row = {0};
+    CHECK(ready &&
+              prime_need_snapshot_allocate_named(arena, &stages[0], numbered_origin,
+                                                 named, &named_left) &&
+              prime_need_snapshot_allocate_named(arena, &stages[0], named_origin,
+                                                 named, &named_right) &&
+              history_latest(&named_left, named, &named_left_row) &&
+              history_latest(&named_right, named, &named_right_row) &&
+              named_left_row.session_id == named_right_row.session_id &&
+              named_left_row.thunk_id == named_right_row.thunk_id &&
+              named_left_row.cell.authority_id != named_right_row.cell.authority_id &&
+              atom_eq(named_left_row.cell.origin, named_right_row.cell.origin) &&
+              !prime_need_snapshot_is_ancestor(&named_left, &named_right) &&
+              !prime_need_snapshot_is_ancestor(&named_right, &named_left),
+          "sibling named allocations share a lookup key without sharing allocation authority");
+    Atom *named_left_ref = prime_need_ref(arena, &named_left, named);
+    Atom *named_right_ref = prime_need_ref(arena, &named_right, named);
+    Atom *named_left_inspect = prime_need_ref_restrict(
+        arena, named_left_ref, &named_left, CETTA_PRIME_NEED_RIGHT_INSPECT);
+    uint64_t untouched_thunk = UINT64_MAX;
+    CHECK(ready && named_left_ref && named_right_ref && named_left_inspect &&
+              prime_need_ref_belongs_to_with_rights(
+                  named_left_ref, &named_left, CETTA_PRIME_NEED_RIGHT_ALL, NULL) &&
+              prime_need_ref_belongs_to_with_rights(
+                  named_right_ref, &named_right, CETTA_PRIME_NEED_RIGHT_ALL, NULL) &&
+              !prime_need_ref_belongs_to_with_rights(
+                  named_left_inspect, &named_right, CETTA_PRIME_NEED_RIGHT_INSPECT,
+                  &untouched_thunk) && untouched_thunk == UINT64_MAX &&
+              !prime_need_ref_restrict(
+                  arena, named_left_ref, &named_right, CETTA_PRIME_NEED_RIGHT_INSPECT),
+          "same-key equal-origin sibling snapshots cannot borrow another allocation's capability");
+}
+
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static void check_receipt_graph_producers(void) {
+    PrimeNeedReceiptGraph empty = {0};
+    bool unchanged = true;
+    CHECK(prime_need_receipt_graph_producers(&empty, NULL) &&
+              prime_need_receipt_graph_producers(&empty, &unchanged) && unchanged,
+          "an empty graph needs no producer index or output storage");
+    PrimeNeedReceiptGraph missing = {.length = 1u};
+    PrimeNeedReceiptGraph too_large = {.nodes = (PrimeNeedReceiptGraphNode *)&missing,
+        .length = SIZE_MAX};
+    CHECK(!prime_need_receipt_graph_producers(NULL, &unchanged) &&
+              !prime_need_receipt_graph_producers(&missing, &unchanged) &&
+              !prime_need_receipt_graph_producers(&too_large, &unchanged) && unchanged,
+          "invalid producer views leave the caller's flags untouched");
+    PrimeNeedReceiptGraphNode nodes[10] = {0};
+    for (size_t i = 0u; i < 10u; i++) {
+        nodes[i].identity_id = i + 1u;
+        nodes[i].has_event = true;
+        nodes[i].event = (PrimeNeedReceiptEvent){
+            .need_session_id = 7u, .thunk_id = 11u, .producer_update_id = 17u};
+    }
+    nodes[0].event.producer_completed = true;
+    nodes[2].event.need_session_id = 8u;
+    nodes[3].event.thunk_id = 12u;
+    nodes[4].has_event = false;
+    nodes[4].event.producer_completed = true;
+    nodes[5].event.producer_update_id = 0u;
+    nodes[6].event.producer_update_id = 19u;
+    nodes[7].event = (PrimeNeedReceiptEvent){.need_session_id = UINT64_MAX,
+        .thunk_id = UINT64_MAX - 1u, .producer_update_id = UINT64_MAX,
+        .producer_completed = true};
+    nodes[8].event = nodes[7].event;
+    nodes[8].event.producer_completed = false;
+    nodes[9].has_event = false;
+    PrimeNeedReceiptGraphNode original[10];
+    memcpy(original, nodes, sizeof(nodes));
+    bool flags[10] = {0};
+    const bool expected[10] = {true, true, false, false, false,
+                              false, false, true, true, false};
+    PrimeNeedReceiptGraph graph = {.nodes = nodes, .length = 10u};
+    CHECK(prime_need_receipt_graph_producers(&graph, flags) &&
+              memcmp(flags, expected, sizeof(flags)) == 0 &&
+              memcmp(nodes, original, sizeof(nodes)) == 0,
+          "producer presence keeps session/cell/update identities and the original node order");
+    nodes[0].event.producer_completed = false;
+    nodes[7].event.producer_completed = false;
+    bool all_external = prime_need_receipt_graph_producers(&graph, flags);
+    for (size_t i = 0u; i < 10u; i++) all_external &= !flags[i];
+    CHECK(all_external,
+          "a graph of deliveries cannot invent retained production from matching identities");
+
+    const size_t count = 8192u;
+    PrimeNeedReceiptGraphNode *many = calloc(count * 2u, sizeof(*many));
+    bool *many_flags = calloc(count * 2u, sizeof(*many_flags));
+    CHECK(many && many_flags, "large producer view allocates its temporary test storage");
+    if (many && many_flags) {
+        for (size_t i = 0u; i < count; i++) {
+            many[i].identity_id = i + 1u;
+            many[i].has_event = true;
+            many[i].event = (PrimeNeedReceiptEvent){
+                .need_session_id = UINT64_MAX - i * 31u,
+                .thunk_id = UINT64_MAX - i * 127u,
+                .producer_update_id = UINT64_MAX - i * 257u,
+                .producer_completed = true};
+        }
+        for (size_t i = 0u; i < count; i++) {
+            many[count + i] = many[count - i - 1u];
+            many[count + i].identity_id = count + i + 1u;
+            many[count + i].event.producer_completed = false;
+        }
+        many[count].event.need_session_id = 0u;
+        many[count + 1u].event.thunk_id = 0u;
+        many[count + 2u].event.producer_update_id = 0u;
+        many[count + 3u].has_event = false;
+        many[count + 4u].event.producer_update_id = 1u;
+        PrimeNeedReceiptGraph large = {.nodes = many, .length = count * 2u};
+        bool matches = prime_need_receipt_graph_producers(&large, many_flags);
+        for (size_t i = 0u; i < count * 2u; i++)
+            matches &= many_flags[i] == !(i >= count && i < count + 5u) &&
+                many[i].identity_id == i + 1u;
+        CHECK(matches,
+              "large reversed deliveries find exact producers without sorting the occurrence graph");
+    } else CHECK(false, "large producer view could not run");
+    free(many_flags);
+    free(many);
+}
+
 static bool recording_root_count(const PrimeNeedReceipt *root, void *raw) {
     if (!root->top) return false;
     PrimeNeedReceiptGraph graph = {0};
@@ -579,6 +1071,120 @@ done:
     prime_need_recording_copy_free(right_copy);
     prime_need_recording_release(original); prime_need_recording_release(independent);
     for (size_t i = 0u; i < 3u; i++) arena_free(arenas[i]);
+}
+
+static void check_recording_copy_forgetting(void) {
+    Arena input, destination, holder, wrong;
+    Arena *arenas[] = {&input, &destination, &holder, &wrong};
+    for (size_t i = 0u; i < 4u; i++) arena_init_detached(arenas[i]);
+    bool input_alive = true, holder_alive = true;
+    AtomDeepCopySession *session = NULL, *retaining = NULL, *duplicating = NULL;
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u, 131072u, 1u, 2u});
+    PrimeNeedReceipt receipt = {0}, empty = {0}, retained = {0};
+    PrimeNeedSnapshot origin = {0}, allocated = {0}, active = {0}, ready = {0};
+    PrimeNeedBranchState branch = {0}, written = {0};
+    StateCell cell = {0};
+    uint64_t thunk = 0u;
+    Atom *value = atom_expr2(&input, atom_symbol(&input, "Kept"), atom_int(&input, 7));
+    bool seeded = group && prime_need_recording_reserve(group, NULL, 4u, 131072u, &receipt);
+    empty = receipt;
+    seeded = seeded && prime_need_receipt_observe_cell(&input, &receipt, 71u, 1u, value, &receipt) &&
+        prime_need_snapshot_begin(&origin) &&
+        prime_need_snapshot_allocate(&input, &origin, value, &allocated, &thunk) &&
+        prime_need_snapshot_start_evaluation(&input, &allocated, thunk, 91u, &active) &&
+        prime_need_snapshot_resolve_ready_value(&input, &active, thunk, 91u, value, &ready) &&
+        prime_need_branch_state_begin(&input, &branch) &&
+        prime_need_branch_state_write(&input, &branch, &cell,
+            atom_int(&input, 1), atom_int(&input, 2), &written);
+    CHECK(seeded, "forgetting source has actual recorded data, a completed Need cell and a state overlay");
+    if (!seeded) goto done;
+    Atom *reference = prime_need_ref(&input, &ready, thunk);
+    Atom *inspection = prime_need_ref_restrict(&input, reference, &ready,
+        CETTA_PRIME_NEED_RIGHT_INSPECT);
+    session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pair = {&input, &destination};
+    CHECK(session && atom_deep_copy_session_set_arena_map(session, &pair, 1u) &&
+        !prime_need_recording_copy_forget(NULL) &&
+        prime_need_recording_copy_forget(session) && prime_need_recording_copy_forget(session),
+        "an explicit erasing copy policy is idempotent and rejects a missing session");
+    if (!session) goto done;
+    CHECK(!prime_need_recording_copy_enable(session),
+        "an erasing session cannot later become a duplicating session");
+    PrimeNeedReceipt erased = receipt, erased_empty = empty;
+    CHECK(prime_need_receipt_copy_with_session(&destination, session, &erased) &&
+        prime_need_receipt_copy_with_session(&destination, session, &erased_empty) &&
+        !erased.top && !erased.recording && !erased.owner && !erased.session_id &&
+        !erased_empty.top && !erased_empty.recording && !erased_empty.owner,
+        "projection erases both a recorded graph and its empty but owner-bearing slice");
+    CHECK(!arena_retains_owner(&destination, group, prime_need_recording_release) &&
+        !prime_need_recording_status(group).owner_links && receipt.top && receipt.recording,
+        "an erased destination adds no recording hold and leaves the source observer intact");
+    PrimeNeedReceipt refused = receipt;
+    CHECK(!prime_need_receipt_copy_with_session(&wrong, session, &refused) &&
+        refused.top == receipt.top && refused.recording == receipt.recording,
+        "wrong destination refusal cannot erase the supplied carrier");
+    PrimeNeedSnapshot copied_need = ready;
+    PrimeNeedBranchState copied_branch = written;
+    Atom *copied_inspection = atom_deep_copy_session_copy(session, inspection);
+    bool transported = copied_inspection &&
+        prime_need_snapshot_copy_with_session(&destination, session, &copied_need) &&
+        prime_need_branch_state_copy_with_session(&destination, session, &copied_branch);
+    CHECK(transported && copied_branch.top && copied_need.top &&
+        copied_branch.session_id == written.session_id && copied_need.session_id == ready.session_id,
+        "erasing observer evidence preserves the operational state and complete Need world");
+    if (!transported) goto done;
+    CHECK(prime_need_ref_belongs_to_with_rights(copied_inspection, &copied_need,
+            CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+        !prime_need_ref_belongs_to_with_rights(copied_inspection, &copied_need,
+            CETTA_PRIME_NEED_RIGHT_FORCE, NULL),
+        "recording erasure neither loses inspection rights nor creates force permission");
+    duplicating = atom_deep_copy_session_new(&wrong);
+    CHECK(duplicating && prime_need_recording_copy_enable(duplicating) &&
+        !prime_need_recording_copy_forget(duplicating),
+        "a duplicating session cannot switch to erasure");
+    retaining = atom_deep_copy_session_new(&holder);
+    retained = receipt;
+    CHECK(retaining && prime_need_receipt_copy_with_session(&holder, retaining, &retained) &&
+        arena_retains_owner(&holder, group, prime_need_recording_release),
+        "default copying still supplies a separate retained observer");
+    CHECK(!prime_need_recording_copy_forget(retaining) &&
+        !prime_need_recording_copy_enable(retaining),
+        "a session cannot change policy after retaining its first recording carrier");
+    atom_deep_copy_session_free(session); session = NULL;
+    atom_deep_copy_session_free(retaining); retaining = NULL;
+    atom_deep_copy_session_free(duplicating); duplicating = NULL;
+    arena_free(&input); input_alive = false;
+    prime_need_recording_release(group); group = NULL;
+    PrimeNeedReceiptEvent event = {0};
+    CHECK(prime_need_receipt_event_at(&retained, 0u, &event) &&
+        atom_eq(event.after, atom_expr2(&destination, atom_symbol(&destination, "Kept"),
+            atom_int(&destination, 7))),
+        "an outside observer retains its graph after the original owner and source arena end");
+    arena_free(&holder); holder_alive = false;
+    PrimeNeedCellView observed;
+    Atom *state_value = NULL;
+    CHECK(prime_need_snapshot_lookup(&copied_need, thunk, &observed) &&
+        observed.cache_state == PRIME_NEED_CACHE_VALUE &&
+        observed.value_role == PRIME_NEED_VALUE_READY &&
+        atom_eq(observed.cached, atom_expr2(&destination, atom_symbol(&destination, "Kept"),
+            atom_int(&destination, 7))) &&
+        prime_need_branch_state_value(&copied_branch, &cell, &state_value) &&
+        atom_eq(state_value, atom_int(&destination, 2)) &&
+        prime_need_ref_belongs_to_with_rights(copied_inspection, &copied_need,
+            CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+        !prime_need_ref_belongs_to_with_rights(copied_inspection, &copied_need,
+            CETTA_PRIME_NEED_RIGHT_FORCE, NULL),
+        "semantic state and restricted authority outlive the final recording holder");
+done:
+    atom_deep_copy_session_free(session);
+    atom_deep_copy_session_free(retaining);
+    atom_deep_copy_session_free(duplicating);
+    prime_need_recording_release(group);
+    if (holder_alive) arena_free(&holder);
+    arena_free(&destination);
+    arena_free(&wrong);
+    if (input_alive) arena_free(&input);
 }
 
 static void check_recording_copy_mode(void) {
@@ -1736,57 +2342,65 @@ static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
     }
 }
 
-/* Compare the ancestry relation against complete path membership, including
- * a fork and transported snapshots after the source arena is retired. */
-static void check_snapshot_lineage_transport(void) {
-    Arena source, retained;
-    arena_init_detached(&source);
-    arena_init_detached(&retained);
-    PrimeNeedSnapshot path[65], copied[65], fork;
-    prime_need_snapshot_init(&path[0]);
-    bool built = prime_need_snapshot_begin(&path[0]);
-    for (size_t i = 1u; built && i < 65u; ++i) {
-        uint64_t id = 0u;
-        built = prime_need_snapshot_allocate(&source, &path[i - 1u],
-            atom_int(&source, (int64_t)i), &path[i], &id);
+/* Compare lineage queries with independently retained parent indices, then
+ * repeat after transporting every prefix and destroying the source arena. */
+static void check_snapshot_prefix_transport(void) {
+    enum { COUNT = 257 };
+    PrimeNeedSnapshot source[COUNT], copied[COUNT];
+    size_t parent[COUNT] = {0};
+    Arena input, output;
+    arena_init_detached(&input);
+    arena_init_detached(&output);
+    AtomDeepCopySession *session = NULL;
+    bool input_alive = true;
+    prime_need_snapshot_init(&source[0]);
+    bool admitted = prime_need_snapshot_begin(&source[0]);
+    for (size_t i = 1u; admitted && i < COUNT; i++) {
+        parent[i] = i <= 128u ? i - 1u :
+            (size_t)(((uint64_t)i * UINT64_C(2654435761)) >> 16u) % i;
+        uint64_t cell = 0u;
+        admitted = prime_need_snapshot_allocate(&input, &source[parent[i]],
+            atom_int(&input, (int64_t)i), &source[i], &cell);
     }
-    CHECK(built, "lineage fixture builds a complete path");
-    if (!built) goto done;
+    CHECK(admitted, "lineage forest retains its independent parent inventory");
+    if (!admitted) goto done;
     bool exact = true;
-    for (size_t i = 0u; i < 65u; ++i)
-        for (size_t j = 0u; j < 65u; ++j)
-            exact &= prime_need_snapshot_is_ancestor(&path[i], &path[j]) == (i <= j);
-    CHECK(exact, "every path ancestry query agrees with path membership");
-    fork = path[17];
-    for (size_t i = 0u; built && i < 20u; ++i) {
-        PrimeNeedSnapshot next;
-        uint64_t id = 0u;
-        built = prime_need_snapshot_allocate(&source, &fork,
-            atom_int(&source, -(int64_t)i), &next, &id);
-        if (built) fork = next;
+    for (size_t a = 0u; a < COUNT; a++) {
+        for (size_t b = 0u; b < COUNT; b++) {
+            size_t walk = b;
+            while (walk && walk != a) walk = parent[walk];
+            if (prime_need_snapshot_is_ancestor(&source[a], &source[b]) != (walk == a))
+                exact = false;
+        }
     }
-    exact = built;
-    for (size_t i = 0u; built && i < 65u; ++i)
-        exact &= prime_need_snapshot_is_ancestor(&path[i], &fork) == (i <= 17u);
-    CHECK(exact, "same-depth sibling frames are not mistaken for ancestors");
-    AtomDeepCopySession *session = atom_deep_copy_session_new(&retained);
-    bool transported = session != NULL;
-    for (size_t i = 0u; transported && i < 65u; ++i) {
-        copied[i] = path[i];
-        transported = prime_need_snapshot_copy_with_session(&retained, session, &copied[i]);
+    CHECK(exact, "lineage queries preserve all ancestor and sibling distinctions");
+    session = atom_deep_copy_session_new(&output);
+    AtomDeepCopyArenaPair pair = {&input, &output};
+    admitted = session && atom_deep_copy_session_set_arena_map(session, &pair, 1u);
+    for (size_t i = 0u; admitted && i < COUNT; i++) {
+        copied[i] = source[i];
+        admitted = prime_need_snapshot_copy_with_session(&output, session, &copied[i]);
     }
+    CHECK(admitted, "complete lineage copies share their transported prefixes");
+    if (!admitted) goto done;
     atom_deep_copy_session_free(session);
-    arena_free(&source);
-    exact = transported;
-    for (size_t i = 0u; transported && i < 65u; ++i)
-        for (size_t j = 0u; j < 65u; ++j)
-            exact &= prime_need_snapshot_is_ancestor(&copied[i], &copied[j]) == (i <= j);
-    CHECK(exact, "transported lineage remains exact after source retirement");
-    arena_free(&retained);
-    return;
+    session = NULL;
+    arena_free(&input);
+    input_alive = false;
+    exact = true;
+    for (size_t a = 0u; a < COUNT; a++) {
+        for (size_t b = 0u; b < COUNT; b++) {
+            size_t walk = b;
+            while (walk && walk != a) walk = parent[walk];
+            if (prime_need_snapshot_is_ancestor(&copied[a], &copied[b]) != (walk == a))
+                exact = false;
+        }
+    }
+    CHECK(exact, "copied lineage queries survive destruction of every source frame");
 done:
-    arena_free(&source);
-    arena_free(&retained);
+    atom_deep_copy_session_free(session);
+    arena_free(&output);
+    if (input_alive) arena_free(&input);
 }
 
 int main(void) {
@@ -1807,7 +2421,8 @@ int main(void) {
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
 
-    check_snapshot_lineage_transport();
+    interleaved_history_controls(&arena, &promoted_arena, &branch_arena);
+    check_snapshot_prefix_transport();
     check_branch_shared_prefix_compatibility();
     check_forwarded_production(&arena, &promoted_arena);
 
@@ -1913,12 +2528,14 @@ int main(void) {
               !prime_need_snapshot_excludes_arena(
                   &branch_thunk, &snapshot_branch_arena),
           "snapshot branch suffix retains its longer-lived prefix");
+    PrimeNeedSnapshot branch_before_promotion = branch_thunk;
     CHECK(prime_need_snapshot_promote_suffix(
               &arena, &snapshot_branch_arena, &branch_thunk) &&
               branch_thunk.owner == &arena &&
               branch_thunk.closure_owner == &arena &&
               prime_need_snapshot_excludes_arena(
-                  &branch_thunk, &snapshot_branch_arena),
+                  &branch_thunk, &snapshot_branch_arena) &&
+              history_transport_controls(&branch_before_promotion, &branch_thunk),
           "snapshot suffix promotion closes directly into its stable parent");
     arena_free(&snapshot_branch_arena);
     PrimeNeedCellView branch_cell;
@@ -2148,6 +2765,8 @@ int main(void) {
                   CETTA_PRIME_NEED_RIGHT_FORCE, NULL),
           "copying preserves an attenuated rights set");
 
+    capability_record_controls(&arena, &source_argument, &root, source_argument_id);
+
     PrimeNeedSnapshot evaluating;
     const uint64_t evaluator_id = 17u;
     CHECK(prime_need_snapshot_start_evaluation(
@@ -2242,7 +2861,10 @@ int main(void) {
                   PRIME_NEED_CACHE_STABLE_FAULT &&
               cell.cached == repeated_fault.cached,
           "repeated fault lookup returns the cached receipt");
-    CHECK(cell.origin == term && cell.cached == fault_value,
+    CHECK(cell.origin == term && cell.cached == fault_value &&
+              history_readback_controls(&root, &thunk, &evaluating,
+                  &faulted, thunk_id, term, fault_value, evaluator_id,
+                  PRIME_NEED_CACHE_STABLE_FAULT),
           "stable-fault caching does not overwrite the origin");
 
     PrimeNeedSnapshot left_evaluating;
@@ -2264,8 +2886,21 @@ int main(void) {
               right_value, &right),
           "right branch memoizes its value");
     CHECK(!prime_need_snapshot_is_ancestor(&left, &right) &&
-              !prime_need_snapshot_is_ancestor(&right, &left),
-          "sibling branch refinements are incomparable");
+              !prime_need_snapshot_is_ancestor(&right, &left) &&
+              history_readback_controls(&root, &thunk, &left_evaluating,
+                &left, thunk_id, term, left_value, 21u, PRIME_NEED_CACHE_VALUE) &&
+              history_readback_controls(&root, &thunk, &right_evaluating,
+                &right, thunk_id, term, right_value, 22u, PRIME_NEED_CACHE_VALUE) &&
+              !history_transport_controls(&left, &right),
+          "incomparable siblings retain exact independent inert histories");
+    CHECK(prime_need_ref_belongs_to_with_rights(
+              inspect_ref, &left, CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+              prime_need_ref_belongs_to_with_rights(
+                  inspect_ref, &right, CETTA_PRIME_NEED_RIGHT_INSPECT, NULL) &&
+              prime_need_snapshot_lookup(&left, thunk_id, &cell) && cell.cached == left_value &&
+              prime_need_snapshot_lookup(&right, thunk_id, &cell) && cell.cached == right_value &&
+              !atom_eq(left_value, right_value),
+          "an inherited capability selects each retained sibling's own cache without merging worlds");
     PrimeNeedSnapshot rejected_merge = left;
     CHECK(!prime_need_snapshot_merge(&rejected_merge, &right),
           "sibling heaps cannot merge");
@@ -2292,7 +2927,9 @@ int main(void) {
           "uncertified faults return the cell to a retryable state");
     CHECK(prime_need_snapshot_lookup(&retried, thunk_id, &cell) &&
               cell.cache_state == PRIME_NEED_CACHE_EMPTY &&
-              cell.origin == term && cell.cached == NULL,
+              cell.origin == term && cell.cached == NULL &&
+              history_readback_controls(&root, &thunk, &retrying,
+                  &retried, thunk_id, term, NULL, 31u, PRIME_NEED_CACHE_EMPTY),
           "retry preserves the immutable origin");
 
     PrimeNeedSnapshot promoted = left;
@@ -2302,7 +2939,8 @@ int main(void) {
               prime_need_snapshot_lookup(&promoted, thunk_id, &cell) &&
               atom_is_symbol(cell.origin, "delayed") &&
               atom_is_symbol(cell.cached, "left") &&
-              prime_need_ref_belongs_to(ref, &promoted, NULL),
+              prime_need_ref_belongs_to(ref, &promoted, NULL) &&
+              history_transport_controls(&left, &promoted),
           "promotion preserves lineage, origin, cache, and authority");
     CHECK(!prime_need_snapshot_start_evaluation(
               &arena, &left, thunk_id + 1u, 41u, &invalid),
@@ -2321,11 +2959,26 @@ int main(void) {
               captured_cell.capture_known &&
               captured_cell.capture_var_count == 2u &&
               captured_cell.capture_var_ids[0] == 101u &&
-              captured_cell.capture_var_ids[1] == 202u,
+              captured_cell.capture_var_ids[1] == 202u &&
+              history_transport_controls(&captured_evaluating, &captured_promoted),
           "promotion preserves exact closure captures");
+    PrimeNeedHistoryIterator captured_history;
+    PrimeNeedHistoryView captured_top = {0}, captured_previous = {0};
+    CHECK(prime_need_snapshot_history_begin(&captured_promoted, &captured_history) &&
+              prime_need_snapshot_history_next(&captured_history, &captured_top) == PRIME_NEED_HISTORY_ENTRY &&
+              prime_need_snapshot_history_next(&captured_history, &captured_previous) == PRIME_NEED_HISTORY_ENTRY &&
+              captured_top.thunk_id == captured_id && captured_previous.thunk_id == captured_id &&
+              captured_top.cell.capture_known && captured_previous.cell.capture_known &&
+              captured_top.cell.capture_var_count == 2u &&
+              captured_previous.cell.capture_var_count == 2u &&
+              captured_top.cell.capture_var_ids != captured_previous.cell.capture_var_ids &&
+              captured_top.cell.capture_var_ids[0] == captured_previous.cell.capture_var_ids[0] &&
+              captured_top.cell.capture_var_ids[1] == captured_previous.cell.capture_var_ids[1],
+          "promoted historical updates preserve capture contents in separate arrays");
 #endif
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    check_receipt_graph_producers();
     check_cache_production_identity(&arena, &promoted_arena);
     check_bounded_recording();
     check_recording_refusal_boundaries();
@@ -2339,6 +2992,7 @@ int main(void) {
     check_growing_recording_grants();
     check_recording_copy_owner_domain();
     check_recording_copy_mode();
+    check_recording_copy_forgetting();
     check_recording_copy_mode_invalidation(false);
     check_recording_copy_mode_invalidation(true);
     for (unsigned mode = 0u; mode < 4u; mode++) check_recording_copy_refusal(mode);

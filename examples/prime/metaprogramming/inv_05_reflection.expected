@@ -21,5 +21,6 @@
 [((Defines double 1) (Defines square 1) (Defines compose 3) (Defines source-path 0) (Defines form-signature 1) (Defines signature 1))]
 [(loaded loaded loaded loaded loaded loaded)]
 [(Ran (quote (double (square 3))) 18)]
-[(Bare (= (double $x) (* 2 $x)))]
+[(Bare (= (* 2 $x) (* 2 $x)))]
 [(Quoted (quote (= (double $x) (* 2 $x))))]
+[(Returned (= (double $x) (* 2 $x)))]

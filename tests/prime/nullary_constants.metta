@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A symbol is a constant with no arguments.  A symbol the program defines
 ; evaluates by its definition, as a request and as an argument; a symbol it

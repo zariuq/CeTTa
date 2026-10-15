@@ -1,0 +1,1 @@
+(: k (-> String Symbol))

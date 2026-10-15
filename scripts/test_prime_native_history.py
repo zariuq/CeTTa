@@ -9,11 +9,13 @@ import os
 import subprocess
 from pathlib import Path
 from test_prime_native_control import parse, observations
+from test_prime_native_cost import receipt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--runtime', required=True)
 parser.add_argument('--receipt-dir', required=True)
 parser.add_argument('--timeout', type=float, default=60)
+parser.add_argument('--population', choices=('all', 'replay', 'forget'), default='all')
 args = parser.parse_args()
 w = Path(__file__).resolve().parent.parent
 b = Path(args.runtime).resolve()
@@ -43,6 +45,15 @@ def tagged(x, tag):
             if result:
                 return result
     return None
+
+
+def walk(x):
+    if isinstance(x, list):
+        if x and isinstance(x[0], str):
+            yield x
+        for y in x:
+            yield from walk(y)
+
 
 def normalize(history):
     """Rename allocated IDs jointly, preserving ordering and alias partitions."""
@@ -117,6 +128,384 @@ def save_receipt():
 
 atexit.register(save_receipt)
 
+
+def finish():
+    global finished
+    finished = True
+    save_receipt()
+    for check in checks:
+        print(f'{"PASS" if check["passed"] else "FAIL"}: {check["case"]}')
+    passed = sum(check['passed'] for check in checks)
+    print(f'(NativeHistorySummary {passed} {len(checks)} {len(checks) - passed})')
+    raise SystemExit(passed != len(checks) or
+                     any(run.get('native_exit') != 0 for run in runs))
+
+
+def replay_fields(value):
+    """Read one actual report; duplicate field names never overwrite evidence."""
+    if not isinstance(value, list) or not value:
+        raise ValueError(('not a report', value))
+    result = {}
+    for row in value[1:]:
+        if not isinstance(row, list) or len(row) != 2 or row[0] in result:
+            raise ValueError(('invalid report field', row))
+        result[row[0]] = row[1]
+    return result
+
+
+def history_reports(name, tag):
+    result = []
+    for row in parse((d / (name + '.stdout')).read_text()):
+        for value in row:
+            if isinstance(value, list) and value and value[0] == tag:
+                result.append(replay_fields(value))
+    return result
+
+
+def replay_reports(name):
+    return history_reports(name, 'ReplayCheckpoint')
+
+
+def replay_observation(report):
+    request = replay_fields(report['last-request'])
+    quoted = request['observation']
+    if not isinstance(quoted, list) or len(quoted) != 2 or quoted[0] != 'quote':
+        raise ValueError(('unquoted observation', quoted))
+    value = quoted[1]
+    return {'values': value[1], **replay_fields(['Fields', *value[2:]])}
+
+
+def replay_policy(budget=0, transaction=False):
+    resource = '(resources Transaction)' if transaction else ''
+    return (f'(search-policy (control FIFO (budget {budget}) (demand all) (retain True) {resource} '
+            '(costs native-events-v1) (receipts True) '
+            '(history (selections 512) (nodes 64) (bytes 32768) (owners 512))))')
+
+
+def replay_controls():
+    # This is the public capsule protocol, not a second replay interpreter.
+    # Answers and store changes below follow directly from the authored sources.
+    library = w / 'lib/native_history.metta'
+    projection = f'!(import! &self {library})\n' + '''
+!(let $record (parse "(Report (payload (println! \\\"FIELD-MUST-STAY-DATA\\\")))") (history:field $record payload))
+!(let $record (parse "(Report (payload A) (payload A))") (history:field $record payload))
+!(let $record (parse "(Report (payload A))") (history:field $record absent))
+!(let $record (parse "(Observation (A A B) (closed True))") (history:field $record values))
+!(let $record (parse "(Observation (A A B) (values Other))") (history:field $record values))
+'''
+    projected = [
+        ['HistoryField', 'Found', 'payload', ['quote', ['println!', 'FIELD-MUST-STAY-DATA']]],
+        ['HistoryField', 'Duplicate', 'payload', []],
+        ['HistoryField', 'Missing', 'absent', []],
+        ['HistoryField', 'Found', 'values', ['quote', ['A', 'A', 'B']]],
+        ['HistoryField', 'Duplicate', 'values', []],
+    ]
+    for language in ('prime', 'he', 'petta'):
+        name = 'replay-field-' + language
+        run(name, projection, definitions='', language=language)
+        text = (d / (name + '.stdout')).read_text()
+        actual = [node for node in walk(parse(text)) if node[0] == 'HistoryField']
+        effects = [line for line in text.splitlines()
+                   if line.strip('"') == 'FIELD-MUST-STAY-DATA']
+        checks.append(dict(case=name, passed=actual == projected and not effects,
+                           actual=actual, effects=effects))
+
+    expression = '(superpose (A B B))'
+    whole = run('replay-independent-whole',
+                f'!(cost:run {replay_policy(500)} {expression})', definitions='')
+    expected = whole[-1] if whole else None
+    for cut in (0, 1, 7, 19):
+        name = f'replay-pure-split-{cut}'
+        query = (f'!(bind! &capsule (history:capture (quote (cost:run '
+                 f'{replay_policy()} {expression})) (ReplayLimits 8 8192 134217728)))\n'
+                 '!(history:checkpoint &capsule)\n'
+                 f'!(history:record &capsule {cut})\n'
+                 f'!(history:record &capsule {500 - cut})\n'
+                 '!(history:replay &capsule 2000000000)\n'
+                 '!(history:replay &capsule 2000000000)\n'
+                 '!(history:checkpoint &capsule)\n'
+                 '!(history:dispose &capsule)')
+        run(name, query, definitions='')
+        reports = replay_reports(name)
+        ok = len(reports) == 6 and expected is not None
+        if ok:
+            first, last = map(replay_observation, reports[1:3])
+            cost = receipt(last['cost'])
+            reference = receipt(expected['cost'])
+            ok = (first['values'] + last['values'] == ['A', 'B', 'B'] and
+                  last['closed'] == 'True' and last['status'] == 'closed' and
+                  last['work'] == expected['work'] and
+                  cost['counts'] == {kind: count + (2 if kind == 'cost-read' else 0)
+                                     for kind, count in reference['counts'].items()} and
+                  [r['accepted-requests'] for r in reports] == [0, 0, 0, 1, 2, 2] and
+                  [r['replay-authenticated'] for r in reports] ==
+                  ['False'] * 4 + ['True', 'True'] and
+                  all(r['refusal'] == 'None' and r['source-correspondence'] == 'Unchecked'
+                      and r['storage-within-limit'] == 'True' for r in reports) and
+                  reports[2]['last-request'] == reports[-1]['last-request'])
+        checks.append(dict(case=name, passed=ok, requests=len(reports)))
+
+    # An accepted residual has its own owning handle. Closing its capsule must
+    # not retire that separately returned consumer or replay its earlier answers.
+    name = 'replay-owned-resume-after-disposal'
+    query = (f'!(import! &self {library})\n'
+             f'!(bind! &capsule (history:capture (quote (cost:run {replay_policy()} '
+             f'{expression})) (ReplayLimits 8 8192 134217728)))\n'
+             '!(history:record &capsule 7)\n'
+             '!(history:replay &capsule 2000000000)\n'
+             '!(bind! &checkpoint (history:checkpoint &capsule))\n'
+             '!(bind! &accepted (let $report &checkpoint '
+             '(let (HistoryField Found accepted-control $token) '
+             '(history:field $report accepted-control) '
+             '(let $tail (cdr-atom $token) (car-atom $tail)))))\n'
+             '!(history:dispose &capsule)\n'
+             f'!(select 0 {replay_policy(500)} &accepted)')
+    resumed = run(name, query, definitions='')
+    reports = replay_reports(name)
+    ok = len(reports) == 2 and bool(resumed) and expected is not None
+    if ok:
+        prefix = replay_observation(reports[0])
+        suffix = resumed[-1]
+        ok = (prefix['values'] + suffix['values'] == ['A', 'B', 'B'] and
+              suffix['closed'] == 'True' and suffix['work'] == expected['work'] and
+              reports[1]['replay-authenticated'] == 'True')
+    checks.append(dict(case=name, passed=ok))
+
+    # Refusal happens before effects; a textual handle is only written data.
+    for label, source, body, limits, reason in (
+        ('effect', '', '(println! "REPLAY-MUST-NOT-EXECUTE")',
+         '(ReplayLimits 8 8192 134217728)', 'ProducerOperation'),
+        ('capacity', '', expression, '(ReplayLimits 0 8192 134217728)', 'CapsuleCapacity'),
+        ('graded', '(= (replay-graded) A)\n'
+         '(= (replay-graded) B (where (println! "REPLAY-MUST-NOT-EXECUTE")))\n',
+         '(replay-graded)', '(ReplayLimits 8 8192 134217728)', 'UngradedNamedRows'),
+    ):
+        name = 'replay-refused-' + label
+        run(name, f'!(history:capture (quote (cost:run {replay_policy()} {body})) {limits})',
+            definitions=source)
+        text = (d / (name + '.stdout')).read_text()
+        reports = replay_reports(name)
+        ok = (len(reports) == 1 and reports[0]['refusal'] == reason and
+              reports[0]['replay-authenticated'] == 'False' and
+              reports[0]['recorded-requests'] == 0 and
+              not any(line.strip('"') == 'REPLAY-MUST-NOT-EXECUTE'
+                      for line in text.splitlines()))
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'replay-forged-written-handle'
+    query = '!(history:replay (NativeHandle "prime-replay" 1) 2000000000)'
+    run(name, query, definitions='')
+    trees = parse((d / (name + '.stdout')).read_text())
+    checks.append(dict(case=name, passed=trees ==
+        [[['history:replay', ['NativeHandle', 'prime-replay', 1], 2000000000]]]))
+
+    for mutate in (False, True):
+        name = 'replay-source-changed' if mutate else 'replay-inspection-exhausted'
+        query = (f'!(bind! &capsule (history:capture (quote (cost:run {replay_policy()} '
+                 f'{expression})) (ReplayLimits 8 8192 134217728)))\n'
+                 '!(history:record &capsule 500)\n')
+        if mutate:
+            query += '!(add-atom &self (replay-marker changed))\n'
+        query += (f'!(history:replay &capsule {2000000000 if mutate else 0})\n'
+                  '!(history:checkpoint &capsule)\n!(history:dispose &capsule)')
+        run(name, query, definitions='')
+        reports = replay_reports(name)
+        ok = (len(reports) == 3 and reports[1]['accepted-requests'] == 0 and
+              reports[1]['unconsumed-requests'] == 1 and
+              reports[1]['replay-authenticated'] == 'False' and
+              reports[1]['last-request'] == reports[0]['last-request'] ==
+              reports[2]['last-request'])
+        checks.append(dict(case=name, passed=ok))
+
+    # The live target receives two commits during recording. Replay uses
+    # independent target images, and must not repeat those live publications.
+    for changed in (False, True):
+        name = 'replay-transaction-changed-target' if changed else 'replay-transaction'
+        query = ('!(bind! &jobs (new-space))\n'
+                 '!(add-atom &jobs (exec 0 (I) (O (+ A))))\n'
+                 '!(add-atom &jobs (exec 1 (I) (O (+ B))))\n'
+                 f'!(bind! &capsule (history:capture (quote (cost:run '
+                 f'{replay_policy(transaction=True)} &jobs)) '
+                 '(ReplayLimits 8 8192 536870912)))\n'
+                 '!(history:record &capsule 18)\n'
+                 '!(history:record &capsule 18)\n'
+                 '!(history:replay &capsule 2000000000)\n')
+        if changed:
+            query += '!(add-atom &jobs Extra)\n!(remove-atom &jobs Extra)\n'
+        query += ('!(history:replay &capsule 2000000000)\n'
+                  '!(collapse (get-atoms &jobs))\n!(history:checkpoint &capsule)\n'
+                  '!(history:dispose &capsule)')
+        run(name, query, definitions='')
+        reports = replay_reports(name)
+        trees = parse((d / (name + '.stdout')).read_text())
+        ok = len(reports) == 5 and [['A', 'B']] in trees
+        if ok:
+            final = reports[-1]
+            recorded = replay_fields(reports[1]['last-request'])
+            retained = replay_fields(final['last-request'])
+            recorded_word = replay_fields(recorded['transaction'])
+            retained_word = replay_fields(retained['transaction'])
+            ok = (reports[2]['accepted-requests'] == 1 and
+                  final['recorded-requests'] == 2 and
+                  final['accepted-requests'] == (1 if changed else 2) and
+                  final['replay-authenticated'] == ('False' if changed else 'True') and
+                  final['refusal'] == ('ChangedExternalTarget' if changed else 'None') and
+                  all(r['profile'] == 'TransactionBoundaryRequestsV1' and
+                      r['source-correspondence'] == 'Unchecked' for r in reports) and
+                  {k: v for k, v in recorded.items() if k != 'transaction'} ==
+                  {k: v for k, v in retained.items() if k != 'transaction'} and
+                  {k: v for k, v in recorded_word.items() if k != 'retained-word-bytes'} ==
+                  {k: v for k, v in retained_word.items() if k != 'retained-word-bytes'})
+        checks.append(dict(case=name, passed=ok))
+
+    for stem in ('retained_replay', 'retained_transaction_replay'):
+        name = 'replay-client-' + stem
+        source = w / 'examples/prime/native_control' / (stem + '.metta')
+        run(name, '', definitions='', source_path=source)
+        actual = (d / (name + '.stdout')).read_text()
+        expected = source.with_suffix('.expected').read_text()
+        checks.append(dict(case=name, passed=parse(actual) == parse(expected)))
+
+
+def forget_controls():
+    library = str(w / 'lib/native_history.metta')
+    imported = f'!(import! &self {library})\n'
+    capture = (f'!(bind! &before (cost:run {policy(1, 19)} {body}))\n'
+               '!(let $report &before $report)\n'
+               '!(bind! &old (let $report &before '
+               '(let (HistoryField Found residual $token) (history:field $report residual) '
+               '(let $tail (cdr-atom $token) (car-atom $tail)))))\n')
+    resume = f'!(select 0 {policy(1, 2000, False)} &old)'
+    reference = run('forget-reference', f'!(cost:run {policy(1, 2000, False)} {body})')
+    expected = reference[-1] if reference else None
+    for cut in (0, 19, 49):
+        name = f'forget-live-alias-{cut}'
+        query = imported + capture.replace('(budget 19)', f'(budget {cut})')
+        query += ('!(history:forget &before 0)\n'
+                  '!(history:forget &before 131072)\n' + resume)
+        parts = run(name, query)
+        reports = history_reports(name, 'HistoryPolicy')
+        ok = (expected is not None and len(parts) == 2 and len(reports) == 2 and
+              parts[0]['values'] + parts[-1]['values'] == expected['values'] and
+              parts[-1]['closed'] == 'True' and parts[-1]['work'] == expected['work'] and
+              'history' not in parts[-1] and
+              [r['status'] for r in reports] == ['Refused', 'Unrecorded'] and
+              reports[0]['reason'] == 'InspectionLimit' and reports[1]['reason'] == 'None' and
+              all(r['residual'] == parts[0]['residual'] and r['work'] == cut for r in reports) and
+              [r['earlier'] for r in reports] == ['Unchanged', 'Unrecorded'] and
+              parts[-1]['residual'] == parts[0]['residual'])
+        checks.append(dict(case=name, passed=ok))
+
+    weighted = base.replace('(= (history-coin) 3)', '(=w (history-coin) 3 2)')
+    weighted = weighted.replace('(= (history-coin) 6)', '(=w (history-coin) 6 5)')
+    weighted_body = f'(weight:read (algebra 0 1 + *) {body})'
+    whole = run('forget-weighted-reference',
+                f'!(cost:run {policy(1, 2000, False)} {weighted_body})', weighted)
+    weighted_expected = whole[-1] if whole else None
+    for cut in (19, 49):
+        name = f'forget-weighted-alias-{cut}'
+        query = imported + capture.replace(body, weighted_body).replace('(budget 19)', f'(budget {cut})')
+        parts = run(name, query + '!(history:forget &before 131072)\n' + resume, weighted)
+        reports = history_reports(name, 'HistoryPolicy')
+        ok = (weighted_expected is not None and len(parts) == 2 and len(reports) == 1 and
+              reports[0]['status'] == 'Unrecorded' and
+              # Factors created after the cut use the ambient fresh allocator.
+              # Compare its identity partition, order and coefficients jointly.
+              normalize(parts[0]['values'] + parts[-1]['values']) == normalize(weighted_expected['values']) and
+              (cut != 49 or parts[0]['values'] + parts[-1]['values'] == weighted_expected['values']) and
+              len(weighted_expected['values']) == 3 and
+              parts[-1]['work'] == weighted_expected['work'] and parts[-1]['closed'] == 'True' and
+              'history' not in parts[-1])
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'forget-late-recording-suffix'
+    query = (imported + capture + '!(history:forget &before 131072)\n'
+             f'!(select 0 {policy(1, 1, False)} &old)\n'
+             f'!(select 0 {policy(1, 2000)} &old)')
+    parts = run(name, query)
+    late = parts[-1].get('history') if parts else None
+    fields = {row[0]: row[1] for row in late[1:]
+              if isinstance(row, list) and len(row) == 2} if isinstance(late, list) else {}
+    ok = (expected is not None and len(parts) == 3 and
+          sum((part['values'] for part in parts), []) == expected['values'] and
+          'history' not in parts[1] and parts[1]['work'] == 20 and
+          fields.get('start-work') == 20 and fields.get('earlier') == 'Unrecorded' and
+          parts[-1]['closed'] == 'True' and parts[-1]['work'] == expected['work'])
+    checks.append(dict(case=name, passed=ok))
+
+    name = 'forget-truncated-recording'
+    limited = capture.replace('(selections 512)', '(selections 1)').replace('(nodes 32)', '(nodes 0)')
+    parts = run(name, imported + limited + '!(history:forget &before 131072)\n' + resume)
+    reports = history_reports(name, 'HistoryPolicy')
+    ok = (expected is not None and len(parts) == 2 and reports and reports[0]['status'] == 'Unrecorded' and
+          tagged(parts[0].get('history'), 'status') == ['status', 'Incomplete'] and
+          parts[0]['values'] + parts[-1]['values'] == expected['values'] and
+          parts[-1]['closed'] == 'True' and 'history' not in parts[-1])
+    checks.append(dict(case=name, passed=bool(ok)))
+
+    name = 'forget-textual-and-duplicate-holder-refusal'
+    query = (imported + capture +
+             '!(bind! &textual (parse "(NativeHandle \\"prime-search\\" 1)"))\n'
+             '!(history:forget &textual 131072)\n'
+             '!(bind! &presented (let $token &old '
+             '(Observation () (residual $token) (residual $token))))\n'
+             '!(history:forget &presented 131072)\n' + resume)
+    parts = run(name, query)
+    reports = history_reports(name, 'HistoryPolicy')
+    ok = (expected is not None and len(reports) == 2 and
+          all(r['status'] == 'Refused' and r['reason'] == 'SourceOwner' and
+              r['residual'] == 'None' for r in reports) and
+          len(parts) == 2 and parts[0]['values'] + parts[-1]['values'] == expected['values'])
+    checks.append(dict(case=name, passed=ok))
+
+    name = 'forget-positional-values-are-not-fields'
+    query = (imported + capture +
+             '!(bind! &presented (let $token &old '
+             '(Observation (residual $token) (residual $token))))\n'
+             '!(history:forget &presented 131072)\n' + resume)
+    parts = run(name, query)
+    reports = history_reports(name, 'HistoryPolicy')
+    ok = (expected is not None and len(reports) == 1 and reports[0]['status'] == 'Unrecorded' and
+          len(parts) == 2 and parts[0]['values'] + parts[-1]['values'] == expected['values'] and
+          'history' not in parts[-1])
+    checks.append(dict(case=name, passed=ok))
+
+    name = 'forget-report-is-completed-data'
+    marker = 'FORGET-REPORT-MUST-STAY-DATA'
+    definitions = base + f'(= (HistoryPolicy $a $b $c $d $e $f) (println! "{marker}"))\n'
+    parts = run(name, imported + capture + '!(history:forget &before 131072)\n' + resume, definitions)
+    reports = history_reports(name, 'HistoryPolicy')
+    text = (d / (name + '.stdout')).read_text()
+    ok = (expected is not None and len(reports) == 1 and reports[0]['status'] == 'Unrecorded' and
+          not any(line.strip('"') == marker for line in text.splitlines()) and
+          len(parts) == 2 and parts[0]['values'] + parts[-1]['values'] == expected['values'])
+    checks.append(dict(case=name, passed=ok))
+
+    name = 'forget-completed-effect-is-not-replayed'
+    marker = 'FORGET-EFFECT-ONCE'
+    effect = f'(= (forget-effect) (let $_ (println! "{marker}") (superpose (A B B))))\n'
+    query = imported + capture.replace(body, '(forget-effect)')
+    parts = run(name, query + '!(history:forget &before 131072)\n' + resume, effect)
+    reports = history_reports(name, 'HistoryPolicy')
+    stdout = (d / (name + '.stdout')).read_text()
+    effects = [line.strip('"') for line in stdout.splitlines()
+               if line.strip('"') == marker]
+    ok = (len(parts) == 2 and len(reports) == 1 and
+          reports[0]['status'] == 'Unrecorded' and effects == [marker] and
+          stdout.find(marker) < stdout.find('[(Observation') and
+          parts[0]['closed'] == 'False' and parts[-1]['closed'] == 'True' and
+          parts[0]['values'] + parts[-1]['values'] == ['A', 'B', 'B'] and
+          parts[-1]['residual'] == parts[0]['residual'] and 'history' not in parts[-1])
+    checks.append(dict(case=name, passed=ok, effects=effects))
+
+
+if args.population != 'forget':
+    replay_controls()
+if args.population != 'replay':
+    forget_controls()
+if args.population != 'all':
+    finish()
+
 for width in (1, 2):
     whole = run(f'whole-w{width}', f'!(select 0 {policy(width, 2000)} {body})')
     if not whole:
@@ -148,13 +537,6 @@ for width in (1, 2):
         obs = run(f'late-w{width}-c{cut}', f'!(let {plain} (select 0 {policy(width, cut, False)} {body}) (Late $w $v (select 0 {policy(width, 2000 - cut)} $r)))')
         pair = tagged(parse((d / f'late-w{width}-c{cut}.stdout').read_text()), 'Late')
         checks.append(dict(case=f'late-w{width}-c{cut}', passed=bool(obs and pair) and pair[2] + obs[-1]['values'] == expected['values'] and (obs[-1]['work'] == expected['work']) and (['start-work', pair[1]] in obs[-1]['history']), requested=cut, prefix_work=pair[1] if pair else None))
-
-def walk(x):
-    if isinstance(x, list):
-        if x and isinstance(x[0], str):
-            yield x
-        for y in x:
-            yield from walk(y)
 
 def fields(history):
     return {x[0]: x[1] for x in history[1:] if isinstance(x, list) and len(x) == 2}
@@ -639,11 +1021,4 @@ for language in ('prime', 'he', 'petta'):
     checks.append(dict(case=name, passed=bool(report) and report[1] == expected and not effects,
                        projection=report[1] if report else None, effects=effects))
 
-finished = True
-save_receipt()
-for check in checks:
-    print(f'{"PASS" if check["passed"] else "FAIL"}: {check["case"]}')
-passed = sum(check['passed'] for check in checks)
-print(f'(NativeHistorySummary {passed} {len(checks)} {len(checks) - passed})')
-raise SystemExit(passed != len(checks) or
-                 any(run.get('native_exit') != 0 for run in runs))
+finish()

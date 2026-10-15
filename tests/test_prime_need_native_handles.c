@@ -34,6 +34,43 @@ static void resource_release(void *raw) {
     } \
 } while (0)
 
+static bool history_resource_control(const PrimeNeedSnapshot *snapshot,
+                                     uint64_t thunk_id, uint64_t occurrence,
+                                     HeldResource *resource) {
+    PrimeNeedHistoryIterator iterator;
+    PrimeNeedHistoryView view;
+    unsigned held = resource->references;
+    unsigned acquisitions = retained, relinquishments = released;
+    if (!prime_need_snapshot_history_begin(snapshot, &iterator))
+        return false;
+    const PrimeNeedCacheState states[] = {
+        PRIME_NEED_CACHE_VALUE, PRIME_NEED_CACHE_EVALUATING, PRIME_NEED_CACHE_EMPTY,
+    };
+    uint64_t authority = 0u, storage = 0u;
+    for (size_t i = 0u; i < 3u; ++i) {
+        if (prime_need_snapshot_history_next(&iterator, &view) != PRIME_NEED_HISTORY_ENTRY ||
+            view.session_id != snapshot->session_id || view.thunk_id != thunk_id ||
+            view.depth != 3u - i || view.cell.cache_state != states[i] ||
+            !atom_is_symbol(view.cell.origin, "resource-producer") ||
+            view.cell.evaluator_id != (i == 1u ? 19u : 0u) ||
+            view.cell.source_occurrence_id != occurrence ||
+            view.cell.source_argument_index != 2u)
+            return false;
+        if (i == 0u) {
+            authority = view.cell.authority_id;
+            storage = view.cell.storage_key;
+            if (!authority || !storage || !view.cell.cached ||
+                view.cell.cached->kind != ATOM_EXPR || view.cell.cached->expr.len != 3u ||
+                view.cell.cached->expr.elems[2]->ground.ival != 41)
+                return false;
+        } else if (view.cell.cached || view.cell.authority_id != authority ||
+                   view.cell.storage_key != storage)
+            return false;
+    }
+    return prime_need_snapshot_history_next(&iterator, &view) == PRIME_NEED_HISTORY_DONE &&
+        resource->references == held && retained == acquisitions && released == relinquishments;
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -189,7 +226,8 @@ int main(void) {
     assert(prime_need_snapshot_lookup(&ready, thunk_id, &before));
     CHECK(before.cache_state == PRIME_NEED_CACHE_VALUE &&
           before.cached == handle && before.source_occurrence_id == occurrence &&
-          before.source_argument_index == 2u,
+          before.source_argument_index == 2u &&
+          history_resource_control(&ready, thunk_id, occurrence, resource),
           "memoization retains the value and source occurrence");
     uint64_t session_id = ready.session_id;
     assert(prime_need_snapshot_promote_suffix(&survivor, &source, &ready));
@@ -205,7 +243,8 @@ int main(void) {
           after.storage_key == before.storage_key &&
           after.import_key == before.import_key &&
           after.source_occurrence_id == before.source_occurrence_id &&
-          after.source_argument_index == before.source_argument_index,
+          after.source_argument_index == before.source_argument_index &&
+          history_resource_control(&ready, thunk_id, occurrence, resource),
           "transport preserves cell identity, role and occurrence");
     CHECK(after.cached != handle && after.cached->expr.elems[2] != identifier &&
           after.cached->expr.elems[2]->ground.ival == 41 &&
@@ -253,7 +292,8 @@ int main(void) {
     assert(prime_need_snapshot_lookup(&ready, thunk_id, &after));
     CHECK(after.cache_state == PRIME_NEED_CACHE_VALUE &&
           after.cached->expr.elems[2]->ground.ival == 41 &&
-          !atom_graph_is_closed_for_arena(&survivor, after.cached),
+          !atom_graph_is_closed_for_arena(&survivor, after.cached) &&
+          history_resource_control(&ready, thunk_id, occurrence, resource),
           "the transported memo remains live without a shallow-copy licence");
     arena_free(&survivor);
     arena_free(&other);

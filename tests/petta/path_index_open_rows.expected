@@ -1,0 +1,5 @@
+(a $V0 q b c)
+($V0 q s)
+((edge a) (edge $V0) (other $V1) ($V2 q) ((f) r) (edge b) (other s) (edge c))
+(n7)
+(d e)

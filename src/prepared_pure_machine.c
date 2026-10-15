@@ -522,6 +522,9 @@ struct CettaPreparedPureProgram {
     bool total_structural_equality;
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
     bool closed_program;
+    /* Checked by the embedding evaluator before compilation.  Rebinding a
+     * cached entry preserves this role as part of the cache key. */
+    bool entry_arguments_are_values;
     bool answer_producer;
     bool allow_callable_templates;
     bool service_source_nodes;
@@ -947,7 +950,8 @@ static bool prepared_pure_roles_begin(CettaPreparedPureProgram *p) {
         e->memo_value_origins[i]=(PreparedPureDemandOrigin){0};
     }
     for (size_t i=0u;i<p->entry_argument_count;i++) {
-        e->entry_ready[i]=prepared_pure_leaf_ready(p,p->entry_arguments[i]);
+        e->entry_ready[i]=p->entry_arguments_are_values ||
+            prepared_pure_leaf_ready(p,p->entry_arguments[i]);
         e->entry_origins[i]=(PreparedPureDemandOrigin){.source_argument_index=(uint32_t)i+1u};
     }
     for (size_t i=0u;i<p->slot_len;i++) e->slot_origins[i]=(PreparedPureDemandOrigin){0};
@@ -3020,6 +3024,56 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
+/* A bind sequence (let*) from pair `index` on: the pair's value, then its
+ * pattern bound for the rest, as nested binds ending in the body. */
+static bool prepared_pure_compile_bind_sequence(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context,
+        Atom *pairs, const void *pairs_view, CettaExprIndex index,
+        Atom *body, const void *body_view,
+        uint32_t depth, uint32_t *node_out) {
+    if (index == pairs->expr.len)
+        return prepared_pure_compile_eval(
+            program, context, body, body_view, depth + 1u, node_out);
+    Atom *pair = pairs->expr.elems[index];
+    if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
+        !pair->expr.elems[0])
+        return prepared_pure_reject(
+            program, "let* pair is outside the fragment", pair);
+    const void *pair_view =
+        prepared_pure_source_child(program, pairs_view, index);
+    uint32_t bound = 0u;
+    if (!prepared_pure_compile_eval(
+            program, context, pair->expr.elems[1],
+            prepared_pure_source_child(program, pair_view, 1u),
+            depth + 1u, &bound))
+        return prepared_pure_reject(
+            program, "let* bound expression is outside the fragment",
+            pair->expr.elems[1]);
+    size_t saved_bindings = context->len;
+    uint32_t pattern_index = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pair->expr.elems[0], &pattern_index))
+        return prepared_pure_reject(
+            program, "let* pattern is outside the fragment",
+            pair->expr.elems[0]);
+    uint32_t rest = 0u;
+    bool rest_ok = prepared_pure_compile_bind_sequence(
+        program, context, pairs, pairs_view, index + 1u,
+        body, body_view, depth, &rest);
+    context->len = saved_bindings;
+    if (!rest_ok)
+        return false;
+    uint32_t children[2] = {bound, rest};
+    return prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = PREPARED_PURE_BIND,
+            .auxiliary = pattern_index,
+        },
+        children, 2u, node_out);
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -3328,6 +3382,18 @@ static bool prepared_pure_compile_eval_with_role(
                     .auxiliary = pattern_index,
                 },
                 children, 2u, node_out);
+        }
+        if (control == CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) {
+            Atom *pairs = source->expr.elems[1];
+            if (arity != 2u || !pairs || pairs->kind != ATOM_EXPR)
+                return prepared_pure_reject(
+                    program, "let* bindings are outside the fragment", pairs);
+            return prepared_pure_compile_bind_sequence(
+                program, context, pairs,
+                prepared_pure_source_child(program, source_view, 1u), 0u,
+                source->expr.elems[2],
+                prepared_pure_source_child(program, source_view, 2u),
+                depth, node_out);
         }
         return false;
     }
@@ -9110,6 +9176,7 @@ prepared_pure_program_compile_closed_mode(
     program->total_structural_equality = total_structural_equality;
     program->match_decision_semantics = match_decision_semantics;
     program->closed_program = true;
+    program->entry_arguments_are_values = entry_arguments_are_values;
     program->answer_producer = answer_producer;
     program->optional_result = optional_result;
     program->service_source_nodes = service_source_nodes;
@@ -10915,6 +10982,20 @@ CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
     };
 }
 
+void cetta_prepared_pure_answer_cursor_storage_census(
+        const CettaPreparedPureAnswerCursor *cursor, CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census, cursor, sizeof(*cursor), CETTA_STORAGE_BLOCK)) return;
+    if (cursor->frame_len > cursor->frame_cap || cursor->argument_len > cursor->argument_cap) {
+        cetta_storage_refuse(census, "PreparedCursorStorageShape"); return;
+    }
+    cetta_prepared_pure_program_storage_census(cursor->program, census);
+    if (cursor->owns_arena) arena_storage_census(&cursor->owned_arena, census);
+    cetta_storage_array(census, cursor->frames, cursor->frame_cap, sizeof(*cursor->frames), 0u);
+    cetta_storage_array(census, cursor->arguments, cursor->argument_cap, sizeof(*cursor->arguments), 0u);
+    cetta_storage_array(census, cursor->head_seen, cursor->program->head_len, sizeof(*cursor->head_seen), 0u);
+    cetta_storage_array(census, cursor->seen_heads, cursor->program->head_len, sizeof(*cursor->seen_heads), 0u);
+}
+
 void cetta_prepared_pure_answer_cursor_close(
     CettaPreparedPureAnswerCursor *cursor) {
     if (cursor && cursor->program->execution) return;
@@ -11830,7 +11911,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                         program, "runtime operator is not a symbol", NULL);
                 }
                 SymbolId head = atom_symbol_current_id(source->expr.elems[0]);
-                uint32_t arity = source->expr.len - 1u;
+                /* The prepared machine keeps arities in 32 bits; a longer
+                 * call stays with the general evaluator. */
+                if (source->expr.len - 1u > UINT32_MAX)
+                    return prepared_pure_runtime_decline(
+                        program, "call arity exceeds the prepared machine", NULL);
+                uint32_t arity = (uint32_t)(source->expr.len - 1u);
                 CettaGsltFoldControl control;
                 if (prepared_pure_control_program(
                         head, arity, &control)) {
@@ -11940,7 +12026,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             }
             frame = &program->frames[program->frame_len - 1u];
             source = program->frame_atoms[program->frame_len - 1u];
-            uint32_t arity = source->expr.len - 1u;
+            /* Admitted in state 0 within 32 bits. */
+            uint32_t arity = (uint32_t)(source->expr.len - 1u);
             if (frame->state == 20u) {
                 if (program->value_len !=
                     (size_t)frame->value_base + 1u)
@@ -12966,9 +13053,9 @@ bool cetta_prepared_pure_closed_service_restore(
         cut->memo_keys_length>execution->memo_origins_capacity ||
         cut->memo_keys_length>execution->memo_value_origins_capacity ||
         cut->entry_arguments_length>execution->entry_origins_capacity) {ok=false;goto done;}
-    /* Insertion grows at 70% occupancy, so a valid captured table can be
-     * more than half full. Its retained buckets need room for the entries
-     * and an empty probe terminator, not a new 50% occupancy policy. */
+    /* Insertion grows at its declared load threshold, which can exceed one
+     * half. Restoration needs an empty probe bucket, not a stricter load
+     * policy than the table that captured this valid prefix. */
     if (cut->memo_keys_length &&
         (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_keys_length)) {
         ok=false;goto done;

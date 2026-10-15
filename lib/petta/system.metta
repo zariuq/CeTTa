@@ -3,6 +3,7 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (: system:monotonic-ns (-> Number))
+(: system:cwd (-> String))
 (= (system:wall-time) (__cetta_lib_system_host wall-time))
 (= (system:pid) (__cetta_lib_system_host pid))
 (= (system:pid-alive? $pid) (__cetta_lib_system_host pid-alive $pid))

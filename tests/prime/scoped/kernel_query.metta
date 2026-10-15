@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The represented query a judgment poses to the kernel, without an answer.
 !(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))

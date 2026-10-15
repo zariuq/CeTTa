@@ -1,6 +1,9 @@
 !(import! &self io)
 
-!(assertEqual (io:capabilities) (http))
+(= (test:io-http-provider $provider) (== $provider http))
+
+!(let $providers (io:capabilities)
+   (assertEqual (filter-atom $providers test:io-http-provider) (http)))
 !(assertEqual (io:poll) (io:idle))
 !(assertEqual
    (io:submit (http:request "GET" "file:///etc/passwd" () "" 1000 1024))

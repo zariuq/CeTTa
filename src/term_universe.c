@@ -1789,13 +1789,12 @@ static uint64_t term_universe_record_slot_hash(
             }
             break;
         case GV_FLOAT:
-            if (payload_len >= sizeof(double)) {
-                double value = term_universe_load_double(payload);
-                uint64_t bits = 0;
-                if (value != 0.0)
-                    memcpy(&bits, &value, sizeof(bits));
-                h = term_universe_index_mix(h, bits);
-            }
+            /* By its bits, as term_universe_atom_slot_hash: 0.0 and -0.0
+             * are two terms, and a record and an atom probe of one float
+             * meet at one coordinate. */
+            if (payload_len >= sizeof(uint64_t))
+                h = term_universe_index_mix(
+                    h, term_universe_load_u64(payload));
             break;
         case GV_BOOL:
             h = term_universe_index_mix(
@@ -2101,9 +2100,11 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
                    term_universe_load_i64(have_payload) ==
                        term_universe_load_i64(want_payload);
         case GV_FLOAT:
+            /* A record is one term: a float by its bits, as an atom
+             * probe compares it (term_universe_entry_eq_atom). */
             return have_payload && want_payload &&
-                   term_universe_load_double(have_payload) ==
-                       term_universe_load_double(want_payload);
+                   term_universe_load_u64(have_payload) ==
+                       term_universe_load_u64(want_payload);
         case GV_BOOL:
             return term_universe_aux_data(have_hdr) ==
                    term_universe_aux_data(want_hdr);

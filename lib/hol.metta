@@ -1,9 +1,9 @@
 ; Prime's native higher-order logic, for the HE and PeTTa extended profiles.
 ;
-; A theory space is an ordinary space that selects a profile of the logic:
+; A theory space is an ordinary space that selects its theory:
 ;   !(bind! &logic (new-space))
-;   !(add-atom &logic (hol:profile core))             ; the logic alone
-;   !(add-atom &sets (hol:profile megalodon-hotg))     ; HOTG set theory over it
+;   !(add-atom &logic (hol:profile base))             ; the logic alone
+;   A set theory over it is imported with `set` (lib/set.metta).
 ; Every judgment names its theory space first; its other operands are
 ; syntax, read by Prime's checker and never evaluated here.  The program's
 ; own space is not a theory space: its type declarations are the dialect's.

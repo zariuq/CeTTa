@@ -476,6 +476,17 @@ void cetta_gslt_ground_dense_workspace_free_v1(
     workspace->impl = NULL;
 }
 
+void cetta_gslt_ground_dense_workspace_storage_v1(
+        const CettaGsltGroundDenseWorkspaceV1 *workspace, CettaStorageCensus *census) {
+    const CettaGsltGroundDenseWorkspaceImplV1 *impl = workspace ? workspace->impl : NULL;
+    if (!impl || !cetta_storage_object(census, impl, sizeof(*impl), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, impl->slots.values, impl->slots.capacity, impl->slots.value_size, 0u);
+    cetta_storage_array(census, impl->slots.epochs, impl->slots.capacity, sizeof(*impl->slots.epochs), 0u);
+    cetta_storage_array(census, impl->pairs, impl->pair_cap, sizeof(*impl->pairs), 0u);
+    cetta_storage_array(census, impl->results, impl->result_cap, sizeof(*impl->results), 0u);
+    cetta_storage_array(census, impl->elements, impl->element_cap, sizeof(*impl->elements), 0u);
+}
+
 void cetta_gslt_ground_dense_workspace_discard_match_v1(
     CettaGsltGroundDenseWorkspaceV1 *workspace) {
     CettaGsltGroundDenseWorkspaceImplV1 *impl =

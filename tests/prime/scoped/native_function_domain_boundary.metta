@@ -1,8 +1,8 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Function domains are retained by native checking and conversion.
 ; These are native declarations, not assertions about set-code equality.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: E (u 0)))
 !(add-atom &thy (: Truth (u 0)))
 !(type:formed &thy (-> E E))

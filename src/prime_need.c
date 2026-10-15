@@ -1349,6 +1349,56 @@ static void prime_need_cell_view_from_frame(
 #endif
 }
 
+bool prime_need_snapshot_history_begin(const PrimeNeedSnapshot *snapshot,
+                                      PrimeNeedHistoryIterator *iterator) {
+    if (!iterator)
+        return false;
+    *iterator = (PrimeNeedHistoryIterator){.invalid = true};
+    if (!prime_need_snapshot_present(snapshot))
+        return false;
+    if (snapshot->top && (snapshot->top->session_id != snapshot->session_id ||
+                          snapshot->top->depth == 0u))
+        return false;
+    *iterator = (PrimeNeedHistoryIterator){
+        .next = snapshot->top,
+        .session_id = snapshot->session_id,
+        .remaining = snapshot->top ? snapshot->top->depth : 0u,
+    };
+    return true;
+}
+
+PrimeNeedHistoryStep prime_need_snapshot_history_next(
+    PrimeNeedHistoryIterator *iterator, PrimeNeedHistoryView *view) {
+    if (!iterator)
+        return PRIME_NEED_HISTORY_INVALID;
+    if (!view || iterator->invalid || iterator->session_id == 0u) {
+        iterator->invalid = true;
+        return PRIME_NEED_HISTORY_INVALID;
+    }
+    const PrimeNeedFrame *frame = iterator->next;
+    if (!frame && iterator->remaining == 0u)
+        return PRIME_NEED_HISTORY_DONE;
+    if (!frame || iterator->remaining == 0u ||
+        frame->session_id != iterator->session_id ||
+        frame->depth != iterator->remaining || frame->serial == 0u ||
+        frame->thunk_id == 0u || frame->authority_id == 0u || !frame->origin ||
+        ((frame->parent == NULL) != (iterator->remaining == 1u))) {
+        iterator->invalid = true;
+        return PRIME_NEED_HISTORY_INVALID;
+    }
+    PrimeNeedHistoryView observed = {
+        .session_id = frame->session_id,
+        .serial = frame->serial,
+        .thunk_id = frame->thunk_id,
+        .depth = frame->depth,
+    };
+    prime_need_cell_view_from_frame(frame, &observed.cell);
+    *view = observed;
+    iterator->next = frame->parent;
+    iterator->remaining--;
+    return PRIME_NEED_HISTORY_ENTRY;
+}
+
 static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_frame(
     const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
     PrimeNeedCellView *out, const PrimeNeedFrame **frame_out) {
@@ -3966,6 +4016,84 @@ void prime_need_receipt_graph_free(PrimeNeedReceiptGraph *graph) {
     *graph = (PrimeNeedReceiptGraph){0};
 }
 
+typedef struct {
+    uint64_t session, cell, update;
+} PrimeNeedReceiptProducer;
+
+static PrimeNeedReceiptProducer prime_need_receipt_producer(
+    const PrimeNeedReceiptEvent *event) {
+    return (PrimeNeedReceiptProducer){event->need_session_id, event->thunk_id,
+                                     event->producer_update_id};
+}
+
+static int prime_need_receipt_producer_compare(const void *raw_left,
+                                              const void *raw_right) {
+    const PrimeNeedReceiptProducer *left = raw_left, *right = raw_right;
+    if (left->session != right->session)
+        return left->session < right->session ? -1 : 1;
+    if (left->cell != right->cell)
+        return left->cell < right->cell ? -1 : 1;
+    return left->update < right->update ? -1 : left->update > right->update;
+}
+
+bool prime_need_receipt_graph_producers(
+    const PrimeNeedReceiptGraph *graph, bool *retained) {
+    if (!graph || graph->length > SIZE_MAX / sizeof(*graph->nodes) ||
+        (graph->length && (!graph->nodes || !retained))) return false;
+    /* Short views avoid sorting and allocation. Large views share one
+     * producer index instead of repeating a whole-graph scan per delivery. */
+    if (graph->length <= 32u) {
+        for (size_t i = 0u; i < graph->length; i++) {
+            const PrimeNeedReceiptGraphNode *node = &graph->nodes[i];
+            const PrimeNeedReceiptEvent *event = &node->event;
+            bool found = false;
+            if (node->has_event && event->producer_update_id) {
+                for (size_t j = 0u; j < graph->length; j++) {
+                    const PrimeNeedReceiptGraphNode *candidate = &graph->nodes[j];
+                    const PrimeNeedReceiptEvent *producer = &candidate->event;
+                    if (candidate->has_event && producer->producer_completed &&
+                        producer->producer_update_id == event->producer_update_id &&
+                        producer->need_session_id == event->need_session_id &&
+                        producer->thunk_id == event->thunk_id) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            retained[i] = found;
+        }
+        return true;
+    }
+    size_t count = 0u;
+    for (size_t i = 0u; i < graph->length; i++) {
+        const PrimeNeedReceiptGraphNode *node = &graph->nodes[i];
+        if (node->has_event && node->event.producer_completed &&
+            node->event.producer_update_id) count++;
+    }
+    if (count > SIZE_MAX / sizeof(PrimeNeedReceiptProducer)) return false;
+    PrimeNeedReceiptProducer *producers = count
+        ? malloc(count * sizeof(*producers)) : NULL;
+    if (count && !producers) return false;
+    size_t written = 0u;
+    for (size_t i = 0u; i < graph->length; i++) {
+        const PrimeNeedReceiptGraphNode *node = &graph->nodes[i];
+        if (node->has_event && node->event.producer_completed &&
+            node->event.producer_update_id)
+            producers[written++] = prime_need_receipt_producer(&node->event);
+    }
+    if (count > 1u)
+        qsort(producers, count, sizeof(*producers), prime_need_receipt_producer_compare);
+    for (size_t i = 0u; i < graph->length; i++) {
+        const PrimeNeedReceiptGraphNode *node = &graph->nodes[i];
+        PrimeNeedReceiptProducer key = prime_need_receipt_producer(&node->event);
+        retained[i] = node->has_event && key.update && count &&
+            bsearch(&key, producers, count, sizeof(*producers),
+                    prime_need_receipt_producer_compare) != NULL;
+    }
+    free(producers);
+    return true;
+}
+
 PrimeNeedReceiptGraphStatus prime_need_receipt_graph_validate(
     const PrimeNeedReceiptGraph *graph) {
     if (!graph)
@@ -4523,6 +4651,22 @@ static const char prime_need_recording_copy_kind, prime_need_recording_slice_cop
 static const char prime_need_recording_member_copy_kind, prime_need_recording_owner_copy_kind;
 static const char prime_need_recording_prepared_copy_kind;
 static char prime_need_recording_copy_mode_kind;
+static char prime_need_recording_copy_retain, prime_need_recording_copy_duplicate;
+static char prime_need_recording_copy_erase;
+
+static const void *prime_need_recording_copy_policy(const AtomDeepCopySession *session) {
+    return atom_deep_copy_session_object_forwarded(session,
+        &prime_need_recording_copy_mode_kind, &prime_need_recording_copy_mode_kind,
+        sizeof(prime_need_recording_copy_mode_kind));
+}
+
+static bool prime_need_recording_copy_select(AtomDeepCopySession *session, char *policy) {
+    const void *selected = prime_need_recording_copy_policy(session);
+    if (selected) return selected == policy;
+    return atom_deep_copy_session_object_record(session,
+        &prime_need_recording_copy_mode_kind, &prime_need_recording_copy_mode_kind,
+        policy, sizeof(*policy));
+}
 
 PrimeNeedRecording *prime_need_receipt_recording_owner(const PrimeNeedReceipt *receipt) {
     return receipt && receipt->recording ? receipt->recording->group : NULL;
@@ -4737,11 +4881,15 @@ bool prime_need_recording_copy_restore_holder(PrimeNeedRecordingCopy *copy,
 }
 
 bool prime_need_recording_copy_enable(AtomDeepCopySession *session) {
-    /* A stable mode token is distinct from every physical owner key. Its
-     * presence changes only explicit receipt copies, never promotions. */
-    return atom_deep_copy_session_object_record(session,
-        &prime_need_recording_copy_mode_kind, &prime_need_recording_copy_mode_kind,
-        &prime_need_recording_copy_mode_kind, sizeof(prime_need_recording_copy_mode_kind));
+    return prime_need_recording_copy_select(session, &prime_need_recording_copy_duplicate);
+}
+
+bool prime_need_recording_copy_forget(AtomDeepCopySession *session) {
+    return prime_need_recording_copy_select(session, &prime_need_recording_copy_erase);
+}
+
+bool prime_need_recording_copy_erases(const AtomDeepCopySession *session) {
+    return prime_need_recording_copy_policy(session) == &prime_need_recording_copy_erase;
 }
 
 bool prime_need_recording_copy_enclosing_owner(PrimeNeedRecordingCopy *copy,
@@ -4758,9 +4906,8 @@ bool prime_need_recording_copy_enclosing_owner(PrimeNeedRecordingCopy *copy,
 
 PrimeNeedRecordingCopy *prime_need_recording_copy_lookup(
     const AtomDeepCopySession *session, const PrimeNeedRecording *source) {
-    if (!source || !atom_deep_copy_session_object_forwarded(session,
-            &prime_need_recording_copy_mode_kind, &prime_need_recording_copy_mode_kind,
-            sizeof(prime_need_recording_copy_mode_kind))) return NULL;
+    if (!source || prime_need_recording_copy_policy(session) !=
+            &prime_need_recording_copy_duplicate) return NULL;
     PrimeNeedRecordingCopy *copy = atom_deep_copy_session_object_forwarded(session,
         &prime_need_recording_prepared_copy_kind, source, sizeof(*copy));
     return copy && copy->session == session && copy->source == source &&
@@ -4771,10 +4918,19 @@ bool prime_need_recording_copy_with_session(Arena *dst,
     AtomDeepCopySession *session, PrimeNeedReceipt *receipt) {
     if (!receipt || !receipt->recording || !atom_deep_copy_session_targets(session, dst))
         return false;
-    if (!atom_deep_copy_session_object_forwarded(session,
-            &prime_need_recording_copy_mode_kind, &prime_need_recording_copy_mode_kind,
-            sizeof(prime_need_recording_copy_mode_kind)))
+    const void *policy = prime_need_recording_copy_policy(session);
+    if (!policy) {
+        if (!prime_need_recording_copy_select(session, &prime_need_recording_copy_retain))
+            return false;
+        policy = &prime_need_recording_copy_retain;
+    }
+    if (policy == &prime_need_recording_copy_erase) {
+        prime_need_receipt_init(receipt);
+        return true;
+    }
+    if (policy == &prime_need_recording_copy_retain)
         return prime_need_recording_promote(dst, receipt);
+    if (policy != &prime_need_recording_copy_duplicate) return false;
     PrimeNeedRecordingCopy *copy = prime_need_recording_copy_lookup(
         session, receipt->recording->group);
     if (!copy) return false;

@@ -1,5 +1,5 @@
-(hol:profile core)
-!(bind! &s (let $sp (new-space) (let $_ (add-atom $sp (hol:profile core)) $sp)))
+(hol:profile base)
+!(bind! &s (let $sp (new-space) (let $_ (add-atom $sp (hol:profile base)) $sp)))
 ; closed instance
 !(car-atom (try (type:check &s (PrimeScoped (PrimeCtxDecl (DeclConst poly (LevelParam 0) (LevelParam 1)) (Pi (Sort (LevelParam 0)) (Sort (LevelParam 1))) PrimeCtxNil) (DeclConst poly (LevelConst 2) (LevelConst 0))) (Pi (Sort (LevelConst 2)) (Sort (LevelConst 0))))))
 ; caller parameter outside schema indexes

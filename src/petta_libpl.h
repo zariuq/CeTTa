@@ -116,4 +116,9 @@ bool petta_libpl_compare_arithmetic(
  * gives a rational for integers that do not divide. */
 bool petta_libpl_prefer_rationals(void);
 
+/* SWI's cpu_count flag in the embedded Prolog, which sizes the worker pool
+ * of concurrent_and and so of SWI-PeTTa's hyperpose.  False when no embedded
+ * Prolog has started. */
+bool petta_libpl_cpu_count(uint32_t *count);
+
 #endif /* CETTA_PETTA_LIBPL_H */

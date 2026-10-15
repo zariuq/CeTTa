@@ -536,6 +536,8 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->petta_static_imports_free = NULL;
     ctx->prime_hol_guest = NULL;
     ctx->prime_hol_guest_free = NULL;
+    ctx->prime_lf_guest = NULL;
+    ctx->prime_lf_guest_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -560,8 +562,11 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         controller &&
         cetta_search_controller_policy_parse(
             controller, &requested_controller);
+    /* HE's relations run on the compiled open-equation machine under HE's
+     * rules, which compiles them from this program's occurrence plans. */
     bool needs_occurrence_program =
         language_id == CETTA_LANGUAGE_PETTA ||
+        language_id == CETTA_LANGUAGE_HE ||
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     bool native_weight_profile = false;
@@ -660,6 +665,10 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->prime_hol_guest_free(ctx->prime_hol_guest);
     ctx->prime_hol_guest = NULL;
     ctx->prime_hol_guest_free = NULL;
+    if (ctx->prime_lf_guest_free)
+        ctx->prime_lf_guest_free(ctx->prime_lf_guest);
+    ctx->prime_lf_guest = NULL;
+    ctx->prime_lf_guest_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -3682,6 +3691,10 @@ static Atom *he_unresolved_module(Arena *arena, const char *name) {
     return atom_symbol(arena, message);
 }
 
+/* The reason an import is refused when no file answers the requested module
+ * (cetta_library_import_error_is_missing_module). */
+static const char CETTA_LIBRARY_MISSING_MODULE[] = "module file not found";
+
 static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec *spec,
                                 Space *logical_target_space,
                                 Space *execution_target_space,
@@ -3809,7 +3822,7 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
             if (reason[0]) {
                 *error_out = atom_symbol(eval_arena, reason);
             } else {
-                *error_out = atom_symbol(eval_arena, "module file not found");
+                *error_out = atom_symbol(eval_arena, CETTA_LIBRARY_MISSING_MODULE);
             }
             return false;
         }
@@ -3932,7 +3945,7 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         if (reason[0]) {
             *error_out = atom_symbol(eval_arena, reason);
         } else {
-            *error_out = atom_symbol(eval_arena, "module file not found");
+            *error_out = atom_symbol(eval_arena, CETTA_LIBRARY_MISSING_MODULE);
         }
         return false;
     }
@@ -3967,19 +3980,20 @@ static bool build_library_resource_path(
        to the shared library. Merely selecting a language never loads either.
        A typecheck profile reads the language's typed spelling of a library
        first, where one exists: the same library with the effect types its
-       checker reads, so the plain spelling stays the reference's. */
+       checker reads, so the plain spelling stays the reference's.  The
+       language version names that directory (PeTTa 1.1's typecheck/). */
     language_name = cetta_language_canonical_name(ctx->session.language_id);
     const CettaLibrarySpec *spec = cetta_library_lookup(name);
     bool shared_body = ctx->session.language_id == CETTA_LANGUAGE_HE &&
         spec && spec->he_words;
-    bool typed = ctx->session.profile &&
-        (ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
-         ctx->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3);
+    const CettaLanguageVersion *version = cetta_language_version_of(
+        ctx->session.language_id, ctx->session.profile);
+    const char *overlay = version ? version->library_overlay : NULL;
     if (ctx->root_dir[0] != '\0') {
         int n;
-        if (typed) {
-            n = snprintf(out, out_sz, "%s/lib/%s/typecheck/%s%s",
-                         ctx->root_dir, language_name, name, suffix);
+        if (overlay) {
+            n = snprintf(out, out_sz, "%s/lib/%s/%s/%s%s",
+                         ctx->root_dir, language_name, overlay, name, suffix);
             if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
                 return true;
         }
@@ -3994,9 +4008,9 @@ static bool build_library_resource_path(
     }
     {
         int n;
-        if (typed) {
-            n = snprintf(out, out_sz, "lib/%s/typecheck/%s%s",
-                         language_name, name, suffix);
+        if (overlay) {
+            n = snprintf(out, out_sz, "lib/%s/%s/%s%s",
+                         language_name, overlay, name, suffix);
             if (n > 0 && (size_t)n < out_sz && access(out, R_OK) == 0)
                 return true;
         }
@@ -9031,7 +9045,7 @@ static bool cetta_library_petta_execute_document_ids(
                 source_plan =
                     petta_program_declaration_block_plan_at(
                         block, block_index - index);
-                if (!source || !source_plan) {
+                if (!source) {
                     petta_program_declaration_block_free(block);
                     if (failure_out)
                         *failure_out =
@@ -11688,6 +11702,10 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
     }
     return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                                registry, fuel, NULL, error_out);
+}
+
+bool cetta_library_import_error_is_missing_module(Atom *error) {
+    return error && atom_is_symbol(error, CETTA_LIBRARY_MISSING_MODULE);
 }
 
 static bool resolve_library_member_candidate(

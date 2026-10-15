@@ -9,23 +9,23 @@
 (scope:profile lexical-fresh per-call reference)
 !(import! &self ../../lib/prime/hol_relativization.metta)
 !(bind! &sets (let $s (new-space)
-  (let $p (add-atom $s (hol:profile megalodon-hotg))
-    (let $r (add-atom $s (hol:rule hol-equality)) $s))))
+  (let $p (add-atom $s (set:profile megalodon-hotg))
+    (let $r (add-atom $s (set:rule hol-equality)) $s))))
 !(bind! &logic (let $s (new-space)
-  (let $p (add-atom $s (hol:profile core))
+  (let $p (add-atom $s (hol:profile base))
     (let $r (add-atom $s (hol:rule hol-equality)) $s))))
 
 ; HOTG theorems.
-!(hol:theorem &sets empty-in-universe (In Empty (UnivOf Empty))
+!(set:theorem &sets empty-in-universe (In Empty (UnivOf Empty))
    (pf:all-elim (pf:known universeIn) Empty))
-!(hol:theorem &sets empty-in-power-empty (In Empty (Power Empty))
+!(set:theorem &sets empty-in-power-empty (In Empty (Power Empty))
    (pf:imp-elim
      (pf:imp-elim
        (pf:all-elim (pf:all-elim (pf:all-elim (pf:known powerLaw) Empty) Empty)
          (imp (all set (lam y (imp (In y Empty) (In y Empty)))) (In Empty (Power Empty))))
        (pf:imp-intro (pf:imp-intro (pf:hyp 0))))
      (pf:all-intro (pf:imp-intro (pf:hyp 0)))))
-!(hol:theorem &sets empty-not-power-empty (imp (eq set Empty (Power Empty)) Falsum)
+!(set:theorem &sets empty-not-power-empty (imp (eq set Empty (Power Empty)) Falsum)
    (pf:imp-intro
      (pf:imp-elim (pf:all-elim (pf:known emptyLaw) Empty)
        (pf:imp-elim
@@ -39,7 +39,7 @@
                            r))))))
 !(let $statement (example:two-distinct-sets)
    (let $q (cons-atom quote ($statement))
-     (hol:theorem &sets two-distinct-sets $q
+     (set:theorem &sets two-distinct-sets $q
        (pf:all-intro (pf:imp-intro
          (pf:imp-elim (pf:all-elim (pf:all-elim (pf:hyp 0) Empty) (Power Empty))
            (pf:known empty-not-power-empty)))))))
@@ -55,8 +55,8 @@
 !(Included (hol-rel:include &logic &sets rel:two-distinct-sets))
 !(let $statement (example:two-distinct-sets)
    (Instantiated (hol-rel:instantiate &sets inc:rel:two-distinct-sets two-distinct-sets-again $statement)))
-!(let $a (hol:known-proposition &sets two-distinct-sets)
-   (let $b (hol:known-proposition &sets two-distinct-sets-again)
+!(let $a (set:known-proposition &sets two-distinct-sets)
+   (let $b (set:known-proposition &sets two-distinct-sets-again)
      (SameStatement (== $a $b))))
 
 ; The logic alone does not accept the HOTG proof of the bare statement: its
@@ -75,6 +75,6 @@
    (UnbridgedCitation $verdict))
 
 ; A proof form the relativization does not read is refused, by name.
-!(hol:theorem &sets refl-by-verb (all set (lam x (imp (In x Empty) (In x Empty))))
+!(set:theorem &sets refl-by-verb (all set (lam x (imp (In x Empty) (In x Empty))))
    (pf:fix x (pf:assume h h)))
 !(Unsupported (hol-rel:relativize &sets &logic refl-by-verb))

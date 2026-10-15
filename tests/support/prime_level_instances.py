@@ -74,7 +74,7 @@ def declared_type(arguments, result, variable):
 def generate(seed, count, path):
     rng = random.Random(seed)
     lines = [
-        "!(bind! &s (let $s (new-space) (let $_ (add-atom $s (hol:profile core)) $s)))",
+        "!(bind! &s (let $s (new-space) (let $_ (add-atom $s (hol:profile base)) $s)))",
         "!(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))",
     ]
     for k in LEVELS:
@@ -210,7 +210,7 @@ def two_declared_type(arguments, result, a, b):
 def generate_two(seed, count, path):
     rng = random.Random(seed)
     lines = [
-        "!(bind! &s (let $s (new-space) (let $_ (add-atom $s (hol:profile core)) $s)))",
+        "!(bind! &s (let $s (new-space) (let $_ (add-atom $s (hol:profile base)) $s)))",
         "!(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))",
     ]
     for value in TWO_POOL:

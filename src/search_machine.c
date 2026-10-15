@@ -647,6 +647,23 @@ bool cetta_owned_continuation_storage(
         (storage->shared_bytes == 0u || storage->shared_identity);
 }
 
+void cetta_owned_continuation_storage_census(
+        const CettaOwnedContinuation *continuation,
+        CettaStorageCensus *census) {
+    if (!continuation || !continuation->payload)
+        return;
+    if (!cetta_continuation_provider_valid(continuation->provider)) {
+        cetta_storage_refuse(census, "InvalidContinuationProvider");
+        return;
+    }
+    CettaStorageVisitor visit = continuation->provider->ownership.storage_census;
+    if (!visit) {
+        cetta_storage_refuse(census, "OpaqueContinuationOwner");
+        return;
+    }
+    cetta_storage_schedule(census, continuation->payload, visit);
+}
+
 static bool cetta_continuation_component_valid(
         CettaContinuationComponent component) {
     return component >= CETTA_CONTINUATION_COMPONENT_AUTHORITY &&

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Two reversals of a list, on the face of sets.  The definitions add their
 ; equations to the hol: language, which the checker uses as computation.

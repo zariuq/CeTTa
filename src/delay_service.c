@@ -59,6 +59,22 @@ struct CettaDelayService {
     uint32_t log_cap;
 };
 
+void cetta_delay_service_storage_census(const CettaDelayService *service,
+        CettaStorageCensus *census) {
+    if (!service || !cetta_storage_object(census, service, sizeof(*service), CETTA_STORAGE_BLOCK)) return;
+    if (service->goal_len > service->goal_cap || service->watch_len > service->watch_cap ||
+        service->queue_len > service->queue_cap || service->log_len > service->log_cap) {
+        cetta_storage_refuse(census, "DelayStorageShape"); return;
+    }
+    arena_storage_census(&service->arena, census);
+    cetta_storage_array(census, service->goals, service->goal_cap, sizeof(*service->goals), 0u);
+    cetta_storage_array(census, service->watches, service->watch_cap, sizeof(*service->watches), 0u);
+    cetta_storage_array(census, service->buckets, service->bucket_cap, sizeof(*service->buckets), 0u);
+    cetta_storage_array(census, service->queue, service->queue_cap, sizeof(*service->queue), 0u);
+    cetta_storage_array(census, service->log, service->log_cap, sizeof(*service->log), 0u);
+    if (service->owner) cetta_storage_refuse(census, "OpaqueDelayedSolver");
+}
+
 static uint32_t delay_bucket(VarId var, uint32_t cap) {
     uint64_t h = var * 0x9E3779B97F4A7C15ull;
     return (uint32_t)(h >> 32) & (cap - 1u);

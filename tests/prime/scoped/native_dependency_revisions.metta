@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A proof whose goal reaches a definition through two aliases. All three
 ; definitions must remain in its native context and ordered rule package.

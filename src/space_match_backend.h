@@ -69,10 +69,15 @@ typedef struct {
     SubstTree *stree;
     bool stree_dirty;
     CettaCount stree_stale_occurrences;
+    /* Candidates the match trie has answered for substitution queries
+     * while no substitution tree exists; the tree is built once they reach
+     * the space's length. */
+    CettaCount stree_rent;
 } SpaceMatchNativeState;
 
 /* Refutation-only encoded scan before retaining a complete cold trie. The
  * caller still performs canonical matching on each returned occurrence. */
+void space_match_native_note_indexed_query(Space *space);
 bool space_match_native_try_cold_candidates(
     Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
     CettaIndex *capacity);
@@ -338,6 +343,12 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
 void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
                                                 CettaIndex atom_idx);
 void space_match_backend_note_remove(Space *s);
+/* Row `removed_row` was removed and the last row, `moved_from`, moved into
+ * it: the native indexes follow both rows instead of being rebuilt. */
+void space_match_backend_note_swap_remove(Space *s, CettaIndex removed_row,
+                                          AtomId removed_id,
+                                          CettaIndex moved_from,
+                                          AtomId moved_id);
 SpaceBackendBatchResult
 space_match_backend_transport_stable_occurrence_coordinates(
     Space *s, const SpaceStableOccurrenceTransport *transport);

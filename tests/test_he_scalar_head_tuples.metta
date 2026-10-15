@@ -1,0 +1,21 @@
+; Tuples headed by a number, string or truth value inside called functions.
+(= (pair $x) (0 $x (+ $x 1)))
+!(pair 5)
+(= (lead $x) ($x 1 2))
+!(lead 7)
+(= (nested) (1 (2 (+ 1 2)) "s"))
+!(nested)
+(= (regs $r) ($r 0 256 0 0))
+(= (bump ($a $b $c $d $e)) ($a (+ $b 1) $c $d $e))
+!(bump (regs 0))
+(= (strh $x) ("tag" $x))
+!(strh (+ 2 3))
+(= (boolh $x) (True $x))
+!(boolh (== 1 1))
+; Nondeterministic elements.
+(= (choice) (superpose (1 2)))
+(= (tup) (0 (choice) (choice)))
+!(collapse (tup))
+; A recursion through a tuple-valued accumulator.
+(= (count $n $acc) (if (== $n 0) $acc (count (- $n 1) (0 (+ $n 0) $acc))))
+!(count 3 ())

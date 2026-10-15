@@ -18,16 +18,27 @@ ANALYSIS_PATTERN = ('(CostAnalysis (metric $metric) (source-profile $profile) (r
                     '(residual $residual) (analysis-cost $cost))')
 
 
-def policy(budget=10000, extra=''):
-    return f'(search-policy (control FIFO (budget {budget}) (costs native-events-v1) {extra}))'
+def policy(budget=10000, extra='', profile='native-events-v1'):
+    return f'(search-policy (control FIFO (budget {budget}) (costs {profile}) {extra}))'
 
 
-def receipt(value, trace=False):
-    assert value[:2] == ['NativeCost', 'native-events-v1'], value
+def cost_fields(value, profile):
+    assert value[:2] == ['NativeCost', profile], value
     fields = dict(value[2:])
     counts = {item[1]: item[2] for item in fields['operations'] if item[0] == 'Counter'}
     assert len(counts) == len(fields['operations']) == 29, value
+    assert all(isinstance(n, int) and n >= 0 for n in counts.values()), value
     assert fields['work'] == ['Exact', sum(counts.values())], value
+    assert fields['span'][0] in ('Sequential', 'ForkJoin'), value
+    assert fields['span'][1][0] == 'Exact', value
+    assert 0 <= fields['span'][1][1] <= fields['work'][1], value
+    fields['counts'] = counts
+    return fields
+
+
+def receipt(value, trace=False):
+    fields = cost_fields(value, 'native-events-v1')
+    counts = fields['counts']
     assert fields['span'] == ['Sequential', fields['work']]
     assert fields['trace-status'] == 'Complete'
     charge = fields['read']
@@ -49,6 +60,144 @@ def receipt(value, trace=False):
         fields['expanded'] = expanded
     fields['counts'] = counts
     return fields
+
+
+def compact_receipt(value, trace=False):
+    fields = cost_fields(value, 'native-counts-v1')
+    assert fields['trace-status'] == 'Unrecorded', value
+    assert fields['read'] == ['UnrecordedCostRead', 'cost-read', 1], value
+    if trace:
+        assert fields['events'] == 'Unrecorded', value
+    return fields
+
+
+def compact_accounts(gate):
+    def compact(budget=10000, extra=''):
+        return policy(budget, extra, 'native-counts-v1')
+
+    cases = [
+        ('duplicate answers', '(= (rows) A) (= (rows) B) (= (rows) B) ', '(rows)'),
+        ('shared choice', '(= (coin) 3) (= (coin) 7) (= (twice $x) (Pair $x $x)) ',
+         '(twice (coin))'),
+        ('completed effect', '(= (once-effect) (chain (println! tick) $x Done)) ',
+         '(once-effect)'),
+    ]
+    for name, source, expression in cases:
+        _, full = gate.run('full cost ' + name, source +
+            f'!(select 0 {policy(extra="(demand all)")} {expression})')
+        _, brief = gate.run('compact cost ' + name, source +
+            f'!(select 0 {compact(extra="(demand all)")} {expression})')
+        a, b = receipt(full[-1]['cost']), compact_receipt(brief[-1]['cost'])
+        assert a['counts'] == b['counts'], (name, a, b)
+        assert a['span'] == b['span'] and a['work'] == b['work']
+        for field in ('values', 'work', 'closed', 'satisfied', 'status'):
+            assert full[-1][field] == brief[-1][field], (name, field)
+        if name == 'completed effect':
+            assert gate.receipts[-1]['stdout'].splitlines().count('tick') == 1
+        gate.passed_case(name + ': compact work equals full accounting without a chronology')
+
+    source = '(= (rows) A) (= (rows) B) (= (rows) B) '
+    trees, parts = gate.run('compact reads and inherited resumption', source +
+        f'!(let {PATTERN} (select 0 {compact(5, "(demand all)")} (rows)) '
+        '(CompactReads $values $receipt (cost:inspect $residual) '
+        '(cost:trace $residual) '
+        '(select 0 (search-policy (control FIFO (budget 10000) (demand all) (retain True))) $residual)))')
+    row = trees[-1][0]
+    before, inspected, traced = (compact_receipt(row[2]), compact_receipt(row[3]),
+                                compact_receipt(row[4], trace=True))
+    after = compact_receipt(parts[-1]['cost'])
+    assert before['scope'] == inspected['scope'] == traced['scope'] == after['scope']
+    assert [x['counts']['cost-read'] for x in (before, inspected, traced)] == [0, 1, 2]
+    assert bag(row[1] + parts[-1]['values']) == bag(['A', 'B', 'B'])
+    assert parts[-1]['closed'] == 'True' and after['counts']['cost-read'] == 3
+    gate.passed_case('compact reads charge later snapshots and resumption inherits the account')
+
+    trees, parts = gate.run('drop event history and resume through saved alias', source +
+        f'!(let {PATTERN} (select 0 {policy(5, "(demand all)")} (rows)) '
+        f'(let $alias $residual (Lowered $values $receipt (select 0 {compact(0)} $residual) '
+        '(select 0 (search-policy (control FIFO (budget 10000) (demand all))) $alias))))')
+    row = trees[-1][0]
+    initial = receipt(row[2]); lowered = compact_receipt(parts[-2]['cost'])
+    final = compact_receipt(parts[-1]['cost'])
+    assert initial['scope'] == lowered['scope'] == final['scope']
+    assert lowered['work'][1] >= initial['work'][1]
+    assert all(lowered['counts'][k] >= n for k, n in initial['counts'].items())
+    assert bag(row[1] + parts[-2]['values'] + parts[-1]['values']) == bag(['A', 'B', 'B'])
+    assert parts[-1]['closed'] == 'True'
+    gate.passed_case('forgetting chronology preserves paid work and the existing owning alias')
+
+    trees, parts = gate.run('refuse retrospective cost history', source +
+        f'!(let {PATTERN} (select 0 {compact(5, "(demand all)")} (rows)) '
+        f'(Upgrade $values (select 0 {policy()} $residual) '
+        '(select 0 (search-policy (control FIFO (budget 10000) (demand all))) $residual)))')
+    row = trees[-1][0]
+    assert row[2][0] == 'select', row
+    assert parts[-1]['closed'] == 'True'
+    assert bag(row[1] + parts[-1]['values']) == bag(['A', 'B', 'B'])
+    compact_receipt(parts[-1]['cost'])
+    gate.passed_case('a compact account cannot fabricate a complete earlier event history')
+
+    trees, _ = gate.run('full scope containing a compact scope', source +
+        f'!(let {PATTERN} (cost:run (select 0 {compact(extra="(demand all)")} (rows))) '
+        '(let (Observation $iv (satisfied $is) (closed $ic) (residual $ir) '
+        '(work $iw) (status $it) (cost $ip)) (car-atom $values) '
+        '(Nested (cost:trace $residual) (cost:trace $ir))))')
+    outer = receipt(trees[-1][0][1], trace=True)
+    inner = compact_receipt(trees[-1][0][2], trace=True)
+    assert outer['scope'] != inner['scope'] and outer['expanded']
+    assert outer['counts']['equation-activation'] >= inner['counts']['equation-activation'] == 3
+    gate.passed_case('a containing recorder owns its events while the compact inner account stays unrecorded')
+
+    measurements = []
+    for profile in ('native-events-v1', 'native-counts-v1'):
+        trees, _ = gate.run('retained cost storage ' + profile, source +
+            f'!(let {PATTERN} (select 0 {policy(extra="(demand all)", profile=profile)} (rows)) '
+            '(Storage $values (cost:storage $residual)))')
+        measurements.append(storage(trees[-1][0][2], recorded=profile == 'native-events-v1'))
+    assert measurements[1]['requested-retained'][1] < measurements[0]['requested-retained'][1]
+    gate.passed_case('requested totals retain less owned storage than the matching event chronology')
+
+    for workers in (2, 4):
+        trees, observed = gate.run(f'compact worker slices width{workers}',
+            '(= (sum $n) (if (== $n 0) 0 (+ $n (sum (- $n 1))))) '
+            '(= (rows) (sum 20)) (= (rows) (sum 21)) (= (rows) (sum 21)) '
+            f'!(select 0 {compact(extra=f"(demand all) (workers {workers}) (quantum 8)")} (rows))')
+        result = observed[-1]; fields = compact_receipt(result['cost'])
+        assert result['closed'] == 'True' and bag(result['values']) == bag([210, 231, 231])
+        assert fields['counts']['worker-dispatch'] > 0, fields
+        assert fields['counts']['worker-join'] > 0, fields
+        gate.passed_case(f'compact worker slices width{workers} preserve duplicates and joined work/span')
+
+
+def compact_history(gate):
+    def compact(budget=10000, extra=''):
+        return policy(budget, extra, 'native-counts-v1')
+
+    source = '(= (rows) A) (= (rows) B) (= (rows) B) '
+    trees, observed = gate.run('compact account through recording erasure', source +
+        f'!(bind! &saved (select 0 {compact(5, "(demand all)")} (rows))) '
+        f'!(let {PATTERN} &saved (SavedPrefix $values $receipt)) '
+        f'!(bind! &tail (let {PATTERN} &saved $residual)) '
+        '!(history:forget &saved 131072) '
+        '!(select 0 (search-policy (control FIFO (budget 10000) (demand all))) &tail)')
+    change = dict(trees[-2][0][1:])
+    assert trees[-2][0][0] == 'HistoryPolicy' and change['status'] == 'Unrecorded'
+    assert observed[-1]['closed'] == 'True'
+    assert bag(trees[1][0][1] + observed[-1]['values']) == bag(['A', 'B', 'B'])
+    compact_receipt(observed[-1]['cost'])
+    gate.passed_case('owned checkpoint replacement preserves the compact account and its residual')
+
+    trees, _ = gate.run('compact capture cannot promise exact replay',
+        f'!(history:capture (quote (cost:run {compact(0)} '
+        '(chain (println! must-not-run) $x Done))) '
+        '(ReplayLimits 8 8192 134217728))')
+    report = trees[-1][0]
+    assert report[0] == 'ReplayCheckpoint', report
+    fields = dict(report[1:])
+    assert fields['status'] == 'CaptureRefused' and fields['initial-state'] == 'NotStarted'
+    assert fields['replay-authenticated'] == 'False' and fields['accepted-owner'] == 'Absent'
+    assert 'must-not-run\n' not in gate.receipts[-1]['stdout']
+    gate.passed_case('exact replay refuses an unrecorded cost account before executing its body')
 
 
 def fixed(gate):
@@ -204,7 +353,7 @@ def analysis_fields(value):
     return fields
 
 
-def storage(value):
+def storage(value, recorded=True):
     assert value[:2] == ['NativeStorage', 'native-owned-storage-v1'], value
     fields = dict(value[2:])
     assert fields['ownership'] == 'Complete', value
@@ -213,7 +362,10 @@ def storage(value):
     assert fields['identities'] > 0 and fields['inspection-probes'] > 0
     assert fields['snapshot'] == 'BeforeInspectionCharge'
     assert fields['environment'] == 'BorrowedSourceAndGlobalPools'
-    assert fields['read'][4:] == ['cost-read', 1, 1]
+    if recorded:
+        assert fields['read'][4:] == ['cost-read', 1, 1]
+    else:
+        assert fields['read'] == ['UnrecordedCostRead', 'cost-read', 1]
     return fields
 
 
@@ -260,6 +412,22 @@ def storage_controls(gate):
     storage(trees[-1][0][3])
     gate.passed_case('closure does not erase retained witnesses or report an empty frontier as zero storage')
 
+    source = ('(= (storage:sumdown $n) '
+              '(if (== $n 0) 0 (+ 1 (storage:sumdown (- $n 1))))) '
+              '(= (storage:jobs) (storage:sumdown 40)) '
+              '(= (storage:jobs) (storage:sumdown 45)) ')
+    trees, observed = gate.run('inspect suspended workers before resumption', source +
+        f'!(let {PATTERN} (select 1 '
+        f'{policy(31, "(workers 2) (quantum 3) (retain True)")} (storage:jobs)) '
+        '(Retained $values $closed (cost:storage $residual) '
+        f'(select 0 {policy(5000, "(workers 2) (quantum 3) (retain True) (demand all)")} '
+        '$residual)))')
+    assert trees[-1][0][1:3] == [[], 'False']
+    measured = storage(trees[-1][0][3])
+    assert measured['repeated-visits'] > 0
+    assert observed[-1]['values'] == [40, 45] and observed[-1]['closed'] == 'True'
+    gate.passed_case('suspended worker census preserves shared owners and the complete resumed result')
+
     trees, _ = gate.run('forged storage capability remains data',
         '!(cost:storage (NativeHandle "prime-search" 1)) !(cost:storage Unknown)')
     assert all(tree[0][0] == 'cost:storage' for tree in trees)
@@ -271,7 +439,8 @@ def cost_clients(gate):
     trees, _ = gate.run('self-budgeted native seven routes', source)
     result = trees[-1][0]
     assert result[:4] == ['BudgetedRoutes', [['Route', i] for i in range(7)], 'True', 'False']
-    before, retained, after = receipt(result[4]), storage(result[5]), receipt(result[6])
+    before, retained, after = (compact_receipt(result[4]), storage(result[5], recorded=False),
+                               compact_receipt(result[6]))
     assert before['work'][1] >= 100 and after['scope'] == before['scope']
     assert before['counts']['quantum'] < after['counts']['quantum']
     assert after['counts']['storage-probe'] == retained['inspection-probes']
@@ -400,16 +569,23 @@ def main():
     parser.add_argument('--timeout', type=int, default=30)
     parser.add_argument('--cases', type=int, default=8)
     parser.add_argument('--receipt', type=Path)
+    parser.add_argument('--population', choices=('all', 'compact'), default='all')
+    parser.add_argument('--history-controls', action='store_true',
+                        help='Check receipt-enabled forgetting and replay boundaries.')
     args = parser.parse_args()
     args.binary = args.binary.resolve()
     gate = Gate(args)
     try:
-        fixed(gate)
-        handled_contributions(gate)
-        split_runs(gate, args.cases)
-        analysis_controls(gate, args.cases)
-        storage_controls(gate)
-        cost_clients(gate)
+        compact_accounts(gate)
+        if args.history_controls:
+            compact_history(gate)
+        if args.population == 'all':
+            fixed(gate)
+            handled_contributions(gate)
+            split_runs(gate, args.cases)
+            analysis_controls(gate, args.cases)
+            storage_controls(gate)
+            cost_clients(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True, exist_ok=True)

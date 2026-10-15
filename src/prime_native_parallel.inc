@@ -594,6 +594,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     CettaSearchPolicySpec policy = {
         .native_control = true, .all = true, .age_share = 8u,
         .work_budget = UINT64_MAX, .costs = owner->cost_enabled, .workers = 1u,
+        .cost_compact = owner->policy.cost_compact,
         .receipts = owner->policy.receipts,
         .prepared_node_quantum = owner->policy.prepared_node_quantum,
     };
@@ -1198,8 +1199,10 @@ static bool prime_native_resource_match_task(CettaParallelWorker *worker,
     EvalContextState previous_context=eval_context_capture();
     eval_swap_library_context(run->library);eval_context_restore(&parallel->context);
     CettaNativeCostScope *containing=cetta_native_cost_detach_begin(),cost;
-    if(parallel->metered)cetta_native_cost_scope_enter(&cost,&parallel->slice_cost,parallel->occurrence);
-    cetta_native_cost_charge(CETTA_COST_QUANTUM,1u);
+    if(parallel->metered) {
+        cetta_native_cost_scope_enter(&cost,&parallel->slice_cost,parallel->occurrence);
+        cetta_native_cost_charge_observed(CETTA_COST_QUANTUM,1u);
+    }
     parallel->spent=cetta_space_agenda_match_run(parallel->resource_match,
         CETTA_SPACE_AGENDA_MATCH_NODES)?1u:0u;
     if(parallel->metered)cetta_native_cost_scope_leave(&cost);
@@ -1218,7 +1221,7 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
     PrimeNativeParallel *parallel = raw;
     PrimeNativeParallelRun *run = context;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    __attribute__((cleanup(prime_need_recording_leave)))
+    __attribute__((cleanup(prime_native_history_scope_leave)))
     PrimeNeedRecordingScope history_scope = {0};
     if (parallel->history_enabled)
         prime_need_recording_enter(&history_scope, &parallel->history);
@@ -1316,7 +1319,8 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
         child->active_occurrence = parallel->occurrence;
         child->active_scoring = parallel->dialect_operation->scoring;
         native_dialect_parallel_operation(parallel->dialect_operation);
-        cetta_native_cost_charge(CETTA_COST_QUANTUM, 1u);
+        if (metered)
+            cetta_native_cost_charge_observed(CETTA_COST_QUANTUM, 1u);
         child->steps++;
         child->active_occurrence = 0u;
         child->active_scoring = false;
@@ -1512,6 +1516,8 @@ static void prime_native_parallel_history_publish(PrimeNativeParallel *parallel)
 
 static void prime_native_parallel_slice_begin(PrimeNativeControl *owner,
         PrimeNativeParallel *parallel, uint64_t grant, uint64_t occurrence) {
+    if (owner->event_cost.compact && parallel->child)
+        parallel->child->policy.cost_compact = true;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     parallel->history_enabled = owner->history.spec.enabled ||
         g_prime_need_recording_scope != NULL;
@@ -1531,7 +1537,12 @@ static void prime_native_parallel_slice_begin(PrimeNativeControl *owner,
      * inside an enclosing observation. Its physical worker slice still
      * belongs to that observation, with the original event identities. */
     parallel->metered = cetta_native_cost_active();
-    if (parallel->metered) cetta_native_cost_init(&parallel->slice_cost);
+    if (parallel->metered) {
+        if (cetta_native_cost_events_requested())
+            cetta_native_cost_init(&parallel->slice_cost);
+        else
+            cetta_native_cost_init_compact(&parallel->slice_cost);
+    }
     if (parallel->child && parallel->execution.profile == PRIME_NATIVE_EXECUTION_NONE)
         parallel->child->policy.receipts = owner->policy.receipts;
     parallel->grant = grant;

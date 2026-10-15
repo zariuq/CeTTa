@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 (hol:rule hol-equality)
 ; Ordinary dependent typing reads its explicit declaration view.
 (: prop (u 0))

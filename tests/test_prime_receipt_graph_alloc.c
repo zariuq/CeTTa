@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "atom.h"
 #include "prime_need.h"
@@ -95,6 +96,23 @@ int main(void) {
     probing = false;
     assert(status == PRIME_NEED_RECEIPT_GRAPH_REFUSED && allocation_count == 1u);
     assert(complete.length == 80u && complete.event_count == 80u);
+    PrimeNeedReceiptGraphNode producers[64] = {0};
+    for (size_t i = 0u; i < 64u; i++)
+        producers[i] = (PrimeNeedReceiptGraphNode){.has_event = true,
+            .event = {.need_session_id = 3u, .thunk_id = 5u,
+                .producer_update_id = i + 1u, .producer_completed = true}};
+    PrimeNeedReceiptGraph producer_graph = {.nodes = producers, .length = 64u};
+    bool retained[64] = {0}, untouched[64] = {0};
+    fail_at = 0u;
+    allocation_count = 0u;
+    probing = true;
+    bool indexed = prime_need_receipt_graph_producers(&producer_graph, retained);
+    probing = false;
+    assert(!indexed && allocation_count == 1u &&
+           memcmp(retained, untouched, sizeof(retained)) == 0 &&
+           producers[6].event.producer_update_id == 7u && producers[6].event.producer_completed);
+    assert(prime_need_receipt_graph_producers(&producer_graph, retained));
+    for (size_t i = 0u; i < 64u; i++) assert(retained[i]);
     assert(prime_need_receipt_graph_collect(&receipt, &graph) ==
            PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 80u);
     prime_need_receipt_graph_free(&graph);

@@ -1,6 +1,6 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
-; Lists over a set, on the face of sets.  The hol: language is
+; Lists over a set, on the face of sets.  The set: language is
 ; higher-order logic over the type `set`, and a declared datatype adds its
 ; type, its constructors and its induction principle to it.  Declared with
 ; a parameter, the principle is a schema over the parameter: `List-ind` is
@@ -11,18 +11,18 @@
 ; part shows where lists meet sets, and which Lean theorem gives the
 ; declaration a set model.
 !(import! &self pf)
-!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(hol:inductive &self (List (: A set)) set
+!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(set:inductive &self (List (: A set)) set
    (: nil (List A))
    (: cons (-> A (List A) (List A))))
-!(hol:define &self append (-> (A : set) (l m : (List A)) (List A))
+!(set:define &self append (-> (A : set) (l m : (List A)) (List A))
    (= (append $A (nil $A) $m) $m)
    (= (append $A (cons $A $a $l) $m) (cons $A $a (append $A $l $m))))
 ; The declaration as recorded: the type of List with its parameter bound,
 ; then the constructors as written.
-!(hol:known-proposition &self List)
+!(set:known-proposition &self List)
 ; The induction principle the declaration gives, a schema over A.
-!(hol:known-proposition &self List-ind)
+!(set:known-proposition &self List-ind)
 
 ; ---- At the lists of numbers, the parameters written.
 !(pf:equality &self (List num) refl@ln subst@ln)
@@ -37,7 +37,7 @@
      (pf:fix a (pf:fix as (pf:assume ih
        (pf:cong (List num) (List num) (lam r (cons num a r))
                 (append num as (nil num)) as ih))))))
-!(hol:known-proposition &self append-nil-num)
+!(set:known-proposition &self append-nil-num)
 ; The theorem used at one list.
 !(pf:proves &self (pf:by append-nil-num)
    (eq (List num) (append num (cons num zero (nil num)) (nil num)) (cons num zero (nil num))))
@@ -85,10 +85,10 @@
 ; and it is refuted.  Two predicates on lists of numbers, defined by
 ; recursion into prop, tell a list whose tail is not empty; at the list
 ; [0], substitution along "[0] ++ [0] = [0]" turns that truth into Falsum.
-!(hol:define &self is-cons (-> (l : (List num)) prop)
+!(set:define &self is-cons (-> (l : (List num)) prop)
    (= (is-cons (nil num)) Falsum)
    (= (is-cons (cons num $a $as)) (all prop (lam p (imp p p)))))
-!(hol:define &self tail-cons (-> (l : (List num)) prop)
+!(set:define &self tail-cons (-> (l : (List num)) prop)
    (= (tail-cons nil) Falsum)
    (= (tail-cons (cons $a $as)) (is-cons $as)))
 !(pf:theorem &self append-self-refuted
@@ -99,12 +99,12 @@
        (pf:all-elim H (cons zero nil))
        (pf:fix p (pf:assume x x)))))
 ; The principle is cited at as many sets as List has parameters.
-!(try (hol:proves &self (pf:all-elim (pf:known (List-ind num num)) (lam l Falsum))
+!(try (set:proves &self (pf:all-elim (pf:known (List-ind num num)) (lam l Falsum))
         (imp Falsum Falsum)))
 ; At a set whose name the principle also writes as a bound name, `v1`, the
 ; bound name is renamed first: the instance is the principle at that set,
 ; and the same proof proves the theorem there.
-!(hol:inductive &self v1 (u 0) (: one v1))
+!(set:inductive &self v1 (u 0) (: one v1))
 !(pf:equality &self (List v1) refl@lv subst@lv)
 !(pf:theorem &self append-nil-v1
    (all (List v1) (lam l (eq (List v1) (append v1 l nil) l)))
@@ -114,20 +114,20 @@
        (pf:cong (List v1) (List v1) (lam r (cons a r)) (append v1 as nil) as ih))))))
 
 ; ---- Equality of lists, at each instance.
-!(hol:eq &self (append num (cons num zero (nil num)) (nil num)) (cons num zero (nil num)))
-!(hol:eq &self (append (List num) (cons nil nil) nil) (cons nil nil))
-!(hol:eq &self (append num (cons zero nil) nil) (cons (suc zero) nil))
+!(set:eq &self (append num (cons num zero (nil num)) (nil num)) (cons num zero (nil num)))
+!(set:eq &self (append (List num) (cons nil nil) nil) (cons nil nil))
+!(set:eq &self (append num (cons zero nil) nil) (cons (suc zero) nil))
 
 ; ---- Lists and sets.  The lists of a set are a set, and so are the lists
 ; of those lists; a function from lists to sets is a formed type.
-!(hol:check &self (List num) set)
-!(hol:check &self (List (List num)) set)
-!(hol:formed &self (-> (List num) set))
+!(set:check &self (List num) set)
+!(set:check &self (List (List num)) set)
+!(set:formed &self (-> (List num) set))
 ; A list is not a set: `In` does not apply to a list.
-!(hol:check &self (lam l (In l Empty)) (-> (List num) prop))
+!(set:check &self (lam l (In l Empty)) (-> (List num) prop))
 ; What a list is, as the set language reads it: written either way.
-!(hol:of &self (cons num zero (nil num)))
-!(hol:of &self (cons (cons zero nil) nil))
+!(set:of &self (cons num zero (nil num)))
+!(set:of &self (cons (cons zero nil) nil))
 
 ; ---- The set model.  Lean declares the lists over a set as a family over
 ; the tower inside the sets (List : set -> set, nil, cons and append) and
@@ -136,30 +136,30 @@
 ; name of its parameter, has its record name that model, with the
 ; hypotheses it holds under; the model is of List, nil and cons, and states
 ; nothing of the recursor or of the principle.
-!(hol:known-proof &self List)
-!(bind! &other (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(hol:inductive &other (List (: B set)) set
+!(set:known-proof &self List)
+!(bind! &other (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(set:inductive &other (List (: B set)) set
    (: nil (List B))
    (: cons (-> B (List B) (List B))))
-!(hol:known-proof &other List)
+!(set:known-proof &other List)
 ; Any other declaration with parameters cites no Lean model: a tree,
-!(hol:inductive &other (Tree (: A set)) set
+!(set:inductive &other (Tree (: A set)) set
    (: leaf (Tree A))
    (: node (-> (Tree A) A (Tree A) (Tree A))))
-!(hol:known-proof &other Tree)
+!(set:known-proof &other Tree)
 ; and the lists over a type of the lowest universe, a datatype of that
 ; universe, which is not Lean's family.
-!(bind! &small (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(hol:inductive &small (List (: A (u 0))) (u 0)
+!(bind! &small (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(set:inductive &small (List (: A (u 0))) (u 0)
    (: nil (List A))
    (: cons (-> A (List A) (List A))))
-!(hol:known-proof &small List)
+!(set:known-proof &small List)
 ; The lists over any set cannot all lie in the lowest universe: the field
 ; of cons at a set A is not of that universe, and the declaration is
 ; refuted.  (Lean proves the same of the list family with List : set -> U0
 ; when List is read as the lists: it has no set model.)
-!(bind! &wrong (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile megalodon-hotg)) $profile-space)))
-!(let $r (try (hol:inductive &wrong (List (: A set)) (u 0)
+!(bind! &wrong (let $profile-space (new-space) (let $_ (add-atom $profile-space (set:profile megalodon-hotg)) $profile-space)))
+!(let $r (try (set:inductive &wrong (List (: A set)) (u 0)
                 (: nil (List A))
                 (: cons (-> A (List A) (List A)))))
    (car-atom $r))

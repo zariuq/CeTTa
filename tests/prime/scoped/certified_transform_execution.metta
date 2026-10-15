@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Bare evaluation of the certified transformations. No type:eq or type:check
 ; wraps these results. A covered call must return the computed value and

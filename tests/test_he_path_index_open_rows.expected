@@ -1,0 +1,5 @@
+[(a open q b c)]
+[(open q s)]
+[((edge a) (edge open) (other open) (open q) ((f) r) (edge b) (other s) (edge c))]
+[(n7)]
+[(d e)]

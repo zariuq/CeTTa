@@ -1,10 +1,10 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Existential introduction substitutes a predicate lambda beneath a proof
 ; binder.  Its beta redex must reach the same conversion authority as the
 ; corresponding closed proposition.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy nat refl@nat subst@nat)
 !(hol:define &thy exists-nat (-> (-> nat prop) prop)

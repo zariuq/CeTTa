@@ -16,7 +16,7 @@ void eval_prime_owned_region_storage_census(const EvalOutcome *outcome,
             sizeof(*outcome->results.items), 0u);
     arena_storage_census(&owned->holders, census);
     prime_native_top_episode_storage(owned->top.episode, census);
-    prime_native_outcomes_storage(&owned->pending, census);
+    outcome_set_storage_census(&owned->pending, census);
     prime_native_control_storage_census(owned->top.owned.unpublished, census);
     prime_native_acquired_operation_storage(owned->top.owned.acquired, census);
 }

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The equality axioms pf:equality publishes for a carrier bind a predicate
 ; and two elements.  Their binders are chosen apart from the carrier, so a

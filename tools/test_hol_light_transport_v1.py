@@ -20,9 +20,11 @@ from hol_light_petta_v1 import export_events
 
 LIBRARY = ("data", "syntax", "kernel", "definitions", "derived", "profile", "receive", "transport")
 
+# Each target: its namespace, its selection, a declaration it needs, and how
+# HOL Light's ind is read there.
 TARGETS = {
-    "logic": ("(hol:profile core)", "(: hl-ind (u 0))", "(HOL:Interpretation hl-ind)"),
-    "sets": ("(hol:profile megalodon-hotg)", None, "(HOL:Interpretation set)"),
+    "logic": ("hol", "(hol:profile base)", "(: hl-ind (u 0))", "(HOL:Interpretation hl-ind)"),
+    "sets": ("set", "(set:profile megalodon-hotg)", None, "(HOL:Interpretation set)"),
 }
 
 # Expected root statements and commitments, per export and target.
@@ -37,14 +39,14 @@ EXPECTED = {
 
 def program(repository: Path, nodes: list[dict], standard: dict, target: str,
             root_id: int | None = None) -> str:
-    profile, declaration, interpretation = TARGETS[target]
+    namespace, profile, declaration, interpretation = TARGETS[target]
     events, keys = export_events(nodes, standard)
     lines = ["(scope:profile lexical-fresh per-call reference)"]
     library = repository / "lib" / "prime" / "hol_light"
     lines += [f"!(import! &self {library / name}.metta)" for name in LIBRARY]
     setup = f"(add-atom $s {declaration})" if declaration else "()"
     lines.append(f"!(bind! &target (let $s (new-space) (let $p (add-atom $s {profile}) "
-                 f"(let $r (add-atom $s (hol:rule hol-equality)) (let $t {setup} $s)))))")
+                 f"(let $r (add-atom $s ({namespace}:rule hol-equality)) (let $t {setup} $s)))))")
     lines.append("!(bind! &received (case (hol-light:standard-receive HOL:Nil) "
                  "(((Some $s) $s) ($r (HOL:Refused $r)))))")
     for event in events:
@@ -58,7 +60,7 @@ def program(repository: Path, nodes: list[dict], standard: dict, target: str,
                      f"{interpretation} $state {keys[node['id']]} HOL:Nil) (Step {node['id']} $name)))")
     root = keys[nodes[-1]["id"]] if root_id is None else keys[root_id]
     lines.append(f"!(let $state &received (let $name (hol-light:transport-replay &target "
-                 f"{interpretation} $state {root} HOL:Nil) (Root (hol:known-proposition &target $name))))")
+                 f"{interpretation} $state {root} HOL:Nil) (Root ({namespace}:known-proposition &target $name))))")
     lines.append("!(Commitments (hol-light:transport-commitments &target))")
     return "\n".join(lines) + "\n"
 

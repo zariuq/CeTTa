@@ -603,17 +603,11 @@ refuse:
     free(frames);return false;
 }
 
-static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {
+/* The borrowed observer policies stay fixed for this run. Unobserved adapter
+ * transitions do not probe cost or replay services at every quantum/return. */
+static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_loop(
+    PrimeNativeControl *control,uint64_t grant,bool meter_cost,bool replay_phases) {
     PrimeEvalStackDriver *driver=&control->driver;
-    assert(driver->capsule_stack && driver->control==control && !control->cost_enabled);
-    if (!grant || control->failed || control->invalidated) return;
-    if (!space_read_token_is_current(control->source_read) ||
-        !prime_native_control_query_reads_current(control) ||
-        !registry_read_view_validate(&control->registry_read,g_registry)) {
-        control->invalidated=true;return;
-    }
-    PrimeNativeRunGuard guard;
-    prime_native_run_enter(control,&guard);
     while (grant && (driver->task_ready || driver->top) &&
            !driver->capsule_frontier && !control->need_pending &&
            !control->effect_pending && !control->failed && !control->invalidated) {
@@ -632,7 +626,8 @@ static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_
         CettaEvalCompletion result=eval_completion_child_end(&completion);
         /* An adapter dispatch remains a paid unit, even if it suspends.
          * It is deliberately not equated with an old agenda quantum. */
-        cetta_native_cost_charge(CETTA_COST_QUANTUM,1u);
+        if (meter_cost)
+            cetta_native_cost_charge_observed(CETTA_COST_QUANTUM,1u);
         control->steps++;grant--;
         if (result!=CETTA_EVAL_COMPLETE) {
             control->completion=result;control->failed=true;
@@ -646,10 +641,35 @@ static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_
             driver->capacity_blocked=true;
             control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;break;
         }
-        (void)prime_native_mark_delivered(control,i);control->published++;
+        (void)prime_native_mark_delivered(control,i,replay_phases);
+        control->published++;
     }
     if (control->registry_read.stale) control->invalidated=true;
     if (control->registry_read.incomplete || driver->capacity_blocked)
         control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+}
+
+static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {
+    PrimeEvalStackDriver *driver=&control->driver;
+    assert(driver->capsule_stack && driver->control==control && !control->cost_enabled);
+    if (!grant || control->failed || control->invalidated) return;
+    if (!space_read_token_is_current(control->source_read) ||
+        !prime_native_control_query_reads_current(control) ||
+        !registry_read_view_validate(&control->registry_read,g_registry)) {
+        control->invalidated=true;return;
+    }
+    PrimeNativeRunGuard guard;
+    prime_native_run_enter(control,&guard);
+    if (guard.cost_active) {
+        if (prime_replay_phases_requested())
+            prime_ordinary_capsule_stack_loop(control,grant,true,true);
+        else
+            prime_ordinary_capsule_stack_loop(control,grant,true,false);
+    } else {
+        if (prime_replay_phases_requested())
+            prime_ordinary_capsule_stack_loop(control,grant,false,true);
+        else
+            prime_ordinary_capsule_stack_loop(control,grant,false,false);
+    }
     prime_native_run_leave(&guard);
 }

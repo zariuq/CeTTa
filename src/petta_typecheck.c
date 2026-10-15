@@ -250,6 +250,20 @@ static PettaTypeMemoEntry *petta_memo_entry(
     }
 }
 
+/* Judging an entry's body may grow the table, which moves every entry: the
+ * verdict is recorded on the entry found again by its key. */
+static void petta_memo_complete(
+    PettaTypecheckContext *context, PettaTypecheckMode mode,
+    Atom *left, Atom *right, PettaTypecheckVerdict verdict) {
+    bool existing = false;
+    PettaTypeMemoEntry *entry = petta_memo_entry(
+        context, mode, left, right, &existing);
+    if (!entry)
+        return;
+    entry->state = PETTA_MEMO_COMPLETE;
+    entry->verdict = verdict;
+}
+
 static PettaDeclInfo petta_decl_info(
     PettaTypecheckContext *context, Atom *name) {
     PettaDeclInfo result = {0};
@@ -616,8 +630,8 @@ static PettaTypecheckVerdict petta_check_types(
     }
     PettaTypecheckVerdict verdict =
         petta_check_type_body(context, actual, required);
-    memo->state = PETTA_MEMO_COMPLETE;
-    memo->verdict = verdict;
+    petta_memo_complete(
+        context, PETTA_TYPECHECK_MODE_TYPE, actual, required, verdict);
     return verdict;
 }
 
@@ -671,12 +685,18 @@ static PettaTypecheckVerdict petta_check_arrow_value(
         context->reason = PETTA_TYPECHECK_REASON_OPEN_VALUE;
         return PETTA_TYPECHECK_UNDETERMINED;
     }
+    /* PeTTa's runtime arrow check: a value callable at the arrow's arity
+     * satisfies the arrow unless a declaration of it definitely
+     * contradicts the arrow (runtime_callable_at_arrow_arity, then
+     * value_definitely_mismatch). */
     PettaTypecheckVerdict declared =
         petta_check_declared_value_types(
             context, value, required, NULL);
-    if (declared == PETTA_TYPECHECK_ESTABLISHED)
-        context->reason = PETTA_TYPECHECK_REASON_DECLARED;
-    return declared;
+    if (declared == PETTA_TYPECHECK_REFUTED ||
+        context->fault != PETTA_TYPECHECK_FAULT_NONE)
+        return declared;
+    context->reason = PETTA_TYPECHECK_REASON_DECLARED;
+    return PETTA_TYPECHECK_ESTABLISHED;
 }
 
 static PettaTypecheckVerdict petta_check_value_body(
@@ -839,8 +859,8 @@ static PettaTypecheckVerdict petta_check_value(
     }
     PettaTypecheckVerdict verdict =
         petta_check_value_body(context, value, required);
-    memo->state = PETTA_MEMO_COMPLETE;
-    memo->verdict = verdict;
+    petta_memo_complete(
+        context, PETTA_TYPECHECK_MODE_VALUE, value, required, verdict);
     return verdict;
 }
 
@@ -959,6 +979,9 @@ typedef struct {
     Atom *subject;
     Atom *type;
     bool inferred;
+    /* An inferred signature: the first form, in program order, whose
+     * clause contributed to it. */
+    size_t inferred_first_form;
     size_t next_same_subject;
     size_t prev_same_subject;
 } PettaBlockDeclaration;
@@ -1021,6 +1044,10 @@ typedef struct {
     size_t bound_bool_stack_len;
     VarId bound_bool_parameters[128];
     size_t bound_bool_parameter_len;
+    /* The clause whose committed body is under cardinality analysis: the
+     * call boundary binds its direct parameters. */
+    Atom *enforced_clause_lhs;
+    Atom *enforced_clause_body;
     struct {
         SymbolId head;
         CettaExprLen arity;
@@ -1038,6 +1065,14 @@ typedef struct {
     uint32_t explicit_ascription_depth;
     bool residual_type_guard_required;
     bool committed_effect_evidence_withheld;
+    /* The variable being checked is an argument of a call whose required
+     * types are one declaration's promise (or a closure's arrow): a known
+     * type that conflicts with its parameter is a runtime obligation, not a
+     * refutation, unless both are distinct newtypes, which erase at run time.
+     * `sole_declaration_call` marks the next named call as having exactly
+     * one applicable declaration. */
+    bool declared_argument_variable;
+    bool sole_declaration_call;
 } PettaBlockCheck;
 
 static bool petta_block_inferred_signatures_current(
@@ -1195,16 +1230,74 @@ static bool petta_block_infix_arrow_misuse(
                type->expr.elems[0], depth + 1u);
 }
 
+/* PeTTa's own checker names the kind of each refutation.  A diagnostic
+ * leads with that name, formatted from the same arguments, and then says
+ * what was refuted here. */
+static const struct {
+    const char *stem;
+    const char *category;
+} PETTA_BLOCK_FAILURE_CATEGORIES[] = {
+    {"body type conflicts with declaration", "Type conflict"},
+    {"head pattern does not fit declaration", "Type mismatch"},
+    {"call arguments conflict with inferred type", "Type mismatch"},
+    {"body specializes a universally quantified type",
+     "Declared parametric parameter is specialized"},
+    {"body cardinality", "Determinism check failed"},
+    {"closure effect conflicts with declaration", "Determinism check failed"},
+    {"committed head contains an executable goal", "Determinism check failed"},
+    {"committed equations overlap",
+     "Deterministic function %s/%u has overlapping clauses"},
+    {"deterministic equations are non-exhaustive",
+     "Deterministic function %s/%u is not exhaustive"},
+    {"strict typing requires a residual type guard",
+     "Strict mode rejected residual runtime type goal"},
+    {"strict typing could not infer a signature",
+     "Strict mode requires a declared or inferable type for %s/%u"},
+    {"no declared overload matches", "No matching typed overload"},
+    {"infix arrow syntax", "Arrows are prefix"},
+    {"existing row conflicts with SpaceOf schema",
+     "SpaceOf declaration for %s rejects existing row"},
+    {"effect variables disagree", "Effect-polymorphic declaration rejected"},
+    {"effect variable occurs", "Effect variable misplaced"},
+    {"effect declaration has no closure argument",
+     "Effect variable has no closure argument"},
+};
+
+static const char *petta_block_failure_category(const char *format) {
+    for (size_t index = 0u;
+         index < sizeof(PETTA_BLOCK_FAILURE_CATEGORIES) /
+                     sizeof(PETTA_BLOCK_FAILURE_CATEGORIES[0]);
+         index++) {
+        const char *stem = PETTA_BLOCK_FAILURE_CATEGORIES[index].stem;
+        if (strncmp(format, stem, strlen(stem)) == 0)
+            return PETTA_BLOCK_FAILURE_CATEGORIES[index].category;
+    }
+    return NULL;
+}
+
 static bool petta_block_fail(
     PettaBlockCheck *check, const char *format, ...) {
     if (!check || !check->result)
         return false;
     check->result->verdict = PETTA_TYPECHECK_REFUTED;
+    char *diagnostic = check->result->diagnostic;
+    size_t size = sizeof(check->result->diagnostic);
+    size_t used = 0u;
     va_list args;
     va_start(args, format);
-    vsnprintf(
-        check->result->diagnostic,
-        sizeof(check->result->diagnostic), format, args);
+    const char *category = petta_block_failure_category(format);
+    if (category) {
+        va_list category_args;
+        va_copy(category_args, args);
+        int written = vsnprintf(diagnostic, size, category, category_args);
+        va_end(category_args);
+        if (written > 0 && (size_t)written + 2u < size) {
+            used = (size_t)written;
+            diagnostic[used++] = ':';
+            diagnostic[used++] = ' ';
+        }
+    }
+    vsnprintf(diagnostic + used, size - used, format, args);
     va_end(args);
     return false;
 }
@@ -1649,6 +1742,32 @@ static bool petta_block_plain_types_may_overlap(
         petta_block_decl_representation(check, right, "Newtype"))
         return false;
     return true;
+}
+
+static Atom *petta_block_decl_representation(
+    PettaBlockCheck *check, Atom *type, const char *kind);
+static bool petta_block_type_compatible(
+    PettaBlockCheck *check, Atom *actual, Atom *required,
+    Bindings *bindings);
+
+static bool petta_block_type_compatible_probe(
+    PettaBlockCheck *check, Atom *actual, Atom *required) {
+    Bindings probe;
+    bindings_init(&probe);
+    bool compatible = petta_block_type_compatible(
+        check, actual, required, &probe);
+    bindings_free(&probe);
+    return compatible;
+}
+
+/* Two different nominal roles: brands erase at run time, so a conflict
+ * between them is decided now. */
+static bool petta_block_distinct_newtypes(
+    PettaBlockCheck *check, Atom *known, Atom *required) {
+    return known && required && known->kind == ATOM_SYMBOL &&
+        required->kind == ATOM_SYMBOL && !atom_eq(known, required) &&
+        petta_block_decl_representation(check, known, "Newtype") &&
+        petta_block_decl_representation(check, required, "Newtype");
 }
 
 static bool petta_block_runtime_type_candidate(
@@ -3472,6 +3591,8 @@ static bool petta_block_try_signature(
     Atom **actual_out, uint32_t depth, bool *applicable_out) {
     if (applicable_out)
         *applicable_out = false;
+    bool sole = check->sole_declaration_call;
+    check->sole_declaration_call = false;
     const char *mode = NULL;
     if (!petta_block_arrow_head(signature, &mode) ||
         signature->expr.len != call->expr.len + 1u)
@@ -3492,10 +3613,13 @@ static bool petta_block_try_signature(
         Atom *formal = petta_block_apply_type_bindings(
             check, &trial, fresh->expr.elems[index]);
         Atom *actual = NULL;
-        if (!petta_block_infer_expr(
-                check, call->expr.elems[index], &trial,
-                formal, &actual,
-                depth + 1u)) {
+        Atom *argument = call->expr.elems[index];
+        check->declared_argument_variable =
+            sole && argument->kind == ATOM_VAR;
+        bool inferred = petta_block_infer_expr(
+            check, argument, &trial, formal, &actual, depth + 1u);
+        check->declared_argument_variable = false;
+        if (!inferred) {
             ok = false;
             break;
         }
@@ -3541,6 +3665,93 @@ static bool petta_block_try_signature(
     return ok;
 }
 
+/* A call whose head is a variable bound to an arrow applies a closure.  Its
+ * arrow's variables belong to the enclosing judgment (a parameter's type
+ * from the declaration being checked), so they are not renamed.  Each given
+ * argument is checked against its parameter, as a named call's are.  Given
+ * every parameter, the call's type is the arrow's result; given fewer, it is
+ * the arrow, with the same effect, over the remaining parameters. */
+static bool petta_block_infer_closure_call(
+    PettaBlockCheck *check, Atom *call, Atom *arrow,
+    Bindings *environment, Atom *expected,
+    Atom **actual_out, uint32_t depth) {
+    CettaExprLen parameters = arrow->expr.len - 2u;
+    CettaExprLen arguments = call->expr.len - 1u;
+    Bindings trial;
+    if (!bindings_clone(&trial, environment))
+        return false;
+    bool ok = true;
+    for (CettaExprIndex index = 1u; ok && index <= arguments; index++) {
+        Atom *formal = petta_block_apply_type_bindings(
+            check, &trial, arrow->expr.elems[index]);
+        Atom *actual = NULL;
+        Atom *argument = call->expr.elems[index];
+        check->declared_argument_variable = argument->kind == ATOM_VAR;
+        bool inferred = petta_block_infer_expr(
+            check, argument, &trial, formal, &actual, depth + 1u);
+        check->declared_argument_variable = false;
+        if (!inferred) {
+            ok = false;
+            break;
+        }
+        if (actual && !petta_block_type_compatible(
+                          check, actual, formal, &trial)) {
+            if (petta_block_type_contains_open_evidence(actual, 0u)) {
+                petta_block_note_residual_guard(
+                    check, formal, "open-closure-argument");
+                continue;
+            }
+            if (check->policy == PETTA_TYPECHECK_POLICY_DEFAULT &&
+                petta_block_plain_types_may_overlap(
+                    check, actual, formal)) {
+                continue;
+            }
+            check->definite_mismatch = true;
+            ok = false;
+        }
+    }
+    Atom *output = NULL;
+    if (ok && arguments == parameters) {
+        output = arrow->expr.elems[arrow->expr.len - 1u];
+    } else if (ok) {
+        CettaExprLen remaining = parameters - arguments;
+        Atom **parts = cetta_malloc(
+            sizeof(*parts) * (size_t)(remaining + 2u));
+        parts[0] = arrow->expr.elems[0];
+        for (CettaExprIndex index = 0u; index <= remaining; index++)
+            parts[index + 1u] = arrow->expr.elems[arguments + 1u + index];
+        output = atom_expr(&check->scratch, parts, remaining + 2u);
+        free(parts);
+        ok = output != NULL;
+    }
+    if (ok) {
+        output = petta_block_apply_type_bindings(check, &trial, output);
+        if (expected) {
+            ok = petta_block_type_compatible(
+                check, output, expected, &trial);
+            if (!ok &&
+                petta_block_runtime_type_candidate(check, expected)) {
+                petta_block_note_residual_guard(
+                    check, expected, "runtime-get-type-closure-result");
+                output = expected;
+                ok = true;
+            }
+            if (!ok)
+                check->definite_mismatch = true;
+            else
+                output = petta_block_apply_type_bindings(
+                    check, &trial, output);
+        }
+    }
+    if (ok) {
+        bindings_replace(environment, &trial);
+        if (actual_out)
+            *actual_out = output;
+    }
+    bindings_free(&trial);
+    return ok;
+}
+
 static bool petta_block_infer_named_call(
     PettaBlockCheck *check, Atom *expression,
     Bindings *environment, Atom *expected,
@@ -3553,6 +3764,34 @@ static bool petta_block_infer_named_call(
         return false;
 
     bool saw_signature = false;
+    Atom **types = NULL;
+    uint32_t count = petta_block_declared_types(
+        check, head_atom, &types);
+    /* The block's own declarations and the space's may present one
+     * declaration twice; distinct applicable arrows are counted. */
+    Atom *first_applicable = NULL;
+    bool several_applicable = false;
+    for (size_t index = 0u;
+         index < check->declaration_len + count && !several_applicable;
+         index++) {
+        Atom *type = NULL;
+        if (index < check->declaration_len) {
+            PettaBlockDeclaration *decl = &check->declarations[index];
+            if (!atom_eq(decl->subject, head_atom))
+                continue;
+            type = decl->type;
+        } else {
+            type = types[index - check->declaration_len];
+        }
+        if (!petta_block_arrow_head(type, NULL) ||
+            type->expr.len != expression->expr.len + 1u)
+            continue;
+        if (!first_applicable)
+            first_applicable = type;
+        else if (!atom_eq(first_applicable, type))
+            several_applicable = true;
+    }
+    bool sole = first_applicable && !several_applicable;
     for (size_t index = 0u; index < check->declaration_len; index++) {
         PettaBlockDeclaration *decl = &check->declarations[index];
         if (!atom_eq(decl->subject, head_atom))
@@ -3560,23 +3799,23 @@ static bool petta_block_infer_named_call(
         bool applicable = false;
         bool outer_mismatch = check->definite_mismatch;
         check->definite_mismatch = false;
+        check->sole_declaration_call = sole;
         if (petta_block_try_signature(
                 check, expression, decl->type, environment,
                 expected, actual_out, depth, &applicable)) {
             check->definite_mismatch = outer_mismatch;
+            free(types);
             return true;
         }
         saw_signature = saw_signature || applicable;
         check->definite_mismatch = outer_mismatch;
     }
 
-    Atom **types = NULL;
-    uint32_t count = petta_block_declared_types(
-        check, head_atom, &types);
     for (uint32_t index = 0u; index < count; index++) {
         bool applicable = false;
         bool outer_mismatch = check->definite_mismatch;
         check->definite_mismatch = false;
+        check->sole_declaration_call = sole;
         if (petta_block_try_signature(
                 check, expression, types[index], environment,
                 expected, actual_out, depth, &applicable)) {
@@ -4325,6 +4564,14 @@ static bool petta_block_infer_expr(
                         *actual_out = known;
                     return true;
                 }
+                if (check->declared_argument_variable &&
+                    !petta_block_distinct_newtypes(check, known, expected)) {
+                    petta_block_note_residual_guard(
+                        check, expected, "declared-argument-conflict");
+                    if (actual_out)
+                        *actual_out = expected;
+                    return true;
+                }
                 check->definite_mismatch = true;
                 return false;
             }
@@ -4415,9 +4662,25 @@ static bool petta_block_infer_expr(
     }
 
     Atom *literal = petta_block_literal_type(check, expression);
-    if (literal)
+    if (literal) {
+        /* A number, string or truth value against a structured type other
+         * than a list or an arrow (a tuple type, a parameterized foreign
+         * type) is not decided by its shape: the check is left to run time. */
+        if (expected && expected->kind == ATOM_EXPR &&
+            expected->expr.len > 0u &&
+            !petta_block_arrow_head(expected, NULL) &&
+            !petta_block_head_is(expected, "List") &&
+            !petta_block_head_is(expected, "|") &&
+            !petta_block_type_compatible_probe(check, literal, expected)) {
+            petta_block_note_residual_guard(
+                check, expected, "literal-structured-requirement");
+            if (actual_out)
+                *actual_out = expected;
+            return true;
+        }
         return petta_block_check_expected(
             check, literal, expected, actual_out);
+    }
     if (expression->kind == ATOM_SYMBOL) {
         if (expected && petta_block_arrow_head(expected, NULL)) {
             CettaExprLen arity = expected->expr.len - 2u;
@@ -4510,12 +4773,21 @@ static bool petta_block_infer_expr(
                 environment, expression->expr.elems[0]);
             if (closure_type && petta_block_arrow_head(
                                     closure_type, NULL)) {
+                if (expression->expr.len - 1u <=
+                    closure_type->expr.len - 2u)
+                    return petta_block_infer_closure_call(
+                        check, expression, closure_type, environment,
+                        expected, actual_out, depth + 1u);
                 Atom *result_type = closure_type->expr.elems[
                     closure_type->expr.len - 1u];
                 return petta_block_check_expected(
                     check, result_type, expected, actual_out);
             }
-            if (closure_type) {
+            /* A wildcard type (%Undefined%, Atom, Expression) says nothing
+             * about the head's value, which may be a partial application:
+             * the form is a dynamic call, and its result stays a residual
+             * obligation, as for an untyped head. */
+            if (closure_type && !petta_block_wildcard(closure_type)) {
                 Atom *structural = petta_block_infer_structural_value_type(
                     check, expression, environment, expected,
                     depth + 1u);
@@ -4632,6 +4904,32 @@ static bool petta_block_infer_expr(
                 return false;
             }
         }
+        /* The lambda's body is a clause of its own: its parameters have
+         * the arrow's parameter types and its result the arrow's result
+         * type, so the obligations and branch facts of the body are judged
+         * there and stay there. */
+        Atom *parameters = expression->expr.elems[1];
+        if (parameters && parameters->kind == ATOM_EXPR &&
+            parameters->expr.len + 2u == expected->expr.len) {
+            Bindings body_environment;
+            bindings_init(&body_environment);
+            bool bound = bindings_clone(&body_environment, environment);
+            for (CettaExprIndex index = 0u;
+                 bound && index < parameters->expr.len; index++) {
+                bound = petta_block_bind_pattern(
+                    check, parameters->expr.elems[index],
+                    expected->expr.elems[index + 1u],
+                    &body_environment, depth + 1u);
+            }
+            Atom *body_actual = NULL;
+            bool typed = bound && petta_block_infer_expr(
+                check, expression->expr.elems[2], &body_environment,
+                expected->expr.elems[expected->expr.len - 1u],
+                &body_actual, depth + 1u);
+            bindings_free(&body_environment);
+            if (bound && !typed)
+                return false;
+        }
         if (actual_out)
             *actual_out = expected;
         return true;
@@ -4693,6 +4991,30 @@ static bool petta_block_infer_expr(
         }
         return petta_block_check_expected(
             check, ascribed, expected, actual_out);
+    }
+    /* (and-then (= $v P) Rest) is (if (= $v P) Rest false): a constructor
+     * pattern over a typed variable types its fields for the operand that
+     * runs after the match succeeds. */
+    if (head && strcmp(head, "and-then") == 0 &&
+        expression->expr.len == 3u &&
+        petta_block_head_is(expression->expr.elems[1], "=")) {
+        Atom *parts[4] = {
+            atom_symbol(&check->scratch, "if"),
+            expression->expr.elems[1],
+            expression->expr.elems[2],
+            atom_symbol(&check->scratch, "false"),
+        };
+        Atom *as_if = parts[0] && parts[3]
+            ? atom_expr(&check->scratch, parts, 4u) : NULL;
+        Atom *lowered = as_if
+            ? petta_block_lower_equality_if_to_case(
+                  check, as_if, environment, depth + 1u)
+            : NULL;
+        if (lowered) {
+            return petta_block_infer_expr(
+                check, lowered, environment,
+                expected, actual_out, depth + 1u);
+        }
     }
     if (head && strcmp(head, "if") == 0 &&
         expression->expr.len == 4u) {
@@ -5504,6 +5826,14 @@ static bool petta_block_expression_fragment_supported(
                       strcmp(head, "and-then") == 0 ||
                       strcmp(head, "or-else") == 0 ||
                       strcmp(head, "not") == 0 ||
+                      (strcmp(head, "==") == 0 &&
+                       expression->expr.len == 3u) ||
+                      ((strcmp(head, "is-var") == 0 ||
+                        strcmp(head, "is-ground") == 0 ||
+                        strcmp(head, "is-expr") == 0 ||
+                        strcmp(head, "is-space") == 0 ||
+                        strcmp(head, "assert") == 0) &&
+                       expression->expr.len == 2u) ||
                       petta_block_current_signature_head(
                           check, head_atom,
                           expression->expr.len - 1u);
@@ -5729,6 +6059,64 @@ static Atom *petta_block_infer_equation_signature(
     return petta_block_signature_has_information(signature) ? signature : NULL;
 }
 
+/* The clauses of one function are joined position by position: a position
+ * on which two clauses disagree carries no knowledge (%Undefined%). */
+static Atom *petta_block_join_inferred_signatures(
+    PettaBlockCheck *check, Atom *left, Atom *right) {
+    if (!left || !right || left->kind != ATOM_EXPR ||
+        right->kind != ATOM_EXPR || left->expr.len != right->expr.len)
+        return NULL;
+    Atom **parts = cetta_malloc(sizeof(*parts) * (size_t)left->expr.len);
+    parts[0] = left->expr.elems[0];
+    for (CettaExprIndex index = 1u; index < left->expr.len; index++)
+        parts[index] = atom_alpha_eq(left->expr.elems[index],
+                                     right->expr.elems[index])
+            ? left->expr.elems[index]
+            : atom_symbol(&check->scratch, "%Undefined%");
+    Atom *joined = atom_expr(&check->scratch, parts, left->expr.len);
+    free(parts);
+    return joined;
+}
+
+static PettaBlockDeclaration *petta_block_inferred_declaration_like(
+    PettaBlockCheck *check, Atom *subject, Atom *signature) {
+    const PettaBlockDeclarationBucket *bucket =
+        petta_block_declaration_bucket_const(check, subject);
+    for (size_t index = bucket ? bucket->first : PETTA_DECL_INDEX_NONE;
+         index != PETTA_DECL_INDEX_NONE;
+         index = check->declarations[index].next_same_subject) {
+        PettaBlockDeclaration *declaration = &check->declarations[index];
+        if (declaration->inferred &&
+            declaration->type->kind == ATOM_EXPR &&
+            declaration->type->expr.len == signature->expr.len)
+            return declaration;
+    }
+    return NULL;
+}
+
+/* Whether `equation` comes before the first clause whose inference built
+ * `signature`, and infers nothing of its own. */
+static bool petta_block_clause_precedes_inference(
+    PettaBlockCheck *check, Atom *subject, Atom *signature,
+    Atom *equation) {
+    const PettaBlockDeclarationBucket *bucket =
+        petta_block_declaration_bucket_const(check, subject);
+    size_t first_form = SIZE_MAX;
+    for (size_t index = bucket ? bucket->first : PETTA_DECL_INDEX_NONE;
+         index != PETTA_DECL_INDEX_NONE;
+         index = check->declarations[index].next_same_subject) {
+        PettaBlockDeclaration *decl = &check->declarations[index];
+        if (decl->inferred && decl->type == signature)
+            first_form = decl->inferred_first_form;
+    }
+    for (size_t index = 0u;
+         index < check->form_count && index < first_form; index++) {
+        if (check->forms[index] == equation)
+            return !petta_block_infer_equation_signature(check, equation);
+    }
+    return false;
+}
+
 static bool petta_block_infer_signatures(PettaBlockCheck *check) {
     if (!check)
         return false;
@@ -5746,12 +6134,32 @@ static bool petta_block_infer_signatures(PettaBlockCheck *check) {
                     check, lhs->expr.elems[0], signature)) {
                 continue;
             }
+            PettaBlockDeclaration *prior =
+                petta_block_inferred_declaration_like(
+                    check, lhs->expr.elems[0], signature);
+            if (prior) {
+                Atom *joined = petta_block_join_inferred_signatures(
+                    check, prior->type, signature);
+                if (!joined)
+                    return petta_block_fault(
+                        check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+                        "could not join inferred PeTTa signatures");
+                if (!atom_alpha_eq(joined, prior->type)) {
+                    prior->type = joined;
+                    added = true;
+                }
+                if (index < prior->inferred_first_form)
+                    prior->inferred_first_form = index;
+                continue;
+            }
             if (!petta_block_add_inferred_declaration(
                     check, lhs->expr.elems[0], signature)) {
                 return petta_block_fault(
                     check, PETTA_TYPECHECK_FAULT_ALLOCATION,
                     "could not retain inferred PeTTa signature");
             }
+            check->declarations[check->declaration_len - 1u]
+                .inferred_first_form = index;
             added = true;
         }
         if (!added)
@@ -6276,7 +6684,7 @@ static bool petta_block_expression_produces_bound_bool(
     static const char *const bound_bool_builtins[] = {
         "<", "<=", ">", ">=", "=", "==", "!=", "=?",
         "=alpha", "=@=", "is-var", "is-ground", "is-expr",
-        "is-space"
+        "is-space", "is-member", "is-alpha-member"
     };
     if (petta_block_name_in(
             head, bound_bool_builtins,
@@ -6398,11 +6806,22 @@ static bool petta_block_value_manifest_bool(
     }
     if (!value || value->kind != ATOM_EXPR)
         return false;
-    return petta_block_expression_produces_bound_bool(
-               check, value, environment, depth + 1u) &&
-           petta_block_expression_effect(
+    if (!petta_block_expression_produces_bound_bool(
+            check, value, environment, depth + 1u))
+        return false;
+    /* A call of a function the program defines is a manifest Bool on its
+     * certificate alone: every clause yields a bound Bool.  How many answers
+     * the call gives is its own effect, which its consumer joins.  A builtin
+     * or a compiler form must also be det at this call. */
+    Atom *head = value->expr.len > 0u ? value->expr.elems[0] : NULL;
+    if (head && head->kind == ATOM_SYMBOL &&
+        !petta_semantics_registered_builtin(atom_symbol_current_id(head)) &&
+        petta_block_equation_count(
+            check, head, value->expr.len - 1u) > 0u)
+        return true;
+    return petta_block_expression_effect(
                check, value, environment, depth + 1u) ==
-               PETTA_BLOCK_EFFECT_DET;
+           PETTA_BLOCK_EFFECT_DET;
 }
 
 static bool petta_block_equation_lhs_overlap(
@@ -7159,6 +7578,158 @@ static Atom *petta_block_empty_list_comparison_value(Atom *condition) {
     return left_empty ? right : left;
 }
 
+static bool petta_block_tests_variable_boundness(
+    Atom *expression, Atom *variable, uint32_t depth);
+
+/* PeTTa's special forms: the translator gives each its own meaning, so a
+ * source expression headed by one is code, never a data literal. */
+static bool petta_block_special_form_head(const char *head) {
+    static const char *const special[] = {
+        "superpose", "match", "add-atom", "remove-atom", "test",
+        "foldl-atom", "map-atom", "filter-atom", "eval", "reduce", "data",
+        "make-list", "collapse", "cut", "once", "hyperpose", "with_mutex",
+        "transaction", "progn", "prog1", "if", "case", "and-then",
+        "or-else", "let", "chain", "let*", "sealed", "forall", "foldall",
+        "|->", "translatePredicate", "call", "brand", "the", "quote",
+        "catch"
+    };
+    return head && petta_block_name_in(
+                       head, special, sizeof(special) / sizeof(special[0]));
+}
+
+/* Whether `head` names a function: a builtin the PeTTa prelude registers,
+ * or a symbol this program gives equations, at any arity. */
+static bool petta_block_symbol_is_function(
+    PettaBlockCheck *check, Atom *head, CettaExprLen arity) {
+    if (!check || !head || head->kind != ATOM_SYMBOL)
+        return false;
+    if (petta_semantics_registered_builtin(atom_symbol_current_id(head)) ||
+        petta_block_head_is_callable(check, head, arity))
+        return true;
+    for (size_t index = 0u; index < check->form_count; index++) {
+        Atom *form = check->forms[index];
+        if (!petta_block_head_is(form, "=") || form->expr.len != 3u)
+            continue;
+        Atom *lhs = form->expr.elems[1];
+        if (lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+            atom_eq(lhs->expr.elems[0], head))
+            return true;
+    }
+    return false;
+}
+
+/* A ground term that evaluation keeps as data all the way down, so its
+ * runtime value is the source term itself.  A call anywhere inside breaks
+ * that: (f), (cons-atom 1 (1)) and (1 (f)) can each evaluate to a list with
+ * a repeated element, and (f) can evaluate to an unbound value. */
+static bool petta_block_ground_data(
+    PettaBlockCheck *check, Atom *value, uint32_t depth) {
+    if (!check || !value || depth > 2048u || value->kind == ATOM_VAR)
+        return false;
+    if (value->kind != ATOM_EXPR || value->expr.len == 0u)
+        return true;
+    Atom *head = value->expr.elems[0];
+    if (head->kind == ATOM_SYMBOL &&
+        (petta_block_special_form_head(petta_block_symbol_name(head)) ||
+         petta_block_symbol_is_function(
+             check, head, value->expr.len - 1u)))
+        return false;
+    for (CettaExprIndex index = 0u; index < value->expr.len; index++) {
+        if (!petta_block_ground_data(
+                check, value->expr.elems[index], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* A bound is-member probe: a ground literal, or a direct parameter of the
+ * committed clause under analysis that its body never tests with is-var. */
+static bool petta_block_is_member_probe_bound(
+    PettaBlockCheck *check, Atom *probe) {
+    if (!check || !probe)
+        return false;
+    if (probe->kind != ATOM_VAR)
+        return petta_block_ground_data(check, probe, 0u);
+    Atom *lhs = check->enforced_clause_lhs;
+    if (!lhs || lhs->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex position = 1u;
+         position < lhs->expr.len; position++) {
+        Atom *parameter = lhs->expr.elems[position];
+        if (parameter->kind == ATOM_VAR &&
+            parameter->var_id == probe->var_id)
+            return !petta_block_tests_variable_boundness(
+                check->enforced_clause_body, parameter, 0u);
+    }
+    return false;
+}
+
+/* A ground literal list in which no element repeats. */
+static bool petta_block_ground_duplicate_free_list(
+    PettaBlockCheck *check, Atom *list) {
+    if (!list || list->kind != ATOM_EXPR ||
+        !petta_block_ground_data(check, list, 0u))
+        return false;
+    for (CettaExprIndex left = 0u; left < list->expr.len; left++) {
+        for (CettaExprIndex right = left + 1u;
+             right < list->expr.len; right++) {
+            if (atom_eq(list->expr.elems[left], list->expr.elems[right]))
+                return false;
+        }
+    }
+    return true;
+}
+
+/* Whether `atom` mentions the variable `var`; past the depth bound it is
+ * taken to. */
+static bool petta_block_mentions_var(
+    const Atom *atom, VarId var, uint32_t depth) {
+    if (!atom)
+        return false;
+    if (depth > 2048u)
+        return true;
+    if (atom->kind == ATOM_VAR)
+        return atom->var_id == var;
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return false;
+    for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
+        if (petta_block_mentions_var(
+                atom->expr.elems[index], var, depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* Whether a let pattern over a decons result is an equality test that can
+ * fail.  decons answers exactly a (head tail) pair: a pattern of another
+ * width never matches, and a pair pattern is total only when both of its
+ * places are fresh, distinct variables.  A repeated variable, a variable of
+ * the decomposed value, a parameter of the clause under analysis, or a
+ * non-variable place compares instead of binding. */
+static bool petta_block_decons_pattern_may_fail(
+    PettaBlockCheck *check, Atom *pattern, Atom *value) {
+    if (!pattern || pattern->kind != ATOM_EXPR || !value ||
+        value->kind != ATOM_EXPR || value->expr.len != 2u ||
+        (!petta_block_head_is(value, "decons") &&
+         !petta_block_head_is(value, "decons-atom")))
+        return false;
+    if (pattern->expr.len != 2u)
+        return true;
+    Atom *head = pattern->expr.elems[0];
+    Atom *tail = pattern->expr.elems[1];
+    if (head->kind != ATOM_VAR || tail->kind != ATOM_VAR ||
+        head->var_id == tail->var_id)
+        return true;
+    Atom *lhs = check ? check->enforced_clause_lhs : NULL;
+    for (int index = 0; index < 2; index++) {
+        Atom *place = pattern->expr.elems[index];
+        if (petta_block_mentions_var(value, place->var_id, 0u) ||
+            (lhs && petta_block_mentions_var(lhs, place->var_id, 0u)))
+            return true;
+    }
+    return false;
+}
+
 static PettaBlockEffect petta_block_expression_effect(
     PettaBlockCheck *check, Atom *expression,
     Bindings *environment, uint32_t depth) {
@@ -7281,7 +7852,8 @@ static PettaBlockEffect petta_block_expression_effect(
         "acos-math", "atan-math", "isnan-math", "isinf-math",
         "<", "<=", ">", ">=", "=", "==", "!=", "=?",
         "=alpha", "=@=", "is-var", "is-ground", "is-expr",
-        "is-space", "cons", "cons-atom", "car-atom", "cdr-atom",
+        "is-space", "is-alpha-member", "cons", "cons-atom", "car-atom",
+        "cdr-atom",
         "list_to_set", "list-to-set", "cut", "data", "brand", "the",
         "assert"
     };
@@ -7397,6 +7969,18 @@ static PettaBlockEffect petta_block_expression_effect(
                                        environment, depth + 1u);
         }
         intrinsic = manifest
+            ? PETTA_BLOCK_EFFECT_DET : PETTA_BLOCK_EFFECT_NONDET;
+    }
+    else if (strcmp(head, "is-member") == 0 &&
+             expression->expr.len == 3u) {
+        /* is-member is member/2 followed by its negation.  With a bound
+         * probe and a ground duplicate-free literal list, member/2 succeeds
+         * at most once and exactly one of the two clauses answers; any other
+         * call can enumerate members. */
+        intrinsic = petta_block_is_member_probe_bound(
+                        check, expression->expr.elems[1]) &&
+                    petta_block_ground_duplicate_free_list(
+                        check, expression->expr.elems[2])
             ? PETTA_BLOCK_EFFECT_DET : PETTA_BLOCK_EFFECT_NONDET;
     }
     else if (strcmp(head, "collapse") == 0) {
@@ -7588,6 +8172,10 @@ static PettaBlockEffect petta_block_expression_effect(
                 effect = fits
                     ? effect : petta_block_effect_join(
                                    effect, PETTA_BLOCK_EFFECT_SEMIDET);
+            } else if (petta_block_decons_pattern_may_fail(
+                           check, pattern, value)) {
+                effect = petta_block_effect_join(
+                    effect, PETTA_BLOCK_EFFECT_SEMIDET);
             } else {
                 effect = PETTA_BLOCK_EFFECT_UNKNOWN;
             }
@@ -7745,6 +8333,37 @@ static bool petta_block_position_covers_constructor(
     return false;
 }
 
+/* A constructor is covered for every value it builds only by a pattern
+ * that pins none of its fields: each field a variable of its own.  A pinned
+ * field ((C 0)), or a variable repeated across fields, leaves the other
+ * values of that constructor unmatched. */
+static bool petta_block_position_covers_constructor_totally(
+    PettaBlockCheck *check, Atom *head, CettaExprLen arity,
+    CettaExprIndex position, Atom *constructor) {
+    size_t equation_len = 0u;
+    Atom *const *equations = petta_block_equations(
+        check, head, arity, &equation_len);
+    for (size_t index = 0u; index < equation_len; index++) {
+        Atom *lhs = equations[index]->expr.elems[1];
+        Atom *pattern = lhs->expr.elems[position + 1u];
+        if (atom_eq(pattern, constructor))
+            return true;
+        if (!petta_block_pattern_head_is(pattern, constructor))
+            continue;
+        bool total = true;
+        for (CettaExprIndex field = 1u;
+             total && field < pattern->expr.len; field++) {
+            Atom *variable = pattern->expr.elems[field];
+            total = variable->kind == ATOM_VAR;
+            for (CettaExprIndex prior = 1u; total && prior < field; prior++)
+                total = pattern->expr.elems[prior]->var_id != variable->var_id;
+        }
+        if (total)
+            return true;
+    }
+    return false;
+}
+
 static bool petta_block_position_proven_exhaustive(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity,
     CettaExprIndex position, Atom *type) {
@@ -7801,7 +8420,7 @@ static bool petta_block_position_proven_exhaustive(
                 check, decl->subject, constructor_arity) > 0u)
             continue;
         constructor_count++;
-        if (!petta_block_position_covers_constructor(
+        if (!petta_block_position_covers_constructor_totally(
                 check, head, arity, position, decl->subject))
             return false;
     }
@@ -8003,6 +8622,10 @@ static bool petta_block_check_determinism(
         bool saved_committed_effect_evidence_withheld =
             check->committed_effect_evidence_withheld;
         check->committed_effect_evidence_withheld = false;
+        Atom *saved_enforced_lhs = check->enforced_clause_lhs;
+        Atom *saved_enforced_body = check->enforced_clause_body;
+        check->enforced_clause_lhs = lhs;
+        check->enforced_clause_body = body;
         PettaBlockEffect actual = environment_ok
             ? (petta_block_validate_effect_arguments(
                    check, body, &effect_environment, 0u)
@@ -8014,6 +8637,8 @@ static bool petta_block_check_determinism(
             check->committed_effect_evidence_withheld;
         check->committed_effect_evidence_withheld =
             saved_committed_effect_evidence_withheld;
+        check->enforced_clause_lhs = saved_enforced_lhs;
+        check->enforced_clause_body = saved_enforced_body;
         bindings_free(&effect_environment);
         if (check->result->verdict == PETTA_TYPECHECK_REFUTED)
             return false;
@@ -8509,20 +9134,39 @@ static bool petta_block_check_equation(
                 "could not snapshot open parameter variables");
         }
     }
+    /* An inferred signature is knowledge read off the clauses, not a
+     * promise: the body's calls are checked, but neither its result nor its
+     * parameters' generality is held against it. */
+    bool inferred_signature = petta_block_signature_is_inferred(
+        check, lhs->expr.elems[0], signature);
+    /* Strict typing reads clauses in program order: a clause that infers
+     * nothing itself, before any clause of its function did, has no type. */
+    if (inferred_signature &&
+        check->policy != PETTA_TYPECHECK_POLICY_DEFAULT &&
+        petta_block_clause_precedes_inference(
+            check, lhs->expr.elems[0], signature, equation)) {
+        return petta_block_fail(
+            check, "strict typing could not infer a signature for %s/%u",
+            petta_block_symbol_name(lhs->expr.elems[0]),
+            (unsigned)arity);
+    }
     Atom *declared_output = fresh->expr.elems[fresh->expr.len - 1u];
-    bool output_only_variable = declared_output->kind == ATOM_VAR &&
+    bool output_only_variable = !inferred_signature &&
+        declared_output->kind == ATOM_VAR &&
         !petta_block_var_id_present(
             input_variables, input_variable_len,
             declared_output->var_id);
-    Atom *required = fresh->expr.elems[fresh->expr.len - 1u];
-    required = petta_block_apply_type_bindings(
-        check, &environment, required);
+    Atom *required = inferred_signature
+        ? NULL : fresh->expr.elems[fresh->expr.len - 1u];
+    if (required)
+        required = petta_block_apply_type_bindings(
+            check, &environment, required);
     Atom *actual = NULL;
     check->definite_mismatch = false;
     check->residual_type_guard_required = false;
     bool valid = petta_block_infer_expr(
         check, rhs, &environment, required, &actual, 0u);
-    if (valid && actual &&
+    if (valid && actual && required &&
         !petta_block_type_compatible(
             check, actual, required, &environment)) {
         valid = false;
@@ -8532,7 +9176,8 @@ static bool petta_block_check_equation(
     check->definite_mismatch = false;
     bool parametric_valid = true;
     for (size_t index = 0u;
-         valid && index < promised_variable_len; index++) {
+         valid && !inferred_signature &&
+         index < promised_variable_len; index++) {
         Atom *variable = atom_var_with_id(
             &check->scratch, "promised-type",
             promised_variables[index]);
@@ -8954,7 +9599,10 @@ static bool petta_typecheck_declaration_block_internal(
             if (!declaration->subject ||
                 declaration->subject->kind != ATOM_SYMBOL)
                 continue;
-            if (!declaration->inferred) {
+            /* A joined inferred signature without knowledge in any
+             * position is not published: there is nothing to add. */
+            if (!declaration->inferred ||
+                !petta_block_signature_has_information(declaration->type)) {
                 petta_program_inferred_signature_remove_head(
                     program, space, atom_symbol_current_id(declaration->subject));
                 continue;
@@ -9437,10 +10085,16 @@ bool petta_typecheck_call_boundary_requirement(
     return ok;
 }
 
-static bool petta_typecheck_validate_target_row(
+/* Judges `row` against the SpaceOf schemas declared for the names that
+ * denote `target_space`.  When one definitely refutes it, `row_type_out`
+ * receives that schema's row type, copied into `detail_arena`. */
+static bool petta_typecheck_validate_target_row_detail(
     Space *program_space, Registry *registry,
     Space *target_space, Atom *row,
+    Arena *detail_arena, Atom **row_type_out,
     PettaTypecheckBlockResult *result) {
+    if (row_type_out)
+        *row_type_out = NULL;
     if (!registry)
         return true;
     Arena scratch;
@@ -9474,11 +10128,14 @@ static bool petta_typecheck_validate_target_row(
             }
             if (row_result.verdict == PETTA_TYPECHECK_REFUTED) {
                 const char *name = petta_block_symbol_name(space_name);
+                if (detail_arena && row_type_out)
+                    *row_type_out = atom_deep_copy(
+                        detail_arena, type->expr.elems[1]);
                 free(types);
                 result->verdict = PETTA_TYPECHECK_REFUTED;
                 snprintf(
                     result->diagnostic, sizeof(result->diagnostic),
-                    "row conflicts with SpaceOf schema for %s",
+                    "Type mismatch: row conflicts with SpaceOf schema for %s",
                     name ? name : "<space>");
                 arena_free(&scratch);
                 return true;
@@ -9488,6 +10145,32 @@ static bool petta_typecheck_validate_target_row(
     }
     arena_free(&scratch);
     return true;
+}
+
+static bool petta_typecheck_validate_target_row(
+    Space *program_space, Registry *registry,
+    Space *target_space, Atom *row,
+    PettaTypecheckBlockResult *result) {
+    return petta_typecheck_validate_target_row_detail(
+        program_space, registry, target_space, row, NULL, NULL, result);
+}
+
+Atom *petta_typecheck_refuted_row_type(
+    Space *program_space, Registry *registry, Space *target_space,
+    Atom *row, Arena *arena) {
+    if (!program_space || !target_space || !row || !arena)
+        return NULL;
+    PettaTypecheckBlockResult result = {
+        .verdict = PETTA_TYPECHECK_ESTABLISHED,
+        .fault = PETTA_TYPECHECK_FAULT_NONE,
+    };
+    Atom *row_type = NULL;
+    if (!petta_typecheck_validate_target_row_detail(
+            program_space, registry, target_space, row,
+            arena, &row_type, &result) ||
+        result.verdict != PETTA_TYPECHECK_REFUTED)
+        return NULL;
+    return row_type;
 }
 
 static bool petta_typecheck_program_mutation_internal(
