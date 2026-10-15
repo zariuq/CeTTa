@@ -1,4 +1,5 @@
 #include "producer_schedule.h"
+#include "fallible_alloc.h"
 
 #include <stdlib.h>
 
@@ -37,7 +38,7 @@ static bool promote(CettaProducerSchedule *schedule) {
         size_t total = (size_t)schedule->offsets[schedule->levels - 1u] + 1u;
         if (total > SIZE_MAX / (2u * sizeof(uint64_t)))
             return false;
-        uint64_t *allocated = calloc(total, 2u * sizeof(uint64_t));
+        uint64_t *allocated = cetta_fallible_calloc(total, 2u * sizeof(uint64_t));
         if (!allocated)
             return false;
         schedule->words = allocated;

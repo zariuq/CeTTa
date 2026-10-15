@@ -46,3 +46,8 @@ lambda_body_checked.metta	--lang petta@1.1 --strict	2	Strict mode rejected resid
 lambda_body_typed.metta	--lang petta@1.1 --strict	0	✅
 accepted_declaration_history.metta	--lang petta@1.1	0	✅
 accepted_declaration_history.metta	--lang petta@1.1 --profile typecheck-v3	0	✅
+default_contract.metta	--lang petta@1.1.c	0	✅
+missing_import_raises.metta	--lang petta@1.1.c	0	✅
+contract_uncaught.metta	--lang petta@1.1.c	2	Type mismatch: got wrong but expected Number
+roman_library.metta	--lang petta@1.1.c --profile extended	2	is not a profile of petta@1.1.c
+roman_library.metta	--lang petta@1.0.6 --profile contract	2	is not a profile of petta@1.0.6

@@ -37,6 +37,7 @@ def main():
         (["--lang", "petta"], ["--lang", "petta@1.0.6"]),
         (["--lang", "petta", "--profile", "extended"],
          ["--lang", "petta@1.0.6", "--profile", "extended"]),
+        (["--lang", "petta", "--profile", "contract"], ["--lang", "petta@1.1.c"]),
     ]
     for ordinary, versioned in pairs:
         for expression in ("!(+ 1 2)", "!(let $value (+ 1 2) (+ $value 4))"):
@@ -49,6 +50,8 @@ def main():
         ("he@9", None, b"unknown source version"),
         ("prime@9", None, b"unknown source version"),
         ("petta@9", None, b"unknown source version"),
+        ("petta@1.1.c", "extended", b"is not a profile"),
+        ("petta@1.0.6", "contract", b"is not a profile"),
         ("he@0.0.1", "he-compat", b"is not a profile"),
         ("he@0.2.10", "extended", b"is not a profile"),
         ("prime@0.0.1", "extended", b"has no named profiles"),

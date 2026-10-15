@@ -173,6 +173,8 @@ SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
+/* Whether the running PeTTa version is of the typed line (1.1, 1.1.c). */
+bool eval_current_petta_typed_line(void) __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,

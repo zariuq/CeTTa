@@ -86,9 +86,11 @@ static void compare_representation(const CettaProducerSchedule *schedule,
         }
         return;
     }
+    /* The checker's words live in static storage: the byte account counts
+     * calloc, and a compiler may turn a malloc and memset into calloc. */
+    static uint64_t expected[2u * (LIMIT / 63u + 8u)];
     size_t words = (size_t)schedule->offsets[schedule->levels - 1u] + 1u;
-    uint64_t *expected = malloc(words * 2u * sizeof(*expected));
-    assert(expected);
+    assert(2u * words <= sizeof(expected) / sizeof(*expected));
     memset(expected, 0, words * 2u * sizeof(*expected));
     for (size_t rank = 0u; rank < reference->size; rank++) {
         if (!reference->current[rank] && !reference->later[rank])
@@ -106,7 +108,6 @@ static void compare_representation(const CettaProducerSchedule *schedule,
     const uint64_t *actual = schedule->levels == 1u ? schedule->storage.single : schedule->words;
     for (size_t index = 0u; index < 2u * words; index++)
         assert(actual[index] == expected[index]);
-    free(expected);
 }
 
 static void run(size_t size) {

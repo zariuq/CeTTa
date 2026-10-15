@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "atom.h"
 #include "term_universe.h"
 
 #include "space.h"
@@ -11298,6 +11299,22 @@ void space_match_backend_print_inventory(FILE *out) {
 #endif
     fprintf(out, "\n");
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
+}
+
+bool space_match_candidates_expression_coordinates64(
+    Space *s, Atom **coordinates, CettaExprLen length,
+    CettaIndex **out, CettaIndex *count) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (!s || !out || !count || s->overlay_base ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    AtomExprBorrowedView view;
+    if (!atom_expr_borrowed_view_init(&view, coordinates, length))
+        return false;
+    space_linearize(s);
+    *count = native_candidates(s, &view.root, out);
+    return true;
 }
 
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out) {

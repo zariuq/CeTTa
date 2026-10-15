@@ -340,6 +340,13 @@ static void test_native_fallback_index_append(Arena *arena,
     built_trie = space.match_backend.native.match_trie;
     assert(built_trie != NULL);
 
+    /* The substitution tree is built once the trie's candidates have cost
+     * as many matches as the tree has rows: the first query is answered
+     * from the trie and pays that rent, the second builds the tree. */
+    space_subst_query(&space, arena, boxed, &matches);
+    assert(matches.len == MATCH_TRIE_THRESHOLD + 1u);
+    smset_free(&matches);
+    assert(space.match_backend.native.stree == NULL);
     space_subst_query(&space, arena, boxed, &matches);
     assert(matches.len == MATCH_TRIE_THRESHOLD + 1u);
     smset_free(&matches);
