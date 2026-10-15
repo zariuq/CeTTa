@@ -4,6 +4,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -22,6 +23,17 @@ bool cetta_siwc_random(char out[44]) {
     unsigned char bytes[32];
     if (RAND_bytes(bytes, sizeof(bytes)) != 1) return false;
     base64url32(bytes, out); OPENSSL_cleanse(bytes, sizeof(bytes)); return true;
+}
+bool cetta_siwc_host_uuid(char out[CETTA_SIWC_HOST_ID_LEN + 1]) {
+    unsigned char b[16];
+    if (RAND_bytes(b, sizeof(b)) != 1) return false;
+    b[6] = (unsigned char)((b[6] & 0x0f) | 0x40);
+    b[8] = (unsigned char)((b[8] & 0x3f) | 0x80);
+    int n = snprintf(out, CETTA_SIWC_HOST_ID_LEN + 1,
+        "urn:uuid:%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    OPENSSL_cleanse(b, sizeof(b));
+    return n == (int)CETTA_SIWC_HOST_ID_LEN;
 }
 bool cetta_siwc_challenge(const char *verifier, char out[44]) {
     unsigned char digest[EVP_MAX_MD_SIZE]; unsigned size = 0;

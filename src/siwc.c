@@ -194,17 +194,17 @@ static bool take_lock(CettaSiwcOperation *op, int dir, CettaSiwcLock *lock) {
     }
     return false;
 }
-static bool host_id(int dir, char id[44]) {
+static bool host_id(int dir, char id[CETTA_SIWC_HOST_ID_LEN + 1]) {
     /* Link a complete private file without replacing an existing host ID.
      * Concurrent creators therefore all read the same complete winner. */
     int fd = openat(dir, "host-id", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 && errno == ENOENT) {
         char random[44], temporary[64];
-        if (!cetta_siwc_random(id) || !cetta_siwc_random(random)) return false;
+        if (!cetta_siwc_host_uuid(id) || !cetta_siwc_random(random)) return false;
         snprintf(temporary, sizeof(temporary), ".host-%s", random);
         int created = openat(dir, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (created < 0) return false;
-        bool ok = write(created, id, 43) == 43 && !fsync(created);
+        bool ok = write(created, id, CETTA_SIWC_HOST_ID_LEN) == (ssize_t)CETTA_SIWC_HOST_ID_LEN && !fsync(created);
         if (close(created)) ok = false;
         if (ok && linkat(dir, temporary, dir, "host-id", 0) && errno != EEXIST) ok = false;
         if (ok && fsync(dir)) ok = false;
@@ -215,7 +215,9 @@ static bool host_id(int dir, char id[44]) {
     struct stat st;
     bool ok = fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_uid == geteuid() && !(st.st_mode & 077);
     if (ok) {
-        ok = read(fd, id, 44) == 43; id[43] = 0;
+        ok = read(fd, id, CETTA_SIWC_HOST_ID_LEN + 1) == (ssize_t)CETTA_SIWC_HOST_ID_LEN;
+        id[CETTA_SIWC_HOST_ID_LEN] = 0;
+        ok = ok && !strncmp(id, "urn:uuid:", 9);
     }
     if (fd >= 0) close(fd);
     return ok;
@@ -426,8 +428,9 @@ static void *run(void *data) {
         goto done;
     }
     if (same(op->kind, "sign-in")) {
-        char host[44], challenge[44];
-        if (!host_id(dir, host) || !cetta_siwc_random(verifier) || !cetta_siwc_random(nonce) ||
+        char host[CETTA_SIWC_HOST_ID_LEN + 1], challenge[44];
+        if (!host_id(dir, host)) { error = "host-id-invalid"; goto done; }
+        if (!cetta_siwc_random(verifier) || !cetta_siwc_random(nonce) ||
             !cetta_siwc_random(state) || !cetta_siwc_challenge(verifier, challenge)) { error = "random-unavailable"; goto done; }
         server = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
         struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(op->port), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};

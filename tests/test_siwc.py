@@ -316,6 +316,8 @@ class NativeSiwcTests(unittest.TestCase):
         p, status = self.start(identity)
         self.assertEqual(self.complete(p, self.callback_url(status))['status'], 'ok')
         self.assertEqual(self.authorizations[0]['ext_agent_host_id'], self.authorizations[1]['ext_agent_host_id'])
+        self.assertRegex(self.authorizations[0]['ext_agent_host_id'][0],
+                         r'^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
         self.assertEqual(self.authorizations[1]['client_id'], [old['client_id']])
         self.assertNotIn('agent_name_hint', self.authorizations[1])
         self.options = {'subject': 'different-subject'}
