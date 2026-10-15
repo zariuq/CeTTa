@@ -8,6 +8,7 @@
 
 #include "space.h"
 #include "space_match_backend.h"
+#include "space_path_index.h"
 #include "stats.h"
 #include "symbol.h"
 #include "native_cost.h"
@@ -75,9 +76,17 @@ static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
         assert(candidates[i] < space_length64(space));
     free(candidates);
 
-    SubstMatchSet matches;
-    space_match_backend_query(space, scratch, query, &matches);
-    smset_free(&matches);
+    /* The substitution tree is rented: queries answer from the trie's
+     * candidates until those have cost as many matches as the space has
+     * rows, and then it is built. */
+    CettaCount rows = space_length64(space);
+    for (CettaCount query_count = 0u;
+         query_count <= rows && !space->match_backend.native.stree;
+         query_count++) {
+        SubstMatchSet matches;
+        space_match_backend_query(space, scratch, query, &matches);
+        smset_free(&matches);
+    }
     assert(space->match_backend.native.match_trie != NULL);
     assert(!space->match_backend.native.match_trie_dirty);
     assert(space->match_backend.native.stree != NULL);
@@ -652,13 +661,18 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
     assert(space_occurrence_cursor_next(&clone, &end) == SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&clone);
     space_occurrence_cursor_release(&cursor);
-    /* Exhausting the startup scan allowance returns to the reusable trie. */
+    /* Exhausting the startup scan allowance returns to a maintained access
+     * path: here the bound field's position index, which covers every row
+     * and keeps the open row of this head as an uncertain candidate. */
     for (unsigned i = 0u; i < 5u; i++) {
         CettaIndex *selected = NULL;
         (void)space_match_backend_candidates64(&space, query, &selected);
         free(selected);
     }
-    assert(space.match_backend.native.match_trie != NULL);
+    CettaSpacePathIndexInfo info = {0};
+    assert(space_path_indexes_info(&space, &info));
+    assert(info.index_count == 1u && info.uncertain_rows == 1u &&
+           info.source_rows == space_length64(&space));
     assert(space_add_atom_ids_batch(&space, appended, 2u));
     const CettaIndex later_matches[] = {20u, 21u, 22u, 23u, 24u, 25u};
     assert_query_indices(&space, scratch, query, later_matches, 6u);
@@ -3474,6 +3488,21 @@ static void test_single_erasure_equation_retention(void) {
     puts("PASS: 384 single erasures preserve or rebuild equations against independent ordered rows across APIs, store formats, backends and layouts");
 }
 
+/* A head's chain reads the same rows, in the same order, in both indexes. */
+static void assert_head_chain_reads_equal(const SpaceHeadChains *left,
+                                          const SpaceHeadChain *left_chain,
+                                          const SpaceHeadChains *right,
+                                          const SpaceHeadChain *right_chain) {
+    assert(left_chain->count == right_chain->count);
+    uint32_t left_row = left_chain->first, right_row = right_chain->first;
+    for (uint32_t k = 0u; k < left_chain->count; k++) {
+        assert(left->atom_indices[left_row] == right->atom_indices[right_row]);
+        assert(left->atom_ids[left_row] == right->atom_ids[right_row]);
+        left_row = left->next[left_row];
+        right_row = right->next[right_row];
+    }
+}
+
 static void assert_declarations_match_rows(Space *space, Arena *scratch,
                                            Atom **subjects, size_t subject_count) {
     Space rebuilt;
@@ -3504,14 +3533,26 @@ static void assert_declarations_match_rows(Space *space, Arena *scratch,
     }
     assert(space->native.ty_idx.has_open_rows == rebuilt.native.ty_idx.has_open_rows);
     assert(space->native.ty_idx.has_non_symbol_subjects == rebuilt.native.ty_idx.has_non_symbol_subjects);
-    for (uint32_t i = 0u; i < EQ_INDEX_BUCKETS; i++) {
-        TypeAnnBucket *actual = &space->native.ty_idx.buckets[i];
-        TypeAnnBucket *reference = &rebuilt.native.ty_idx.buckets[i];
-        assert(actual->len == reference->len);
-        for (CettaIndex j = 0u; j < actual->len; j++) {
-            assert(actual->atom_indices[j] == reference->atom_indices[j]);
-            assert(actual->atom_ids[j] == reference->atom_ids[j]);
-        }
+    const SpaceHeadChains *actual = &space->native.ty_idx.rows;
+    const SpaceHeadChains *reference = &rebuilt.native.ty_idx.rows;
+    assert(actual->len == reference->len);
+    for (CettaIndex j = 0u; j < actual->len; j++) {
+        assert(actual->atom_indices[j] == reference->atom_indices[j]);
+        assert(actual->atom_ids[j] == reference->atom_ids[j]);
+    }
+    assert_head_chain_reads_equal(actual, &actual->headless,
+                                  reference, &reference->headless);
+    assert(actual->chain_len == reference->chain_len);
+    for (uint32_t slot = 0u; slot < actual->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &actual->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE)
+            continue;
+        const SpaceHeadChain *twin = NULL;
+        for (uint32_t other = 0u; !twin && other < reference->chain_cap; other++)
+            if (reference->chains[other].head == chain->head)
+                twin = &reference->chains[other];
+        assert(twin);
+        assert_head_chain_reads_equal(actual, chain, reference, twin);
     }
     space_free(&rebuilt);
 }

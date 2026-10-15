@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; First proofs by induction of a proof-assistant curriculum, over declared
 ; datatypes: the numbers and the lists of numbers.  Symmetry, transitivity
@@ -7,7 +7,7 @@
 ; family of identity types.  A definition is admitted only after the kernel
 ; has checked its right side against its declared type.
 
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(hol:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
 

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Decoding proposition codes in a native proof package.  The family
 ; Holds : prop -> Sort 0 decodes all@A P to Pi A (Holds (P #0)).  That rule
@@ -10,7 +10,7 @@
 ; signature instead, which have no equation.
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: Q (-> (u 0) prop))))
 (= (verdict-of $r)
    (unify $r (Established $e) Established

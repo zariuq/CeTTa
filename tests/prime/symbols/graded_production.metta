@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A shared production is charged once per shared occurrence.  The grade is
 ; the firing count of declared definitions (cost:firings); `two` is admitted,

@@ -496,7 +496,7 @@ bool cetta_relational_plan_prepare(
              (plan->info.query_class == CETTA_RELATIONAL_CYCLIC_QUERY ||
               plan->info.covering_factor != SIZE_MAX));
     }
-    CettaCount rows = space->native.len;
+    CettaCount rows = space_length64(space);
     for (size_t i = 0u; ready && i < pattern_count; i++) {
         RelationalFactor *factor = &plan->factors[i];
         Atom *pattern = resolved[i];

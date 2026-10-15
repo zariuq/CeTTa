@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Group annotations share their preceding context; placement crosses siblings.
 !(type:formed (-> (A : (u 0)) (x y : A) A))
@@ -12,7 +12,7 @@
 ; The second A must be the outer type variable, not the newly bound value x.
 !(type:formed (-> (A : (u 0)) (x : A) (y : x) A))
 
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
 !(add-atom &thy (: a A))
 !(add-atom &thy (: b A))

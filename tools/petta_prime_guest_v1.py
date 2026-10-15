@@ -26,7 +26,7 @@ PRIMITIVES = frozenset({
     "get-type", "get-metatype", "size-atom", "index-atom", "decons-atom",
     "cons-atom", "get-atoms", "new-space", "get-state", "change-state!",
     "println!", "readln!", "string-to-chars", "chars-to-string",
-    "string-to-bytes", "bytes-to-string", "strcat", "strlen",
+    "string-to-bytes", "bytes-to-string", "strcat", "strlen", "parse",
 })
 
 

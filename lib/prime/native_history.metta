@@ -115,14 +115,16 @@
        (let ($row $tail) (decons-atom $rows)
          (history:field-row $row $tail $label $count $value)){$row $tail}))
 
+; Pattern binding retains the payload as data; evaluating its extracted form
+; in a let would execute code-shaped fields under HE.
 (= (history:field-row $row $tail $label $count $value)
    (if (== (get-metatype $row) Expression)
        (if (== (size-atom $row) 2)
            (if (== (car-atom $row) $label)
-               (let $parts (cdr-atom $row)
-                 (let $payload (car-atom $parts)
-                   (let $next (+ $count 1)
-                     (history:field-scan $tail $label $next $payload)){$next}){$payload}){$parts}
+               (unify $row ($head $payload)
+                 (let $next (+ $count 1)
+                   (history:field-scan $tail $label $next $payload)){$next}
+                 (history:field-scan $tail $label $count $value))
                (history:field-scan $tail $label $count $value))
            (history:field-scan $tail $label $count $value))
        (history:field-scan $tail $label $count $value)))

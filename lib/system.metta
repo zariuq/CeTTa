@@ -1,4 +1,5 @@
 (: system:monotonic-ns (-> Number))
+(: system:cwd (-> String))
 
 (= (system:wall-time)
    (function (case (__cetta_lib_system_host wall-time)

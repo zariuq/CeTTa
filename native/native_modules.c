@@ -1209,6 +1209,7 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
     {"hol", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", cetta_hol_module_call},
+    {"set", CETTA_NATIVE_IMPORT_SET, NULL, "__cetta_lib_set_", cetta_hol_module_call},
 #if CETTA_BUILD_WITH_DURABLE
     {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},
 #endif

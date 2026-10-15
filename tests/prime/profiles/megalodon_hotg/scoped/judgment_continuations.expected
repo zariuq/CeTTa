@@ -13,7 +13,7 @@
 [Undetermined]
 [(Established Refuted)]
 [True]
-[(hol:proves (data-proof power-self) (In Empty (Power Empty)))]
+[(set:proves (data-proof power-self) (In Empty (Power Empty)))]
 [(uninterpreted-operation power-self)]
 [found-power]
 [(Consumed found-power True True True)]

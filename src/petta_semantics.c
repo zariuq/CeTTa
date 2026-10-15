@@ -25,7 +25,7 @@ int cetta_tensor_compare(const CettaTensor *, const CettaTensor *) __attribute__
 #define PETTA_FORM_DENSE_CAP 4096u
 #define PETTA_FORM_OVERFLOW_CAP 128u
 
-_Static_assert(PETTA_FORM_VALUE_LET <= UINT8_MAX,
+_Static_assert(PETTA_FORM_OR_ELSE <= UINT8_MAX,
                "PeTTa semantic forms must fit in the dense fact byte");
 _Static_assert(
     (PETTA_FORM_OVERFLOW_CAP & (PETTA_FORM_OVERFLOW_CAP - 1u)) == 0u,
@@ -219,6 +219,8 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->lambda, PETTA_FORM_LAMBDA);                                   \
     X(g_builtin_syms.let, PETTA_FORM_LET);                               \
     X(g_builtin_syms.chain, PETTA_FORM_CHAIN);                           \
+    X(ids->and_then, PETTA_FORM_AND_THEN);                               \
+    X(ids->or_else, PETTA_FORM_OR_ELSE);                                 \
     X(ids->value_let, PETTA_FORM_VALUE_LET)
 
 static bool petta_form_dense_build(PeTTaSymbolIds *ids) {
@@ -1125,6 +1127,69 @@ Atom *petta_semantics_cyclic_term_error(
         ? petta_error_predicate_context(arena, module, name, arity)
         : petta_error_unbound_context(arena);
     return formal && context ? petta_error_term(arena, formal, context) : NULL;
+}
+
+Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
+                                          Atom *type) {
+    if (!arena || !value || !type)
+        return NULL;
+    Atom *head = atom_symbol(arena, "literal_type_mismatch");
+    Atom *formal = head ? atom_expr3(arena, head, value, type) : NULL;
+    return petta_error_term(arena, formal, atom_symbol(arena, "typecheck"));
+}
+
+Atom *petta_semantics_no_matching_overload_error(Arena *arena,
+                                                 Atom *function) {
+    if (!arena || !function)
+        return NULL;
+    Atom *head = atom_symbol(arena, "no_matching_overload");
+    Atom *formal = head ? atom_expr2(arena, head, function) : NULL;
+    return petta_error_term(arena, formal, atom_symbol(arena, "typecheck"));
+}
+
+Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file) {
+    if (!arena || !file)
+        return NULL;
+    Atom *existence = atom_symbol(arena, "existence_error");
+    Atom *sink = atom_symbol(arena, "source_sink");
+    Atom *formal = existence && sink
+        ? atom_expr3(arena, existence, sink, file) : NULL;
+    Atom *context = atom_symbol(arena, "context");
+    Atom *import = atom_symbol(arena, "import!");
+    Atom *where = context && import
+        ? atom_expr3(arena, context, import, file) : NULL;
+    return petta_error_term(arena, formal, where);
+}
+
+bool petta_semantics_error_message(Arena *arena, Atom *error, char *out,
+                                   size_t capacity) {
+    if (!arena || !out || capacity == 0u || !atom_is_error(error) ||
+        error->expr.len < 2u)
+        return false;
+    Atom *formal = error->expr.elems[1];
+    if (!formal || formal->kind != ATOM_EXPR || formal->expr.len < 2u)
+        return false;
+    Atom *kind = formal->expr.elems[0];
+    if (atom_is_symbol(kind, "literal_type_mismatch") &&
+        formal->expr.len == 3u) {
+        char *value = atom_to_string(arena, formal->expr.elems[1]);
+        char *type = atom_to_string(arena, formal->expr.elems[2]);
+        if (!value || !type)
+            return false;
+        snprintf(out, capacity, "Type mismatch: got %s but expected %s",
+                 value, type);
+        return true;
+    }
+    if (atom_is_symbol(kind, "no_matching_overload") &&
+        formal->expr.len == 2u) {
+        char *function = atom_to_string(arena, formal->expr.elems[1]);
+        if (!function)
+            return false;
+        snprintf(out, capacity, "No matching typed overload for %s",
+                 function);
+        return true;
+    }
+    return false;
 }
 
 Atom *petta_semantics_syntax_error(Arena *arena, const char *text) {
@@ -2926,6 +2991,25 @@ Atom *petta_semantics_lower(
             arena, atom_symbol_id(arena, petta_symbol_ids()->progn),
             print, form->expr.elems[2]);
         return petta_sequence_lower(arena, sequence, false);
+    }
+    case PETTA_FORM_AND_THEN:
+    case PETTA_FORM_OR_ELSE: {
+        /* (and-then A B) is (if A B false) and (or-else A B) is
+         * (if A true B): A's answer decides, its bindings reach B, and B
+         * runs only when A does not already decide the result. */
+        if (form->expr.len != 3u)
+            return NULL;
+        bool and_then = kind == PETTA_FORM_AND_THEN;
+        Atom *decided = petta_semantics_boolean_value(arena, !and_then);
+        if (!decided)
+            return NULL;
+        Atom *if_elems[4] = {
+            atom_symbol_id(arena, g_builtin_syms.if_text),
+            form->expr.elems[1],
+            and_then ? form->expr.elems[2] : decided,
+            and_then ? decided : form->expr.elems[2],
+        };
+        return atom_expr(arena, if_elems, 4u);
     }
     case PETTA_FORM_PROGN:
         return petta_sequence_lower(arena, form, false);

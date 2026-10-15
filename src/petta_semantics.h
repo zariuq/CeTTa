@@ -69,6 +69,9 @@ typedef enum {
     PETTA_FORM_CHAIN,
     PETTA_FORM_TRACE,
     PETTA_FORM_VALUE_LET,
+    /* PeTTa's short-circuit operators, lowered to if. */
+    PETTA_FORM_AND_THEN,
+    PETTA_FORM_OR_ELSE,
 } PeTTaForm;
 
 typedef struct {
@@ -332,6 +335,22 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
 Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
                                  Atom *culprit);
 Atom *petta_semantics_syntax_error(Arena *arena, const char *text);
+/* The typecheck errors the reference's guards throw at run time, in context
+ * typecheck: literal_type_mismatch(Value, Type) where a value does not have
+ * the type a declaration requires, and no_matching_overload(Function) where
+ * no declared overload of a call applies to its arguments. */
+Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
+                                          Atom *type);
+Atom *petta_semantics_no_matching_overload_error(Arena *arena,
+                                                 Atom *function);
+/* PeTTa 1.1's error for an import no file answers:
+ * existence_error(source_sink, File) in context(import!, File). */
+Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);
+/* The message the reference prints for an uncaught error of its typecheck
+ * vocabulary ("Type mismatch: got V but expected T", "No matching typed
+ * overload for F"), written into `out`; false for any other error. */
+bool petta_semantics_error_message(Arena *arena, Atom *error, char *out,
+                                   size_t capacity);
 /* PeTTa's error for a term that is not a finite tree where only a finite
  * one can go: representation_error(cyclic_term), in the context of the
  * predicate `module:name/arity`, or an unbound context when `name` is NULL. */

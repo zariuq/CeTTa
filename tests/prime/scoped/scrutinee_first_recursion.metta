@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A recursive definition whose calls change an argument before the scrutinee,
 ; such as an accumulator, is admitted through its scrutinee-first form: that
@@ -6,7 +6,7 @@
 ; argument may change, and the authored definition passes its arguments to it.
 ; The authored equations then hold by conversion.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0)) (: a elem) (: b elem) (: c elem)))
 !(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(hol:inductive &thy num (u 0) (: zero num) (: succ (-> num num)))

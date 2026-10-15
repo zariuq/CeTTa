@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Hyperseed's d-calculus concepts as Prime programs over declared data, and
 ; the finite laboratory of chapter 5 recomputed from them.  Source: Goertzel,

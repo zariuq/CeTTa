@@ -118,8 +118,8 @@ def main():
     if len(labels) != len(set(labels)) or len(labels) != 22 or not OUTSIDE_FORMATION <= set(labels):
         raise RuntimeError("Incomplete independent observation panel")
     program = [
-        "(hol:profile core)",
-        "!(bind! &s (let $space (new-space) (let $_ (add-atom $space (hol:profile core)) $space)))",
+        "(hol:profile base)",
+        "!(bind! &s (let $space (new-space) (let $_ (add-atom $space (hol:profile base)) $space)))",
         "!(hol:inductive &s num (u 0) (: zero num) (: succ (-> num num)))",
     ]
     expected = ["[()]", "[num]"]

@@ -12,18 +12,31 @@ static Atom *row(Arena *arena, Atom *value) {
     return atom_expr2(arena, atom_symbol(arena, "row"), value);
 }
 
+/* A query may name rows it has not matched yet; its consumer matches each
+ * one (space_subst_match_with_seed). The answers are the rows that match,
+ * in row order. Inside a concurrent scope every named row is already an
+ * exact match. */
 static void assert_rows(Space *space, Arena *arena, Atom *query,
                         const CettaIndex *expected, size_t count) {
     SubstMatchSet matches;
     space_subst_query(space, arena, query, &matches);
-    assert(matches.len == count);
-    for (size_t index = 0u; index < count; index++) {
-        assert(matches.items[index].atom_idx == expected[index]);
+    bool concurrent = cetta_shared_transition_scope_active();
+    if (concurrent)
+        assert(matches.len == count);
+    size_t answers = 0u;
+    for (CettaIndex index = 0u; index < matches.len; index++) {
+        if (concurrent)
+            assert(matches.items[index].exact);
         Bindings bindings;
-        assert(space_subst_match_with_seed(space, query, &matches.items[index],
-                                           NULL, arena, &bindings));
+        if (!space_subst_match_with_seed(space, query, &matches.items[index],
+                                         NULL, arena, &bindings))
+            continue;
         bindings_free(&bindings);
+        assert(answers < count);
+        assert(matches.items[index].atom_idx == expected[answers]);
+        answers++;
     }
+    assert(answers == count);
     smset_free(&matches);
 }
 

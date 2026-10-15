@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The reversal theorem again, with append and rev DEFINED by their equations
 ; instead of assumed.  A definition is admitted only as a total structural
@@ -7,7 +7,7 @@
 ;   app-nil []       = refl              app-nil (x ∷ xs) = cong (x ∷_) (app-nil xs)
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: elem (u 0))))
 !(hol:inductive &thy list (u 0) (: nil list) (: cons (-> elem list list)))
 !(pf:equality &thy list refl@list subst@list)

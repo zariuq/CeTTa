@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Conversion verdicts need operands that the declarations type.
 !(hol:inductive &self nat (u 0) (: zero nat) (: succ (-> nat nat)))

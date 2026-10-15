@@ -197,6 +197,66 @@ typedef struct {
 } BindingsIterator;
 bool bindings_iterator_next(BindingsIterator *iterator, Binding *binding_out);
 
+/* Borrow the authoritative current frame inventory, including frames with
+ * no assigned values and every unbound slot. This is distinct from activation output, which omits
+ * writes preceding that activation's boundary. The image and its syntax
+ * owners must remain alive and unchanged while a cursor or view is used.
+ * Neither operation interprets a skeleton or consumes Prime occurrence state. */
+typedef struct {
+    const Bindings *bindings;
+    uint32_t frame;
+} BindingsFrameStateIterator;
+
+typedef struct {
+    const Bindings *bindings;
+    const BindingsFrameIndex *directory;
+    uint32_t frame_count;
+    uint64_t schema_revision;
+    uint64_t write_clock;
+} BindingsFrameDirectoryStateView;
+
+typedef struct {
+    const Bindings *bindings;
+    const BindingsFrameIndex *directory;
+    BindingsFrameRef ref;
+    uint32_t slot_count;
+    uint32_t schema_slot_count;
+    uint64_t schema_revision;
+    uint64_t write_clock;
+    uint64_t activation_write_boundary;
+    bool has_activation_write_boundary;
+    bool schema_complete;
+    bool owns_identity;
+} BindingsFrameStateView;
+
+typedef struct {
+    VarId source_id;
+    VarId var_id;
+    SymbolId spelling;
+    Atom *name_key;
+    /* Grown positional slots have implicit presentation; spelling and
+     * name_key remain unset rather than interning a synthetic name. */
+    bool declared_in_schema;
+    BindingValue value;
+    uint64_t write_version;
+} BindingsFrameSlotStateView;
+
+bool bindings_frame_state_next(BindingsFrameStateIterator *iterator,
+                                BindingsFrameStateView *view);
+/* Directory metadata remains observable even when it has no frames. A missing
+ * directory has zero count, revision and clock; a present empty directory keeps
+ * its own readings. This borrows storage under the same unchanged-image rule. */
+bool bindings_frame_state_directory(const Bindings *bindings,
+                                    BindingsFrameDirectoryStateView *view);
+/* Number of registered frames, including frames with no bound slots. A
+ * complete inspection must obtain this many rows: iterator refusal is not
+ * evidence of exhaustion. The same unchanged-image borrow contract applies. */
+bool bindings_frame_state_count(const Bindings *bindings, uint32_t *count_out);
+/* Failed reads leave the output unchanged. A view does not retain its image
+ * and cannot cross writes, rollback, projection, promotion or release. */
+bool bindings_frame_state_read_slot(const BindingsFrameStateView *view,
+                                    uint32_t slot, BindingsFrameSlotStateView *out);
+
 /* Storage index into the unframed prefix or suffix.  `i` must
  * be strictly less than `b->len`. */
 static inline const Binding *bindings_entry_at(const Bindings *b, uint32_t i)
@@ -705,6 +765,13 @@ void      bindings_assert_no_private_variant_slots(const Bindings *b);
  * whether that value is represented by a chronological row or only by its
  * owning frame slot. */
 bool      bindings_has_bound_values(const Bindings *b);
+/* Registered contextual frames retain inventory and lineage even when every
+ * slot is unbound. Logical emptiness does not imply absence of this authority. */
+bool      bindings_has_frame_authority(const Bindings *b);
+/* Retain the already-selected frame inventories and lineage in a value view.
+ * Existing destination values are preserved; no logical substitution is
+ * imported or interpreted. The source supplies their frame coordinates. */
+bool      bindings_retain_frame_state(Bindings *dst, const Bindings *src);
 size_t    bindings_frame_binding_count(const Bindings *bindings,
                                        BindingsFrameRef frame);
 /* Count authoritative logical assignments independently of their storage.

@@ -3024,6 +3024,56 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
+/* A bind sequence (let*) from pair `index` on: the pair's value, then its
+ * pattern bound for the rest, as nested binds ending in the body. */
+static bool prepared_pure_compile_bind_sequence(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context,
+        Atom *pairs, const void *pairs_view, CettaExprIndex index,
+        Atom *body, const void *body_view,
+        uint32_t depth, uint32_t *node_out) {
+    if (index == pairs->expr.len)
+        return prepared_pure_compile_eval(
+            program, context, body, body_view, depth + 1u, node_out);
+    Atom *pair = pairs->expr.elems[index];
+    if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
+        !pair->expr.elems[0])
+        return prepared_pure_reject(
+            program, "let* pair is outside the fragment", pair);
+    const void *pair_view =
+        prepared_pure_source_child(program, pairs_view, index);
+    uint32_t bound = 0u;
+    if (!prepared_pure_compile_eval(
+            program, context, pair->expr.elems[1],
+            prepared_pure_source_child(program, pair_view, 1u),
+            depth + 1u, &bound))
+        return prepared_pure_reject(
+            program, "let* bound expression is outside the fragment",
+            pair->expr.elems[1]);
+    size_t saved_bindings = context->len;
+    uint32_t pattern_index = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pair->expr.elems[0], &pattern_index))
+        return prepared_pure_reject(
+            program, "let* pattern is outside the fragment",
+            pair->expr.elems[0]);
+    uint32_t rest = 0u;
+    bool rest_ok = prepared_pure_compile_bind_sequence(
+        program, context, pairs, pairs_view, index + 1u,
+        body, body_view, depth, &rest);
+    context->len = saved_bindings;
+    if (!rest_ok)
+        return false;
+    uint32_t children[2] = {bound, rest};
+    return prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = PREPARED_PURE_BIND,
+            .auxiliary = pattern_index,
+        },
+        children, 2u, node_out);
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -3332,6 +3382,18 @@ static bool prepared_pure_compile_eval_with_role(
                     .auxiliary = pattern_index,
                 },
                 children, 2u, node_out);
+        }
+        if (control == CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) {
+            Atom *pairs = source->expr.elems[1];
+            if (arity != 2u || !pairs || pairs->kind != ATOM_EXPR)
+                return prepared_pure_reject(
+                    program, "let* bindings are outside the fragment", pairs);
+            return prepared_pure_compile_bind_sequence(
+                program, context, pairs,
+                prepared_pure_source_child(program, source_view, 1u), 0u,
+                source->expr.elems[2],
+                prepared_pure_source_child(program, source_view, 2u),
+                depth, node_out);
         }
         return false;
     }
@@ -11849,7 +11911,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                         program, "runtime operator is not a symbol", NULL);
                 }
                 SymbolId head = atom_symbol_current_id(source->expr.elems[0]);
-                uint32_t arity = source->expr.len - 1u;
+                /* The prepared machine keeps arities in 32 bits; a longer
+                 * call stays with the general evaluator. */
+                if (source->expr.len - 1u > UINT32_MAX)
+                    return prepared_pure_runtime_decline(
+                        program, "call arity exceeds the prepared machine", NULL);
+                uint32_t arity = (uint32_t)(source->expr.len - 1u);
                 CettaGsltFoldControl control;
                 if (prepared_pure_control_program(
                         head, arity, &control)) {
@@ -11959,7 +12026,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             }
             frame = &program->frames[program->frame_len - 1u];
             source = program->frame_atoms[program->frame_len - 1u];
-            uint32_t arity = source->expr.len - 1u;
+            /* Admitted in state 0 within 32 bits. */
+            uint32_t arity = (uint32_t)(source->expr.len - 1u);
             if (frame->state == 20u) {
                 if (program->value_len !=
                     (size_t)frame->value_base + 1u)

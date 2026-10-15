@@ -26,6 +26,8 @@ void disc_node_free(DiscNode *n);
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx);
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx);
+bool disc_remove_id(DiscNode *root, const TermUniverse *universe,
+                    AtomId atom_id, CettaIndex coordinate);
 /* Transport every retained leaf coordinate through one validated stable
  * occurrence contraction.  Returns the number of removed leaves. */
 CettaCount disc_transport_stable_coordinates(
@@ -60,6 +62,31 @@ bool disc_count_rigid_exact_expression_coordinates(
 
 #include "space_match_backend.h"
 
+/* ── Head chains: the rows of one projection, chained by head symbol ────── */
+
+/* The rows whose head is `head`, oldest first.  Row positions index the
+ * SpaceHeadChains row arrays. */
+typedef struct {
+    SymbolId head;
+    uint32_t first;
+    uint32_t last;
+    uint32_t count;
+} SpaceHeadChain;
+
+typedef struct {
+    /* Captured logical-order keys; atom_ids survive projection disposal.
+     * next[r] is the following row of row r's chain. */
+    CettaIndex *atom_indices;
+    AtomId *atom_ids;
+    uint32_t *next;
+    CettaIndex len, cap;
+    /* Open addressing by the head's spelling-stable hash. */
+    SpaceHeadChain *chains;
+    uint32_t chain_len, chain_cap;
+    /* Rows without a head symbol. */
+    SpaceHeadChain headless;
+} SpaceHeadChains;
+
 /* ── Equation Index (head-symbol → equations, à la Vampire LiteralIndex) ── */
 
 #define EQ_INDEX_BUCKETS 256
@@ -89,7 +116,9 @@ typedef struct {
 typedef struct {
     EqBucket buckets[EQ_INDEX_BUCKETS];
     EqBucket wildcard; /* equations with variable/structured LHS head */
-    EqHeadSet heads;
+    /* Each exact head's equations.  Bucket collisions in the pattern index
+     * must not turn a head-scoped question into a scan of colliding rows. */
+    SpaceHeadChains head_rows;
     /* Separate declaration projection. Ordinary callable lookup never reads
      * these heads; an extended execution view must opt in explicitly. */
     EqHeadSet directional_heads;
@@ -97,17 +126,12 @@ typedef struct {
     bool directional_present;
 } EqIndex;
 
-/* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
+/* ── Type Annotation Index (: subject type) by subject head ─────────────── */
 
+/* Declarations chained by their subject's head: the symbol itself, or the
+ * symbol heading an expression subject. */
 typedef struct {
-    /* Captured logical-order keys; atom_ids survive projection disposal. */
-    CettaIndex *atom_indices;
-    AtomId *atom_ids; /* stable annotation ids for backend-primary views */
-    CettaIndex len, cap;
-} TypeAnnBucket;
-
-typedef struct {
-    TypeAnnBucket buckets[EQ_INDEX_BUCKETS];
+    SpaceHeadChains rows;
     /* Rows with an open outer constructor can match a declaration without
      * being syntactically headed by ':'. They prohibit negative exclusion. */
     bool has_open_rows;
@@ -157,6 +181,14 @@ typedef struct {
     bool has_non_exact_atoms_dirty;
     bool has_graded_equations; /* derived alongside the ordinary equation index */
     uint32_t secondary_index_deferral_depth;
+    /* Rows removed and not yet contracted away (space_mark_rows): one bit
+     * per row, their number, and a Fenwick tree of live rows that maps
+     * logical positions to rows while any row is marked. */
+    uint64_t *marks;
+    CettaIndex *mark_tree;
+    CettaIndex marked;
+    CettaIndex mark_rows;
+    CettaIndex mark_cap;
 } SpaceNativeStorage;
 
 typedef struct Space {
@@ -183,6 +215,11 @@ typedef struct Space {
             bool has_non_exact_atoms_dirty;
             bool has_graded_equations;
             uint32_t secondary_index_deferral_depth;
+            uint64_t *marks;
+            CettaIndex *mark_tree;
+            CettaIndex marked;
+            CettaIndex mark_rows;
+            CettaIndex mark_cap;
         };
     };
     SpaceKind kind;
@@ -202,6 +239,10 @@ typedef struct Space {
        equation and declaration projections together and nothing else, so
        caches of those facts key on this pair rather than on `revision`. */
     uint64_t declaration_revision;
+    /* A `(:< sub super)` row, or a mutation that could not be classified, has
+       been published here. Never cleared: a read that finds it false knows
+       the space has no subtype rows. */
+    bool declares_subtypes;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
        publications preserve it.  An overlay folds the stamps of its actual
@@ -296,6 +337,24 @@ bool space_mark_imported_prefix(Space *s);
    count, or for an overlay the count of the space at the bottom of its
    overlay chain. */
 CettaIndex space_imported_length(const Space *s);
+
+/* Removal by marks.  A removed data row is marked and left in place; the
+ * logical view skips it, and one contraction later removes every marked row
+ * and carries the indexes once (space_settle_marks).  Marks are settled
+ * before any reader that reads rows directly. */
+CettaIndex space_marks_select(const Space *s, CettaIndex logical);
+CettaIndex space_marks_physical_to_logical(const Space *s, CettaIndex *rows,
+                                           CettaIndex count);
+bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
+                                    CettaCount count);
+void space_settle_marks_slow(Space *s);
+static inline bool space_has_marks(const Space *s) {
+    return s && s->native.marked != 0u;
+}
+static inline void space_settle_marks(Space *s) {
+    if (space_has_marks(s))
+        space_settle_marks_slow(s);
+}
 /* Append `dependency` to `importer`'s dependencies unless it is already
    there.  False on allocation failure or for a space importing itself.  A
    change of the list advances the importer's revisions. */
@@ -342,6 +401,27 @@ static inline bool space_has_dependencies(const Space *s) {
 uint32_t space_session_grounded_symbol_types(SymbolId symbol,
                                              Atom *const **types)
     __attribute__((weak));
+/* Whether the active session reads function types curried (HE's
+ * curried-arrows setting).  Weak, as above: without the evaluator, no. */
+bool space_session_curried_arrows(void) __attribute__((weak));
+/* The function type `type` read curried at `given` arguments: its domains,
+ * with those of a result arrow after them, the first `given` the call's and
+ * the rest the result's.  NULL when it has fewer than `given` in all. */
+Atom *space_curried_function_type(Arena *a, Atom *type, CettaExprLen given);
+/* How a call of `given` arguments reads the function types `types`, full
+ * arity first: 0 as declared (some type takes exactly `given`, or none reads
+ * it curried, or a type is not a function type); 1 a partial application
+ * (the types taking more); 2 an over-application (the types taking fewer
+ * whose result is an arrow taking the rest). */
+unsigned space_curried_call_rank(Atom *const *types, uint32_t count,
+                                 CettaExprLen given);
+/* The rank of one function type's reading (3: it does not read the call). */
+unsigned space_curried_type_rank(Atom *type, CettaExprLen given);
+/* space_curried_call_rank of the symbol `head`'s grounded or declared
+ * types, read as stored: no type is instantiated, so the check takes no
+ * frame identity. */
+unsigned space_curried_head_rank(Space *s, Arena *a, Atom *head,
+                                 CettaExprLen given);
 void space_free(Space *s);
 /* Owned index allocations; the Space object and borrowed TermUniverse have
  * independent owners and are not charged by this visitor. */
@@ -409,6 +489,8 @@ CettaCount space_length64(const Space *s);
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at(const Space *s, uint32_t idx);
+bool space_row_may_be_rule(const Space *s, CettaIndex idx);
+bool space_view_row_may_be_rule(const Space *s, CettaIndex index);
 Atom *space_peek(const Space *s);
 bool space_pop(Space *s, Atom **out);
 bool space_truncate64(Space *s, CettaCount new_len);
@@ -843,6 +925,7 @@ void query_results_free(QueryResults *qr);
    Returns substituted RHS for each match, plus bindings. */
 void query_equations(Space *s, Atom *query, Arena *a, QueryResults *out);
 bool space_equations_may_match_known_head(Space *s, SymbolId head);
+bool space_equations_may_match_unnamed_head(Space *s);
 /* A clean local equation index is already a maintained absence certificate.
  * Mutations dirty or update it; composed/overlay views need their full reader. */
 static inline bool space_directional_index_proves_absent(const Space *s) {
@@ -1268,6 +1351,12 @@ Atom *get_grounded_type(Arena *a, Atom *atom);
 Atom *normalize_type_expr(Arena *a, Atom *ty);
 Atom *normalize_type_expr_head(Arena *a, Atom *ty);
 
+/* HE's get-type: every typing HE's type checker derives for `atom` (tuple
+ * types, the atom's declared types and their supertypes, then function
+ * applications, one per derivation), without evaluating it. [%Undefined%]
+ * when nothing types it; none when every typing is an application error. */
+uint32_t space_he_type_answers(Space *s, Arena *a, Atom *atom,
+                               Atom ***out_types);
 uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
 

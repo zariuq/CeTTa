@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; The power set of a set lies in its universe: for every set N,
 ;   Power N ∈ UnivOf N.
@@ -22,7 +22,7 @@
          (pf:by closed (pf:assume union-closed (pf:assume rest
            (pf:by rest (pf:assume power (pf:assume replacement power))))))
          (pf:by power-closed (pf:all-elim (pf:known universeIn) N))))))
-!(hol:known-proposition &self power-in-universe)
+!(set:known-proposition &self power-in-universe)
 ; Used at Empty, and at the universe of Empty, which is a set too.
 !(pf:proves &self (pf:by power-in-universe) (In (Power Empty) (UnivOf Empty)))
 !(pf:proves &self (pf:by power-in-universe)
@@ -71,7 +71,7 @@
 ; instantiating it at the component wanted.  The native compiler turns it
 ; into a term of the kernel: the quantifier over all sets by the rule
 ; constants allI@set and allE@set, the two laws as its assumptions.
-!(hol:theorem power-in-universe-term (all set (lam N (In (Power N) (UnivOf N))))
+!(set:theorem power-in-universe-term (all set (lam N (In (Power N) (UnivOf N))))
    (pf:all-intro
      (pf:imp-elim
        (pf:all-elim
@@ -97,19 +97,19 @@
        (pf:all-elim (pf:known universeIn) (pf:var 0)))))
 ; Its term introduces the quantifier by allI@set, and its assumptions are the
 ; two laws.
-!(let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
-      (hol:native-proof power-in-universe-term)
+!(let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+      (set:native-proof power-in-universe-term)
    (let (App (App (DeclConst $intro) $predicate) $body) $term
      (let (($first $first-law $first-type) ($second $second-law $second-type)) $assumptions
        (TypedProof $name $intro ($first $second)))))
 ; Its type is checked: the term is used at Empty by allE@set, and the result
 ; has the type of the statement at Empty.
-!(let $package (hol:native-proof power-in-universe-term)
-   (let (HolNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
+!(let $package (set:native-proof power-in-universe-term)
+   (let (SetNativeProofV1 $name $prop $proof $term $type $context $rules $assumptions $digest)
         $package
      (let (App (DeclConst $family) (App (DeclConst $all) $predicate)) $type
-       (let (HolNativeUseV1 $checked $consumer $result $result-type)
-            (hol:native-use $package
+       (let (SetNativeUseV1 $checked $consumer $result $result-type)
+            (set:native-use $package
               (Lam $type (App (App (App (DeclConst allE@set) $predicate) (idx 0))
                               (DeclConst Empty))))
          (UsedAt (== $checked $package)
@@ -121,7 +121,7 @@
 ; local lemma (pf:have) compiles to a redex, the lemma's proof given to a
 ; function of its name, and a pf:by step to the eliminations the checker
 ; found for it, the same rules of the logic the term above is built from.
-!(let $r (try (hol:native-proof power-in-universe)) (car-atom $r))
+!(let $r (try (set:native-proof power-in-universe)) (car-atom $r))
 
 ; ---- Operational: nothing to run.
 ; Power and UnivOf have no equation, so a set stays as written, and so does
@@ -136,7 +136,7 @@
    (quote (firings-of (Power (UnivOf Empty)) $values $n)))
 !(let (quote ($values $n)) (lift (cost:firings (pf:all-elim (pf:known power-in-universe) Empty)))
    (quote (firings-of (pf:all-elim (pf:known power-in-universe) Empty) $values $n)))
-!(let (quote ($values $n)) (lift (cost:firings (hol:proves (pf:all-elim (pf:known power-in-universe) Empty)
+!(let (quote ($values $n)) (lift (cost:firings (set:proves (pf:all-elim (pf:known power-in-universe) Empty)
                                       (In (Power Empty) (UnivOf Empty)))))
-   (quote (firings-of (hol:proves (pf:all-elim (pf:known power-in-universe) Empty)
+   (quote (firings-of (set:proves (pf:all-elim (pf:known power-in-universe) Empty)
                                 (In (Power Empty) (UnivOf Empty))) $values $n)))

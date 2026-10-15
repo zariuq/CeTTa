@@ -1,11 +1,11 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A definition whose body uses the polymorphic quantifier or equality converts
 ; under hol:eq exactly as under the proof checker.  Its stored rule keeps the
 ; source's head, which ranges over every type of `class` and takes no
 ; universe argument; only the proof route specializes it, where it selects
 ; rules.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: A prop))
 !(hol:define &thy falsum prop (= falsum (all prop (lam p p))))
 !(hol:define &thy refl-A prop (= refl-A (eq prop A A)))

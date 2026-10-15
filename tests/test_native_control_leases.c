@@ -2435,7 +2435,7 @@ static void dependency_view_case(unsigned which) {
     eval_set_library_context(&context);
     Arena arena; arena_init(&arena);
     Space space; space_init(&space);
-    space_add(&space, parse_one(&arena, "(hol:profile core)"));
+    space_add(&space, parse_one(&arena, "(hol:profile base)"));
     Atom *premise = dependency_view_publish(&arena, &space, "(hol:axiom premise Falsum)");
     Atom *original = dependency_view_publish(&arena, &space,
         "(hol:theorem cited Falsum (pf:known premise))");

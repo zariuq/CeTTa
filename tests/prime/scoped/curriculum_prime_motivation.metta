@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Prime Motivation 01, the deterministic finite automaton, in the hol:
 ; language. The word is an inductive type of symbols; the transition
@@ -8,7 +8,7 @@
 ; are definitions on top. Every answer below is computed by the kernel's
 ; definitions, and the state after a word is checked as a typed equality.
 
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy symbol (u 0) (: zero symbol) (: one symbol))
 !(hol:inductive &thy state (u 0) (: q0 state) (: q1 state) (: q2 state))
 !(hol:inductive &thy word (u 0) (: wnil word) (: wcons (-> symbol word word)))

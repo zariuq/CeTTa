@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Native arithmetic for the operations of arith.binary.metta, inserted after
 ; its definitions by tests/support/check_prime_arith_oracle.py.  Each reading

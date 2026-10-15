@@ -1,10 +1,10 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The Natural Number Game, as in the Lean ladder: addition recurses on its
 ; second argument, so n + 0 = n holds by computation; 0 + n and (n+1) + m
 ; need induction; commutativity and associativity follow.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(pf:equality &thy nat refl@nat subst@nat)
 !(hol:known-proposition &thy nat-ind)

@@ -5,8 +5,10 @@
 
 The families scale the programs MORK ships: ancestor, transitive closure,
 counter machine, odd-even sort, grounded bulk compute and the counting step
-of decision-tree learning. A problem instance has the MM2 program in MORK's
-own idiom and one case per MeTTa program form:
+of decision-tree learning. Two families measure changing spaces without an
+MM2 program: a typed knowledge base loaded one add at a time, and a counter
+updated in place among unrelated facts. A problem instance has the MM2
+program in MORK's own idiom and one case per MeTTa program form:
 
   natural      the solution a MeTTa programmer writes for the problem
   tabled       the natural solution with the recursive relation tabled (PeTTa)
@@ -785,8 +787,108 @@ def tally_cases(scale):
                 metta_control="one query evaluated to exhaustion"))
 
 
+# ------------------------------------------------------- knowledge base --
+
+KB_CHAINER = """(: Nat Type)
+(: Z Nat)
+(: S (-> Nat Nat))
+(: fromNumber (-> Number Nat))
+(= (fromNumber $n) (if (<= $n 0) Z (S (fromNumber (- $n 1)))))
+
+(: bc (-> $a Nat $b $b))
+(= (bc $kb $_ (: $proof $theorem))
+   (match $kb (: $proof $theorem) (: $proof $theorem)))
+(= (bc $kb (S $depth) (: ($rule $prem) $theorem))
+   (let* (((: $rule (-> (: $prem $ptype) $theorem))
+            (bc $kb $depth (: $rule (-> (: $prem $ptype) $theorem))))
+          ((: $prem $ptype)
+            (bc $kb $depth (: $prem $ptype))))
+     (: ($rule $prem) $theorem)))
+"""
+
+
+def kb_load_program(adds, levels=8):
+    per = adds // levels
+    lines = ["!(bind! &kb (new-space))", "!(add-atom &kb (: seed (Reach g0)))"]
+    for level in range(levels):
+        lines.append(f"!(add-atom &kb (: reach_{level} "
+                     f"(-> (: $p (Reach g{level})) (Reach g{level + 1}))))")
+        for k in range(per):
+            lines.append(f"!(add-atom &kb (: noise_{level}_{k} "
+                         f"(-> (: $p (Reach g{level})) (Noise n_{level}_{k}))))")
+    lines.append(f"!(bc &kb (fromNumber {levels}) (: $prf (Reach g{levels})))")
+    # One result per add-atom; bind! prints nothing.
+    return KB_CHAINER + "\n".join(lines) + "\n", 1 + levels * (per + 1)
+
+
+def kb_load_cases(scale):
+    levels = 8
+    for adds in ((64, 128) if scale == "smoke" else (10000, 20000, 40000)):
+        program, directives = kb_load_program(adds, levels)
+        proof = "seed"
+        for level in range(levels):
+            proof = f"(reach_{level} {proof})"
+        expected = sorted(["true"] * directives +
+                          [f"(: {proof} (Reach g{levels}))"])
+        yield dict(
+            family="knowledge_base", instance=f"kb_load_{adds}", case=f"kb_load_{adds}",
+            role="natural", expected=expected, mm2=None, projection_heads=[":"],
+            mm2_steps=0, he=None, petta=program,
+            params=dict(typed_adds=adds, levels=levels),
+            oracle="the reach_* spine is the only proof of depth 8",
+            semantics=dict(semantics(
+                problem="load a typed knowledge base by adding its declarations one directive "
+                        "at a time, then prove a goal by backward chaining",
+                observer="each add's result and the proof", multiplicity="one result per directive",
+                mm2_plan="none", mm2_control="none"),
+                comparison="idiomatic solution",
+                read_window="each directive adds one declaration to the knowledge base; the "
+                            "proof reads the base at the end",
+                metta_plan="add-atom per declaration; backward chaining by match",
+                metta_control="one directive per declaration"))
+
+
+# ------------------------------------------------------------- space step --
+
+def space_step_program(rows, steps):
+    lines = [f"(fact {i} {i * 7 % 1000})" for i in range(rows)]
+    lines.append("(slot 0 0)")
+    lines.append("""(= (tick $k $limit)
+   (if (== $k $limit) done
+       (let $v (match &self (slot 0 $x) $x)
+            (let* (($n (+ $v 1))
+                   ($r (remove-atom &self (slot 0 $v)))
+                   ($a (add-atom &self (slot 0 $n))))
+                  (tick (+ $k 1) $limit)))))""")
+    lines.append(f"!(tick 0 {steps})")
+    lines.append("!(match &self (slot 0 $x) (slot 0 $x))")
+    return "\n".join(lines) + "\n"
+
+
+def space_step_cases(scale):
+    for rows in ((16, 64) if scale == "smoke" else (1000, 10000, 100000)):
+        for steps in ((8, 24) if scale == "smoke" else (2000, 6000)):
+            yield dict(
+                family="space_step", instance=f"space_step_{rows}", role="translation",
+                case=f"space_step_{rows}_{steps}", expected=["done", f"(slot 0 {steps})"],
+                mm2=None, projection_heads=["slot"], mm2_steps=0, he=None,
+                petta=space_step_program(rows, steps),
+                params=dict(rows=rows, steps=steps),
+                oracle="a counter advanced once per step",
+                semantics=dict(semantics(
+                    problem="advance a counter kept in a space of unrelated facts, each step "
+                            "reading it, removing it and adding its successor",
+                    observer="the final counter", multiplicity="one result",
+                    mm2_plan="none", mm2_control="none"),
+                    comparison="direct algorithm translation",
+                    read_window="a step reads the counter row, then replaces it",
+                    metta_plan="match, remove-atom and add-atom on one row",
+                    metta_control="one call, a tail call per step"))
+
+
 FAMILIES = {"ancestor": ancestor_cases, "closure": closure_cases, "counter_machine": counter_cases,
-            "sort": sort_cases, "arithmetic": arithmetic_cases, "grouped_count": tally_cases}
+            "sort": sort_cases, "arithmetic": arithmetic_cases, "grouped_count": tally_cases,
+            "knowledge_base": kb_load_cases, "space_step": space_step_cases}
 
 
 def write_corpus(out, only, scale):

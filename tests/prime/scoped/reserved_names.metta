@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A call whose head Prime interprets itself is answered without the
 ; program's equations, so an equation or a type declaration the program
@@ -41,7 +41,7 @@
 !(type:eq (and (succ zero) zero) (succ zero))
 ; A theory in a space of its own may name its constants after them, and
 ; declarations added there are its own.
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(hol:define &thy and (-> bool bool bool) (= (and true $b) $b) (= (and false $b) false))
 !(type:eq &thy (and true false) false)
@@ -54,7 +54,7 @@
 ; and its definition takes effect when run and in judgments.
 (= (pair $a $b) (my-pair $a $b))
 !(pair 1 2)
-!(bind! &tok (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &tok (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &tok token (u 0) (: a token) (: b token) (: pair (-> token token token)))
 !(hol:define &tok first (-> token token) (= (first a) a) (= (first b) b) (= (first (pair $x $y)) $x))
 !(type:eq &tok (first (pair b a)) b)

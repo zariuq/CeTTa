@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: c0db99f7cbde429c01267b78c92cc48a255810ade22c7f8159029b11835fb2d2
+ * Source SHA-256: 642fdd4d5eaa692204b497db24b296641c591aa0064e3ffcc3a90063b5145e4f
  */
 
 #include <stdbool.h>
@@ -212,11 +212,13 @@ typedef enum {
     CETTA_GSLT_FOLD_CONTROL_BIND = 0,
     CETTA_GSLT_FOLD_CONTROL_BRANCH = 1,
     CETTA_GSLT_FOLD_CONTROL_EVALUATE = 2,
+    CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE = 3,
 } CettaGsltFoldControl;
 
 typedef enum {
     CETTA_GSLT_CONTROL_OPERAND_EVALUATED = 0,
     CETTA_GSLT_CONTROL_OPERAND_PATTERN = 1,
+    CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS = 2,
 } CettaGsltControlOperandRole;
 
 static inline bool cetta_gslt_fold_control_operand_role(
@@ -256,6 +258,17 @@ static inline bool cetta_gslt_fold_control_operand_role(
     case CETTA_GSLT_FOLD_CONTROL_EVALUATE:
         switch (operand_index) {
         case 0u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        default:
+            return false;
+        }
+    case CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE:
+        switch (operand_index) {
+        case 0u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS;
+            return true;
+        case 1u:
             *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
             return true;
         default:
@@ -307,6 +320,7 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
 
 /* Executable control arms for the generated determinate-fold program. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X)     X(let, 3u, CETTA_GSLT_FOLD_CONTROL_BIND) \
+    X(let_star, 2u, CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) \
     X(if_text, 3u, CETTA_GSLT_FOLD_CONTROL_BRANCH) \
     X(eval, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE) \
     X(function, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE)

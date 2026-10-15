@@ -36,6 +36,26 @@ int main(void) {
             neighbor[position] = name[position];
         }
     }
+    /* Positions are the compact names a symbol keeps for its policy. */
+    if (cetta_builtin_policy_position(NULL) != 0u ||
+        cetta_builtin_policy_at_position(0u) ||
+        cetta_builtin_policy_at_position((uint32_t)count + 1u) ||
+        count + 1u > CETTA_BUILTIN_POLICY_POSITIONS)
+        return 1;
+    for (size_t i = 0; i < count; i++) {
+        const CettaBuiltinPolicy *policy = &CETTA_BUILTIN_POLICIES[i];
+        uint32_t position = cetta_builtin_policy_position(policy);
+        if (position != (uint32_t)i + 1u ||
+            cetta_builtin_policy_at_position(position) != policy ||
+            cetta_language_allows_builtin_policy(
+                CETTA_LANGUAGE_PETTA, NULL, policy) !=
+                cetta_language_allows_builtin(
+                    CETTA_LANGUAGE_PETTA, NULL, policy->name))
+            return 1;
+    }
+    if (!cetta_language_allows_builtin_policy(CETTA_LANGUAGE_PETTA, NULL, NULL))
+        return 1;
     puts("PASS: builtin policy lookup preserves every policy and lexical boundary");
+    puts("PASS: builtin policy positions round-trip and decide as the names do");
     return 0;
 }

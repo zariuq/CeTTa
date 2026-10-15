@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; The numbers from n as a stream of a declared family, on three faces.  The
 ; family is the one Lean declares over the tower inside the sets:
@@ -14,15 +14,15 @@
 ; different stream terms decides nothing, and that their observations agree
 ; at every position is a theorem.
 !(import! &self pf)
-!(hol:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
-!(hol:known-proposition &self num-ind)
+!(set:inductive &self num (u 0) (: zero num) (: suc (-> num num)))
+!(set:known-proposition &self num-ind)
 !(pf:equality &self num refl@num subst@num)
-!(hol:define &self add (-> num num num)
+!(set:define &self add (-> num num num)
    (= (add $n zero) $n)
    (= (add $n (suc $k)) (suc (add $n $k))))
 
 ; ---- The family, written as Lean writes it.
-!(hol:family &self
+!(set:family &self
    (: Stream (-> set set))
    (: scons (-> (A : set) (a : A) (s : (Stream A)) (Stream A)))
    (: shead (-> (A : set) (s : (Stream A)) A))
@@ -35,13 +35,13 @@
 ; on, the Lean theorem, which holds relative to a chain of closed universes
 ; (cofinally many inaccessibles), with the hypotheses the draft takes as
 ; given.  The equations are rules; the rule of iter waits for an observation.
-!(hol:known-proof &self iter)
+!(set:known-proof &self iter)
 !(match &self (type:rule shead $n $p $r) $n)
 !(match &self (type:rule iter $n $p $r) $n)
 
 ; ---- The numbers from n, and the stream from position k on.
-!(hol:define &self from (-> num (Stream num)) (= (from $n) (iter num suc $n)))
-!(hol:define &self drop (-> num (Stream num) (Stream num))
+!(set:define &self from (-> num (Stream num)) (= (from $n) (iter num suc $n)))
+!(set:define &self drop (-> num (Stream num) (Stream num))
    (= (drop zero $s) $s)
    (= (drop (suc $k) $s) (drop $k (stail num $s))))
 
@@ -84,8 +84,8 @@
 
 ; ---- Extensional: a stream of numbers is a set; the observation at
 ; position k of the stream from n is n + k, by induction on k for every n.
-!(hol:formed &self (Stream num))
-!(hol:of &self (shead num (from zero)))
+!(set:formed &self (Stream num))
+!(set:of &self (shead num (from zero)))
 !(pf:theorem &self add-suc-left
    (all num (lam n (all num (lam k (eq num (add (suc n) k) (suc (add n k)))))))
    (pf:fix n (pf:induction num-ind (lam k (eq num (add (suc n) k) (suc (add n k))))
@@ -117,7 +117,7 @@
 ; number of tails, written as the pairs reached from the two streams by
 ; applying the tail to both.  The law is a schema over the set; its instance
 ; at num is cited as (Stream-ext num).
-!(hol:known-proof &self Stream-ext)
+!(set:known-proof &self Stream-ext)
 !(pf:equality &self (Stream num) refl@stream subst@stream)
 ; By the law, the iteration from n is n in front of the iteration from
 ; n + 1: at every pair of positions reached, the heads agree and the tails
@@ -158,12 +158,12 @@
 ; So from's written equation, from n = n in front of from (n + 1), has a
 ; solution in sets, the iteration, and is admitted on that evidence.  Its
 ; record names the theorem; its rule waits for an observation.
-!(hol:define &self from-written (-> num (Stream num))
+!(set:define &self from-written (-> num (Stream num))
    (by set-solution
      (pf:fix r (pf:assume k
        (pf:imp-elim (pf:all-elim k (lam n (iter num suc n))) (pf:known iter-unfolds)))))
    (= (from-written $n) (scons num $n (from-written (suc $n)))))
-!(let (quote (definition-evidence $rules $termination $lean)) (lift (hol:known-proof &self from-written))
+!(let (quote (definition-evidence $rules $termination $lean)) (lift (set:known-proof &self from-written))
    (quote $lean))
 !(match &self (type:rule from-written $n $p $r) $n)
 ; It runs under observation; a stream with no observation is still not
@@ -186,14 +186,14 @@
 ; ---- Negative controls.
 ; At the type of lists the same equation has no solution: the list from n
 ; would contain the list from n + 1 as a part, and so on.
-!(hol:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
-!(try (hol:define &self from-list (-> num list) (= (from-list $n) (cons $n (from-list (suc $n))))))
+!(set:inductive &self list (u 0) (: nil list) (: cons (-> num list list)))
+!(try (set:define &self from-list (-> num list) (= (from-list $n) (cons $n (from-list (suc $n))))))
 ; The head of a number is refused on every face that meets it.
 !(try (type:of &self (shead num zero)))
 !(shead num zero)
 ; A family that is not one whose set model is known is not admitted, and
 ; not refused: here iteration starts after the first value.
-!(try (hol:family &self
+!(try (set:family &self
    (: Stream2 (-> set set))
    (: scons2 (-> (A : set) (a : A) (s : (Stream2 A)) (Stream2 A)))
    (: shead2 (-> (A : set) (s : (Stream2 A)) A))
@@ -203,13 +203,13 @@
    (= (stail2 $A (scons2 $A $a $s)) $s)
    (= (iter2 $A $f $a) (scons2 $A ($f $a) (iter2 $A $f ($f $a))))))
 ; The family's names are taken.
-!(try (hol:family &self (: Stream (-> set set))))
+!(try (set:family &self (: Stream (-> set set))))
 
 ; ---- Families that have no set model.  Lean proves of some families that
 ; no set model has them, and such a family is refuted with the theorem
 ; named.  The list family is admitted on its model, the finite lists of a
 ; set's members; its append runs by its equations.
-!(hol:family &self
+!(set:family &self
    (: List (-> set set))
    (: lnil (-> (A : set) (List A)))
    (: lcons (-> (A : set) (a : A) (l : (List A)) (List A)))
@@ -218,16 +218,16 @@
    (= (lappend $A (lcons $A $a $l) $m) (lcons $A $a (lappend $A $l $m))))
 !(lappend num (lcons num zero (lnil num)) (lcons num (suc zero) (lnil num)))
 ; The stream equation at those lists would put a list in front of itself.
-!(try (hol:family &self
+!(try (set:family &self
    (: iter-list (-> (A : set) (f : (-> A A)) (a : A) (List A)))
    (= (iter-list $A $f $a) (lcons $A $a (iter-list $A $f ($f $a))))))
 ; With the first value dropped, the equation is not one Lean decides: not
 ; admitted, and not refused.
-!(try (hol:family &self
+!(try (set:family &self
    (: iter-list-next (-> (A : set) (f : (-> A A)) (a : A) (List A)))
    (= (iter-list-next $A $f $a) (lcons $A ($f $a) (iter-list-next $A $f ($f $a))))))
 ; A declaration at a proposition declares a proof of it.  A set with a
 ; proof that it is a member of itself has no set model; a set with a proof
 ; that the empty set is a member of it is not decided here.
-!(try (hol:family &self (: loop-set set) (: loop-in (In loop-set loop-set))))
-!(try (hol:family &self (: holder set) (: holder-in (In Empty holder))))
+!(try (set:family &self (: loop-set set) (: loop-in (In loop-set loop-set))))
+!(try (set:family &self (: holder set) (: holder-in (In Empty holder))))

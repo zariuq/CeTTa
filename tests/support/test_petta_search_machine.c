@@ -788,13 +788,23 @@ static void test_type_frame_exhaustion(Arena *arena) {
         Atom *ground = parse_one(arena, "exhaustion-ground");
         Atom *poly = parse_one(arena, "exhaustion-poly");
         Atom *number = parse_one(arena, "Number");
-        CettaFrameIdentity *held = malloc(
-            sizeof(*held) * CETTA_FRAME_HANDLE_MASK);
+        /* The facility grows with demand; bound it in this child so that
+         * exhaustion is reached without issuing every handle it could. */
+        cetta_frame_identity_limit_handles(UINT32_C(1) << 16);
+        size_t capacity = (size_t)1u << 16;
+        CettaFrameIdentity *held = malloc(sizeof(*held) * capacity);
         assert(held);
         size_t count = 0u;
-        while (count < CETTA_FRAME_HANDLE_MASK &&
-               cetta_frame_identity_acquire(&held[count]))
+        for (;;) {
+            if (count == capacity) {
+                capacity *= 2u;
+                held = realloc(held, sizeof(*held) * capacity);
+                assert(held);
+            }
+            if (!cetta_frame_identity_acquire(&held[count]))
+                break;
             count++;
+        }
         Atom **types = NULL;
         uint32_t length = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
@@ -5870,6 +5880,7 @@ static void test_activated_empty_authority(
         .context = &probe,
         .candidate_snapshot_lease = test_equation_guard_snapshot_lease,
         .classify = terminal_empty_classify,
+        .classify_may_override = true,
         .evaluate = terminal_empty_evaluate,
         .measure_stats = true,
         .source_output_constraints = true,
@@ -8019,6 +8030,7 @@ static void test_quoted_result_override(Space *space, Arena *arena) {
     PettaMachineHost host = {
         .context = &probe,
         .classify = quoted_result_override_classify,
+        .classify_may_override = true,
         .evaluate = host_projection_evaluate,
         .source_output_constraints = true,
     };
@@ -10186,12 +10198,18 @@ static bool test_analysis_has_runtime_classifier(
         space, requirement);
 }
 
-static Atom *test_analysis_error_atom(
-    void *opaque, Arena *arena, Atom *source,
-    int exit_code, const char *diagnostic) {
+static Atom *test_analysis_type_error_atom(
+    void *opaque, Arena *arena, Atom *value, Atom *requirement,
+    PettaAnalysisReason reason) {
     (void)opaque;
-    return petta_typecheck_error_atom(
-        arena, source, exit_code, diagnostic);
+    (void)reason;
+    return petta_semantics_type_mismatch_error(arena, value, requirement);
+}
+
+static Atom *test_analysis_overload_error_atom(
+    void *opaque, Arena *arena, Atom *function) {
+    (void)opaque;
+    return petta_semantics_no_matching_overload_error(arena, function);
 }
 
 static const char *test_analysis_reason_name(
@@ -10217,7 +10235,8 @@ static const PettaAnalysisService test_analysis_service = {
     .judge_value = test_analysis_judge_value,
     .type_has_runtime_classifier =
         test_analysis_has_runtime_classifier,
-    .error_atom = test_analysis_error_atom,
+    .type_error_atom = test_analysis_type_error_atom,
+    .overload_error_atom = test_analysis_overload_error_atom,
     .reason_name = test_analysis_reason_name,
     .validate_ready_call = test_analysis_boundary_accept,
 };
@@ -10727,7 +10746,8 @@ static void test_analysis_capability_contract(
             .judge_value = test_analysis_judge_value,
             .type_has_runtime_classifier =
                 test_analysis_has_runtime_classifier,
-            .error_atom = test_analysis_error_atom,
+            .type_error_atom = test_analysis_type_error_atom,
+            .overload_error_atom = test_analysis_overload_error_atom,
             .reason_name = test_analysis_reason_name,
         },
     };
@@ -10742,7 +10762,8 @@ static void test_analysis_capability_contract(
             .judge_value = test_analysis_judge_value,
             .type_has_runtime_classifier =
                 test_analysis_has_runtime_classifier,
-            .error_atom = test_analysis_error_atom,
+            .type_error_atom = test_analysis_type_error_atom,
+            .overload_error_atom = test_analysis_overload_error_atom,
             .reason_name = test_analysis_reason_name,
             .validate_ready_call = test_analysis_boundary_accept,
         },

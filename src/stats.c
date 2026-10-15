@@ -1025,6 +1025,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-optional-call-admission",
     "prepared-optional-call-empty",
     "prepared-optional-call-value",
+    "space-marked-row",
+    "space-mark-settle",
+    "space-mark-settle-row",
 };
 
 static int64_t clamp_counter(uint64_t value) {

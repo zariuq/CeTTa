@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; The identities that proof packages generate are reserved: no program
 ; declares them, and a declaration written for one confers nothing.

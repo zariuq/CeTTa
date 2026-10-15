@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Correspondence between the executed iterator, the hosted zero-add
 ; package, and the candidate-syntax shared step. The successor equation stored

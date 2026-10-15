@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Lists over a type and their append, typed.  The lists are declared at the
 ; lowest universe with a parameter in it, so that a list of any type of

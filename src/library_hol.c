@@ -5,27 +5,32 @@
 #include "eval.h"
 #include "prime_scoped_judgments.h"
 
-/* The HE and PeTTa extended profiles reach Prime's native higher-order logic
- * through this module.  A judgment names its theory space first: a space
- * whose theory is a profile of the logic, selected in it by
- * (hol:profile core) or (hol:profile megalodon-hotg).  The program's own
- * space is not read as a theory.  The judgment is Prime's own, with the same
- * checker and the same records, and its answer is data that the dialect does
- * not evaluate again:
+/* The HE and PeTTa extended profiles reach Prime's native logic and its set
+ * theories through this module: `import hol` for hol: judgments, `import set`
+ * for set: judgments.  A judgment names its theory space first: a space
+ * whose theory belongs to the judgment's namespace, (hol:profile base) for
+ * hol:, and for set: a set profile, prime-common by default or
+ * (set:profile megalodon-hotg).  The program's own space is not read as a
+ * theory.  The judgment is Prime's own, with the same checker and the same
+ * records, and its answer is data that the dialect does not evaluate again:
  *   a publication       the published name, its record admitted to the space;
  *   a value             the value;
  *   another success     True;
  *   a refutation        False;
  *   anything undecided  the judgment as written.
- * (hol:try J) answers the verdict of J itself: (Established evidence),
- * (Refuted reason), (Undetermined reason) or (Incomplete reason).
- * The declarations in lib/hol.metta hand a judgment to this module as
- * (__cetta_lib_hol_judge_v1 (WORD SPACE OPERAND ...)), its operands never
- * evaluated, and a tried one as (__cetta_lib_hol_try_v1 J).  Prime reads
- * hol: judgments itself; there the module declines. */
+ * (hol:try J) and (set:try J) answer the verdict of J itself:
+ * (Established evidence), (Refuted reason), (Undetermined reason) or
+ * (Incomplete reason).  The declarations in lib/hol.metta and lib/set.metta
+ * hand a judgment to this module as (__cetta_lib_hol_judge_v1 (WORD SPACE
+ * OPERAND ...)) or (__cetta_lib_set_judge_v1 ...), its operands never
+ * evaluated, and a tried one as (__cetta_lib_hol_try_v1 J) or
+ * (__cetta_lib_set_try_v1 J).  Prime reads both namespaces itself; there the
+ * module declines. */
 
 static bool hol_module_enabled(const CettaLibraryContext *context) {
-    if (!context || !(context->active_mask & CETTA_NATIVE_IMPORT_HOL)) return false;
+    if (!context ||
+        !(context->active_mask & (CETTA_NATIVE_IMPORT_HOL | CETTA_NATIVE_IMPORT_SET)))
+        return false;
     const CettaProfile *profile = context->session.profile;
     return profile &&
         ((context->session.language_id == CETTA_LANGUAGE_HE &&
@@ -58,32 +63,39 @@ static const char *hol_verdict(Atom *verdict, Atom **evidence_out) {
     return atom_name_cstr(verdict->expr.elems[1]);
 }
 
-/* The judgment a library call asks for: `(__cetta_lib_hol_judge_v1 (WORD
- * SPACE OPERAND ...))` asks for `(hol:WORD SPACE OPERAND ...)`, and
- * `(__cetta_lib_hol_try_v1 J)` for the verdict of the hol: judgment J.  NULL
- * when the call names no judgment of the logic. */
+/* The judgment a library call asks for: `(__cetta_lib_NS_judge_v1 (WORD
+ * SPACE OPERAND ...))` asks for `(NS:WORD SPACE OPERAND ...)`, and
+ * `(__cetta_lib_NS_try_v1 J)` for the verdict of the NS: judgment J, NS being
+ * hol or set.  NULL when the call names no judgment of that namespace. */
 static Atom *hol_requested_judgment(Arena *arena, Atom *head, Atom **arguments,
-                                    uint32_t count, bool *try_out) {
+                                    uint32_t count, bool *try_out, bool *hol_out) {
     *try_out = false;
+    *hol_out = false;
     if (count != 1u || !arguments[0] || arguments[0]->kind != ATOM_EXPR ||
         arguments[0]->expr.len < 2u)
         return NULL;
+    bool hol_judge = hol_named(head, "__cetta_lib_hol_judge_v1");
+    bool hol_try = hol_named(head, "__cetta_lib_hol_try_v1");
+    bool set_judge = hol_named(head, "__cetta_lib_set_judge_v1");
+    bool set_try = hol_named(head, "__cetta_lib_set_try_v1");
+    if (!hol_judge && !hol_try && !set_judge && !set_try) return NULL;
+    const char *prefix = hol_judge || hol_try ? "hol:" : "set:";
+    *hol_out = hol_judge || hol_try;
     Atom *request = arguments[0];
     Atom *word = request->expr.elems[0];
     if (!word || word->kind != ATOM_SYMBOL) return NULL;
-    if (hol_named(head, "__cetta_lib_hol_try_v1")) {
-        if (strncmp(atom_name_cstr(word), "hol:", 4u) != 0 ||
+    if (hol_try || set_try) {
+        if (strncmp(atom_name_cstr(word), prefix, 4u) != 0 ||
             !prime_scoped_judgment_is_head_id(atom_symbol_current_id(word)))
             return NULL;
         *try_out = true;
         return request;
     }
-    if (!hol_named(head, "__cetta_lib_hol_judge_v1")) return NULL;
     const char *bare = atom_name_cstr(word);
     size_t length = strlen(bare);
     char *spelled = arena_alloc(arena, length + 5u);
     if (!spelled) return NULL;
-    memcpy(spelled, "hol:", 4u);
+    memcpy(spelled, prefix, 4u);
     memcpy(spelled + 4u, bare, length + 1u);
     Atom *judgment_head = atom_symbol(arena, spelled);
     if (!prime_scoped_judgment_is_head_id(atom_symbol_current_id(judgment_head))) return NULL;
@@ -101,13 +113,16 @@ bool cetta_hol_module_call(CettaLibraryContext *context, Space *space,
     if (!head || head->kind != ATOM_SYMBOL || !hol_module_enabled(context))
         return false;
     bool try_judgment = false;
-    Atom *written = hol_requested_judgment(arena, head, arguments, count, &try_judgment);
+    bool hol = false;
+    Atom *written = hol_requested_judgment(arena, head, arguments, count, &try_judgment, &hol);
     if (!written) return false;
-    /* The theory space is the judgment's first operand. */
+    Atom *as_written = try_judgment
+        ? atom_expr2(arena, atom_symbol(arena, hol ? "hol:try" : "set:try"), written) : written;
+    /* The theory space is the judgment's first operand; its theory must
+     * belong to the judgment's namespace. */
     Space *theory = prime_public_space_argument(arena, written->expr.elems[1]);
-    if (!theory || !prime_scoped_space_is_hol(theory)) {
-        *out = cetta_call_completed_value(
-            try_judgment ? atom_expr2(arena, atom_symbol(arena, "hol:try"), written) : written);
+    if (!theory || prime_scoped_space_is_hol(theory) != hol) {
+        *out = cetta_call_completed_value(as_written);
         return true;
     }
     Atom *judgment = try_judgment
@@ -115,14 +130,13 @@ bool cetta_hol_module_call(CettaLibraryContext *context, Space *space,
     Atom *verdict = prime_scoped_judgment_judge(arena, theory, judgment, false, 0u);
     Atom *evidence = NULL;
     const char *status = hol_verdict(verdict, &evidence);
-    Atom *answer = try_judgment
-        ? atom_expr2(arena, atom_symbol(arena, "hol:try"), written) : written;
+    Atom *answer = as_written;
     if (status && strcmp(status, "Established") == 0) {
         if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len == 2u &&
             hol_named(evidence->expr.elems[0], "PrimeScopedValue")) {
             answer = evidence->expr.elems[1];
         } else if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len >= 2u &&
-                   hol_named(evidence->expr.elems[0], "HolPublish")) {
+                   hol_named(evidence->expr.elems[0], hol ? "HolPublish" : "SetPublish")) {
             Atom *record = evidence->expr.elems[1];
             bool published = record && record->kind == ATOM_EXPR && record->expr.len >= 2u &&
                 eval_admit_scoped_record(theory, arena, record);

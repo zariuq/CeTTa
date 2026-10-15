@@ -1349,6 +1349,56 @@ static void prime_need_cell_view_from_frame(
 #endif
 }
 
+bool prime_need_snapshot_history_begin(const PrimeNeedSnapshot *snapshot,
+                                      PrimeNeedHistoryIterator *iterator) {
+    if (!iterator)
+        return false;
+    *iterator = (PrimeNeedHistoryIterator){.invalid = true};
+    if (!prime_need_snapshot_present(snapshot))
+        return false;
+    if (snapshot->top && (snapshot->top->session_id != snapshot->session_id ||
+                          snapshot->top->depth == 0u))
+        return false;
+    *iterator = (PrimeNeedHistoryIterator){
+        .next = snapshot->top,
+        .session_id = snapshot->session_id,
+        .remaining = snapshot->top ? snapshot->top->depth : 0u,
+    };
+    return true;
+}
+
+PrimeNeedHistoryStep prime_need_snapshot_history_next(
+    PrimeNeedHistoryIterator *iterator, PrimeNeedHistoryView *view) {
+    if (!iterator)
+        return PRIME_NEED_HISTORY_INVALID;
+    if (!view || iterator->invalid || iterator->session_id == 0u) {
+        iterator->invalid = true;
+        return PRIME_NEED_HISTORY_INVALID;
+    }
+    const PrimeNeedFrame *frame = iterator->next;
+    if (!frame && iterator->remaining == 0u)
+        return PRIME_NEED_HISTORY_DONE;
+    if (!frame || iterator->remaining == 0u ||
+        frame->session_id != iterator->session_id ||
+        frame->depth != iterator->remaining || frame->serial == 0u ||
+        frame->thunk_id == 0u || frame->authority_id == 0u || !frame->origin ||
+        ((frame->parent == NULL) != (iterator->remaining == 1u))) {
+        iterator->invalid = true;
+        return PRIME_NEED_HISTORY_INVALID;
+    }
+    PrimeNeedHistoryView observed = {
+        .session_id = frame->session_id,
+        .serial = frame->serial,
+        .thunk_id = frame->thunk_id,
+        .depth = frame->depth,
+    };
+    prime_need_cell_view_from_frame(frame, &observed.cell);
+    *view = observed;
+    iterator->next = frame->parent;
+    iterator->remaining--;
+    return PRIME_NEED_HISTORY_ENTRY;
+}
+
 static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_frame(
     const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
     PrimeNeedCellView *out, const PrimeNeedFrame **frame_out) {

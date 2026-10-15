@@ -1,9 +1,9 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Definitions and datatypes are admitted and compute at any size: no fixed
 ; bound on arguments, equations, constructors, fields or pattern variables
 ; stands in for a verdict.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:inductive &s bool (u 0) (: true bool) (: false bool))
 

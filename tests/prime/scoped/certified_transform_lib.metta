@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Reusable certified transformations for a supplied family.
 ; A step takes a value and evidence that the family holds of that value,

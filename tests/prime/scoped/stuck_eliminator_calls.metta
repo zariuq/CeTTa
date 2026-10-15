@@ -1,9 +1,9 @@
-(hol:profile core)
+(hol:profile base)
 
 ; A defined call whose equation unfolds to the language's identity
 ; eliminator, stuck on a path that is not reflexivity, is still a term the
 ; judgments compare: it is reflexively equal to itself, and not to another.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: k num))
 !(add-atom &s (: q (id num zero k)))

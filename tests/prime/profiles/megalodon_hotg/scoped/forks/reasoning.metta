@@ -1,12 +1,12 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; FORK-HO: which face produced a fact?  A native proof, a native decision,
 ; and a replayed external certificate answer differently and must stay
 ; distinguishable.
 
 ; Native proof service: a checked derivation, retained on publication.
-!(hol:theorem native-fact (In Empty (UnivOf Empty)) (pf:all-elim (pf:known universeIn) Empty))
-!(match &self (hol:known native-fact $p $origin $proof $d $r $sig) $origin)
+!(set:theorem native-fact (In Empty (UnivOf Empty)) (pf:all-elim (pf:known universeIn) Empty))
+!(match &self (set:known native-fact $p $origin $proof $d $r $sig) $origin)
 
 ; Native decision service: an operational observation of a producer.
 (: Thing (u 0))

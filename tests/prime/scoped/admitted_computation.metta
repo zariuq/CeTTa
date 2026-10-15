@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Only computation that admission published enters conversion.
 !(hol:inductive &self colour (u 0) (: red colour) (: blue colour))

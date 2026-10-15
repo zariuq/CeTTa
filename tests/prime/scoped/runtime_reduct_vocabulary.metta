@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Evaluation reduces a call by an admitted definition only to a term of the
 ; evaluated space's own vocabulary.  A definition whose body quantifies, or

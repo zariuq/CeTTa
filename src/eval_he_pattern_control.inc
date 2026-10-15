@@ -81,7 +81,7 @@ static void he_canonical_resume_pattern(HeCanonicalFrame *frame) {
     bool branching = head == g_builtin_syms.pat_case_forward;
     bool raw = head == g_builtin_syms.pat_unify_forward;
     if (frame->phase == 2u) {
-        he_canonical_publish(frame, &frame->paths, false);
+        he_canonical_finish(frame, &frame->paths, false);
         he_canonical_pop();
         return;
     }

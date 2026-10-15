@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Lists of numbers and their append, run.  The two datatypes and append are
 ; declared in &self, so plain evaluation runs append by its two equations,
@@ -59,7 +59,7 @@
 !(append zero nil)
 
 ; A declaration made in another space does not run here.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(hol:inductive &s list (u 0) (: nil list) (: cons (-> num list list)))
 !(hol:define &s concat (-> list list list)

@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Lists of numbers and their append, typed.  The two datatypes and append are
 ; declared in &self.  The kernel checks each declaration before it admits it:

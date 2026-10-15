@@ -1,0 +1,15 @@
+; Equality of completed values inside called functions.
+(: n1 Node)
+(= (same $x $y) (if (== $x $y) yes no))
+!(same (a b) (a b))
+!(same (a b) (b a))
+!(same () ())
+!(same (a) ())
+!(same (n1) (n1))
+!(same (a (b c)) (a (b c)))
+(= (frontier-done $f) (== $f ()))
+!(frontier-done ())
+!(frontier-done (x))
+; Declared types that cannot meet end the run, as in HE.
+(= (mixed) (== n1 5))
+!(mixed)

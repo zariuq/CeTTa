@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Lists over any set and their append, run.  The lists are declared once,
 ; with a parameter: the set their elements come from,

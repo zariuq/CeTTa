@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Why it matters: a learner that generalizes must be able to change its mind,
 ; and every conclusion drawn from a rule it has since revised must stop
@@ -13,7 +13,7 @@
 ; unrelated fact.  The learner renews the alias and derives again: robin still
 ; flies, pingu's old conclusion is withdrawn, and its negation is published.
 
-!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &kb (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &kb kind (u 0) (: songbird kind) (: penguin kind))
 !(hol:inductive &kb animal (u 0) (: tweety animal) (: pingu animal) (: robin animal))
 !(hol:define &kb falsum prop (= falsum (all prop (lam p p))))

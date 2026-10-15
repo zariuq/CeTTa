@@ -100,7 +100,7 @@
 (= (repair:certified $concepts)
    (let* (($prior (repair:prior)) ($like (repair:likelihood)) ($kernel (repair:kernel))
           ($goal (repair:cheap-goal)) ($plans (repair:diagnostic-plans))
-          ($allowed (cons-atom diagnose (repair:allowed)))
+          ($base (repair:allowed)) ($allowed (cons-atom diagnose $base))
           ($view (bayes:concept-view $prior $concepts)))
      (case (bayes:class-consumer $like $view)
        (((bayes:consumer $retained)

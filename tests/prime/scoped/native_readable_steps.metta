@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Readable steps compile natively, in the hol profile as in any other.  A
 ; local lemma (pf:have) is a redex: the lemma's proof given to a function of
@@ -8,7 +8,7 @@
 ; antecedent.  The package's proof is the proof as compiled, written in the
 ; rules of the logic, and the checker accepts it in its own right.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: P (-> set prop)) (: Q (-> set prop)) (: R (-> set prop)) (: c set)
                   (: All (-> (-> set prop) prop))))
 !(hol:axiom &thy p-to-q (all set (lam x (imp (P x) (Q x)))))

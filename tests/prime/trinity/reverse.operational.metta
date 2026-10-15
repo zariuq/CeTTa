@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Two reversals of a list, run.  Over the lists of numbers and their append,
 ;   rev nil                  = nil

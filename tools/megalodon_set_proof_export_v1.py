@@ -716,8 +716,8 @@ def ask(cetta: Path, source: Path, names: list[str],
     target = f"{space} " if space else ""
     queries = []
     for name in names:
-        queries.append(f"!(try (hol:native-proof {target}{name}))")
-        queries.append(f"!(try (hol:known-proposition {target}{name}))")
+        queries.append(f"!(try (set:native-proof {target}{name}))")
+        queries.append(f"!(try (set:known-proposition {target}{name}))")
     answers = run_queries(cetta, source, queries)
     return [(answers[2 * i], answers[2 * i + 1]) for i in range(len(names))]
 
@@ -784,10 +784,10 @@ def gather(cetta: Path, source: Path, names: list[str], space: str | None = None
                     except CannotRender as reason:
                         known.unwritable[name] = str(reason)
             value = established(package)
-            if is_form(value, "HolNativeProofV1", 10) and value[3] == ():
+            if is_form(value, "SetNativeProofV1", 10) and value[3] == ():
                 # A seed or an axiom: its package is its own assumption.
                 known.assumed.add(name)
-            elif is_form(value, "HolNativeProofV1", 10) and sym(value[1]) == name:
+            elif is_form(value, "SetNativeProofV1", 10) and sym(value[1]) == name:
                 rows = value[8] if isinstance(value[8], tuple) else ()
                 known.theorems[name] = Theorem(
                     name, value[2], value[3],
@@ -1101,7 +1101,7 @@ class Writer:
         if name not in self.known.theorems:
             verdict = self.known.verdicts.get(name)
             if (is_form(verdict, "Undetermined", 2)
-                    and is_form(verdict[1], "hol:native-unsupported-proof-form", 2)):
+                    and is_form(verdict[1], "set:native-unsupported-proof-form", 2)):
                 self.refuse_readable(verdict[1][1])
             raise CannotRender(
                 f"C has no native package of {name}: "

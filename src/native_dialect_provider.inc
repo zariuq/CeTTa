@@ -860,6 +860,11 @@ static bool native_dialect_prepare_he_type(
         result_set_free(&cast); return true;
     }
     SymbolId head = atom_head_symbol_id(source);
+    /* HE does not reduce (quote X): interpreting it gives it unchanged,
+     * never PeTTa's reading of quote as its operand. */
+    if (head == g_builtin_syms.quote && source->expr.len == 2u) {
+        outcome_set_add(values, source, &empty); return true;
+    }
     bool held_control = head == g_builtin_syms.if_text || head == g_builtin_syms.let;
     /* Host syntax keeps its declared operand policy. In particular a
      * resource constructor is an operation, not an unmatched equation call.

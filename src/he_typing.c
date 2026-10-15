@@ -3676,7 +3676,11 @@ bool he_typing_is_op(const char *name) {
  * Kept beside HE_OP_NAMES so the op syntax and its argument policy cannot
  * drift apart; the evaluator consults this instead of naming ops itself. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
-    if (!name) return false;
+    /* Asked for each argument of each evaluated tuple: an ordinary head is
+     * told apart by its first byte before any name is compared. */
+    if (!name || (name[0] != 'n' && name[0] != 'c' && name[0] != 'i' &&
+                  name[0] != 's'))
+        return false;
     if (strcmp(name, "normalize-type") == 0 ||
         strcmp(name, "check-type-refinements") == 0)
         return arg_index == 1;

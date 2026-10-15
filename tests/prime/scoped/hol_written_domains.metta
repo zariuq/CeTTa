@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Written lambda domains in the HOL profile: a proposition may write the
 ; domain of a quantified variable, the written domain is a contract checked
@@ -6,7 +6,7 @@
 ; proposition, the native compiler keeps the declared domain, and a written
 ; domain that is another type former than the carrier is refuted.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: nat (u 0)) (: zero nat) (: succ (-> nat nat))))
 !(pf:equality &thy nat refl@nat subst@nat)
 

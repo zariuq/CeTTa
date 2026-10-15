@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Logical theorems cite each other by name in the hol profile, as set
 ; theorems do in megalodon-hotg.  A theorem published in a theory is a
@@ -9,7 +9,7 @@
 ; published there and not withdrawn, under the same profile, with everything
 ; it was checked against unchanged and available.
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 
 ; A declared predicate pair and one assumption about them, not provable in
 ; the logic: whatever is P is Q.
@@ -94,7 +94,7 @@
 !(try (hol:native-proof &thy forged-lemma))
 
 ; Nor is a theorem of another theory, though it declares the same names.
-!(bind! &other (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &other (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &other ((: P (-> set prop)) (: Q (-> set prop)) (: c set)))
 !(let ($verdict $why)
       (try (hol:proves &other (quote (pf:known p-to-q-again))

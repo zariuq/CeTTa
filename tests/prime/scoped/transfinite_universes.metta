@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Universe levels beyond the finite ones.  A closed level is an ordinal
 ; notation below epsilon-zero in Cantor normal form: 0, 1, 2, ..., omega,
@@ -41,7 +41,7 @@
 !(type:eq (u (* omega 2)) (u (^ omega 2)))
 
 ; Cumulativity: a type of a lower universe is a type of every higher one.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &s num (u 0) (: zero num) (: suc (-> num num)))
 !(add-atom &s (: Small (u 3)))
 !(add-atom &s (: Big (u omega)))

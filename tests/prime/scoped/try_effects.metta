@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Three contracts of the boundary, each with its counterexample.
 ; 1. A record that names the signature as its origin is untrusted syntax
@@ -19,7 +19,7 @@
 !(hol:recheck nat-total)
 !(hol:proves (pf:known nat-total) (all Nat (lam n (all prop (lam p (imp p p))))))
 ; 3. try routes a type query to the space it names.
-!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &s (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &s (: Bit (u 0)))
 !(add-atom &s (: b Bit))
 !(type:check &s b Bit)

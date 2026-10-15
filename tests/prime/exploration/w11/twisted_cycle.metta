@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Views glued around a cycle.  Three places a, b and c each hold a view.
 ; Crossing an edge translates the view.  In the twisted cycle the views are
@@ -80,7 +80,7 @@
 ; ---- Part 2: the same facts as checked theorems ----------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(hol:inductive &thy bool (u 0) (: true bool) (: false bool))
 !(pf:equality &thy bool refl@bool subst@bool)
 !(hol:define &thy truth prop (= truth (all prop (lam p (imp p p)))))

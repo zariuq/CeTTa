@@ -1,4 +1,4 @@
-(hol:profile core)
+(hol:profile base)
 
 ; Proof plans with casts: a cast closes only with its obligation, and a cast
 ; that cannot close is blamed by position.
@@ -154,7 +154,7 @@
 ; ---- the ITP half: a plan is a proof of an implication ----------------------------------
 
 !(import! &self pf)
-!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile core)) $profile-space)))
+!(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(pf:theory &thy ((: A prop) (: B prop) (: C prop) (: CastAB prop) (: CastCG prop) (: G prop)))
 (= (imps $ctx $goal)
    (if (== $ctx ()) $goal

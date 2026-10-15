@@ -1414,11 +1414,19 @@ static Atom *prime_level_schema_head(Space *space, Arena *a, Atom *term) {
     return schema ? head : NULL;
 }
 
-static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
-                         PrimeResourceLedger *ledger,
-                         CettaPrimeTypingRouteV1 *route_out,
-                         bool *engine_fault_out,
-                         Atom **canonical_term_out) {
+/* `get-type` asks `type:of` with the HE-style declaration fragments left to
+ * it (prime_semantics_native_type_of): the routes before them answer, or none
+ * does.  Only the outermost synthesis of that question stops there; a route
+ * that synthesizes the type of a part asks in full. */
+static _Thread_local bool g_prime_synth_native_only;
+static _Thread_local unsigned g_prime_synth_depth;
+static _Thread_local unsigned g_prime_synth_declined;
+
+static Atom *prime_synth_routes(Space *space, Arena *a, Atom *judgment,
+                                Atom *term, PrimeResourceLedger *ledger,
+                                CettaPrimeTypingRouteV1 *route_out,
+                                bool *engine_fault_out,
+                                Atom **canonical_term_out) {
     if (route_out) *route_out = CETTA_PRIME_TYPING_ROUTE_NONE;
     if (engine_fault_out) *engine_fault_out = false;
     if (canonical_term_out) *canonical_term_out = NULL;
@@ -1521,6 +1529,11 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
         return prime_undetermined(
             a, judgment, prime_expr2(a, "universe-schema-not-formed",
                                      schema_head));
+    if (g_prime_synth_native_only && g_prime_synth_depth == 1u) {
+        g_prime_synth_declined++;
+        return prime_undetermined(a, judgment,
+                                  prime_expr1(a, "no-native-route"));
+    }
     /* HE-style declarations: the grounded fragments decided by the hosted
      * HOL Light checker, never HE's engine. */
     cetta_runtime_stats_inc(
@@ -1528,6 +1541,19 @@ static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
     PrimeHeJudgment judged =
         prime_he_synthesize(space, a, term, false, ledger);
     return prime_he_verdict(a, judgment, &judged);
+}
+
+static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
+                         PrimeResourceLedger *ledger,
+                         CettaPrimeTypingRouteV1 *route_out,
+                         bool *engine_fault_out,
+                         Atom **canonical_term_out) {
+    g_prime_synth_depth++;
+    Atom *verdict = prime_synth_routes(space, a, judgment, term, ledger,
+                                       route_out, engine_fault_out,
+                                       canonical_term_out);
+    g_prime_synth_depth--;
+    return verdict;
 }
 
 static PrimeFormStatus prime_form_scoped_regular_type(
@@ -14311,6 +14337,32 @@ Atom *prime_semantics_judge_typing_direct(
     bool steps_limited, uint64_t steps) {
     return prime_semantics_judge_typing_accounted(
         a, space, judgment, steps_limited, steps, NULL, NULL);
+}
+
+/* The verdict of `type:of` on `term` from the routes before the HE-style
+ * declaration fragments, or NULL when none of them answers it. */
+Atom *prime_semantics_native_type_of(Arena *a, Space *space, Atom *term) {
+    if (!a || !space || !term) return NULL;
+    bool outer = g_prime_synth_native_only;
+    unsigned outer_depth = g_prime_synth_depth;
+    unsigned outer_declined = g_prime_synth_declined;
+    g_prime_synth_native_only = true;
+    g_prime_synth_depth = 0u;
+    g_prime_synth_declined = 0u;
+    Atom *verdict = prime_semantics_judge_typing_direct(
+        a, space, prime_expr2(a, "type:of", term), false, 0u);
+    bool declined = g_prime_synth_declined != 0u;
+    g_prime_synth_native_only = outer;
+    g_prime_synth_depth = outer_depth;
+    g_prime_synth_declined = outer_declined;
+    if (!verdict || verdict->kind != ATOM_EXPR || verdict->expr.len != 4u)
+        return NULL;
+    /* A route that declined leaves the question to the HE-style fragments
+     * unless another established or refuted it. */
+    if (declined && !prime_verdict_is(verdict, "Established") &&
+        !prime_verdict_is(verdict, "Refuted"))
+        return NULL;
+    return verdict;
 }
 
 Atom *prime_semantics_judge_typing_accounted(

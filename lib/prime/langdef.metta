@@ -247,7 +247,8 @@
 ; Reify raw syntax as code without running it or forming Prime lambdas
 ; inside it. Existing scope records and variable identities are preserved.
 ; This differs from lifting an already formed Prime value into code.
-(: langdef:quote-syntax (-> Atom Atom))
+(: __cetta_abt_quote_syntax (-> Atom Atom))
+(: langdef:quote-syntax (-> Atom %Undefined%))
 
 (= (langdef:load-deterministic-equations $sources)
    (function
@@ -459,6 +460,10 @@
 ; declared interpreter or lowering. Quoted source is opened explicitly.
 (= (langdef:instantiate-names $signature $avoid $term)
    (__cetta_abt_instantiate $signature $avoid $term))
+
+; Syntax held as code: the argument is data, and it is never run.
+(= (langdef:quote-syntax $syntax)
+   (__cetta_abt_quote_syntax $syntax))
 
 ; A code instance carries the chosen signature, sealed source, instantiated
 ; syntax, and complete freshening receipts. Syntax and receipts are sealed

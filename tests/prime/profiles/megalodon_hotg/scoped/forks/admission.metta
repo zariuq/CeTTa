@@ -1,4 +1,4 @@
-(hol:profile megalodon-hotg)
+(set:profile megalodon-hotg)
 
 ; FORK-ADM: run first, or admit first?  A program may run before it is
 ; formed; a published claim needs the formation-sensitive judgment.
@@ -7,7 +7,7 @@
 (= (set:twice $f $x) ($f ($f $x)))
 !(set:twice Power Empty)
 ; The mathematical face declines the same name: no authority from spelling.
-!(hol:check (set:twice Power Empty) set)
+!(set:check (set:twice Power Empty) set)
 
 ; Operational typing observes what a producer actually yields...
 (= (candidate) (superpose ((lam x x) u0)))
@@ -18,4 +18,4 @@
 !(type:check (lam x x) u0)
 ; A proposition-valued codomain is not a type; the judgment abstains rather
 ; than admitting an unformed arrow.
-!(hol:formed (-> (x : set) (In x x)))
+!(set:formed (-> (x : set) (In x x)))
