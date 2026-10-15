@@ -47,3 +47,37 @@
 !(add-atom &A (reading 99))
 !(match &self (keep-handle $h) (run $h))
 !(match &self (keep-name $c) (run $c))
+
+; A captured body waits for explicit activation. Capturing or storing its
+; value does not execute its effects; each requested activation runs once.
+; Implicit shared fields stay correlated, while returned code stays data.
+
+; explicit-both
+!(let $code (ctx:capture &self (+ 1 2)) (Pair (eval $code &self) (run $code)))
+
+; capture-unused
+!(let $code (ctx:capture &self (println! unexpected)) done)
+
+; capture-selected
+!(let $code (ctx:capture &self (chain (println! body) $ignored 7)) (Pair (run $code) (eval $code &self)))
+
+; capture-producer
+(= (ca:make) (chain (println! make) $ignored (ctx:capture &self (chain (println! body) $ignored 7)))) !(let $code (ca:make) (Pair (run $code) (eval $code &self)))
+
+; capture-lexical
+!(let $x 5 (let $code (ctx:capture &self (+ $x 1)) (eval $code &self)))
+
+; capture-choice
+(= (ca:make $x) (ctx:capture &self (Pair $x $x))) !(let $code (ca:make (superpose (1 2))) (run $code))
+
+; capture-quote
+!(let $code (ctx:capture &self (quote (+ 1 2))) (Pair (run $code) (eval $code &self)))
+
+; earned-data
+!(let $code (cons-atom + (1 2)) (Pair $code (eval $code)))
+
+; visible-source
+!(Pair (eval (+ 1 2) &self) (run (+ 1 2)))
+
+; empty-code
+!(run (superpose ())) !(eval (superpose ()) &self)

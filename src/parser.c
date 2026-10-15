@@ -38,6 +38,7 @@ size_t parser_supported_expression_depth(void) {
 #endif
 
 static __thread bool g_rational_literals_enabled = true;
+static __thread bool g_runtime_data_symbols = false;
 static __thread bool g_universal_name_syntax_enabled = false;
 static __thread bool g_list_syntax_enabled = false;
 static __thread bool g_namespace_sugar_enabled = true;
@@ -45,6 +46,17 @@ static __thread ParserBareDollarMode g_bare_dollar_mode =
     CETTA_BARE_DOLLAR_DEFAULT_MODE;
 static ParserDocumentIdsBackend g_document_ids_backend;
 static __thread bool g_document_ids_backend_active = false;
+
+static SymbolId parser_intern_token(const char *text) {
+    return g_runtime_data_symbols
+        ? symbol_intern_data_cstr(g_symbols, text)
+        : symbol_intern_cstr(g_symbols, text);
+}
+
+static Atom *parser_symbol_token(Arena *arena, const char *text) {
+    return g_runtime_data_symbols ? atom_symbol_data(arena, text)
+        : atom_symbol_id(arena, parser_intern_token(text));
+}
 
 static const ParserSyntaxFormSpec g_syntax_forms[] = {
     {PARSER_SYNTAX_QUOTE,
@@ -531,7 +543,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
         return expr;
     }
 
-    SymbolId head = expr->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expr->expr.elems[0]);
     bool is_var = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_VAR);
     bool is_ref = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_REF);
     bool is_exec = parser_symbol_is_syntax_form(head, PARSER_SYNTAX_EXEC);
@@ -553,8 +565,8 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
     Atom *arg = expr->expr.elems[1];
     if (is_var) {
         if (arg->kind == ATOM_SYMBOL) {
-            VarId id = parser_var_scope_id(scope, arg->sym_id);
-            return atom_var_with_spelling(a, arg->sym_id, id);
+            VarId id = parser_var_scope_id(scope, atom_symbol_current_id(arg));
+            return atom_var_with_spelling(a, atom_symbol_current_id(arg), id);
         }
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key)) {
@@ -572,7 +584,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
             char *legacy = arena_alloc(a, len + 2u);
             legacy[0] = '&';
             memcpy(legacy + 1u, name, len + 1u);
-            return atom_symbol(a, legacy);
+            return parser_symbol_token(a, legacy);
         }
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key) &&
@@ -698,6 +710,38 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
     return PARSER_SYN_LOWER_INVALID;
 }
 
+typedef enum {
+    PARSER_NAMED_LITERAL_NONE,
+    PARSER_NAMED_LITERAL_TRUE,
+    PARSER_NAMED_LITERAL_FALSE,
+    PARSER_NAMED_LITERAL_PI,
+    PARSER_NAMED_LITERAL_EXP,
+} ParserNamedLiteral;
+
+/* Both readers classify the same bounded token before selecting their atom
+ * or universe representation. The lexer already supplies its exact length. */
+static ParserNamedLiteral parser_named_literal(const char *token, size_t length) {
+    switch (length) {
+    case 2u:
+        if (memcmp(token, "PI", 2u) == 0)
+            return PARSER_NAMED_LITERAL_PI;
+        break;
+    case 3u:
+        if (memcmp(token, "EXP", 3u) == 0)
+            return PARSER_NAMED_LITERAL_EXP;
+        break;
+    case 4u:
+        if (memcmp(token, "True", 4u) == 0)
+            return PARSER_NAMED_LITERAL_TRUE;
+        break;
+    case 5u:
+        if (memcmp(token, "False", 5u) == 0)
+            return PARSER_NAMED_LITERAL_FALSE;
+        break;
+    }
+    return PARSER_NAMED_LITERAL_NONE;
+}
+
 typedef struct {
     bool rational_literals;
     bool namespace_sugar;
@@ -755,25 +799,12 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
         return universe ? (ParserWordValue){.id = CETTA_ATOM_ID_NONE}
                         : (ParserWordValue){.atom = NULL};
     }
-    /* These spellings have distinct first bytes. The lexer supplies the
-     * exact length, so bounded comparisons preserve exact-match semantics. */
-    switch (tok[0]) {
-    case 'T':
-        if (length == 4u && memcmp(tok, "True", 4u) == 0)
-            return parser_word_bool(a, universe, true);
-        break;
-    case 'F':
-        if (length == 5u && memcmp(tok, "False", 5u) == 0)
-            return parser_word_bool(a, universe, false);
-        break;
-    case 'P':
-        if (length == 2u && memcmp(tok, "PI", 2u) == 0)
-            return parser_word_float(a, universe, M_PI);
-        break;
-    case 'E':
-        if (length == 3u && memcmp(tok, "EXP", 3u) == 0)
-            return parser_word_float(a, universe, M_E);
-        break;
+    switch (parser_named_literal(tok, length)) {
+    case PARSER_NAMED_LITERAL_TRUE: return parser_word_bool(a, universe, true);
+    case PARSER_NAMED_LITERAL_FALSE: return parser_word_bool(a, universe, false);
+    case PARSER_NAMED_LITERAL_PI: return parser_word_float(a, universe, M_PI);
+    case PARSER_NAMED_LITERAL_EXP: return parser_word_float(a, universe, M_E);
+    case PARSER_NAMED_LITERAL_NONE: break;
     }
 
     char *endp;
@@ -806,9 +837,11 @@ static inline ParserWordValue parser_ground_word(Arena *a, TermUniverse *univers
 
     const char *canonical = policy.namespace_sugar
         ? parser_namespace_token(a, tok) : tok;
-    SymbolId spelling = symbol_intern_cstr(g_symbols, canonical);
-    return universe ? (ParserWordValue){.id = tu_intern_symbol(universe, spelling)}
-                    : (ParserWordValue){.atom = atom_symbol_id(a, spelling)};
+    if (universe) {
+        SymbolId spelling = symbol_intern_cstr(g_symbols, canonical);
+        return (ParserWordValue){.id = tu_intern_symbol(universe, spelling)};
+    }
+    return (ParserWordValue){.atom = parser_symbol_token(a, canonical)};
 }
 
 static AtomId parser_project_word_id(TermUniverse *universe, Arena *scratch,
@@ -970,14 +1003,14 @@ AtomId parser_host_projection_v1_braces(
 static AtomId parser_project_atom_leaf(ParserHostProjectionV1 *projection, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL: {
-        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
-        size_t len = symbol_len(g_symbols, atom->sym_id);
+        const char *bytes = atom_symbol_bytes(atom);
+        size_t len = atom_symbol_length(atom);
         return parser_host_projection_v1_word_bytes(
             projection, (const uint8_t *)bytes, len);
     }
     case ATOM_VAR: {
-        const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
-        size_t len = symbol_len(g_symbols, atom->sym_id);
+        const char *bytes = atom_symbol_bytes(atom);
+        size_t len = atom_symbol_length(atom);
         return len == 0u
                    ? parser_host_projection_v1_anonymous_variable(projection)
                    : parser_host_projection_v1_variable_bytes(
@@ -1111,6 +1144,23 @@ bool parser_project_document_ids(Atom *const *atoms, uint32_t atom_len,
 
 /* ── Parse a single token or expression ─────────────────────────────────── */
 
+/* Prime's reader: a bracket or brace touching the end of a term is a
+ * meta-argument, T[...] or T{...}, read as the wrapper (meta T [...]) or
+ * (meta T {...}); they apply left to right, and a prefix binds tighter, so
+ * @(f $x)[$x := @a] wraps the code @(f $x).  The reader gives no head a
+ * meaning (the core reads [k := v] on code as substitution, and {...} on a
+ * scope-forming construct as its crossing set).  Inside a touching bracket
+ * `:=` is a word; with layout before it, `[` opens a list, in which `:=` is
+ * refused, so the one-space slip is caught.  Brackets and braces end
+ * tokens. */
+static bool parser_at_binding_mark(const char *text, size_t text_len,
+                                   size_t pos) {
+    return parser_more(text, text_len, pos) && text[pos] == ':' &&
+           parser_more(text, text_len, pos + 1u) && text[pos + 1u] == '=' &&
+           !(parser_more(text, text_len, pos + 2u) &&
+             is_list_token_char(text[pos + 2u]));
+}
+
 static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
     Arena *a, char *tok, size_t len, ParserVarScope *scope) {
     /* Prime's bare `$` is a fresh anonymous variable. Named variables keep
@@ -1119,7 +1169,7 @@ static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
         if (len > 1) {
             const char *spelling_text =
                 parser_canonicalize_namespace_token(a, tok + 1);
-            SymbolId spelling = symbol_intern_cstr(g_symbols, spelling_text);
+            SymbolId spelling = parser_intern_token(spelling_text);
             VarId id = parser_var_scope_id(scope, spelling);
             return atom_var_with_spelling(a, spelling, id);
         }
@@ -1130,17 +1180,9 @@ static inline __attribute__((always_inline)) Atom *parser_read_word_atom(
         }
     }
 
-    ParserWordPolicy policy = {
-        g_rational_literals_enabled, g_namespace_sugar_enabled};
+    ParserWordPolicy policy = {g_rational_literals_enabled,
+                               g_namespace_sugar_enabled};
     return parser_ground_word(a, NULL, tok, len, policy).atom;
-}
-
-/* The binding mark belongs to touching meta-arguments, not an ordinary list. */
-static bool parser_at_binding_mark(const char *text, size_t text_len, size_t pos) {
-    return parser_more(text, text_len, pos) && text[pos] == ':' &&
-           parser_more(text, text_len, pos + 1u) && text[pos + 1u] == '=' &&
-           !(parser_more(text, text_len, pos + 2u) &&
-             is_list_token_char(text[pos + 2u]));
 }
 
 typedef union {
@@ -1583,8 +1625,17 @@ Atom *parse_sexpr_n(Arena *arena, const char *text, size_t text_len, size_t *pos
     return result;
 }
 
-Atom *parse_sexpr(Arena *arena, const char *text, size_t *pos) {
-    return parse_sexpr_n(arena, text, PARSER_TEXT_NUL_TERMINATED, pos);
+Atom *parse_data_sexpr_n(Arena *a, const char *text, size_t text_len,
+                         size_t *pos) {
+    bool previous = g_runtime_data_symbols;
+    g_runtime_data_symbols = true;
+    Atom *result = parse_sexpr_n(a, text, text_len, pos);
+    g_runtime_data_symbols = previous;
+    return result;
+}
+
+Atom *parse_sexpr(Arena *a, const char *text, size_t *pos) {
+    return parse_sexpr_n(a, text, PARSER_TEXT_NUL_TERMINATED, pos);
 }
 
 static AtomId parse_sexpr_to_id_scoped(TermUniverse *universe, Arena *scratch,
@@ -1617,7 +1668,7 @@ bool parser_syn_exec_payload(Atom *form, Atom **payload_out) {
     if (!form || form->kind != ATOM_EXPR || form->expr.len != 2u ||
         form->expr.elems[0]->kind != ATOM_SYMBOL ||
         !parser_symbol_is_syntax_form(
-            form->expr.elems[0]->sym_id, PARSER_SYNTAX_EXEC)) {
+            atom_symbol_current_id(form->expr.elems[0]), PARSER_SYNTAX_EXEC)) {
         return false;
     }
     if (payload_out) *payload_out = form->expr.elems[1];
@@ -1717,7 +1768,7 @@ static bool parser_render_record_var(ParserRenderContext *ctx, Atom *atom) {
     ctx->vars[ctx->len++] = (ParserRenderVar){
         .id = atom->var_id,
         .named = atom->name_key != NULL,
-        .spelling = atom->sym_id,
+        .spelling = atom_symbol_current_id(atom),
         .key = atom->name_key,
     };
     return true;
@@ -1838,6 +1889,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
@@ -1940,7 +1992,7 @@ render_node:
         } else {
             Atom *head = atom->expr.len ? atom->expr.elems[0] : NULL;
             SymbolId head_id = head && head->kind == ATOM_SYMBOL
-                ? head->sym_id : SYMBOL_ID_NONE;
+                ? atom_symbol_current_id(head) : SYMBOL_ID_NONE;
             Atom *payload = atom->expr.len == 2u ? atom->expr.elems[1] : NULL;
             Atom *key = NULL;
             if (payload && head && atom_is_symbol(head, "resolve-name") &&

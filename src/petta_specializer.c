@@ -328,9 +328,9 @@ static void petta_specializer_trace_variables(Atom *root) {
         if (atom->kind == ATOM_VAR) {
             fprintf(
                 stderr, " %s=%" PRIu64,
-                atom->sym_id == SYMBOL_ID_NONE
+                atom_symbol_current_id(atom) == SYMBOL_ID_NONE
                     ? "<structural>"
-                    : symbol_bytes(g_symbols, atom->sym_id),
+                    : atom_symbol_bytes(atom),
                 (uint64_t)atom->var_id);
             continue;
         }
@@ -610,8 +610,8 @@ static bool petta_pattern_path_crosses_cons(
             return true;
         Atom *head = node->expr.elems[0];
         if (head && head->kind == ATOM_SYMBOL &&
-            (strcmp(symbol_bytes(g_symbols, head->sym_id), "cons") == 0 ||
-             strcmp(symbol_bytes(g_symbols, head->sym_id), "cons-atom") == 0))
+            (strcmp(symbol_bytes(g_symbols, atom_symbol_current_id(head)), "cons") == 0 ||
+             strcmp(symbol_bytes(g_symbols, atom_symbol_current_id(head)), "cons-atom") == 0))
             return true;
         node = node->expr.elems[path[index]];
     }
@@ -759,8 +759,8 @@ static bool petta_specialization_key_atom(
         return petta_string_append(builder, "VAR");
     if (atom->kind == ATOM_SYMBOL) {
         return petta_string_append_span(
-            builder, symbol_bytes(g_symbols, atom->sym_id),
-            symbol_len(g_symbols, atom->sym_id));
+            builder, atom_symbol_bytes(atom),
+            atom_symbol_length(atom));
     }
     if (atom->kind == ATOM_EXPR) {
         if (!petta_string_append(builder, "["))
@@ -1028,7 +1028,7 @@ static PeTTaNamedArity petta_specializer_named_arity(
         return petta_semantics_named_arity(
             context->space, &context->scratch, head, supplied);
     }
-    SymbolId symbol = head->sym_id;
+    SymbolId symbol = atom_symbol_current_id(head);
     uint32_t mixed = symbol ^ (symbol >> 8u) ^
         (symbol >> 16u) ^ (symbol >> 24u);
     mixed = mixed * 33u + (uint32_t)supplied;
@@ -1153,7 +1153,7 @@ static uint64_t petta_forest_supplier_class(
     case ATOM_SYMBOL:
         return UINT64_C(0x22) |
             ((uint64_t)petta_symbol_classification(
-                 context, atom->sym_id) << 8);
+                 context, atom_symbol_current_id(atom)) << 8);
     case ATOM_GROUNDED:
         return UINT64_C(0x33) | ((uint64_t)atom->ground.gkind << 8);
     case ATOM_EXPR: {
@@ -1163,7 +1163,7 @@ static uint64_t petta_forest_supplier_class(
         uint8_t classification = 0u;
         if (head && head->kind == ATOM_SYMBOL)
             classification = petta_symbol_classification(
-                context, head->sym_id);
+                context, atom_symbol_current_id(head));
         else if (head && head->kind == ATOM_VAR)
             classification = 0xffu;
         uint64_t mixed = UINT64_C(0x55) |
@@ -1310,7 +1310,7 @@ static bool petta_query_forest_closed_leaf_shape(
         }
         if (atom->kind == ATOM_SYMBOL) {
             mixed = petta_forest_mix(
-                mixed, UINT64_C(0x22) | ((uint64_t)atom->sym_id << 8));
+                mixed, UINT64_C(0x22) | ((uint64_t)atom_symbol_current_id(atom) << 8));
             continue;
         }
         return false;
@@ -1508,9 +1508,9 @@ static bool petta_relation_body_facts(
         }
         if (atom->expr.len > 1u && head &&
             head->kind == ATOM_SYMBOL &&
-            petta_symbol_is_callable(context, head->sym_id) &&
+            petta_symbol_is_callable(context, atom_symbol_current_id(head)) &&
             space_equations_may_match_known_head(
-                context->space, head->sym_id)) {
+                context->space, atom_symbol_current_id(head))) {
             bool carries = false;
             for (CettaExprIndex index = 1u;
                  ok && !carries && index < atom->expr.len; index++) {
@@ -1520,7 +1520,7 @@ static bool petta_relation_body_facts(
             }
             if (ok && carries)
                 ok = petta_symbol_vector_push_unique(
-                    forwards, head->sym_id);
+                    forwards, atom_symbol_current_id(head));
         }
         for (CettaExprIndex index = 0u;
              ok && index < atom->expr.len; index++) {
@@ -1818,7 +1818,7 @@ static bool petta_value_specializable(
         return base && arguments;
     }
     return atom->kind == ATOM_SYMBOL &&
-           petta_symbol_is_callable(context, atom->sym_id);
+           petta_symbol_is_callable(context, atom_symbol_current_id(atom));
 }
 
 /*
@@ -1879,7 +1879,7 @@ petta_query_arguments_may_supply_specializable_value(
         Atom *atom = cursor.source;
         if (atom->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context, atom->sym_id)) {
+                context, atom_symbol_current_id(atom))) {
             return PETTA_RELEVANCE_YES;
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
@@ -1895,7 +1895,7 @@ petta_query_arguments_may_supply_specializable_value(
         /* Both head facts belong to the same revision and symbol table.
          * Read their prepared classification once per head observation. */
         uint8_t classification = head->kind == ATOM_SYMBOL
-            ? petta_symbol_classification(context, head->sym_id) : 0u;
+            ? petta_symbol_classification(context, atom_symbol_current_id(head)) : 0u;
         if (classification & PETTA_SYMBOL_CALLABLE)
             return PETTA_RELEVANCE_YES;
         if (atom->expr.len == 3u &&
@@ -1964,7 +1964,7 @@ petta_query_values_may_supply_specializable_value(
         }
         Atom *atom = value.skeleton;
         if (atom->kind == ATOM_SYMBOL &&
-            petta_symbol_is_callable(context, atom->sym_id)) {
+            petta_symbol_is_callable(context, atom_symbol_current_id(atom))) {
             return PETTA_RELEVANCE_YES;
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
@@ -1981,7 +1981,7 @@ petta_query_values_may_supply_specializable_value(
         }
         Atom *head = head_value.skeleton;
         uint8_t classification = head->kind == ATOM_SYMBOL
-            ? petta_symbol_classification(context, head->sym_id) : 0u;
+            ? petta_symbol_classification(context, atom_symbol_current_id(head)) : 0u;
         if (classification & PETTA_SYMBOL_CALLABLE)
             return PETTA_RELEVANCE_YES;
         if (atom->expr.len == 3u &&
@@ -2638,7 +2638,7 @@ static Atom *petta_specializer_ready_value(
     }
 
     bool callable = petta_symbol_is_callable(
-        context, head->sym_id);
+        context, atom_symbol_current_id(head));
     PeTTaNamedArity arity = callable
         ? petta_specializer_named_arity(
               context, head, supplied)
@@ -2737,7 +2737,7 @@ static bool petta_analyze_forwarded_calls(
         if (atom->expr.len > 1u &&
             atom->expr.elems[0]->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context, atom->expr.elems[0]->sym_id)) {
+                context, atom_symbol_current_id(atom->expr.elems[0]))) {
             bool carries = false;
             for (CettaExprIndex index = 1u;
                  index < atom->expr.len; index++) {
@@ -3206,7 +3206,7 @@ static bool petta_specializer_body_raises_nothing(
         return true;
     const Atom *head = body->expr.elems[0];
     SymbolId head_id = head->kind == ATOM_SYMBOL
-        ? head->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(head) : SYMBOL_ID_NONE;
     if (head_id == g_builtin_syms.quote)
         return true;
     if (head_id != SYMBOL_ID_NONE) {
@@ -3281,11 +3281,11 @@ static bool petta_specializer_calls_directly(
     PettaSpecializerContext *context,
     PettaSpecializationRecord *record, const Atom *callee) {
     if (!callee || callee->kind != ATOM_SYMBOL ||
-        !petta_specializer_head_is_equational(callee->sym_id))
+        !petta_specializer_head_is_equational(atom_symbol_current_id(callee)))
         return false;
     PettaSymbolVector heads = {0};
     bool direct = petta_specializer_callee_raises_nothing(
-        context, callee->sym_id, &heads, 0u);
+        context, atom_symbol_current_id(callee), &heads, 0u);
     for (size_t index = 0u; direct && index < heads.len; index++) {
         bool known = false;
         for (size_t seen = 0u;
@@ -3381,7 +3381,7 @@ static bool petta_materialize_specialization(
                 continue;
             if (!bindings_add_id(
                     &selected, formal->var_id,
-                    formal->sym_id, candidate->value)) {
+                    atom_symbol_current_id(formal), candidate->value)) {
                 context->capacity = true;
                 bindings_free(&selected);
                 return false;
@@ -3549,7 +3549,7 @@ static bool petta_specializer_analyze_call(
         call->expr.elems[0]->kind != ATOM_SYMBOL) {
         return true;
     }
-    SymbolId source = call->expr.elems[0]->sym_id;
+    SymbolId source = atom_symbol_current_id(call->expr.elems[0]);
     petta_specializer_trace_atom("analyze call: ", call);
     if (!space_equations_may_match_known_head(
             context->space, source)) {
@@ -3856,14 +3856,14 @@ static SymbolId petta_mutated_source_head(Atom *atom) {
         return lhs && lhs->kind == ATOM_EXPR &&
                lhs->expr.len > 0u &&
                lhs->expr.elems[0]->kind == ATOM_SYMBOL
-            ? lhs->expr.elems[0]->sym_id
+            ? atom_symbol_current_id(lhs->expr.elems[0])
             : SYMBOL_ID_NONE;
     }
     if (atom_is_symbol_id(
             atom->expr.elems[0],
             g_builtin_syms.colon) &&
         atom->expr.elems[1]->kind == ATOM_SYMBOL) {
-        return atom->expr.elems[1]->sym_id;
+        return atom_symbol_current_id(atom->expr.elems[1]);
     }
     return SYMBOL_ID_NONE;
 }
@@ -4059,7 +4059,7 @@ petta_specializer_pattern_root(
         lhs && lhs->kind == ATOM_EXPR &&
         lhs->expr.len > 0u &&
         lhs->expr.elems[0]->kind == ATOM_SYMBOL
-            ? lhs->expr.elems[0]->sym_id
+            ? atom_symbol_current_id(lhs->expr.elems[0])
             : SYMBOL_ID_NONE;
     if (head == SYMBOL_ID_NONE)
         return NULL;
@@ -4118,7 +4118,7 @@ petta_specializer_equation_plan(
         lhs && lhs->kind == ATOM_EXPR &&
         lhs->expr.len > 0u &&
         lhs->expr.elems[0]->kind == ATOM_SYMBOL
-            ? lhs->expr.elems[0]->sym_id
+            ? atom_symbol_current_id(lhs->expr.elems[0])
             : SYMBOL_ID_NONE;
     if (head == SYMBOL_ID_NONE)
         return NULL;

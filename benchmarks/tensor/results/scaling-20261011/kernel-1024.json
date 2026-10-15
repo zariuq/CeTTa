@@ -1,0 +1,317 @@
+{
+  "status": "passed",
+  "programme_complete": false,
+  "seed": 109107,
+  "sizes": [
+    {
+      "rows": 1000,
+      "dimension": 1024,
+      "index_build_seconds": 0.00779354898,
+      "samples": [
+        {
+          "wide_ms": 0.111450965,
+          "screen_ms": 0.132621964,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.104431005,
+          "screen_ms": 0.124640996,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.102761027,
+          "screen_ms": 0.123761012,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.102040998,
+          "screen_ms": 0.123630976,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.102691003,
+          "screen_ms": 0.126910978,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.101690996,
+          "screen_ms": 0.12380199,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.102121965,
+          "screen_ms": 0.123590988,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.101261016,
+          "screen_ms": 0.123812002,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.100932026,
+          "screen_ms": 0.125791004,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.101461017,
+          "screen_ms": 0.123652047,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.101881975,
+          "screen_ms": 0.123621023,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.101690996,
+          "screen_ms": 0.123812002,
+          "candidates": 5
+        }
+      ],
+      "matrix_bytes": 8192000,
+      "compact_bytes": 4096000,
+      "certificate_bytes": 16000,
+      "p50": {
+        "wide_ms": 0.1019614865,
+        "screen_ms": 0.123806996,
+        "candidates": 5.0
+      }
+    },
+    {
+      "rows": 4000,
+      "dimension": 1024,
+      "index_build_seconds": 0.031738141,
+      "samples": [
+        {
+          "wide_ms": 0.563127047,
+          "screen_ms": 0.549647026,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.537236978,
+          "screen_ms": 0.525717041,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.471325999,
+          "screen_ms": 0.494826003,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.407715037,
+          "screen_ms": 0.50683599,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.41735603,
+          "screen_ms": 0.497146044,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.408585009,
+          "screen_ms": 0.498276029,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.419855001,
+          "screen_ms": 0.490586041,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.411215995,
+          "screen_ms": 0.499075977,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.416164985,
+          "screen_ms": 0.491166022,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.411715009,
+          "screen_ms": 0.498256006,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.460314972,
+          "screen_ms": 0.492057006,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 0.425975013,
+          "screen_ms": 0.51242701,
+          "candidates": 5
+        }
+      ],
+      "matrix_bytes": 32768000,
+      "compact_bytes": 16384000,
+      "certificate_bytes": 64000,
+      "p50": {
+        "wide_ms": 0.4186055155,
+        "screen_ms": 0.4982660175,
+        "candidates": 5.0
+      }
+    },
+    {
+      "rows": 32000,
+      "dimension": 1024,
+      "index_build_seconds": 0.254190232,
+      "samples": [
+        {
+          "wide_ms": 5.60486101,
+          "screen_ms": 4.342645,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 4.944093,
+          "screen_ms": 4.237013,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.602661,
+          "screen_ms": 4.29974403,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.381278,
+          "screen_ms": 4.46515699,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 6.08890696,
+          "screen_ms": 4.43081598,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.89960499,
+          "screen_ms": 4.31986398,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.82258403,
+          "screen_ms": 4.30705404,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.94986498,
+          "screen_ms": 4.87393199,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 6.25311903,
+          "screen_ms": 4.44889697,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 6.162078,
+          "screen_ms": 4.76981001,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 6.35148102,
+          "screen_ms": 4.49471601,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 5.95689501,
+          "screen_ms": 4.71310003,
+          "candidates": 5
+        }
+      ],
+      "matrix_bytes": 262144000,
+      "compact_bytes": 131072000,
+      "certificate_bytes": 512000,
+      "p50": {
+        "wide_ms": 5.924734985000001,
+        "screen_ms": 4.439856475,
+        "candidates": 5.0
+      }
+    },
+    {
+      "rows": 128000,
+      "dimension": 1024,
+      "index_build_seconds": 1.00450629,
+      "samples": [
+        {
+          "wide_ms": 20.267456,
+          "screen_ms": 16.895293,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 20.665642,
+          "screen_ms": 16.949294,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 20.328487,
+          "screen_ms": 17.187167,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 20.087944,
+          "screen_ms": 16.593329,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.406675,
+          "screen_ms": 16.664051,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.634548,
+          "screen_ms": 17.133787,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 20.237295,
+          "screen_ms": 16.8558231,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 20.086274,
+          "screen_ms": 16.802423,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.458595,
+          "screen_ms": 17.025115,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.515927,
+          "screen_ms": 16.927394,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.841121,
+          "screen_ms": 16.568159,
+          "candidates": 5
+        },
+        {
+          "wide_ms": 19.576387,
+          "screen_ms": 16.994335,
+          "candidates": 5
+        }
+      ],
+      "matrix_bytes": 1048576000,
+      "compact_bytes": 524288000,
+      "certificate_bytes": 2048000,
+      "p50": {
+        "wide_ms": 19.963697500000002,
+        "screen_ms": 16.9113435,
+        "candidates": 5.0
+      }
+    }
+  ],
+  "scope": "resident native matvec plus selection; excludes service and interpreter",
+  "retained_dataset_bytes": 0,
+  "hashes": {
+    "binary": "9820567f3a9cae69542b345f9b70f58f03a4201a2cef7b220a5ec242c4627289",
+    "src/tensor.c": "b2dc9e5c398b21a23dce41f4b266cedde3b9c679512b8f6daeaef4f153dea1ac",
+    "src/tensor.h": "735c2e5419f34a57624aa2be7b835d8fd9d3e8ed994dd06d22fd88b1f684971b",
+    "benchmarks/tensor/screening.py": "8371ba49f4f3921e55490dc01c00f9a3c6bdae6cacb7fb5ad9ec6cb39fdd63d6",
+    "benchmarks/tensor/screening.c": "ce4056486789392f3205f484408c10153e8aa6f5fa1bfa0fc9b2821e7bc06b53"
+  },
+  "artifacts_unchanged": true
+}

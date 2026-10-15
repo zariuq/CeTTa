@@ -1785,8 +1785,10 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
             return;
         }
     }
-    if (frame->selected && (he_minimal_instruction(source) ||
-        atom_head_symbol_id(source) == g_builtin_syms.superpose) &&
+    /* As on the recursive tuple route, a minimal instruction remains
+     * executable in a space without a declared function signature. */
+    if ((he_minimal_instruction(source) ||
+        (frame->selected && atom_head_symbol_id(source) == g_builtin_syms.superpose)) &&
         atom_head_symbol_id(source) != g_builtin_syms.call_native) {
         he_canonical_instruction_push(frame, source, return_type, env,
             true, frame->typed, sink);
@@ -1834,14 +1836,14 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
             return;
         }
         if (he_curried_arrows_enabled() && head->kind == ATOM_SYMBOL &&
-            is_grounded_op(head->sym_id) &&
-            he_curried_grounded_partial(head->sym_id, nargs)) {
+            is_grounded_op(atom_symbol_current_id(head)) &&
+            he_curried_grounded_partial(atom_symbol_current_id(head), nargs)) {
             /* A grounded operation keeps its arity: applied to fewer
              * arguments, under curried arrows, it is a value. */
             outcome_set_add(sink, source, env);
             return;
         }
-        if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id)) {
+        if (head->kind == ATOM_SYMBOL && is_grounded_op(atom_symbol_current_id(head))) {
             CettaCallOutcome produced;
             bool handled = dispatch_native_call(frame->space, a, head,
                 source->expr.elems + 1u, nargs, &produced);
@@ -2219,7 +2221,7 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
             return;
         }
     }
-    if (!frame->sourced_match && !match_query_is_connective(registers->source[0])) {
+    if (!frame->sourced_match && !space_query_is_connective(registers->source[0])) {
         MatchStep steps[16];
         uint32_t count = 1u;
         steps[0] = (MatchStep){frame->match_spaces[0], registers->source[0]};
@@ -2227,7 +2229,7 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
         while (count < 16u && body->kind == ATOM_EXPR && body->expr.len == 4u &&
                 atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match)) {
             Atom *pattern = resolve_registry_refs(a, body->expr.elems[2]);
-            if (match_query_is_connective(pattern))
+            if (space_query_is_connective(pattern))
                 break;
             Space *space = g_registry ? resolve_registry_space_payload(g_registry,
                 resolve_registry_refs(a, body->expr.elems[1])) : NULL;
@@ -2261,7 +2263,8 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
         outcome_set_init(&next);
         for (CettaCount i = 0u; i < frame->work.len; i++) {
             BindingSet rows;
-            if (!match_query_bindings(frame->match_spaces[leg], a,
+            prime_native_observe_space_read(frame->match_spaces[leg]);
+            if (!space_query_bindings(frame->match_spaces[leg], a,
                     registers->source[leg], &frame->work.items[i].env, &rows)) {
                 eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
                 outcome_set_free(&next);
@@ -2400,7 +2403,8 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
         if (!frame->sourced_match && registers->len > 1u) {
             CettaExprIndex last = registers->len - 1u;
             BindingSet rows;
-            if (!match_query_bindings(frame->match_spaces[last], a,
+            prime_native_observe_space_read(frame->match_spaces[last]);
+            if (!space_query_bindings(frame->match_spaces[last], a,
                     registers->source[last], &prefix->env, &rows)) {
                 eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
                 return;
@@ -2624,7 +2628,7 @@ static bool he_canonical_call_compilable(Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR || !atom->expr.len ||
         atom->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
-    SymbolId head = atom->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(atom->expr.elems[0]);
     return !is_grounded_op(head) && !symbol_id_is_builtin(head);
 }
 

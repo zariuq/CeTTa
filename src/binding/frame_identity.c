@@ -15,11 +15,70 @@ typedef struct {
     uint32_t next_free;
 } FrameIdentityCell;
 
-static FrameIdentityCell g_frame_identities[CETTA_FRAME_HANDLE_MASK + 1u];
+/* Cells live in segments allocated when their first handle is issued.  A
+ * published segment is never moved or freed, so a reader holding a handle
+ * reaches its cell without a lock. */
+enum {
+    FRAME_IDENTITY_SEGMENT_BITS = 16u,
+    FRAME_IDENTITY_SEGMENT_CELLS = 1u << FRAME_IDENTITY_SEGMENT_BITS,
+    FRAME_IDENTITY_SEGMENTS =
+        (CETTA_FRAME_HANDLE_LIMIT + FRAME_IDENTITY_SEGMENT_CELLS - 1u) /
+        FRAME_IDENTITY_SEGMENT_CELLS,
+};
+
+static FrameIdentityCell *_Atomic g_frame_identity_segments[FRAME_IDENTITY_SEGMENTS];
 static pthread_mutex_t g_frame_identity_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_frame_identity_next_handle = 1u;
+static uint32_t g_frame_identity_handle_limit = CETTA_FRAME_HANDLE_LIMIT;
 static uint32_t g_frame_identity_free_handle;
 static _Atomic uint64_t g_frame_identity_exhaustions;
+
+/* The cell of an issued handle, or NULL when its segment was never
+ * allocated (the handle was never issued). */
+static FrameIdentityCell *frame_identity_cell(uint32_t handle) {
+    if (handle == 0u || handle >= CETTA_FRAME_HANDLE_LIMIT)
+        return NULL;
+    FrameIdentityCell *segment = atomic_load_explicit(
+        &g_frame_identity_segments[handle >> FRAME_IDENTITY_SEGMENT_BITS],
+        memory_order_acquire);
+    return segment
+        ? &segment[handle & (FRAME_IDENTITY_SEGMENT_CELLS - 1u)] : NULL;
+}
+
+/* Called with the mutex held, before `handle` is issued for the first time. */
+static bool frame_identity_segment_ensure(uint32_t handle) {
+    _Atomic(FrameIdentityCell *) *slot =
+        &g_frame_identity_segments[handle >> FRAME_IDENTITY_SEGMENT_BITS];
+    if (atomic_load_explicit(slot, memory_order_relaxed))
+        return true;
+    FrameIdentityCell *segment =
+        calloc(FRAME_IDENTITY_SEGMENT_CELLS, sizeof(*segment));
+    if (!segment)
+        return false;
+    atomic_store_explicit(slot, segment, memory_order_release);
+    return true;
+}
+
+static uint32_t frame_identity_generation_max(uint32_t handle) {
+    return handle < CETTA_FRAME_CLASS1_FIRST ? CETTA_FRAME_GENERATION_MAX
+         : handle < CETTA_FRAME_CLASS2_FIRST ? UINT32_C(0x3e)
+         : handle < CETTA_FRAME_CLASS3_FIRST ? UINT32_C(0x6)
+         : UINT32_C(0x2);
+}
+
+static CettaFrameIdentity frame_identity_spell(uint32_t handle,
+                                               uint32_t generation) {
+    if (handle < CETTA_FRAME_CLASS1_FIRST)
+        return (generation << CETTA_FRAME_HANDLE_BITS) | handle;
+    if (handle < CETTA_FRAME_CLASS2_FIRST)
+        return (UINT32_C(2) << 30) | (generation << 24) |
+               (handle - CETTA_FRAME_CLASS1_FIRST);
+    if (handle < CETTA_FRAME_CLASS3_FIRST)
+        return (UINT32_C(6) << 29) | (generation << 26) |
+               (handle - CETTA_FRAME_CLASS2_FIRST);
+    return (UINT32_C(14) << 28) | (generation << 26) |
+           (handle - CETTA_FRAME_CLASS3_FIRST);
+}
 
 /* Free handles kept by the thread that released them, so minting and the
  * last release of an activation's identity take no lock.  A handle here has
@@ -44,7 +103,7 @@ static void frame_identity_return_local_handles(void *raw) {
     pthread_mutex_lock(&g_frame_identity_mutex);
     while (local->len > 0u) {
         uint32_t handle = local->handles[--local->len];
-        g_frame_identities[handle].next_free = g_frame_identity_free_handle;
+        frame_identity_cell(handle)->next_free = g_frame_identity_free_handle;
         g_frame_identity_free_handle = handle;
     }
     pthread_mutex_unlock(&g_frame_identity_mutex);
@@ -78,8 +137,9 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
         handle = g_frame_identity_free_handle;
         if (handle) {
             g_frame_identity_free_handle =
-                g_frame_identities[handle].next_free;
-        } else if (g_frame_identity_next_handle <= CETTA_FRAME_HANDLE_MASK) {
+                frame_identity_cell(handle)->next_free;
+        } else if (g_frame_identity_next_handle < g_frame_identity_handle_limit &&
+                   frame_identity_segment_ensure(g_frame_identity_next_handle)) {
             handle = g_frame_identity_next_handle++;
         } else {
             pthread_mutex_unlock(&g_frame_identity_mutex);
@@ -89,15 +149,16 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
         }
         pthread_mutex_unlock(&g_frame_identity_mutex);
     }
-    FrameIdentityCell *cell = &g_frame_identities[handle];
+    FrameIdentityCell *cell = frame_identity_cell(handle);
     uint64_t previous = atomic_load_explicit(&cell->state, memory_order_relaxed);
     uint32_t generation = (uint32_t)(previous >> 32u) + 1u;
-    if ((uint32_t)previous != 0u || generation > CETTA_FRAME_GENERATION_MAX)
+    if ((uint32_t)previous != 0u ||
+        generation > frame_identity_generation_max(handle))
         abort();
     atomic_store_explicit(&cell->next_slot, 0u, memory_order_relaxed);
     atomic_store_explicit(&cell->state,
         ((uint64_t)generation << 32u) | UINT64_C(1), memory_order_release);
-    *identity_out = (generation << CETTA_FRAME_HANDLE_BITS) | handle;
+    *identity_out = frame_identity_spell(handle, generation);
     return true;
 }
 
@@ -106,12 +167,29 @@ uint64_t cetta_frame_identity_exhaustions(void) {
                                 memory_order_relaxed);
 }
 
+void cetta_frame_identity_limit_handles(uint32_t count) {
+    pthread_mutex_lock(&g_frame_identity_mutex);
+    uint32_t limit = count >= CETTA_FRAME_HANDLE_LIMIT - 1u
+        ? CETTA_FRAME_HANDLE_LIMIT : count + 1u;
+    g_frame_identity_handle_limit = limit;
+    pthread_mutex_unlock(&g_frame_identity_mutex);
+}
+
+/* The cell an identity names while that incarnation may still be live. */
+static FrameIdentityCell *frame_identity_cell_of(CettaFrameIdentity identity,
+                                                 uint32_t *generation_out) {
+    CettaFrameIdentityParts parts;
+    if (!cetta_frame_identity_parts(identity, &parts))
+        return NULL;
+    *generation_out = parts.generation;
+    return frame_identity_cell(parts.handle);
+}
+
 bool cetta_frame_identity_retain(CettaFrameIdentity identity) {
-    uint32_t handle = cetta_frame_handle(identity);
-    uint32_t generation = cetta_frame_generation(identity);
-    if (!handle || !generation || generation > CETTA_FRAME_GENERATION_MAX)
+    uint32_t generation = 0u;
+    FrameIdentityCell *cell = frame_identity_cell_of(identity, &generation);
+    if (!cell)
         return false;
-    FrameIdentityCell *cell = &g_frame_identities[handle];
     uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
     for (;;) {
         uint32_t references = (uint32_t)state;
@@ -129,7 +207,8 @@ bool cetta_frame_identity_new_slot(CettaFrameIdentity identity,
         uint32_t inventory_size, uint32_t *slot_out) {
     if (!slot_out || !cetta_frame_identity_retain(identity))
         return false;
-    FrameIdentityCell *cell = &g_frame_identities[cetta_frame_handle(identity)];
+    uint32_t generation = 0u;
+    FrameIdentityCell *cell = frame_identity_cell_of(identity, &generation);
     uint32_t current = atomic_load_explicit(&cell->next_slot, memory_order_relaxed);
     bool allocated = false;
     for (;;) {
@@ -150,12 +229,11 @@ bool cetta_frame_identity_new_slot(CettaFrameIdentity identity,
 
 bool cetta_frame_identity_slot_count(CettaFrameIdentity identity,
                                     uint32_t *count_out) {
-    uint32_t handle = cetta_frame_handle(identity);
-    uint32_t generation = cetta_frame_generation(identity);
-    if (!count_out || !handle || !generation ||
-        generation > CETTA_FRAME_GENERATION_MAX)
+    uint32_t generation = 0u;
+    FrameIdentityCell *cell = count_out
+        ? frame_identity_cell_of(identity, &generation) : NULL;
+    if (!cell)
         return false;
-    FrameIdentityCell *cell = &g_frame_identities[handle];
     uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
     if ((uint32_t)(state >> 32u) != generation || !(uint32_t)state)
         return false;
@@ -164,11 +242,13 @@ bool cetta_frame_identity_slot_count(CettaFrameIdentity identity,
 }
 
 void cetta_frame_identity_release(CettaFrameIdentity identity) {
-    uint32_t handle = cetta_frame_handle(identity);
-    uint32_t generation = cetta_frame_generation(identity);
-    if (!handle || !generation || generation > CETTA_FRAME_GENERATION_MAX)
+    CettaFrameIdentityParts parts;
+    if (!cetta_frame_identity_parts(identity, &parts))
         abort();
-    FrameIdentityCell *cell = &g_frame_identities[handle];
+    FrameIdentityCell *cell = frame_identity_cell(parts.handle);
+    if (!cell)
+        abort();
+    uint32_t generation = parts.generation;
     uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
     for (;;) {
         if ((uint32_t)(state >> 32u) != generation || !(uint32_t)state)
@@ -177,16 +257,18 @@ void cetta_frame_identity_release(CettaFrameIdentity identity) {
                 memory_order_acq_rel, memory_order_relaxed))
             break;
     }
-    if ((uint32_t)state != 1u || generation == CETTA_FRAME_GENERATION_MAX)
+    /* A handle whose generations are spent is retired: no later identity can
+     * spell an incarnation that a stale holder might still present. */
+    if ((uint32_t)state != 1u || generation == parts.generation_max)
         return;
     FrameIdentityLocalHandles *local = frame_identity_local_handles();
     if (local && local->len < FRAME_IDENTITY_LOCAL_HANDLES) {
-        local->handles[local->len++] = handle;
+        local->handles[local->len++] = parts.handle;
         return;
     }
     pthread_mutex_lock(&g_frame_identity_mutex);
     cell->next_free = g_frame_identity_free_handle;
-    g_frame_identity_free_handle = handle;
+    g_frame_identity_free_handle = parts.handle;
     pthread_mutex_unlock(&g_frame_identity_mutex);
 }
 

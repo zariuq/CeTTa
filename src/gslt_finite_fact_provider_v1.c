@@ -77,9 +77,14 @@ static bool finite_fact_root_key_v1(
     if (!atom || !key)
         return false;
     if (atom->kind == ATOM_SYMBOL) {
+        /* Missing numeric identities are not equal index keys. Fall back
+         * to the content matcher, including after later registration. */
+        if (atom_symbol_is_spelled(atom) &&
+            atom_symbol_current_id(atom) == SYMBOL_ID_NONE)
+            return false;
         *key = (CettaGsltFiniteFactRootKeyV1){
             .kind = CETTA_GSLT_FACT_ROOT_SYMBOL_V1,
-            .symbol = atom->sym_id,
+            .symbol = atom_symbol_current_id(atom),
             .arity = 0u,
         };
         return true;
@@ -87,9 +92,12 @@ static bool finite_fact_root_key_v1(
     if (atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
         atom->expr.elems && atom->expr.elems[0] &&
         atom->expr.elems[0]->kind == ATOM_SYMBOL) {
+        if (atom_symbol_is_spelled(atom->expr.elems[0]) &&
+            atom_symbol_current_id(atom->expr.elems[0]) == SYMBOL_ID_NONE)
+            return false;
         *key = (CettaGsltFiniteFactRootKeyV1){
             .kind = CETTA_GSLT_FACT_ROOT_APPLICATION_V1,
-            .symbol = atom->expr.elems[0]->sym_id,
+            .symbol = atom_symbol_current_id(atom->expr.elems[0]),
             .arity = atom->expr.len - 1u,
         };
         return true;

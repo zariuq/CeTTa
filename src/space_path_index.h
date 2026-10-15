@@ -10,6 +10,7 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
     CETTA_SPACE_PATH_INTEGER_KEY,
+    CETTA_SPACE_PATH_STRING_HASH_KEY,
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
@@ -48,17 +49,27 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
     if (!pattern || pattern->kind != ATOM_EXPR || !atom_has_vars(pattern))
         return false;
     /* A two-coordinate bound prefix followed by one free scalar: the bound
-     * field's position index answers it when that field is a symbol or an
-     * integer; a ground nested prefix stays with the trie. */
+     * field's position index answers it when that field is a symbol, an
+     * integer or a string; a ground nested prefix stays with the trie. */
     if (pattern->expr.len == 3u && pattern->expr.elems[2] &&
         pattern->expr.elems[2]->kind == ATOM_VAR &&
         !atom_has_vars(pattern->expr.elems[0]) &&
-        !atom_has_vars(pattern->expr.elems[1]))
-        return pattern->expr.elems[1]->kind == ATOM_SYMBOL ||
-            (pattern->expr.elems[1]->kind == ATOM_GROUNDED &&
-             pattern->expr.elems[1]->ground.gkind == GV_INT);
+        pattern->expr.elems[1] && !atom_has_vars(pattern->expr.elems[1])) {
+        /* A string field is distinguished only by the maintained index: the
+         * primary trie keeps strings on its uncertain branch. */
+        const Atom *field = pattern->expr.elems[1];
+        return field->kind == ATOM_SYMBOL ||
+            (field->kind == ATOM_GROUNDED &&
+             (field->ground.gkind == GV_INT || field->ground.gkind == GV_STRING));
+    }
     for (CettaExprIndex position = 0u; position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
+        /* The primary trie puts strings on its uncertain branch. A rigid
+         * string prefix therefore needs the same maintained path index as
+         * a rigid coordinate after a variable. Hash collisions remain
+         * candidates and are rejected only by the exact matcher. */
+        if (child && child->kind == ATOM_GROUNDED && child->ground.gkind == GV_STRING)
+            return true;
         if (!atom_has_vars(child))
             continue;
         if (child->kind == ATOM_EXPR)
@@ -72,7 +83,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
              suffix < pattern->expr.len; suffix++) {
             child = pattern->expr.elems[suffix];
             if (child && (child->kind == ATOM_EXPR || child->kind == ATOM_SYMBOL ||
-                    (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+                    (child->kind == ATOM_GROUNDED &&
+                     (child->ground.gkind == GV_INT || child->ground.gkind == GV_STRING))))
                 return true;
         }
         return false;
@@ -81,7 +93,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
 }
 
 bool space_path_index_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity);
 void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position);
 /* Candidates from an index that already serves this pattern's shape, as
  * physical rows, without building one and only when no open row needs

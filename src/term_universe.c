@@ -100,6 +100,7 @@ static size_t term_universe_atom_id_storage_width_bytes(
     const TermUniverse *universe);
 static size_t term_universe_slot_storage_width_bytes(
     const TermUniverse *universe);
+static inline size_t term_universe_intern_pair_width(size_t id_width);
 static AtomId term_universe_load_stored_atom_id(const TermUniverse *universe,
                                                 const uint8_t *src);
 static uint64_t term_universe_load_slot_value(const TermUniverse *universe,
@@ -740,7 +741,8 @@ bool term_universe_atom_is_stable(Atom *atom) {
      * Preserve its owner in the existing pointer-backed fallback, never in the
      * pointer-free integer encoding. The fact composes through expressions. */
     if (atom && (atom->structural_facts &
-                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u)
+                 (ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+                  ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL)) != 0u)
         return false;
 
     /* The compositional leaf summary answers this for immutable atoms built
@@ -769,6 +771,9 @@ bool term_universe_atom_is_stable(Atom *atom) {
             goto done;
         switch (cur->kind) {
         case ATOM_SYMBOL:
+            if (atom_symbol_is_spelled(cur))
+                goto done;
+            break;
         case ATOM_VAR:
             break;
         case ATOM_GROUNDED:
@@ -829,6 +834,7 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -871,6 +877,7 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->snapshot_entries = false;
     universe->variable_support_blocks = NULL;
     universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
@@ -905,6 +912,45 @@ void term_universe_free(TermUniverse *universe) {
     universe->observer_len = 0;
     universe->observer_cap = 0;
     universe->persistent_arena = NULL;
+}
+
+void term_universe_storage_census(const TermUniverse *u, CettaStorageCensus *c) {
+    if (!u || !cetta_storage_object(c, u, 0u, CETTA_STORAGE_VISITED)) return;
+    cetta_storage_array(c, u->blob_pool, u->blob_cap, 1u, 0u);
+    cetta_storage_array(c, u->entries, u->cap, sizeof(*u->entries), 0u);
+    cetta_storage_array(c, u->observers, u->observer_cap, sizeof(*u->observers), 0u);
+    size_t width = term_universe_slot_storage_width_bytes(u);
+    if (u->intern_slots && u->intern_mask == SIZE_MAX) cetta_storage_refuse(c, "InternCapacity");
+    else cetta_storage_array(c, u->intern_slots, u->intern_mask + 1u, term_universe_intern_pair_width(width), 0u);
+    if (u->ptr_slots && u->ptr_mask == SIZE_MAX) cetta_storage_refuse(c, "PointerIndexCapacity");
+    else cetta_storage_array(c, u->ptr_slots, u->ptr_mask + 1u, width, 0u);
+    if (u->frame_identities.identities != u->frame_identities.inline_identities)
+        cetta_storage_array(c, u->frame_identities.identities, u->frame_identities.cap,
+            sizeof(*u->frame_identities.identities), 0u);
+    if (u->integer_slots) {
+        if (u->integer_mask == SIZE_MAX) { cetta_storage_refuse(c, "IntegerIndexCapacity"); return; }
+        cetta_storage_array(c, u->integer_slots, u->integer_mask + 1u, sizeof(*u->integer_slots), 0u);
+        for (size_t i = 0u; i <= u->integer_mask; i++) {
+            const CettaIntegerInternPage *page = u->integer_slots[i].page;
+            if (!page || !cetta_storage_object(c, page, sizeof(*page), CETTA_STORAGE_BLOCK)) continue;
+            if (page->dense) cetta_storage_array(c, page->data.positions,
+                TERM_UNIVERSE_INTEGER_PAGE_SIZE, sizeof(*page->data.positions), 0u);
+            else cetta_storage_array(c, page->data.sparse, page->cap, sizeof(*page->data.sparse), 0u);
+        }
+    }
+    cetta_storage_array(c, u->variable_support_blocks, u->variable_support_block_cap,
+        sizeof(*u->variable_support_blocks), 0u);
+    for (size_t i = 0u; u->variable_support_blocks && i < u->variable_support_block_cap; i++) {
+        const CettaTermVariableSupportBlock *block = atomic_load_explicit(
+            &u->variable_support_blocks[i], memory_order_acquire);
+        if (!block || !cetta_storage_object(c, block, sizeof(*block), CETTA_STORAGE_BLOCK)) continue;
+        for (size_t j = 0u; j < CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE; j++) {
+            const CettaTermVariableSupport *support = atomic_load_explicit(&block->slots[j], memory_order_acquire);
+            if (!support) continue;
+            size_t n = support->representation == CETTA_TERM_VARIABLE_SUPPORT_DENSE64 ? 0u : support->count;
+            cetta_storage_array(c, support, n, sizeof(*support->sparse_base_ids), sizeof(*support));
+        }
+    }
 }
 
 void term_universe_set_persistent_arena(TermUniverse *universe,
@@ -1563,6 +1609,7 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -1742,13 +1789,12 @@ static uint64_t term_universe_record_slot_hash(
             }
             break;
         case GV_FLOAT:
-            if (payload_len >= sizeof(double)) {
-                double value = term_universe_load_double(payload);
-                uint64_t bits = 0;
-                if (value != 0.0)
-                    memcpy(&bits, &value, sizeof(bits));
-                h = term_universe_index_mix(h, bits);
-            }
+            /* By its bits, as term_universe_atom_slot_hash: 0.0 and -0.0
+             * are two terms, and a record and an atom probe of one float
+             * meet at one coordinate. */
+            if (payload_len >= sizeof(uint64_t))
+                h = term_universe_index_mix(
+                    h, term_universe_load_u64(payload));
             break;
         case GV_BOOL:
             h = term_universe_index_mix(
@@ -1767,6 +1813,7 @@ static uint64_t term_universe_record_slot_hash(
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -1823,12 +1870,12 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
     uint32_t sym_or_head = SYMBOL_ID_NONE;
     uint32_t aux_data = 0;
     if (atom->kind == ATOM_SYMBOL) {
-        sym_or_head = atom->sym_id;
+        sym_or_head = atom_symbol_current_id(atom);
     } else if (atom->kind == ATOM_VAR) {
         subtag = atom->name_key
                      ? (uint8_t)CETTA_VAR_SPELLING_NAME_KEY
                      : 0u;
-        sym_or_head = atom->name_key ? SYMBOL_ID_NONE : atom->sym_id;
+        sym_or_head = atom->name_key ? SYMBOL_ID_NONE : atom_symbol_current_id(atom);
     } else if (atom->kind == ATOM_GROUNDED) {
         subtag = (uint8_t)atom->ground.gkind;
         if (atom->ground.gkind == GV_BOOL)
@@ -1900,6 +1947,7 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -2052,9 +2100,11 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
                    term_universe_load_i64(have_payload) ==
                        term_universe_load_i64(want_payload);
         case GV_FLOAT:
+            /* A record is one term: a float by its bits, as an atom
+             * probe compares it (term_universe_entry_eq_atom). */
             return have_payload && want_payload &&
-                   term_universe_load_double(have_payload) ==
-                       term_universe_load_double(want_payload);
+                   term_universe_load_u64(have_payload) ==
+                       term_universe_load_u64(want_payload);
         case GV_BOOL:
             return term_universe_aux_data(have_hdr) ==
                    term_universe_aux_data(want_hdr);
@@ -2077,6 +2127,7 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -2606,7 +2657,7 @@ SymbolId tu_sym(const TermUniverse *universe, AtomId id) {
         return SYMBOL_ID_NONE;
     return (entry->decoded_cache->kind == ATOM_SYMBOL ||
             entry->decoded_cache->kind == ATOM_VAR)
-               ? entry->decoded_cache->sym_id
+               ? atom_symbol_current_id(entry->decoded_cache)
                : SYMBOL_ID_NONE;
 }
 
@@ -3656,7 +3707,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         return term_universe_lookup_stable_id(universe, src);
     switch (src->kind) {
     case ATOM_SYMBOL:
-        return tu_intern_symbol(universe, src->sym_id);
+        return tu_intern_symbol(universe, atom_symbol_current_id(src));
     case ATOM_VAR:
         if (src->name_key) {
             AtomId key_id = term_universe_store_atom_id(
@@ -3665,7 +3716,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
                        ? CETTA_ATOM_ID_NONE
                        : tu_intern_named_var(universe, key_id, src->var_id);
         }
-        return tu_intern_var(universe, src->sym_id, src->var_id);
+        return tu_intern_var(universe, atom_symbol_current_id(src), src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
@@ -3685,6 +3736,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4117,6 +4169,7 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4355,7 +4408,7 @@ static size_t term_universe_copy_estimated_arena_bytes(
 static Atom *term_universe_copy_read_leaf(Arena *dst, Atom *atom, void *context) {
     TermUniverseCopyMemo *memo = context;
     Atom *value = atom->kind == ATOM_SYMBOL
-        ? memo->read_symbol(memo->read_context, atom->sym_id) : NULL;
+        ? memo->read_symbol(memo->read_context, atom_symbol_current_id(atom)) : NULL;
     return atom_deep_copy(dst, value ? value : atom);
 }
 
@@ -4403,7 +4456,7 @@ static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
             Atom *key = memo->read_symbol
                 ? term_universe_copy_atom(universe, dst,
                       tu_var_name_key_id(universe, id))
-                : children ? children[0] : NULL;
+                : (children ? children[0] : NULL);
             out = key ? atom_var_with_name_key(dst, key, var_id) : NULL;
         } else {
             out = atom_var_with_spelling(dst, hdr->sym_or_head, var_id);
@@ -4435,6 +4488,7 @@ static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4815,7 +4869,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
     const uint8_t *payload = term_universe_payload(universe, id);
     switch ((AtomKind)hdr->tag) {
     case ATOM_SYMBOL:
-        return src->kind == ATOM_SYMBOL && src->sym_id == hdr->sym_or_head;
+        return src->kind == ATOM_SYMBOL && atom_symbol_current_id(src) == hdr->sym_or_head;
     case ATOM_VAR:
         return src->kind == ATOM_VAR &&
                src->var_id == (VarId)term_universe_load_u64(payload);
@@ -4856,6 +4910,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4941,6 +4996,14 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
                                                false, &stable);
     if (!stable)
         return CETTA_ATOM_ID_NONE;
+    if (stable_id == CETTA_ATOM_ID_NONE && universe->snapshot_entries) {
+        for (size_t i = 0u; i < universe->len; i++) {
+            const TermEntry *entry = &universe->entries[i];
+            if (!term_universe_entry_has_blob(entry) && entry->decoded_cache &&
+                atom_eq(entry->decoded_cache, src))
+                return term_universe_physical_index_to_atom_id(universe, i);
+        }
+    }
     return stable_id;
 }
 
@@ -5143,6 +5206,42 @@ static void term_universe_track_ptr_id(TermUniverse *universe, AtomId id) {
     (void)term_universe_insert_ptr_id(universe, id);
 }
 
+AtomId term_universe_store_snapshot_image(TermUniverse *universe,
+        const AtomDeepCopySession *snapshot, const Atom *source) {
+    if (!universe || !universe->persistent_arena) return CETTA_ATOM_ID_NONE;
+    Atom *image = atom_deep_copy_session_snapshot_image(
+        snapshot, universe->persistent_arena, source);
+    if (!image) return CETTA_ATOM_ID_NONE;
+    AtomId existing = term_universe_lookup_ptr_id(universe, image);
+    if (existing != CETTA_ATOM_ID_NONE) return existing;
+    term_universe_clear_error(universe);
+    if (!term_universe_atom_id_capacity_available(universe) ||
+        universe->len == SIZE_MAX ||
+        !term_universe_reserve_entries(universe, universe->len + 1u))
+        return CETTA_ATOM_ID_NONE;
+    size_t capacity = universe->ptr_slots ? universe->ptr_mask + 1u : 0u;
+    if (!capacity || universe->ptr_used >= capacity / 2u) {
+        size_t requested = 0u;
+        if (!term_universe_double_request(universe, capacity, 1024u, &requested) ||
+            !term_universe_ptr_reserve(universe, requested)) return CETTA_ATOM_ID_NONE;
+    }
+    size_t index = universe->len;
+    AtomId id = term_universe_physical_index_to_atom_id(universe, index);
+    if (id == CETTA_ATOM_ID_NONE) return CETTA_ATOM_ID_NONE;
+    universe->entries[index] = (TermEntry){
+        .byte_off = CETTA_TERM_ENTRY_BLOB_NONE, .decoded_cache = image};
+    universe->len++;
+    if (!term_universe_insert_ptr_id(universe, id)) {
+        universe->len--;
+        universe->entries[index] = (TermEntry){.byte_off=CETTA_TERM_ENTRY_BLOB_NONE};
+        return CETTA_ATOM_ID_NONE;
+    }
+    universe->snapshot_entries = true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT);
+    return id;
+}
+
 static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
                                                    Atom *src) {
     if (!universe || !src)
@@ -5181,7 +5280,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
 
     switch (src->kind) {
     case ATOM_SYMBOL:
-        return tu_intern_symbol(universe, src->sym_id);
+        return tu_intern_symbol(universe, atom_symbol_current_id(src));
     case ATOM_VAR:
         if (src->name_key) {
             AtomId key_id = term_universe_store_atom_id(
@@ -5190,7 +5289,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
                        ? CETTA_ATOM_ID_NONE
                        : tu_intern_named_var(universe, key_id, src->var_id);
         }
-        return tu_intern_var(universe, src->sym_id, src->var_id);
+        return tu_intern_var(universe, atom_symbol_current_id(src), src->var_id);
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
@@ -5210,6 +5309,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -5355,6 +5455,7 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:

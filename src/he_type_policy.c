@@ -280,7 +280,7 @@ bool he_library_names_subject(const Atom *subject) {
         return false;
     for (size_t i = 0u; i < sizeof g_he_library_undeclared /
                             sizeof g_he_library_undeclared[0]; i++) {
-        if (subject->sym_id == g_he_library_undeclared[i])
+        if (atom_symbol_current_id(subject) == g_he_library_undeclared[i])
             return true;
     }
     return false;
@@ -436,15 +436,15 @@ Atom *he_type_result_demand(Arena *arena, Atom *codomain) {
 
 bool he_type_is_wildcard(const Atom *type) {
     return type && type->kind == ATOM_SYMBOL &&
-           (type->sym_id == g_builtin_syms.atom ||
-            type->sym_id == g_builtin_syms.undefined_type);
+           (atom_symbol_current_id(type) == g_builtin_syms.atom ||
+            atom_symbol_current_id(type) == g_builtin_syms.undefined_type);
 }
 
 /* An identical rigid type symbol cannot learn a substitution. Keep the
  * common monomorphic case out of the general structural matcher. */
 static bool he_type_same_symbol(const Atom *actual, const Atom *expected) {
     return actual && expected && actual->kind == ATOM_SYMBOL &&
-           expected->kind == ATOM_SYMBOL && actual->sym_id == expected->sym_id;
+           expected->kind == ATOM_SYMBOL && atom_symbols_equal(actual, expected);
 }
 
 bool he_type_refine(Atom *actual, Atom *expected, Bindings *bindings,

@@ -31,3 +31,5 @@
 ; Elements are data: a call written inside a list is not run by the walk.
 !(println! (list:len [(+ 1 2) (undefined-function x)]))
 !(println! (list:reverse [(+ 1 2) (undefined-function x)]))
+
+!(println! (Range (list:range 3) (list:range 2 5) (list:range 0)))

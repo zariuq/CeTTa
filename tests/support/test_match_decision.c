@@ -197,9 +197,9 @@ static void test_scoped_cursors(
     /* Preparation records the write boundary; activation writes follow it. */
     uint32_t mark = bindings_builder_save(&builder);
     assert(bindings_builder_add_id_fresh(&builder,
-        var_epoch_id(x->var_id, epoch), x->sym_id, outer_value));
+        var_epoch_id(x->var_id, epoch), atom_symbol_current_id(x), outer_value));
     assert(bindings_builder_add_id_fresh(&builder,
-        var_epoch_id(y->var_id, epoch), y->sym_id, b));
+        var_epoch_id(y->var_id, epoch), atom_symbol_current_id(y), b));
     BindingsTermCursorContextV1 context = {&builder.current, &frame};
     CettaGsltTermCursorV1 argument = {x, &frame};
     CettaMatchDecisionQueryViewV1 query = {
@@ -251,9 +251,9 @@ static void test_scoped_cursors(
             bindings_builder_rollback(&builder, mark);
             expect_cursor_refs(decision, space, semantics, &query, open_refs, 3u);
             assert(bindings_builder_add_id_fresh(&builder,
-                var_epoch_id(x->var_id, epoch), x->sym_id, outer_value));
+                var_epoch_id(x->var_id, epoch), atom_symbol_current_id(x), outer_value));
             assert(bindings_builder_add_id_fresh(&builder,
-                var_epoch_id(y->var_id, epoch), y->sym_id, b));
+                var_epoch_id(y->var_id, epoch), atom_symbol_current_id(y), b));
             assert(bindings_activation_view_prepare(
                 &frame, &builder, ids, variables, 1u, epoch, first));
             expect_cursor_refs(decision, space, semantics, &query, outer_refs, 2u);
@@ -355,7 +355,7 @@ static void test_scoped_equality(
             &frame, &builder, ids, variables, 1u, epoch, first));
         uint32_t mark = bindings_builder_save(&builder);
         assert(bindings_builder_add_id_fresh(&builder,
-            var_epoch_id(source->var_id, epoch), source->sym_id, outer));
+            var_epoch_id(source->var_id, epoch), atom_symbol_current_id(source), outer));
         BindingsTermCursorContextV1 context = {&builder.current, &frame};
         CettaGsltTermCursorV1 arguments[] = {{left, &frame}, {right, NULL}};
         CettaMatchDecisionQueryViewV1 query = {
@@ -386,7 +386,7 @@ static void test_scoped_equality(
         /* An unbound authored variable cannot borrow its ordinary namesake. */
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         assert(bindings_builder_add_id_fresh(&builder,
-            var_epoch_id(source->var_id, epoch), source->sym_id, b));
+            var_epoch_id(source->var_id, epoch), atom_symbol_current_id(source), b));
         assert(bindings_activation_view_available(&frame, &builder.current));
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         /* A bounded observation may be less precise than complete forcing.

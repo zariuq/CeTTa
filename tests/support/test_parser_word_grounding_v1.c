@@ -88,7 +88,7 @@ static bool expected_value(const Atom *atom, const WordCase *test,
         if (!rational_values && strchr(test->source, '/'))
             text = test->source;
         return atom && atom->kind == ATOM_SYMBOL &&
-               symbol_eq_cstr(g_symbols, atom->sym_id, text);
+               atom_symbol_equals_cstr(atom, text);
     }
     if (!atom || atom->kind != ATOM_GROUNDED)
         return false;

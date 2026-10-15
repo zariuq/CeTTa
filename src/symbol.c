@@ -13,6 +13,102 @@ SymbolTable *g_symbols = NULL;
 BuiltinSyms g_builtin_syms;
 static _Atomic uint64_t g_symbol_table_instance_counter = 1u;
 
+#if CETTA_SYMBOL_READ_COVERAGE
+typedef struct {
+    SymbolTable *table;
+    uint64_t instance_id;
+    SymbolId watched;
+    bool collecting;
+    bool armed;
+    bool marked;
+    bool omit_marks;
+    uint64_t collections;
+    uint64_t marked_copies;
+    uint64_t checked_reads;
+} SymbolReadCoverage;
+
+static _Thread_local SymbolReadCoverage read_coverage;
+
+static void symbol_read_coverage_check(const SymbolTable *st, SymbolId id) {
+    SymbolReadCoverage *gate = &read_coverage;
+    if (!gate->armed || gate->table != st || gate->watched != id ||
+        gate->instance_id != st->instance_id)
+        return;
+    gate->checked_reads++;
+    if (!gate->marked) {
+        fprintf(stderr, "CeTTa: unmarked symbol read after collection (id=%u)\n",
+                (unsigned)id);
+        abort();
+    }
+}
+
+bool symbol_read_coverage_watch(SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE || id >=
+        atomic_load_explicit(&st->entry_len, memory_order_acquire))
+        return false;
+    read_coverage = (SymbolReadCoverage){.table = st,
+        .instance_id = st->instance_id, .watched = id};
+    return true;
+}
+
+void symbol_read_coverage_begin(SymbolTable *st) {
+    SymbolReadCoverage *gate = &read_coverage;
+    if (gate->table != st || gate->instance_id != st->instance_id)
+        return;
+    gate->collecting = true;
+    gate->armed = false;
+    gate->marked = false;
+    gate->marked_copies = 0u;
+}
+
+void symbol_read_coverage_mark_copy(SymbolTable *st, SymbolId id) {
+    SymbolReadCoverage *gate = &read_coverage;
+    if (gate->collecting && gate->table == st && gate->watched == id &&
+        gate->instance_id == st->instance_id && !gate->omit_marks) {
+        gate->marked = true;
+        gate->marked_copies++;
+    }
+}
+
+void symbol_read_coverage_commit(SymbolTable *st) {
+    SymbolReadCoverage *gate = &read_coverage;
+    if (gate->table != st || gate->instance_id != st->instance_id ||
+        !gate->collecting)
+        return;
+    gate->collecting = false;
+    gate->armed = true;
+    gate->collections++;
+}
+
+void symbol_read_coverage_cancel(SymbolTable *st) {
+    SymbolReadCoverage *gate = &read_coverage;
+    if (gate->table != st)
+        return;
+    gate->collecting = false;
+    gate->armed = false;
+}
+
+void symbol_read_coverage_clear(void) {
+    read_coverage = (SymbolReadCoverage){0};
+}
+
+void symbol_read_coverage_omit_marks_for_test(bool omit) {
+    read_coverage.omit_marks = omit;
+}
+
+uint64_t symbol_read_coverage_collections(void) {
+    return read_coverage.collections;
+}
+
+uint64_t symbol_read_coverage_marked_copies(void) {
+    return read_coverage.marked_copies;
+}
+
+uint64_t symbol_read_coverage_checked_reads(void) {
+    return read_coverage.checked_reads;
+}
+#endif
+
 static void symbol_oom(size_t size) {
     fprintf(stderr, "fatal: out of memory allocating %zu bytes\n", size);
     abort();
@@ -66,7 +162,27 @@ static void symbol_table_add_flags(SymbolTable *st, SymbolId id,
         return;
     SymbolEntry *entry = symbol_table_entry_mut(st, id);
     if (entry)
-        entry->flags |= flags;
+        atomic_fetch_or_explicit(&entry->flags, flags, memory_order_relaxed);
+}
+
+static void symbol_table_note_metadata(SymbolTable *st, uint64_t bytes) {
+    st->stats.metadata_bytes += bytes;
+    if (st->stats.metadata_bytes > st->stats.peak_metadata_bytes)
+        st->stats.peak_metadata_bytes = st->stats.metadata_bytes;
+}
+
+static void symbol_pin_entry(SymbolTable *st, SymbolEntry *entry) {
+    uint32_t flags = atomic_load_explicit(&entry->flags, memory_order_relaxed);
+    if (!(flags & CETTA_SYMBOL_FLAG_RUNTIME_DATA))
+        return;
+    atomic_fetch_and_explicit(&entry->flags, ~CETTA_SYMBOL_FLAG_RUNTIME_DATA,
+                             memory_order_relaxed);
+    uint64_t bytes = (uint64_t)entry->len + 1u;
+    st->stats.data_count--;
+    st->stats.data_bytes -= bytes;
+    st->stats.owned_count++;
+    st->stats.owned_bytes += bytes;
+    st->stats.promotions++;
 }
 
 static void symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
@@ -78,6 +194,8 @@ static void symbol_table_ensure_entry_chunk(SymbolTable *st, SymbolId id) {
     if (st->entry_chunks[chunk_index]) return;
     st->entry_chunks[chunk_index] =
         symbol_calloc(SYMBOL_ENTRY_CHUNK_SIZE, sizeof(SymbolEntry));
+    symbol_table_note_metadata(
+        st, (uint64_t)SYMBOL_ENTRY_CHUNK_SIZE * sizeof(SymbolEntry));
 }
 
 static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
@@ -88,9 +206,13 @@ static bool symbol_entry_matches(const SymbolEntry *entry, const uint8_t *bytes,
 
 static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     SymbolSlot *old_slots = st->slots;
+    uint32_t old_cap = st->slot_cap;
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
 
     st->slots = symbol_malloc(sizeof(SymbolSlot) * new_cap);
+    /* Both arrays are reserved during rebuild; include that transient
+     * overlap in the peak, then subtract the released array below. */
+    symbol_table_note_metadata(st, (uint64_t)new_cap * sizeof(SymbolSlot));
     memset(st->slots, 0, sizeof(SymbolSlot) * new_cap);
     st->slot_cap = new_cap;
     st->slot_used = 0;
@@ -109,6 +231,7 @@ static void symbol_table_resize(SymbolTable *st, uint32_t new_cap) {
     }
 
     free(old_slots);
+    st->stats.metadata_bytes -= (uint64_t)old_cap * sizeof(SymbolSlot);
 }
 
 void symbol_table_init(SymbolTable *st) {
@@ -122,7 +245,10 @@ void symbol_table_init(SymbolTable *st) {
     st->slots = NULL;
     st->slot_cap = 0;
     st->slot_used = 0;
+    st->stats = (SymbolTableStats){0};
     st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
+    symbol_table_note_metadata(
+        st, (uint64_t)SYMBOL_ENTRY_CHUNK_COUNT * sizeof(SymbolEntry *));
     atomic_init(&st->entry_len, 0);
     if (pthread_mutex_init(&st->write_mutex, NULL) != 0) {
         fprintf(stderr, "fatal: failed to initialize symbol table mutex\n");
@@ -157,17 +283,23 @@ void symbol_table_free(SymbolTable *st) {
     atomic_store_explicit(&st->entry_len, 0, memory_order_relaxed);
     st->slot_cap = 0;
     st->slot_used = 0;
+    st->stats = (SymbolTableStats){0};
 }
 
 static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
                                                    const uint8_t *bytes,
                                                    uint32_t len,
-                                                   uint64_t hash) {
+                                                   uint64_t hash,
+                                                   bool runtime_data) {
     uint32_t entry_len;
 
     if (!st || !bytes || len == 0) return SYMBOL_ID_NONE;
-    if ((st->slot_used + 1) * SYMBOL_TABLE_MAX_LOAD_DEN >
-        st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
+    if (((uint64_t)st->slot_used + 1u) * SYMBOL_TABLE_MAX_LOAD_DEN >
+        (uint64_t)st->slot_cap * SYMBOL_TABLE_MAX_LOAD_NUM) {
+        if (st->slot_cap > UINT32_MAX / 2u) {
+            fprintf(stderr, "fatal: symbol table index capacity exhausted\n");
+            abort();
+        }
         symbol_table_resize(st, st->slot_cap ? st->slot_cap * 2 : SYMBOL_TABLE_MIN_SLOTS);
     }
 
@@ -176,6 +308,12 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     while (true) {
         SymbolSlot *entry = &st->slots[slot];
         if (entry->id == SYMBOL_ID_NONE) {
+            /* Leave room for the published exclusive upper bound. Never
+             * wrap to the reserved zero ID, even after future retirement. */
+            if (entry_len == UINT32_MAX) {
+                fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
+                abort();
+            }
             char *copy = symbol_malloc((size_t)len + 1);
             memcpy(copy, bytes, len);
             copy[len] = '\0';
@@ -186,8 +324,22 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             sym->bytes = copy;
             sym->len = len;
             sym->hash = hash;
-            sym->flags = 0;
+            atomic_init(&sym->flags,
+                        runtime_data ? CETTA_SYMBOL_FLAG_RUNTIME_DATA : 0u);
             sym->builtin_policy = 0;
+
+            uint64_t allocated = (uint64_t)len + 1u;
+            if (runtime_data) {
+                st->stats.data_count++;
+                st->stats.data_bytes += allocated;
+                st->stats.data_allocated_bytes += allocated;
+            } else {
+                st->stats.owned_count++;
+                st->stats.owned_bytes += allocated;
+            }
+            uint64_t payload = st->stats.owned_bytes + st->stats.data_bytes;
+            if (payload > st->stats.peak_payload_bytes)
+                st->stats.peak_payload_bytes = payload;
 
             entry->hash = hash;
             entry->len = len;
@@ -197,9 +349,12 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             return id;
         }
         if (entry->hash == hash) {
-            const SymbolEntry *sym = symbol_table_entry_ref(st, entry->id);
-            if (symbol_entry_matches(sym, bytes, len, hash))
+            SymbolEntry *sym = symbol_table_entry_mut(st, entry->id);
+            if (symbol_entry_matches(sym, bytes, len, hash)) {
+                if (!runtime_data)
+                    symbol_pin_entry(st, sym);
                 return entry->id;
+            }
         }
         slot = (slot + 1) % st->slot_cap;
     }
@@ -210,7 +365,7 @@ SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
     SymbolId id;
     if (!st) return SYMBOL_ID_NONE;
     pthread_mutex_lock(&st->write_mutex);
-    id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash);
+    id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash, false);
     pthread_mutex_unlock(&st->write_mutex);
     return id;
 }
@@ -225,10 +380,133 @@ SymbolId symbol_intern_cstr(SymbolTable *st, const char *text) {
     return symbol_intern_bytes(st, (const uint8_t *)text, (uint32_t)strlen(text));
 }
 
-SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
-    if (!st || !text || !*text) return SYMBOL_ID_NONE;
-    uint32_t len = (uint32_t)strlen(text);
-    uint64_t hash = symbol_hash_bytes((const uint8_t *)text, len);
+SymbolId symbol_intern_data_bytes(SymbolTable *st, const uint8_t *bytes,
+                                  uint32_t len) {
+    if (!st || !bytes || len == 0u)
+        return SYMBOL_ID_NONE;
+    uint64_t hash = symbol_hash_bytes(bytes, len);
+    pthread_mutex_lock(&st->write_mutex);
+    SymbolId id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash, true);
+    pthread_mutex_unlock(&st->write_mutex);
+    return id;
+}
+
+SymbolId symbol_intern_data_cstr(SymbolTable *st, const char *text) {
+    if (!text || !*text)
+        return SYMBOL_ID_NONE;
+    return symbol_intern_data_bytes(st, (const uint8_t *)text,
+                                   (uint32_t)strlen(text));
+}
+
+bool symbol_pin(SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE)
+        return false;
+    uint32_t published = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    const SymbolEntry *existing = id < published ? symbol_table_entry_ref(st, id) : NULL;
+    if (!existing || !existing->bytes)
+        return false;
+    /* Ownership never decreases. Repeated structural registrations of an
+     * owned key therefore need neither the writer lock nor a counter update. */
+    if (!(atomic_load_explicit(&existing->flags, memory_order_relaxed) &
+          CETTA_SYMBOL_FLAG_RUNTIME_DATA))
+        return true;
+    pthread_mutex_lock(&st->write_mutex);
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
+    SymbolEntry *entry = id < entry_len ? symbol_table_entry_mut(st, id) : NULL;
+    bool valid = entry && entry->bytes;
+    if (valid)
+        symbol_pin_entry(st, entry);
+    pthread_mutex_unlock(&st->write_mutex);
+    return valid;
+}
+
+void symbol_table_stats_snapshot(SymbolTable *st, SymbolTableStats *out) {
+    if (!out)
+        return;
+    *out = (SymbolTableStats){0};
+    if (!st)
+        return;
+    pthread_mutex_lock(&st->write_mutex);
+    *out = st->stats;
+    pthread_mutex_unlock(&st->write_mutex);
+}
+
+bool symbol_shadow_begin(SymbolTable *st, SymbolShadowScan *scan) {
+    if (!st || !scan)
+        return false;
+    *scan = (SymbolShadowScan){0};
+    pthread_mutex_lock(&st->write_mutex);
+    scan->table = st;
+    scan->instance_id = st->instance_id;
+    scan->entry_limit = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
+    scan->marked = symbol_calloc(((size_t)scan->entry_limit + 7u) / 8u, 1u);
+    pthread_mutex_unlock(&st->write_mutex);
+    return true;
+}
+
+bool symbol_shadow_mark(SymbolShadowScan *scan, SymbolId id) {
+    if (!scan || !scan->marked)
+        return false;
+    if (id == SYMBOL_ID_NONE)
+        return true;
+    if (id >= scan->entry_limit) {
+        scan->late_mark = true;
+        return false;
+    }
+    scan->marked[id >> 3u] |= (uint8_t)(1u << (id & 7u));
+    return true;
+}
+
+bool symbol_shadow_finish(SymbolShadowScan *scan, SymbolShadowResult *out) {
+    if (!scan || !scan->table || !scan->marked || !out)
+        return false;
+    *out = (SymbolShadowResult){0};
+    SymbolTable *st = scan->table;
+    pthread_mutex_lock(&st->write_mutex);
+    if (st->instance_id != scan->instance_id) {
+        pthread_mutex_unlock(&st->write_mutex);
+        return false;
+    }
+    uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_relaxed);
+    if (entry_len < scan->entry_limit) {
+        pthread_mutex_unlock(&st->write_mutex);
+        return false;
+    }
+    out->late_births = entry_len - scan->entry_limit;
+    out->snapshot_outdated = out->late_births != 0u || scan->late_mark;
+    for (uint32_t id = 1u; id < scan->entry_limit; id++) {
+        const SymbolEntry *entry = symbol_table_entry_ref(st, id);
+        if (!entry || !entry->bytes ||
+            !(atomic_load_explicit(&entry->flags, memory_order_relaxed) &
+              CETTA_SYMBOL_FLAG_RUNTIME_DATA))
+            continue;
+        uint64_t bytes = (uint64_t)entry->len + 1u;
+        if (scan->marked[id >> 3u] & (uint8_t)(1u << (id & 7u))) {
+            out->marked_data_count++;
+            out->marked_data_bytes += bytes;
+        } else {
+            out->unmarked_data_count++;
+            out->unmarked_data_bytes += bytes;
+        }
+    }
+    pthread_mutex_unlock(&st->write_mutex);
+    return true;
+}
+
+void symbol_shadow_destroy(SymbolShadowScan *scan) {
+    if (!scan)
+        return;
+    free(scan->marked);
+    *scan = (SymbolShadowScan){0};
+}
+
+uint64_t symbol_hash_span(const uint8_t *bytes, uint32_t len) {
+    return symbol_hash_bytes(bytes, len);
+}
+
+SymbolId symbol_lookup_span_hashed(SymbolTable *st, const uint8_t *bytes,
+                                    uint32_t len, uint64_t hash) {
+    if (!st || !bytes || !len) return SYMBOL_ID_NONE;
     SymbolId found = SYMBOL_ID_NONE;
     pthread_mutex_lock(&st->write_mutex);
     if (st->slot_cap) {
@@ -237,7 +515,7 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
             const SymbolSlot *entry = &st->slots[slot];
             if (entry->hash == hash &&
                 symbol_entry_matches(symbol_table_entry_ref(st, entry->id),
-                                     (const uint8_t *)text, len, hash)) {
+                                     bytes, len, hash)) {
                 found = entry->id;
                 break;
             }
@@ -248,8 +526,20 @@ SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
     return found;
 }
 
+SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text) {
+    if (!text || !*text) return SYMBOL_ID_NONE;
+    size_t length = strlen(text);
+    if (length > UINT32_MAX) return SYMBOL_ID_NONE;
+    uint32_t len = (uint32_t)length;
+    return symbol_lookup_span_hashed(st, (const uint8_t *)text, len,
+                                    symbol_hash_bytes((const uint8_t *)text, len));
+}
+
 const char *symbol_bytes(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return "";
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_check(st, id);
+#endif
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
     if (id >= entry_len) return "";
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
@@ -258,6 +548,9 @@ const char *symbol_bytes(const SymbolTable *st, SymbolId id) {
 
 uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return 0;
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_check(st, id);
+#endif
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
     if (id >= entry_len) return 0;
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
@@ -290,6 +583,9 @@ bool symbol_id_is_builtin(SymbolId id) {
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE) return (uint64_t)id;
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_check(st, id);
+#endif
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
     if (id >= entry_len) return (uint64_t)id;
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
@@ -299,12 +595,15 @@ uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id) {
     if (!st || id == SYMBOL_ID_NONE)
         return 0u;
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_check(st, id);
+#endif
     uint32_t entry_len = atomic_load_explicit(
         &st->entry_len, memory_order_acquire);
     if (id >= entry_len)
         return 0u;
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
-    return entry ? entry->flags : 0u;
+    return entry ? atomic_load_explicit(&entry->flags, memory_order_relaxed) : 0u;
 }
 
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id) {
@@ -332,11 +631,15 @@ void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value) {
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {
     if (!text || !st || id == SYMBOL_ID_NONE) return false;
+#if CETTA_SYMBOL_READ_COVERAGE
+    symbol_read_coverage_check(st, id);
+#endif
     uint32_t entry_len = atomic_load_explicit(&st->entry_len, memory_order_acquire);
     if (id >= entry_len) return false;
     uint32_t len = (uint32_t)strlen(text);
     const SymbolEntry *entry = symbol_table_entry_ref(st, id);
-    return entry && entry->len == len && memcmp(entry->bytes, text, len) == 0;
+    return entry && entry->bytes && entry->len == len &&
+           memcmp(entry->bytes, text, len) == 0;
 }
 
 void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
@@ -344,6 +647,12 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 #define CETTA_INIT_BUILTIN(field, text) builtins->field = symbol_intern_cstr(st, text);
     CETTA_BUILTIN_SYMBOLS(CETTA_INIT_BUILTIN)
 #undef CETTA_INIT_BUILTIN
+
+    /* Includes append-only extensions outside the legacy contiguous range. */
+#define CETTA_MARK_BUILTIN(field, text) \
+    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_BUILTIN);
+    CETTA_BUILTIN_SYMBOLS(CETTA_MARK_BUILTIN)
+#undef CETTA_MARK_BUILTIN
 
 #define CETTA_MARK_STATIC_GROUNDED(field) \
     symbol_table_add_flags( \
@@ -358,6 +667,12 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(
         CETTA_MARK_TYPE_PURE_GROUNDED)
 #undef CETTA_MARK_TYPE_PURE_GROUNDED
+
+#define CETTA_MARK_SPECULATIVE(field) \
+    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_SPECULATIVE_OP);
+    CETTA_PURE_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_SPECULATIVE)
+    CETTA_SPECULATIVE_SYMBOL_FIELDS(CETTA_MARK_SPECULATIVE)
+#undef CETTA_MARK_SPECULATIVE
 
     /* The library ABI reserves this prefix for native grounded operators.
        Mark builtins eagerly; later dynamically interned ABI names retain the

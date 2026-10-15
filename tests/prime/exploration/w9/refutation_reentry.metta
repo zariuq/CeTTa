@@ -1,0 +1,15 @@
+; A refutation accounts for declarations in the already extended space.
+; Later judgments keep that view usable, and new definitions rebuild it.
+!(bind! &thy (new-space))
+!(set:inductive &thy flag (u 0) (: yes flag) (: no flag))
+!(set:define &thy same (-> flag flag) (= (same $x) $x))
+!(set:eq &thy (same yes) no)
+!(set:eq &thy (same yes) yes)
+!(set:define &thy flip (-> flag flag) (= (flip yes) no) (= (flip no) yes))
+!(set:eq &thy (flip yes) no)
+!(set:eq &thy (flip yes) yes)
+!(set:eq &thy (flip no) yes)
+!(bind! &other (new-space))
+!(set:inductive &other flag (u 0) (: yes flag) (: no flag))
+!(set:eq &other yes no)
+!(set:eq &thy (same no) no)

@@ -804,7 +804,7 @@ static TermShape term_view_shape(TermView view) {
     Atom *body = NULL;
     if (atom_petta_prolog_compound_body(atom, &body) && body) {
         return (TermShape){.kind = SHAPE_COMPOUND,
-                           .name = body->expr.elems[0]->sym_id,
+                           .name = atom_symbol_current_id(body->expr.elems[0]),
                            .arity = (uint32_t)(body->expr.len - 1u),
                            .base = (TermView){VIEW_ATOM, 1u, body, NULL}};
     }

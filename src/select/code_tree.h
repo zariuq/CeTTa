@@ -1,6 +1,7 @@
 #ifndef CETTA_SELECT_CODE_TREE_H
 #define CETTA_SELECT_CODE_TREE_H
 
+#include "../storage_census.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -93,6 +94,12 @@ CettaCodeTree *cetta_code_tree_build(uint32_t coordinate_count,
                                      uint32_t occurrence_count);
 
 void cetta_code_tree_free(CettaCodeTree *tree);
+/* Snapshot immutable routing and private completed-selection scratch.
+ * No traversal or borrowed output may be outstanding. Capacities are kept;
+ * inactive scratch bytes are initialized, never read from the source. */
+CettaCodeTree *cetta_code_tree_copy(const CettaCodeTree *source);
+CettaCodeTreeCursor *cetta_code_tree_cursor_copy_quiescent(
+    const CettaCodeTreeCursor *source);
 
 uint32_t cetta_code_tree_coordinate_count(const CettaCodeTree *tree);
 uint32_t cetta_code_tree_occurrence_capacity(const CettaCodeTree *tree);
@@ -150,4 +157,9 @@ uint32_t cetta_code_tree_residual_coordinates(uint32_t coordinate_count,
                                               const uint32_t *observation,
                                               uint32_t *out);
 
+void cetta_code_tree_storage_census(const CettaCodeTree *tree, CettaStorageCensus *census);
+void cetta_code_tree_cursor_storage_census(const CettaCodeTreeCursor *cursor, CettaStorageCensus *census);
+
+#include "checkpoint_compare.h"
+bool cetta_code_tree_checkpoint_compare(const CettaCodeTree *, const CettaCodeTreeCursor *, const CettaCodeTree *, const CettaCodeTreeCursor *, const CettaCheckpointCompare *);
 #endif

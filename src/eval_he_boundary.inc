@@ -112,7 +112,13 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         } else {
             BindingSet rows;
             binding_set_init(&rows);
-            match_query_bindings(target, a, expr_arg(atom, 1), &env, &rows);
+            prime_native_observe_space_read(target);
+            if (!space_query_bindings(target, a, expr_arg(atom, 1), &env, &rows)) {
+                binding_set_free(&rows);
+                outcome_set_free(&raw);
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return;
+            }
             MatchVisibleVarSet visible;
             match_visible_var_set_init(&visible);
             collect_match_visible_vars_rec(atom, &visible);

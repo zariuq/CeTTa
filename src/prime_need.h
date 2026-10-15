@@ -2,6 +2,7 @@
 #define CETTA_PRIME_NEED_H
 
 #include "atom.h"
+#include "weight_ledger.h"
 
 #ifndef CETTA_PRIME_NEED_HEAP_INDEX
 #define CETTA_PRIME_NEED_HEAP_INDEX 0
@@ -47,6 +48,14 @@ typedef enum {
     PRIME_NEED_CACHE_STABLE_FAULT,
 } PrimeNeedCacheState;
 
+/* A completed demand may still require structural observation. A ready
+ * value protects returned syntax from execution; embedded Need references
+ * remain demands. EMPTY/EVALUATING cells have no completed value role. */
+typedef enum {
+    PRIME_NEED_VALUE_DEMAND_RESULT = 0,
+    PRIME_NEED_VALUE_READY,
+} PrimeNeedValueRole;
+
 typedef struct PrimeNeedFrame PrimeNeedFrame;
 typedef struct PrimeNeedArenaAudit PrimeNeedArenaAudit;
 #if CETTA_PRIME_NEED_HEAP_INDEX
@@ -73,6 +82,12 @@ typedef struct {
 
 typedef struct {
     PrimeNeedCacheState cache_state;
+    PrimeNeedValueRole value_role;
+    /* Optional direct producer of this VALUE update, in the same session.
+     * Both identities are zero for ordinary results. The update identity
+     * distinguishes sibling completions of the same producer cell. */
+    uint64_t value_producer_thunk;
+    uint64_t value_producer_update;
     Atom *origin;
     Atom *cached;
     uint64_t authority_id;
@@ -131,6 +146,9 @@ PrimeNeedHistoryStep prime_need_snapshot_history_next(
  * bound in that order.  Compatibility projects to a functional observation
  * law: one Need cell cannot have two distinct outcomes; equal reads of one
  * state cell may join; incomparable writes to one state cell do not join.
+ * Valid inherited histories keep their common causal occurrences; hazards
+ * are checked only between their branch-specific extensions.  Sequential
+ * writes already in their shared history are not concurrent effects.
  * Repeated equal observations remain distinct events in the native receipt,
  * even though the corresponding functional world quotient contains one
  * cell/outcome pair.  StateCell pointer identity is episode-local and is not
@@ -142,14 +160,27 @@ typedef enum {
     PRIME_NEED_RECEIPT_WRITE_STATE,
     PRIME_NEED_RECEIPT_USE_EQUATION,
     PRIME_NEED_RECEIPT_RESAMPLE,
+    PRIME_NEED_RECEIPT_ADMISSION_TRUE,
+    PRIME_NEED_RECEIPT_ADMISSION_FALSE,
+    PRIME_NEED_RECEIPT_ADMISSION_PENDING,
 } PrimeNeedReceiptEventKind;
 
 typedef struct PrimeNeedReceiptFrame PrimeNeedReceiptFrame;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+typedef struct PrimeNeedRecording PrimeNeedRecording;
+typedef struct PrimeNeedRecordingSlice PrimeNeedRecordingSlice;
+#endif
 
 typedef struct {
     const PrimeNeedReceiptFrame *top;
     uint64_t session_id;
     Arena *owner;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    /* NULL for operational branch state and ordinary diagnostic receipts.
+     * A recording slice is private mutable allocation state; its immutable
+     * frames belong to one shared, bounded recording owner. */
+    PrimeNeedRecordingSlice *recording;
+#endif
 } PrimeNeedBranchState;
 
 /* A receipt has the same persistent-DAG handle representation as branch
@@ -170,6 +201,7 @@ typedef PrimeNeedBranchState PrimeNeedReceipt;
 typedef struct {
     PrimeNeedSnapshot prime_need;
     PrimeNeedBranchState branch_state;
+    CettaWeightLedger weights;
     /* Compact operational identity for one exact relational occurrence.
      * It preserves duplicate derivations when causal receipt observation is
      * absent; full rule-use evidence remains in `receipt` only when an
@@ -189,6 +221,14 @@ typedef struct {
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
     uint64_t rule_occurrence_id;
+    /* The immutable cached update that this delivery observes.  Cell and
+     * storage identities survive retries and branch choices; they cannot
+     * identify a production.  Zero means that no completed update is named.
+     * A true completion flag is supplied only by the successful force-return
+     * boundary.  A later delivery may name an update produced before capture;
+     * absence of its completion event is an external dependency, not a firing. */
+    uint64_t producer_update_id;
+    bool producer_completed;
 #endif
     StateCell *state_cell;
     Atom *before;
@@ -231,10 +271,23 @@ bool prime_need_snapshot_settled_ancestor(const PrimeNeedSnapshot *base,
                                           PrimeNeedSnapshot *out);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
-/* Share a plain physical-copy episode with the other roots of one owner.
- * Semantic mappers/resolvers are outside this identity-preserving boundary. */
+/* Full-path composition with a caller-owned Atom copy session. Preserve
+ * frame serials, cell/world identities and the exact storage-key watermark;
+ * share Atom images with other roots copied in this session. The caller
+ * discards its private destination and session after any failed preparation.
+ * StateCell/Space identities still require their external lifetime authority. */
 bool prime_need_snapshot_promote_with_session(
-    AtomDeepCopySession *copy_session, PrimeNeedSnapshot *snapshot);
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedSnapshot *snapshot);
+/* Owned checkpoint copy, distinct from ordinary path promotion. The common
+ * session preserves actual frame, index and capture-array identity across
+ * every carrier, including distinct equal paths and absent index roots.
+ * Owners must be live throughout preparation. A region map must cover every
+ * metadata allocation when it is not in the current frame's owner; borrowed
+ * identity regions are refused for this metadata. Atom external identities
+ * retain their existing lifetime contract. On refusal the snapshot is intact;
+ * discard the unpublished destination graph and session before retrying. */
+bool prime_need_snapshot_copy_with_session(
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedSnapshot *snapshot);
 /* Copy only the suffix owned by `forbidden` into `dst`, retaining an older
  * immutable prefix that already excludes `forbidden`.  The source-owned
  * suffix must be contiguous.  This is the promotion operation used before a
@@ -251,6 +304,11 @@ bool prime_need_snapshot_excludes_arena(
     const PrimeNeedSnapshot *snapshot, const Arena *forbidden);
 bool prime_need_snapshot_owner_excludes_arena(
     const PrimeNeedSnapshot *snapshot, const Arena *forbidden);
+/* Inspect every retained Atom root, including superseded updates. This does
+ * not force a cell, establish its owner's lifetime, or authenticate a cache
+ * transition. The predicate inspects the complete Atom graph when required. */
+bool prime_need_snapshot_atoms_satisfy(const PrimeNeedSnapshot *snapshot,
+    AtomTreePredicate predicate, void *context);
 PrimeNeedArenaAudit *prime_need_arena_audit_new(
     const Arena *forbidden);
 bool prime_need_arena_audit_snapshot(
@@ -309,6 +367,23 @@ bool prime_need_snapshot_start_evaluation(
 bool prime_need_snapshot_resolve_value(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
+/* Complete the consumer with a value returned directly by an already
+ * completed producer. The caller supplies the returned value (possibly an
+ * owned transport of it); this operation records, and later validates, the
+ * producer's exact immutable update and preserves its return role. It does
+ * not infer provenance by Atom equality or change embedded child roles. */
+bool prime_need_snapshot_resolve_forwarded_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, uint64_t producer_thunk_id,
+    PrimeNeedSnapshot *out);
+bool prime_need_snapshot_forwarded_value_source(
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
+    PrimeNeedCellView *source);
+/* The same owner-checked completion, for an already produced value whose
+ * callable-looking syntax must stay data during structural observation. */
+bool prime_need_snapshot_resolve_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
+    uint64_t evaluator_id, Atom *value, PrimeNeedSnapshot *out);
 bool prime_need_snapshot_resolve_stable_fault(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, Atom *fault, PrimeNeedSnapshot *out);
@@ -318,6 +393,15 @@ bool prime_need_snapshot_retry_evaluation(
 bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
                                 uint64_t thunk_id,
                                 PrimeNeedCellView *out);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+/* Observation identity of the latest VALUE/STABLE_FAULT update.  It is fresh
+ * for each successful cache transition, preserved by whole/suffix promotion,
+ * and qualified by snapshot->session_id.  Refusal leaves *out unchanged.
+ * This read does not retain the snapshot or certify that recording witnessed
+ * the production.  Ordinary cell lookup need not construct this evidence. */
+bool prime_need_snapshot_cached_update_id(
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id, uint64_t *out);
+#endif
 
 Atom *prime_need_ref(Arena *arena, const PrimeNeedSnapshot *snapshot,
                      uint64_t thunk_id);
@@ -372,7 +456,15 @@ static inline bool prime_need_branch_state_merge(
 bool prime_need_branch_state_promote(
     Arena *dst, PrimeNeedBranchState *state);
 bool prime_need_branch_state_promote_with_session(
-    AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
+/* Copy an unpublished owned carrier through the enclosing physical graph.
+ * Source frames/owners remain quiescent and live through preparation. Shared
+ * nodes keep one image, distinct nodes are not identified by event/value IDs.
+ * Owner/extent and session checks also apply to memo hits. External StateCell
+ * identities keep their separately captured lifetime/currentness authority.
+ * On refusal retain the original and discard the unpublished copy/session. */
+bool prime_need_branch_state_copy_with_session(
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
 bool prime_need_branch_state_promote_suffix(
     Arena *dst, const Arena *forbidden, PrimeNeedBranchState *state);
 bool prime_need_branch_state_promote_suffix_with_session(
@@ -380,6 +472,13 @@ bool prime_need_branch_state_promote_suffix_with_session(
     AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
 bool prime_need_branch_state_excludes_arena(
     const PrimeNeedBranchState *state, const Arena *forbidden);
+/* StateCell identities are external roots even when no Atom wraps them.
+ * Inspect the complete retained DAG, independently of recording completeness
+ * or any destination copy memo. Collection refusal is false, never an empty
+ * successful inspection. Callers retain all source owners during the walk. */
+typedef bool (*PrimeNeedStateCellPredicate)(const StateCell *cell, void *context);
+bool prime_need_branch_state_payloads_satisfy(const PrimeNeedBranchState *state,
+    AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context);
 bool prime_need_arena_audit_branch_state(
     PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *state);
 void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit);
@@ -396,6 +495,136 @@ bool prime_need_branch_state_value(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+typedef struct {
+    size_t nodes;
+    size_t payload_bytes;
+    size_t slices;
+    size_t owner_links;
+} PrimeNeedRecordingLimits;
+
+typedef struct {
+    size_t nodes;
+    size_t reserved_nodes;
+    size_t payload_charge;
+    size_t reserved_payload_bytes;
+    size_t metadata_bound;
+    size_t retained_bound;
+    size_t owner_links;
+    uint64_t omitted;
+    bool incomplete;
+    bool overflow;
+} PrimeNeedRecordingStatus;
+
+/* The coordinator reserves disjoint slices before concurrent execution.
+ * Each slice has one writer. Reading status/census and releasing the final
+ * owner require quiescence. No recording owner borrows a semantic arena.
+ * Payload capacity covers conservative allocation/block charges; metadata
+ * and destination-owner links have separate explicit bounds. */
+PrimeNeedRecording *prime_need_recording_new(PrimeNeedRecordingLimits limits);
+void prime_need_recording_retain(void *recording);
+void prime_need_recording_release(void *recording);
+void prime_need_recording_storage(const void *recording, CettaStorageCensus *census);
+PrimeNeedRecordingStatus prime_need_recording_status(const PrimeNeedRecording *recording);
+/* A failed reservation leaves both the captured receipt and output intact.
+ * Only a seed from this owner is accepted; earlier external histories need
+ * an explicit capture-boundary adapter rather than a borrowed pointer. */
+bool prime_need_recording_reserve(PrimeNeedRecording *recording,
+    const PrimeNeedReceipt *seed, size_t nodes, size_t payload_bytes,
+    PrimeNeedReceipt *out);
+/* A continuing worker may acquire further grants of this size from the
+ * same bounded group. Ordinary reserve retains its fixed slice limits. */
+bool prime_need_recording_reserve_growing(PrimeNeedRecording *recording,
+    const PrimeNeedReceipt *seed, size_t node_quantum, size_t byte_quantum,
+    PrimeNeedReceipt *out);
+bool prime_need_recording_promote(Arena *dst, PrimeNeedReceipt *receipt);
+bool prime_need_recording_merge(PrimeNeedReceipt *dst, const PrimeNeedReceipt *src);
+/* Dynamic allocation authority is separate from immutable captured roots.
+ * A present scope with an empty slice silences recording after refusal;
+ * it never falls back to unbounded diagnostic allocation. */
+extern _Thread_local const PrimeNeedReceipt *g_prime_need_recording_scope;
+typedef struct {
+    const PrimeNeedReceipt *previous;
+    bool entered;
+} PrimeNeedRecordingScope;
+void prime_need_recording_enter(PrimeNeedRecordingScope *scope,
+    const PrimeNeedReceipt *slice);
+void prime_need_recording_leave(PrimeNeedRecordingScope *scope);
+void prime_need_recording_omit_scope(void);
+/* Reserve a sibling slice in the active scope's group. False leaves *out
+ * untouched and does not mark the parent incomplete. */
+bool prime_need_recording_inherit(PrimeNeedReceipt *out);
+/* Quiescent publication adopts an initial root and joins independent roots
+ * through bounded DAG
+ * joins in the active scope. Source carriers and allocation owners remain
+ * intact; refusal is optional evidence loss and records incompleteness. */
+void prime_need_recording_publish(PrimeNeedReceipt *src);
+bool prime_need_recording_merge_scoped(PrimeNeedReceipt *dst,
+    const PrimeNeedReceipt *src);
+typedef bool (*PrimeNeedRecordingRootVisitor)(const PrimeNeedReceipt *, void *);
+/* Quiescent terminal roots retained by this slice, including an adopted root.
+ * Roots are separate branch views and may have overlapping ancestors. */
+bool prime_need_recording_roots(const PrimeNeedReceipt *slice,
+    PrimeNeedRecordingRootVisitor visit, void *context);
+
+/* Unpublished copy of one quiescent recording owner. The caller keeps all
+ * source holders and the common Atom session live and excludes concurrent
+ * recording, promotion and reset. Stage every returned arena pair before
+ * sealing that session's injective region map. Preparation preserves the
+ * complete slice inventory, identities, omissions and remaining quotas.
+ * It does not capture the service that allocates future occurrence IDs.
+ * A carrier's writable slice and root inventory are checked separately:
+ * roots may belong to another slice of the same physical group, but equal
+ * captured logical IDs do not authorize roots from a distinct owner.
+ *
+ * A restored holder must already retain the source group. Rebuilding its
+ * physical owner link does not spend the logical quota a second time; the
+ * new link and copied payload still occupy separately counted storage.
+ * Receipt outputs borrow the image until TAKE or an explicit restored hold.
+ * On refusal discard the unpublished copy/session; the source is unchanged.
+ * This API neither authenticates replay nor admits a recorded parent copy. */
+typedef struct PrimeNeedRecordingCopy PrimeNeedRecordingCopy;
+/* Borrow the physical recording owner of a held receipt; this does not
+ * retain it or authenticate the receipt. The caller holds its carrier. */
+PrimeNeedRecording *prime_need_receipt_recording_owner(const PrimeNeedReceipt *receipt);
+PrimeNeedRecordingCopy *prime_need_recording_copy_new(PrimeNeedRecording *source);
+size_t prime_need_recording_copy_pair_count(const PrimeNeedRecordingCopy *copy);
+bool prime_need_recording_copy_pair(const PrimeNeedRecordingCopy *copy,
+    size_t index, AtomDeepCopyArenaPair *out);
+bool prime_need_recording_copy_prepare(PrimeNeedRecordingCopy *copy,
+    AtomDeepCopySession *session);
+bool prime_need_recording_copy_receipt(const PrimeNeedRecordingCopy *copy,
+    const PrimeNeedReceipt *source, PrimeNeedReceipt *out);
+bool prime_need_recording_copy_restore_holder(PrimeNeedRecordingCopy *copy,
+    const Arena *source, Arena *image);
+PrimeNeedRecording *prime_need_recording_copy_take(PrimeNeedRecordingCopy *copy);
+void prime_need_recording_copy_free(PrimeNeedRecordingCopy *copy);
+
+/* Explicit recording-copy mode for one unpublished common Atom session.
+ * Once enabled, receipt_copy_with_session refuses every recorded carrier
+ * without a complete physical group/slice/inventory map. It never falls
+ * back to retaining that carrier's source group. Ordinary receipt promotion
+ * remains a retention operation, including in this session.
+ *
+ * Copy handles, source groups and all source holders outlive the session.
+ * Complete all carrier copies before TAKE. The destination enclosing owner
+ * must then acquire TAKE's group reference before releasing the copy handle.
+ * Registering an enclosing pair asserts that the actual source owner holds
+ * the source group directly and that the actual destination owner will hold
+ * the image directly. Its carriers may borrow only within those lifetimes.
+ * This does not manufacture an arena retain link or spend its logical quota.
+ * Actual paid arena holders use restore_holder instead. Both relationships
+ * use the session's captured injective private-arena map; borrowed identity
+ * regions cannot become enclosing destinations. No concurrent session use. */
+bool prime_need_recording_copy_enable(AtomDeepCopySession *session);
+/* Borrow a completed capability in an explicitly enabled session. Missing,
+ * stale and already-taken images refuse. The handle remains caller-owned. */
+PrimeNeedRecordingCopy *prime_need_recording_copy_lookup(
+    const AtomDeepCopySession *session, const PrimeNeedRecording *source);
+bool prime_need_recording_copy_enclosing_owner(PrimeNeedRecordingCopy *copy,
+    const Arena *source, Arena *image);
+bool prime_need_recording_copy_with_session(Arena *dst,
+    AtomDeepCopySession *session, PrimeNeedReceipt *receipt);
+
 static inline void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
     prime_need_branch_state_init(receipt);
 }
@@ -415,24 +644,56 @@ static inline bool prime_need_receipt_is_ancestor(
 }
 static inline bool prime_need_receipt_compatible(
     const PrimeNeedReceipt *left, const PrimeNeedReceipt *right) {
+    if ((left && left->recording) || (right && right->recording))
+        return true;
     return prime_need_branch_state_compatible(left, right);
 }
 static inline bool prime_need_receipt_merge(
     PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
+    if (g_prime_need_recording_scope)
+        return prime_need_recording_merge_scoped(dst, src);
+    if ((dst && dst->recording) || (src && src->recording))
+        return prime_need_recording_merge(dst, src);
     return prime_need_branch_state_merge(dst, src);
 }
 static inline bool prime_need_receipt_promote(
     Arena *dst, PrimeNeedReceipt *receipt) {
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote(dst, receipt);
     return prime_need_branch_state_promote(dst, receipt);
+}
+static inline bool prime_need_receipt_promote_with_session(
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(copy_session, dst))
+        return false;
+    /* Bounded recordings retain their separate immutable payload owner;
+     * this operation grants no new writable slice authority. */
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote(dst, receipt);
+    return prime_need_branch_state_promote_with_session(dst, copy_session, receipt);
+}
+static inline bool prime_need_receipt_copy_with_session(
+    Arena *dst, AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(copy_session, dst))
+        return false;
+    if (receipt && receipt->recording)
+        return prime_need_recording_copy_with_session(dst, copy_session, receipt);
+    return prime_need_branch_state_copy_with_session(dst, copy_session, receipt);
 }
 static inline bool prime_need_receipt_promote_suffix(
     Arena *dst, const Arena *forbidden, PrimeNeedReceipt *receipt) {
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote(dst, receipt);
     return prime_need_branch_state_promote_suffix(
         dst, forbidden, receipt);
 }
 static inline bool prime_need_receipt_promote_suffix_with_session(
     Arena *dst, const Arena *forbidden,
     AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(copy_session, dst))
+        return false;
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote(dst, receipt);
     return prime_need_branch_state_promote_suffix_with_session(
         dst, forbidden, copy_session, receipt);
 }
@@ -462,6 +723,14 @@ bool prime_need_receipt_observe_source_cell_branch_local(
     uint64_t need_session_id, uint64_t thunk_id,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
     Atom *outcome, PrimeNeedReceipt *out);
+/* Record delivery from an actual completed cache update.  `completed` names
+ * the caller's successful commit boundary; false names a cached delivery.
+ * Branch-local allocation has the same prefix-lifetime contract as the
+ * other branch-local receipt operations. */
+bool prime_need_receipt_observe_cached_cell(
+    Arena *owner, const PrimeNeedReceipt *base,
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
+    bool completed, bool branch_local, Atom *outcome, PrimeNeedReceipt *out);
 bool prime_need_receipt_inspect_origin(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
@@ -502,13 +771,75 @@ bool prime_need_receipt_resample(
 bool prime_need_receipt_resample_branch_local(
     Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
     PrimeNeedReceipt *out);
+/* An examined authored predicate return, not an inference from absent body
+ * work. `before` retains the completed coefficient and `after` the actual
+ * verdict. The dependency identifies its captured authored occurrence;
+ * separate verdict returns keep separate receipt node identities. The caller
+ * supplies the role from its actual admission transition. This recording
+ * never supplies semantic compatibility or authority to replay the body. */
+bool prime_need_receipt_admission(
+    Arena *owner, const PrimeNeedReceipt *base,
+    PrimeNeedReceiptEventKind kind, uint64_t dependency,
+    Atom *coefficient, Atom *verdict, PrimeNeedReceipt *out);
 bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
                                     StateCell *cell, Atom **out_value);
+/* A checked view of the existing receipt DAG, including its non-event joins.
+ * IDs and predecessors survive promotion.  The increasing-ID order is a
+ * topological allocation order, not the parent agenda's publication order.
+ * The node array is owned by the view; Atom and StateCell payloads remain
+ * borrowed from the receipt's retained owners.  Free the view before releasing
+ * those owners.  This view does not authenticate causes or certify replay. */
+typedef struct {
+    uint64_t identity_id;
+    uint64_t left_id;
+    uint64_t right_id;
+    bool has_event;
+    PrimeNeedReceiptEvent event;
+} PrimeNeedReceiptGraphNode;
+
+typedef struct {
+    uint64_t session_id;
+    uint64_t root_id;
+    PrimeNeedReceiptGraphNode *nodes;
+    size_t length;
+    size_t event_count;
+    bool incomplete;
+} PrimeNeedReceiptGraph;
+
+typedef enum {
+    PRIME_NEED_RECEIPT_GRAPH_ABSENT = 0,
+    PRIME_NEED_RECEIPT_GRAPH_COMPLETE,
+    PRIME_NEED_RECEIPT_GRAPH_REFUSED,
+    PRIME_NEED_RECEIPT_GRAPH_INVALID,
+    PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE,
+} PrimeNeedReceiptGraphStatus;
+
+/* Initialize the destination to zero.  Successful collection replaces it;
+ * refusal or invalid input preserves the entire previous view and receipt.
+ * ABSENT is distinct from a COMPLETE event-free captured session.
+ * INCOMPLETE replaces the view with a valid retained prefix, never a claim
+ * that the recorded computation is complete. */
+PrimeNeedReceiptGraphStatus prime_need_receipt_graph_collect(
+    const PrimeNeedReceipt *receipt, PrimeNeedReceiptGraph *out);
+void prime_need_receipt_graph_free(PrimeNeedReceiptGraph *graph);
+/* Check finite structure only: fresh IDs, retained earlier predecessors,
+ * one root, complete reachability and event count.  Erasing a genuine causal
+ * edge can still pass this check; comparison with execution remains required.
+ * Allocation refusal is never returned as an empty complete graph. */
+PrimeNeedReceiptGraphStatus prime_need_receipt_graph_validate(
+    const PrimeNeedReceiptGraph *graph);
+/* Legacy event-only projections.  The count has no failure channel; consumers
+ * requiring completeness must use the checked graph collection above. */
 size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt);
 bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
                                  size_t index,
                                  PrimeNeedReceiptEvent *out_event);
 #endif
+
+
+void prime_need_snapshot_storage_census(const PrimeNeedSnapshot *snapshot, CettaStorageCensus *census);
+void prime_need_branch_storage_census(const PrimeNeedBranchState *state, CettaStorageCensus *census);
+void prime_occurrence_storage_census(const PrimeOccurrence *occurrence, CettaStorageCensus *census);
 
 #if CETTA_PRIME_NEED_IDENTITY_TEST_HOOKS
 /* Test builds only.  The runtime has no way to move a namespace; these let
@@ -540,4 +871,13 @@ uint64_t prime_need_identity_test_take(PrimeNeedIdentityNamespace ns);
 void prime_need_identity_test_reserve_storage_keys_through(uint64_t key);
 #endif
 
+
+#include "checkpoint_compare.h"
+void prime_need_checkpoint_issuance(CettaCheckpointIssuance *);
+bool prime_need_snapshot_compare(const PrimeNeedSnapshot *, const PrimeNeedSnapshot *, const CettaCheckpointCompare *);
+bool prime_need_branch_state_compare(const PrimeNeedBranchState *, const PrimeNeedBranchState *, const CettaCheckpointCompare *);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+bool prime_need_recording_compare(const PrimeNeedRecording *, const PrimeNeedRecording *, const CettaCheckpointCompare *);
+bool prime_need_receipt_compare(const PrimeNeedReceipt *, const PrimeNeedReceipt *, const CettaCheckpointCompare *);
+#endif
 #endif /* CETTA_PRIME_NEED_H */

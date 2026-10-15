@@ -3,6 +3,7 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (= (fs:read-text $path) (__cetta_lib_fs_read_text $path))
+(= (fs:read-text-result $path $max-bytes $errors) (__cetta_lib_fs_read_text_result $path $max-bytes $errors))
 (= (fs:write $path $text) (__cetta_lib_fs_write $path $text))
 (= (fs:append-text $path $text) (__cetta_lib_fs_append_text $path $text))
 (= (fs:exists $path) (__cetta_lib_fs_exists $path))
@@ -11,3 +12,11 @@
 (= (fs:try-canonical-from-file $base-file $requested-path) (__cetta_lib_fs_try_canonical_from_file $base-file $requested-path))
 (= (fs:try-canonical-under $directory $requested-path) (__cetta_lib_fs_try_canonical_under $directory $requested-path))
 (= (fs:read-lines $path) (__cetta_lib_fs_read_lines $path))
+(= (fs:read-lines-between $path $start $end) (__cetta_lib_fs_read_lines_between $path $start $end))
+(= (fs:line-window $path $start $count) (__cetta_lib_fs_line_window $path $start $count))
+(= (fs:tree-page $path $depth $limit $offset $skips) (__cetta_lib_fs_tree_page $path $depth $limit $offset $skips))
+(= (fs:grep-page $pattern $path $limit $offset $skips) (__cetta_lib_fs_grep_page $pattern $path $limit $offset $skips))
+(= (fs:update-text $path $operation $first $second $backup-directory) (__cetta_lib_fs_update_text $path $operation $first $second $backup-directory))
+(= (fs:is-file $path) (__cetta_lib_fs_is_file $path))
+(= (fs:tail-text $path $bytes) (__cetta_lib_fs_tail_text $path $bytes))
+(= (fs:entries $path) (__cetta_lib_fs_entries $path))

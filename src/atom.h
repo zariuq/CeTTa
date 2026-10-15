@@ -1,6 +1,7 @@
 #ifndef CETTA_ATOM_H
 #define CETTA_ATOM_H
 
+#include "storage_census.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -15,6 +16,10 @@
 #define CETTA_PROVENANCE_ASSERT 0
 #endif
 
+#ifndef CETTA_MANAGED_SYMBOLS
+#define CETTA_MANAGED_SYMBOLS 0
+#endif
+
 #ifndef CETTA_BUILD_WITH_GMP
 #define CETTA_BUILD_WITH_GMP 0
 #endif
@@ -24,6 +29,7 @@
 #endif
 
 typedef struct CettaForeignValue CettaForeignValue;
+typedef struct CettaTensor CettaTensor;
 typedef struct CettaBigInt CettaBigInt;
 typedef struct CettaRational CettaRational;
 typedef struct CettaPrimeNeedCapability CettaPrimeNeedCapability;
@@ -36,6 +42,12 @@ typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
 typedef struct ArenaSymbolCache ArenaSymbolCache;
 typedef struct AtomDeepCopySession AtomDeepCopySession;
+/* Immutable bytes owned by the same arena allocation as their symbol Atom. */
+typedef struct CettaSymbolSpelling {
+    uint64_t hash;
+    uint32_t len;
+    char bytes[];
+} CettaSymbolSpelling;
 
 #define VAR_ID_NONE ((VarId)0)
 #define NAME_ID_NONE ((NameId)0)
@@ -64,7 +76,8 @@ typedef enum {
     GV_INTERNAL_TAG,
     GV_BINDINGS,
     /* A node of a rational term's graph (term_graph.h). */
-    GV_TERM_GRAPH
+    GV_TERM_GRAPH,
+    GV_TENSOR
 } GroundedKind;
 
 typedef enum {
@@ -200,12 +213,13 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * same unfolding, whatever part of it is open. */
 #define ATOM_STRUCTURAL_HAS_RATIONAL UINT32_C(0x00000100)
 #define ATOM_STRUCTURAL_HAS_PETTA_NONLIST UINT32_C(0x00000200)
+#define ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL UINT32_C(0x00000400)
 /* Every reachable Atom allocation is global or in this atom's arena, and
  * every external leaf is a native-handle holder retained by that arena.
  * This is a conjunction over children, not an inherited occurrence bit.
  * It certifies carrier lifetime only: it grants neither a shallow-copy or
  * hash-cons licence nor permission to use a closed registry resource. */
-#define ATOM_STRUCTURAL_OWNER_CLOSED UINT32_C(0x00000400)
+#define ATOM_STRUCTURAL_OWNER_CLOSED UINT32_C(0x00000800)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -215,6 +229,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
+                       ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
                        ATOM_STRUCTURAL_OWNER_CLOSED ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
@@ -223,6 +238,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
+                    ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
                     ATOM_STRUCTURAL_OWNER_CLOSED),
                "structural fact bits overlap");
 
@@ -242,6 +258,9 @@ static inline bool atom_var_id_is_private_variant(VarId id) {
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
 
+/* The arena id of an atom whose copy it records; never an arena's. */
+#define ATOM_ARENA_ID_FORWARDED UINT32_MAX
+
 typedef struct Atom Atom;
 struct Atom {
     AtomKind kind;
@@ -258,7 +277,7 @@ struct Atom {
      * change equality or hashing.
      */
     VarId var_id;
-    SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
+    SymbolId symbol_number; /* Raw ID: access Symbol values through the API below. */
     /*
      * Allocation identity, not part of atom equality or hashing.  Arena
      * identities make ownership tests for known Atom pointers O(1), avoiding
@@ -266,7 +285,10 @@ struct Atom {
      * atom not owned by an Arena (for example a hash-consed global).
      */
     uint32_t arena_id;
-    Atom *name_key;          /* ATOM_VAR structural spelling, otherwise NULL */
+    union {
+        Atom *name_key;      /* Variable name, or evacuation forwarding pointer. */
+        const CettaSymbolSpelling *spelling; /* Unnumbered ATOM_SYMBOL only. */
+    };
     uint32_t hash_cache;     /* lazily memoized structural hash */
     uint32_t structural_facts;
     union {
@@ -300,6 +322,8 @@ struct Atom {
  * stays sixteen bytes. */
 _Static_assert(sizeof(((Atom *)0)->ground) == 16,
                "the string length must fit the grounded padding");
+
+static inline SymbolId atom_symbol_current_id(const Atom *atom);
 
 static inline VarId atom_single_variable_id(const Atom *atom) {
     if (!atom || (atom->flags & ATOM_FLAG_HAS_VARS) == 0u)
@@ -382,7 +406,7 @@ static inline bool atom_is_quotation(const Atom *atom) {
              atom_sequence_is_own_list(atom->expr.elems[2]))) &&
            atom->expr.elems[0] &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom->expr.elems[0]->sym_id == g_builtin_syms.quote;
+           atom_symbol_current_id(atom->expr.elems[0]) == g_builtin_syms.quote;
 }
 
 /* The drop `*@$x` of a quoted variable, `(unquote (quote $x))`.  The drop of
@@ -392,7 +416,7 @@ static inline bool atom_is_drop_of_quoted_variable(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
            atom->expr.elems[0] &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom->expr.elems[0]->sym_id == g_builtin_syms.unquote &&
+           atom_symbol_current_id(atom->expr.elems[0]) == g_builtin_syms.unquote &&
            atom_is_quotation(atom->expr.elems[1]) &&
            atom->expr.elems[1]->expr.elems[1] &&
            atom->expr.elems[1]->expr.elems[1]->kind == ATOM_VAR;
@@ -421,7 +445,7 @@ static inline bool atom_is_prime_braces(const Atom *atom) {
 static inline bool atom_is_prime_meta(const Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
         !atom->expr.elems[0] || atom->expr.elems[0]->kind != ATOM_SYMBOL ||
-        atom->expr.elems[0]->sym_id != g_builtin_syms.prime_meta)
+        atom_symbol_current_id(atom->expr.elems[0]) != g_builtin_syms.prime_meta)
         return false;
     const Atom *argument = atom->expr.elems[2];
     return atom_is_prime_braces(argument) ||
@@ -532,6 +556,7 @@ static inline bool atom_prime_scope_metadata_shape(CettaExprLen len, SymbolId he
            (len == 4u && head == g_builtin_syms.prime_lam) ||
            (len == 5u && head == g_builtin_syms.map_atom) ||
            (len == 7u && head == g_builtin_syms.foldl_atom) ||
+           (len == 6u && head == g_builtin_syms.match) ||
            (len == 5u && (head == g_builtin_syms.let ||
                           head == g_builtin_syms.match ||
                           head == g_builtin_syms.chain ||
@@ -556,7 +581,7 @@ static inline bool atom_prime_template_own_hidden(const Atom *atom) {
     if (!last || last->kind != ATOM_EXPR || !atom_sequence_is_own_list(last))
         return false;
     SymbolId head = atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL
-        ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(atom->expr.elems[0]) : SYMBOL_ID_NONE;
     return atom_prime_scope_metadata_shape(len, head);
 }
 
@@ -654,13 +679,16 @@ typedef struct ArenaBlock {
 typedef struct ArenaRetainedOwner ArenaRetainedOwner;
 typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
 
-typedef struct {
+typedef struct Arena {
     ArenaBlock *head;
     ArenaBlock *spare;
     HashConsTable *hashcons;
     ArenaSymbolCache *symbol_cache;
-    size_t symbol_cache_bytes;
+    /* Metadata retained across partial reset: scalar caches and identity ownership. */
+    size_t persistent_bytes;
     size_t live_bytes;
+    uint64_t managed_symbol_count;
+    uint64_t managed_symbol_bytes;
     /* Heap storage owned by arena finalizers (for example GMP limbs).  This
      * is kept separate from block occupancy so mark/reset can account for
      * allocation pressure without corrupting the block allocator's math. */
@@ -707,8 +735,10 @@ typedef struct {
     ArenaBlock *head;
     size_t used;
     size_t live_bytes;
+    uint64_t managed_symbol_count;
+    uint64_t managed_symbol_bytes;
     size_t external_bytes;
-    size_t symbol_cache_bytes;
+    size_t persistent_bytes;
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;
@@ -728,6 +758,7 @@ typedef struct CettaBindingsValue {
     Atom *(*observe)(Arena *, const struct CettaBindingsValue *);
     bool (*equal)(const struct CettaBindingsValue *,
                   const struct CettaBindingsValue *);
+    CettaStorageVisitor storage;
     Atom *(*apply)(Arena *, const struct CettaBindingsValue *, Atom *);
     const VarId *support;
     size_t support_count;
@@ -749,6 +780,7 @@ void  arena_init_detached(Arena *a);
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */
 void  arena_set_block_capacity(Arena *a, size_t capacity);
+void arena_storage_census(const Arena *arena, CettaStorageCensus *census);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
@@ -776,8 +808,20 @@ bool arena_frame_identity_owned_test(const Arena *a,
 /* Retain an immutable external owner once per arena lifetime segment. A reset
  * releases owners first retained after its mark; earlier owners remain live.
  * Ordinary atom copies must still transport their payload into the destination. */
+bool arena_retain_owner_with_storage(Arena *a, void *owner,
+    void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage);
 bool arena_retain_owner(Arena *a, void *owner,
                         void (*retain)(void *), void (*release)(void *));
+/* Read-only support for an optional bounded owner.  The caller owns the
+ * arena's mutation authority while checking and subsequently retaining. */
+bool arena_retains_owner(const Arena *a, const void *owner,
+                         void (*release)(void *));
+/* Borrow the indexed owner among actual retained edges with this release
+ * operation. Exclusive arena access and the original lifetime hold remain
+ * required; enumeration does not retain or synchronize the owner. */
+const void *arena_retained_owner_at(const Arena *arena,
+    void (*release)(void *), size_t index);
+size_t arena_retained_owner_allocation_bytes(void);
 
 /* Allocation policy consults these aggregates at every machine transition.
  * Keep the overflow behavior visible to the compiler while atom.c retains
@@ -789,9 +833,9 @@ inline size_t arena_accounted_live_bytes(const Arena *a) {
     if (live > SIZE_MAX - a->external_bytes)
         return SIZE_MAX;
     live += a->external_bytes;
-    if (live > SIZE_MAX - a->symbol_cache_bytes)
+    if (live > SIZE_MAX - a->persistent_bytes)
         return SIZE_MAX;
-    return live + a->symbol_cache_bytes;
+    return live + a->persistent_bytes;
 }
 
 inline size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
@@ -799,18 +843,29 @@ inline size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
     if (live > SIZE_MAX - mark.external_bytes)
         return SIZE_MAX;
     live += mark.external_bytes;
-    if (live > SIZE_MAX - mark.symbol_cache_bytes)
+    if (live > SIZE_MAX - mark.persistent_bytes)
         return SIZE_MAX;
-    return live + mark.symbol_cache_bytes;
+    return live + mark.persistent_bytes;
 }
 
 void  arena_account_external_bytes(Arena *a, size_t size);
 /* Native handle identifiers retain an external owner without changing their
  * integer equality, hash, or printed representation. Only these identifiers
  * have the extended allocation; ordinary Atom layout is unchanged. */
+Atom *atom_native_handle_identifier_with_storage(Arena *a, int64_t id, void *owner,
+    void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage);
+/* Preserve a held identifier's authentication tuple while a distinct
+ * owned carrier supplies its payload lifetime. This does not issue an id,
+ * renew its slot, or grant resource mutation. The source must remain live
+ * through construction and the callbacks own the carrier's lifetime. */
+Atom *atom_native_handle_identifier_with_carrier(Arena *a, const Atom *source,
+    void *lifetime, void (*retain)(void *), void (*release)(void *),
+    CettaStorageVisitor storage);
 Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
                                     void (*retain)(void *),
                                     void (*release)(void *));
+/* Test the actual retained holder, not integer equality or printed syntax. */
+bool atom_native_handle_identifier_has_owner(const Atom *identifier, const void *owner);
 Atom *atom_int_copy(Arena *a, const Atom *source);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
@@ -865,6 +920,8 @@ int   cetta_format_float(char *buf, size_t size, double value);
 #define HASHCONS_TABLE_SIZE 65536
 
 struct HashConsTable {
+    /* Nonzero for one live constructor incarnation; never a pointer lease. */
+    uint64_t instance_id;
     CettaFrameIdentityScope frame_identities;
     Atom **table;
     uint32_t size, used;
@@ -882,11 +939,19 @@ void hashcons_init(HashConsTable *hc);
  * Canonical atoms retain their addresses when its index grows. */
 void hashcons_init_compact(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
+void hashcons_storage_census(const HashConsTable *hc, CettaStorageCensus *census);
 /* Process-wide stamp for caches borrowing atoms from any hash-cons table.
  * Reclamation advances it before freeing atoms; UINT64_MAX permanently
  * disables pointer-key reuse rather than wrapping. The caller still keeps
  * every borrowed atom alive throughout each operation that reads it. */
 uint64_t hashcons_reclamation_epoch(void);
+/* The caller holds the table header alive. Zero means retired or identity
+ * exhaustion. Other tables' retirement and this table's growth leave its
+ * instance unchanged; free followed by init obtains a new instance. */
+uint64_t hashcons_instance_id(const HashConsTable *hc);
+/* Allocated bucket and scalar-cache arrays; excludes atom payloads and
+ * frame-identity storage. Query only in the owning worker. */
+uint64_t hashcons_index_reserved_bytes(const HashConsTable *hc);
 /*
  * Return a shared atom if an identical one exists, otherwise insert it.
  * Expressions and variable name keys are published only when their retained
@@ -907,6 +972,13 @@ bool atom_eq_fast(Atom *a, Atom *b);
 
 /* Compute structural hash of an atom */
 uint32_t atom_hash(Atom *a);
+
+/* Concurrent readers may use hashes published before their episode, but must
+ * not mutate the lazy cache on a shared Atom or any recursively hashed child.
+ * These nested, thread-local scopes require quiescent publication of the
+ * borrowed graph; they do not synchronize an unscoped writer. */
+void atom_hash_read_scope_enter(void);
+void atom_hash_read_scope_leave(void);
 
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 
@@ -952,10 +1024,48 @@ extern VarInternTable *g_var_intern;
 /* ── Constructors ───────────────────────────────────────────────────────── */
 
 Atom *atom_symbol(Arena *a, const char *name);
+Atom *atom_symbol_data(Arena *a, const char *name);
+Atom *atom_symbol_data_n(Arena *a, const char *bytes, uint32_t len);
 /* A symbol spelled by static, immutable storage. Uses the literal cache;
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
+Atom *atom_symbol_copy(Arena *owner, const Atom *source);
+bool atom_symbol_is_spelled(const Atom *atom);
+/* Borrowed bytes: a spelled value's pointer is valid only while its owning
+ * arena remains alive and unreset. Copy the value into a surviving owner
+ * before a boundary that can reset/evacuate it; registration alone does not
+ * extend this pointer's lifetime. Numbered table payloads remain permanent
+ * in this prototype. Embedded NULs require atom_symbol_length, not strlen. */
+const char *atom_symbol_bytes(const Atom *atom);
+uint32_t atom_symbol_length(const Atom *atom);
+uint64_t atom_symbol_spelling_hash(const Atom *atom);
+/* Current lookup does not mutate an atom or insert a missing spelling. */
+SymbolId atom_symbol_lookup_spelling_id(const Atom *atom);
+static inline SymbolId atom_symbol_current_id(const Atom *atom) {
+    if (!atom) return SYMBOL_ID_NONE;
+#if CETTA_MANAGED_SYMBOLS
+    if (atom->kind == ATOM_SYMBOL && atom->symbol_number == SYMBOL_ID_NONE &&
+        atom->spelling)
+        return atom_symbol_lookup_spelling_id(atom);
+#endif
+    return atom->symbol_number;
+}
+/* Registration is explicit; retaining/copying an Atom must not call it. */
+SymbolId atom_symbol_register_id(const Atom *atom);
+bool atom_symbols_equal(const Atom *left, const Atom *right);
+bool atom_symbol_equals_cstr(const Atom *atom, const char *text);
+typedef struct {
+    uint64_t retained_count, retained_bytes, allocated_bytes;
+} AtomManagedSymbolStats;
+void atom_managed_symbol_stats(AtomManagedSymbolStats *out);
+/* Visits symbol IDs and variable spellings/name keys in a syntax graph.
+ * Grounded resource interiors are deliberately outside this visitor: it is
+ * not a complete runtime-root scanner. Shared nodes are visited once. */
+typedef bool (*AtomSymbolVisitor)(SymbolId id, void *context);
+bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
+                               void *context);
+void atom_pin_syntax_symbols(const Atom *root);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
@@ -1131,6 +1241,8 @@ typedef struct CettaForeignHold {
 } CettaForeignHold;
 
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+/* Immutable native value. The atom retains a hold until its arena retires. */
+Atom *atom_tensor(Arena *a, CettaTensor *value);
 
 /* A node of a rational term's graph (term_graph.h), the payload of a
  * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms
@@ -1472,9 +1584,183 @@ Atom *atom_deep_copy_mapped(Arena *dst, Atom *src,
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
-/* Destination of an ordinary physical-copy episode; NULL for failed,
- * mapped, resolving or destructively forwarding episodes. */
-Arena *atom_deep_copy_session_plain_arena(const AtomDeepCopySession *session);
+
+/* Copy an admitted immutable value graph into fresh owned storage, including
+ * global hashcons nodes. Every source Atom gets a distinct image; repeated
+ * Atom edges and variable name keys use the same forwarding memo. Sources and
+ * their payload owners remain live and quiescent until the session ends.
+ * Symbols/variables/expressions and ordinary scalar values are admitted.
+ * Grounded resources, native-handle integers and opaque graphs refuse; this
+ * profile does not acquire their lifetimes. Refusal may leave unpublished
+ * destination preparation, which the caller still owns. Child-array address
+ * equality is not an observation of this value-graph snapshot.
+ * The destination must have neither hashcons nor scalar canonicalization.
+ * This is separate from allocation-domain relocation and destructive GC. */
+bool atom_deep_copy_session_set_snapshot(AtomDeepCopySession *session);
+bool atom_deep_copy_session_snapshot_unsupported(const AtomDeepCopySession *session);
+/* Inspect an already completed forwarding entry in an actual, current
+ * snapshot session. This neither copies a root nor extends either lifetime.
+ * The destination header and all source memo keys remain independently held. */
+Atom *atom_deep_copy_session_snapshot_image(const AtomDeepCopySession *session,
+    const Arena *destination, const Atom *source);
+
+typedef struct {
+    const Arena *source;
+    Arena *destination;
+} AtomDeepCopyArenaPair;
+/* Optional allocation-domain transport, installed before copying any root.
+ * Every non-global Atom owner must have one injective pair. An identity pair
+ * explicitly borrows a separately retained external region: only its closed
+ * Atom graphs are reused, and that region must outlive the destination. This
+ * clause does not acquire a pin or validate a Space's semantic revision.
+ * Borrowed regions are excluded from source-retirement claims. Older-generation
+ * links, allocation policy and live scalar-cache entries are transported;
+ * hash-consed owners and reset/configuration drift refuse. The caller owns
+ * all destination arenas and keeps source arenas quiescent until the session
+ * is freed. This neither retains source owners nor copies grounded resource
+ * identities. Global closed atoms keep their existing lifetime contract.
+ * A failed setup/copy leaves sources unchanged; discard the unpublished
+ * session and destination arenas, which may contain partial preparation. */
+bool atom_deep_copy_session_set_arena_map(AtomDeepCopySession *session,
+    const AtomDeepCopyArenaPair *pairs, size_t count);
+
+/* GlobalDomainInspectionV2: index visits include table/closure/subset slots,
+ * memo initialization and growth clears, and every lookup/store/rehash probe.
+ * Analysis steps include node headers and allocation-attempt sites. The sum
+ * is bounded by the supplied service allowance on success and refusal.
+ * It excludes allocator internals, elapsed CPU and the fixed authority guards. */
+typedef struct {
+    size_t index_visits, analysis_steps;
+} AtomDeepCopyGlobalInspection;
+
+/* Before arena-map setup, restrict a fresh copy session to one held current
+ * runtime hashcons table plus the built-in static list nodes. Admission
+ * checks the complete table's closure by pointer membership, without
+ * dereferencing foreign children. Source/table/symbol owners must remain
+ * live and quiescent. Reclamation, runtime-table or symbol-instance changes
+ * invalidate the session. This opt-in acquires no lifetime pin and leaves
+ * ordinary mapped copying unchanged. No copying is allowed until map setup,
+ * including its canonical-cache transport. Inspection has an explicit finite bound;
+ * the required output retains the complete named service-loop count, including
+ * refused setup. The caller accounts for that work in its own scope. */
+bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
+    const HashConsTable *owner, size_t inspection_limit,
+    AtomDeepCopyGlobalInspection *inspection);
+
+/* Extend that same held serial domain after actual append-only allocation.
+ * Both calls reject owner, reclamation, symbol or mapped-arena drift, even
+ * when the used count matches. Existing logical cells must be immutable
+ * under the native hashcons service contract. A changed count causes a full
+ * current-table closure check and an old-key subset check. No child header
+ * is read before owner membership. This acquires no owner lifetime.
+ * The budget is additional temporary metadata beyond the still-retained old
+ * carrier, and bounded inspection work. Reserve both before allocating.
+ * A refused extension leaves the old domain/count and every forwarding map
+ * unchanged; partial inspection is returned for the caller's paid account.
+ * A successful extension replaces only the membership carrier. */
+bool atom_deep_copy_session_global_extension_budget(const AtomDeepCopySession *,
+    const HashConsTable *, size_t node_limit, size_t *additional_bytes, size_t *work);
+bool atom_deep_copy_session_extend_globals(AtomDeepCopySession *,
+    const HashConsTable *, size_t node_limit, size_t inspection_limit,
+    size_t additional_bytes, AtomDeepCopyGlobalInspection *);
+
+/* Explicit serial runtime profile, after successful restrict_globals.
+ * Each pair keeps its allocation policy: both hashcons pointers are NULL,
+ * or both identify the exact validated and independently held runtime table.
+ * Private Atom/header and element-buffer aliases use the same injective copy
+ * session; no canonical constructor may merge the copied private variables.
+ * This does not isolate mutable service state or acquire the table lifetime.
+ * Ordinary set_arena_map continues to reject every hashcons-backed pair. */
+bool atom_deep_copy_session_set_runtime_arena_map(AtomDeepCopySession *session,
+    const AtomDeepCopyArenaPair *pairs, size_t count);
+
+bool atom_deep_copy_session_maps_arena(const AtomDeepCopySession *session,
+    const Arena *source, const Arena *destination);
+/* Validate the allocation destination before composing carrier promotion
+ * with an existing multi-root copy. This does not establish source lifetime
+ * or ownership of resources referenced by grounded values. */
+bool atom_deep_copy_session_targets(const AtomDeepCopySession *session,
+                                    const Arena *dst);
+/* A nested carrier allocates its metadata and frame-identity pins in its
+ * own mapped private destination, while all Atom roots keep the enclosing
+ * session's forwarding table. Scopes are zero-initialized, entered only on
+ * a quiescent mapped session, and left in reverse order before session/arena
+ * release. One mutable session must not be used concurrently. Identity-pair
+ * external regions, unmapped owners and stale maps refuse without changes.
+ * Leave restores the previous selection even after a failed copy or epoch
+ * invalidation; an out-of-order leave refuses. Inactive leave is idempotent. */
+typedef struct AtomDeepCopyDestinationScope {
+    AtomDeepCopySession *session;
+    Arena *previous;
+    Arena *selected;
+    struct AtomDeepCopyDestinationScope *parent;
+    bool active;
+} AtomDeepCopyDestinationScope;
+bool atom_deep_copy_destination_enter(AtomDeepCopySession *session,
+    Arena *destination, AtomDeepCopyDestinationScope *scope);
+bool atom_deep_copy_destination_leave(AtomDeepCopyDestinationScope *scope);
+/* Typed, injective metadata identities belonging to the same unpublished
+ * graph as the Atom memo. Kinds are stable caller-owned tokens, not names or
+ * value equality. Ordinary registration borrows both endpoints; payload
+ * storage belongs to the destination owner. A partially filled graph is
+ * discarded on any copy refusal. Ordinary Atom copying does not construct
+ * these tables. */
+/* Check the captured map and any registrations involving this endpoint
+ * before inspecting its payload. A missing registration is allowed and
+ * still requires the caller to supply a live object. This does not permit
+ * reusing unrelated Atom memo entries after an arena reset. */
+bool atom_deep_copy_session_object_current(const AtomDeepCopySession *session,
+    const void *kind, const void *object);
+void *atom_deep_copy_session_object_forwarded(const AtomDeepCopySession *session,
+    const void *kind, const void *source, size_t bytes);
+/* Inverse lookup in that same injective table, with the same captured-map
+ * validation. This identifies an already registered source; it does not
+ * establish the lifetime or authority of either endpoint. */
+const void *atom_deep_copy_session_object_original(const AtomDeepCopySession *session,
+    const void *kind, const void *image, size_t bytes);
+bool atom_deep_copy_session_object_record(AtomDeepCopySession *session,
+    const void *kind, const void *source, void *image, size_t bytes);
+/* Retain both metadata endpoints until session release. Callbacks must be
+ * non-failing, must not reenter the session, and must not claim ownership of
+ * the endpoints' referenced arenas. An exact duplicate adds no holds; a
+ * conflicting registration leaves all holds unchanged. The selected
+ * destination's identity and reset epoch are captured for later lookup.
+ * These holds retain metadata, not copied payload bytes. */
+typedef void (*AtomDeepCopyObjectLifetime)(const void *object);
+bool atom_deep_copy_session_object_record_retained(AtomDeepCopySession *session,
+    const void *kind, const void *source, void *image, size_t bytes,
+    AtomDeepCopyObjectLifetime retain, AtomDeepCopyObjectLifetime release);
+/* Resolve actual owner/extent under the captured region map. Without a map,
+ * the supplied source owner is checked and the selected destination is used.
+ * Identity pairs may be returned, but confer no writable or lifetime licence.
+ * A metadata client must validate all edges before retaining such an image. */
+bool atom_deep_copy_session_destination_for_owner(
+    const AtomDeepCopySession *session, const Arena *source, Arena **image);
+bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
+    const void *source, size_t bytes, const Arena *fallback,
+    const Arena **source_owner, Arena **image_owner);
+/* Copy a quiescent, table-backed transport without copying its atoms. Both
+ * sessions borrow the same source graphs and destination arena; those owners
+ * must outlive both sessions. Existing forwarding and buffer-sharing entries
+ * are preserved, while later table updates are independent. A resolver or
+ * destructive region transport has additional authority and is refused.
+ * Metadata registrations, borrowed or retained, also refuse cloning.
+ * Refusal leaves the source unchanged. This is not an arena snapshot. */
+AtomDeepCopySession *atom_deep_copy_session_clone(
+    const AtomDeepCopySession *source);
+/* A plain, non-interning enclosing copy for retained pointer-key state. */
+bool atom_deep_copy_session_relocation_targets(
+    const AtomDeepCopySession *session, const Arena *destination);
+/* Relocate a quiescent transport's keys, values and shared-buffer keys through
+ * one enclosing copy session. Both sessions must be plain table transports;
+ * the destination must not intern distinct source nodes. Each known shared
+ * source end must map to one distinct destination end, or the copy refuses.
+ * The source is unchanged. On refusal the caller discards the unpublished
+ * enclosing copy and its arena; they may contain partially copied roots.
+ * Atom inputs retain copy()'s finite expression-DAG contract. Grounded
+ * resource identities keep their separate lifetime contract. */
+AtomDeepCopySession *atom_deep_copy_session_relocate(
+    const AtomDeepCopySession *source, AtomDeepCopySession *relocation);
 /* A multi-root mapped episode. The mapper/context cannot be replaced during
  * the episode. Destination-owned terms are still traversed: storage ownership
  * does not establish that their leaves already have the requested meaning.
@@ -1509,6 +1795,8 @@ Atom *atom_deep_copy_session_forwarded(
 bool atom_deep_copy_session_settled(
     const AtomDeepCopySession *session, const Atom *atom);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
+void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
+    CettaStorageCensus *census);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.
    Safe only for arenas whose contents outlive the global hash-cons table. */
@@ -1545,4 +1833,19 @@ static inline bool cetta_expr_len_mul_fits_size(CettaExprLen len,
            len <= (CettaExprLen)(SIZE_MAX / elem_size);
 }
 
+
+#include "checkpoint_compare.h"
+bool atom_checkpoint_global_budget(const HashConsTable *, size_t, size_t *, size_t *);
+bool atom_checkpoint_global_contains(const AtomDeepCopySession *, const Atom *, const CettaCheckpointCompare *);
+bool arena_checkpoint_span(const Arena *, const void *, size_t, const CettaCheckpointCompare *, bool);
+bool arena_checkpoint_cache_compare(const Arena *, const Arena *, const CettaCheckpointCompare *);
+bool arena_checkpoint_frame_holds(const Arena *, const CettaCheckpointCompare *, bool);
+bool arena_checkpoint_holds_frame(const Arena *, CettaFrameIdentity, const CettaCheckpointCompare *, bool);
+bool atom_checkpoint_payload_admitted(const Atom *, const Arena *, bool, const CettaCheckpointCompare *, bool);
+bool atom_checkpoint_leaf_compare(const Atom *, const Atom *, const CettaCheckpointCompare *);
+/* Same externally held owner, never an image of that owner's mutable resource. */
+bool atom_checkpoint_native_reference_compare(const Atom *, const Arena *,
+    const Atom *, const Arena *, const CettaCheckpointCompare *);
+/* A rigid private tag readout, not admission to execute its enclosing form. */
+bool atom_checkpoint_internal_tag_admitted(int64_t);
 #endif /* CETTA_ATOM_H */

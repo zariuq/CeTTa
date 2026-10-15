@@ -86,7 +86,7 @@ static Atom *hol_requested_judgment(Arena *arena, Atom *head, Atom **arguments,
     if (!word || word->kind != ATOM_SYMBOL) return NULL;
     if (hol_try || set_try) {
         if (strncmp(atom_name_cstr(word), prefix, 4u) != 0 ||
-            !prime_scoped_judgment_is_head_id(word->sym_id))
+            !prime_scoped_judgment_is_head_id(atom_symbol_current_id(word)))
             return NULL;
         *try_out = true;
         return request;
@@ -98,7 +98,7 @@ static Atom *hol_requested_judgment(Arena *arena, Atom *head, Atom **arguments,
     memcpy(spelled, prefix, 4u);
     memcpy(spelled + 4u, bare, length + 1u);
     Atom *judgment_head = atom_symbol(arena, spelled);
-    if (!prime_scoped_judgment_is_head_id(judgment_head->sym_id)) return NULL;
+    if (!prime_scoped_judgment_is_head_id(atom_symbol_current_id(judgment_head))) return NULL;
     Atom **items = arena_alloc(arena, sizeof(Atom *) * request->expr.len);
     if (!items) return NULL;
     items[0] = judgment_head;

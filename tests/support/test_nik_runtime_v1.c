@@ -603,6 +603,7 @@ int main(int argc, char **argv) {
     arena_init(&arena);
 
     test_pattern_sharing();
+    check_exact_premise_replay(&arena);
 
     check_exact_premise_replay(&arena);
 

@@ -1,0 +1,31 @@
+!(pragma! prefer-rationals True)
+
+; Cheapest route on a road map with a cycle (a -> c -> a), min-plus: a
+; route's cost is the sum of its road lengths, drawn from the map's rows.
+(road a b 4)
+(road a c 1)
+(road c b 1)
+(road b d 1)
+(road c a 1)
+(= (route $x $y) (match &self (road $x $y $len) (Arrive $y) (where $len)))
+(= (route $x $z) (match &self (road $x $y $len) (Via $y (route $y $z)) (where $len)))
+
+; Cheapest first, under the nonnegative-sum law checked on every road.
+!(select 1 (search-policy (control WO (order by-weight ascending)
+     (law nonnegative-sum) (budget 200000)))
+   (weight:read (algebra 1000000 0 min +) (route a d)))
+
+; The three cheapest.
+!(select 3 (search-policy (control WO (order by-weight ascending)
+     (law nonnegative-sum) (budget 200000)))
+   (weight:read (algebra 1000000 0 min +) (route a d)))
+
+; Without a law the cycle never lets best-k close.
+!(select 1 (search-policy (control WO (order by-weight ascending) (budget 20000)))
+   (weight:read (algebra 1000000 0 min +) (route a d)))
+
+; A negative road breaks the law: refused, not trusted.
+!(add-atom &self (road b d -1))
+!(select 1 (search-policy (control WO (order by-weight ascending)
+     (law nonnegative-sum) (budget 20000)))
+   (weight:read (algebra 1000000 0 min +) (route a d)))

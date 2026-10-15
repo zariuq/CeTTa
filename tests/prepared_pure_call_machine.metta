@@ -36,9 +36,11 @@
 (= (prepared-partial (Cons $x $xs)) $x)
 !(prepared-partial Nil)
 
-; The generated bind instruction must implement the canonical structural-let
-; contract: fresh fields bind positionally, repeated fields co-refer, and a
-; variable already visible from the equation LHS is a rigid reference.
+; The generated bind instruction must implement the elaborated structural-let
+; contract: fresh fields bind positionally and repeated fields co-refer.  A
+; profile may either retain a visible binder identity or allocate a new one;
+; the worker must preserve that prior elaboration rather than infer identity
+; from the printed name.
 (= (prepared-unpack $pair)
    (let (Pair $x $y) $pair (Unpacked $x $y)))
 !(prepared-unpack (Pair a b))
@@ -52,7 +54,8 @@
 (= (prepared-rigid $x $pair)
    (let (Pair $x $y) $pair (Rigid $x $y)))
 !(prepared-rigid same (Pair same tail))
-; Negative: a binder occurrence referring to the outer $x must not shadow it.
+; A refinement profile rejects the disagreement.  Prime's default
+; lexical-fresh profile instead introduces a new inner $x and returns it.
 !(prepared-rigid same (Pair other tail))
 
 ; Eager compositions apply the canonical argument-congruence rule beneath an
@@ -116,6 +119,25 @@
        ((0 low) (7 high-a) (7 high-b) (3 middle)) 2)
      (/ 5 2)))
 !(prepared-list-algebra ignored)
+
+
+; An optional pure worker distinguishes an empty answer stream from a value.
+; Repeating either call keeps that distinction. Later equations remain live
+; alternatives and defeat the optional realization rather than being cut.
+(= (prepared-maybe $x) (if (== $x 0) (empty) (Box $x)))
+!(collapse (prepared-maybe 0))
+!(collapse (prepared-maybe 7))
+!(collapse (prepared-maybe 0))
+(= (prepared-maybe-more $x) (if (== $x 0) (empty) (Box $x)))
+(= (prepared-maybe-more $x) (Box 9))
+!(collapse (prepared-maybe-more 0))
+!(collapse (prepared-maybe-more 7))
+
+; Optional conditions fail their branch without retrying a completed call.
+(= (prepared-maybe-bool $x) (if (== $x 0) (empty) (== $x 7)))
+!(collapse (if (prepared-maybe-bool 0) yes no))
+!(collapse (if (prepared-maybe-bool 7) yes no))
+!(collapse (if (prepared-maybe-bool 8) yes no))
 
 ; Negative: the generated deconstruction instruction implements only the
 ; successful nonempty-expression arm.  Computation zero and dialect-specific

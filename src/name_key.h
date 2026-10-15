@@ -20,9 +20,17 @@ void name_key_table_delete(NameKeyTable *table);
 
 /* Open variables, cyclic graphs, and contextual grounded values fail closed. */
 NameId name_key_intern(NameKeyTable *table, Atom *key);
+/* The independently owned snapshot destination outlives this table and is
+ * never reset while it is referenced. Store its actual completed image;
+ * structural name equality/collision admission remains unchanged. */
+NameId name_key_intern_snapshot(NameKeyTable *table,
+    const AtomDeepCopySession *snapshot, const Arena *destination, const Atom *source);
 /* Non-mutating lookup.  Unknown or inadmissible keys return NAME_ID_NONE. */
 NameId name_key_find(const NameKeyTable *table, Atom *key);
 const Atom *name_key_lookup(const NameKeyTable *table, NameId id);
 uint32_t name_key_count(const NameKeyTable *table);
+
+
+void name_key_table_storage_census(const NameKeyTable *table, CettaStorageCensus *census);
 
 #endif /* CETTA_NAME_KEY_H */

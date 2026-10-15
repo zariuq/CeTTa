@@ -123,7 +123,7 @@ static bool descent_out_of_memory(DescentContext *ctx) {
 
 static bool descent_symbol_is(const Atom *atom, const char *name) {
     return atom && atom->kind == ATOM_SYMBOL &&
-           strcmp(symbol_bytes(g_symbols, atom->sym_id), name) == 0;
+           strcmp(atom_symbol_bytes(atom), name) == 0;
 }
 
 static const char *const descent_views[] = {
@@ -133,7 +133,7 @@ static const char *const descent_views[] = {
 static bool descent_is_view_symbol(const Atom *atom) {
     if (!atom || atom->kind != ATOM_SYMBOL)
         return false;
-    const char *name = symbol_bytes(g_symbols, atom->sym_id);
+    const char *name = atom_symbol_bytes(atom);
     for (uint32_t i = 0u; descent_views[i]; i++) {
         if (strcmp(name, descent_views[i]) == 0)
             return true;
@@ -181,7 +181,7 @@ typedef enum {
  * at other arities only, the vocabulary's primitive, else a constructor. */
 static DescentHeadKind descent_head_kind(const DescentContext *ctx,
                                          const Atom *term) {
-    SymbolId head = term->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(term->expr.elems[0]);
     uint32_t arity = (uint32_t)(term->expr.len - 1u);
     if (descent_function_at(ctx, head, arity) >= 0)
         return DESCENT_HEAD_CALL;
@@ -349,7 +349,7 @@ typedef struct {
 
 static bool descent_add_edge(DescentContext *ctx, uint32_t f, uint32_t rule,
                              const Atom *call, const DescentEnvStack *env) {
-    int32_t g = descent_function_at(ctx, call->expr.elems[0]->sym_id,
+    int32_t g = descent_function_at(ctx, atom_symbol_current_id(call->expr.elems[0]),
                                     (uint32_t)(call->expr.len - 1u));
     if (g < 0)
         return true;
@@ -941,7 +941,7 @@ bool cetta_deterministic_equation_descends_v1(
                                rules[r].name ? rules[r].name : "an equation rule");
             goto done;
         }
-        SymbolId head = left->expr.elems[0]->sym_id;
+        SymbolId head = atom_symbol_current_id(left->expr.elems[0]);
         uint32_t arity = (uint32_t)(left->expr.len - 1u);
         int32_t f = descent_function_at(&ctx, head, arity);
         if (f < 0) {

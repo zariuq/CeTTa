@@ -63,28 +63,28 @@ static void test_arena_accounting_saturation_contract(void) {
     assert(arena_accounted_live_bytes(NULL) == 0u);
     arena.live_bytes = 11u;
     arena.external_bytes = 7u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == 23u);
     arena.live_bytes = SIZE_MAX - 3u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 0u;
+    arena.persistent_bytes = 0u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
     arena.live_bytes = SIZE_MAX - 7u;
     arena.external_bytes = 4u;
-    arena.symbol_cache_bytes = 5u;
+    arena.persistent_bytes = 5u;
     assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
 
     mark.live_bytes = 13u;
     mark.external_bytes = 3u;
-    mark.symbol_cache_bytes = 2u;
+    mark.persistent_bytes = 2u;
     assert(arena_mark_accounted_live_bytes(mark) == 18u);
     mark.live_bytes = SIZE_MAX - 1u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 0u;
+    mark.persistent_bytes = 0u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
     mark.live_bytes = SIZE_MAX - 4u;
     mark.external_bytes = 2u;
-    mark.symbol_cache_bytes = 3u;
+    mark.persistent_bytes = 3u;
     assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
 }
 
@@ -692,9 +692,15 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 
@@ -1995,8 +2001,8 @@ static void test_copy_reads_symbols_once_with_owned_values(void) {
     Atom *word = atom_symbol(&source, "read-token");
     Atom *later = atom_symbol(&source, "read-later");
     Atom *value = atom_expr2(&source, atom_symbol(&source, "pair"), later);
-    registry_bind_id(&names, word->sym_id, value);
-    registry_bind_id(&names, later->sym_id, atom_int(&source, 99));
+    registry_bind_id(&names, atom_symbol_current_id(word), value);
+    registry_bind_id(&names, atom_symbol_current_id(later), atom_int(&source, 99));
     Atom *form = atom_expr3(&source, atom_symbol(&source, "form"), word, word);
     AtomId id = term_universe_store_atom_id(&universe, NULL, form);
     assert(id != CETTA_ATOM_ID_NONE && tu_hdr(&universe, id));
@@ -2860,21 +2866,21 @@ int main(void) {
     assert(coordinate_existence_applicable);
     Atom *seen_arguments[1] = {seen_alpha};
     assert(term_universe_lookup_symbol_application(
-               &universe, seen_head->sym_id, seen_arguments, 1u) == seen_id);
+               &universe, atom_symbol_current_id(seen_head), seen_arguments, 1u) == seen_id);
     assert(space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *missing_seen_arguments[1] = {missing_seen_coordinates[1]};
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, missing_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), missing_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *open_seen_arguments[1] = {
         atom_var(&scratch, "$open-seen-argument"),
     };
     assert(!space_contains_exact_symbol_application(
-        &hash_space, seen_head->sym_id, open_seen_arguments, 1u,
+        &hash_space, atom_symbol_current_id(seen_head), open_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(!coordinate_existence_applicable);
     assert(!space_match_exists_ground_exact_expression_coordinates(

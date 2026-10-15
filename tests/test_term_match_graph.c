@@ -11,7 +11,7 @@ static bool leaf_eq(Atom *a, Atom *b) {
     if (a->kind != b->kind) return false;
     switch (a->kind) {
     case ATOM_VAR: return a->var_id == b->var_id;
-    case ATOM_SYMBOL: return a->sym_id == b->sym_id;
+    case ATOM_SYMBOL: return atom_symbols_equal(a, b);
     case ATOM_GROUNDED:
         return a->ground.gkind == GV_INT && b->ground.gkind == GV_INT &&
                a->ground.ival == b->ground.ival;
@@ -267,7 +267,7 @@ static void carrier_environments(Arena *arena) {
     CettaTermGraph *graph = term_graph_new();
     assert(graph);
     uint32_t parameter = term_graph_add_param(graph, 0u);
-    uint32_t root = term_graph_add_compound(graph, atom_symbol(arena, "cycle")->sym_id, 2u);
+    uint32_t root = term_graph_add_compound(graph, atom_symbol_current_id(atom_symbol(arena, "cycle")), 2u);
     assert(term_graph_set_child(graph, root, 0u, parameter));
     assert(term_graph_set_child(graph, root, 1u, root));
     assert(term_graph_seal(graph));

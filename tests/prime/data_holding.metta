@@ -60,7 +60,13 @@
 !(hold-again (f nil))
 !(size-atom (hold-again (f nil)))
 
-; Holding survives storage.
-!(add-atom &self (stored (hold (f nil))))
+; Produce the held value before passing it to the data-only storage operation.
+!(let $held (hold (f nil))
+   (add-atom &self (stored $held)))
 !(match &self (stored $s) $s)
 !(match &self (stored $s) (size-atom $s))
+
+; Written code is stored as data. Opening it is a separate evaluation request.
+!(add-atom &self (stored-source (hold (f nil))))
+!(match &self (stored-source $s) $s)
+!(match &self (stored-source $s) (eval $s))

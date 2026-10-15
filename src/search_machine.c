@@ -1,3 +1,5 @@
+#include "identity_counter.h"
+#include "native_cost.h"
 #include "search_machine.h"
 
 #include <inttypes.h>
@@ -156,7 +158,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
 
         SymbolId head = atom->expr.len > 0u &&
                         atom->expr.elems[0]->kind == ATOM_SYMBOL
-            ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+            ? atom_symbol_current_id(atom->expr.elems[0]) : SYMBOL_ID_NONE;
         bool direct_consumer =
             item.executable && atom->expr.len == 2u &&
             head != SYMBOL_ID_NONE && is_consumer(context, head) &&
@@ -298,6 +300,20 @@ bool cetta_selection_automaton_fifo(
     automaton->state_count = 1u;
     automaton->lane[0] = CETTA_SELECTION_LANE_OLDEST;
     automaton->next[0] = 0u;
+    return true;
+}
+
+bool cetta_selection_automaton_same_graph(
+        const CettaSelectionAutomaton *left,
+        const CettaSelectionAutomaton *right) {
+    if (!cetta_selection_automaton_valid(left) ||
+        !cetta_selection_automaton_valid(right) ||
+        left->state_count != right->state_count)
+        return false;
+    for (uint32_t i = 0u; i < left->state_count; i++) {
+        if (left->lane[i] != right->lane[i] || left->next[i] != right->next[i])
+            return false;
+    }
     return true;
 }
 
@@ -854,11 +870,15 @@ CettaContinuationStatus cetta_continuation_expand(
     return CETTA_CONTINUATION_READY;
 }
 
+static _Atomic uint64_t next_store_identity = 1u;
+
 void cetta_continuation_store_init(
     CettaContinuationStore *queue) {
     if (queue) {
         *queue = (CettaContinuationStore){0};
         queue->next_occurrence_id = 1u;
+        queue->identity = cetta_identity_try_take(&next_store_identity);
+        queue->next_lease = 1u;
     }
 }
 
@@ -869,6 +889,7 @@ void cetta_continuation_store_destroy(
     for (size_t i = queue->begin; i < queue->end; i++)
         cetta_owned_continuation_destroy(&queue->items[i]);
     free(queue->items);
+    free(queue->leases);
     *queue = (CettaContinuationStore){0};
 }
 
@@ -899,6 +920,7 @@ static bool cetta_continuation_store_reserve(
         return true;
     if (queue->begin != 0u) {
         if (length != 0u) {
+            cetta_native_cost_charge(CETTA_COST_QUEUE_MOVE, length);
             memmove(
                 queue->items, &queue->items[queue->begin],
                 length * sizeof(*queue->items));
@@ -937,6 +959,7 @@ bool cetta_continuation_store_append(
     continuation->occurrence_id = queue->next_occurrence_id;
     queue->next_occurrence_id = queue->next_occurrence_id == UINT64_MAX
         ? 0u : queue->next_occurrence_id + 1u;
+    cetta_native_cost_charge(CETTA_COST_QUEUE_INSERT, 1u);
     queue->items[queue->end++] = *continuation;
     *continuation = (CettaOwnedContinuation){0};
     return true;
@@ -993,6 +1016,7 @@ bool cetta_continuation_store_take(
         index >= cetta_continuation_store_length(queue)) {
         return false;
     }
+    cetta_native_cost_charge(CETTA_COST_QUEUE_TAKE, 1u);
     size_t selected = queue->begin + index;
     *continuation = queue->items[selected];
     if (selected == queue->begin) {
@@ -1000,6 +1024,7 @@ bool cetta_continuation_store_take(
     } else {
         size_t remaining = queue->end - selected - 1u;
         if (remaining != 0u) {
+            cetta_native_cost_charge(CETTA_COST_QUEUE_MOVE, remaining);
             memmove(
                 &queue->items[selected], &queue->items[selected + 1u],
                 remaining * sizeof(*queue->items));
@@ -1165,6 +1190,227 @@ bool cetta_continuation_hub_switch_schedule(
     }
     hub->schedule = *schedule;
     hub->schedule.state = 0u;
+    return true;
+}
+
+static size_t continuation_lease_index(const CettaContinuationStore *store,
+                                      const CettaOwnedContinuation *owned) {
+    if (!store || !owned || !owned->resume_store ||
+        owned->resume_store != store->identity || !owned->resume_lease)
+        return SIZE_MAX;
+    for (size_t i = 0u; i < store->lease_length; i++) {
+        cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT,1u);
+        const CettaContinuationLease *lease = &store->leases[i];
+        if (lease->occurrence == owned->occurrence_id && lease->lease == owned->resume_lease &&
+            lease->payload == owned->payload && lease->provider == owned->provider)
+            return i;
+    }
+    return SIZE_MAX;
+}
+
+static bool continuation_handle_equal(const CettaOwnedContinuation *left,
+                                      const CettaOwnedContinuation *right) {
+    return left->payload == right->payload &&
+        left->provider == right->provider &&
+        left->occurrence_id == right->occurrence_id &&
+        left->parent_occurrence_id == right->parent_occurrence_id &&
+        left->resume_store == right->resume_store &&
+        left->resume_lease == right->resume_lease;
+}
+
+CettaContinuationStatus cetta_continuation_hub_copy_prepared(
+        const CettaContinuationHub *source,
+        CettaContinuationTransport *transport, size_t length,
+        CettaContinuationHub *destination) {
+    if (!source || !destination || source == destination ||
+        !source->initialized || destination->initialized ||
+        destination->store.items || destination->store.leases ||
+        !cetta_selection_automaton_valid(&source->schedule) ||
+        !cetta_control_plan_valid(&source->plan) ||
+        source->plan.activation != CETTA_CONTROL_ACTIVATE_CONTROLLED ||
+        (source->selection_duty != CETTA_SELECTION_DUTY_NONE &&
+         source->selection_duty != CETTA_SELECTION_DUTY_RECURRENT_OLDEST) ||
+        (source->selection_duty == CETTA_SELECTION_DUTY_RECURRENT_OLDEST &&
+         !cetta_selection_automaton_has_recurrent_oldest(&source->schedule))) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    const CettaContinuationStore *store = &source->store;
+    if (!store->identity || store->begin > store->end ||
+        store->end > store->capacity ||
+        (store->capacity && !store->items) ||
+        store->lease_length > store->lease_capacity ||
+        (store->lease_capacity && !store->leases) ||
+        store->capacity > SIZE_MAX / sizeof(*store->items) ||
+        store->lease_capacity > SIZE_MAX / sizeof(*store->leases)) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    size_t queued = store->end - store->begin;
+    if (store->lease_length > SIZE_MAX - queued ||
+        length != queued + store->lease_length || (length && !transport)) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+
+    /* Exact membership plus injective occurrence keys and equal cardinality
+     * checks coverage of both the queue and the externally owned leases.
+     * Payload addresses are deliberately not used as occurrence keys. */
+    for (size_t i = 0u; i < length; i++) {
+        const CettaOwnedContinuation *owned = transport[i].source;
+        const CettaOwnedContinuation *prepared = &transport[i].prepared;
+        if (!owned || !owned->payload || !owned->occurrence_id ||
+            !cetta_continuation_provider_valid(owned->provider) ||
+            !prepared->payload || prepared->provider != owned->provider ||
+            prepared->occurrence_id || prepared->parent_occurrence_id ||
+            prepared->resume_store || prepared->resume_lease ||
+            (store->next_occurrence_id &&
+             owned->occurrence_id >= store->next_occurrence_id)) {
+            return CETTA_CONTINUATION_UNSUPPORTED;
+        }
+        for (size_t prior = 0u; prior < i; prior++) {
+            cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT, 1u);
+            const CettaOwnedContinuation *earlier = transport[prior].source;
+            if (earlier->occurrence_id == owned->occurrence_id ||
+                (owned->resume_lease &&
+                 earlier->resume_lease == owned->resume_lease)) {
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+        }
+        if (owned->resume_lease) {
+            if ((store->next_lease && owned->resume_lease >= store->next_lease) ||
+                continuation_lease_index(store, owned) == SIZE_MAX) {
+                return CETTA_CONTINUATION_INVALIDATED;
+            }
+        } else {
+            bool found = false;
+            if (owned->resume_store)
+                return CETTA_CONTINUATION_INVALIDATED;
+            for (size_t q = store->begin; q < store->end; q++) {
+                cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT, 1u);
+                if (continuation_handle_equal(owned, &store->items[q])) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return CETTA_CONTINUATION_INVALIDATED;
+        }
+    }
+
+    CettaContinuationHub copy = *source;
+    copy.store.items = NULL;
+    copy.store.leases = NULL;
+    if (store->capacity) {
+        copy.store.items = calloc(store->capacity, sizeof(*store->items));
+        if (!copy.store.items)
+            return CETTA_CONTINUATION_CAPACITY;
+        cetta_native_cost_charge(CETTA_COST_FRAME_ALLOCATE, 1u);
+    }
+    if (store->lease_capacity) {
+        copy.store.leases = calloc(store->lease_capacity, sizeof(*store->leases));
+        if (!copy.store.leases) {
+            free(copy.store.items);
+            return CETTA_CONTINUATION_CAPACITY;
+        }
+        cetta_native_cost_charge(CETTA_COST_FRAME_ALLOCATE, 1u);
+    }
+    copy.store.identity = cetta_identity_try_take(&next_store_identity);
+    if (!copy.store.identity) {
+        free(copy.store.leases);
+        free(copy.store.items);
+        return CETTA_CONTINUATION_CAPACITY;
+    }
+
+    /* No fallible operation remains. The caller keeps the source and the
+     * complete prepared graph quiescent until this ownership move finishes. */
+    for (size_t i = 0u; i < length; i++) {
+        const CettaOwnedContinuation *owned = transport[i].source;
+        CettaOwnedContinuation prepared = *owned;
+        prepared.payload = transport[i].prepared.payload;
+        prepared.provider = transport[i].prepared.provider;
+        if (owned->resume_lease) {
+            size_t lease = continuation_lease_index(store, owned);
+            prepared.resume_store = copy.store.identity;
+            copy.store.leases[lease] = (CettaContinuationLease){
+                prepared.occurrence_id, prepared.resume_lease,
+                prepared.payload, prepared.provider};
+            transport[i].prepared = prepared;
+        } else {
+            for (size_t q = store->begin; q < store->end; q++) {
+                cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT, 1u);
+                if (store->items[q].occurrence_id == owned->occurrence_id) {
+                    copy.store.items[q] = prepared;
+                    break;
+                }
+            }
+            transport[i].prepared = (CettaOwnedContinuation){0};
+        }
+        cetta_native_cost_charge(CETTA_COST_CAPTURE, 1u);
+    }
+    *destination = copy;
+    return CETTA_CONTINUATION_READY;
+}
+
+bool cetta_continuation_hub_take_for_resume(CettaContinuationHub *hub, size_t index,
+        CettaOwnedContinuation *owned) {
+    if (!hub || !hub->initialized || !owned || owned->payload ||
+        !hub->store.identity || !hub->store.next_lease ||
+        index >= cetta_continuation_store_length(&hub->store)) return false;
+    CettaContinuationStore *store = &hub->store;
+    const CettaOwnedContinuation *candidate = cetta_continuation_store_at(store,index);
+    if (!candidate || candidate->resume_lease) return false;
+    for (size_t i = 0u; i < store->lease_length; i++) {
+        cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT,1u);
+        if (store->leases[i].occurrence == candidate->occurrence_id) return false;
+    }
+    if (store->lease_length == store->lease_capacity) {
+        size_t capacity = store->lease_capacity ? store->lease_capacity * 2u : 4u;
+        if (capacity < store->lease_capacity || capacity > SIZE_MAX / sizeof(*store->leases)) return false;
+        void *leases = realloc(store->leases,capacity*sizeof(*store->leases));
+        if (!leases) return false;
+        store->leases = leases;
+        store->lease_capacity = capacity;
+        cetta_native_cost_charge(CETTA_COST_FRAME_ALLOCATE,1u);
+    }
+    if (!cetta_continuation_store_take(store,index,owned)) return false;
+    owned->resume_store = store->identity;
+    owned->resume_lease = store->next_lease;
+    store->next_lease = store->next_lease == UINT64_MAX ? 0u : store->next_lease+1u;
+    store->leases[store->lease_length++] = (CettaContinuationLease){
+        owned->occurrence_id,owned->resume_lease,owned->payload,owned->provider};
+    cetta_native_cost_charge(CETTA_COST_CAPTURE,1u);
+    return true;
+}
+
+bool cetta_continuation_hub_release_lease(CettaContinuationHub *hub,
+        CettaOwnedContinuation *owned) {
+    if (!hub || !hub->initialized) return false;
+    CettaContinuationStore *store = &hub->store;
+    size_t index = continuation_lease_index(store,owned);
+    if (index == SIZE_MAX) return false;
+    store->leases[index] = store->leases[--store->lease_length];
+    owned->resume_store = 0u;
+    owned->resume_lease = 0u;
+    cetta_native_cost_charge(CETTA_COST_FRAME_RETIRE,1u);
+    return true;
+}
+
+bool cetta_continuation_hub_requeue(CettaContinuationHub *hub,
+        CettaOwnedContinuation *owned) {
+    if (!hub || !hub->initialized || !owned || !owned->payload ||
+        !owned->provider || !owned->occurrence_id) return false;
+    CettaContinuationStore *store = &hub->store;
+    size_t lease = continuation_lease_index(store,owned);
+    if (lease == SIZE_MAX) return false;
+    for (size_t i = store->begin; i < store->end; i++) {
+        cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT,1u);
+        if (store->items[i].occurrence_id == owned->occurrence_id) return false;
+    }
+    if (!cetta_continuation_store_reserve(store,1u)) return false;
+    store->leases[lease] = store->leases[--store->lease_length];
+    owned->resume_store = 0u;
+    owned->resume_lease = 0u;
+    cetta_native_cost_charge(CETTA_COST_QUEUE_INSERT,1u);
+    store->items[store->end++] = *owned;
+    *owned = (CettaOwnedContinuation){0};
     return true;
 }
 

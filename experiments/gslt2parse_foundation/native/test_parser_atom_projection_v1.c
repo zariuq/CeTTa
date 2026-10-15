@@ -312,8 +312,8 @@ static bool embedded_nul_gate(PPAtomProjectionV1Plan *plan,
           error);
     CHECK(atoms && len == 1u && atoms[0]->kind == ATOM_SYMBOL,
           "embedded-NUL word did not project to one symbol");
-    spelling = symbol_bytes(g_symbols, atoms[0]->sym_id);
-    CHECK(symbol_len(g_symbols, atoms[0]->sym_id) == 3u &&
+    spelling = atom_symbol_bytes(atoms[0]);
+    CHECK(atom_symbol_length(atoms[0]) == 3u &&
           memcmp(spelling, "a\0b", 3u) == 0,
           "embedded-NUL symbol spelling changed");
     (*passed) += 2u;
@@ -695,7 +695,7 @@ static bool alpha_atom_equal(Atom *left, Atom *right, AlphaVarMap *variables) {
     if (!left || !right || left->kind != right->kind)
         return left == right;
     if (left->kind == ATOM_VAR) {
-        if (left->sym_id != right->sym_id)
+        if (!atom_symbols_equal(left, right))
             return false;
         for (index = 0u; index < variables->len; index++) {
             if (variables->pairs[index].left == left->var_id ||
@@ -904,7 +904,7 @@ static bool projection_event_empty_gate(
               builder, &atoms, &len, error, sizeof(error)),
           error);
     CHECK(atoms && len == 1u && atoms[0]->kind == ATOM_VAR &&
-          atoms[0]->sym_id == SYMBOL_ID_NONE,
+          atom_symbol_current_id(atoms[0]) == SYMBOL_ID_NONE,
           "empty event variable changed spelling");
     *passed += 6u;
     return true;
@@ -948,8 +948,8 @@ static bool projection_event_leaf_kind_gate(
           error);
     CHECK(event_atoms && event_len == 1u &&
           event_atoms[0]->kind == ATOM_SYMBOL &&
-          symbol_len(g_symbols, event_atoms[0]->sym_id) == 3u &&
-          memcmp(symbol_bytes(g_symbols, event_atoms[0]->sym_id),
+          atom_symbol_length(event_atoms[0]) == 3u &&
+          memcmp(atom_symbol_bytes(event_atoms[0]),
                  "a\0b", 3u) == 0,
           "event projector changed an embedded-NUL symbol");
 

@@ -402,6 +402,58 @@ static void test_variable_atoms_share_one_record(void) {
           "freeing the arena released its one shared hold");
 }
 
+/* The facility grows past its first class: more identities live at once
+ * than class 0 has handles.  Every live identity names its own handle, an
+ * extended class retains and releases as class 0 does, and a released
+ * extended handle comes back with a new generation that the old one does
+ * not alias. */
+static void test_live_identities_outgrow_the_first_class(void) {
+    size_t count = (size_t)CETTA_FRAME_CLASS1_FIRST + 4096u;
+    CettaFrameIdentity *held = malloc(sizeof(*held) * count);
+    check(held != NULL, "allocate the held identities");
+    if (!held)
+        return;
+    size_t acquired = 0u;
+    while (acquired < count && cetta_frame_identity_acquire(&held[acquired]))
+        acquired++;
+    check(acquired == count, "more identities live than class 0 has handles");
+    unsigned char *seen = calloc(CETTA_FRAME_HANDLE_LIMIT / 8u + 1u, 1u);
+    check(seen != NULL, "allocate the handle census");
+    bool distinct = seen != NULL, extended = false;
+    for (size_t i = 0u; seen && i < acquired; i++) {
+        uint32_t handle = cetta_frame_handle(held[i]);
+        if (handle == 0u || handle >= CETTA_FRAME_HANDLE_LIMIT ||
+            (seen[handle / 8u] & (1u << (handle % 8u))))
+            distinct = false;
+        else
+            seen[handle / 8u] |= (unsigned char)(1u << (handle % 8u));
+        if (handle >= CETTA_FRAME_CLASS1_FIRST)
+            extended = true;
+    }
+    free(seen);
+    check(distinct, "every live identity names its own handle");
+    check(extended, "the facility issued handles of an extended class");
+
+    CettaFrameIdentity last = held[acquired - 1u];
+    check(cetta_frame_handle(last) >= CETTA_FRAME_CLASS1_FIRST,
+          "the newest identity belongs to an extended class");
+    check(cetta_frame_identity_retain(last), "an extended identity retains");
+    cetta_frame_identity_release(last);
+    for (size_t i = 0u; i < acquired; i++)
+        cetta_frame_identity_release(held[i]);
+    check(!cetta_frame_identity_retain(last),
+          "a released extended identity is refused");
+    CettaFrameIdentity again = 0u;
+    check(cetta_frame_identity_acquire(&again), "reacquire after release");
+    check(cetta_frame_handle(again) != cetta_frame_handle(last) ||
+              cetta_frame_generation(again) > cetta_frame_generation(last),
+          "a recycled handle carries a later generation");
+    check(!cetta_frame_identity_retain(last) || again == last,
+          "the old incarnation does not alias the new one");
+    cetta_frame_identity_release(again);
+    free(held);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -416,6 +468,7 @@ int main(void) {
     test_escape_ownership_is_per_arena();
     test_suffix_delete_preserves_probe_chains();
     test_variable_atoms_share_one_record();
+    test_live_identities_outgrow_the_first_class();
 
     g_symbols = NULL;
     symbol_table_free(&symbols);

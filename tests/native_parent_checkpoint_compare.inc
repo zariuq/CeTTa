@@ -1,0 +1,155 @@
+/* Independent rooted relation: enumerate each retained carrier and compare
+ * logical fields plus physical alias classes, without consulting the copier. */
+typedef struct { unsigned kind; const void *source, *image; } CopyIdentity;
+typedef struct { CopyIdentity keys[8192]; size_t count, shared; bool valid; } CopyRelation;
+static bool copy_identity(CopyRelation *r,unsigned kind,const void *s,const void *d) {
+    if(!s||!d)return r->valid&=(s==NULL)==(d==NULL);
+    if(s==d)return r->valid=false;
+    for(size_t i=0;i<r->count;i++)if(r->keys[i].kind==kind){
+        if((r->keys[i].source==s)!=(r->keys[i].image==d))return r->valid=false;
+        if(r->keys[i].source==s){r->shared++;return true;}
+    }
+    if(r->count>=sizeof(r->keys)/sizeof(*r->keys))return r->valid=false;
+    r->keys[r->count++]=(CopyIdentity){kind,s,d};return true;
+}
+static bool copy_need(CopyRelation *r,const PrimeNeedSnapshot *s,const PrimeNeedSnapshot *d) {
+    if(s->session_id!=d->session_id||s->max_storage_key!=d->max_storage_key)return r->valid=false;
+    bool good=copy_identity(r,1,s->top,d->top);
+#if CETTA_PRIME_NEED_HEAP_INDEX
+    good=copy_identity(r,2,s->heap_index,d->heap_index)&&good;
+    good=copy_identity(r,2,s->lineage_index,d->lineage_index)&&good;
+#endif
+    return good;
+}
+static bool copy_receipt(CopyRelation *r,const PrimeNeedReceipt *s,const PrimeNeedReceipt *d,unsigned kind) {
+    return (s->session_id==d->session_id&&copy_identity(r,kind,s->top,d->top))||(r->valid=false);
+}
+static bool copy_factors(CopyRelation *r,const CettaWeightLedger *s,const CettaWeightLedger *d) {
+    if(s->length!=d->length||s->claim_count!=d->claim_count)return r->valid=false;
+    const CettaWeightFactor *a=s->last,*b=d->last;
+    for(size_t i=0;i<s->length;i++){
+        if(!a||!b||a->occurrence!=b->occurrence||a->dependency!=b->dependency||!atom_eq(a->value,b->value))return r->valid=false;
+        if(!copy_identity(r,5,a,b))return false;
+        a=a->previous;b=b->previous;
+    }
+    if(a||b)return r->valid=false;
+    const CettaWeightClaim *x=s->claims,*y=d->claims;
+    for(size_t i=0;i<s->claim_count;i++){
+        if(!x||!y||x->occurrence!=y->occurrence||x->handler!=y->handler)return r->valid=false;
+        if(!copy_identity(r,6,x,y))return false;
+        x=x->previous;y=y->previous;
+    }
+    return (!x&&!y)||(r->valid=false);
+}
+static bool copy_bindings(CopyRelation *r,const Bindings *s,const Bindings *d) {
+    if((s->prime_ext!=NULL)!=(d->prime_ext!=NULL)||bindings_occurrence_token(s)!=bindings_occurrence_token(d))return r->valid=false;
+    bool good=copy_need(r,bindings_need_view(s),bindings_need_view(d));
+    good=copy_receipt(r,bindings_branch_state_view(s),bindings_branch_state_view(d),3)&&good;
+    good=copy_factors(r,bindings_weight_view(s),bindings_weight_view(d))&&good;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    good=copy_receipt(r,bindings_receipt_view(s),bindings_receipt_view(d),3)&&good;
+#endif
+    return good;
+}
+static bool copy_outcomes(CopyRelation *r,const OutcomeSet *s,const OutcomeSet *d) {
+    if(s->len!=d->len||s->cap!=d->cap)return r->valid=false;
+    for(size_t i=0;i<s->len;i++){
+        if(s->items[i].kind!=d->items[i].kind||
+           s->items[i].result_form!=d->items[i].result_form||
+           (s->items[i].materialized_atom!=NULL)!=(d->items[i].materialized_atom!=NULL)||
+           (s->items[i].delayed!=NULL)!=(d->items[i].delayed!=NULL)||
+           !copy_bindings(r,&s->items[i].env,&d->items[i].env))return r->valid=false;
+    }
+    return true;
+}
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static bool copy_recorded_receipt(CopyRelation *r,const PrimeNeedReceipt *s,const PrimeNeedReceipt *d) {
+    bool good=copy_receipt(r,s,d,3);
+    good=copy_identity(r,7,s->recording,d->recording)&&good;
+    good=copy_identity(r,8,s->owner,d->owner)&&good;
+    return good;
+}
+#endif
+static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *d,CopyRelation *r) {
+    *r=(CopyRelation){.valid=true};
+    if(s->selected_length!=d->selected_length||s->selected_delivered!=d->selected_delivered||
+        s->goal_found!=d->goal_found||s->goal_reported!=d->goal_reported)return false;
+    for(size_t i=0u;i<s->selected_length;i++)if(s->selected[i]!=d->selected[i])return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if(s->history.count!=d->history.count)return false;
+    copy_identity(r,9,s->history.group,d->history.group);
+    for(size_t i=0u;i<s->history.count;i++) {
+        const PrimeNativeHistorySelection *a=&s->history.entries[i],*b=&d->history.entries[i];
+        if(a->occurrence!=b->occurrence||a->spent!=b->spent||a->paid!=b->paid||
+            a->preparation!=b->preparation||strcmp(a->protocol,b->protocol))r->valid=false;
+        copy_recorded_receipt(r,&a->operation,&b->operation);
+        copy_recorded_receipt(r,&a->prepared,&b->prepared);
+    }
+#endif
+    copy_factors(r,&s->weight_entry,&d->weight_entry);
+    if(s->base_environment_initialized)copy_bindings(r,&s->base_environment,&d->base_environment);
+    if(s->weight_environment_initialized)copy_bindings(r,&s->weight_environment,&d->weight_environment);
+    copy_outcomes(r,&s->output,&d->output);
+    const PrimeNativeAdvice *sa=s->advice_cells,*da=d->advice_cells;
+    for(;sa&&da;sa=sa->next,da=da->next) {
+        copy_identity(r,10,sa,da);
+        copy_identity(r,10,sa->inherited,da->inherited);
+        copy_identity(r,10,sa->follows,da->follows);
+        copy_bindings(r,&sa->environment,&da->environment);
+    }
+    if(sa||da)r->valid=false;
+    const PrimeEvalStackFrame *sf=s->frames,*df=d->frames;
+    for(;sf&&df;sf=sf->control_next,df=df->control_next){
+        if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index||
+           sf->normalization_value_ready!=df->normalization_value_ready||
+           sf->normalization_return_value_ready!=df->normalization_return_value_ready||
+           sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
+        if(sf->control_return_advice_length!=df->control_return_advice_length ||
+           sf->control_return_advice_capacity!=df->control_return_advice_capacity ||
+           sf->control_return_advice_length>sf->control_return_advice_capacity ||
+           df->control_return_advice_length>df->control_return_advice_capacity ||
+           sf->control_return_advice_length>sf->child.len ||
+           df->control_return_advice_length>df->child.len) return r->valid=false;
+        copy_identity(r,11,sf->control_return_advice,df->control_return_advice);
+        copy_identity(r,10,sf->control_advice,df->control_advice);
+        for(size_t i=0u;i<sf->control_return_advice_length;i++) {
+            const PrimeNativeReturnAdvice *a=&sf->control_return_advice[i];
+            const PrimeNativeReturnAdvice *b=&df->control_return_advice[i];
+            if((a->key==NULL)!=(b->key==NULL)||(a->bound==NULL)!=(b->bound==NULL)||
+               (a->key&&!atom_eq(a->key,b->key))||(a->bound&&!atom_eq(a->bound,b->bound)))r->valid=false;
+            copy_identity(r,10,a->advice,b->advice);
+        }
+        if(sf->env_initialized)copy_bindings(r,&sf->env,&df->env);
+        if(sf->child_initialized)copy_outcomes(r,&sf->child,&df->child);
+        copy_need(r,&sf->before,&df->before);copy_need(r,&sf->evaluating,&df->evaluating);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        copy_receipt(r,&sf->before_receipt,&df->before_receipt,3);
+        copy_receipt(r,&sf->producer_receipt,&df->producer_receipt,3);
+#endif
+        if(sf->match_rows)copy_bindings(r,&sf->match_rows->pending,&df->match_rows->pending);
+        if(sf->equation_search){
+            const PrimeNeedEquationContinuation *a=sf->equation_search,*b=df->equation_search;
+            const OutcomeSet *x[]={&a->work,&a->current,&a->raw_results,&a->residuals,&a->publication,&a->forced_worlds};
+            const OutcomeSet *y[]={&b->work,&b->current,&b->raw_results,&b->residuals,&b->publication,&b->forced_worlds};
+            if(a->state!=b->state||a->plan_count!=b->plan_count||a->frontier!=b->frontier)r->valid=false;
+            for(size_t i=0;i<6;i++)copy_outcomes(r,x[i],y[i]);
+            for(size_t i=0;i<a->plan_count;i++)copy_outcomes(r,&a->plans[i].results,&b->plans[i].results);
+        }
+    }
+    if(sf||df)r->valid=false;
+    size_t queued=cetta_continuation_hub_length(&s->hub);
+    if(queued!=cetta_continuation_hub_length(&d->hub)||s->parked_count!=d->parked_count)return false;
+    for(size_t i=0;i<queued+s->parked_count;i++){
+        const CettaOwnedContinuation *a=i<queued?cetta_continuation_hub_at(&s->hub,i):&s->parked[i-queued];
+        const CettaOwnedContinuation *b=i<queued?cetta_continuation_hub_at(&d->hub,i):&d->parked[i-queued];
+        const PrimeNativeWork *x=a->payload,*y=b->payload;
+        if(a->occurrence_id!=b->occurrence_id||a->parent_occurrence_id!=b->parent_occurrence_id||
+           ((a->resume_store!=0)!=(b->resume_store!=0))||
+           (a->resume_store&&(a->resume_store!=s->hub.store.identity||b->resume_store!=d->hub.store.identity))||x->task_initialized!=y->task_initialized)r->valid=false;
+        if(x->task_initialized){
+            if(x->task.dynamic_env_initialized)copy_bindings(r,&x->task.dynamic_env,&y->task.dynamic_env);
+            if(x->task.seed_env_initialized)copy_bindings(r,&x->task.seed_env,&y->task.seed_env);
+        }
+    }
+    return r->valid;
+}

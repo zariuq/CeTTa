@@ -435,6 +435,10 @@ Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
  * filled as a hole of quoted code, textually.  NULL on failure. */
 Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
                                 Atom *value);
+/* As above, retaining value's free variables for capture avoidance and its
+ * syntax in patterns/quoted holes, with a distinct runtime value carrier. */
+Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
+                                  Atom *value, Atom *runtime_value);
 Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
                                         Atom *term);
 
@@ -527,6 +531,9 @@ void prime_semantics_theorem_record(
 
 /* A space that comes to hold another's contents holds its theorem records. */
 void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to);
+/* A bounded noninitializing read; completion and emptiness are separate. */
+bool prime_semantics_theorem_instance_empty(uint64_t instance, size_t limit,
+    size_t *visited, bool *empty);
 
 /* The types of an atom from its HE-style declarations, read through the HOL
  * contract and decided by the hosted HOL Light checker, as Prime's `get-type`

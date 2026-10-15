@@ -171,12 +171,51 @@ static int test_eval_redirect_growth(void) {
     return 0;
 }
 
+static int test_eval_redirect_nested(void) {
+    const uintptr_t counts[] = {3u, 80u, 2u};
+    for (uintptr_t depth = 0u; depth < 3u; depth++) {
+        if (!eval_payload_redirects_begin(NULL) ||
+            eval_payload_space_redirect_count() || eval_payload_state_redirect_count())
+            return fail("nested payload did not start with private redirect maps");
+        for (uintptr_t i = 1u; i <= counts[depth]; i++) {
+            if (!eval_payload_note_space_redirect((Space *)(i << 4),
+                    (Space *)((1000u + depth * 100u + i) << 4)) ||
+                !eval_payload_note_state_redirect((StateCell *)(i << 4),
+                    (StateCell *)((2000u + depth * 100u + i) << 4)))
+                return fail("nested payload redirect insertion failed");
+        }
+    }
+    for (uintptr_t remaining = 3u; remaining; remaining--) {
+        uintptr_t depth = remaining - 1u;
+        if (eval_payload_space_redirect_count() != counts[depth] ||
+            eval_payload_state_redirect_count() != counts[depth])
+            return fail("nested payload retirement changed the parent map length");
+        for (uintptr_t i = 1u; i <= counts[depth]; i++) {
+            Space *original, *redirect;
+            StateCell *state, *replacement;
+            if (!eval_payload_space_redirect_at(i - 1u, &original, &redirect) ||
+                original != (Space *)(i << 4) ||
+                redirect != (Space *)((1000u + depth * 100u + i) << 4) ||
+                !eval_payload_state_redirect_at(i - 1u, &state, &replacement) ||
+                state != (StateCell *)(i << 4) ||
+                replacement != (StateCell *)((2000u + depth * 100u + i) << 4))
+                return fail("nested payload retirement changed a parent redirect");
+        }
+        eval_payload_redirects_end();
+    }
+    if (eval_payload_space_redirect_count() || eval_payload_state_redirect_count())
+        return fail("outer payload teardown retained nested redirects");
+    return 0;
+}
+
 int main(void) {
     if (test_atom_hashflags_soundness() != 0)
         return 1;
     if (test_registry_growth() != 0)
         return 1;
     if (test_eval_redirect_growth() != 0)
+        return 1;
+    if (test_eval_redirect_nested() != 0)
         return 1;
     if (!rhocalc_payload_map_capacity_selftest())
         return fail("rhocalc payload maps did not grow past inline storage");

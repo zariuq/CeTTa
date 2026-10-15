@@ -210,6 +210,23 @@ struct PettaPlanNode {
     const PettaPlanNode *children;
 };
 
+/* Retain the authored roles and control boundaries in an owned arena. The
+ * optional source-pointer-specific compiled realizations are not copied. */
+const PettaPlanNode *petta_plan_copy_semantics(Arena *owner, const PettaPlanNode *source);
+typedef struct {
+    uint64_t hash;
+    const PettaPlanNode *plan;
+} PettaPlanSnapshotEntry;
+
+/* Copy a descriptor-free plan into `owner`, sharing identical copies by
+ * content in the caller's bounded cache. No source pointer survives. NULL
+ * declines (descriptor, node/cache capacity or allocation failure); callers
+ * must retain the original owner instead. Entries live until owner resets. */
+const PettaPlanNode *petta_plan_plain_snapshot(
+    Arena *owner, const PettaPlanNode *source,
+    PettaPlanSnapshotEntry *cache, size_t *cache_len, size_t cache_capacity,
+    size_t node_limit);
+
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
 typedef struct PettaEquationTemplate PettaEquationTemplate;
 
@@ -367,15 +384,23 @@ typedef enum {
 } PettaResolvedCallClass;
 
 PettaProgram *petta_program_new(void);
+/* Set once at program construction for the owning dialect/profile. */
+void petta_program_enable_graded_equations(PettaProgram *program);
+bool petta_program_interprets_graded_equations(const PettaProgram *program);
 /* A fixed language-owned host vocabulary, installed before any plans exist.
  * Such occurrences are calls, not inert data or user relation slots. */
 PettaProgram *petta_program_new_with_host_intrinsics(
-    unsigned admitted_forms, bool (*is_host_intrinsic)(SymbolId head));
+    bool (*is_host_intrinsic)(SymbolId head));
 /* Declaration admission is fixed for this owned program and retained by its
  * revision views. The ordinary constructor admits only base equations. */
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
+PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted_forms,
+    bool (*is_host_intrinsic)(SymbolId head));
 bool petta_program_admits_equation(const PettaProgram *program, Atom *atom);
 void petta_program_free(PettaProgram *program);
+/* The complete source/Atom backing region is independently held and the
+ * program is quiescent. This counts owned allocations, not borrowed worlds. */
+void petta_program_storage_census(const PettaProgram *program, CettaStorageCensus *census);
 /* Signature facts are owned by the existing program and keyed by the live
  * SpaceProgramToken. Data-only changes preserve them; equation, declaration,
  * overlay and lifetime changes invalidate them. This caches declarations,
@@ -415,12 +440,36 @@ bool petta_program_observe_addition(
 bool petta_program_synchronize_space(
     PettaProgram *program, Space *space);
 
+/* Compare complete synchronized native occurrence catalogs while both
+ * programs, Spaces, term universes and backing owners are held and quiescent.
+ * The Atom callback supplies the completed source/image relation for every
+ * ordered row. Plans retain every semantic key field and ordered child; only
+ * their two source-specific compiled realization pointers are erased.
+ *
+ * This provider requires scalar, atom, service and service_release. Service
+ * admission reserves temporary bytes before allocation, and release follows
+ * free on every exit. Every catalog/row/plan read and stack copy is paid.
+ * The provider itself checks scalar equality, so a permissive scalar visitor
+ * cannot admit unequal plans. It acquires no ownership or execution authority.
+ * Returns 1 for agreement, 0 for mismatch/unqualified catalog, and -1 when a
+ * visitor or allocation refuses comparison; no input is modified. */
+int petta_program_snapshot_semantics_compare(
+    const PettaProgram *left, const Space *left_space,
+    const PettaProgram *right, const Space *right_space,
+    const CettaCheckpointCompare *read);
+
 /* Classify one call only after synchronize_space has established a current
  * complete catalog.  UNQUALIFIED is conservative: canonical evaluation keeps
  * authority and no continuation controller is installed. */
 CettaRelationalExecutionClass
 petta_program_relational_execution_class(
-    PettaProgram *program, Space *space, Atom *call);
+        PettaProgram *program, Space *space, Atom *call);
+
+/* Structural equation execution with eager argument/constructor returns.
+ * Uses the same pinned complete catalog as the portable checker. Dynamic
+ * callable heads, host intrinsics and specialized PeTTa values are excluded. */
+bool petta_program_native_eager_equations(
+    PettaProgram *program, Space *space, Atom *expression);
 
 /* True when PeTTa's relational machine, rather than an ordinary user
  * equation or inert constructor, owns the head's execution semantics. */
@@ -581,6 +630,7 @@ typedef struct {
 
 PettaProgramRevisionView *petta_program_revision_view_capture(
     PettaProgram *program, Space *source);
+bool petta_program_revision_view_retain(PettaProgramRevisionView *view);
 void petta_program_revision_view_free(
     PettaProgramRevisionView *view);
 bool petta_program_revision_view_bind(

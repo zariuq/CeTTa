@@ -327,8 +327,13 @@ bool cetta_gslt_rigid_key_from_atom_v1(
     memset(key_out, 0, sizeof(*key_out));
     switch (atom->kind) {
     case ATOM_SYMBOL:
+#if CETTA_MANAGED_SYMBOLS
+        if (atom_symbol_is_spelled(atom) &&
+            atom_symbol_current_id(atom) == SYMBOL_ID_NONE)
+            return false;
+#endif
         key_out->kind = CETTA_GSLT_RIGID_KEY_SYMBOL_V1;
-        key_out->symbol = atom->sym_id;
+        key_out->symbol = atom_symbol_current_id(atom);
         return true;
     case ATOM_GROUNDED:
         if (atom->ground.gkind == GV_STRING && atom->ground.sval) {
@@ -349,7 +354,12 @@ bool cetta_gslt_rigid_key_from_atom_v1(
             atom->expr.len - 1u > UINT32_MAX)
             return false;
         key_out->kind = CETTA_GSLT_RIGID_KEY_APPLICATION_V1;
-        key_out->symbol = atom->expr.elems[0]->sym_id;
+#if CETTA_MANAGED_SYMBOLS
+        if (atom_symbol_is_spelled(atom->expr.elems[0]) &&
+            atom_symbol_current_id(atom->expr.elems[0]) == SYMBOL_ID_NONE)
+            return false;
+#endif
+        key_out->symbol = atom_symbol_current_id(atom->expr.elems[0]);
         key_out->arity = (uint32_t)(atom->expr.len - 1u);
         return true;
     default:

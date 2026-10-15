@@ -141,6 +141,9 @@ struct TermUniverse {
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
     size_t len, cap;
+    /* A held snapshot may contain equal values with distinct pointer IDs.
+     * Structural membership must not use canonical-ID equality in this mode. */
+    bool snapshot_entries;
     _Atomic(struct CettaTermVariableSupportBlock *)
         *variable_support_blocks;
     size_t variable_support_block_cap;
@@ -281,6 +284,7 @@ void term_universe_init(TermUniverse *universe);
 bool term_universe_init_with_store_format(TermUniverse *universe,
                                           TermUniverseStoreFormat format);
 void term_universe_free(TermUniverse *universe);
+void term_universe_storage_census(const TermUniverse *universe, CettaStorageCensus *census);
 void term_universe_set_persistent_arena(TermUniverse *universe,
                                         Arena *persistent_arena);
 void term_universe_diag_reset(TermUniverse *universe);
@@ -328,6 +332,15 @@ AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
 AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src);
+/* Insert the exact already-forwarded Atom into the existing fallback
+ * entry representation. The universe's persistent arena must be the actual
+ * snapshot destination, held without reset until all universe users retire.
+ * Distinct equal images keep distinct IDs; repeated pointers reuse one ID.
+ * This admits no resource and does not acquire an arena lifetime. It is for
+ * independently owned read-only snapshots, not ordinary canonical ingress.
+ * Refusal may retain unpublished metadata but never a partial new entry. */
+AtomId term_universe_store_snapshot_image(TermUniverse *universe,
+    const AtomDeepCopySession *snapshot, const Atom *source);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
 /* Non-inserting lookup of an expression presented as borrowed child
  * coordinates.  This is structurally identical to lookup of an expression

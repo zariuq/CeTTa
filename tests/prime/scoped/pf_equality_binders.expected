@@ -12,3 +12,8 @@
 [(refl@num subst@num)]
 [(all (-> num prop) (lam P (all num (lam a (all num (lam b (imp (eq num a b) (imp (P a) (P b)))))))))]
 [False]
+[True]
+[(f a)]
+[(f a)]
+[(Box (+ 1 2))]
+[(+ 1 2)]

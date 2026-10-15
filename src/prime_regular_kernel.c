@@ -1530,18 +1530,18 @@ static bool regular_unrelated_refuted(PrimeRegularKernelInfer left,
     return regular_written_principal(left) || regular_written_principal(right);
 }
 
-static Atom *g_regular_rules;
+static _Thread_local Atom *g_regular_rules;
 
 /* Whether the rule list has a guarded rule at all, and one that waits for an
  * observation: most have none, and then no question about guards walks the
  * rules.  Set with the list. */
-static bool g_regular_rules_guarded = false;
-static bool g_regular_rules_observed = false;
+static _Thread_local bool g_regular_rules_guarded = false;
+static _Thread_local bool g_regular_rules_observed = false;
 /* Whether the rules set for this call declare any family irrelevant. */
-static bool g_regular_rules_irrelevant = false;
+static _Thread_local bool g_regular_rules_irrelevant = false;
 
 /* Rule firings, counted for the runtime's account of a call. */
-static uint64_t g_regular_rule_firings = 0u;
+static _Thread_local uint64_t g_regular_rule_firings = 0u;
 
 /* The arity of a rule: a numeral, or `(PObserved n)` for a rule that
  * unfolds a call only where it is observed, that is, where another rule
@@ -2507,7 +2507,7 @@ static Atom *regular_substitute_zero(
 }
 
 /* Identity policy of the active profile (see the header). */
-static int g_prime_identity_policy = CETTA_PRIME_IDENTITY_J;
+static _Thread_local int g_prime_identity_policy = CETTA_PRIME_IDENTITY_J;
 
 void cetta_prime_identity_policy_set(int policy) {
     g_prime_identity_policy = policy;
@@ -2521,14 +2521,14 @@ int cetta_prime_identity_policy(void) { return g_prime_identity_policy; }
  * over kernel spelling, with pattern variables `(PVar k)`.  The table is
  * set for the duration of a kernel call by the layer that admitted the
  * rules; the kernel itself admits nothing here, it only computes. */
-static Atom *g_regular_rules = NULL;
+static _Thread_local Atom *g_regular_rules = NULL;
 
 /* Whether a synthesized type is being presented to a caller.  The type of an
  * application is then the normal form of its function's codomain,
  * instantiated with the argument as written, so arguments keep their
  * spelling.  Checking and conversion decide judgments and reduce types only
  * to weak-head normal form.  Set for the duration of a synthesis call. */
-static bool g_regular_present_types = false;
+static _Thread_local bool g_regular_present_types = false;
 
 void cetta_prime_regular_kernel_rules_set(Atom *rules) {
     g_regular_rules = rules;

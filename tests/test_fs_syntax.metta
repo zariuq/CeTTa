@@ -41,6 +41,16 @@
        "tests/support" "../test_fs_syntax.metta"))
    True)
 !(assertEqual (fs:read-text "tests/support/fs_fixture.txt") "first line\nsecond line\n\nthird line\n")
+!(assertEqual
+   (fs:read-text-result "tests/support/fs_fixture.txt" 0 "raw")
+   ("ok" "first line\nsecond line\n\nthird line\n"))
+!(assertEqual
+   (fs:read-text-result "tests/support/fs_fixture.txt" 1 "replace")
+   ("limit" 1))
+!(assertEqual
+   (fs:read-text-result "tests/support/fs_fixture.txt" -1 "replace")
+   ("ok" "first line\nsecond line\n\nthird line\n"))
+!(assertEqual (fs:read-text-result "tests" 0 "replace") ("directory" ""))
 !(assertEqual (fs:read-lines "tests/support/fs_fixture.txt") ("first line" "second line" "" "third line"))
 !(assertEqual (fs:write "runtime/test_fs_syntax_output.txt" "alpha") ())
 !(assertEqual (fs:append-text "runtime/test_fs_syntax_output.txt" "\nbeta") ())

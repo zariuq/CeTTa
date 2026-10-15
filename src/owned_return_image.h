@@ -28,8 +28,10 @@ typedef struct CettaOwnedReturnImagePolicy {
  * name keys, and return provenance. Source Atom graphs are finite and acyclic.
  * Plain scalar leaves are copied. Opaque resource leaves require a qualified
  * owner descriptor; no resource permission is inferred from its syntax or
- * ordinary Atom-copy support. A top-level logical Prime occurrence extension
- * is refused here; opaque saved contents remain the descriptor's obligation.
+ * ordinary Atom-copy support. Immutable Prime occurrence state is copied
+ * through the same graph, preserving each return's own world. Bare mutable
+ * state-cell identities and active recording owners are refused; opaque
+ * saved contents remain the descriptor's obligation.
  * Symbol identities keep their original intern context, which the host keeps
  * alive. Storage independence grants no transport to a different context.
  * NULL leaves the source return unchanged.
@@ -49,8 +51,9 @@ void cetta_owned_return_image_release(void *image);
  * delivery without copying the answer or its environment again. */
 CettaOwnedReturnImage *cetta_owned_return_image_from_view(
     const CettaOwnedReturn *view);
-/* Control and Atom-arena bytes. Logical binding/index allocations and opaque
- * resource backing storage are separate accounts of their owning services. */
+/* Control and captured-arena bytes, including copied immutable Prime state.
+ * Logical binding/index allocations and opaque resource backing storage are
+ * separate accounts of their owning services. */
 size_t cetta_owned_return_image_syntax_bytes(const CettaOwnedReturnImage *image);
 
 #endif

@@ -27,10 +27,11 @@ static size_t prime_migration_occ(const Atom *term, VarId id) {
 
 static bool prime_migration_simple(const Atom *term, CettaExprIndex *pattern,
                                     CettaExprIndex *source) {
-    if (!term || term->kind != ATOM_EXPR || atom_authored_len(term) != 4u ||
+    if (!term || term->kind != ATOM_EXPR ||
+        (atom_authored_len(term) != 4u && !space_match_where_grade(term)) ||
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
-    SymbolId head = term->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(term->expr.elems[0]);
     if (head == g_builtin_syms.let) {
         *pattern = 1u; *source = 2u;
         return true;
@@ -97,7 +98,7 @@ static const Atom *prime_migration_cover(PrimeMigration *m, Atom *term,
         return prime_migration_cover(m, term->expr.elems[2], id);
     }
     SymbolId head = term->expr.len && term->expr.elems[0]->kind == ATOM_SYMBOL
-        ? term->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(term->expr.elems[0]) : SYMBOL_ID_NONE;
     if ((head == g_builtin_syms.case_text || head == g_builtin_syms.switch_text ||
          head == g_builtin_syms.switch_minimal) &&
         (term->expr.len == 3u || term->expr.len == 4u) &&
@@ -158,7 +159,7 @@ static void prime_migration_event(PrimeMigration *m, const char *kind,
     printf("],\"arity\":%u,\"head\":", (unsigned)(term->kind == ATOM_EXPR ? atom_authored_len(term) : 0u));
     const char *head = term->kind == ATOM_EXPR && term->expr.len &&
                        term->expr.elems[0]->kind == ATOM_SYMBOL
-        ? symbol_bytes(g_symbols, term->expr.elems[0]->sym_id) : "";
+        ? atom_symbol_bytes(term->expr.elems[0]) : "";
     prime_migration_string(head ? head : "");
     printf(",\"names\":[");
     for (size_t i = 0u; i < count; i++) {
@@ -283,7 +284,7 @@ static void prime_migration_walk(PrimeMigration *m, Atom *term, bool pattern,
     bool simple = prime_migration_simple(term, &pat, &source);
     bool sequence = prime_elab_is_let_star(term);
     SymbolId head = term->expr.len && term->expr.elems[0]->kind == ATOM_SYMBOL
-        ? term->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(term->expr.elems[0]) : SYMBOL_ID_NONE;
     bool branches = (head == g_builtin_syms.case_text ||
                      head == g_builtin_syms.switch_text ||
                      head == g_builtin_syms.switch_minimal) &&
@@ -304,6 +305,8 @@ static void prime_migration_walk(PrimeMigration *m, Atom *term, bool pattern,
         prime_migration_child(m, term, source, false);
         for (size_t i = 0u; i < n; i++) prime_lex_force_id(e, shared[i]->var_id, true);
         prime_migration_child(m, term, 3u, false);
+        if (space_match_where_grade(term))
+            prime_migration_child(m, term, 4u, false);
     } else {
         for (size_t i = 0u; i < n; i++) prime_lex_force_id(e, shared[i]->var_id, true);
         for (CettaExprIndex i = 0u; i < atom_authored_len(term); i++) {

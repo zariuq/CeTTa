@@ -220,6 +220,11 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
     return false;
 }
 
+char *cetta_foreign_python_error_report(Atom *error) {
+    (void)error;
+    return NULL;
+}
+
 bool cetta_foreign_exception_detail(Atom *value, char *out, size_t capacity,
                                     bool *truncated) {
     (void)value;

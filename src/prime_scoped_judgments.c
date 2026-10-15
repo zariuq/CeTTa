@@ -11,6 +11,7 @@
 #include "prime_semantics.h"
 #include "eval.h"
 #include "stats.h"
+#include "native_cost.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -497,6 +498,13 @@ static Atom *sj_known_record(Arena *a, Atom *name, Atom *prop,
         atom_int(a, revision > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)revision),
         atom_string(a, sj_signature_digest())};
     return atom_expr(a, items, SJ_KNOWN_LEN);
+}
+
+/* A stored dependency field has the same inspection boundary as a
+ * judgment operand. Its syntax view is temporary: admission and withdrawal
+ * continue to identify the complete original stored record. */
+static Atom *sj_record_dependencies(Arena *a, Atom *record) {
+    return prime_public_operand_syntax(a, record->expr.elems[SJ_KNOWN_DEPENDS]);
 }
 
 /* Admitted-object boundary.  Publication through `set:axiom`/`set:theorem`
@@ -4551,11 +4559,19 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
         sj_fail(st, false, sj_expr2(a, SJ_S("set:dependency-depth"), record->expr.elems[SJ_KNOWN_NAME]));
         return false;
     }
-    Atom *depends = record->expr.elems[SJ_KNOWN_DEPENDS];
-    if (!depends || depends->kind != ATOM_EXPR) return true;
+    Atom *depends = sj_record_dependencies(a, record);
+    if (!depends || depends->kind != ATOM_EXPR) {
+        sj_fail(st, false, sj_expr2(a, SJ_S("set:dependency-syntax"),
+                                   record->expr.elems[SJ_KNOWN_NAME]));
+        return false;
+    }
     for (CettaExprIndex i = 0u; i < depends->expr.len; i++) {
         Atom *pair = depends->expr.elems[i];
-        if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u) continue;
+        if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u) {
+            sj_fail(st, false, sj_expr2(a, SJ_S("set:dependency-syntax"),
+                                       record->expr.elems[SJ_KNOWN_NAME]));
+            return false;
+        }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_DEPENDENCY_VISIT);
         Atom *name = pair->expr.elems[0];
         size_t seen = memo->count;
@@ -11088,9 +11104,9 @@ static Atom *sj_set_define_scrutinee_first(Arena *a, Space *space,
      * definition and on everything that definition depends on. */
     {
         Atom *permuted_record = published_first->expr.elems[1];
-        Atom *own = record->expr.elems[SJ_KNOWN_DEPENDS];
+        Atom *own = sj_record_dependencies(a, record);
         Atom *inner = sj_is_expr(permuted_record, SJ_S("set:known"), SJ_KNOWN_LEN)
-            ? permuted_record->expr.elems[SJ_KNOWN_DEPENDS] : NULL;
+            ? sj_record_dependencies(a, permuted_record) : NULL;
         size_t own_count = own && own->kind == ATOM_EXPR ? own->expr.len : 0u;
         size_t inner_count = inner && inner->kind == ATOM_EXPR ? inner->expr.len : 0u;
         Atom **pins = arena_alloc(a, sizeof(Atom *) * (own_count + inner_count + 1u));
@@ -12212,7 +12228,7 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
  * actually used must have the same pin in the record; extra pins are allowed
  * and have already passed the currentness walk. */
 static bool sj_dependencies_recorded(SjProofState *st, Atom *record) {
-    Atom *depends = record->expr.elems[SJ_KNOWN_DEPENDS];
+    Atom *depends = sj_record_dependencies(st->arena, record);
     for (size_t i = 0u; i < st->depend_count; i++) {
         bool named = false;
         bool pinned = false;
@@ -14810,4 +14826,25 @@ const char *prime_scoped_judgment_refutation_without_completeness(
         if (!exact) return NULL;
     }
     return SJ_NIL_NOT_EQUAL_CONS;
+}
+
+bool prime_scoped_judgment_instance_empty(uint64_t instance, size_t limit,
+        size_t *visited, bool *empty) {
+    if (visited) *visited=0u;
+    if (empty) *empty=false;
+    if (!visited || !empty || !instance || instance==UINT64_MAX) return false;
+    for (size_t i=0u;i<g_admitted_cap;i++) {
+        if (*visited==limit) return false;
+        (*visited)++;
+        cetta_native_cost_charge(CETTA_COST_STORAGE_PROBE,1u);
+        /* Revoked records are retained history, not empty authority storage. */
+        if (g_admitted[i].digest[0] && g_admitted[i].instance==instance)
+            return true;
+    }
+    *empty=true;
+    return true;
+}
+
+SpaceContentsMovedHook prime_scoped_judgment_contents_subscriber(void) {
+    return sj_admission_follows_contents;
 }

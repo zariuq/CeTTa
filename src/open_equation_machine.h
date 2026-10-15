@@ -125,6 +125,13 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
 /* Drop the compiler's reference; each open cursor holds its own. */
 void cetta_open_equation_program_retain(CettaOpenEquationProgram *program);
 void cetta_open_equation_program_release(CettaOpenEquationProgram *program);
+/* True when exported HOST plans or literals may reside in this program's
+ * private payload arena. Programs without such storage borrow their plans
+ * from the independently retained authored PeTTa program. This does not
+ * authorize releasing a cursor or cache still reading compiled arrays. */
+bool cetta_open_equation_program_owns_host_payload(
+    const CettaOpenEquationProgram *program);
+
 /* The space revision the program was compiled from is still current. */
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program);
@@ -342,8 +349,8 @@ typedef struct {
      * finds would evaluate further withdraws the cursor, since HE evaluates
      * it again where a binder instantiates it and the run reads one so. */
     bool withdraws_reducible_collections;
-    /* Storage the host keeps for the cursor's whole life, released only
-     * after the cursor is gone, as the older generation the region shares.
+    /* Storage the host keeps until it calls cursor_detach before replacement
+     * or the cursor is gone, as the older generation the region shares.
      * A ground value a host goal takes from the region is copied there once
      * and shared from then on, and what an answer brings back from there is
      * shared too.  It never references the host's `answer_arena`.  NULL:

@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "tests/typed_conversion"))
 import build_curriculum_ledger as build  # noqa: E402
 
 BIN = build.BIN
-SCRATCH = Path(os.environ.get("TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer"))
+SCRATCH = Path(os.environ.get("TC_SCRATCH", build.DEFAULT_SCRATCH))
 DEPS = SCRATCH / "curriculum-dependencies.md"
 
 WANT = {

@@ -151,8 +151,8 @@ static void shared_lexical_readings(void) {
     assert(match_binding_values(binding_value_from_atom(y),
         binding_value_from_context(source, second), &env, &arena));
     Atom *a = atom_symbol(&arena, "a"), *b = atom_symbol(&arena, "b");
-    assert(bindings_add_id(&env, var_epoch_id(slot->var_id, first), slot->sym_id, a));
-    assert(bindings_add_id(&env, var_epoch_id(slot->var_id, second), slot->sym_id, b));
+    assert(bindings_add_id(&env, var_epoch_id(slot->var_id, first), atom_symbol_current_id(slot), a));
+    assert(bindings_add_id(&env, var_epoch_id(slot->var_id, second), atom_symbol_current_id(slot), b));
     Atom *pair = atom_expr2(&arena, x, y);
     Atom *ordinary = bindings_apply(&env, &arena, pair);
     Atom *shared = bindings_apply_graph(&env, &arena, pair);
@@ -377,7 +377,7 @@ static void saved_carrier(void) {
     CettaTermGraph *graph = term_graph_new();
     assert(graph);
     uint32_t parameter = term_graph_add_param(graph, 0u);
-    uint32_t root = term_graph_add_compound(graph, atom_symbol(&source, "cycle")->sym_id, 2u);
+    uint32_t root = term_graph_add_compound(graph, atom_symbol_current_id(atom_symbol(&source, "cycle")), 2u);
     assert(term_graph_set_child(graph, root, 0u, parameter));
     assert(term_graph_set_child(graph, root, 1u, root));
     assert(term_graph_seal(graph));
@@ -485,13 +485,13 @@ static void frame_inventory_shared_readings(void) {
     assert(bindings_frame_slot_source_id(f, 1u) == var_base_id(b->var_id));
     assert(bindings_frame_slot_source_id(g, 0u) == var_base_id(a->var_id));
     assert(bindings_frame_slot_source_id(g, 1u) == var_base_id(b->var_id));
-    assert(bindings_add_id(&env, var_epoch_id(a->var_id, first), a->sym_id,
+    assert(bindings_add_id(&env, var_epoch_id(a->var_id, first), atom_symbol_current_id(a),
                            atom_int(&source, 1)));
-    assert(bindings_add_id(&env, var_epoch_id(b->var_id, first), b->sym_id,
+    assert(bindings_add_id(&env, var_epoch_id(b->var_id, first), atom_symbol_current_id(b),
                            atom_int(&source, 2)));
-    assert(bindings_add_id(&env, var_epoch_id(a->var_id, second), a->sym_id,
+    assert(bindings_add_id(&env, var_epoch_id(a->var_id, second), atom_symbol_current_id(a),
                            atom_int(&source, 3)));
-    assert(bindings_add_id(&env, var_epoch_id(b->var_id, second), b->sym_id,
+    assert(bindings_add_id(&env, var_epoch_id(b->var_id, second), atom_symbol_current_id(b),
                            atom_int(&source, 4)));
     assert(env.len == 2u && env.frame_index->bound_value_count == 4u);
     Atom *result = bindings_apply_graph(&env, &destination,

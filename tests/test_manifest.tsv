@@ -162,6 +162,7 @@ tests/prime/profiles/megalodon_hotg/trinity/list_param.extensional.metta	prime	m
 tests/prime/profiles/megalodon_hotg/trinity/power-in-universe.metta	prime	metta		any	native	test-prime-profile-megalodon-hotg	golden	Explicit Megalodon HOTG profile regression
 tests/prime/profiles/megalodon_hotg/trinity/stream.family.metta	prime	metta		any	native	test-prime-profile-megalodon-hotg	golden	Explicit Megalodon HOTG profile regression
 tests/prime/quote_head_matching.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/ready_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/relational_first_demand.metta	prime	metta		any	native	test-prime	golden	Prime root first-answer demand, fallback, and nested-search regression
 tests/prime/rule_machine_compile.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_duplicate_id.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -331,6 +332,7 @@ tests/support/import_mode/nested/use_parent_helper.metta	he	metta	extended	main	
 tests/support/test_fallback_eval_session.c	he	c		main	n/a	test-fallback-eval-session	binary	direct evaluator path uses base HE with no selected profile
 tests/support/test_rhometta_payload_map_capacity.c	he	c		main	n/a	test-rhometta-payload-map-capacity-c	binary	payload maps and registry grow past inline storage
 tests/test_add_atom_nodup_canonical_var_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_add_atom_nodup_float_identity_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_add_atom_nodup_pathmap_alpha_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_add_reduct.metta	he	metta	extended	main	native	test	golden	-
 tests/test_alpha_equiv.metta	he	metta	extended	main	native	test	golden	-
@@ -556,6 +558,7 @@ tests/test_io_rho_bridge.metta	he	metta	extended	core	native	test-opt-in-feature
 tests/test_io_syntax.metta	he	metta	extended	core	native	test-opt-in-feature	property	assertion-only property without golden oracle
 tests/test_isinf_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_isnan_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
+tests/test_json_direct_reference.metta	he	metta	extended	main	native	test	golden	-
 tests/test_json_gslt_byte_lengths.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_hostile_constructors.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_invalid_number.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
@@ -608,6 +611,7 @@ tests/test_lts_rho_cost_parallel_runtime_stats.metta	he	metta	extended	runtime-s
 tests/test_lts_rho_cost_search_budget.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_rho_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_syntax.metta	he	metta	extended	main	native	test	golden	-
+tests/test_managed_symbol_exact_membership.metta	he	metta	extended	main	native	test	golden	-
 tests/test_map_filter_atom.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	extended	main	native	test	golden	-

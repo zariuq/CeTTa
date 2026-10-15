@@ -20,10 +20,27 @@ typedef struct {
 
 typedef struct {
     const CettaOwnedReturnImagePolicy *policy;
+    AtomDeepCopySession *session;
     PendingNameKey *keys;
     size_t key_count;
     size_t key_capacity;
 } ReturnCopy;
+
+/* Inspect every operational root, including superseded immutable updates.
+ * The enclosing copy memo also owns these roots, so aliases across the
+ * visible value, logical bindings and the captured world stay aliases. */
+static bool capture_return_root(const Atom *root, void *context) {
+    ReturnCopy *copy = context;
+    return atom_deep_copy_session_copy(copy->session, (Atom *)root) != NULL;
+}
+
+/* A receipt can name a mutable cell without an Atom carrying its owner.
+ * The leaf-owner policy does not describe such a bare resource identity. */
+static bool refuse_unqualified_state_cell(const StateCell *cell, void *context) {
+    (void)cell;
+    (void)context;
+    return false;
+}
 
 static bool remember_name_key(ReturnCopy *copy, Atom *source, Atom *variable) {
     if (copy->key_count == copy->key_capacity) {
@@ -43,9 +60,9 @@ static bool remember_name_key(ReturnCopy *copy, Atom *source, Atom *variable) {
 static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
     ReturnCopy *copy = context;
     if (leaf->kind == ATOM_SYMBOL)
-        return atom_symbol_id(arena, leaf->sym_id);
+        return atom_symbol_copy(arena, leaf);
     if (leaf->kind == ATOM_VAR) {
-        Atom *variable = atom_var_with_spelling(arena, leaf->sym_id, leaf->var_id);
+        Atom *variable = atom_var_with_spelling(arena, atom_symbol_current_id(leaf), leaf->var_id);
         if (leaf->name_key) {
             /* Name keys are Atom roots even though a variable is a syntax
              * leaf. Queue them in this same episode instead of invoking an
@@ -95,18 +112,23 @@ static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
 CettaOwnedReturnImage *cetta_owned_return_image_capture(
     const CettaOwnedReturn *returned,
     const CettaOwnedReturnImagePolicy *policy) {
-    if (!returned || (returned->environment && returned->environment->prime_ext))
+    if (!returned)
         return NULL;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (returned->environment && bindings_receipt_view(returned->environment)->recording)
+        return NULL;
+#endif
     CettaOwnedReturnImage *image = calloc(1u, sizeof(*image));
     if (!image)
         return NULL;
     image->references = 1u;
-    image->returned.outcome = returned->outcome;
+    image->returned = *returned;
     arena_init_detached(&image->syntax);
     bindings_init(&image->environment);
     ReturnCopy copy = {.policy = policy};
     AtomDeepCopySession *session = atom_deep_copy_session_new_mapped(
         &image->syntax, capture_return_leaf, &copy);
+    copy.session = session;
     bool ok = session != NULL;
     if (ok && returned->outcome.term) {
         image->returned.outcome.term = atom_deep_copy_session_copy(
@@ -119,8 +141,11 @@ CettaOwnedReturnImage *cetta_owned_return_image_capture(
         ok = image->returned.outcome.delayed != NULL;
     }
     if (ok && returned->environment) {
-        ok = bindings_copy(&image->environment, returned->environment) &&
-             bindings_promote_logical_atoms_with_session(&image->environment, session);
+        ok = bindings_payloads_satisfy(returned->environment,
+                 capture_return_root, refuse_unqualified_state_cell, &copy) &&
+             bindings_copy(&image->environment, returned->environment) &&
+             bindings_copy_owned_atoms_with_session(
+                 &image->environment, &image->syntax, session);
         image->returned.environment = &image->environment;
     }
     for (size_t index = 0u; ok && index < copy.key_count; ++index) {

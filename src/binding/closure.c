@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <assert.h>
+#include <stdatomic.h>
 
 Atom *bindings_capture_images(Arena *arena, Atom *const *variables,
                               Atom *const *values, size_t count, bool renaming) {
@@ -19,21 +20,25 @@ done:
     return result;
 }
 
+
 struct BindingsOwners {
-    size_t references;
+    _Atomic size_t references;
     size_t count;
     CettaBindingsValue *values[];
 };
 
 void bindings_owners_retain(BindingsOwners *owners) {
     if (owners) {
-        assert(owners->references < SIZE_MAX);
-        owners->references++;
+        size_t previous = atomic_fetch_add_explicit(&owners->references, 1u, memory_order_relaxed);
+        assert(previous > 0u && previous < SIZE_MAX);
     }
 }
 
 void bindings_owners_release(BindingsOwners *owners) {
-    if (!owners || --owners->references != 0u) return;
+    if (!owners) return;
+    size_t previous = atomic_fetch_sub_explicit(&owners->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u) return;
     for (size_t i = 0; i < owners->count; i++)
         owners->values[i]->release(owners->values[i]);
     free(owners);
@@ -70,24 +75,34 @@ void bindings_inherit_owners(Bindings *destination, const Bindings *source) {
 
 typedef struct {
     CettaBindingsValue value;
-    size_t references;
+    _Atomic size_t references;
     Arena syntax;
     Bindings bindings;
 } CapturedBindings;
 
 static void captured_bindings_retain(void *raw) {
     CapturedBindings *captured = raw;
-    assert(captured->references < SIZE_MAX);
-    captured->references++;
+    size_t previous = atomic_fetch_add_explicit(&captured->references, 1u, memory_order_relaxed);
+    assert(previous > 0u && previous < SIZE_MAX);
 }
 
 static void captured_bindings_release(void *raw) {
     CapturedBindings *captured = raw;
-    if (--captured->references != 0u) return;
+    size_t previous = atomic_fetch_sub_explicit(&captured->references, 1u, memory_order_acq_rel);
+    assert(previous > 0u);
+    if (previous != 1u) return;
     free((void *)captured->value.support);
     bindings_free(&captured->bindings);
     arena_free(&captured->syntax);
     free(captured);
+}
+
+static void captured_bindings_storage(const void *raw, CettaStorageCensus *census) {
+    const CapturedBindings *captured = raw;
+    if (!cetta_storage_object(census, captured, sizeof(*captured), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, captured->value.support, captured->value.support_count, sizeof(VarId), 0u);
+    arena_storage_census(&captured->syntax, census);
+    bindings_storage_census(&captured->bindings, census);
 }
 
 static Atom *captured_bindings_observe(
@@ -120,6 +135,7 @@ Atom *bindings_capture_value(Arena *arena, const Bindings *bindings) {
             .release = captured_bindings_release,
             .observe = captured_bindings_observe,
             .equal = captured_bindings_equal,
+            .storage = captured_bindings_storage,
             .apply = captured_bindings_apply,
         },
         .references = 1u,
@@ -281,7 +297,7 @@ typedef struct {
 
 static bool scoped_name_visit(const Atom *atom, void *raw) {
     ScopedName *name = raw;
-    if (atom->kind != ATOM_VAR || atom->name_key || atom->sym_id != name->spelling)
+    if (atom->kind != ATOM_VAR || atom->name_key || atom_symbol_current_id(atom) != name->spelling)
         return false;
     VarId id = name->epoch ? var_epoch_id(atom->var_id, name->epoch) : atom->var_id;
     if (name->id != VAR_ID_NONE && name->id != id) name->ambiguous = true;
@@ -327,8 +343,8 @@ bool bindings_from_atom_scoped(Atom *atom, const Atom *scope,
             if (!bindings_add_var(out, key, value)) goto fail;
         } else if (key->kind == ATOM_SYMBOL) {
             VarId id;
-            if (!scoped_name_resolve(key->sym_id, scope, receiver, &id) ||
-                !bindings_add_id(out, id, key->sym_id, value)) goto fail;
+            if (!scoped_name_resolve(atom_symbol_current_id(key), scope, receiver, &id) ||
+                !bindings_add_id(out, id, atom_symbol_current_id(key), value)) goto fail;
         } else goto fail;
     }
     for (CettaExprIndex i = 0; i < equalities->expr.len; i++) {
@@ -345,4 +361,15 @@ fail:
 
 bool bindings_from_atom(Atom *atom, Bindings *out) {
     return bindings_from_atom_scoped(atom, NULL, NULL, out);
+}
+
+
+void bindings_owners_storage_census(const BindingsOwners *owners, CettaStorageCensus *census) {
+    if (!owners || !cetta_storage_array(census, owners, owners->count,
+            sizeof(*owners->values), sizeof(*owners))) return;
+    for (size_t i = 0; i < owners->count; i++) {
+        const CettaBindingsValue *value = owners->values[i];
+        if (value->storage) value->storage(value, census);
+        else cetta_storage_refuse(census, "OpaqueCapturedBindings");
+    }
 }

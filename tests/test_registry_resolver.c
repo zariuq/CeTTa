@@ -42,6 +42,139 @@ static bool result_has_source(const RegistryResolutionSet *results,
     return false;
 }
 
+static void read_view_controls(Arena *arena) {
+    Registry source;
+    RegistryReadView view, nested;
+    registry_init(&source);
+    SymbolId coefficient = symbol_intern_cstr(g_symbols, "&coefficient");
+    SymbolId absent = symbol_intern_cstr(g_symbols, "&absent-coefficient");
+    SymbolId unrelated = symbol_intern_cstr(g_symbols, "&saved-residual");
+    Atom *two = atom_int(arena, 2), *nine = atom_int(arena, 9);
+    registry_bind_id(&source, coefficient, two);
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "admission captures a complete registry value view");
+    registry_bind_id(&source, coefficient, nine);
+    RegistryReadView *previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_id(&source, coefficient), two) && view.stale,
+          "first post-suspension consultation detects replacement and retains old authority");
+    CHECK(atom_eq(view.stale_expected, two) && atom_eq(view.stale_actual, nine),
+          "stale receipt contains the admitted and replacement values");
+    registry_read_view_leave(previous);
+    CHECK(!registry_read_view_validate(&view, &source),
+          "stale view cannot silently rebase");
+    registry_read_view_free(&view);
+
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "new admission may capture the replacement value");
+    registry_bind_id(&source, absent, two);
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(registry_lookup_id(&source, absent) == NULL && view.stale &&
+              view.stale_expected == NULL && atom_eq(view.stale_actual, two),
+          "initially absent name stays absent and records absent-to-present");
+    registry_read_view_leave(previous);
+    registry_read_view_free(&view);
+
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "capture before a present-to-absent change");
+    registry_bind_id(&source, coefficient, NULL);
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_id(&source, coefficient), nine) && view.stale &&
+              view.stale_actual == NULL,
+          "lookup records present-to-absent and retains the admitted value");
+    registry_read_view_leave(previous);
+    registry_read_view_free(&view);
+
+    registry_bind_id(&source, coefficient, two);
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "capture before unchanged and unrelated changes");
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_id(&source, coefficient), two) && !view.stale,
+          "unchanged consultation is admitted");
+    registry_read_view_leave(previous);
+    registry_bind_id(&source, unrelated, nine);
+    registry_bind_id(&source, coefficient, atom_int(arena, 2));
+    CHECK(registry_read_view_validate(&view, &source),
+          "unrelated names and equal value rebinding preserve consulted authority");
+    registry_bind_id(&source, coefficient, nine);
+    CHECK(!registry_read_view_validate(&view, &source) &&
+              atom_eq(view.stale_expected, two),
+          "resume revalidates names already read before suspension");
+    registry_read_view_free(&view);
+
+    Atom *name = descriptor(arena, "coefficient");
+    CHECK(registry_bind_name(&source, name, two) &&
+              registry_read_view_init(&view, &source, arena),
+          "structural names have the same admission boundary");
+    CHECK(registry_bind_name(&source, name, nine), "replace structural-name binding");
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_name(&source, name), two) && view.stale,
+          "structural lookup cannot bypass stale-scope detection");
+    registry_read_view_leave(previous);
+    registry_read_view_free(&view);
+
+    registry_bind_id(&source, absent, NULL);
+    CHECK(registry_read_view_init(&view, &source, arena), "capture enclosing scope");
+    previous = registry_read_view_enter(&view, &source);
+    registry_bind_id(&source, absent, nine);
+    CHECK(registry_read_view_init(&nested, &source, arena), "capture nested scope");
+    RegistryReadView *outer = registry_read_view_enter(&nested, &source);
+    CHECK(registry_lookup_id(&source, absent) == NULL && view.stale && nested.stale,
+          "nested admission inherits the parent's absence and both observe the change");
+    registry_read_view_leave(outer);
+    registry_read_view_leave(previous);
+    registry_read_view_free(&nested);
+    registry_read_view_free(&view);
+    CHECK(atom_eq(registry_lookup_id(&source, absent), nine),
+          "ordinary lookup outside a retained scope still sees the live binding");
+
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "capture before dependency capacity refusal");
+    uint32_t saved_length = view.consulted.len;
+    view.consulted.len = UINT32_MAX;
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_id(&source, coefficient), nine) && view.incomplete &&
+              !view.stale && !registry_read_view_validate(&view, &source),
+          "refused symbol dependency is incomplete even when the value is unchanged");
+    CHECK(!registry_read_view_init(&nested, &source, arena) && nested.incomplete &&
+              !registry_read_view_validate(&nested, &source),
+          "nested admission inherits a refused dependency view");
+    registry_read_view_free(&nested);
+    registry_read_view_leave(previous);
+    view.consulted.len = saved_length;
+    CHECK(!registry_read_view_validate(&view, &source),
+          "a refused dependency stays incomplete after capacity becomes available");
+    registry_read_view_free(&view);
+
+    CHECK(registry_read_view_init(&view, &source, arena),
+          "capture before structural dependency capacity refusal");
+    saved_length = view.consulted.len;
+    view.consulted.len = UINT32_MAX;
+    previous = registry_read_view_enter(&view, &source);
+    CHECK(atom_eq(registry_lookup_name(&source, name), nine) && view.incomplete &&
+              !registry_read_view_validate(&view, &source),
+          "refused structural dependency cannot authorize publication");
+    registry_read_view_leave(previous);
+    view.consulted.len = saved_length;
+    registry_read_view_free(&view);
+
+    NameKeyTable *keys = source.name_keys;
+    source.name_keys = NULL;
+    CHECK(!registry_read_view_init(&view, &source, arena) && view.incomplete &&
+              !registry_read_view_validate(&view, &source),
+          "partial initial capture is retained but cannot certify a complete view");
+    source.name_keys = keys;
+    registry_read_view_free(&view);
+
+    saved_length = source.len;
+    source.len = UINT32_MAX;
+    SymbolId refused = symbol_intern_cstr(g_symbols, "&unrecorded-capacity-key");
+    CHECK(!registry_bind_id_checked(&source, refused, two) &&
+              source.len == UINT32_MAX && registry_lookup_id(&source, refused) == NULL,
+          "checked symbol insertion refuses length overflow without modifying entries");
+    source.len = saved_length;
+    registry_free(&source);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -56,6 +189,7 @@ int main(void) {
     g_hashcons = NULL;
     g_var_intern = NULL;
     arena_init(&arena);
+    read_view_controls(&arena);
     registry_init(&local_a);
     registry_init(&local_b);
     registry_init(&private_c);

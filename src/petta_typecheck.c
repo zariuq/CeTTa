@@ -76,7 +76,7 @@ static PettaTypecheckVerdict petta_check_types(
 static bool petta_type_symbol_is(const Atom *atom, const char *name) {
     if (!atom || atom->kind != ATOM_SYMBOL || !g_symbols)
         return false;
-    const char *actual = symbol_bytes(g_symbols, atom->sym_id);
+    const char *actual = atom_symbol_bytes(atom);
     return actual && strcmp(actual, name) == 0;
 }
 
@@ -165,8 +165,7 @@ static const char *petta_type_arrow_mode_name(const Atom *type) {
         type->expr.elems[0]->kind != ATOM_SYMBOL || !g_symbols) {
         return NULL;
     }
-    const char *name = symbol_bytes(
-        g_symbols, type->expr.elems[0]->sym_id);
+    const char *name = atom_symbol_bytes(type->expr.elems[0]);
     return petta_type_arrow_symbol_name(name) ? name : NULL;
 }
 
@@ -472,7 +471,7 @@ static PettaTypecheckVerdict petta_check_type_body(
             required_decl.kind == PETTA_DECL_NEWTYPE) {
             context->reason = actual->kind == ATOM_SYMBOL &&
                                       required->kind == ATOM_SYMBOL &&
-                                      actual->sym_id == required->sym_id
+                                      atom_symbols_equal(actual, required)
                                   ? PETTA_TYPECHECK_REASON_EXACT
                                   : PETTA_TYPECHECK_REASON_MISMATCH;
             return context->reason == PETTA_TYPECHECK_REASON_EXACT
@@ -1196,7 +1195,7 @@ static bool petta_block_inference_parameter_tainted(
 
 static const char *petta_block_symbol_name(const Atom *atom) {
     return atom && atom->kind == ATOM_SYMBOL && g_symbols
-        ? symbol_bytes(g_symbols, atom->sym_id) : NULL;
+        ? atom_symbol_bytes(atom) : NULL;
 }
 
 static bool petta_block_head_is(const Atom *atom, const char *name) {
@@ -1400,17 +1399,17 @@ static PettaBlockDeclarationBucket *petta_block_declaration_bucket(
 static const PettaBlockDeclarationBucket *petta_block_declaration_bucket_const(
     const PettaBlockCheck *check, const Atom *subject) {
     if (!check || !subject || subject->kind != ATOM_SYMBOL ||
-        subject->sym_id == SYMBOL_ID_NONE || check->declaration_bucket_cap == 0u) {
+        atom_symbol_current_id(subject) == SYMBOL_ID_NONE || check->declaration_bucket_cap == 0u) {
         return NULL;
     }
-    size_t slot = (size_t)petta_block_declaration_hash(subject->sym_id) &
+    size_t slot = (size_t)petta_block_declaration_hash(atom_symbol_current_id(subject)) &
                   (check->declaration_bucket_cap - 1u);
     for (;;) {
         const PettaBlockDeclarationBucket *bucket =
             &check->declaration_buckets[slot];
         if (!bucket->occupied)
             return NULL;
-        if (bucket->subject == subject->sym_id)
+        if (bucket->subject == atom_symbol_current_id(subject))
             return bucket;
         slot = (slot + 1u) & (check->declaration_bucket_cap - 1u);
     }
@@ -1497,7 +1496,7 @@ static bool petta_block_add_declaration(
         return false;
     }
     PettaBlockDeclarationBucket *bucket =
-        petta_block_declaration_bucket(check, subject->sym_id, true);
+        petta_block_declaration_bucket(check, atom_symbol_current_id(subject), true);
     if (!bucket)
         return false;
     size_t declaration_index = check->declaration_len;
@@ -1625,7 +1624,7 @@ static uint32_t petta_block_declared_types(
         return 0u;
     PettaBlockDeclaredTypeMemo *memo =
         petta_block_declared_type_memo_entry(
-            check, subject->sym_id, false);
+            check, atom_symbol_current_id(subject), false);
     if (!memo) {
         Atom **types = NULL;
         uint32_t count = space_get_declared_types(
@@ -1659,7 +1658,7 @@ static uint32_t petta_block_declared_types(
         }
         free(program_types);
         memo = petta_block_declared_type_memo_entry(
-            check, subject->sym_id, true);
+            check, atom_symbol_current_id(subject), true);
         if (!memo) {
             free(types);
             petta_block_fault(
@@ -3833,7 +3832,7 @@ static bool petta_block_infer_named_call(
     size_t inferred_count = 0u;
     if (check->program &&
         !petta_block_inferred_signatures_lookup(
-            check, head_atom->sym_id,
+            check, atom_symbol_current_id(head_atom),
             expression->expr.len - 1u,
             &inferred, &inferred_count)) {
         return petta_block_fault(
@@ -3906,7 +3905,7 @@ static bool petta_block_head_is_callable(
     CettaExprLen maximum = 0u;
     bool exact = false;
     return space_equation_head_arity_bounds(
-               check->space, head->sym_id,
+               check->space, atom_symbol_current_id(head),
                &minimum, &maximum, &exact, arity) && exact;
 }
 
@@ -5640,7 +5639,7 @@ static bool petta_block_find_signature(
     if (!*signature_out && check->program &&
         subject->kind == ATOM_SYMBOL) {
         (void)petta_block_inferred_signature_lookup(
-            check, subject->sym_id, arity, signature_out);
+            check, atom_symbol_current_id(subject), arity, signature_out);
     }
     return *signature_out != NULL;
 }
@@ -5875,7 +5874,7 @@ static bool petta_block_inert_structural_result(
         return false;
     }
     return !cetta_petta_source_head_has_runtime_meaning(
-        check->space, head->sym_id, arity);
+        check->space, atom_symbol_current_id(head), arity);
 }
 
 static bool petta_block_seed_pattern_variables(
@@ -6263,7 +6262,7 @@ static size_t petta_block_equation_count(
     for (size_t index = 0u;
          index < check->relation_view_len; index++) {
         PettaBlockRelationView *view = &check->relation_views[index];
-        if (view->head == head->sym_id && view->arity == arity)
+        if (view->head == atom_symbol_current_id(head) && view->arity == arity)
             return view->equation_len;
     }
 
@@ -6280,7 +6279,7 @@ static size_t petta_block_equation_count(
     PettaBlockRelationView *view =
         &check->relation_views[check->relation_view_len++];
     *view = (PettaBlockRelationView){
-        .head = head->sym_id,
+        .head = atom_symbol_current_id(head),
         .arity = arity,
     };
 
@@ -6288,7 +6287,7 @@ static size_t petta_block_equation_count(
     size_t live_len = 0u;
     if (check->program && !check->forms_include_live_equations &&
         !petta_program_candidate_snapshot(
-            check->program, check->space, head->sym_id,
+            check->program, check->space, atom_symbol_current_id(head),
             &live, &live_len)) {
         petta_block_fault(
             check, PETTA_TYPECHECK_FAULT_ALLOCATION,
@@ -6366,7 +6365,7 @@ static Atom *const *petta_block_equations(
     for (size_t index = 0u;
          index < check->relation_view_len; index++) {
         PettaBlockRelationView *view = &check->relation_views[index];
-        if (view->head == head->sym_id && view->arity == arity)
+        if (view->head == atom_symbol_current_id(head) && view->arity == arity)
             return view->equations;
     }
     return NULL;
@@ -6628,7 +6627,7 @@ static bool petta_block_value_is_proven_proper_list(
     }
     if (!head)
         return false;
-    SymbolId head_id = value->expr.elems[0]->sym_id;
+    SymbolId head_id = atom_symbol_current_id(value->expr.elems[0]);
     CettaExprLen arity = value->expr.len - 1u;
     for (size_t index = 0u;
          index < check->proper_list_stack_len; index++) {
@@ -6760,7 +6759,7 @@ static bool petta_block_expression_produces_bound_bool(
         }
         return true;
     }
-    SymbolId head_id = expression->expr.elems[0]->sym_id;
+    SymbolId head_id = atom_symbol_current_id(expression->expr.elems[0]);
     CettaExprLen arity = expression->expr.len - 1u;
     for (size_t index = 0u;
          index < check->bound_bool_stack_len; index++) {
@@ -6816,7 +6815,7 @@ static bool petta_block_value_manifest_bool(
      * or a compiler form must also be det at this call. */
     Atom *head = value->expr.len > 0u ? value->expr.elems[0] : NULL;
     if (head && head->kind == ATOM_SYMBOL &&
-        !petta_semantics_registered_builtin(head->sym_id) &&
+        !petta_semantics_registered_builtin(atom_symbol_current_id(head)) &&
         petta_block_equation_count(
             check, head, value->expr.len - 1u) > 0u)
         return true;
@@ -6939,7 +6938,7 @@ static PettaBlockEffect petta_block_inferred_call_effect(
         call->expr.len == 0u || depth > 128u)
         return PETTA_BLOCK_EFFECT_UNKNOWN;
     SymbolId head_id = call->expr.elems[0]->kind == ATOM_SYMBOL
-        ? call->expr.elems[0]->sym_id : 0u;
+        ? atom_symbol_current_id(call->expr.elems[0]) : 0u;
     CettaExprLen arity = call->expr.len - 1u;
     for (size_t index = 0u; index < check->effect_stack_len; index++) {
         if (check->effect_stack[index].head == head_id &&
@@ -7604,7 +7603,7 @@ static bool petta_block_symbol_is_function(
     PettaBlockCheck *check, Atom *head, CettaExprLen arity) {
     if (!check || !head || head->kind != ATOM_SYMBOL)
         return false;
-    if (petta_semantics_registered_builtin(head->sym_id) ||
+    if (petta_semantics_registered_builtin(atom_symbol_current_id(head)) ||
         petta_block_head_is_callable(check, head, arity))
         return true;
     for (size_t index = 0u; index < check->form_count; index++) {
@@ -8905,7 +8904,7 @@ static bool petta_block_select_equation_signature(
         Atom **inferred = NULL;
         size_t inferred_count = 0u;
         if (!petta_block_inferred_signatures_lookup(
-                check, subject->sym_id, arity,
+                check, atom_symbol_current_id(subject), arity,
                 &inferred, &inferred_count)) {
             free(signatures);
             return petta_block_fault(
@@ -9024,7 +9023,7 @@ static bool petta_block_check_equation(
         CettaExprLen intrinsic_arity = 0u;
         bool known_intrinsic = rhs_head &&
             petta_semantics_intrinsic_partial_arity(
-                rhs_head->sym_id, &intrinsic_arity) &&
+                atom_symbol_current_id(rhs_head), &intrinsic_arity) &&
             intrinsic_arity == rhs->expr.len - 1u;
         bool untyped_runtime_call = rhs_head &&
             !petta_block_find_signature(
@@ -9605,7 +9604,7 @@ static bool petta_typecheck_declaration_block_internal(
             if (!declaration->inferred ||
                 !petta_block_signature_has_information(declaration->type)) {
                 petta_program_inferred_signature_remove_head(
-                    program, space, declaration->subject->sym_id);
+                    program, space, atom_symbol_current_id(declaration->subject));
                 continue;
             }
             if (!declaration->type ||
@@ -9613,7 +9612,7 @@ static bool petta_typecheck_declaration_block_internal(
                 declaration->type->expr.len < 2u ||
                 !petta_block_inferred_signature_put(
                     program, space, authority,
-                    declaration->subject->sym_id,
+                    atom_symbol_current_id(declaration->subject),
                     declaration->type->expr.len - 2u,
                     declaration->type)) {
                 petta_block_inferred_signatures_reset(
@@ -10103,8 +10102,7 @@ static bool petta_typecheck_validate_target_row_detail(
     arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     for (uint32_t entry_index = 0u;
          entry_index < registry->len; entry_index++) {
-        RegistryEntry *entry = &registry->entries[entry_index];
-        Atom *space_name = atom_symbol_id(&scratch, entry->key);
+        Atom *space_name = registry_entry_symbol(registry, entry_index, &scratch);
         if (!space_name || resolve_space(registry, space_name) != target_space)
             continue;
         Atom **types = NULL;

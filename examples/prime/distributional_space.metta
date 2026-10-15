@@ -45,7 +45,8 @@
        ()
        (let ((World $r $w $n) $rest) (decons-atom $worlds)
          (let $scaled (* $n ($likelihood $r $w))
-           (cons-atom (World $r $w $scaled) (ds:reweight $rest $likelihood))){$scaled}){$r $w $n $rest}))
+           (let $tail (ds:reweight $rest $likelihood)
+             (cons-atom (World $r $w $scaled) $tail)){$tail}){$scaled}){$r $w $n $rest}))
 (= (ds:wet-likelihood) (lam r (lam w (if w 1 0))))
 
 !(Prior-rain (ds:prob (ds:joint) (ds:rain)))

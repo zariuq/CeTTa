@@ -53,6 +53,7 @@
        (let $h (car-atom $list)
          (if (== $h $x) True
              (let $rest (cdr-atom $list) (pf:member $x $rest)){$rest})){$h}))
+(: pf:verb-head (-> (Data Atom) Bool))
 (= (pf:verb-head $t)
    (let $h (car-atom $t)
      (if (== (get-metatype $h) Symbol)
@@ -72,6 +73,7 @@
              (let $et (pf:expand-tail $rest)
                (cons-atom $eh $et)){$et}){$eh}){$rest}){$h}))
 
+(: pf:expand (-> (Data Atom) (Data Atom)))
 (= (pf:expand $t)
    (if (== (get-metatype $t) Expression)
        (if (== $t ()) ()
@@ -94,7 +96,7 @@
                    (let $out (pf:calc-from $A $t0 $steps)
                      (pf:expand $out)){$out}){$steps}){$r2}){$r1}){$t0}){$A}
                    (if (pf:verb-head $node)
-                       (let $out $node (if (== $out $node) $node (pf:expand $out))){$out}
+                       (let $out (eval $node) (if (== $out $node) $node (pf:expand $out))){$out}
                        $node)))){$head}){$node})
        $t))
 

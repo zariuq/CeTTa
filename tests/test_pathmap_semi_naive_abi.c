@@ -61,9 +61,9 @@ static bool check_join_row(const Bindings *bindings, void *ctx_ptr) {
     Atom *x = bindings_lookup_value_id((Bindings *)bindings, ctx->x).skeleton;
     Atom *y = bindings_lookup_value_id((Bindings *)bindings, ctx->y).skeleton;
     Atom *z = bindings_lookup_value_id((Bindings *)bindings, ctx->z).skeleton;
-    assert(x && x->kind == ATOM_SYMBOL && x->sym_id == ctx->a);
-    assert(y && y->kind == ATOM_SYMBOL && y->sym_id == ctx->b);
-    assert(z && z->kind == ATOM_SYMBOL && z->sym_id == ctx->c);
+    assert(x && x->kind == ATOM_SYMBOL && x->symbol_number == ctx->a);
+    assert(y && y->kind == ATOM_SYMBOL && y->symbol_number == ctx->b);
+    assert(z && z->kind == ATOM_SYMBOL && z->symbol_number == ctx->c);
     ctx->rows++;
     return true;
 }
@@ -98,8 +98,8 @@ static bool collect_closure_row(const Bindings *bindings, void *ctx_ptr) {
 
     assert(from && from->kind == ATOM_SYMBOL);
     assert(to && to->kind == ATOM_SYMBOL);
-    from_idx = closure_node_index(ctx, from->sym_id);
-    to_idx = closure_node_index(ctx, to->sym_id);
+    from_idx = closure_node_index(ctx, atom_symbol_current_id(from));
+    to_idx = closure_node_index(ctx, atom_symbol_current_id(to));
     assert(from_idx != UINT64_MAX);
     assert(to_idx != UINT64_MAX);
     assert(from_idx < to_idx);

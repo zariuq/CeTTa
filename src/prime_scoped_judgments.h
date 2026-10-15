@@ -74,6 +74,11 @@ bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record);
 
 /* A number that changes whenever what is admitted may have changed. */
 uint64_t prime_scoped_judgment_admission_epoch(void);
+/* Bounded read of actual per-instance authority, including revoked history.
+ * Neither function initializes a ledger nor changes the installed hook. */
+bool prime_scoped_judgment_instance_empty(uint64_t instance, size_t limit,
+    size_t *visited, bool *empty);
+SpaceContentsMovedHook prime_scoped_judgment_contents_subscriber(void);
 
 /* What a refutation by the conversion algorithm of `left` and `right`
  * assumes in `space`: `(assumes-completeness kind ...)`, the kinds of

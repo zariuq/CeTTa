@@ -188,7 +188,7 @@ static CettaGsltProviderOutcomeV1 abt_provider_field_depth_query_v1(
             return abt_provider_empty_or_fault_v1(
                 true, error, error_size, "cannot intern ABT constructor head");
         entry = abt_signature_lookup(
-            &provider->signature, head_atom->sym_id, arity);
+            &provider->signature, atom_symbol_current_id(head_atom), arity);
     }
     uint32_t depth = entry ? entry->depths[position] : 0u;
     Atom *quoted_depth = abt_provider_qnat_atom_v1(answer_arena, depth);

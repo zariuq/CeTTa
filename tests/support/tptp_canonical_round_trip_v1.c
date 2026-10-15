@@ -103,8 +103,8 @@ static bool term_digest(const Atom *root, char out[65], char *error, size_t erro
     while (ok && len > 0u) {
         const Atom *atom = stack[--len];
         if (atom->kind == ATOM_SYMBOL) {
-            const char *name = symbol_bytes(g_symbols, atom->sym_id);
-            digest_bytes(&sha, 'S', name, symbol_len(g_symbols, atom->sym_id));
+            const char *name = atom_symbol_bytes(atom);
+            digest_bytes(&sha, 'S', name, atom_symbol_length(atom));
         } else if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
             digest_bytes(&sha, 'T', atom->ground.sval, strlen(atom->ground.sval));
         } else if (atom->kind == ATOM_EXPR) {

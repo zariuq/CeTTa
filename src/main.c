@@ -22,6 +22,7 @@
 #include "petta_typecheck.h"
 #include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
+#include "parallel_executor.h"
 #include "prime_compiled_reader.h"
 #include "prime_semantics.h"
 #include "prime_arith_oracle.h"
@@ -58,6 +59,7 @@ static void handle_sigsegv(int sig) {
 }
 
 static bool g_count_only = false;
+static bool g_durable_admin = false;
 static bool g_quiet_results = false;
 static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
@@ -232,11 +234,14 @@ typedef struct {
     size_t rules_len;
     PrimeNeedTraceId *receipts;
     size_t receipts_len;
+    PrimeNeedTraceId *producers;
+    size_t producers_len;
     PrimeNeedTraceCell *cells;
     size_t cells_len;
     PrimeNeedTraceState *states;
     size_t states_len;
     bool allocation_failed;
+    bool graph_incomplete;
 } PrimeNeedTracePrinter;
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -320,6 +325,12 @@ static const char *prime_need_trace_event_name(
         return "use-equation";
     case PRIME_NEED_RECEIPT_RESAMPLE:
         return "resample";
+    case PRIME_NEED_RECEIPT_ADMISSION_TRUE:
+        return "admission-true";
+    case PRIME_NEED_RECEIPT_ADMISSION_FALSE:
+        return "admission-false";
+    case PRIME_NEED_RECEIPT_ADMISSION_PENDING:
+        return "admission-pending";
     }
     return "unknown";
 }
@@ -337,18 +348,26 @@ static void prime_need_trace_answer(
         : 0u;
     if (receipt && receipt->session_id != 0u && receipt_id == 0u)
         trace->allocation_failed = true;
-    size_t event_count = receipt
-        ? prime_need_receipt_event_count(receipt) : 0u;
+    PrimeNeedReceiptGraph graph = {0};
+    PrimeNeedReceiptGraphStatus graph_status = receipt
+        ? prime_need_receipt_graph_collect(receipt, &graph)
+        : PRIME_NEED_RECEIPT_GRAPH_ABSENT;
+    if (graph_status == PRIME_NEED_RECEIPT_GRAPH_REFUSED ||
+        graph_status == PRIME_NEED_RECEIPT_GRAPH_INVALID)
+        trace->graph_incomplete = true;
     fprintf(trace->out,
             "(prime-need:answer %" PRIu64 " %" PRIu64 " (value ",
             trace->form, trace->answer);
     atom_print(answer, trace->out);
     fprintf(trace->out, ") (receipt %" PRIu64,
             receipt_id);
-    for (size_t i = 0u; i < event_count; i++) {
-        PrimeNeedReceiptEvent event;
-        if (!prime_need_receipt_event_at(receipt, i, &event))
+    if (graph_status == PRIME_NEED_RECEIPT_GRAPH_REFUSED ||
+        graph_status == PRIME_NEED_RECEIPT_GRAPH_INVALID)
+        fputs(" (unavailable graph-collection)", trace->out);
+    for (size_t i = 0u; i < graph.length; i++) {
+        if (!graph.nodes[i].has_event)
             continue;
+        PrimeNeedReceiptEvent event = graph.nodes[i].event;
         uint64_t event_id = prime_need_trace_id(
             &trace->events, &trace->events_len, event.event_id);
         if (event.event_id != 0u && event_id == 0u)
@@ -383,6 +402,15 @@ static void prime_need_trace_answer(
                 trace->allocation_failed = true;
             fprintf(trace->out, " (cell %" PRIu64 ")", cell_id);
         }
+        if (event.producer_update_id != 0u) {
+            uint64_t producer_id = prime_need_trace_id(
+                &trace->producers, &trace->producers_len,
+                event.producer_update_id);
+            if (producer_id == 0u)
+                trace->allocation_failed = true;
+            fprintf(trace->out, " (producer %" PRIu64 ") (production %s)",
+                    producer_id, event.producer_completed ? "True" : "False");
+        }
         if (event.rule_occurrence_id != 0u) {
             uint64_t rule_id = prime_need_trace_id(
                 &trace->rules, &trace->rules_len,
@@ -411,6 +439,7 @@ static void prime_need_trace_answer(
         fputc(')', trace->out);
     }
     fputs("))\n", trace->out);
+    prime_need_receipt_graph_free(&graph);
 }
 #else
 static void prime_need_trace_answer(
@@ -429,6 +458,7 @@ static void prime_need_trace_printer_free(PrimeNeedTracePrinter *trace) {
     free(trace->sources);
     free(trace->rules);
     free(trace->receipts);
+    free(trace->producers);
     free(trace->cells);
     free(trace->states);
     memset(trace, 0, sizeof(*trace));
@@ -714,6 +744,8 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_bindings_value(dst, src->ground.ptr);
         case GV_FOREIGN:
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+        case GV_TENSOR:
+            return atom_tensor(dst, src->ground.ptr);
         case GV_TERM_GRAPH: {
             const CettaTermGraphRef *ref = src->ground.ptr;
             return atom_term_graph(dst, ref->graph, ref->node);
@@ -1600,8 +1632,12 @@ static int run_rhocalc_cli(const char *filename,
         if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA &&
             atom_is_symbol_id(process, g_builtin_syms.bang) && i + 1 < n) {
             result_set_init(&evaluated);
-            eval_top_with_registry(
-                &space, &arena, &arena, &registry, atoms[++i], &evaluated);
+            Atom *command=atoms[++i];
+            Atom *administrative = g_durable_admin
+                ? cetta_library_durable_admin(&libraries, &arena, command) : NULL;
+            if (administrative) result_set_add(&evaluated,administrative);
+            else eval_top_with_registry(
+                &space, &arena, &arena, &registry, command, &evaluated);
             if (!main_rhometta_print_eval_results(
                     &evaluated, syntax, stdout) ||
                 result_set_has_error(&evaluated)) {
@@ -1693,6 +1729,8 @@ static int run_rhocalc_cli(const char *filename,
 
 done:
     free(atoms);
+    if (libraries_initialized)
+        cetta_native_handle_cleanup_all(&libraries);
     if (registry_initialized) {
         eval_cleanup_owned_new_spaces(&registry, &space);
         registry_free(&registry);
@@ -1813,6 +1851,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
+    fputs("       cetta --durable-admin <file.metta>     # enable literal durable repair commands (default: off)\n", out);
     fputs("       cetta --run-report <path> <file>      # native query report as JSON\n", out);
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
@@ -2240,7 +2279,7 @@ static bool main_he_prepare_library(Space *space, Arena *arena,
             continue;
         }
         bool grounded = subject->kind == ATOM_SYMBOL &&
-            he_grounded_symbol_types(subject->sym_id, extensions, NULL) != 0u;
+            he_grounded_symbol_types(atom_symbol_current_id(subject), extensions, NULL) != 0u;
         if (!grounded && !he_library_names_subject(subject))
             continue;
         mask[i] = 1u;
@@ -2500,6 +2539,12 @@ static void cetta_main_cleanup_registry_spaces(
 static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     if (!cleanup) return true;
     bool ok = true;
+    /* Worker thread-local foreign attachments outlive their last episode.
+     * Join them before retiring the contexts and resources they borrowed. A
+     * busy refusal keeps those roots intact for the still-live execution. */
+    if (!cetta_parallel_executor_shutdown()) return false;
+    if (cleanup->libraries_initialized)
+        cetta_native_handle_cleanup_all(cleanup->libraries);
 
     if (cleanup->parser_rational_literals_set) {
         parser_set_rational_literals_enabled(cleanup->parser_rational_literals_old);
@@ -2567,8 +2612,6 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
-    cetta_lib_prolog_global_shutdown();
-    cetta_foreign_global_shutdown();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();
@@ -2590,6 +2633,12 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         arena_free(cleanup->arena);
         cleanup->arena_initialized = false;
     }
+
+    /* Escaped values may have kept a private library context alive until
+     * the last arena root above was released. Finalize foreign contexts only
+     * after those owners have detached, while symbol identities still live. */
+    cetta_foreign_global_shutdown();
+    if (!cetta_lib_prolog_global_shutdown()) ok = false;
 
     if (cleanup->var_intern_initialized) {
         g_var_intern = NULL;
@@ -3022,6 +3071,10 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--count-only") == 0) {
             count_only = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--durable-admin") == 0) {
+            g_durable_admin = true;
             continue;
         }
         if (strcmp(argv[i], "--quiet") == 0) {
@@ -4175,7 +4228,7 @@ static int cetta_main(int argc, char **argv) {
                 atom_is_symbol_id(item->expr.elems[0],
                                   g_builtin_syms.colon) &&
                 item->expr.elems[1]->kind == ATOM_SYMBOL)
-                he_heads[he_head_count++] = item->expr.elems[1]->sym_id;
+                he_heads[he_head_count++] = atom_symbol_current_id(item->expr.elems[1]);
         }
         eval_prime_set_he_signature_heads(he_heads, he_head_count);
         free(he_heads);
@@ -4401,7 +4454,10 @@ process_petta_document:
                 Atom *expr = atoms[i + 1];
                 ResultSet rs;
                 result_set_init(&rs);
-                eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
+                Atom *administrative = g_durable_admin
+                    ? cetta_library_durable_admin(&libraries, &eval_arena, expr) : NULL;
+                if (administrative) result_set_add(&rs,administrative);
+                else eval_top_with_registry(&space, &eval_arena, &arena, &registry, expr, &rs);
                 if (cetta_eval_session_process_exit_requested(
                         &libraries.session)) {
                     rc = cetta_eval_session_process_exit_code(
@@ -4509,7 +4565,12 @@ process_petta_document:
             }
             if (lang->id == CETTA_LANGUAGE_PRIME)
                 prime_arith_oracle_query_begin();
-            if (emit_prime_need_trace) {
+            Atom *administrative = g_durable_admin
+                ? cetta_library_durable_admin(&libraries, &eval_arena, expr) : NULL;
+            if (administrative) {
+                result_set_init(&rs);
+                result_set_add(&rs,administrative);
+            } else if (emit_prime_need_trace) {
                 eval_outcome_init(&detailed);
                 detailed_initialized = true;
                 results = &detailed.results;
@@ -4532,7 +4593,7 @@ process_petta_document:
                        lang->id == CETTA_LANGUAGE_PETTA ||
                        lang->id == CETTA_LANGUAGE_PRIME ||
                        (profile && profile->id == CETTA_PROFILE_HE_EXTENDED)) {
-                /* PeTTa and HE/extended directives publish a whole stream, which
+                /* Complete directive streams are observed with a tracker, which
                  * claims there are no further answers, so it is always
                  * observed with a completion tracker.  Finite fuel reaches
                  * the search machine through the same tracker; unlimited
@@ -4696,6 +4757,14 @@ process_petta_document:
                         fputs("error: uncaught PeTTa error: ", stderr);
                         write_results(stderr, results, lang->id, profile);
                     }
+                    for (uint32_t i = 0u; i < results->len; i++) {
+                        char *report = cetta_foreign_python_error_report(
+                            results->items[i]);
+                        if (report) {
+                            fprintf(stderr, "%s\n", report);
+                            free(report);
+                        }
+                    }
                 }
             } else if (!petta_answer_without_text) {
                 if (!report_incomplete_and_continue)
@@ -4724,6 +4793,12 @@ process_petta_document:
             if (trace.allocation_failed) {
                 fprintf(stderr,
                         "error: could not allocate Prime receipt trace identity\n");
+                stop_after_error = true;
+                prime_need_trace_failed = true;
+            }
+            if (trace.graph_incomplete) {
+                fprintf(stderr,
+                        "error: could not collect a complete Prime receipt graph\n");
                 stop_after_error = true;
                 prime_need_trace_failed = true;
             }

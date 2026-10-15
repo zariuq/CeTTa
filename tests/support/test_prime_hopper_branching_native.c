@@ -40,8 +40,8 @@ static Atom *parse_one(Arena *arena, const char *text) {
 static void print_case_failure(Atom *name, const char *reason) {
     fputs("FAIL: Hopper source case ", stderr);
     if (name && name->kind == ATOM_SYMBOL) {
-        const char *bytes = symbol_bytes(g_symbols, name->sym_id);
-        size_t length = symbol_len(g_symbols, name->sym_id);
+        const char *bytes = atom_symbol_bytes(name);
+        size_t length = atom_symbol_length(name);
         fwrite(bytes, 1u, length, stderr);
     } else {
         fputs("<malformed-name>", stderr);
@@ -51,8 +51,8 @@ static void print_case_failure(Atom *name, const char *reason) {
 
 static bool symbol_contains(Atom *atom, const char *needle) {
     if (!atom || atom->kind != ATOM_SYMBOL || !needle) return false;
-    const char *bytes = symbol_bytes(g_symbols, atom->sym_id);
-    size_t length = symbol_len(g_symbols, atom->sym_id);
+    const char *bytes = atom_symbol_bytes(atom);
+    size_t length = atom_symbol_length(atom);
     size_t needle_length = strlen(needle);
     if (!bytes || needle_length > length) return false;
     for (size_t offset = 0u; offset + needle_length <= length; offset++)

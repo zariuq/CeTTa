@@ -299,7 +299,7 @@ static bool abt_entries_overlap(const AbtSignatureEntry *left,
             const AbtSignatureEntry *fixed = left->prefix ? right : left;
             const AbtSignatureEntry *named = left->prefix ? left : right;
             Atom *atom = named->prefix[0];
-            if (atom->kind != ATOM_SYMBOL || atom->sym_id != fixed->head)
+            if (atom->kind != ATOM_SYMBOL || atom_symbol_current_id(atom) != fixed->head)
                 return false;
         } else if (!atom_eq(left->prefix[i], right->prefix[i])) {
             return false;
@@ -398,7 +398,7 @@ static bool abt_signature_add_named_decl(AbtSignature *signature,
     if (!abt_parse_head_prefix(head, &entry.prefix, &entry.prefix_len))
         return false;
     entry.head = entry.prefix[0]->kind == ATOM_SYMBOL
-        ? entry.prefix[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(entry.prefix[0]) : SYMBOL_ID_NONE;
     entry.arity = arity;
     entry.scoped = arity ? cetta_malloc(sizeof(*entry.scoped) * (size_t)arity)
                          : NULL;
@@ -594,7 +594,7 @@ bool abt_signature_add_decl(AbtSignature *signature, Atom *declaration) {
         goto done;
     }
 
-    ok = abt_signature_add_fixed(signature, head->sym_id, arity, depths);
+    ok = abt_signature_add_fixed(signature, atom_symbol_current_id(head), arity, depths);
 
 done:
     free(seen);
@@ -1221,7 +1221,7 @@ static Atom *abt_transform_term(const AbtSignature *signature, Arena *arena,
             if (!cetta_expr_len_fits_u32(current->expr.len - 1u)) goto fail;
             arity = (uint32_t)(current->expr.len - 1u);
             entry = abt_signature_lookup(
-                signature, current->expr.elems[0]->sym_id, arity);
+                signature, atom_symbol_current_id(current->expr.elems[0]), arity);
             elems[0] = current->expr.elems[0];
         }
         CettaExprIndex first = symbolic_head ? 1u : 0u;
@@ -1379,7 +1379,7 @@ static bool abt_print_fresh_offset(Atom *term, uint64_t *offset) {
         if (!abt_transform_memo_store(&seen, current, 0u, current)) goto fail;
         if (current->kind == ATOM_SYMBOL) {
             uint64_t value = 0u;
-            int status = abt_generated_name_index(current->sym_id, &value);
+            int status = abt_generated_name_index(atom_symbol_current_id(current), &value);
             if (status < 0) goto fail;
             if (status > 0 && (!found || value > maximum)) {
                 maximum = value;
@@ -1557,7 +1557,7 @@ Atom *abt_print(const AbtSignature *signature, Arena *arena, Atom *term) {
             if (!cetta_expr_len_fits_u32(current->expr.len - 1u)) goto fail;
             arity = (uint32_t)(current->expr.len - 1u);
             entry = abt_signature_lookup(
-                signature, current->expr.elems[0]->sym_id, arity);
+                signature, atom_symbol_current_id(current->expr.elems[0]), arity);
         }
         uint32_t binder_count = abt_entry_max_depth(entry);
         bool wrapped = binder_count > 0u;
@@ -1898,7 +1898,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
                 goto fail;
             uint32_t arity = (uint32_t)(current->expr.len - 3u);
             const AbtSignatureEntry *entry = abt_signature_lookup(
-                signature, current->expr.elems[1]->sym_id, arity);
+                signature, atom_symbol_current_id(current->expr.elems[1]), arity);
             uint32_t binder_count = abt_entry_max_depth(entry);
             Atom *names = current->expr.elems[2];
             if (!entry || binder_count == 0u ||
@@ -1937,7 +1937,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
         if (symbolic_head) {
             if (!cetta_expr_len_fits_u32(current->expr.len - 1u)) goto fail;
             const AbtSignatureEntry *entry = abt_signature_lookup(
-                signature, current->expr.elems[0]->sym_id,
+                signature, atom_symbol_current_id(current->expr.elems[0]),
                 (uint32_t)(current->expr.len - 1u));
             if (abt_entry_max_depth(entry) > 0u) goto fail;
         }
@@ -2020,7 +2020,7 @@ bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
         if (symbolic_head) {
             if (!cetta_expr_len_fits_u32(task.term->expr.len - 1u)) goto fail;
             entry = abt_signature_lookup(
-                signature, task.term->expr.elems[0]->sym_id,
+                signature, atom_symbol_current_id(task.term->expr.elems[0]),
                 (uint32_t)(task.term->expr.len - 1u));
         }
         CettaExprIndex first = symbolic_head ? 1u : 0u;
@@ -2243,8 +2243,8 @@ bool abt_is_name(const AbtSignature *signature, const Atom *atom) {
             len = (uint32_t)strlen(bytes);
         } else {
             if (candidate->kind != ATOM_SYMBOL) continue;
-            bytes = symbol_bytes(g_symbols, candidate->sym_id);
-            len = symbol_len(g_symbols, candidate->sym_id);
+            bytes = atom_symbol_bytes(candidate);
+            len = atom_symbol_length(candidate);
         }
         if (!bytes || len == 0u) continue;
         if (name_class->kind == ABT_NAME_SYMBOL_INITIAL || string_class) {
@@ -2267,8 +2267,8 @@ static bool abt_name_text(Atom *name, const char **text, uint32_t *len) {
         return true;
     }
     if (name->kind == ATOM_SYMBOL) {
-        *text = symbol_bytes(g_symbols, name->sym_id);
-        *len = symbol_len(g_symbols, name->sym_id);
+        *text = atom_symbol_bytes(name);
+        *len = atom_symbol_length(name);
         return *text != NULL;
     }
     if (!abt_name_shaped(name)) return false;
@@ -3375,7 +3375,7 @@ bool abt_op_data_arg(SymbolId id, uint32_t arg_index) {
 Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
                             Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     AbtOpKind kind = abt_op_kind(id);
     if (kind == ABT_OP_QUOTE_SYNTAX) {
         if (nargs != 1u)

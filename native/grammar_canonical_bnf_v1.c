@@ -19,7 +19,7 @@ static bool gcb_error(char *error, size_t size, const char *format, ...) {
 static bool gcb_head(const Atom *atom, const char *head, uint32_t arity) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == arity + 1u &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           strcmp(symbol_bytes(g_symbols, atom->expr.elems[0]->sym_id), head) == 0;
+           strcmp(atom_symbol_bytes(atom->expr.elems[0]), head) == 0;
 }
 
 static size_t gcb_utf8(uint32_t scalar, char *out) {
@@ -170,7 +170,7 @@ static bool gcb_read_origins(GcbGrammar *grammar, const Atom *origins, char *err
             known = grammar->origins[i].name == entry->name;
         if (known)
             continue; /* first binding wins */
-        kind_name = symbol_bytes(g_symbols, kind->sym_id);
+        kind_name = atom_symbol_bytes(kind);
         entry->repeat = 0;
         if (strcmp(kind_name, "group") == 0) {
             entry->kind = CETTA_GRAMMAR_CANONICAL_GROUP_V1;

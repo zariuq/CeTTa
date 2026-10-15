@@ -262,6 +262,7 @@ typedef struct CettaLibraryContext {
     CettaLibPrologRuntime *lib_prolog;
     CettaForeignRuntime *foreign_runtime;
     struct CettaIoRuntime *io_runtime;
+    struct CettaDurableRuntime *durable_runtime;
     struct CettaJsonLibraryRuntimeV1 *json_runtime;
 } CettaLibraryContext;
 
@@ -269,9 +270,16 @@ void cetta_library_context_init(CettaLibraryContext *ctx);
 void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
+/* Private structural Prime snapshots have no foreign capability service.
+ * The caller must independently validate every captured root and call. A
+ * false result still leaves an initialized context requiring normal free. */
+bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx);
+void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
+    CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);
-/* Compatibility initialization refusals are scoped to one runner request.
- * Default profiles retain their refusals across requests. */
+/* Track nested compatibility initialization attempts within a runner request.
+ * Completed compatibility attempts do not cache refusals. Default profiles
+ * retain their refusals across requests. */
 void cetta_library_he_run_begin(CettaLibraryContext *ctx,
                                 CettaHEModuleRunScope *scope);
 void cetta_library_he_run_end(CettaHEModuleRunScope *scope);
@@ -420,6 +428,9 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
 bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
                                         Arena *eval_arena, Atom **error_out);
 
+/* Explicit top-level administration, outside speculative evaluation. The
+ * runner passes literal data; callbacks within evaluation must not call it. */
+Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *arena, Atom *form);
 /* A native operation of an active library, and what it did
  * (call_outcome.h): a library operation's value, or a foreign call's
  * outcome, whose failure PeTTa raises.  False when no active library

@@ -6,12 +6,12 @@
 
 
 PettaTypeDemand petta_type_demand(const Atom *type) {
-    if (type && type->kind == ATOM_SYMBOL && type->sym_id == g_builtin_syms.atom)
+    if (type && type->kind == ATOM_SYMBOL && atom_symbol_current_id(type) == g_builtin_syms.atom)
         return PETTA_TYPE_RAW;
     if ((type && type->kind == ATOM_SYMBOL &&
-         type->sym_id == g_builtin_syms.undefined_type) ||
+         atom_symbol_current_id(type) == g_builtin_syms.undefined_type) ||
         (type && type->kind == ATOM_SYMBOL &&
-         symbol_eq_cstr(g_symbols, type->sym_id, "_")))
+         atom_symbol_equals_cstr(type, "_")))
         return PETTA_TYPE_TRANSLATE;
     return PETTA_TYPE_TRANSLATE_AND_GUARD;
 }
@@ -92,7 +92,9 @@ bool petta_type_call_compile(Atom *signature, PettaTypeCall *call) {
 
 bool petta_type_call_instantiate(Arena *arena, const PettaTypeCall *source,
                                  PettaTypeCall *call) {
-    if (!arena || !source || !call)
+    /* Captured applicability is tied to its activation's variable identities.
+     * This operation freshens declaration templates, not retained calls. */
+    if (!arena || !source || !call || source->source_refinement)
         return false;
     Atom *signature = cetta_instantiate_frame_syntax(arena, source->signature);
     if (!signature)
@@ -154,16 +156,16 @@ bool petta_type_literal_proves(const Atom *value, const Atom *required) {
         case GV_BIGINT:
         case GV_RATIONAL:
         case GV_FLOAT:
-            return symbol_eq_cstr(g_symbols, required->sym_id, "Number");
+            return atom_symbol_equals_cstr(required, "Number");
         case GV_STRING:
-            return symbol_eq_cstr(g_symbols, required->sym_id, "String");
+            return atom_symbol_equals_cstr(required, "String");
         default:
             break;
         }
     }
     bool truth = false;
     return petta_semantics_truth_value(value, &truth) &&
-           symbol_eq_cstr(g_symbols, required->sym_id, "Bool");
+           atom_symbol_equals_cstr(required, "Bool");
 }
 
 Atom *petta_type_declaration_query(Arena *arena, Atom *subject, Atom *required) {

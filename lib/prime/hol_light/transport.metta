@@ -804,4 +804,3 @@
                                   (let $at-q (hol-light:tr-node2 pf:all-elim $at-p $qt)
                                     (let $first-arg (hol-light:tr-node2 pf:imp-elim $at-q $pq)
                                       (hol-light:tr-node2 pf:imp-elim $first-arg $qp))))))))))))))))))))
-

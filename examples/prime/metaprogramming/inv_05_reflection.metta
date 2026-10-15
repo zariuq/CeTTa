@@ -58,8 +58,8 @@
 ; Parse each line; keep each line that reads as one equation, as a code
 ; value.  A line that is not one form (a comment, a fragment of a longer
 ; form) is reported Failed by `try`.  The verdict is lifted to code and taken
-; apart as code, so the equation is kept as written: a bare parsed equation
-; in an evaluated position would have its left side evaluated (see query 22).
+; apart as code, so the equation is kept as written. Explicit activation of
+; a parsed equation evaluates its left side (see query 22).
 (= (own-equations $lines)
    (if (== $lines ())
        ()
@@ -97,7 +97,8 @@
      (unify $compose-code (quote (= (compose double square 3) $body))
        (Ran (quote $body) (eval $body))
        none)))
-; 22. Contrast: the same parsed equation placed bare in a constructor field is
-;     evaluated there, so its left side (double $x) becomes (* 2 $x).
-!(let $f (parse "(= (double $x) (* 2 $x))") (Bare $f))
+; 22-24. Explicit activation evaluates the parsed equation's left side.
+;        Both quoted code and an ordinarily returned parsed value stay data.
+!(let $f (parse "(= (double $x) (* 2 $x))") (Bare (eval $f)))
 !(let $f (lift (parse "(= (double $x) (* 2 $x))")) (Quoted $f))
+!(let $f (parse "(= (double $x) (* 2 $x))") (Returned $f))

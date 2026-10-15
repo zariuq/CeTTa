@@ -244,9 +244,15 @@ static bool g_petta_libpl_ready;
 static bool g_petta_libpl_message_hook_installed;
 static bool g_petta_libpl_owns_engine;
 static PL_engine_t g_petta_libpl_worker_engine;
-/* SWI's main engine was given back by the worker thread that started it. */
-static bool g_petta_libpl_main_released;
+/* The actual engine returned by our initialization. PL_ENGINE_MAIN is an
+ * alias, and re-selecting an already current engine reports INUSE. */
+static PL_engine_t g_petta_libpl_main_engine;
 static _Atomic uint64_t g_petta_libpl_runtime_counter = 1u;
+/* UINT64_MAX seals context creation for final shutdown. Live contexts keep
+ * their engine authority until their last foreign handles are released. */
+static _Atomic uint64_t g_petta_libpl_live_contexts;
+static bool g_petta_libpl_shutdown_complete;
+static bool g_petta_libpl_reclaim_failed;
 static _Thread_local Arena *g_petta_libpl_active_arena;
 static _Thread_local CettaLibPrologRuntime *g_petta_libpl_active_runtime;
 static _Thread_local uint32_t g_petta_libpl_enter_depth;
@@ -1087,8 +1093,7 @@ static bool petta_libpl_plref_view(
         !atom->expr.elems[1] || !atom->expr.elems[2] ||
         !atom->expr.elems[3])
         return false;
-    const char *name = symbol_bytes(
-        g_symbols, atom->expr.elems[0]->sym_id);
+    const char *name = atom_symbol_bytes(atom->expr.elems[0]);
     if (!name || strcmp(name, PETTA_LIBPL_PLREF_TAG) != 0)
         return false;
     for (CettaExprIndex index = 1u; index < 4u; index++) {
@@ -1120,8 +1125,7 @@ static bool petta_libpl_plref_tagged(Atom *atom) {
         atom->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
-    const char *name = symbol_bytes(
-        g_symbols, atom->expr.elems[0]->sym_id);
+    const char *name = atom_symbol_bytes(atom->expr.elems[0]);
     return name && strcmp(name, PETTA_LIBPL_PLREF_TAG) == 0;
 }
 
@@ -1277,37 +1281,67 @@ static bool petta_libpl_import_admission_maybe_contains(
     return true;
 }
 
-static void petta_libpl_global_cleanup(void) {
+static bool petta_libpl_cleanup(bool reclaim) {
     if (!g_petta_libpl_ready)
-        return;
+        return !g_petta_libpl_reclaim_failed;
     /* PL_cleanup runs in the main engine, so the thread that ends the run
      * takes it back first. */
-    if (g_petta_libpl_main_released &&
-        PL_set_engine(PL_ENGINE_MAIN, NULL) == PL_ENGINE_SET)
-        g_petta_libpl_main_released = false;
+    if (g_petta_libpl_owns_engine &&
+        PL_current_engine() != g_petta_libpl_main_engine &&
+        PL_set_engine(g_petta_libpl_main_engine, NULL) != PL_ENGINE_SET)
+        return false;
     if (g_petta_libpl_worker_engine) {
         if (!PL_destroy_engine(g_petta_libpl_worker_engine)) {
-            fputs(
-                "fatal: failed to destroy pooled libpl engine\n",
-                stderr);
-            abort();
+            return false;
         }
         g_petta_libpl_worker_engine = NULL;
     }
-    /* The memory stays until the process ends, as with halt/1: a worker
-     * thread that crossed may still end after this, and its thread-exit
-     * handlers must not meet freed engine state. */
-    if (g_petta_libpl_owns_engine)
-        (void)PL_cleanup(PL_CLEANUP_NO_CANCEL | PL_CLEANUP_NO_RECLAIM_MEMORY);
+    bool ok = true;
+    if (g_petta_libpl_owns_engine) {
+        int flags = PL_CLEANUP_NO_CANCEL |
+            (reclaim ? 0 : PL_CLEANUP_NO_RECLAIM_MEMORY);
+        ok = PL_cleanup(flags) == PL_CLEANUP_SUCCESS;
+        if (reclaim && !ok) g_petta_libpl_reclaim_failed = true;
+    }
     g_petta_libpl_ready = false;
     g_petta_libpl_owns_engine = false;
+    g_petta_libpl_main_engine = NULL;
+    return ok;
 }
 
-void cetta_lib_prolog_global_shutdown(void) {
-    if (pthread_mutex_lock(&g_petta_libpl_lock) != 0)
+static void petta_libpl_global_cleanup(void) {
+    /* Emergency process exit may still have live contexts or participating
+     * workers. Do not wait for a nested call or reclaim their engine state.
+     * Normal shutdown uses the checked, quiescent path below. */
+    if (g_petta_libpl_enter_depth ||
+        pthread_mutex_trylock(&g_petta_libpl_lock) != 0)
         return;
-    petta_libpl_global_cleanup();
+    (void)petta_libpl_cleanup(false);
     (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+}
+
+static bool petta_libpl_close_context_admission(void *unused) {
+    (void)unused;
+    uint64_t expected = 0u;
+    return atomic_compare_exchange_strong_explicit(&g_petta_libpl_live_contexts,
+        &expected, UINT64_MAX, memory_order_acq_rel, memory_order_acquire) ||
+        expected == UINT64_MAX;
+}
+
+bool cetta_lib_prolog_global_shutdown(void) {
+    if (g_petta_libpl_enter_depth ||
+        !cetta_parallel_executor_shutdown_if(
+            petta_libpl_close_context_admission, NULL)) return false;
+    /* A finalizer may ask again while cleanup owns this mutex. It must not
+     * deadlock or re-enter cleanup. A failed join/cleanup leaves admission
+     * sealed and can be retried; only a live-context/episode refusal leaves
+     * admission open. */
+    if (pthread_mutex_trylock(&g_petta_libpl_lock) != 0) return false;
+    if (!g_petta_libpl_shutdown_complete)
+        g_petta_libpl_shutdown_complete = petta_libpl_cleanup(true);
+    bool complete = g_petta_libpl_shutdown_complete;
+    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    return complete;
 }
 
 static void petta_libpl_global_init(void) {
@@ -1346,15 +1380,15 @@ static void petta_libpl_global_init(void) {
          * its own alternate signal stack: the host owns every thread of the
          * run.  A build without threads has no such thread to turn off. */
         (void)PL_set_prolog_flag("gc_thread", PL_BOOL, false);
+        g_petta_libpl_main_engine = PL_current_engine();
         /* A parallel worker that starts the engine does not keep SWI's main
          * engine: it may outlive nothing (a one-shot worker) or idle until
          * the run ends (a pooled one), and the run's end must be able to
          * stop every Prolog thread.  It gives the engine back; every
          * crossing then claims the pooled engine, as a worker always does,
          * and the cleanup takes the main engine back. */
-        if (cetta_parallel_worker_active() &&
-            PL_set_engine(NULL, NULL) == PL_ENGINE_SET)
-            g_petta_libpl_main_released = true;
+        if (cetta_parallel_worker_active())
+            (void)PL_set_engine(NULL, NULL);
     }
 
     if (atexit(petta_libpl_global_cleanup) != 0) {
@@ -1613,7 +1647,7 @@ static bool petta_libpl_symbol_is(
 static bool petta_libpl_atom_is_symbol(
     const Atom *atom, const char *name) {
     return atom && atom->kind == ATOM_SYMBOL &&
-           petta_libpl_symbol_is(atom->sym_id, name);
+           atom_symbol_equals_cstr(atom, name);
 }
 
 static void petta_libpl_import_clear(
@@ -1706,6 +1740,7 @@ static size_t petta_libpl_standard_function_arities(
 
 static PettaLibplImport *petta_libpl_register_import(
     CettaLibPrologRuntime *runtime, SymbolId symbol) {
+    (void)symbol_pin(g_symbols, symbol);
     PettaLibplImport *existing =
         petta_libpl_find_import(runtime, symbol);
     if (existing)
@@ -2219,6 +2254,7 @@ static SymbolId petta_libpl_callable_name(CettaLibPrologRuntime *runtime, Atom *
     Atom *retained = atom_deep_copy(&runtime->callable_codes, code);
     if (!retained)
         return SYMBOL_ID_NONE;
+    atom_pin_syntax_symbols(retained);
     size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, name);
     runtime->callables[slot] = (PettaLibplCallable){name, retained};
     runtime->callable_len++;
@@ -2291,8 +2327,8 @@ static bool petta_libpl_to_callable(
     if (atom->kind == ATOM_SYMBOL) {
         return petta_libpl_put_utf8(
             output, PL_ATOM,
-            symbol_bytes(g_symbols, atom->sym_id),
-            symbol_len(g_symbols, atom->sym_id));
+            atom_symbol_bytes(atom),
+            atom_symbol_length(atom));
     }
     if (atom->kind != ATOM_EXPR ||
         atom->expr.len == 0u ||
@@ -2310,7 +2346,7 @@ static bool petta_libpl_to_callable(
      * every row under the wrong predicate.
      */
     if (atom->expr.len == 3u &&
-        petta_semantics_form(atom->expr.elems[0]->sym_id) ==
+        petta_semantics_form(atom_symbol_current_id(atom->expr.elems[0])) ==
             PETTA_FORM_CONS &&
         atom->expr.elems[1] &&
         atom->expr.elems[1]->kind == ATOM_SYMBOL &&
@@ -2362,10 +2398,8 @@ static bool petta_libpl_to_callable(
                 return false;
             }
             atom_t univ_name = petta_libpl_new_utf8_atom(
-                symbol_bytes(
-                    g_symbols, atom->expr.elems[1]->sym_id),
-                symbol_len(
-                    g_symbols, atom->expr.elems[1]->sym_id));
+                atom_symbol_bytes(atom->expr.elems[1]),
+                atom_symbol_length(atom->expr.elems[1]));
             functor_t univ_functor =
                 PL_new_functor_sz(univ_name, univ_arity);
             bool univ_built = univ_functor &&
@@ -2408,10 +2442,8 @@ static bool petta_libpl_to_callable(
         return false;
 
     atom_t name = petta_libpl_new_utf8_atom(
-        symbol_bytes(
-            g_symbols, atom->expr.elems[0]->sym_id),
-        symbol_len(
-            g_symbols, atom->expr.elems[0]->sym_id));
+        atom_symbol_bytes(atom->expr.elems[0]),
+        atom_symbol_length(atom->expr.elems[0]));
     functor_t functor = PL_new_functor_sz(name, arity);
     bool built = functor &&
                  PL_cons_functor_v(
@@ -2459,8 +2491,8 @@ static bool petta_libpl_to_term(
     case ATOM_SYMBOL:
         return petta_libpl_put_utf8(
             output, PL_ATOM,
-            symbol_bytes(g_symbols, atom->sym_id),
-            symbol_len(g_symbols, atom->sym_id));
+            atom_symbol_bytes(atom),
+            atom_symbol_length(atom));
     case ATOM_VAR: {
         PettaLibplVar *variable =
             petta_libpl_var_add(variables, atom);
@@ -2625,6 +2657,7 @@ static bool petta_libpl_to_term(
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
+    case GV_TENSOR:
     case GV_FOREIGN:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
@@ -3190,10 +3223,30 @@ static SymbolId petta_libpl_atom_term_symbol(
                        memcmp(text, active->module_name, length) == 0;
     SymbolId symbol = module_name
         ? symbol_intern_cstr(g_symbols, "user")
-        : symbol_intern_bytes(g_symbols, (const uint8_t *)text,
+        : symbol_intern_data_bytes(g_symbols, (const uint8_t *)text,
                               (uint32_t)length);
     PL_free(text);
     return symbol;
+}
+
+static Atom *petta_libpl_atom_term_value(Arena *arena, term_t term,
+        const PettaLibplVarMap *variables) {
+    char *text = NULL;
+    size_t length = 0u;
+    if (!PL_get_nchars(term, &length, &text,
+                       CVT_ATOM | BUF_MALLOC | REP_UTF8) ||
+        length > UINT32_MAX) {
+        if (text) PL_free(text);
+        return NULL;
+    }
+    const CettaLibPrologRuntime *active = g_petta_libpl_active_runtime;
+    bool module_name = !variables->private_module && active &&
+        active->module_name && length == active->module_name_len &&
+        memcmp(text, active->module_name, length) == 0;
+    Atom *result = module_name ? atom_symbol(arena, "user")
+        : atom_symbol_data_n(arena, text, (uint32_t)length);
+    PL_free(text);
+    return result;
 }
 
 static Atom *petta_libpl_from_term_mode(
@@ -3270,12 +3323,13 @@ static Atom *petta_libpl_from_term_mode(
         return atom_string(arena, copy);
     }
     if (type == PL_ATOM) {
-        SymbolId symbol = petta_libpl_atom_term_symbol(term, variables);
+        Atom *value = petta_libpl_atom_term_value(arena, term, variables);
+        if (!value) return NULL;
+        SymbolId symbol = atom_symbol_current_id(value);
         Atom *code = petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol);
         if (code)
             return atom_deep_copy(arena, code);
-        return symbol == SYMBOL_ID_NONE
-            ? NULL : atom_symbol_id(arena, symbol);
+        return value;
     }
     if (variables->cyclic_graphs &&
         (type == PL_TERM || PL_is_pair(term)) && !PL_is_acyclic(term))
@@ -4559,7 +4613,7 @@ static bool petta_libpl_register_clause_grounded_calls(
             body->expr.len >= 2u &&
             body->expr.elems[0]->kind == ATOM_SYMBOL) {
             SymbolId head =
-                body->expr.elems[0]->sym_id;
+                atom_symbol_current_id(body->expr.elems[0]);
             CettaExprLen function_arity = 0u;
             size_t predicate_arity =
                 (size_t)(body->expr.len - 1u);
@@ -4691,6 +4745,12 @@ static bool petta_libpl_retract_predicate(
 }
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
+    uint64_t live = atomic_load_explicit(&g_petta_libpl_live_contexts,
+                                         memory_order_acquire);
+    do {
+        if (live >= UINT64_MAX - 1u) return NULL;
+    } while (!atomic_compare_exchange_weak_explicit(&g_petta_libpl_live_contexts,
+        &live, live + 1u, memory_order_acq_rel, memory_order_acquire));
     CettaLibPrologRuntime *runtime =
         cetta_malloc(sizeof(*runtime));
     memset(runtime, 0, sizeof(*runtime));
@@ -4702,6 +4762,8 @@ CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
         instance_id > (uint64_t)INT64_MAX) {
         arena_free(&runtime->callable_codes);
         free(runtime);
+        atomic_fetch_sub_explicit(&g_petta_libpl_live_contexts, 1u,
+                                  memory_order_release);
         return NULL;
     }
     runtime->instance_id = instance_id;
@@ -4789,6 +4851,8 @@ void cetta_lib_prolog_runtime_free(
     free(runtime->solver_module_name);
     free(runtime->working_dir);
     free(runtime);
+    atomic_fetch_sub_explicit(&g_petta_libpl_live_contexts, 1u,
+                              memory_order_release);
 }
 
 CettaLibPrologReadToken cetta_lib_prolog_read_token(
@@ -6049,7 +6113,7 @@ static bool petta_libpl_call_raising(
                environment && outcomes && recognized;
     }
 
-    SymbolId head = expression->expr.elems[0]->sym_id;
+    SymbolId head = atom_symbol_current_id(expression->expr.elems[0]);
     PeTTaForm form = petta_semantics_form(head);
     bool adapter_form =
         form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
@@ -6141,7 +6205,7 @@ static bool petta_libpl_call_raising(
         Atom *name = expression->expr.elems[1];
         PeTTaForm imported_form =
             name && name->kind == ATOM_SYMBOL
-            ? petta_semantics_form(name->sym_id)
+            ? petta_semantics_form(atom_symbol_current_id(name))
             : PETTA_FORM_NONE;
         bool native_form =
             name && name->kind == ATOM_SYMBOL &&
@@ -6151,7 +6215,7 @@ static bool petta_libpl_call_raising(
             name && name->kind == ATOM_SYMBOL &&
             !native_form
                 ? petta_libpl_register_import(
-                      runtime, name->sym_id)
+                      runtime, atom_symbol_register_id(name))
                 : NULL;
         /* An explicit import grants full authority even when plan-time
          * resolution registered the name first. */

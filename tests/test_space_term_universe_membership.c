@@ -15,9 +15,15 @@ void space_match_backend_init(Space *s) {
 }
 
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 
@@ -966,7 +972,157 @@ static void test_space_imported_prefix(void) {
            "removal, truncation, copies and overlays\n");
 }
 
-int main(void) {
+static void test_runtime_symbol_membership(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Space space;
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+
+    Atom *head = atom_symbol(&scratch, "runtime-membership-head");
+    space.kind = SPACE_KIND_STACK;
+    const char bytes[] = {'r', 0, (char)0xff, 'a'};
+    const char different[] = {'r', 0, (char)0xff, 'b'};
+    Atom *value = atom_symbol_data_n(&scratch, bytes, sizeof(bytes));
+    Atom *fact = atom_expr2(&scratch, head, value);
+    Atom *other = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, different, sizeof(different)));
+    space_add(&space, fact);
+    space_add(&space, other);
+    space_add(&space, atom_deep_copy(&scratch, fact));
+    Atom *query = atom_deep_copy(&scratch, fact);
+    Atom *prefix_query = atom_expr2(&scratch, head,
+        atom_symbol_data_n(&scratch, bytes, 1u));
+    assert(query != space_get_at64(&space, 0u));
+
+    SymbolTableStats before, after;
+    symbol_table_stats_snapshot(g_symbols, &before);
+    CettaIndex *matches = NULL;
+    assert(space_exact_match_indices64(&space, query, &matches) == 2u);
+    assert(matches[0] == 0u && matches[1] == 2u);
+    free(matches);
+    assert(space_contains_exact(&space, query));
+    assert(space_contains_for_add_nodup(&space, query));
+    assert(!space_contains_exact(&space, prefix_query));
+    bool applicable = false;
+    assert(space_match_exists_ground_exact(&space, query, &applicable));
+    assert(applicable);
+    symbol_table_stats_snapshot(g_symbols, &after);
+    assert(before.owned_count == after.owned_count &&
+           before.data_count == after.data_count);
+
+    /* A spelling retained before registration still matches numbered values.
+       Duplicate rows may use both representations, in authored order. */
+    SymbolId registered = atom_symbol_register_id(value);
+    Atom *numbered = atom_expr2(&scratch, head,
+        atom_symbol_id(&scratch, registered));
+    assert(space_contains_exact(&space, numbered));
+    assert(space_contains_for_add_nodup(&space, numbered));
+    bool canonical_applicable = false;
+    bool canonical_found = space_contains_canonical(
+        &space, numbered, &canonical_applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!canonical_found && !canonical_applicable);
+    assert(space.native.id_present_incomplete);
+#else
+    assert(canonical_found && canonical_applicable);
+#endif
+    space_add(&space, numbered);
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+    assert(space_exact_match_indices64(&space, query, &matches) == 3u);
+    assert(matches[0] == 0u && matches[1] == 2u && matches[2] == 3u);
+    free(matches);
+
+    /* Numeric-only coordinate accelerators must decline an incomplete view. */
+    Atom *arguments[] = {numbered->expr.elems[1]};
+    bool coordinate_found = space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+    coordinate_found = space_match_exists_ground_exact_expression_coordinates(
+        &space, numbered->expr.elems, numbered->expr.len, &applicable);
+#if CETTA_MANAGED_SYMBOLS
+    assert(!coordinate_found && !applicable);
+#else
+    assert(coordinate_found && applicable);
+#endif
+
+    /* Content equality also composes through nested expressions and overlays. */
+    Atom *nested = atom_expr2(&scratch, head, query);
+    space_add(&space, nested);
+    assert_exact_match_one(&space, atom_deep_copy(&scratch, nested), 4u);
+    Space overlay;
+    space_init_overlay(&overlay, &space);
+    assert(space_contains_exact(&overlay, atom_deep_copy(&scratch, nested)));
+    space_free(&overlay);
+
+    assert(space_remove(&space, numbered));
+    assert(space_exact_match_indices64(&space, numbered, &matches) == 2u);
+    assert(matches[0] == 1u && matches[1] == 2u);
+    free(matches);
+    assert(space_truncate64(&space, 0u));
+    assert(!space_contains_exact(&space, numbered));
+    assert(!space.native.id_present_incomplete);
+    space_add(&space, numbered);
+    assert(space_contains_exact_symbol_application(
+        &space, atom_symbol_current_id(head), arguments, 1u, &applicable));
+    assert(applicable);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: runtime spelling membership, mixed keys, duplicates and mutation");
+}
+
+static void test_unregistered_head_lookup(void) {
+    Arena scratch;
+    arena_init(&scratch);
+
+#if CETTA_MANAGED_SYMBOLS
+    /* A dynamically read, unknown head remains a spelled symbol. In a
+     * hashed trie, its absent number must not select an empty hash slot's
+     * uninitialized child. Stored wildcards must still match that head. */
+    DiscNode *unknown_head_disc = disc_node_new();
+    for (CettaIndex i = 0u; i < 64u; i++) {
+        char head_name[64];
+        snprintf(head_name, sizeof(head_name), "hashed-known-head-%llu",
+                 (unsigned long long)i);
+        Atom *known_head = atom_symbol(&scratch, head_name);
+        (void)atom_symbol_register_id(known_head);
+        disc_insert(unknown_head_disc,
+                    atom_expr2(&scratch, known_head, atom_int(&scratch, 1)), i);
+    }
+    Atom *unknown_head = atom_symbol_data(&scratch, "hashed-unregistered-head");
+    assert(atom_symbol_current_id(unknown_head) == SYMBOL_ID_NONE);
+    Atom *unknown_query = atom_expr2(
+        &scratch, unknown_head, atom_var(&scratch, "$unknown-head-value"));
+    CettaIndex *unknown_matches = NULL;
+    CettaIndex unknown_count = 0u, unknown_capacity = 0u;
+    disc_lookup(unknown_head_disc, unknown_query, &unknown_matches,
+                &unknown_count, &unknown_capacity);
+    assert(unknown_count == 0u);
+    free(unknown_matches);
+    disc_insert(unknown_head_disc,
+                atom_expr2(&scratch, atom_var(&scratch, "$any-head"),
+                           atom_int(&scratch, 1)), 64u);
+    disc_lookup(unknown_head_disc, unknown_query, &unknown_matches,
+                &unknown_count, &unknown_capacity);
+    assert(unknown_count == 1u && unknown_matches[0] == 64u);
+    free(unknown_matches);
+    disc_node_free(unknown_head_disc);
+#endif
+    arena_free(&scratch);
+}
+
+int main(int argc, char **argv) {
     SymbolTable symbols;
     Arena persistent;
     Arena scratch_a;
@@ -979,6 +1135,14 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_unregistered_head_lookup();
+    if (argc == 2 && strcmp(argv[1], "--unregistered-head") == 0) {
+        g_symbols = NULL;
+        symbol_table_free(&symbols);
+        puts("PASS: unregistered symbol lookup and stored wildcard");
+        return 0;
+    }
+    test_runtime_symbol_membership();
     test_space_imported_prefix();
     test_space_equation_projection_tokens();
     test_space_program_projection_tokens();
@@ -1215,7 +1379,44 @@ int main(void) {
         }
         assert(overlay_step == SPACE_EQUATION_CURSOR_END);
         assert(overlay_matches == 4u);
+        assert(!space_has_graded_equations(&overlay_cursor_space));
         space_free(&overlay_cursor_space);
+
+        /* Overlay grade presence follows visible physical rows, rather than
+         * interpreting every transactional payload as a weighted program. */
+        Space grade_base, grade_overlay, grade_nested;
+        space_init_with_universe(&grade_base, &equation_universe);
+        space_add(&grade_base, source_equation);
+        space_init_overlay(&grade_overlay, &grade_base);
+        assert(!space_has_graded_equations(&grade_base));
+        assert(!space_has_graded_equations(&grade_overlay));
+        Atom *grade_parts[] = {atom_symbol(&equation_scratch, "=w"),
+            source_lhs, atom_true(&equation_scratch), atom_int(&equation_scratch, 2)};
+        Atom *grade_row = atom_expr(&equation_scratch, grade_parts, 4u);
+        space_add(&grade_overlay, grade_row);
+        space_add(&grade_overlay, grade_row);
+        assert(space_has_graded_equations(&grade_overlay));
+        assert(!space_has_graded_equations(&grade_base));
+        space_init_overlay(&grade_nested, &grade_overlay);
+        assert(space_has_graded_equations(&grade_nested));
+        SpaceReadToken grade_read = space_read_token(&grade_nested);
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_read_token_is_current(grade_read));
+        assert(space_has_graded_equations(&grade_nested));
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_has_graded_equations(&grade_nested));
+        assert(space_has_graded_equations(&grade_overlay));
+        /* A later base append is outside the nested overlay's captured
+         * prefix; a local append is visible and removal refreshes metadata. */
+        space_add(&grade_overlay, grade_row);
+        assert(!space_has_graded_equations(&grade_nested));
+        space_add(&grade_nested, grade_row);
+        assert(space_has_graded_equations(&grade_nested));
+        assert(space_remove(&grade_nested, grade_row));
+        assert(!space_has_graded_equations(&grade_nested));
+        space_free(&grade_nested);
+        space_free(&grade_overlay);
+        space_free(&grade_base);
 
         Space occurrence_space;
         space_init_with_universe(&occurrence_space, &equation_universe);

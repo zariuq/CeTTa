@@ -19,10 +19,11 @@ import curriculum_port_repairs
 from curriculum_trace import INVALID, failed_output, final_output, trace_failure
 
 ROOT = Path(__file__).resolve().parents[2]
-CURRICULUM = Path("/home/aimama/aihub/Mettapedia/MettaKernel/Curriculum")
-COVERAGE = Path(
-    "/shared/zahrada/work/prime-coherence-opus-20260924-claude/curriculum-coverage.md"
-)
+METTAPEDIA = Path(os.environ.get("METTAPEDIA_ROOT", ROOT.parent / "MeTTapedia")).expanduser()
+CURRICULUM = METTAPEDIA / "MettaKernel" / "Curriculum"
+DEFAULT_WORK = Path(os.environ.get("TC_WORK", ROOT / "runtime" / "typed-conversion"))
+DEFAULT_SCRATCH = DEFAULT_WORK / "scratch"
+COVERAGE = Path(os.environ.get("TC_COVERAGE", DEFAULT_WORK / "curriculum-coverage.md"))
 FIXTURES = (
     ROOT / "tests/prime/scoped/curriculum_coq.metta",
     ROOT / "tests/prime/scoped/curriculum_hol.metta",
@@ -166,7 +167,7 @@ def run_fixture(fixture: Path) -> list[str]:
     )
     dest = Path(os.environ.get(
         "TC_SCRATCH",
-        "/tmp/claude/grok-goal-aaee6e0e0c16/implementer",
+        DEFAULT_SCRATCH,
     )) / f"run-{fixture.name}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text)
@@ -494,7 +495,7 @@ def _run_assert_slices(path: Path, text: str, wanted: list[str]) -> list[str] | 
     if len(spans) != len(wanted):
         return None
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "repaired"
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "repaired"
     scratch.mkdir(parents=True, exist_ok=True)
     results: list[str] = []
     for index, (start, end) in enumerate(spans):
@@ -546,7 +547,7 @@ def run_repaired_guest(path: Path, bangs: list[str]) -> dict | None:
     if not asserts or len(asserts) != len(wanted):
         return None
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "repaired"
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "repaired"
     scratch.mkdir(parents=True, exist_ok=True)
     results: list[str] = []
     for index, bang in enumerate(asserts):
@@ -669,7 +670,7 @@ def definition_prints(path: Path) -> list[tuple[str, str, str]]:
     if not calls:
         return []
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "defs"
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "defs"
     scratch.mkdir(parents=True, exist_ok=True)
 
     def run_calls(selected: list[tuple[str, str]]) -> list[str]:
@@ -710,7 +711,7 @@ def _defs_only_file(path: Path, seen: dict[str, Path]) -> Path:
     except ValueError:
         rel = Path(path.name)
     dest = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "probe-defs" / rel
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "probe-defs" / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     seen[key] = dest
     text = _strip_checks(path.read_text(encoding="utf-8", errors="replace"))
@@ -744,7 +745,7 @@ def run_probe_batch(path: Path, calls: list[tuple[str, str]]) -> list[tuple[str,
     if not calls:
         return []
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "probes"
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "probes"
     scratch.mkdir(parents=True, exist_ok=True)
 
     def run_calls(selected: list[tuple[str, str]]) -> tuple[list[str], str]:
@@ -902,7 +903,7 @@ def ground_printed_equations(runs: dict) -> None:
 
 def write_guest_logs(runs: dict) -> None:
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer"))
+        "TC_SCRATCH", DEFAULT_SCRATCH))
     scratch.mkdir(parents=True, exist_ok=True)
     encoders: list[str] = []
     readers: list[str] = []
@@ -1152,7 +1153,7 @@ def materialize_guest(path: Path, seen: dict | None = None, keep_asserts: bool =
     if key in seen:
         return seen[key]
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer")) / "ported"
+        "TC_SCRATCH", DEFAULT_SCRATCH)) / "ported"
     try:
         rel = path.resolve().relative_to(CURRICULUM.resolve())
     except ValueError:
@@ -2044,7 +2045,7 @@ def self_check() -> None:
             print(f"self-check own-port stand-in {key}")
             raise SystemExit(1)
     own_scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-40a1861d1dd5/implementer"))
+        "TC_SCRATCH", DEFAULT_SCRATCH))
     own_scratch.mkdir(parents=True, exist_ok=True)
     own_cache: dict[str, str] = {}
     own_got = {
@@ -3829,7 +3830,7 @@ def _record_admission(row: dict, call: str, printed: str, scratch: Path) -> None
 def apply_constant_samples(rows: list[dict]) -> None:
     """Replace each non-design heuristic bucket with one kernel stdout."""
     scratch = Path(os.environ.get(
-        "TC_SCRATCH", "/tmp/claude/grok-goal-aaee6e0e0c16/implementer"))
+        "TC_SCRATCH", DEFAULT_SCRATCH))
     scratch.mkdir(parents=True, exist_ok=True)
     groups: dict[str, list[dict]] = {}
     for row in rows:

@@ -35,6 +35,16 @@ static Atom *parse(Arena *arena, const char *text) {
     return result;
 }
 
+static void fixture_add_source(Fixture *f, const char *source) {
+    size_t position = 0u;
+    Atom *form;
+    while ((form = parse_sexpr(&f->source, source, &position))) {
+        form = eval_read_registry_words(&f->registry, &f->source, form);
+        check(form != NULL, "capture source words at read time");
+        space_add(&f->space, form);
+    }
+}
+
 static void fixture_begin(Fixture *f, const char *source) {
     memset(f, 0, sizeof(*f));
     arena_init(&f->source);
@@ -50,10 +60,7 @@ static void fixture_begin(Fixture *f, const char *source) {
     cetta_eval_session_init(&f->library->session, CETTA_LANGUAGE_HE,
         cetta_profile_he_extended());
     eval_set_library_context(f->library);
-    size_t position = 0u;
-    Atom *form;
-    while ((form = parse_sexpr(&f->source, source, &position)))
-        space_add(&f->space, form);
+    fixture_add_source(f, source);
 }
 
 static void fixture_end(Fixture *f) {
@@ -70,7 +77,8 @@ static void fixture_end(Fixture *f) {
 }
 
 static CettaHeExecution *begin(Fixture *f, const char *query, CettaHeEntry entry) {
-    Atom *input = parse(&f->scratch, query);
+    Atom *input = eval_read_registry_words(
+        &f->registry, &f->scratch, parse(&f->scratch, query));
     CettaHeExecution *owner = eval_he_owned_begin(&f->space, &f->registry,
         entry, input, NULL, eval_get_default_fuel(), NULL, true, false);
     check(owner != NULL, "begin owned execution");
@@ -218,9 +226,14 @@ static void prefix_and_interleave(void) {
 
 static void collected_bindings(void) {
     Fixture f;
-    fixture_begin(&f, "(= (down $n) (if (== $n 0) 0 "
-        "(let $u (change-state! &pressure $n) (+ 1 (down (- $n 1))))))");
+    fixture_begin(&f, "(= (before-binding) &pressure)");
     fixture_eval(&f, "(bind! &pressure (new-state 0))");
+    fixture_add_source(&f, "(= (down $n) (if (== $n 0) 0 "
+        "(let $u (change-state! &pressure $n) (+ 1 (down (- $n 1))))))");
+    CettaHeExecution *earlier = begin(&f, "(before-binding)", CETTA_HE_ENTRY_EVALUATE);
+    drain(earlier);
+    expect(&f, earlier, "&pressure");
+    check(eval_he_owned_destroy(earlier), "release source read before binding");
     Atom *held = parse(&f.scratch, "(kept a b c)");
     Atom *body = parse(&f.scratch, "(let $answer (collapse (down 3000)) (Held $held $held))");
     Atom *query = atom_expr2(&f.scratch, atom_symbol(&f.scratch, "collapse"), body);
@@ -263,7 +276,8 @@ static void fixture_eval(Fixture *f, const char *text) {
     ResultSet out;
     result_set_init(&out);
     eval_top_with_registry(&f->space, &f->scratch, &f->source, &f->registry,
-        parse(&f->scratch, text), &out);
+        eval_read_registry_words(&f->registry, &f->scratch,
+            parse(&f->scratch, text)), &out);
     result_set_free(&out);
 }
 
@@ -389,9 +403,9 @@ static void *wrong_thread(void *argument) {
 
 static void current_world_and_thread(void) {
     Fixture f;
-    fixture_begin(&f, "(= (later) old) "
-        "(= (driver) (let $u (change-state! &cell 1) (later)))");
+    fixture_begin(&f, "(= (later) old)");
     fixture_eval(&f, "(bind! &cell (new-state 0))");
+    fixture_add_source(&f, "(= (driver) (let $u (change-state! &cell 1) (later)))");
     Atom *cell_atom = registry_lookup_id(&f.registry, symbol_intern_cstr(g_symbols, "&cell"));
     check(cell_atom && cell_atom->kind == ATOM_GROUNDED && cell_atom->ground.gkind == GV_STATE,
         "borrowed state resource");

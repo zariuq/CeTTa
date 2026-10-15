@@ -79,10 +79,14 @@ typedef struct {
  * caller still performs canonical matching on each returned occurrence. */
 void space_match_native_note_indexed_query(Space *space);
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity);
 void space_match_native_ensure_trie(Space *s);
 void space_match_native_pin_trie(Space *s);
 void space_match_native_unpin_trie(Space *s);
+/* Exact native operation tables with canonical logical occurrence access.
+ * A custom table with the same engine tag does not acquire this capability. */
+bool space_match_backend_has_native_occurrences(const Space *space);
 /* Before the Space rewrites its rows, hand the current pinned view the rows
  * and trie its cursors captured.  The Space continues with its own rows and
  * a trie rebuilt on demand; the cursors keep draining the captured bag. */

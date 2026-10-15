@@ -63,6 +63,611 @@ static void check_deep_print(Atom *list, bool petta) {
     fclose(stream);
 }
 
+static void check_copy_session_clone(Arena *source, Arena *destination) {
+    Atom *roots[128];
+    AtomDeepCopySession *session = atom_deep_copy_session_new(destination);
+    assert(session && !atom_deep_copy_session_clone(NULL));
+    for (size_t i = 0u; i < 128u; i++) {
+        roots[i] = atom_expr2(source, atom_symbol(source, "clone-prefix"),
+                             atom_int(source, (int64_t)i));
+        assert(atom_deep_copy_session_copy(session, roots[i]));
+    }
+    AtomDeepCopySession *copy = atom_deep_copy_session_clone(session);
+    assert(copy);
+    for (size_t i = 0u; i < 128u; i++)
+        assert(atom_deep_copy_session_forwarded(copy, roots[i]) ==
+               atom_deep_copy_session_forwarded(session, roots[i]));
+    Atom *suffix = atom_expr2(source, atom_symbol(source, "clone-suffix"),
+                             roots[127]);
+    Atom *suffix_copy = atom_deep_copy_session_copy(copy, suffix);
+    assert(suffix_copy && suffix_copy->expr.elems[1] ==
+           atom_deep_copy_session_forwarded(session, roots[127]));
+    assert(!atom_deep_copy_session_forwarded(session, suffix));
+    Atom *other = atom_expr2(source, atom_symbol(source, "source-only"), roots[0]);
+    assert(atom_deep_copy_session_copy(session, other));
+    assert(!atom_deep_copy_session_forwarded(copy, other));
+    atom_deep_copy_session_free(session);
+    assert(atom_deep_copy_session_copy(copy, suffix) == suffix_copy);
+    assert(atom_deep_copy_session_copy(copy, other)->expr.elems[1] ==
+           atom_deep_copy_session_forwarded(copy, roots[0]));
+    atom_deep_copy_session_free(copy);
+
+    /* Refusal cannot discard or partially overwrite either special transport.
+     * Their resolver/region authority is deliberately not borrowed by a clone. */
+    session = atom_deep_copy_session_new(destination);
+    TestCopyResolution resolution = {.from = roots[0], .to = roots[1]};
+    atom_deep_copy_session_set_resolver(session, resolve_test_atom, &resolution);
+    assert(!atom_deep_copy_session_clone(session));
+    assert(atom_eq(atom_deep_copy_session_copy(session, roots[0]), roots[1]));
+    atom_deep_copy_session_free(session);
+    Arena transient;
+    arena_init(&transient);
+    ArenaMark mark = arena_mark(&transient);
+    Atom *dying = atom_expr2(&transient, atom_symbol(&transient, "dying"), roots[0]);
+    session = atom_deep_copy_session_new(destination);
+    assert(atom_deep_copy_session_forward_region(session, &transient, mark));
+    assert(!atom_deep_copy_session_clone(session));
+    Atom *survivor = atom_deep_copy_session_copy(session, dying);
+    assert(survivor && atom_is_symbol(survivor->expr.elems[0], "dying"));
+    atom_deep_copy_session_free(session);
+    arena_free(&transient);
+    assert(atom_eq(survivor->expr.elems[1], roots[0]));
+    puts("PASS: cloned transport preserves shared prefix, independent suffix and refusal authority");
+}
+
+static void check_copy_session_relocation(void) {
+    Arena source, original_output, destination, destination_inputs;
+    arena_init(&source);
+    arena_init(&original_output);
+    arena_init(&destination);
+    arena_init(&destination_inputs);
+    AtomDeepCopySession *original = atom_deep_copy_session_new(&original_output);
+    AtomDeepCopySession *relocation = atom_deep_copy_session_new(&destination);
+    Atom *roots[128], *images[128], *values[128];
+    for (size_t i = 0u; i < 128u; i++) {
+        /* Equal payloads still have distinct source headers. */
+        roots[i] = atom_expr2(&source, atom_symbol(&source, "relocated-key"),
+                             atom_int(&source, (int64_t)(i % 2u)));
+        values[i] = atom_deep_copy_session_copy(original, roots[i]);
+        assert(values[i]);
+    }
+    Atom *longest = atom_expr(&source, NULL, 0u);
+    for (unsigned i = 0u; i < 12u; i++)
+        longest = atom_expr_prepend(&source, atom_int(&source, i), longest);
+    Atom *shortest = atom_expr_suffix(&source, longest, longest->expr.len - 1u);
+    /* This header views the existing checked front-slack allocation; the
+     * preceding slot is inside that allocation even when already occupied. */
+    shortest->structural_facts |= ATOM_STRUCTURAL_FRONT_SLACK;
+    assert(longest != shortest && longest->expr.elems + longest->expr.len ==
+           shortest->expr.elems + shortest->expr.len);
+    Atom *long_value = atom_deep_copy_session_copy(original, longest);
+    Atom *short_value = atom_deep_copy_session_copy(original, shortest);
+    assert(long_value && short_value &&
+           long_value->expr.elems + long_value->expr.len ==
+           short_value->expr.elems + short_value->expr.len);
+    assert(!atom_deep_copy_session_relocate(NULL, relocation));
+    assert(!atom_deep_copy_session_relocate(original, original));
+    const AtomDeepCopyArenaPair pairs[]={{&source,&destination_inputs},{&original_output,&destination}};
+    assert(atom_deep_copy_session_set_arena_map(relocation,pairs,2u));
+    AtomDeepCopySession *copy = atom_deep_copy_session_relocate(original, relocation);
+    assert(copy && atom_deep_copy_session_targets(copy, &destination));
+    for (size_t i = 0u; i < 128u; i++) {
+        images[i] = atom_deep_copy_session_forwarded(relocation, roots[i]);
+        Atom *value_image = atom_deep_copy_session_forwarded(relocation, values[i]);
+        assert(images[i] && value_image &&
+               atom_deep_copy_session_forwarded(copy, images[i]) == value_image);
+        assert(atom_deep_copy_session_forwarded(original, roots[i]) == values[i]);
+        if (i > 1u) assert(images[i] != images[i - 2u]);
+    }
+    Atom *long_image = atom_deep_copy_session_forwarded(relocation, longest);
+    Atom *short_image = atom_deep_copy_session_forwarded(relocation, shortest);
+    Atom *long_value_image = atom_deep_copy_session_forwarded(relocation, long_value);
+    Atom *short_value_image = atom_deep_copy_session_forwarded(relocation, short_value);
+    assert(long_image && short_image && long_value_image && short_value_image);
+    assert(long_image->expr.elems + long_image->expr.len ==
+           short_image->expr.elems + short_image->expr.len);
+    assert(long_value_image->expr.elems + long_value_image->expr.len ==
+           short_value_image->expr.elems + short_value_image->expr.len);
+    atom_deep_copy_session_free(original);
+    atom_deep_copy_session_free(relocation);
+    arena_free(&source);
+    arena_free(&original_output);
+    for (size_t i = 0u; i < 128u; i++) {
+        Atom *value = atom_deep_copy_session_copy(copy, images[i]);
+        assert(value && atom_eq(value, images[i]));
+    }
+    assert(atom_deep_copy_session_copy(copy, long_image) == long_value_image);
+    assert(atom_deep_copy_session_copy(copy, short_image) == short_value_image);
+    Arena late;
+    arena_init(&late);
+    arena_set_older_generation(&late, &destination_inputs);
+    Atom *new_view = atom_expr_suffix(&late, long_image, 3u);
+    new_view->structural_facts |= ATOM_STRUCTURAL_FRONT_SLACK;
+    Atom *new_value = atom_deep_copy_session_copy(copy, new_view);
+    assert(new_value && atom_eq(new_value, new_view));
+    assert(new_value->expr.elems + new_value->expr.len ==
+           long_value_image->expr.elems + long_value_image->expr.len);
+    atom_deep_copy_session_free(copy);
+    arena_free(&late);
+    arena_free(&destination);
+    arena_free(&destination_inputs);
+
+    /* Short-first copying can fix two images with different buffer ends.
+     * Header values alone cannot authorize transporting the shared-end key. */
+    for (unsigned fracture_values = 0u; fracture_values < 2u; fracture_values++) {
+    arena_init(&source);
+    arena_init(&original_output);
+    arena_init(&destination);
+    arena_init(&destination_inputs);
+    original = atom_deep_copy_session_new(&original_output);
+    relocation = atom_deep_copy_session_new(&destination);
+    longest = atom_expr(&source, NULL, 0u);
+    for (unsigned i = 0u; i < 12u; i++)
+        longest = atom_expr_prepend(&source, atom_int(&source, i), longest);
+    shortest = atom_expr_suffix(&source, longest, longest->expr.len - 1u);
+    shortest->structural_facts |= ATOM_STRUCTURAL_FRONT_SLACK;
+    long_value = atom_deep_copy_session_copy(original, longest);
+    short_value = atom_deep_copy_session_copy(original, shortest);
+    assert(atom_deep_copy_session_set_arena_map(relocation,pairs,2u));
+    assert(long_value->expr.elems + long_value->expr.len ==
+           short_value->expr.elems + short_value->expr.len);
+    short_image = atom_deep_copy_session_copy(
+        relocation, fracture_values ? short_value : shortest);
+    long_image = atom_deep_copy_session_copy(
+        relocation, fracture_values ? long_value : longest);
+    assert(short_image->expr.elems + short_image->expr.len !=
+           long_image->expr.elems + long_image->expr.len);
+    assert(!atom_deep_copy_session_relocate(original, relocation));
+    assert(atom_deep_copy_session_copy(original, longest) == long_value);
+    assert(atom_deep_copy_session_copy(original, shortest) == short_value);
+    atom_deep_copy_session_free(original);
+    atom_deep_copy_session_free(relocation);
+    arena_free(&source);
+    arena_free(&original_output);
+    arena_free(&destination);
+    arena_free(&destination_inputs);
+    }
+    puts("PASS: relocated transport owns keys and values after retirement and refuses fractured shared ends");
+}
+
+static void check_copy_nested_buffer_views(void) {
+    Arena input, output, mapped_input, mapped_output;
+    arena_init(&input); arena_init(&output);
+    arena_init(&mapped_input); arena_init(&mapped_output);
+    Atom *parent = atom_expr_builder_begin(&input, 3u);
+    parent->expr.elems[0] = atom_int(&input, 70);
+    parent->expr.elems[1] = atom_int(&input, 71);
+    parent->expr.elems[2] = atom_int(&input, 72);
+    parent = atom_expr_builder_finish(&input, parent);
+    Atom *suffix = atom_expr_suffix(&input, parent, 1u);
+    /* The private parent is still under construction. The shared suffix
+     * includes only its already-final tail, so replacing the head is safe. */
+    parent->expr.elems[0] = suffix;
+    parent = atom_expr_builder_finish(&input, parent);
+    assert(parent->expr.elems[0] == suffix && parent != suffix);
+    assert(parent->expr.elems + 3u == suffix->expr.elems + 2u);
+    assert(!(parent->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK));
+    assert(!(suffix->structural_facts & ATOM_STRUCTURAL_FRONT_SLACK));
+    AtomDeepCopySession *original = atom_deep_copy_session_new(&output);
+    Atom *value = atom_deep_copy_session_copy(original, parent);
+    assert(value && value->expr.elems[0] ==
+           atom_deep_copy_session_forwarded(original, suffix));
+    AtomDeepCopySession *relocation = atom_deep_copy_session_new(&mapped_output);
+    const AtomDeepCopyArenaPair pairs[] = {
+        {&input, &mapped_input}, {&output, &mapped_output},
+    };
+    assert(atom_deep_copy_session_set_arena_map(relocation, pairs, 2u));
+    AtomDeepCopySession *copy = atom_deep_copy_session_relocate(original, relocation);
+    assert(copy);
+    Atom *parent_image = atom_deep_copy_session_forwarded(relocation, parent);
+    Atom *suffix_image = atom_deep_copy_session_forwarded(relocation, suffix);
+    Atom *value_image = atom_deep_copy_session_forwarded(relocation, value);
+    assert(parent_image && suffix_image && value_image);
+    assert(parent_image->expr.elems[0] == suffix_image);
+    assert(parent_image->expr.elems + 3u == suffix_image->expr.elems + 2u);
+    assert(parent_image->structural_facts == parent->structural_facts);
+    assert(suffix_image->structural_facts == suffix->structural_facts);
+    atom_deep_copy_session_free(original);
+    atom_deep_copy_session_free(relocation);
+    arena_free(&output); arena_free(&input);
+    assert(suffix_image->expr.elems[0]->ground.ival == 71);
+    assert(suffix_image->expr.elems[1]->ground.ival == 72);
+    assert(atom_deep_copy_session_copy(copy, parent_image) == value_image);
+    assert(atom_eq(parent_image, value_image));
+    atom_deep_copy_session_free(copy);
+    arena_free(&mapped_output); arena_free(&mapped_input);
+    puts("PASS: nested ordinary suffix headers retain their actual backing end and summaries after source retirement");
+}
+
+static void check_copy_distinct_scalar_nodes(void) {
+    Arena source, destination;
+    arena_init(&source); arena_init(&destination);
+    arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    Atom *evicted = atom_symbol(&source, "transport-evicted-symbol");
+    for (unsigned i = 0u; i < 256u; i++) {
+        char spelling[64];
+        snprintf(spelling, sizeof(spelling), "transport-cache-fill-%u", i);
+        (void)atom_symbol(&source, spelling);
+    }
+    Atom *live = atom_symbol(&source, "transport-evicted-symbol");
+    Atom *first_int = atom_int(&source, 7);
+    Atom *second_int = atom_int(&source, 7);
+    assert(evicted != live && atom_eq(evicted, live));
+    assert(evicted->arena_id == live->arena_id);
+    assert(first_int != second_int && atom_eq(first_int, second_int));
+    assert(first_int->arena_id == second_int->arena_id);
+    assert(atom_symbol(&source, "transport-evicted-symbol") == live);
+    Atom *root = atom_expr(&source,
+        (Atom *[]){evicted, live, first_int, second_int}, 4u);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    const AtomDeepCopyArenaPair pair = {&source, &destination};
+    assert(atom_deep_copy_session_set_arena_map(session, &pair, 1u));
+    Atom *image = atom_deep_copy_session_copy(session, root);
+    assert(image && atom_eq(image, root));
+    assert(image->expr.elems[0] != image->expr.elems[1]);
+    assert(image->expr.elems[2] != image->expr.elems[3]);
+    assert(atom_symbol(&destination, "transport-evicted-symbol") == image->expr.elems[1]);
+    atom_deep_copy_session_free(session);
+    arena_free(&source);
+    assert(atom_eq(image->expr.elems[0], image->expr.elems[1]));
+    assert(atom_eq(image->expr.elems[2], image->expr.elems[3]));
+    assert(atom_symbol(&destination, "transport-evicted-symbol") == image->expr.elems[1]);
+    arena_free(&destination);
+    puts("PASS: distinct equal scalar nodes stay distinct and the captured live cache slot remains the factory result");
+}
+
+static void check_copy_retained_owner(void) {
+    for (unsigned scalar_cache = 0u; scalar_cache < 2u; scalar_cache++) {
+        Arena external, source, destination;
+        arena_init(&external); arena_init(&source); arena_init(&destination);
+        arena_set_runtime_kind(&external, CETTA_ARENA_RUNTIME_KIND_EVAL);
+        arena_set_scalar_cache(&external, scalar_cache != 0u);
+        arena_set_older_generation(&source, &external);
+        arena_set_older_generation(&destination, &external);
+        Atom *live = atom_symbol(&external, "retained-row-symbol");
+        Atom *row = atom_expr2(&external,
+            atom_int(&external, 100000), atom_int(&external, 100001));
+        assert(atom_graph_is_closed_for_arena(&external, row));
+        Atom *view = atom_expr_suffix(&source, row, 1u);
+        assert(view->expr.elems + view->expr.len == row->expr.elems + row->expr.len);
+        Atom *root = atom_expr(&source, (Atom *[]){row, live, view}, 3u);
+        Atom *open = atom_expr2(&external, row, root);
+        assert(!atom_graph_is_closed_for_arena(&external, open));
+        AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+        const AtomDeepCopyArenaPair pairs[] = {
+            {&source, &destination}, {&external, &external},
+        };
+        ArenaMark external_before = arena_mark(&external);
+        assert(atom_deep_copy_session_set_arena_map(session, pairs, 2u));
+        assert(atom_deep_copy_session_maps_arena(session, &external, &external));
+        assert(atom_deep_copy_session_copy(session, row) == row);
+        Atom *image = atom_deep_copy_session_copy(session, root);
+        assert(image && image != root && image->expr.elems[0] == row &&
+               image->expr.elems[1] == live);
+        assert(image->expr.elems[2] != view &&
+               image->expr.elems[2]->expr.elems == view->expr.elems);
+        assert(atom_symbol(&external, "retained-row-symbol") == live);
+        ArenaMark external_after = arena_mark(&external);
+        assert(external_after.head == external_before.head &&
+               external_after.used == external_before.used);
+        assert(!atom_deep_copy_session_copy(session, open));
+        atom_deep_copy_session_free(session);
+        arena_free(&source);
+        assert(image->expr.elems[0] == row && image->expr.elems[1] == live);
+        assert(image->expr.elems[2]->expr.elems[0]->ground.ival == 100001);
+        /* External storage stays live through every destination use. */
+        arena_free(&destination); arena_free(&external);
+    }
+    puts("PASS: explicit external identity pairs preserve closed row/cache identities and refuse open graphs without allocation into the borrowed owner");
+}
+
+static void check_copy_arena_map(void) {
+    for (unsigned scenario=0u;scenario<8u;scenario++) {
+        unsigned profile=scenario/2u;
+        Arena input, result, copied_input, copied_result, unknown;
+        arena_init(&input); arena_init(&result);
+        arena_init(&copied_input); arena_init(&copied_result); arena_init(&unknown);
+        if (profile>0u) {
+            arena_set_runtime_kind(&input,CETTA_ARENA_RUNTIME_KIND_EVAL);
+            arena_set_runtime_kind(&result,CETTA_ARENA_RUNTIME_KIND_EVAL);
+            arena_set_runtime_kind(&copied_input,CETTA_ARENA_RUNTIME_KIND_EVAL);
+            arena_set_runtime_kind(&copied_result,CETTA_ARENA_RUNTIME_KIND_EVAL);
+        }
+        if (profile==2u) {
+            arena_set_scalar_cache(&input,true); arena_set_scalar_cache(&result,true);
+            arena_set_scalar_cache(&copied_input,true); arena_set_scalar_cache(&copied_result,true);
+        }
+        if (profile==3u) {
+            arena_set_older_generation(&result,&input);
+            arena_set_older_generation(&copied_result,&copied_input);
+        }
+        Atom *input_head=atom_symbol(&input,"region-head");
+        Atom *result_head=atom_symbol(&result,"region-head");
+        assert(input_head!=result_head && atom_eq(input_head,result_head));
+        Atom *small=atom_int(&input,7);
+        Atom *payload=atom_expr2(&input,input_head,small);
+        Atom *equal_payload=atom_expr2(&input,input_head,small);
+        assert(payload!=equal_payload && atom_eq(payload,equal_payload));
+        Atom *named=atom_var_with_name_key(&input,payload,UINT64_C(440051));
+        Atom *key=named->name_key;
+        assert(key==payload);
+        Atom global=*small; global.arena_id=0u;
+        Atom *root=atom_expr(&result,(Atom *[]){result_head,payload,equal_payload,named,key,&global},6u);
+        bool input_closed=atom_graph_is_closed_for_arena(&input,payload);
+        bool result_closed=atom_graph_is_closed_for_arena(&result,payload);
+        bool input_settled=atom_settled_for_arena(&input,payload);
+        bool result_settled=atom_settled_for_arena(&result,payload);
+        AtomDeepCopySession *session=atom_deep_copy_session_new(&copied_result);
+        const AtomDeepCopyArenaPair collapsed[]={{&result,&copied_result},{&input,&copied_result}};
+        assert(!atom_deep_copy_session_set_arena_map(session,collapsed,2u));
+        const AtomDeepCopyArenaPair pairs[]={{&result,&copied_result},{&input,&copied_input}};
+        assert(atom_deep_copy_session_set_arena_map(session,pairs,2u));
+        assert(!atom_deep_copy_session_set_arena_map(session,pairs,2u));
+        assert(atom_deep_copy_session_maps_arena(session,&input,&copied_input));
+        assert(!atom_deep_copy_session_maps_arena(session,&input,&copied_result));
+        assert(!atom_deep_copy_session_clone(session));
+        Atom *image=atom_deep_copy_session_copy(session,root);
+        assert(image && image->expr.len==6u && atom_eq(image,root));
+        Atom *mapped=atom_deep_copy_session_forwarded(session,payload);
+        assert(mapped && mapped==image->expr.elems[1]);
+        assert(mapped!=image->expr.elems[2] && atom_eq(mapped,image->expr.elems[2]));
+        assert(image->expr.elems[3]->name_key==image->expr.elems[4]);
+        assert(image->expr.elems[5]==&global);
+        assert(mapped->expr.elems[0]!=image->expr.elems[0]);
+        assert(atom_graph_is_closed_for_arena(&copied_input,mapped)==input_closed);
+        assert(atom_graph_is_closed_for_arena(&copied_result,mapped)==result_closed);
+        assert(atom_settled_for_arena(&copied_input,mapped)==input_settled);
+        assert(atom_settled_for_arena(&copied_result,mapped)==result_settled);
+        if (profile>0u) {
+            assert(atom_symbol(&input,"region-head")==input_head);
+            assert(atom_symbol(&copied_input,"region-head")==mapped->expr.elems[0]);
+            assert(atom_symbol(&copied_result,"region-head")==image->expr.elems[0]);
+        }
+        if (profile==2u)
+            assert(atom_int(&copied_input,7)==atom_deep_copy_session_forwarded(session,small));
+        assert(atom_deep_copy_session_copy(session,root)==image);
+        if (scenario%2u==0u) {
+            Atom *outside=atom_expr2(&unknown,atom_symbol(&unknown,"unmapped"),root);
+            assert(!atom_deep_copy_session_copy(session,outside));
+            /* A failed graph is unpublished; no subsequent root may escape
+             * the session's sticky failure, even if it was copied earlier. */
+            assert(!atom_deep_copy_session_copy(session,root));
+        } else {
+            /* Staleness has its own fresh session: a prior copy refusal
+             * must not mask failure to validate the captured arena epoch. */
+            assert(atom_deep_copy_session_maps_arena(session,&result,&copied_result));
+            arena_reset(&input,arena_mark(&input));
+            assert(!atom_deep_copy_session_copy(session,root));
+            assert(!atom_deep_copy_session_maps_arena(session,&result,&copied_result));
+        }
+        atom_deep_copy_session_free(session);
+        arena_free(&result); arena_free(&input); arena_free(&unknown);
+        assert(image->expr.elems[3]->name_key==image->expr.elems[4]);
+        assert(atom_is_symbol(mapped->expr.elems[0],"region-head"));
+        arena_free(&copied_result); arena_free(&copied_input);
+    }
+    puts("PASS: region transport preserves cache ownership, closure, generations, name-key sharing and global lifetime; stale/unmapped/collapsed captures refuse");
+}
+
+static void check_copy_destination_scope(void) {
+    for (unsigned stale = 0u; stale < 3u; stale++) {
+        Arena source, child_source, destination, child_destination, external, wrong;
+        Arena *owners[] = {&source, &child_source, &destination,
+            &child_destination, &external, &wrong};
+        for (size_t i = 0u; i < sizeof(owners) / sizeof(*owners); i++) {
+            arena_init(owners[i]); arena_set_hashcons(owners[i], NULL);
+        }
+        Atom *root = atom_expr2(&child_source, atom_symbol(&child_source, "child"),
+                               atom_int(&child_source, 19));
+        AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+        AtomDeepCopyArenaPair collapsed[] = {{&source, &destination},
+            {&child_source, &destination}};
+        assert(!atom_deep_copy_session_set_arena_map(session, collapsed, 2u));
+        AtomDeepCopyArenaPair pairs[] = {{&source, &destination},
+            {&child_source, &child_destination}, {&external, &external}};
+        assert(atom_deep_copy_session_set_arena_map(session, pairs, 3u));
+        AtomDeepCopyDestinationScope outer = {0}, inner = {0}, refused = {0};
+        size_t external_bytes = arena_accounted_live_bytes(&external);
+        assert(!atom_deep_copy_destination_enter(session, &external, &refused));
+        assert(!atom_deep_copy_destination_enter(session, &wrong, &refused));
+        assert(!refused.active && atom_deep_copy_session_targets(session, &destination));
+        assert(arena_accounted_live_bytes(&external) == external_bytes);
+        assert(!atom_deep_copy_session_targets(session, &child_destination));
+        assert(atom_deep_copy_destination_enter(session, &child_destination, &outer));
+        assert(atom_deep_copy_session_targets(session, &child_destination));
+        assert(!atom_deep_copy_session_targets(session, &destination));
+        assert(!atom_deep_copy_destination_enter(session, &destination, &outer));
+        Atom *image = atom_deep_copy_session_copy(session, root);
+        assert(image && arena_owns_atom(&child_destination, image));
+        CettaFrameIdentity identity = 0u;
+        assert(cetta_frame_identity_acquire(&identity));
+        assert(atom_deep_copy_session_retain_frame(session, identity));
+        cetta_frame_identity_release(identity);
+        assert(atom_deep_copy_destination_enter(session, &destination, &inner));
+        assert(!atom_deep_copy_destination_leave(&outer));
+        assert(atom_deep_copy_session_targets(session, &destination));
+        assert(atom_deep_copy_session_copy(session, root) == image);
+        assert(atom_deep_copy_destination_leave(&inner));
+        assert(atom_deep_copy_session_targets(session, &child_destination));
+        Atom *unmapped = atom_expr2(&wrong, atom_symbol(&wrong, "unmapped"), root);
+        assert(!atom_deep_copy_session_copy(session, unmapped));
+        assert(atom_deep_copy_session_targets(session, &child_destination));
+        if (stale) {
+            Arena *changed = stale == 1u ? &child_source : &child_destination;
+            arena_reset(changed, arena_mark(changed));
+            assert(!atom_deep_copy_session_targets(session, &child_destination));
+            assert(!atom_deep_copy_destination_enter(session, &destination, &refused));
+            assert(!atom_deep_copy_session_copy(session, root));
+        }
+        assert(atom_deep_copy_destination_leave(&outer));
+        assert(atom_deep_copy_destination_leave(&outer));
+        assert(stale || atom_deep_copy_session_targets(session, &destination));
+        assert(arena_accounted_live_bytes(&external) == external_bytes);
+        atom_deep_copy_session_free(session);
+        arena_free(&source); arena_free(&child_source); arena_free(&destination);
+        /* The old primary owner cannot be the only holder of the child's
+         * metadata identity. It must survive under the child's actual owner. */
+        assert(cetta_frame_identity_retain(identity));
+        cetta_frame_identity_release(identity);
+        assert(image->expr.elems[1]->ground.ival == 19);
+        arena_free(&child_destination);
+        assert(!cetta_frame_identity_retain(identity));
+        arena_free(&external); arena_free(&wrong);
+    }
+    Arena external, source, destination;
+    arena_init(&external); arena_init(&source); arena_init(&destination);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&external);
+    AtomDeepCopyArenaPair pairs[] = {{&external, &external}, {&source, &destination}};
+    assert(atom_deep_copy_session_set_arena_map(session, pairs, 2u));
+    AtomDeepCopyDestinationScope scope = {0};
+    size_t before = arena_accounted_live_bytes(&external);
+    assert(!atom_deep_copy_destination_enter(session, &external, &scope));
+    assert(!atom_deep_copy_session_targets(session, &external));
+    CettaFrameIdentity identity = 0u;
+    assert(cetta_frame_identity_acquire(&identity));
+    assert(!atom_deep_copy_session_retain_frame(session, identity));
+    assert(arena_accounted_live_bytes(&external) == before);
+    assert(atom_deep_copy_destination_enter(session, &destination, &scope));
+    assert(atom_deep_copy_session_retain_frame(session, identity));
+    assert(atom_deep_copy_destination_leave(&scope));
+    cetta_frame_identity_release(identity);
+    atom_deep_copy_session_free(session);
+    arena_free(&external); arena_free(&source);
+    assert(cetta_frame_identity_retain(identity));
+    cetta_frame_identity_release(identity);
+    arena_free(&destination);
+    assert(!cetta_frame_identity_retain(identity));
+    puts("PASS: mapped destination scopes retain one memo, nested restoration and child-owned identity pins; borrowed, collapsed, unmapped and reset owners refuse");
+}
+
+static void check_copy_metadata_identities(void) {
+    static const char frame_kind, other_kind;
+    Arena source, destination;
+    arena_init_detached(&source); arena_init_detached(&destination);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    AtomDeepCopyArenaPair pair = {&source, &destination};
+    assert(session && atom_deep_copy_session_set_arena_map(session, &pair, 1u));
+    enum { NODE_COUNT = 257 };
+    uint64_t *keys[NODE_COUNT], *images[NODE_COUNT];
+    for (size_t i = 0u; i < NODE_COUNT; i++) {
+        keys[i] = arena_alloc(&source, sizeof(*keys[i]));
+        images[i] = arena_alloc(&destination, sizeof(*images[i]));
+        assert(keys[i] && images[i]);
+        *keys[i] = *images[i] = 7u;
+        assert(atom_deep_copy_session_object_record(session, &frame_kind,
+            keys[i], images[i], sizeof(*keys[i])));
+    }
+    for (size_t i = 0u; i < NODE_COUNT; i++) {
+        assert(atom_deep_copy_session_object_forwarded(session, &frame_kind,
+            keys[i], sizeof(*keys[i])) == images[i]);
+        assert(atom_deep_copy_session_object_record(session, &frame_kind,
+            keys[i], images[i], sizeof(*keys[i])));
+    }
+    assert(!atom_deep_copy_session_object_record(session, &frame_kind,
+        keys[0], images[1], sizeof(*keys[0])));
+    assert(!atom_deep_copy_session_object_record(session, &frame_kind,
+        keys[0], images[0], 1u));
+    uint64_t extra = 7u;
+    assert(!atom_deep_copy_session_object_record(session, &frame_kind,
+        &extra, images[0], sizeof(extra)));
+    assert(!atom_deep_copy_session_object_forwarded(session, &frame_kind, keys[0], 1u));
+    assert(!atom_deep_copy_session_object_forwarded(session, &other_kind,
+        keys[0], sizeof(*keys[0])));
+    assert(atom_deep_copy_session_object_record(session, &other_kind,
+        keys[0], images[1], sizeof(*keys[0])));
+    assert(atom_deep_copy_session_object_forwarded(session, &other_kind,
+        keys[0], sizeof(*keys[0])) == images[1]);
+    assert(!atom_deep_copy_session_clone(session));
+    const Arena *owner = NULL;
+    Arena *image_owner = NULL;
+    assert(atom_deep_copy_session_owner_of_span(session, keys[0], sizeof(*keys[0]),
+        NULL, &owner, &image_owner) && owner == &source && image_owner == &destination);
+    assert(!atom_deep_copy_session_owner_of_span(session, &extra, sizeof(extra),
+        &source, &owner, &image_owner));
+    assert(!atom_deep_copy_session_owner_of_span(session, keys[0], SIZE_MAX,
+        &source, &owner, &image_owner));
+    assert(atom_deep_copy_session_destination_for_owner(session, &source, &image_owner) &&
+        image_owner == &destination);
+    ArenaMark mark = arena_mark(&destination);
+    (void)arena_alloc(&destination, 16u);
+    arena_reset(&destination, mark);
+    assert(!atom_deep_copy_session_object_forwarded(session, &frame_kind,
+        keys[0], sizeof(*keys[0])));
+    assert(!atom_deep_copy_session_object_record(session, &frame_kind,
+        &extra, images[0], sizeof(extra)));
+    assert(!atom_deep_copy_session_destination_for_owner(session, &source, &image_owner));
+    atom_deep_copy_session_free(session);
+    arena_free(&destination); arena_free(&source);
+}
+
+typedef struct {
+    unsigned holds, retained, released;
+} MetadataLifetime;
+
+static void metadata_retain(const void *object) {
+    MetadataLifetime *item = (MetadataLifetime *)object;
+    item->holds++;
+    item->retained++;
+}
+
+static void metadata_release(const void *object) {
+    MetadataLifetime *item = (MetadataLifetime *)object;
+    assert(item->holds > 0u);
+    item->holds--;
+    item->released++;
+}
+
+static void check_copy_metadata_lifetimes(void) {
+    static const char kind;
+    enum { COUNT = 257 };
+    MetadataLifetime sources[COUNT] = {{0}}, images[COUNT] = {{0}};
+    Arena destination;
+    arena_init_detached(&destination);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+    assert(session);
+    for (size_t i = 0u; i < COUNT; i++) {
+        assert(atom_deep_copy_session_object_record_retained(session, &kind,
+            &sources[i], &images[i], sizeof(sources[i]), metadata_retain, metadata_release));
+        assert(atom_deep_copy_session_object_record_retained(session, &kind,
+            &sources[i], &images[i], sizeof(sources[i]), metadata_retain, metadata_release));
+        assert(sources[i].holds == 1u && sources[i].retained == 1u &&
+               images[i].holds == 1u && images[i].retained == 1u);
+        assert(atom_deep_copy_session_object_current(session, &kind, &sources[i]) &&
+               atom_deep_copy_session_object_current(session, &kind, &images[i]));
+        assert(atom_deep_copy_session_object_forwarded(session, &kind,
+            &sources[i], sizeof(sources[i])) == &images[i]);
+    }
+    assert(!atom_deep_copy_session_clone(session));
+    assert(!atom_deep_copy_session_object_record_retained(session, &kind,
+        &sources[0], &images[1], sizeof(sources[0]), metadata_retain, metadata_release));
+    assert(!atom_deep_copy_session_object_record_retained(session, &kind,
+        &sources[0], &images[0], 1u, metadata_retain, metadata_release));
+    assert(!atom_deep_copy_session_object_record_retained(session, &kind,
+        &sources[0], &images[0], sizeof(sources[0]), NULL, metadata_release));
+    assert(!atom_deep_copy_session_object_record_retained(session, &kind,
+        &sources[0], &images[0], sizeof(sources[0]), metadata_retain, NULL));
+    assert(!atom_deep_copy_session_object_record(session, &kind,
+        &sources[0], &images[0], sizeof(sources[0])));
+    ArenaMark mark = arena_mark(&destination);
+    (void)arena_alloc(&destination, 16u);
+    arena_reset(&destination, mark);
+    assert(!atom_deep_copy_session_object_forwarded(session, &kind,
+        &sources[0], sizeof(sources[0])));
+    assert(!atom_deep_copy_session_object_original(session, &kind,
+        &images[0], sizeof(images[0])));
+    assert(!atom_deep_copy_session_object_current(session, &kind, &sources[0]) &&
+           !atom_deep_copy_session_object_current(session, &kind, &images[0]));
+    assert(!atom_deep_copy_session_object_record_retained(session, &kind,
+        &sources[0], &images[0], sizeof(sources[0]), metadata_retain, metadata_release));
+    atom_deep_copy_session_free(session);
+    for (size_t i = 0u; i < COUNT; i++)
+        assert(sources[i].holds == 0u && sources[i].retained == 1u &&
+               sources[i].released == 1u && images[i].holds == 0u &&
+               images[i].retained == 1u && images[i].released == 1u);
+    arena_free(&destination);
+}
+
 typedef struct {
     Atom *variable;
     unsigned visited;
@@ -149,10 +754,19 @@ int main(void) {
     g_symbols = &symbols;
     g_hashcons = NULL;
     g_var_intern = NULL;
+    check_copy_destination_scope();
+    check_copy_metadata_identities();
+    check_copy_metadata_lifetimes();
     arena_init(&source);
     arena_init(&destination);
     arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    check_copy_session_clone(&source, &destination);
+    check_copy_session_relocation();
+    check_copy_nested_buffer_views();
+    check_copy_distinct_scalar_nodes();
+    check_copy_retained_owner();
+    check_copy_arena_map();
     check_map(&source, &destination);
 
     /* A name in a reusable buffer is read by its spelling, not its address
@@ -203,7 +817,7 @@ int main(void) {
     (void)symbol_intern_cstr(&other_symbols, "reused-table-prefix-two");
     g_symbols = &other_symbols;
     Atom *reused_literal = atom_symbol_literal(&destination, colliding_names[0]);
-    assert(reused_literal->sym_id != other_literal->sym_id);
+    assert(reused_literal->symbol_number != other_literal->symbol_number);
     assert(atom_eq(reused_literal, atom_symbol(&destination, colliding_names[0])));
     assert(atom_is_symbol(reused_literal, colliding_names[0]));
     assert(!atom_is_symbol(reused_literal, colliding_names[1]));

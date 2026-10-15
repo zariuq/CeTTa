@@ -1,0 +1,223 @@
+!(import! &self durable:telegram)
+!(import! &self durable:telegram_actions)
+!(import! &self durable:worker)
+
+; Fixed service program, telegram-agent/1. The host chooses all scopes and
+; grants. Worker JSON is data, never MeTTa code or a list of read permissions.
+(: JsonArray (-> Atom Atom))
+(: JsonObject (-> Atom Atom))
+(: JsonPair (-> Atom Atom Atom))
+(: JsonString (-> Atom Atom))
+(: JsonNumber (-> Atom Atom))
+
+(= (tg-agent:state)
+   (case (collapse (tg-host:match (host:record 1 $key $record) $record))
+     ((() (tg-agent:idle))
+      (((host:actor 1 "telegram-agent/1" $state)) $state)
+      ($other (tg-agent:held invalid-actor)))))
+
+; Dispatch query: view 0 = accepted intent, 1 = current actor. Only the
+; expected position is eligible; native admission also checks attempts/outcomes.
+(= (tg-agent:dispatchable)
+   (tg-host:match (host:record 0 $key (host:intent 1 "telegram.action" "1" $action
+     (tg-agent:sent 1 $source $lane $batch $position $count)))
+     (case (tg-agent:state)
+       (((tg-agent:sending $batch $position $count) True)
+        ($other False)))))
+
+; A selected reaction passes its proposal through a real rho COMM before the
+; host sees it. External dispatch still occurs only after durable acceptance.
+(= (tg-agent:reaction $proposal)
+   (case $proposal
+     (((host:transition $state $writes $effects)
+       (let $values (rhometta:values (rhometta:run-canonical
+         (rho:par (rho:recv (rho:quote rho:nil) $value (rho:drop $value))
+                  (rho:send (rho:quote rho:nil)
+                    (rho:val (host:transition $state $writes $effects))))))
+         (superpose $values)))
+      ($other (superpose ())))))
+
+; Incoming input: views 2 = received record, 3 = this chat's inbox prefix.
+; Channel 0 = the authorized worker. Non-routed occurrences use a separate
+; audit actor, so they cannot overwrite a chat's waiting continuation.
+(= (tg-agent:receive $worker $source $lane)
+   (tg-host:match (host:record 0 $key (host:input 1 $source $id $ledger $lane $disposition))
+     (tg-host:match (host:record 2 $ledger (host:received 1 $source $id $lane $disposition $input))
+       (if (== $disposition routed)
+         (case (tg-agent:state)
+           (((tg-agent:idle) (tg-agent:prepare $worker $source $lane $id $input))
+            ($busy Empty)))
+         (host:transition (tg-agent:ignored $source $id $disposition) () ())))))
+(= (tg-agent:prepare $worker $source $lane $id $input)
+   (case $input
+     (((telegram:input 1 $kind $chat $thread $sender $role $update)
+       (let $observation (json:stringify $update)
+         (if (> (str:byte-length $observation) 65536)
+           (host:transition (tg-agent:held observation-too-large) () ())
+           (host:transition (tg-agent:waiting $source $lane $id $chat $thread) ()
+             ((durable:worker:request 0 $worker $observation
+                (tg-agent:return 1 $source $lane $id $chat $thread)))))))
+      ($bad Empty))))
+
+; A bounded command batch uses JSON arrays, avoiding duplicate object keys.
+; ["send", text, format], ["edit", message-id, text, format], ["delete", id].
+; Destinations come from the recorded continuation, not the worker.
+(= (tg-agent:command $command $chat $thread)
+   (case $command
+     (((JsonArray ((JsonString "send") (JsonString $text) (JsonString $format)))
+       (tg-agent:action (telegram:send-text 1 $chat $thread 0 $text $format)))
+      ((JsonArray ((JsonString "edit") (JsonNumber $number) (JsonString $text) (JsonString $format)))
+       (case (telegram:integer (JsonNumberV1 $number))
+         (((tg:integer $id) (tg-agent:action (telegram:edit-text 1 $chat $id $text $format)))
+          ($bad tg-agent:bad))))
+      ((JsonArray ((JsonString "delete") (JsonNumber $number)))
+       (case (telegram:integer (JsonNumberV1 $number))
+         (((tg:integer $id) (tg-agent:action (telegram:delete-message 1 $chat $id)))
+          ($bad tg-agent:bad))))
+      ($bad tg-agent:bad))))
+(= (tg-agent:commands $items $chat $thread)
+   (if (== $items ()) (tg-agent:actions ())
+     (let ($head $tail) (decons-atom $items)
+       (case ((tg-agent:command $head $chat $thread) (tg-agent:commands $tail $chat $thread))
+         ((((tg-agent:action $action) (tg-agent:actions $rest))
+           (tg-agent:actions (cons-atom $action $rest)))
+          ($bad tg-agent:bad))))))
+(= (tg-agent:batch $body $chat $thread)
+   (case (json-parse $body)
+     (((JsonArray ((JsonString "cognitive-hold/1") (JsonString $reason)))
+       (if (telegram:contains $reason
+             ("model-outcome-unknown" "model-failed" "invalid-model-request"
+              "request-too-large" "invalid-model-response" "invalid-model-commands"
+              "unsupported-command-batch" "adapter-version-changed"))
+         (tg-agent:cognitive-hold $reason) tg-agent:bad))
+      ((JsonArray $commands)
+       (if (> (size-atom $commands) 64) tg-agent:bad (tg-agent:commands $commands $chat $thread)))
+      ($bad tg-agent:bad))))
+(= (tg-agent:intents $actions $source $lane $batch $position $count)
+   (if (== $actions ()) ()
+     (let ($head $tail) (decons-atom $actions)
+       (let $rest (tg-agent:intents $tail $source $lane $batch (+ $position 1) $count)
+         (cons-atom (host:send 0 $head (tg-agent:sent 1 $source $lane $batch $position $count)) $rest)))))
+
+; Worker reply views: 2 task, 3 origin, 4 original intent, 5 chat inbox prefix,
+; 6 writable application decision key (grant 4). Channel 0 = Telegram actions.
+; Every pairing is checked against the ticket's fresh views.
+(= (tg-agent:reply $worker)
+   (tg-host:match (host:record 0 $key (host:worker-result 1 $worker $batch $revision $body))
+    (tg-host:match (host:record-version 2 $task $revision $task-position)
+     (tg-host:match (host:record 3 $task (host:worker-origin 1 $epoch $outkey $outrev $outpos))
+      (tg-host:match (host:record-version 4 $outkey $outrev $outpos)
+       (tg-host:match (host:record 4 $outkey (host:intent 1 "worker.request" "1"
+         (worker:request 1 $worker $observation) (tg-agent:return 1 $source $lane $id $chat $thread)))
+        (tg-host:match (host:record 2 $task $observation)
+         (let $state (tg-agent:state)
+          (if (== $state (tg-agent:held invalid-actor)) Empty
+          (if (== $state (tg-agent:waiting $source $lane $id $chat $thread))
+           (if (== (collapse (tg-host:match (host:record 5 $new $value) True)) ())
+            (case (tg-agent:batch $body $chat $thread)
+             (((tg-agent:cognitive-hold $reason)
+               (host:transition (tg-agent:worker-held $batch $reason)
+                 ((host:put 4 $batch (tg-agent:decision 1 held (tg-agent:cognitive-hold $reason)))) ()))
+              ((tg-agent:actions $actions)
+               (let $count (size-atom $actions)
+                (host:transition (if (== $count 0) (tg-agent:idle) (tg-agent:sending $batch 0 $count))
+                  ((host:put 4 $batch (tg-agent:decision 1 accepted $actions)))
+                  (tg-agent:intents $actions $source $lane $batch 0 $count))))
+              ($bad (host:transition (tg-agent:idle)
+                ((host:put 4 $batch (tg-agent:decision 1 rejected invalid-command-batch))) ()))))
+            (host:transition (tg-agent:idle) ((host:put 4 $batch (tg-agent:decision 1 stale newer-input))) ()))
+           (host:transition $state ((host:put 4 $batch (tg-agent:decision 1 stale continuation-changed))) ())))))))))))
+
+; The host selects this branch only after a complete proposal fails its
+; immutable action permissions. It uses the same observation and grants.
+(= (tg-agent:reject-invalid-batch)
+   (tg-host:match (host:record 0 $key (host:worker-result 1 $worker $batch $revision $body))
+     (host:transition (tg-agent:idle)
+       ((host:put 4 $batch (tg-agent:decision 1 rejected action-not-permitted))) ())))
+
+; Native operator input, separately authorized from worker proposals. View 2
+; is the immutable request ledger, view 3 the result key (write grant 1).
+; Release only the named cognitive hold. Sending and uncertain delivery states
+; are preserved, and no effect authority is granted to this reaction.
+(= (tg-agent:control)
+   (tg-host:match (host:record 0 $input (host:telegram-control 1 $source $id $lane "release-worker" $batch))
+     (tg-host:match (host:record 2 $id (host:telegram-control 1 $source $id $lane "release-worker" $batch))
+       (let $state (tg-agent:state)
+         (if (or (== $state (tg-agent:held invalid-actor))
+                 (not (== (collapse (tg-host:match (host:record 3 $id $prior) True)) ()))) Empty
+           (case $state
+             (((tg-agent:worker-held $batch $reason)
+               (host:transition (tg-agent:idle)
+                 ((host:put 1 $id (tg-agent:control-result 1 released $batch))) ()))
+              ($other (host:transition $state
+                 ((host:put 1 $id (tg-agent:control-result 1 refused $batch))) ())))))))))
+
+; Transport outcome classification, never an excuse to replay an ambiguous
+; send. Positive API success must contain a result appropriate to the action.
+(= (tg-agent:api-result $normalized $action)
+   (case $normalized
+     (((tg:ok $object)
+       (case (telegram:field $object "ok")
+         (((tg:some (JsonBoolV1 True))
+           (case ($action (telegram:field $object "result"))
+             ((((telegram:delete-message 1 $chat $id) (tg:some (JsonBoolV1 True)))
+               (tg-agent:delivered $id))
+              (($payload (tg:some (JsonObjectV1 $members)))
+               (case $payload
+                 (((telegram:send-text 1 $chat $thread $reply $text $format)
+                   (tg-agent:message-result (JsonObjectV1 $members) $chat))
+                  ((telegram:send-text 1 $chat $thread $reply $text $format $keyboard)
+                   (tg-agent:message-result (JsonObjectV1 $members) $chat))
+                  ((telegram:edit-text 1 $chat $id $text $format)
+                   (case (tg-agent:message-result (JsonObjectV1 $members) $chat)
+                     (((tg-agent:delivered $id) (tg-agent:delivered $id)) ($bad (tg-agent:uncertain invalid-api-result)))))
+                  ((telegram:edit-text 1 $chat $id $text $format $keyboard)
+                   (case (tg-agent:message-result (JsonObjectV1 $members) $chat)
+                     (((tg-agent:delivered $id) (tg-agent:delivered $id)) ($bad (tg-agent:uncertain invalid-api-result)))))
+                  ($bad (tg-agent:uncertain invalid-api-result)))))
+              ($bad (tg-agent:uncertain invalid-api-result)))))
+          ((tg:some (JsonBoolV1 False))
+           (case (telegram:field $object "error_code")
+             (((tg:some $code)
+               (case (telegram:integer $code)
+                 (((tg:integer $n) (if (and (>= $n 400) (< $n 500)) (tg-agent:failed $n) (tg-agent:uncertain api-server-error)))
+                  ($bad (tg-agent:uncertain invalid-api-error)))))
+              ($bad (tg-agent:uncertain invalid-api-error)))))
+          ($bad (tg-agent:uncertain invalid-api-result)))))
+      ($bad (tg-agent:uncertain malformed-api-result)))))
+(= (tg-agent:message-result $object $chat)
+   (case ((telegram:field $object "message_id") (telegram:field $object "chat"))
+     ((((tg:some $number) (tg:some $target))
+       (case ((telegram:integer $number) (telegram:field $target "id"))
+         ((((tg:integer $id) (tg:some $target-id))
+           (case (telegram:integer $target-id)
+             (((tg:integer $chat) (if (> $id 0) (tg-agent:delivered $id) (tg-agent:uncertain invalid-message-id)))
+              ($bad (tg-agent:uncertain wrong-chat)))))
+          ($bad (tg-agent:uncertain invalid-message-result)))))
+      ($bad (tg-agent:uncertain invalid-message-result)))))
+(= (tg-agent:outcome $outcome $action)
+   (case $outcome
+     (((host:outcome 1 $effect $attempt observed (True False 0 $status $known $bytes False False False) $body)
+       (if (or (== $status 200) (and (>= $status 400) (< $status 500)))
+         (tg-agent:api-result (telegram:normalize (json:parse $body) 0) $action)
+         (tg-agent:uncertain http-status)))
+      ((host:outcome 1 $effect $attempt not-started (False $cancelled $code $status $known $bytes $large $budget $allocation) $body)
+       (tg-agent:not-sent))
+      ($other (tg-agent:uncertain transport)))))
+
+; Completion views: 2 original intent, 3 outcome, 4 writable delivery key
+; (grant 2). No effect grants. Only the expected position advances the lane.
+(= (tg-agent:complete)
+   (tg-host:match (host:record 0 $input (host:completion 1 $effect $outkey))
+    (tg-host:match (host:record 2 $outkey (host:intent 1 "telegram.action" "1" $action
+      (tg-agent:sent 1 $source $lane $batch $position $count)))
+     (tg-host:match (host:record 3 $outkey (host:outcome 1 $effect $attempt $kind $metadata $body))
+      (case (tg-agent:state)
+       (((tg-agent:sending $batch $position $count)
+         (let $result (tg-agent:outcome (host:outcome 1 $effect $attempt $kind $metadata $body) $action)
+           (host:transition
+             (case $result
+               (((tg-agent:delivered $id) (if (== (+ $position 1) $count) (tg-agent:idle) (tg-agent:sending $batch (+ $position 1) $count)))
+                ($other (tg-agent:held $batch $position $count $result))))
+             ((host:put 2 $outkey (tg-agent:delivery 1 $batch $position $result))) ())))
+        ($other Empty)))))))

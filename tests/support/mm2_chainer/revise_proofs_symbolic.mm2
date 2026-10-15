@@ -1,0 +1,186 @@
+; A small, pure-MM2 approximation of revise-proofs.
+;
+; Run:
+;   mork run examples/revise_proofs_symbolic.mm2
+;
+; Input:
+;   (open-proof TYPE GOAL PROOF-ID STV)
+;   (proof-evidence TYPE GOAL PROOF-ID EVIDENCE-ID)
+;
+; Output:
+;   (proved TYPE GOAL PROOF-ID STV)
+;   (revised TYPE GOAL MERGED-STV MERGED-PROOF)
+;   (revised-evidence TYPE GOAL EVIDENCE-ID)
+;
+; STVs and proof ids are merged symbolically:
+;   (merge stv1 stv2)
+;   (merge p1 p2)
+;
+; The implementation is a greedy fixed-point fold.  Each pass selects one
+; pending proof for one existing accumulator.  It starts as `disjoint`, just
+; like examples/disjoint.mm2, and is changed to `overlap` when a shared
+; evidence atom is found.  A disjoint proof is merged; an overlapping proof
+; is merely removed from the pending fold while remaining available as
+; `proved`.
+
+; Register all input proofs.  `revise-changed` starts the fixed-point loop.
+(exec (0 register)
+  (, (open-proof $type $goal $proof $stv))
+  (O
+    (- (open-proof $type $goal $proof $stv))
+    (+ (proved $type $goal $proof $stv))
+    (+ (pending-proof $type $goal $proof $stv))
+    (+ (needs-revise-seed $type $goal))
+    (+ (revise-changed))))
+
+; ---------------------------------------------------------------------------
+; One revision pass, stored as data.
+;
+; The controller below materializes these as priorities (1 0) through (1 7).
+
+; Pick the first proof for one group.
+(revise-rule 0
+  (, (needs-revise-seed $type $goal)
+     (pending-proof $type $goal $proof $stv))
+  (O
+    (head 1
+      (revise-seed $type $goal $proof $stv))))
+
+; Copy the seed's evidence into the group accumulator.
+(revise-rule 1
+  (, (revise-seed $type $goal $proof $stv)
+     (proof-evidence $type $goal $proof $evidence))
+  (O
+    (+ (revised-evidence $type $goal $evidence))))
+
+; Install the seed as the public result and request another pass.
+(revise-rule 2
+  (, (needs-revise-seed $type $goal)
+     (revise-seed $type $goal $proof $stv)
+     (pending-proof $type $goal $proof $stv))
+  (O
+    (- (needs-revise-seed $type $goal))
+    (- (revise-seed $type $goal $proof $stv))
+    (- (pending-proof $type $goal $proof $stv))
+    (+ (revised-acc $type $goal $stv $proof))
+    (+ (revised $type $goal $stv $proof))
+    (+ (revise-changed))))
+
+; Select one remaining proof.  It is provisionally disjoint.
+(revise-rule 3
+  (, (revised-acc $type $goal $old-stv $old-proof)
+     (pending-proof $type $goal $proof $stv))
+  (O
+    (head 1
+      (disjoint
+        $type $goal
+        $old-stv $old-proof
+        $proof $stv))))
+
+; A shared evidence atom turns the provisional disjoint pair into overlap.
+(revise-rule 4
+  (, (disjoint
+       $type $goal
+       $old-stv $old-proof
+       $proof $stv)
+     (proof-evidence $type $goal $proof $evidence)
+     (revised-evidence $type $goal $evidence))
+  (O
+    (- (disjoint
+         $type $goal
+         $old-stv $old-proof
+         $proof $stv))
+    (+ (overlap
+         $type $goal
+         $old-stv $old-proof
+         $proof $stv))))
+
+; Union evidence from a surviving disjoint proof.
+(revise-rule 5
+  (, (disjoint
+       $type $goal
+       $old-stv $old-proof
+       $proof $stv)
+     (proof-evidence $type $goal $proof $evidence))
+  (O
+    (+ (revised-evidence $type $goal $evidence))))
+
+; Merge a surviving disjoint proof into the accumulator.
+(revise-rule 6
+  (, (disjoint
+       $type $goal
+       $old-stv $old-proof
+       $proof $stv)
+     (revised-acc $type $goal $old-stv $old-proof)
+     (revised $type $goal $old-stv $old-proof)
+     (pending-proof $type $goal $proof $stv))
+  (O
+    (- (disjoint
+         $type $goal
+         $old-stv $old-proof
+         $proof $stv))
+    (- (revised-acc $type $goal $old-stv $old-proof))
+    (- (revised $type $goal $old-stv $old-proof))
+    (- (pending-proof $type $goal $proof $stv))
+    (+ (revised-acc
+         $type $goal
+         (merge $old-stv $stv)
+         (merge $old-proof $proof)))
+    (+ (revised
+         $type $goal
+         (merge $old-stv $stv)
+         (merge $old-proof $proof)))
+    (+ (revise-changed))))
+
+; Skip an overlapping proof without removing its durable `proved` fact.
+(revise-rule 7
+  (, (overlap
+       $type $goal
+       $old-stv $old-proof
+       $proof $stv)
+     (pending-proof $type $goal $proof $stv))
+  (O
+    (- (overlap
+         $type $goal
+         $old-stv $old-proof
+         $proof $stv))
+    (- (pending-proof $type $goal $proof $stv))
+    (+ (revise-changed))))
+
+; ---------------------------------------------------------------------------
+; Fixed-point controller.
+;
+; A successful seed, merge, or skip emits `revise-changed`.  The controller
+; consumes that token, schedules one copy of every pass rule, and re-emits
+; itself.  When a complete pass makes no change, the controller has no match
+; and MORK stops naturally.
+(exec (2 fixed-point)
+  (, (revise-changed)
+     (revise-rule $phase $pattern $output)
+     (exec (2 fixed-point) $self-pattern $self-output))
+  (O
+    (- (revise-changed))
+    (+ (exec (1 $phase) $pattern $output))
+    (+ (exec (2 fixed-point) $self-pattern $self-output))))
+
+; ---------------------------------------------------------------------------
+; Demo data
+
+; p1 and p2 are independent, so they merge.  p3 overlaps p1, so it remains
+; proved but is skipped by the revised accumulator.
+(open-proof bird tweety p1 stv1)
+(proof-evidence bird tweety p1 e1)
+
+(open-proof bird tweety p2 stv2)
+(proof-evidence bird tweety p2 e2)
+
+(open-proof bird tweety p3 stv3)
+(proof-evidence bird tweety p3 e1)
+
+; Same type, different goal.
+(open-proof bird polly p4 stv4)
+(proof-evidence bird polly p4 e4)
+
+; Same goal, different type.
+(open-proof fish tweety p5 stv5)
+(proof-evidence fish tweety p5 e5)

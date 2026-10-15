@@ -27,7 +27,7 @@ static bool observe(Atom *body, const Bindings *bindings, void *raw) {
 
 static Answers run(Space *space, Arena *arena, Atom *argument, unsigned forms) {
     SpaceEquationCursor cursor;
-    SymbolId head = atom_symbol(arena, "f")->sym_id;
+    SymbolId head = atom_symbol_current_id(atom_symbol(arena, "f"));
     assert(space_rule_cursor_init(space, head, forms, &cursor));
     Answers answers = {.arena = arena, .variable = argument};
     Atom *query = atom_expr2(arena, atom_symbol(arena, "f"), argument);
@@ -67,7 +67,7 @@ int main(void) {
     Atom *a = atom_symbol(&arena, "a"), *x = atom_var(&arena, "x");
     Atom *q = atom_var(&arena, "q");
     Atom *directional = equation(&arena, "=%", a, 2);
-    SymbolId head = atom_symbol(&arena, "f")->sym_id;
+    SymbolId head = atom_symbol_current_id(atom_symbol(&arena, "f"));
     space_add(&space, equation(&arena, "=", a, 1));
     assert(space_length64(&space) == 1u);
     assert(!space_directional_rules_may_match_known_head(&space, head));

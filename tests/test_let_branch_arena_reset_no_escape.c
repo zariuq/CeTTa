@@ -35,9 +35,15 @@ void space_match_backend_init(Space *s) {
     s->match_backend.kind = SPACE_ENGINE_NATIVE;
 }
 /* This standalone fixture does not provide native cursor execution. */
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    (void)space;
+    return false;
+}
+
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
-    (void)space; (void)pattern; (void)out; (void)count;
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,
+    CettaIndex *capacity) {
+    (void)space; (void)pattern; (void)out; (void)count; (void)capacity;
     return false;
 }
 

@@ -217,7 +217,8 @@ static bool name_key_ensure_bucket_capacity_locked(NameKeyTable *table,
     return name_key_rehash_locked(table, count);
 }
 
-NameId name_key_intern(NameKeyTable *table, Atom *key) {
+static NameId name_key_intern_image(NameKeyTable *table, Atom *key,
+        bool held_image) {
     if (!table || !name_key_is_admissible(key)) return NAME_ID_NONE;
     uint32_t digest = atom_hash(key) & table->hash_mask;
 
@@ -243,7 +244,7 @@ NameId name_key_intern(NameKeyTable *table, Atom *key) {
         return NAME_ID_NONE;
     }
     bucket = (size_t)digest & (table->bucket_count - 1u);
-    Atom *owned = atom_deep_copy(&table->arena, key);
+    Atom *owned = held_image ? key : atom_deep_copy(&table->arena, key);
     if (!owned) {
         pthread_mutex_unlock(&table->mutex);
         return NAME_ID_NONE;
@@ -258,6 +259,16 @@ NameId name_key_intern(NameKeyTable *table, Atom *key) {
     table->len++;
     pthread_mutex_unlock(&table->mutex);
     return id;
+}
+
+NameId name_key_intern(NameKeyTable *table, Atom *key) {
+    return name_key_intern_image(table,key,false);
+}
+
+NameId name_key_intern_snapshot(NameKeyTable *table,
+        const AtomDeepCopySession *snapshot, const Arena *destination, const Atom *source) {
+    Atom *image=atom_deep_copy_session_snapshot_image(snapshot,destination,source);
+    return image ? name_key_intern_image(table,image,true) : NAME_ID_NONE;
 }
 
 NameId name_key_find(const NameKeyTable *table, Atom *key) {
@@ -293,4 +304,41 @@ uint32_t name_key_count(const NameKeyTable *table) {
     uint32_t count = table->len;
     pthread_mutex_unlock((pthread_mutex_t *)&table->mutex);
     return count;
+}
+
+
+void name_key_table_storage_census(const NameKeyTable *table, CettaStorageCensus *census) {
+    if (!table || !cetta_storage_object(census, table, sizeof(*table), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, table->buckets, table->bucket_count, sizeof(*table->buckets), 0u);
+    cetta_storage_array(census, table->by_id, table->by_id_cap, sizeof(*table->by_id), 0u);
+    arena_storage_census(&table->arena, census);
+    if (!table->bucket_count || !table->buckets || !table->by_id ||
+        (table->bucket_count & (table->bucket_count - 1u)) ||
+        table->len >= table->by_id_cap) {
+        cetta_storage_refuse(census, "NameKeyTableShape");
+        return;
+    }
+    size_t entries = 0u;
+    for (size_t i = 0u; i < table->bucket_count; i++) {
+        const NameKeyEntry *entry = table->buckets[i];
+        while (entry) {
+            /* Record before following next: a repeated allocation stops a
+             * cyclic or multiply linked chain without another header read. */
+            if (!cetta_storage_object(census, entry, sizeof(*entry), CETTA_STORAGE_BLOCK)) {
+                cetta_storage_refuse(census, "NameKeyRepeatedEntry");
+                return;
+            }
+            if (entries == table->len || entry->id == NAME_ID_NONE ||
+                entry->id > table->len || table->by_id[entry->id] != entry ||
+                ((size_t)entry->digest & (table->bucket_count - 1u)) != i || !entry->key) {
+                cetta_storage_refuse(census, "NameKeyEntryShape");
+                return;
+            }
+            entries++;
+            entry = entry->next;
+        }
+    }
+    if (entries != table->len) cetta_storage_refuse(census, "NameKeyEntryCount");
+    /* Snapshot keys have an independently held backing arena. That owner
+     * is visited by the enclosing region, not inferred from a key pointer. */
 }

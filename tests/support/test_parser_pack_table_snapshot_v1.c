@@ -156,27 +156,27 @@ static bool grammar_backtracking(CettaLpNativeGrammar *grammar,
                                  Arena *arena,
                                  SymbolId *start_out,
                                  Atom **tokens_out) {
-    SymbolId start = atom_symbol(arena, "bt-start")->sym_id;
-    SymbolId a_nt = atom_symbol(arena, "bt-a-nt")->sym_id;
+    SymbolId start = atom_symbol_current_id(atom_symbol(arena, "bt-start"));
+    SymbolId a_nt = atom_symbol_current_id(atom_symbol(arena, "bt-a-nt"));
     Atom *a = atom_symbol(arena, "bt-a");
     Atom *b = atom_symbol(arena, "bt-b");
     Atom *c = atom_symbol(arena, "bt-c");
     Atom *d = atom_symbol(arena, "bt-d");
     CettaLpNativeSymbol success_rhs[] = {
         {CETTA_LP_NATIVE_SYMBOL_HL, a_nt, 0u},
-        {CETTA_LP_NATIVE_SYMBOL_TM, c->sym_id, 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(c), 0u},
     };
     CettaLpNativeSymbol failing_rhs[] = {
         {CETTA_LP_NATIVE_SYMBOL_HL, a_nt, 0u},
-        {CETTA_LP_NATIVE_SYMBOL_TM, b->sym_id, 0u},
-        {CETTA_LP_NATIVE_SYMBOL_TM, d->sym_id, 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(b), 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(d), 0u},
     };
     CettaLpNativeSymbol short_rhs[] = {
-        {CETTA_LP_NATIVE_SYMBOL_TM, a->sym_id, 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(a), 0u},
     };
     CettaLpNativeSymbol long_rhs[] = {
-        {CETTA_LP_NATIVE_SYMBOL_TM, a->sym_id, 0u},
-        {CETTA_LP_NATIVE_SYMBOL_TM, b->sym_id, 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(a), 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(b), 0u},
     };
     Atom *nil = atom_symbol(arena, "Nil");
 
@@ -186,16 +186,16 @@ static bool grammar_backtracking(CettaLpNativeGrammar *grammar,
         return false;
     grammar->production_len = 4u;
     if (!set_production(&grammar->productions[0],
-                        atom_symbol(arena, "bt-success-prod")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "bt-success-prod")),
                         start, success_rhs, 2u) ||
         !set_production(&grammar->productions[1],
-                        atom_symbol(arena, "bt-failing-prod")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "bt-failing-prod")),
                         start, failing_rhs, 3u) ||
         !set_production(&grammar->productions[2],
-                        atom_symbol(arena, "bt-short-prod")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "bt-short-prod")),
                         a_nt, short_rhs, 1u) ||
         !set_production(&grammar->productions[3],
-                        atom_symbol(arena, "bt-long-prod")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "bt-long-prod")),
                         a_nt, long_rhs, 2u)) {
         return false;
     }
@@ -211,9 +211,9 @@ static bool grammar_ambiguous(CettaLpNativeGrammar *grammar,
                               Arena *arena,
                               SymbolId *start_out,
                               Atom **tokens_out) {
-    SymbolId start = atom_symbol(arena, "amb-start")->sym_id;
-    SymbolId left = atom_symbol(arena, "amb-left")->sym_id;
-    SymbolId right = atom_symbol(arena, "amb-right")->sym_id;
+    SymbolId start = atom_symbol_current_id(atom_symbol(arena, "amb-start"));
+    SymbolId left = atom_symbol_current_id(atom_symbol(arena, "amb-left"));
+    SymbolId right = atom_symbol_current_id(atom_symbol(arena, "amb-right"));
     Atom *a = atom_symbol(arena, "amb-a");
     CettaLpNativeSymbol start_left[] = {
         {CETTA_LP_NATIVE_SYMBOL_HL, left, 0u},
@@ -222,7 +222,7 @@ static bool grammar_ambiguous(CettaLpNativeGrammar *grammar,
         {CETTA_LP_NATIVE_SYMBOL_HL, right, 0u},
     };
     CettaLpNativeSymbol leaf[] = {
-        {CETTA_LP_NATIVE_SYMBOL_TM, a->sym_id, 0u},
+        {CETTA_LP_NATIVE_SYMBOL_TM, atom_symbol_current_id(a), 0u},
     };
 
     cetta_lp_native_grammar_init(grammar);
@@ -231,16 +231,16 @@ static bool grammar_ambiguous(CettaLpNativeGrammar *grammar,
         return false;
     grammar->production_len = 4u;
     if (!set_production(&grammar->productions[0],
-                        atom_symbol(arena, "amb-start-left")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "amb-start-left")),
                         start, start_left, 1u) ||
         !set_production(&grammar->productions[1],
-                        atom_symbol(arena, "amb-start-right")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "amb-start-right")),
                         start, start_right, 1u) ||
         !set_production(&grammar->productions[2],
-                        atom_symbol(arena, "amb-left-leaf")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "amb-left-leaf")),
                         left, leaf, 1u) ||
         !set_production(&grammar->productions[3],
-                        atom_symbol(arena, "amb-right-leaf")->sym_id,
+                        atom_symbol_current_id(atom_symbol(arena, "amb-right-leaf")),
                         right, leaf, 1u)) {
         return false;
     }
@@ -321,11 +321,11 @@ int main(void) {
     second = atom_symbol(&arena, "snap-second");
     expect(&counts,
            grammar_ab(&grammar,
-                      atom_symbol(&arena, "snap-prod")->sym_id,
-                      start->sym_id, first->sym_id, second->sym_id),
+                      atom_symbol_current_id(atom_symbol(&arena, "snap-prod")),
+                      atom_symbol_current_id(start), atom_symbol_current_id(first), atom_symbol_current_id(second)),
            "build SLR grammar");
     expect(&counts,
-           cetta_lp_native_slr_prepare(&prepared, &grammar, start->sym_id,
+           cetta_lp_native_slr_prepare(&prepared, &grammar, atom_symbol_current_id(start),
                                        error, sizeof(error)),
            error[0] ? error : "prepare SLR");
     error[0] = '\0';
@@ -542,7 +542,7 @@ int main(void) {
            "DFA state_len");
     expect(&counts, loaded.slr.production_len == snap.slr.production_len,
            "SLR production_len");
-    expect(&counts, loaded.slr.start_nonterminal == start->sym_id,
+    expect(&counts, loaded.slr.start_nonterminal == atom_symbol_current_id(start),
            "start interned");
     {
         PPTableSnapshotV1 mismatch;

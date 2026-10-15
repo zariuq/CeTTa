@@ -26,3 +26,13 @@
 ; set space, nor the HOTG space a space of the logic alone.
 !(let $r (set:proves &logic (pf:all-intro (pf:imp-intro (pf:hyp 0))) (all prop (lam p (imp p p)))) (car-atom $r))
 !(let $r (hol:of &hotg Empty) (car-atom $r))
+
+; Completed judgments retain HE Boolean values, including their type and identity.
+!(let $value (hol:proves &logic (pf:known self-imp) (all prop (lam p (imp p p)))) (get-type $value))
+!(let $value (hol:proves &logic (pf:known self-imp) (all prop (lam p (imp p p)))) (get-metatype $value))
+!(let $value (hol:proves &logic (pf:known self-imp) (all prop (lam p (imp p p)))) (== $value True))
+!(let $value (hol:proves &logic (pf:known self-imp) (all prop (lam p (imp p p)))) (== $value true))
+!(let $value (hol:proves &logic (pf:hyp 0) (all prop (lam p (imp p p)))) (get-type $value))
+!(let $value (hol:proves &logic (pf:hyp 0) (all prop (lam p (imp p p)))) (get-metatype $value))
+!(let $value (hol:proves &logic (pf:hyp 0) (all prop (lam p (imp p p)))) (== $value False))
+!(let $value (hol:proves &logic (pf:hyp 0) (all prop (lam p (imp p p)))) (== $value false))

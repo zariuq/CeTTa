@@ -137,6 +137,10 @@ Atom *parse_sexpr(Arena *a, const char *text, size_t *pos);
    and comments; text[text_len] must be a readable NUL, as it is after a
    string atom's bytes.  The other _n entries below read text the same way. */
 Atom *parse_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos);
+/* Runtime text has the same grammar and values as source parsing, but new
+ * spellings are data-born. Source loading continues to use parse_sexpr_n.
+ * The wrapper restores the caller's birth mode on success and failure. */
+Atom *parse_data_sexpr_n(Arena *a, const char *text, size_t text_len, size_t *pos);
 
 /* Parse a single S-expression directly into the term universe and return its
    canonical AtomId. Returns CETTA_ATOM_ID_NONE on end-of-input or error. */

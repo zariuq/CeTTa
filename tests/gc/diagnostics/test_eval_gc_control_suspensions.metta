@@ -109,3 +109,20 @@
     (runtime-counter eval-tail-reclaimed-bytes $n)
     (> $n 0))
   (True))
+
+; Case keeps both equal physical alternatives and the caller's value alive
+; across allocating scrutinee evaluation. The count assertion requires a
+; real collection, while switch/unify cover their captured branch bindings.
+!(reset-runtime-stats!)
+!(let $kept (held sentinel)
+   (case (superpose ((gc-control-burn 8192 seed)
+                     (gc-control-burn 8192 seed)))
+     (($value (Pair $kept $value)))))
+!(bind! &gc-case-stats (runtime-stats!))
+!(assertEqualToResult
+   (match &gc-case-stats (runtime-counter eval-tail-reclaimed-bytes $n) (> $n 0))
+   (True))
+!(switch (key 7) (((key $x) (Pair $x $x)) ($other wrong)))
+!(assertEqualToResult (switch (key 8) (((key 7) wrong))) ())
+!(unify (key 7) (key $x) (Pair $x $x) wrong)
+!(unify (key 8) (key 7) wrong refused)

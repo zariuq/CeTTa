@@ -4,6 +4,9 @@
 Kernel queries (`type:eq`, `set:native-proof`) stay in files that contain no
 MeTTa equations: an equation in the same `--lang prime` load makes `type:eq`
 answer false. The checker is loaded only for its own queries.
+
+TC_CETTA (or CETTA_BIN) selects the engine; METTAPEDIA_ROOT selects the
+external proof sources. TC_WORK and TC_SCRATCH select generated artifacts.
 """
 
 import hashlib
@@ -16,33 +19,23 @@ from pathlib import Path
 
 import generate_queries
 
-ROOT = Path("/home/aimama/aihub/hyperon/cetta-prime-2.0-draft-20260910")
-CURRENT_BINARY = Path(
-    "/shared/zahrada/work/prime-coherence-opus-20260924-claude/CURRENT-BINARY.txt"
-)
+ROOT = Path(__file__).resolve().parents[2]
+METTAPEDIA = Path(os.environ.get("METTAPEDIA_ROOT", ROOT.parent / "MeTTapedia")).expanduser()
 
 
 def comparison_binary() -> Path:
-    override = os.environ.get("TC_CETTA")
-    if override:
-        return Path(override)
-    token = CURRENT_BINARY.read_text(encoding="utf-8").split()[0]
-    return Path(token)
+    return Path(os.environ.get("TC_CETTA", os.environ.get("CETTA_BIN", ROOT / "cetta")))
 
 
 CETTA = comparison_binary()
 CHECKER = ROOT / "lib" / "typed_conversion.metta"
 FOCUSED = ROOT / "tests" / "typed_conversion" / "focused.metta"
-SPEC_DIR = Path(
-    "/home/aimama/aihub/Mettapedia/lean/mettapedia/Mettapedia/TypeTheory/"
-    "Calculi/ParameterizedPiSigmaId/TypedEquality"
-)
+SPEC_DIR = (METTAPEDIA / "lean/mettapedia/Mettapedia/TypeTheory/Calculi/"
+            "ParameterizedPiSigmaId/TypedEquality")
 SPEC = SPEC_DIR / "Normalization" / "Algorithmic" / "Relation.lean"
-WORK = Path(os.environ.get(
-    "TC_WORK", "/shared/zahrada/work/typed-conversion-grok"))
+WORK = Path(os.environ.get("TC_WORK", ROOT / "runtime" / "typed-conversion"))
 LEDGER = WORK / "ledger.tsv"
-SCRATCH = Path(os.environ.get(
-    "TC_SCRATCH", "/tmp/claude/grok-goal-6fb6ec8c9416/implementer"))
+SCRATCH = Path(os.environ.get("TC_SCRATCH", WORK / "scratch"))
 
 THEOREM_RE = re.compile(r"set:theorem\s+([A-Za-z_][A-Za-z0-9_@+\-]*)")
 AXIOM_RE = re.compile(r"set:axiom\s+&self\s+([A-Za-z_][A-Za-z0-9_@+\-]*)")
@@ -79,20 +72,14 @@ def open_reason(row: dict) -> str:
     return "open"
 
 
-# 24 GiB virtual-memory cap. Nested identity β blows up past this; see defects/3.
-VM_KB = "25165824"
-
-
 def run_cetta(src: Path, timeout: int, profile: str | None = None) -> tuple[int, str]:
+    argv = [str(CETTA), "--lang", "prime"]
     if profile:
-        script = 'ulimit -v "$1" && exec "$2" --lang prime --profile "$3" "$4"'
-        argv = ["run", VM_KB, str(CETTA), profile, str(src)]
-    else:
-        script = 'ulimit -v "$1" && exec "$2" --lang prime "$3"'
-        argv = ["run", VM_KB, str(CETTA), str(src)]
+        argv += ["--profile", profile]
+    argv.append(str(src))
     try:
         proc = subprocess.run(
-            ["bash", "-c", script, *argv],
+            argv,
             cwd=str(ROOT),
             text=True,
             capture_output=True,
@@ -497,11 +484,7 @@ def c_word(token: str) -> str:
 def run_cetta_bin(binary: Path, src: Path, timeout: int) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            [
-                "bash", "-c",
-                'ulimit -v "$1" && exec "$2" --lang prime "$3"',
-                "run", VM_KB, str(binary), str(src),
-            ],
+            [str(binary), "--lang", "prime", str(src)],
             cwd=str(ROOT),
             text=True,
             capture_output=True,
@@ -742,9 +725,7 @@ def run_kernel_mutation() -> tuple[bool, list[str]]:
         and original.count("if (!ok || !substituted)") == 1
         and original.count("if (!ok || !reduct)") == 1
     )
-    binary = WORK / "cetta-engine-failure"
-    if not binary.exists():
-        binary = Path("/shared/zahrada/work/typed-conversion-grok/cetta-engine-failure")
+    binary = Path(os.environ.get("TC_ENGINE_FAILURE_BINARY", WORK / "cetta-engine-failure"))
     probe = SCRATCH / "kernel-beta.metta"
     probe.write_text(
         "!(type:eq (PrimeScoped (PrimeCtxCons (Sort (LevelConst 0)) PrimeCtxNil) (idx 0)) "

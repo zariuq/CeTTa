@@ -4,6 +4,22 @@
 (: system:monotonic-ns (-> Number))
 (: system:cwd (-> String))
 
+(= (system:wall-time)
+   (function (case (__cetta_lib_system_host wall-time)
+     (($result (return $result)))){$result}))
+(= (system:pid)
+   (function (case (__cetta_lib_system_host pid)
+     (($result (return $result)))){$result}))
+(= (system:pid-alive? $pid)
+   (function (case (__cetta_lib_system_host pid-alive $pid)
+     (($result (return $result)))){$result}))
+(= (system:format-time $format $timestamp $zone)
+   (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)
+     (($result (return $result)))){$result}))
+(= (system:read-line)
+   (function (case (__cetta_lib_system_read_line ())
+     (($result (return $result)))){$result}))
+
 (= (system:args)
    (function
      (case (__cetta_lib_system_args ())

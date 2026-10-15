@@ -85,6 +85,18 @@ typedef struct {
     uint32_t witness_len;
 } PPNativeV1ForestExtension;
 
+/*
+ * One replay scope validates a shared forest extension before replaying a
+ * batch. The pack, extension, their arrays, and all referenced atoms are
+ * borrowed and must remain alive and immutable until the scope is freed.
+ * This scope is local to that batch; it is not a cache across source inputs.
+ * Failed preparation leaves the previous binding intact. Each finish checks
+ * the borrowed metadata and validates the individual forest as usual.
+ */
+typedef struct {
+    void *implementation;
+} PPNativeV1ReplayScope;
+
 typedef struct {
     const Atom *state;
     const Atom *tag;
@@ -115,18 +127,6 @@ bool ppnative_v1_token_binding_plan_build(
     const PPABIV1Pack *pack, const Atom *start,
     const PPNativeV1TokenBindingInput *inputs, uint32_t input_len,
     PPNativeV1TokenBindingPlan *out, char *error_buf, size_t error_buf_size);
-
-/*
- * One replay scope validates a shared forest extension before replaying a
- * batch. The pack, extension, their arrays, and all referenced atoms are
- * borrowed and must remain alive and immutable until the scope is freed.
- * This scope is local to that batch; it is not a cache across source inputs.
- * Failed preparation leaves the previous binding intact. Each finish checks
- * the borrowed metadata and validates the individual forest as usual.
- */
-typedef struct {
-    void *implementation;
-} PPNativeV1ReplayScope;
 
 typedef struct {
     Arena arena;

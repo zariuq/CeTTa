@@ -1,0 +1,92 @@
+!(import! &self durable:worker)
+!(import! &self durable:timer)
+
+(: activity:match (-> Atom Atom %Undefined%))
+(= (activity:match $pattern $template)
+   (chain (context-space) $space (match $space $pattern $template)))
+
+; Ground, versioned continuation tags survive a process restart. The receive
+; binder is reconstructed by trusted code, never deserialized as executable
+; worker input. Grant 0 writes the exact result key; other views are read-only.
+(= (activity:state)
+   (case (collapse (activity:match (host:record 1 $key $value) $value))
+     ((() activity:idle)
+      (((host:actor 1 "activity/1" $state)) $state)
+      ($bad activity:invalid))))
+
+(= (activity:receive $worker)
+   (activity:match (host:record 0 $key
+     (activity:input 1 $id $owner $generation $kind $body $due $period))
+     (if (== (activity:state) activity:idle)
+       (case $kind
+         ((work
+           (host:transition (activity:waiting 1 $id $owner $generation) ()
+             ((durable:worker:request 0 $worker $body
+                (activity:return 1 $id $owner $generation)))))
+          (notice
+           (host:transition (activity:done 1 $id $owner $generation)
+             ((host:put 0 $id (activity:noticed 1 $owner $generation $body))) ()))
+          (timer
+           (host:transition (activity:timing 1 $id $owner $generation) ()
+             ((host:send 1 (timer:at 1 $due $period FireOnce 0 $body)
+                (activity:tick 1 $id $owner $generation)))))
+          ($bad Empty)))
+       (host:transition (activity:state)
+         ((host:put 0 $id (activity:rejected 1 $owner $generation existing-activity))) ()))))
+
+(= (activity:cancel)
+   (activity:match (host:record 0 $key
+     (activity:input 1 $id $owner $generation cancel $body $due $period))
+     (let $state (activity:state)
+       (case $state
+         (((activity:waiting 1 $request $owner $generation)
+           (host:transition (activity:cancelled 1 $request $owner $generation)
+             ((host:put 0 $id (activity:cancelled-wait 1 $owner $generation))) ()))
+          ((activity:timing 1 $request $owner $generation)
+           (host:transition (activity:cancelled 1 $request $owner $generation)
+             ((host:put 0 $id (activity:cancelled-wait 1 $owner $generation))) ()))
+          ($other
+           (host:transition $state
+             ((host:put 0 $id (activity:cancel-refused 1 $owner $generation))) ())))))))
+
+; Views: 2 result, 3 task, 4 origin, 5 intent. Versions and the observation
+; match again in the exact acceptance snapshot, including negative reads.
+(= (activity:reply $worker $result-key $task-key $intent-key)
+   (activity:match (host:record 0 $key (host:worker-result 1 $worker $task $revision $body))
+    (activity:match (host:record 3 $task-key $observation)
+     (activity:match (host:record-version 3 $task-key $revision $task-position)
+      (activity:match (host:record 4 $task-key
+        (host:worker-origin 1 $epoch $intent-key $intent-revision $intent-position))
+       (activity:match (host:record-version 5 $intent-key $intent-revision $intent-position)
+        (activity:match (host:record 5 $intent-key
+          (host:intent 1 "worker.request" "1" (worker:request 1 $worker $observation)
+            (activity:return 1 $request $owner $generation)))
+         (let* (($state (activity:state))
+                ($current (== $state (activity:waiting 1 $request $owner $generation)))
+                ($channel (durable:rho:channel $intent-key))
+                ($values (rhometta:values (rhometta:run-canonical
+                  (rho:par
+                    (rho:recv $channel $answer (rho:drop $answer))
+                    (rho:send $channel (rho:val $body)))))))
+           (case $values
+             ((($answer)
+               (host:transition
+                 (if $current (activity:done 1 $request $owner $generation) $state)
+                 ((host:put 0 $result-key
+                    (activity:result 1 $owner $generation
+                      (if $current current late) $answer))) ()))
+              ($bad Empty)))))))))))
+
+(= (activity:timer-reply $result-key $intent-key $effect-id)
+   (activity:match (host:record 0 $key
+     (host:timer-event 1 $effect-id $sequence $kind $due $now $represented $body
+       (activity:tick 1 $request $owner $generation)))
+    (activity:match (host:record 3 $intent-key
+      (host:intent 1 "timer.after" "1" $payload
+        (activity:tick 1 $request $owner $generation)))
+     (let* (($state (activity:state))
+            ($current (== $state (activity:timing 1 $request $owner $generation))))
+       (host:transition $state
+         ((host:put 0 $result-key
+            (activity:timer-result 1 $owner $generation $sequence $kind $due $now
+              $represented (if $current current late) $body))) ())))))

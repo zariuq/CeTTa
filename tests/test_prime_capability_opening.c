@@ -218,7 +218,7 @@ static bool capture_follows_capabilities_in_bound_values(Arena *arena) {
     assert(bindings_add_var(&full, middle, inner_ref));
     assert(bindings_add_var(&full, inner, atom_int(arena, 7)));
     assert(bindings_add_var(&full, unrelated, atom_int(arena, 99)));
-    bindings_prime_set(&full, &g_prime_need_active, NULL, 0u, NULL);
+    bindings_prime_set(&full, &g_prime_need_active, NULL, 0u, NULL, NULL);
     bool made = bindings_project_body_exact_env(arena, outer, &full, &captured);
     PrimeNeedCellView first, second;
     uint64_t first_id = 0u, second_id = 0u;

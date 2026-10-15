@@ -1,0 +1,11 @@
+; Returned Python text and argv/env members must be accepted as PeTTa atoms.
+!(import! &self (library proc))
+!(let $cwd (py-call (str "/"))
+   (test (proc:run ("/bin/echo" "hello") $cwd () 1000 100)
+         (proc:exited 0 "hello\n" "")))
+!(let* (($argv (py-call (tuple ("/usr/bin/env"))))
+        ($env (py-call (tuple (("ONLY" "test"))))))
+   (test (proc:run $argv "/" $env 1000 100)
+         (proc:exited 0 "ONLY=test\n" "")))
+!(let $bad (catch (proc:run ("/bin/echo") () () 1000 100))
+   (test (case $bad (((Error $op $reason) True) ($other False))) True))

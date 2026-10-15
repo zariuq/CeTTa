@@ -8,6 +8,8 @@
 #include "mork_space_bridge_runtime.h"
 #include "parser.h"
 #include "shared_transition.h"
+#include "native_cost.h"
+#include "storage_census.h"
 #include "stats.h"
 #include "space_path_index.h"
 #include "generated/cetta_execution_contracts.generated.h"
@@ -361,10 +363,10 @@ static const MorkImportedState *mork_imported_state_const(const Space *s) {
 }
 
 static SymbolId atom_head_sym(Atom *a) {
-    if (a->kind == ATOM_SYMBOL) return a->sym_id;
+    if (a->kind == ATOM_SYMBOL) return atom_symbol_current_id(a);
     if (a->kind == ATOM_EXPR && a->expr.len > 0 &&
         a->expr.elems[0]->kind == ATOM_SYMBOL)
-        return a->expr.elems[0]->sym_id;
+        return atom_symbol_current_id(a->expr.elems[0]);
     return SYMBOL_ID_NONE;
 }
 
@@ -456,7 +458,7 @@ static bool imported_atom_has_bridge_vars(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_VAR:
     case ATOM_SYMBOL: {
-        text = symbol_bytes(g_symbols, atom->sym_id);
+        text = atom_symbol_bytes(atom);
         return text &&
                (strncmp(text, "$__mork_", 8) == 0 ||
                 strncmp(text, "$$__mork_", 9) == 0);
@@ -476,7 +478,7 @@ static bool imported_bridge_internal_var(const Atom *atom) {
     const char *text;
     if (!atom || atom->kind != ATOM_VAR)
         return false;
-    text = symbol_bytes(g_symbols, atom->sym_id);
+    text = atom_symbol_bytes(atom);
     return text &&
            (strncmp(text, "$__mork_", 8) == 0 ||
             strncmp(text, "$$__mork_", 9) == 0);
@@ -924,7 +926,9 @@ static bool match_space_atom_epoch(Space *s, CettaIndex atom_idx, Atom *query,
                                    Bindings *b, Arena *a, uint32_t epoch) {
     if (!s || !query || !b || atom_idx >= s->native.len)
         return false;
-    AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
+    /* This helper receives a local native coordinate. Overlay logical
+     * coordinates start with inherited rows and would retarget this index. */
+    AtomId atom_id = space_match_backend_get_atom_id_at64(s, atom_idx);
     return match_atoms_atom_id_epoch(query, s->native.universe, atom_id, b, a, epoch);
 }
 
@@ -1225,7 +1229,7 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
 }
 
 static bool native_cold_flat_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,CettaIndex *allocated);
 
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out);
 
@@ -1286,14 +1290,14 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     CettaIndex cold_count = 0u;
     bool leads = space_path_index_leads(pattern);
     if (leads && space_path_index_may_select(pattern) &&
-        space_path_index_candidates(s, pattern, out, &cold_count)) {
+        space_path_index_candidates(s, pattern, out, &cold_count, NULL)) {
         space_match_native_note_indexed_query(s);
         return cold_count;
     }
-    if (space_match_native_try_cold_candidates(s, pattern, out, &cold_count))
+    if (space_match_native_try_cold_candidates(s, pattern, out, &cold_count, NULL))
         return cold_count;
     if (!leads && space_path_index_may_select(pattern) &&
-        space_path_index_candidates(s, pattern, out, &cold_count))
+        space_path_index_candidates(s, pattern, out, &cold_count, NULL))
         return cold_count;
     native_ensure_match_trie(s);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
@@ -1354,7 +1358,7 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
  * and opaque representations remain candidates for the canonical matcher.
  * Occurrences keep their source order, including repeated immutable ids. */
 static bool native_cold_flat_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,CettaIndex *allocated) {
     if (!space || !pattern || !out || !count || !space->native.universe ||
         space->overlay_base || atom_structural_may_have_list_carrier(pattern) ||
         !native_pattern_is_flat_linear(pattern))
@@ -1409,20 +1413,21 @@ static bool native_cold_flat_candidates(
     }
     *out = indices;
     *count = length;
+    if(allocated)*allocated=capacity;
     return true;
 }
 
 enum { NATIVE_COLD_FLAT_SCAN_LIMIT = 4u };
 
 bool space_match_native_try_cold_candidates(
-    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count) {
+    Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count,CettaIndex *capacity) {
     if (!space || !out || !count ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
     SpaceMatchNativeState *state = &space->match_backend.native;
     if (state->match_trie || state->cold_flat_scans >= NATIVE_COLD_FLAT_SCAN_LIMIT ||
-        !native_cold_flat_candidates(space, pattern, out, count))
+        !native_cold_flat_candidates(space, pattern, out, count,capacity))
         return false;
     state->cold_flat_scans++;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, *count);
@@ -2114,7 +2119,7 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     if (space_path_index_may_select(query)) {
         CettaIndex *positions = NULL;
         CettaIndex count = 0u;
-        if (space_path_index_candidates(s, query, &positions, &count)) {
+        if (space_path_index_candidates(s, query, &positions, &count, NULL)) {
             for (CettaIndex next = 0u; next < count; next++)
                 subst_matchset_push_row(out, positions[next]);
             free(positions);
@@ -2144,10 +2149,10 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     native_ensure_stree(s);
 
     SymbolId head = SYMBOL_ID_NONE;
-    if (query->kind == ATOM_SYMBOL) head = query->sym_id;
+    if (query->kind == ATOM_SYMBOL) head = atom_symbol_current_id(query);
     else if (query->kind == ATOM_EXPR && query->expr.len > 0 &&
              query->expr.elems[0]->kind == ATOM_SYMBOL)
-        head = query->expr.elems[0]->sym_id;
+        head = atom_symbol_current_id(query->expr.elems[0]);
 
     if (head != SYMBOL_ID_NONE) {
         stree_query_bucket(&st->stree->buckets[stree_head_hash(head)],
@@ -6423,12 +6428,12 @@ static void imported_flatten_atom(ImportedFlatBuilder *b, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         tok.kind = IMPORTED_FLAT_SYMBOL;
-        tok.sym_id = atom->sym_id;
+        tok.sym_id = atom_symbol_current_id(atom);
         imported_builder_push(b, tok);
         return;
     case ATOM_VAR:
         tok.kind = IMPORTED_FLAT_VAR;
-        tok.sym_id = atom->sym_id;
+        tok.sym_id = atom_symbol_current_id(atom);
         tok.var_id = atom->var_id;
         imported_builder_push(b, tok);
         return;
@@ -6528,6 +6533,7 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         case GV_STATE:
         case GV_CAPTURE:
         case GV_BINDINGS:
+        case GV_TENSOR:
         case GV_FOREIGN:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -6586,6 +6592,8 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     if (lhs->kind != rhs->kind) return false;
     switch (lhs->kind) {
     case IMPORTED_FLAT_SYMBOL:
+        if (lhs->origin && rhs->origin)
+            return atom_symbols_equal(lhs->origin, rhs->origin);
         return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_VAR:
         return lhs->var_id == rhs->var_id;
@@ -6598,11 +6606,11 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     case IMPORTED_FLAT_BOOL:
         return lhs->bval == rhs->bval;
     case IMPORTED_FLAT_STRING:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_BIGINT:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_RATIONAL:
-        return lhs->sym_id == rhs->sym_id;
+        return (lhs->sym_id == rhs->sym_id);
     case IMPORTED_FLAT_GROUNDED_OTHER:
     case IMPORTED_FLAT_LIST:
         if (lhs->origin_id != CETTA_ATOM_ID_NONE &&
@@ -6689,7 +6697,7 @@ static bool imported_bridge_collect_vars(Atom *atom, ImportedBridgeVarMap *map) 
             return false;
         if (imported_bridge_internal_var(atom))
             return true;
-        return imported_bridge_varmap_add(map, atom->var_id, atom->sym_id);
+        return imported_bridge_varmap_add(map, atom->var_id, atom_symbol_current_id(atom));
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (!imported_bridge_collect_vars(atom->expr.elems[i], map))
@@ -8146,7 +8154,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
         case IMPORTED_FLAT_STRING:
         case IMPORTED_FLAT_BIGINT:
         case IMPORTED_FLAT_RATIONAL:
-            if (qt->sym_id != ct->sym_id) return IMPORTED_COREF_FAIL;
+            if (!imported_token_equal(qt, ct)) return IMPORTED_COREF_FAIL;
             break;
         case IMPORTED_FLAT_INT:
             if (qt->ival != ct->ival) return IMPORTED_COREF_FAIL;
@@ -8243,7 +8251,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
         case IMPORTED_FLAT_STRING:
         case IMPORTED_FLAT_BIGINT:
         case IMPORTED_FLAT_RATIONAL:
-            if (qt->sym_id != ct->sym_id) return false;
+            if (!imported_token_equal(qt, ct)) return false;
             break;
         case IMPORTED_FLAT_INT:
             if (qt->ival != ct->ival) return false;
@@ -11788,6 +11796,795 @@ void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen n
         return;
     }
     space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
+}
+
+bool space_query_is_connective(const Atom *pattern) {
+    return pattern && pattern->kind == ATOM_EXPR && pattern->expr.len >= 1u &&
+           (atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma) ||
+            atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe));
+}
+
+static bool match_query_push_seed_or_unit(BindingSet *out,
+                                          const Bindings *seed) {
+    if (seed)
+        return binding_set_push(out, seed);
+    Bindings unit;
+    bindings_init(&unit);
+    bool ok = binding_set_push(out, &unit);
+    bindings_free(&unit);
+    return ok;
+}
+
+static bool match_query_append(BindingSet *dst, const BindingSet *src) {
+    for (CettaIndex i = 0; i < src->len; i++) {
+        if (!binding_set_push(dst, &src->items[i]))
+            return false;
+    }
+    return true;
+}
+
+static void match_query_leaf(Space *space, Arena *arena, Atom **patterns,
+        CettaExprLen length, const Bindings *seed, BindingSet *out,
+        bool *complete) {
+    if (complete) space_match_backend_clear_error();
+    space_query_conjunction(space, arena, patterns, length, seed, out);
+    if (complete &&
+        space_match_backend_last_error_code() != SPACE_MATCH_BACKEND_ERROR_NONE) {
+        /* A refusing backend has not certified its partial rows. Remember
+         * that refusal independently of diagnostics from later siblings. */
+        *complete = false;
+        binding_set_free(out);
+    }
+}
+
+/* Evaluate the query-connective algebra into a bag of bindings.
+ *
+ * Comma threads each factor through the preceding factor's bindings.  Pipe
+ * evaluates every disjunct from the same seed and concatenates the resulting
+ * bags in declaration order.  Atomic and flat-conjunction leaves retain the
+ * backend's indexed implementation; only nested connective structure is
+ * interpreted here. */
+static bool space_query_bindings_rec(Space *space, Arena *a, Atom *pattern,
+        const Bindings *seed, BindingSet *out, bool *complete) {
+    if (!space_query_is_connective(pattern)) {
+        match_query_leaf(space, a, &pattern, 1u, seed, out, complete);
+        return true;
+    }
+
+    bool is_conjunction =
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma);
+    CettaExprLen arity = pattern->expr.len - 1u;
+
+    if (is_conjunction) {
+        bool flat = true;
+        for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+            if (space_query_is_connective(pattern->expr.elems[i])) {
+                flat = false;
+                break;
+            }
+        }
+        if (flat) {
+            match_query_leaf(space, a, pattern->expr.elems + 1u,
+                             arity, seed, out, complete);
+            return true;
+        }
+
+        BindingSet current;
+        binding_set_init(&current);
+        if (!match_query_push_seed_or_unit(&current, seed)) {
+            binding_set_free(&current);
+            return false;
+        }
+        for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+            BindingSet next;
+            binding_set_init(&next);
+            for (CettaIndex row = 0u; row < current.len; row++) {
+                BindingSet factor;
+                if (!space_query_bindings_rec(space, a, pattern->expr.elems[i],
+                        &current.items[row], &factor, complete)) {
+                    binding_set_free(&next);
+                    binding_set_free(&current);
+                    return false;
+                }
+                bool ok = match_query_append(&next, &factor);
+                binding_set_free(&factor);
+                if (!ok) {
+                    binding_set_free(&next);
+                    binding_set_free(&current);
+                    return false;
+                }
+            }
+            binding_set_free(&current);
+            current = next;
+            if (current.len == 0u)
+                break;
+        }
+        *out = current;
+        return true;
+    }
+
+    binding_set_init(out);
+    for (CettaExprIndex i = 1u; i < pattern->expr.len; i++) {
+        BindingSet branch;
+        if (!space_query_bindings_rec(space, a, pattern->expr.elems[i], seed,
+                                      &branch, complete)) {
+            binding_set_free(out);
+            return false;
+        }
+        bool ok = match_query_append(out, &branch);
+        binding_set_free(&branch);
+        if (!ok) {
+            binding_set_free(out);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool space_query_bindings(Space *space, Arena *arena, Atom *pattern,
+                          const Bindings *seed, BindingSet *out) {
+    return space_query_bindings_rec(space, arena, pattern, seed, out, NULL);
+}
+
+/* A query continuation is an immutable sequence of borrowed pattern spans.
+ * Comma prepends one span; pipe retains a generator and visits one branch.
+ * The mutable work stack therefore advances without recursive query calls or
+ * a materialized intermediate bag. Each successful atomic row extends the
+ * current physical witness path, independently of equal binding values. */
+typedef struct SpaceQuerySequence {
+    size_t references;
+    Atom *const *items;
+    CettaExprLen length;
+    struct SpaceQuerySequence *tail;
+} SpaceQuerySequence;
+
+typedef struct SpaceQueryWitness {
+    size_t references;
+    SpaceReadToken read;
+    CettaIndex index;
+    struct SpaceQueryWitness *previous;
+} SpaceQueryWitness;
+
+typedef enum {
+    SPACE_QUERY_WORK_ENTER,
+    SPACE_QUERY_WORK_ATOM,
+    SPACE_QUERY_WORK_PIPE,
+} SpaceQueryWorkKind;
+
+typedef struct SpaceQueryWork {
+    struct SpaceQueryWork *previous;
+    SpaceQuerySequence *sequence;
+    SpaceQueryWitness *witnesses;
+    Bindings seed;
+    Bindings candidate;
+    SpaceOccurrenceCursor occurrences;
+    CettaMatchCursor *matcher;
+    Atom *grounded;
+    CettaExprIndex branch;
+    CettaIndex candidate_index;
+    SpaceQueryWorkKind kind;
+    bool candidate_ready;
+    SpaceQueryCursorStep blocked;
+} SpaceQueryWork;
+
+struct SpaceQueryCursor {
+    Space *space;
+    Arena *arena;
+    Atom *pattern;
+    SpaceReadView reads;
+    SpaceQueryWork *work;
+    SpaceQueryWitness *last_witnesses;
+    Bindings seed;
+    BindingSet fallback_rows;
+    CettaIndex fallback_position;
+    bool incremental;
+    bool fallback_started;
+    bool fallback_constructed;
+    bool fallback_complete;
+    bool last_row;
+};
+
+static void space_query_sequence_release(SpaceQuerySequence *sequence) {
+    while (sequence && --sequence->references == 0u) {
+        SpaceQuerySequence *tail = sequence->tail;
+        free(sequence);
+        sequence = tail;
+    }
+}
+
+static bool space_query_sequence_retain(SpaceQuerySequence *sequence) {
+    if (!sequence) return true;
+    if (sequence->references == SIZE_MAX) return false;
+    sequence->references++;
+    return true;
+}
+
+static bool space_query_sequence_new(Atom *const *items, CettaExprLen length,
+        SpaceQuerySequence *tail, SpaceQuerySequence **out) {
+    *out = NULL;
+    if (!space_query_sequence_retain(tail)) return false;
+    if (!length) { *out = tail; return true; }
+    SpaceQuerySequence *sequence = cetta_malloc(sizeof(*sequence));
+    if (!sequence) { space_query_sequence_release(tail); return false; }
+    *sequence = (SpaceQuerySequence){1u, items, length, tail};
+    *out = sequence;
+    return true;
+}
+
+static bool space_query_sequence_rest(SpaceQuerySequence *sequence,
+                                       SpaceQuerySequence **out) {
+    return space_query_sequence_new(sequence->items + 1u,
+        sequence->length - 1u, sequence->tail, out);
+}
+
+static bool space_query_witness_retain(SpaceQueryWitness *witness) {
+    if (!witness) return true;
+    if (witness->references == SIZE_MAX) return false;
+    witness->references++;
+    return true;
+}
+
+static void space_query_witness_release(SpaceQueryWitness *witness) {
+    while (witness && --witness->references == 0u) {
+        SpaceQueryWitness *previous = witness->previous;
+        free(witness);
+        witness = previous;
+    }
+}
+
+static SpaceQueryWork *space_query_work_new(SpaceQuerySequence *sequence,
+        SpaceQueryWitness *witnesses, const Bindings *seed) {
+    SpaceQueryWork *work = cetta_malloc(sizeof(*work));
+    if (!work) return NULL;
+    memset(work, 0, sizeof(*work));
+    bindings_init(&work->seed);
+    bindings_init(&work->candidate);
+    if (!bindings_clone(&work->seed, seed)) {
+        bindings_free(&work->seed); free(work); return NULL;
+    }
+    if (!space_query_sequence_retain(sequence)) {
+        bindings_free(&work->seed); free(work); return NULL;
+    }
+    if (!space_query_witness_retain(witnesses)) {
+        space_query_sequence_release(sequence);
+        bindings_free(&work->seed); free(work); return NULL;
+    }
+    work->sequence = sequence;
+    work->witnesses = witnesses;
+    return work;
+}
+
+static void space_query_work_free(SpaceQueryWork *work) {
+    if (!work) return;
+    space_query_sequence_release(work->sequence);
+    space_query_witness_release(work->witnesses);
+    bindings_free(&work->seed);
+    bindings_free(&work->candidate);
+    space_occurrence_cursor_release(&work->occurrences);
+    match_atoms_cursor_free(work->matcher);
+    free(work);
+}
+
+void space_query_cursor_free(SpaceQueryCursor *cursor) {
+    if (!cursor) return;
+    while (cursor->work) {
+        SpaceQueryWork *work = cursor->work;
+        cursor->work = work->previous;
+        space_query_work_free(work);
+    }
+    space_query_witness_release(cursor->last_witnesses);
+    bindings_free(&cursor->seed);
+    binding_set_free(&cursor->fallback_rows);
+    space_read_view_release(&cursor->reads);
+    free(cursor);
+}
+
+bool space_match_backend_has_native_occurrences(const Space *space) {
+    return space && (space->match_backend.ops == &NATIVE_BACKEND_OPS ||
+        space->match_backend.ops == &NATIVE_CANDIDATE_EXACT_BACKEND_OPS);
+}
+
+SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
+                                         Atom *pattern, const Bindings *seed) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (!space || !arena || !pattern) return NULL;
+    SpaceQueryCursor *cursor = cetta_malloc(sizeof(*cursor));
+    if (!cursor) return NULL;
+    memset(cursor, 0, sizeof(*cursor));
+    cursor->space = space;
+    cursor->arena = arena;
+    cursor->pattern = pattern;
+    bindings_init(&cursor->seed);
+    binding_set_init(&cursor->fallback_rows);
+    if (!space_read_view_capture(space, &cursor->reads)) {
+        space_query_cursor_free(cursor); return NULL;
+    }
+    if (seed && !bindings_clone(&cursor->seed, seed)) {
+        space_query_cursor_free(cursor); return NULL;
+    }
+    cursor->incremental = space_read_view_has_native_occurrences(&cursor->reads);
+    if (cursor->incremental) {
+        SpaceQuerySequence *sequence = NULL;
+        if (space_query_sequence_new(&cursor->pattern, 1u, NULL, &sequence)) {
+            cursor->work = space_query_work_new(sequence, NULL, &cursor->seed);
+            space_query_sequence_release(sequence);
+        }
+        if (!cursor->work) { space_query_cursor_free(cursor); return NULL; }
+    }
+    return cursor;
+}
+
+/* One transport for both immutable metadata chains preserves their internal
+ * sharing while giving the new cursor its own reference counters. Each map
+ * entry owns a temporary reference until the complete cursor is installed.
+ * In particular, a sequence span must not keep &source_cursor->pattern. */
+typedef enum {
+    SPACE_QUERY_CLONE_SEQUENCE,
+    SPACE_QUERY_CLONE_WITNESS,
+} SpaceQueryCloneKind;
+
+typedef struct {
+    const void *source;
+    void *copy;
+    SpaceQueryCloneKind kind;
+    bool linked;
+} SpaceQueryCloneEntry;
+
+typedef struct {
+    SpaceQueryCloneEntry *entries;
+    size_t capacity;
+    size_t used;
+    Atom *const *pattern_source;
+    Atom *const *pattern_copy;
+    Arena *arena;
+    AtomDeepCopySession *atoms;
+} SpaceQueryClone;
+
+static size_t space_query_clone_hash(const void *key) {
+    uintptr_t value = (uintptr_t)key >> 3u;
+    value ^= value >> 17u;
+    value *= (uintptr_t)UINT64_C(0x9e3779b97f4a7c15);
+    return (size_t)(value ^ (value >> 23u));
+}
+
+static SpaceQueryCloneEntry *space_query_clone_find(
+        SpaceQueryClone *map, const void *key) {
+    if (!map->capacity || !key) return NULL;
+    size_t slot = space_query_clone_hash(key) & (map->capacity - 1u);
+    while (map->entries[slot].source && map->entries[slot].source != key)
+        slot = (slot + 1u) & (map->capacity - 1u);
+    return &map->entries[slot];
+}
+
+static bool space_query_clone_reserve(SpaceQueryClone *map) {
+    if (map->used < map->capacity / 2u) return true;
+    size_t capacity = map->capacity ? map->capacity * 2u : 16u;
+    if (capacity < map->capacity || capacity > SIZE_MAX / sizeof(*map->entries))
+        return false;
+    SpaceQueryCloneEntry *entries = calloc(capacity, sizeof(*entries));
+    if (!entries) return false;
+    SpaceQueryClone old = *map;
+    map->entries = entries;
+    map->capacity = capacity;
+    for (size_t i = 0u; i < old.capacity; i++)
+        if (old.entries[i].source)
+            *space_query_clone_find(map, old.entries[i].source) = old.entries[i];
+    free(old.entries);
+    return true;
+}
+
+static const void *space_query_clone_next(const void *node, SpaceQueryCloneKind kind) {
+    return kind == SPACE_QUERY_CLONE_SEQUENCE
+        ? (const void *)((const SpaceQuerySequence *)node)->tail
+        : (const void *)((const SpaceQueryWitness *)node)->previous;
+}
+
+static bool space_query_clone_chain(SpaceQueryClone *map, const void *root,
+                                    SpaceQueryCloneKind kind, void **out) {
+    *out = NULL;
+    if (!root) return true;
+    for (const void *node = root; node; node = space_query_clone_next(node, kind)) {
+        if (!space_query_clone_reserve(map)) return false;
+        SpaceQueryCloneEntry *entry = space_query_clone_find(map, node);
+        if (entry->source) {
+            /* An unlinked entry on this chain would close a metadata cycle. */
+            if (entry->kind != kind || !entry->linked) return false;
+            break;
+        }
+        void *copy;
+        if (kind == SPACE_QUERY_CLONE_SEQUENCE) {
+            const SpaceQuerySequence *source = node;
+            if (!source->references || !source->length || !source->items ||
+                (source->items == map->pattern_source && source->length != 1u))
+                return false;
+            SpaceQuerySequence *sequence = malloc(sizeof(*sequence));
+            if (!sequence) return false;
+            /* Other spans are slices of borrowed immutable query Atoms.
+             * The sole cursor-local span has length one, so rest() cannot
+             * create a nonempty slice into the retired cursor shell. */
+            Atom *const *items = source->items == map->pattern_source
+                ? map->pattern_copy : source->items;
+            if (map->atoms && source->items != map->pattern_source) {
+                if (!cetta_expr_len_mul_fits_size(source->length, sizeof(Atom *))) {
+                    free(sequence); return false;
+                }
+                Atom **owned = arena_alloc(map->arena,
+                    (size_t)source->length * sizeof(*owned));
+                for (CettaExprIndex i = 0u; i < source->length; i++) {
+                    owned[i] = atom_deep_copy_session_copy(map->atoms, source->items[i]);
+                    if (!owned[i]) { free(sequence); return false; }
+                }
+                /* These pointer arrays are query metadata. Their Atom entries
+                 * use the enclosing graph transport; the arrays live with the
+                 * destination arena, including later rest() spans. */
+                items = owned;
+            }
+            *sequence = (SpaceQuerySequence){1u, items, source->length, NULL};
+            copy = sequence;
+        } else {
+            const SpaceQueryWitness *source = node;
+            if (!source->references) return false;
+            SpaceQueryWitness *witness = malloc(sizeof(*witness));
+            if (!witness) return false;
+            *witness = (SpaceQueryWitness){1u, source->read, source->index, NULL};
+            copy = witness;
+        }
+        *entry = (SpaceQueryCloneEntry){node, copy, kind, false};
+        map->used++;
+    }
+    for (const void *node = root; node; node = space_query_clone_next(node, kind)) {
+        SpaceQueryCloneEntry *entry = space_query_clone_find(map, node);
+        if (entry->linked) break;
+        const void *next = space_query_clone_next(node, kind);
+        void *copy = next ? space_query_clone_find(map, next)->copy : NULL;
+        if (kind == SPACE_QUERY_CLONE_SEQUENCE) {
+            if (!space_query_sequence_retain(copy)) return false;
+            ((SpaceQuerySequence *)entry->copy)->tail = copy;
+        } else {
+            if (!space_query_witness_retain(copy)) return false;
+            ((SpaceQueryWitness *)entry->copy)->previous = copy;
+        }
+        entry->linked = true;
+    }
+    void *copy = space_query_clone_find(map, root)->copy;
+    bool retained = kind == SPACE_QUERY_CLONE_SEQUENCE
+        ? space_query_sequence_retain(copy) : space_query_witness_retain(copy);
+    if (retained) *out = copy;
+    return retained;
+}
+
+static void space_query_clone_free(SpaceQueryClone *map) {
+    for (size_t i = 0u; i < map->capacity; i++) {
+        SpaceQueryCloneEntry *entry = &map->entries[i];
+        if (!entry->source) continue;
+        if (entry->kind == SPACE_QUERY_CLONE_SEQUENCE)
+            space_query_sequence_release(entry->copy);
+        else
+            space_query_witness_release(entry->copy);
+    }
+    free(map->entries);
+}
+
+static bool space_query_clone_bindings(Bindings *out, const Bindings *source,
+        Arena *arena, AtomDeepCopySession *atoms) {
+    return bindings_clone(out, source) &&
+        (!atoms || bindings_copy_owned_atoms_with_session(out, arena, atoms));
+}
+
+static SpaceQueryCursor *space_query_cursor_clone_internal(
+        const SpaceQueryCursor *source, Arena *arena, AtomDeepCopySession *atoms) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (!source || !source->space || !source->arena || !source->pattern ||
+        source->fallback_position > source->fallback_rows.len ||
+        source->fallback_rows.len > source->fallback_rows.cap ||
+        (source->fallback_rows.len && !source->fallback_rows.items)) return NULL;
+    SpaceQueryCursor *copy = calloc(1u, sizeof(*copy));
+    if (!copy) return NULL;
+    SpaceQueryClone transport = {
+        .pattern_source = &source->pattern, .pattern_copy = &copy->pattern,
+        .arena = arena, .atoms = atoms,
+    };
+    copy->space = source->space;
+    copy->arena = atoms ? arena : source->arena;
+    copy->pattern = atoms ? atom_deep_copy_session_copy(atoms, source->pattern)
+                          : source->pattern;
+    copy->fallback_position = source->fallback_position;
+    copy->incremental = source->incremental;
+    copy->fallback_started = source->fallback_started;
+    copy->fallback_constructed = source->fallback_constructed;
+    copy->fallback_complete = source->fallback_complete;
+    copy->last_row = source->last_row;
+    bindings_init(&copy->seed);
+    binding_set_init(&copy->fallback_rows);
+    if (!copy->pattern || !space_read_view_clone(&source->reads, &copy->reads) ||
+        !space_query_clone_bindings(&copy->seed, &source->seed, arena, atoms)) goto fail;
+    for (CettaIndex i = 0u; i < source->fallback_rows.len; i++) {
+        if (!binding_set_push(&copy->fallback_rows, &source->fallback_rows.items[i]) ||
+            (atoms && !bindings_copy_owned_atoms_with_session(
+                &copy->fallback_rows.items[i], arena, atoms)))
+            goto fail;
+    }
+    void *chain;
+    if (!space_query_clone_chain(&transport, source->last_witnesses,
+            SPACE_QUERY_CLONE_WITNESS, &chain)) goto fail;
+    copy->last_witnesses = chain;
+    SpaceQueryWork **target = &copy->work;
+    for (const SpaceQueryWork *work = source->work; work; work = work->previous) {
+        SpaceQueryWork *item = calloc(1u, sizeof(*item));
+        if (!item) goto fail;
+        *target = item;
+        target = &item->previous;
+        bindings_init(&item->seed);
+        bindings_init(&item->candidate);
+        item->grounded = atoms && work->grounded
+            ? atom_deep_copy_session_copy(atoms, work->grounded) : work->grounded;
+        item->branch = work->branch;
+        item->candidate_index = work->candidate_index;
+        item->kind = work->kind;
+        item->candidate_ready = work->candidate_ready;
+        item->blocked = work->blocked;
+        if ((work->grounded && !item->grounded) ||
+            !space_query_clone_bindings(&item->seed, &work->seed, arena, atoms) ||
+            !space_query_clone_bindings(&item->candidate, &work->candidate, arena, atoms)) goto fail;
+        if (!space_query_clone_chain(&transport, work->sequence,
+                SPACE_QUERY_CLONE_SEQUENCE, &chain)) goto fail;
+        item->sequence = chain;
+        if (!space_query_clone_chain(&transport, work->witnesses,
+                SPACE_QUERY_CLONE_WITNESS, &chain)) goto fail;
+        item->witnesses = chain;
+        if ((work->occurrences.pinned || work->occurrences.logical_scan) &&
+            !space_occurrence_cursor_clone(&work->occurrences, &item->occurrences))
+            goto fail;
+        if (work->matcher) {
+            item->matcher = atoms
+                ? match_atoms_cursor_copy_to_arena(work->matcher, arena, atoms)
+                : match_atoms_cursor_clone(work->matcher);
+            if (!item->matcher) goto fail;
+        }
+    }
+    space_query_clone_free(&transport);
+    return copy;
+fail:
+    space_query_cursor_free(copy);
+    space_query_clone_free(&transport);
+    return NULL;
+}
+
+SpaceQueryCursor *space_query_cursor_clone(const SpaceQueryCursor *source) {
+    return space_query_cursor_clone_internal(source, NULL, NULL);
+}
+
+SpaceQueryCursor *space_query_cursor_copy_to_arena(const SpaceQueryCursor *source,
+        Arena *arena, AtomDeepCopySession *atoms) {
+    if (!source || !atom_deep_copy_session_relocation_targets(atoms, arena) ||
+        !atom_deep_copy_session_maps_arena(atoms, source->arena, arena)) return NULL;
+    return space_query_cursor_clone_internal(source, arena, atoms);
+}
+
+bool space_query_cursor_incremental(const SpaceQueryCursor *cursor) {
+    return cursor && cursor->incremental;
+}
+
+static void space_query_cursor_pop(SpaceQueryCursor *cursor) {
+    SpaceQueryWork *work = cursor->work;
+    cursor->work = work->previous;
+    space_query_work_free(work);
+}
+
+static SpaceQueryCursorStep space_query_cursor_publish_candidate(
+        SpaceQueryCursor *cursor, SpaceQueryWork *work) {
+    SpaceQuerySequence *rest = NULL;
+    if (!space_query_sequence_rest(work->sequence, &rest))
+        return SPACE_QUERY_CURSOR_CAPACITY;
+    SpaceQueryWitness *witness = cetta_malloc(sizeof(*witness));
+    if (!witness || !space_query_witness_retain(work->witnesses)) {
+        free(witness); space_query_sequence_release(rest);
+        return SPACE_QUERY_CURSOR_CAPACITY;
+    }
+    *witness = (SpaceQueryWitness){1u, cursor->reads.root,
+        work->candidate_index, work->witnesses};
+    SpaceQueryWork *child = space_query_work_new(rest, witness, &work->candidate);
+    space_query_sequence_release(rest);
+    space_query_witness_release(witness);
+    if (!child) return SPACE_QUERY_CURSOR_CAPACITY;
+    child->previous = work;
+    cursor->work = child;
+    bindings_free(&work->candidate);
+    bindings_init(&work->candidate);
+    work->candidate_ready = false;
+    return SPACE_QUERY_CURSOR_PROGRESS;
+}
+
+SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *cursor,
+        uint64_t match_nodes, Bindings *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (!cursor || !out) return SPACE_QUERY_CURSOR_CAPACITY;
+    if (!match_nodes) return SPACE_QUERY_CURSOR_PROGRESS;
+    cursor->last_row = false;
+    space_query_witness_release(cursor->last_witnesses);
+    cursor->last_witnesses = NULL;
+    if (!space_read_view_is_current(&cursor->reads))
+        return SPACE_QUERY_CURSOR_INVALIDATED;
+    if (!cursor->incremental) {
+        if (!cursor->fallback_started) {
+            bool complete = true;
+            cursor->fallback_constructed = space_query_bindings_rec(cursor->space,
+                cursor->arena, cursor->pattern, &cursor->seed,
+                &cursor->fallback_rows, &complete);
+            cursor->fallback_complete = cursor->fallback_constructed && complete;
+            cursor->fallback_started = true;
+            if (!space_read_view_is_current(&cursor->reads))
+                return SPACE_QUERY_CURSOR_INVALIDATED;
+            if (!cursor->fallback_constructed) return SPACE_QUERY_CURSOR_CAPACITY;
+            return cursor->fallback_complete || cursor->fallback_rows.len
+                ? SPACE_QUERY_CURSOR_PROGRESS : SPACE_QUERY_CURSOR_INCOMPLETE;
+        }
+        if (!cursor->fallback_constructed) return SPACE_QUERY_CURSOR_CAPACITY;
+        if (cursor->fallback_position == cursor->fallback_rows.len)
+            return cursor->fallback_complete ? SPACE_QUERY_CURSOR_END
+                                             : SPACE_QUERY_CURSOR_INCOMPLETE;
+        bindings_move(out, &cursor->fallback_rows.items[cursor->fallback_position++]);
+        cursor->last_row = true;
+        return SPACE_QUERY_CURSOR_ROW;
+    }
+    SpaceQueryWork *work = cursor->work;
+    if (!work) return SPACE_QUERY_CURSOR_END;
+    if (work->blocked) return work->blocked;
+    if (!work->sequence) {
+        if (!space_query_witness_retain(work->witnesses))
+            return SPACE_QUERY_CURSOR_CAPACITY;
+        cursor->last_witnesses = work->witnesses;
+        bindings_move(out, &work->seed);
+        space_query_cursor_pop(cursor);
+        cursor->last_row = true;
+        return SPACE_QUERY_CURSOR_ROW;
+    }
+    Atom *pattern = work->sequence->items[0];
+    if (work->kind == SPACE_QUERY_WORK_ENTER) {
+        if (space_query_is_connective(pattern)) {
+            if (atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma)) {
+                SpaceQuerySequence *rest = NULL, *next = NULL;
+                if (!space_query_sequence_rest(work->sequence, &rest))
+                    return SPACE_QUERY_CURSOR_CAPACITY;
+                bool ready = space_query_sequence_new(pattern->expr.elems + 1u,
+                    pattern->expr.len - 1u, rest, &next);
+                space_query_sequence_release(rest);
+                if (!ready) return SPACE_QUERY_CURSOR_CAPACITY;
+                space_query_sequence_release(work->sequence);
+                work->sequence = next;
+            } else {
+                work->branch = 1u;
+                work->kind = SPACE_QUERY_WORK_PIPE;
+            }
+            return SPACE_QUERY_CURSOR_PROGRESS;
+        }
+        work->grounded = bindings_apply_if_vars(&work->seed, cursor->arena, pattern);
+        if (!work->grounded || !space_occurrence_cursor_init_scan(
+                cursor->space, &work->occurrences))
+            return SPACE_QUERY_CURSOR_CAPACITY;
+        work->kind = SPACE_QUERY_WORK_ATOM;
+        return SPACE_QUERY_CURSOR_PROGRESS;
+    }
+    if (work->kind == SPACE_QUERY_WORK_PIPE) {
+        if (work->branch == pattern->expr.len) {
+            space_query_cursor_pop(cursor);
+            return SPACE_QUERY_CURSOR_PROGRESS;
+        }
+        SpaceQuerySequence *rest = NULL, *next = NULL;
+        if (!space_query_sequence_rest(work->sequence, &rest))
+            return SPACE_QUERY_CURSOR_CAPACITY;
+        bool ready = space_query_sequence_new(pattern->expr.elems + work->branch,
+            1u, rest, &next);
+        space_query_sequence_release(rest);
+        if (!ready) return SPACE_QUERY_CURSOR_CAPACITY;
+        SpaceQueryWork *child = space_query_work_new(next, work->witnesses, &work->seed);
+        space_query_sequence_release(next);
+        if (!child) return SPACE_QUERY_CURSOR_CAPACITY;
+        work->branch++;
+        child->previous = work;
+        cursor->work = child;
+        return SPACE_QUERY_CURSOR_PROGRESS;
+    }
+    if (work->candidate_ready)
+        return space_query_cursor_publish_candidate(cursor, work);
+    if (work->matcher) goto match_candidate;
+    CettaIndex index = 0u;
+    SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index);
+    if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED)
+        return SPACE_QUERY_CURSOR_INVALIDATED;
+    if (step == SPACE_OCCURRENCE_CURSOR_END) {
+        space_query_cursor_pop(cursor);
+        return SPACE_QUERY_CURSOR_PROGRESS;
+    }
+    work->candidate_index = index;
+    cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 1u);
+    cetta_native_cost_charge(CETTA_COST_CANDIDATE_ROW, 1u);
+    Atom *candidate = space_occurrence_cursor_atom(&work->occurrences, index);
+    work->matcher = candidate ? match_atoms_cursor_new(
+        work->grounded,candidate,&work->seed,cursor->arena) : NULL;
+    if (!work->matcher) {
+        work->blocked = SPACE_QUERY_CURSOR_CAPACITY;
+        return work->blocked;
+    }
+match_candidate:;
+    CettaMatchCursorStep result = match_atoms_cursor_step(work->matcher,match_nodes);
+    if (result == CETTA_MATCH_CURSOR_PROGRESS) return SPACE_QUERY_CURSOR_PROGRESS;
+    if (result == CETTA_MATCH_CURSOR_INCOMPLETE || result == CETTA_MATCH_CURSOR_CAPACITY) {
+        /* The undecided pair, path, transport and binding trail remain
+         * owned. It is not a mismatch or a fresh attempt on the next poll. */
+        work->blocked = result == CETTA_MATCH_CURSOR_INCOMPLETE
+            ? SPACE_QUERY_CURSOR_INCOMPLETE : SPACE_QUERY_CURSOR_CAPACITY;
+        return work->blocked;
+    }
+    if (result == CETTA_MATCH_CURSOR_MATCHED &&
+        !match_atoms_cursor_take(work->matcher,&work->candidate)) {
+        work->blocked = SPACE_QUERY_CURSOR_CAPACITY;
+        return work->blocked;
+    }
+    match_atoms_cursor_free(work->matcher);
+    work->matcher = NULL;
+    if (result == CETTA_MATCH_CURSOR_REFUTED) return SPACE_QUERY_CURSOR_PROGRESS;
+    work->candidate_ready = true;
+    return SPACE_QUERY_CURSOR_PROGRESS;
+}
+
+SpaceQueryCursorStep space_query_cursor_step(SpaceQueryCursor *cursor,
+                                             Bindings *out) {
+    return space_query_cursor_step_with_budget(cursor,32u,out);
+}
+
+bool space_query_cursor_visit_reads(const SpaceQueryCursor *cursor,
+        SpaceQueryReadVisitor visitor, void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    return cursor && space_read_view_visit(&cursor->reads, visitor, context);
+}
+
+bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
+        SpaceQueryWitnessVisitor visitor, void *context) {
+    if (!cursor || !cursor->incremental || !cursor->last_row || !visitor)
+        return false;
+    size_t length = 0u;
+    for (const SpaceQueryWitness *w = cursor->last_witnesses; w; w = w->previous) {
+        if (length == SIZE_MAX / sizeof(w)) return false;
+        length++;
+    }
+    const SpaceQueryWitness **ordered = length ? cetta_malloc(length * sizeof(*ordered)) : NULL;
+    if (length && !ordered) return false;
+    size_t index = length;
+    for (const SpaceQueryWitness *w = cursor->last_witnesses; w; w = w->previous)
+        ordered[--index] = w;
+    bool accepted = true;
+    for (index = 0u; accepted && index < length; index++)
+        accepted = visitor(ordered[index]->read, ordered[index]->index, context);
+    free(ordered);
+    return accepted;
+}
+
+void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
+                                       CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census, cursor, sizeof(*cursor), CETTA_STORAGE_BLOCK))
+        return;
+    arena_storage_census(cursor->arena, census);
+    space_read_view_storage_census(&cursor->reads, census);
+    bindings_storage_census(&cursor->seed, census);
+    cetta_storage_array(census, cursor->fallback_rows.items, cursor->fallback_rows.cap,
+        sizeof(*cursor->fallback_rows.items), 0u);
+    for (CettaIndex i = 0u; i < cursor->fallback_rows.len; i++)
+        bindings_storage_census(&cursor->fallback_rows.items[i], census);
+    const SpaceQueryWitness *last = cursor->last_witnesses;
+    for (const SpaceQueryWork *work = cursor->work; work; work = work->previous) {
+        if (!cetta_storage_object(census, work, sizeof(*work), CETTA_STORAGE_BLOCK)) break;
+        bindings_storage_census(&work->seed, census);
+        bindings_storage_census(&work->candidate, census);
+        space_occurrence_cursor_storage_census(&work->occurrences, census);
+        match_atoms_cursor_storage_census(work->matcher,census);
+        for (const SpaceQuerySequence *seq = work->sequence; seq; seq = seq->tail)
+            if (!cetta_storage_object(census, seq, sizeof(*seq), CETTA_STORAGE_BLOCK)) break;
+        for (const SpaceQueryWitness *w = work->witnesses; w; w = w->previous)
+            if (!cetta_storage_object(census, w, sizeof(*w), CETTA_STORAGE_BLOCK)) break;
+    }
+    for (const SpaceQueryWitness *w = last; w; w = w->previous)
+        if (!cetta_storage_object(census, w, sizeof(*w), CETTA_STORAGE_BLOCK)) break;
 }
 
 bool disc_count_flat_bound_vars(

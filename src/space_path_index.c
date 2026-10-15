@@ -161,6 +161,33 @@ static void path_grow_keys(CettaSpacePathIndex *index) {
 
 typedef enum { PATH_MISS, PATH_KEY, PATH_UNCERTAIN } PathProjection;
 
+/* A service may admit a portable value whose data symbols have no packed
+ * term header. Such a row is still an owned, inspectable Atom. Use the same
+ * conservative projection on that representation; absence of a packed
+ * header alone must not turn every ordinary row into an uncertain posting. */
+static PathProjection path_project_unrecorded(const CettaSpacePathIndex *index,
+                                             AtomId id, size_t depth,
+                                             uint64_t *key) {
+    /* Retain the existing uncertain-row treatment for symbol and numeric
+     * keys. Unregistered symbol identities and numeric promotion need their
+     * own contracts; the new projection is only for exact string leaves. */
+    if (index->kind!=CETTA_SPACE_PATH_STRING_HASH_KEY) return PATH_UNCERTAIN;
+    Atom *term=term_universe_get_atom(index->universe,id);
+    for (; depth<index->path_len; ++depth) {
+        if (!term || term->kind==ATOM_VAR) return PATH_UNCERTAIN;
+        if (term->kind!=ATOM_EXPR) return PATH_MISS;
+        if (term->expr.len && term->expr.elems[0] &&
+            term->expr.elems[0]->kind==ATOM_GROUNDED &&
+            term->expr.elems[0]->ground.gkind==GV_INTERNAL_TAG) return PATH_UNCERTAIN;
+        if (index->path[depth]>=term->expr.len) return PATH_MISS;
+        term=term->expr.elems[index->path[depth]];
+    }
+    if (!term || term->kind==ATOM_VAR) return PATH_UNCERTAIN;
+    if (term->kind!=ATOM_GROUNDED || term->ground.gkind!=GV_STRING) return PATH_MISS;
+    *key=atom_hash(term);
+    return PATH_KEY;
+}
+
 static PathProjection path_project(const CettaSpacePathIndex *index,
                                    AtomId id, uint64_t *key) {
     const TermUniverse *universe = index->universe;
@@ -175,7 +202,7 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
             const Atom *decoded = term_universe_get_atom(universe, id);
             if (decoded && decoded->kind == ATOM_EXPR && decoded->expr.len > 0u &&
                 decoded->expr.elems[0]->kind == ATOM_SYMBOL)
-                head = decoded->expr.elems[0]->sym_id;
+                head = atom_symbol_current_id(decoded->expr.elems[0]);
         }
         if (head == SYMBOL_ID_NONE)
             return PATH_UNCERTAIN;
@@ -184,7 +211,9 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
     }
     for (size_t depth = 0u; depth < index->path_len; depth++) {
         const CettaTermHdr *header = tu_hdr(universe, id);
-        if (!header || header->tag == ATOM_VAR)
+        if (!header)
+            return path_project_unrecorded(index,id,depth,key);
+        if (header->tag == ATOM_VAR)
             return PATH_UNCERTAIN;
         if (header->tag != ATOM_EXPR)
             return PATH_MISS;
@@ -198,7 +227,9 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
         id = tu_child(universe, id, index->path[depth]);
     }
     const CettaTermHdr *header = tu_hdr(universe, id);
-    if (!header || header->tag == ATOM_VAR)
+    if (!header)
+        return path_project_unrecorded(index,id,index->path_len,key);
+    if (header->tag == ATOM_VAR)
         return PATH_UNCERTAIN;
     if (index->kind == CETTA_SPACE_PATH_SYMBOL_KEY) {
         if (header->tag != ATOM_SYMBOL)
@@ -208,6 +239,12 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
     }
     if (header->tag != ATOM_GROUNDED)
         return PATH_MISS;
+    if (index->kind == CETTA_SPACE_PATH_STRING_HASH_KEY) {
+        if (tu_ground_kind(universe, id) != GV_STRING)
+            return PATH_MISS;
+        *key = tu_hash32(universe, id);
+        return PATH_KEY;
+    }
     if (tu_ground_kind(universe, id) != GV_INT)
         return PATH_UNCERTAIN;
     *key = (uint64_t)tu_int(universe, id);
@@ -232,7 +269,7 @@ static PathPosting *path_row_posting(CettaSpacePathIndex *index, AtomId id,
             const Atom *row = term_universe_get_atom(index->universe, id);
             if (row && row->kind == ATOM_EXPR && row->expr.len > 0u &&
                 row->expr.elems[0]->kind == ATOM_SYMBOL)
-                head = row->expr.elems[0]->sym_id;
+                head = atom_symbol_current_id(row->expr.elems[0]);
         }
         if (head == SYMBOL_ID_NONE)
             return &index->uncertain;
@@ -349,13 +386,21 @@ static void path_append_row(CettaSpacePathIndex *index, AtomId id,
 static bool path_query_key(const Atom *atom, CettaSpacePathKeyKind *kind,
                             uint64_t *key) {
     if (atom && atom->kind == ATOM_SYMBOL) {
+        SymbolId id = atom_symbol_current_id(atom);
+        if (id == SYMBOL_ID_NONE && atom_symbol_is_spelled(atom))
+            return false;
         *kind = CETTA_SPACE_PATH_SYMBOL_KEY;
-        *key = atom->sym_id;
+        *key = id;
         return true;
     }
     if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
         *kind = CETTA_SPACE_PATH_INTEGER_KEY;
         *key = (uint64_t)atom->ground.ival;
+        return true;
+    }
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        *kind = CETTA_SPACE_PATH_STRING_HASH_KEY;
+        *key = atom_hash((Atom *)atom);
         return true;
     }
     return false;
@@ -389,9 +434,9 @@ static uint64_t path_flat_shape(const Atom *pattern) {
     return shape;
 }
 
-/* Choose a rigid coordinate after a variable in the trie's structural order.
- * Prefix-selective patterns keep their existing access path. Explicit frames
- * make the coordinate search independent of the C call stack. */
+/* Choose a rigid coordinate after a variable, or a rigid string which the
+ * primary trie cannot distinguish. Other prefix-selective patterns keep
+ * their existing access path. Explicit frames avoid C recursion. */
 static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                                       uint64_t *key) {
     if (!pattern || pattern->kind != ATOM_EXPR || !atom_has_vars(pattern) ||
@@ -420,7 +465,8 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         Atom *child = frame->term->expr.elems[frame->child];
         if (child && child->kind == ATOM_VAR)
             unbound = true;
-        if (unbound && path_query_key(child, &kind, key)) {
+        if (path_query_key(child, &kind, key) &&
+            (unbound || kind == CETTA_SPACE_PATH_STRING_HASH_KEY)) {
             if (frame->child != 0u) {
                 found = true;
                 break;
@@ -462,7 +508,7 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                 depth = 1u;
                 found = true;
                 if (pattern->expr.elems[0]->kind == ATOM_SYMBOL)
-                    lead_head = pattern->expr.elems[0]->sym_id;
+                    lead_head = atom_symbol_current_id(pattern->expr.elems[0]);
                 break;
             }
         }
@@ -594,7 +640,7 @@ static __attribute__((noinline)) CettaCount path_merge_open_rows(
                     space->native.universe, row_id);
                 if (row && row->kind == ATOM_EXPR && row->expr.len > 0u &&
                     row->expr.elems[0]->kind == ATOM_SYMBOL &&
-                    row->expr.elems[0]->sym_id != query_head)
+                    atom_symbol_current_id(row->expr.elems[0]) != query_head)
                     continue;
             }
         }
@@ -605,7 +651,8 @@ static __attribute__((noinline)) CettaCount path_merge_open_rows(
 }
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
-                                CettaIndex **out, CettaIndex *count) {
+                                CettaIndex **out, CettaIndex *count,
+                                CettaIndex *capacity) {
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
@@ -617,7 +664,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
     uint64_t shape = path_flat_shape(pattern);
     CettaSpacePathIndex *index = NULL;
     SymbolId pattern_head = pattern->expr.elems[0]->kind == ATOM_SYMBOL
-        ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(pattern->expr.elems[0]) : SYMBOL_ID_NONE;
     for (CettaSpacePathIndex *known = shape ? space->match_backend.native.path_indexes : NULL;
          known; known = known->next) {
         if (known->shape != shape || known->path_len != 1u ||
@@ -641,7 +688,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
     CettaCount known = posting ? posting->len : 0u;
     SymbolId query_head = pattern->expr.len != 0u &&
             pattern->expr.elems[0] && pattern->expr.elems[0]->kind == ATOM_SYMBOL
-        ? pattern->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        ? atom_symbol_current_id(pattern->expr.elems[0]) : SYMBOL_ID_NONE;
     /* A query with a head symbol reads the open rows of that head; one
      * without reads every open row. */
     PathPosting *headed = NULL;
@@ -674,6 +721,8 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
             positions[next] = posting_at(posting, next);
         *out = positions;
         *count = known;
+        if (capacity)
+            *capacity = candidates;
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                                known);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, known);
@@ -683,6 +732,8 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
         headed, headed_len, query_head, candidates, positions);
     *out = positions;
     *count = retained;
+    if (capacity)
+        *capacity = candidates;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_CANDIDATE,
                            retained);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, retained);
@@ -702,7 +753,7 @@ bool space_path_index_existing_candidates(Space *space, Atom *pattern,
         if (index->shape != shape || index->path_len != 1u ||
             (index->head != SYMBOL_ID_NONE &&
              (pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
-              index->head != pattern->expr.elems[0]->sym_id)))
+              index->head != atom_symbol_current_id(pattern->expr.elems[0]))))
             continue;
         uint64_t key = 0u;
         CettaSpacePathKeyKind kind;

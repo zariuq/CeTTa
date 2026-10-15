@@ -362,7 +362,7 @@ static bool he_term_may_branch(Space *space, const Atom *term,
         return true;
     const Atom *head = term->expr.elems[0];
     if (head->kind == ATOM_SYMBOL) {
-        SymbolId id = head->sym_id;
+        SymbolId id = atom_symbol_current_id(head);
         if (id == g_builtin_syms.collapse || id == g_builtin_syms.quote ||
             id == g_builtin_syms.add_atom || id == g_builtin_syms.remove_atom)
             return false;
@@ -410,7 +410,7 @@ static bool he_answers_leave_in_tail(Space *space, const Atom *term,
     if (depth >= 256u)
         return false;
     const Atom *head = term->expr.elems[0];
-    SymbolId id = head->kind == ATOM_SYMBOL ? head->sym_id : SYMBOL_ID_NONE;
+    SymbolId id = head->kind == ATOM_SYMBOL ? atom_symbol_current_id(head) : SYMBOL_ID_NONE;
     CettaExprLen len = term->expr.len;
     if (id == g_builtin_syms.collapse && len == 2u)
         return he_answers_leave_in_tail(space, term->expr.elems[1], true,
@@ -643,7 +643,15 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             return false;
         if (!expression && term->kind != ATOM_SYMBOL)
             continue;
-        SymbolId head = expression ? atom_head_symbol_id(term) : term->sym_id;
+        /* Extended semantic handlers keep their owned coefficient,
+         * demand and return continuations on the native evaluator.
+         * Check callable symbol values through the same source view. */
+        Atom head_call = {.kind = ATOM_EXPR,
+            .expr = {.elems = &term, .len = 1u}};
+        if (prepared_pure_requires_native_handler(admission->space,
+                expression ? term : &head_call))
+            return false;
+        SymbolId head = expression ? atom_head_symbol_id(term) : atom_symbol_current_id(term);
         bool intrinsic = he_execution_intrinsic(head);
         /* Empty, and the faults of arithmetic and ordering, would reach a
          * consumer before the completed frontier could remove them. */
@@ -841,7 +849,7 @@ static bool he_stream_value_inert(Space *space, const Atom *value) {
     case ATOM_GROUNDED:
         return true;
     case ATOM_SYMBOL:
-        return !he_symbol_callable(space, value->sym_id);
+        return !he_symbol_callable(space, atom_symbol_current_id(value));
     case ATOM_EXPR:
         for (CettaExprIndex i = 0u; i < value->expr.len; i++)
             if (!he_stream_value_inert(space, value->expr.elems[i]))
@@ -890,7 +898,7 @@ static bool he_stream_call_admitted(Space *space, Arena *arena, Atom *call) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len ||
         call->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
-    if (!he_stream_head_admitted(space, arena, call->expr.elems[0]->sym_id,
+    if (!he_stream_head_admitted(space, arena, atom_symbol_current_id(call->expr.elems[0]),
                                  call->expr.len - 1u))
         return false;
     for (CettaExprIndex i = 1u; i < call->expr.len; i++)
@@ -979,7 +987,7 @@ static bool he_compiled_call_admitted(Space *space, Arena *arena, Atom *call,
                                       bool raises) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len ||
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
-        !he_compiled_admitted(space, arena, call->expr.elems[0]->sym_id,
+        !he_compiled_admitted(space, arena, atom_symbol_current_id(call->expr.elems[0]),
                               raises))
         return false;
     for (CettaExprIndex i = 1u; i < call->expr.len; i++)
@@ -1699,7 +1707,7 @@ static bool he_execution_term_computes(Space *space, const Atom *term) {
     const Atom *head = term->expr.elems[0];
     if (head->kind != ATOM_SYMBOL)
         return true;
-    SymbolId id = head->sym_id;
+    SymbolId id = atom_symbol_current_id(head);
     bool structural = id == g_builtin_syms.match || id == g_builtin_syms.comma ||
         he_execution_collection(id);
     if (!structural && (eval_space_has_equations(space, id) ||
@@ -1846,7 +1854,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         if (eval_unwinding() || eval_cancel_check())
             return true;
         CettaPreparedPureAnswersResult answers = prepared_pure_closed_answers_try(
-            space, arena, source, fuel, cache, outer, preserve_bindings, outcomes);
+            space, arena, source, type, fuel, cache, outer, preserve_bindings, outcomes);
         if (answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
             answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED)
             return true;

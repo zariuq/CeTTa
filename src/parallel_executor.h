@@ -75,6 +75,22 @@ void cetta_parallel_executor_fail(CettaParallelExecutor *executor,
 const char *cetta_parallel_executor_error(const CettaParallelExecutor *executor);
 bool cetta_parallel_executor_failed(const CettaParallelExecutor *executor);
 
+/* Final process-level shutdown. A busy refusal leaves admission unchanged.
+ * Success closes admission and joins all idle persistent workers, including
+ * their thread-local destructors. One-shot and nested episodes count as live
+ * until their workers have joined. Repeated successful shutdown is harmless;
+ * no new episode is admitted afterward. The caller still owns its contexts. */
+bool cetta_parallel_executor_shutdown(void);
+/* As above, with an additional final-admission gate. The gate runs only once
+ * no episode is live, under the admission mutex, before worker admission is
+ * closed. It must not call the executor or run finalizers: it may atomically
+ * seal another owner's admission, or refuse without changing that owner.
+ * Joining and thread-exit callbacks run after this mutex is released. A join
+ * failure retains Closing; another call retries the remaining joins. */
+typedef bool (*CettaParallelShutdownGate)(void *context);
+bool cetta_parallel_executor_shutdown_if(CettaParallelShutdownGate gate,
+                                         void *context);
+
 Arena *cetta_parallel_worker_arena(CettaParallelWorker *worker);
 uint32_t cetta_parallel_worker_index(const CettaParallelWorker *worker);
 /* Whether the calling thread is running a parallel worker's episode. */

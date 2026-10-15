@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/zariuq/MeTTapedia",
+  "commit": "42c00805b497232ce29034806ac2eab396a26683",
+  "upstream_lean": "leanprover/lean4:v4.33.1",
+  "upstream_mathlib": "0df444a360eaa60ab8c11dca51a86af692955474",
+  "files": [
+    {
+      "source_path": "lean/mettapedia/Mettapedia/GSLT/Dynamics/StoreReachability.lean",
+      "vendored_path": "upstream/Mettapedia/GSLT/Dynamics/StoreReachability.lean",
+      "sha256": "a0812137201637b7ba266d700e69e9bee04e1517bea8df3490be8cb69df7f75f"
+    },
+    {
+      "source_path": "lean/mettapedia/Mettapedia/GSLT/Dynamics/StoreCollectionAdvanced.lean",
+      "vendored_path": "upstream/Mettapedia/GSLT/Dynamics/StoreCollectionAdvanced.lean",
+      "sha256": "a10b4fd831a04781bdfcb5169c70742e4a44c530453061b70dc77c96e049a305"
+    },
+    {
+      "source_path": "LICENSE",
+      "vendored_path": "upstream/LICENSE",
+      "sha256": "93db3ecca5815085ea138601ab884b1e327c2b9a707893079158bb2919dadd93"
+    }
+  ]
+}

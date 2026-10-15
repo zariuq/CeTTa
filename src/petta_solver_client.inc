@@ -965,7 +965,7 @@ static bool petta_solver_try_call(CettaLibPrologRuntime *runtime, Arena *arena,
     *handled = false;
     bool predicate = expression && expression->kind == ATOM_EXPR &&
         expression->expr.len == 2u && expression->expr.elems[0]->kind == ATOM_SYMBOL &&
-        petta_semantics_form(expression->expr.elems[0]->sym_id) == PETTA_FORM_TRANSLATE_PREDICATE;
+        petta_semantics_form(atom_symbol_current_id(expression->expr.elems[0])) == PETTA_FORM_TRANSLATE_PREDICATE;
     Atom *source = predicate ? expression->expr.elems[1] : expression;
     Atom *result_value = expected;
     if (predicate) {
@@ -979,7 +979,7 @@ static bool petta_solver_try_call(CettaLibPrologRuntime *runtime, Arena *arena,
     int relation = petta_solver_relation(source);
     if (relation < 0 || !view || !view->acquire || !view->mark || PL_current_query())
         return true;
-    PettaLibplImport *entry = petta_libpl_find_import(runtime, source->expr.elems[0]->sym_id);
+    PettaLibplImport *entry = petta_libpl_find_import(runtime, atom_symbol_current_id(source->expr.elems[0]));
     if (!predicate && (!entry || !entry->reference_stdlib || entry->auto_resolved))
         return true;
     CettaDelayService *service = view->acquire(view->context);

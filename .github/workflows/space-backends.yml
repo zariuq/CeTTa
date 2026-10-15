@@ -1,0 +1,57 @@
+name: Optional space backends
+on:
+  push:
+    paths:
+      - 'rust/**'
+      - 'src/**'
+      - 'native/**'
+      - 'lib/**'
+      - 'tests/**'
+      - 'Makefile'
+      - '.github/workflows/space-backends.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backend-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: CeTTa
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: Adam-Vandervorst/PathMap
+          ref: cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b
+          path: PathMap
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: trueagi-io/MORK
+          ref: ed57c6716d8c510296fb5fbb8be6fbfe2df241d7
+          path: MORK
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config python3 libgmp-dev
+      - name: Install the qualified Rust toolchain
+        run: rustup toolchain install nightly-2026-07-15 --profile minimal
+      - name: Check Rust adapters against pinned upstream sources
+        working-directory: CeTTa
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: >-
+          make -j2 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0
+          ENABLE_MANAGED_SYMBOLS=1 MORK_BRIDGE_CARGO='cargo +nightly-2026-07-15'
+          test-rust-bridge
+      - name: Check service, counts, snapshots, loadable ABI and MORK execution
+        working-directory: CeTTa
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: >-
+          make -j2 BUILD=mork ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0
+          ENABLE_MANAGED_SYMBOLS=1 MORK_BRIDGE_CARGO='cargo +nightly-2026-07-15'
+          test-space-service test-space-ground-count
+          test-petta-pathmap-match-snapshot test-mork-query-admission-fallback
+          test-mork-shared-bridge test-mork-lane

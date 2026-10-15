@@ -124,7 +124,7 @@ static Atom *pattern_abt_multi_head(PatternAbtContextV1 *context,
     Atom *head = atom_symbol(context->arena, name);
     const uint32_t depths[] = {arity};
     if (!head || !pattern_abt_signature_add(
-            context, head->sym_id, 1u, depths))
+            context, atom_symbol_current_id(head), 1u, depths))
         return NULL;
     return head;
 }
@@ -279,7 +279,7 @@ static bool pattern_abt_prepare(PatternAbtContextV1 *context,
             Atom *bound = source->expr.elems[2];
             if (!bound || bound->kind != ATOM_EXPR || bound->expr.len != 2u ||
                 !bound->expr.elems[0] || bound->expr.elems[0]->kind != ATOM_SYMBOL ||
-                bound->expr.elems[0]->sym_id != head->sym_id)
+                !atom_symbols_equal(bound->expr.elems[0], head))
                 goto invalid;
             frame->arity = 4u;
             frame->items[0] = atom_symbol(context->arena, "PMultiLam");

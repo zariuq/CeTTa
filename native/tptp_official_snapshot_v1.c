@@ -1420,7 +1420,7 @@ static bool slr_add_prod(CettaLpNativeGrammar *g, uint32_t *cap, Arena *arena,
         *cap = ncap;
     }
     p = &g->productions[g->production_len];
-    p->label = atom_symbol(arena, label)->sym_id;
+    p->label = atom_symbol_current_id(atom_symbol(arena, label));
     p->lhs = p->label;
     /* label may include #alt suffix; lhs is the NT without suffix handled by
      * caller via the same symbol as the rule name for alt 0, but we set lhs
@@ -1471,13 +1471,13 @@ static bool slr_symbol_from_name(Arena *arena,
     }
     if (rule >= 0 && frontier->token_rules[rule]) {
         out->kind = CETTA_LP_NATIVE_SYMBOL_TM;
-        out->name = atom_symbol(arena, tm)->sym_id;
+        out->name = atom_symbol_current_id(atom_symbol(arena, tm));
         out->scope = 0;
         return true;
     }
     if (cls >= 0 && frontier->token_classes[cls]) {
         out->kind = CETTA_LP_NATIVE_SYMBOL_TM;
-        out->name = atom_symbol(arena, tm)->sym_id;
+        out->name = atom_symbol_current_id(atom_symbol(arena, tm));
         out->scope = 0;
         return true;
     }
@@ -1488,7 +1488,7 @@ static bool slr_symbol_from_name(Arena *arena,
     if (rule < 0 || !frontier->queued[rule])
         return false;
     out->kind = CETTA_LP_NATIVE_SYMBOL_HL;
-    out->name = atom_symbol(arena, tm)->sym_id;
+    out->name = atom_symbol_current_id(atom_symbol(arena, tm));
     out->scope = 0;
     return true;
 }
@@ -1566,8 +1566,8 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                     Atom *galts = inner->expr.elems[1];
                     uint32_t galti = 0u;
                     snprintf(aux, sizeof(aux), "#grp-%u", g->production_len);
-                    aux_id = atom_symbol(arena, aux)->sym_id;
-                    if (!slr_origin_add(origins, aux_id, atom_symbol(arena, rname)->sym_id,
+                    aux_id = atom_symbol_current_id(atom_symbol(arena, aux));
+                    if (!slr_origin_add(origins, aux_id, atom_symbol_current_id(atom_symbol(arena, rname)),
                                         CETTA_GRAMMAR_CANONICAL_GROUP_V1, 0))
                         return false;
                     while (is_app(galts, "bnf-v1:alternatives-cons", 2u)) {
@@ -1598,7 +1598,7 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                                        decode_text(ge->expr.elems[1], gn,
                                                    sizeof(gn))) {
                                 gs.kind = CETTA_LP_NATIVE_SYMBOL_TM;
-                                gs.name = atom_symbol(arena, gn)->sym_id;
+                                gs.name = atom_symbol_current_id(atom_symbol(arena, gn));
                                 gs.scope = 0;
                                 grhs[gl++] = gs;
                             }
@@ -1636,7 +1636,7 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                            decode_text(inner->expr.elems[1], name,
                                        sizeof(name))) {
                     one.kind = CETTA_LP_NATIVE_SYMBOL_TM;
-                    one.name = atom_symbol(arena, name)->sym_id;
+                    one.name = atom_symbol_current_id(atom_symbol(arena, name));
                     one.scope = 0;
                     omit = false;
                 } else {
@@ -1652,9 +1652,9 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
                         CettaLpNativeProduction *p1;
                         snprintf(aux, sizeof(aux), "#rep-%u",
                                  g->production_len);
-                        aux_id = atom_symbol(arena, aux)->sym_id;
+                        aux_id = atom_symbol_current_id(atom_symbol(arena, aux));
                         if (!slr_origin_add(
-                                origins, aux_id, atom_symbol(arena, rname)->sym_id,
+                                origins, aux_id, atom_symbol_current_id(atom_symbol(arena, rname)),
                                 rep == 3 ? CETTA_GRAMMAR_CANONICAL_OPTION_V1
                                          : CETTA_GRAMMAR_CANONICAL_REPETITION_V1,
                                 rep == 1 ? '*' : rep == 2 ? '+' : '?'))
@@ -1697,7 +1697,7 @@ static bool slr_fill_from_pack(CettaLpNativeGrammar *g, uint32_t *cap,
             /* slr_add_prod sets lhs from the full label including #alt.
              * Override lhs to the unsuffixed NT. */
             g->productions[g->production_len - 1u].lhs =
-                atom_symbol(arena, rname)->sym_id;
+                atom_symbol_current_id(atom_symbol(arena, rname));
             alt_i++;
             alts = alts->expr.elems[2];
         }
@@ -2100,7 +2100,7 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
             snprintf(error, error_size, "SLR fill: %s", local);
         goto done;
     }
-    if (!cetta_lp_native_slr_summary(&grammar, start_sym->sym_id, &summary,
+    if (!cetta_lp_native_slr_summary(&grammar, atom_symbol_current_id(start_sym), &summary,
                                      local, sizeof(local))) {
         fprintf(stderr, "tptp snapshot: SLR summary failed: %s\n", local);
         memset(&summary, 0, sizeof(summary));
@@ -2124,10 +2124,10 @@ bool cetta_tptp_snapshot_construct_from_pack_v1(
     memset(&dfa_prog, 0, sizeof(dfa_prog));
     if (!(snap.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GLR
               ? cetta_lp_native_slr_prepare_glr(
-                    &prepared, &grammar, start_sym->sym_id, local,
+                    &prepared, &grammar, atom_symbol_current_id(start_sym), local,
                     sizeof(local))
               : cetta_lp_native_slr_prepare(
-                    &prepared, &grammar, start_sym->sym_id, local,
+                    &prepared, &grammar, atom_symbol_current_id(start_sym), local,
                     sizeof(local)))) {
         if (error && error_size)
             snprintf(error, error_size, "parser prepare: %s", local);

@@ -70,6 +70,15 @@
    (if (== $n 0)
        done
        (decision:loop (decision:test K63 $n))))
+; Retained service cuts restore across both sides of memo-table growth.
+!(decision:loop 8)
+!(decision:loop 9)
+!(decision:loop 11)
+!(decision:loop 12)
+!(decision:loop 17)
+!(decision:loop 22)
+!(decision:loop 23)
+!(decision:loop 32)
 !(decision:loop 10000)
 
 ; No single position separates this matrix; the conjunction does.

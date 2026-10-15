@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: e090f70381df46f0e52a808be3fab0650dd49123d4f72dd97ff7e6e2e07778a4
+ * Source SHA-256: 642fdd4d5eaa692204b497db24b296641c591aa0064e3ffcc3a90063b5145e4f
  */
 
 #include <stdbool.h>
@@ -559,6 +559,9 @@ typedef enum {
     STRONG_ATOM_SLOT(strict_source) \
     STRONG_ATOM_SLOT(then_branch) \
     STRONG_ATOM_SLOT(else_branch) \
+    STRONG_ATOM_SLOT(weight_subject) \
+    STRONG_ATOM_SLOT(weight_algebra) \
+    STRONG_ATOM_SLOT(weight_trace) \
     STRONG_ATOM_SLOT(ref) \
     STRONG_ATOM_SPAN(normalization_children) \
     LOGICAL_BINDINGS(env) \
@@ -705,6 +708,9 @@ typedef enum {
     CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->strict_source, FAIL); \
     CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->then_branch, FAIL); \
     CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->else_branch, FAIL); \
+    CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->weight_subject, FAIL); \
+    CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->weight_algebra, FAIL); \
+    CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->weight_trace, FAIL); \
     CETTA_GC_VISIT_STRONG_ATOM_SLOT((SESSION), (PAYLOAD)->ref, FAIL); \
     CETTA_GC_VISIT_STRONG_ATOM_SPAN((SESSION), (PAYLOAD)->normalization_children, FAIL); \
     CETTA_GC_VISIT_LOGICAL_BINDINGS((SESSION), (PAYLOAD)->env, FAIL); \

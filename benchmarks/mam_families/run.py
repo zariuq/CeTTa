@@ -26,7 +26,7 @@ import argparse, hashlib, json, os, resource, shlex, signal, subprocess, sys, th
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PETTA = ROOT.parent/'PeTTa'
+PETTA = Path(os.environ.get('PETTA_ROOT', ROOT.parent / 'PeTTa')).resolve()
 sys.path.insert(0,str(ROOT/'scripts'))
 from petta_corpus_manifest import alpha_canonicalize_atom_text
 

@@ -96,7 +96,7 @@ BindingsFrameSchema *bindings_frame_schema_new_presented(
             bindings_frame_schema_release(schema);
             return NULL;
         }
-        schema->spellings[slot] = variable->sym_id;
+        schema->spellings[slot] = atom_symbol_current_id(variable);
         schema->name_keys[slot] = variable->name_key;
     }
     return schema;
@@ -147,19 +147,82 @@ bool bindings_frame_schema_find_slot(
     return true;
 }
 
-BindingsFrameSchema *bindings_frame_schema_clone(
-        const BindingsFrameSchema *source) {
-    if (!source)
+BindingsFrameSchema *bindings_frame_schema_clone_capacity(
+        const BindingsFrameSchema *source, uint32_t capacity) {
+    if (!source || capacity < source->cap)
         return NULL;
-    BindingsFrameSchema *copy = bindings_frame_schema_alloc(source->cap);
+    BindingsFrameSchema *copy = bindings_frame_schema_alloc(capacity);
     if (source->len > 0u) {
         memcpy(copy->source_ids, source->source_ids,
                (size_t)source->len * sizeof(*copy->source_ids));
+    }
+    /* Manufactured frames can grow positional slots without changing their
+     * published source inventory. Their presentation is still owned here. */
+    if (source->cap > 0u) {
         memcpy(copy->spellings, source->spellings,
-               (size_t)source->len * sizeof(*copy->spellings));
+               (size_t)source->cap * sizeof(*copy->spellings));
         memcpy(copy->name_keys, source->name_keys,
-               (size_t)source->len * sizeof(*copy->name_keys));
+               (size_t)source->cap * sizeof(*copy->name_keys));
     }
     bindings_frame_schema_publish(copy, source->len);
     return copy;
+}
+
+BindingsFrameSchema *bindings_frame_schema_clone(
+        const BindingsFrameSchema *source) {
+    return source ? bindings_frame_schema_clone_capacity(source, source->cap) : NULL;
+}
+
+static const char bindings_frame_schema_copy_kind;
+
+static void bindings_frame_schema_copy_retain(const void *schema) {
+    bindings_frame_schema_retain((BindingsFrameSchema *)schema);
+}
+
+static void bindings_frame_schema_copy_release(const void *schema) {
+    bindings_frame_schema_release((BindingsFrameSchema *)schema);
+}
+
+BindingsFrameSchema *bindings_frame_schema_copy_lookup(
+    const BindingsFrameSchema *source, const AtomDeepCopySession *atoms) {
+    if (!source || !atoms ||
+        !atom_deep_copy_session_object_current(atoms, &bindings_frame_schema_copy_kind, source) ||
+        source->len > source->cap ||
+        (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
+        return NULL;
+    size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
+    BindingsFrameSchema *known = atom_deep_copy_session_object_forwarded(
+        atoms, &bindings_frame_schema_copy_kind, source, bytes);
+    if (known) return known;
+    /* An image encountered by another root is already in this graph.
+     * Inverse lookup validates the same destination/map epoch. */
+    return atom_deep_copy_session_object_original(
+        atoms, &bindings_frame_schema_copy_kind, source, bytes)
+        ? (BindingsFrameSchema *)source : NULL;
+}
+
+BindingsFrameSchema *bindings_frame_schema_copy_with_session(
+    const BindingsFrameSchema *source, AtomDeepCopySession *atoms) {
+    if (!source || !atoms ||
+        !atom_deep_copy_session_object_current(atoms, &bindings_frame_schema_copy_kind, source) ||
+        source->len > source->cap ||
+        (size_t)source->cap > (SIZE_MAX - sizeof(*source)) / sizeof(*source->source_ids))
+        return NULL;
+    size_t bytes=sizeof(*source)+(size_t)source->cap*sizeof(*source->source_ids);
+    BindingsFrameSchema *known=bindings_frame_schema_copy_lookup(source,atoms);
+    if(known){bindings_frame_schema_retain(known);return known;}
+    BindingsFrameSchema *image=bindings_frame_schema_clone(source);
+    if(!image)return NULL;
+    for(uint32_t i=0u;i<source->cap;i++) {
+        if(!source->name_keys[i])continue;
+        image->name_keys[i]=atom_deep_copy_session_copy(atoms,source->name_keys[i]);
+        if(!image->name_keys[i])goto fail;
+    }
+    if(!atom_deep_copy_session_object_record_retained(atoms,&bindings_frame_schema_copy_kind,
+            source,image,bytes,bindings_frame_schema_copy_retain,
+            bindings_frame_schema_copy_release))goto fail;
+    return image;
+fail:
+    bindings_frame_schema_release(image);
+    return NULL;
 }

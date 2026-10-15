@@ -2,6 +2,7 @@
 #define CETTA_SESSION_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <limits.h>
 #include <stdio.h>
@@ -302,6 +303,12 @@ typedef struct {
     CettaModulePolicy module_policy;
     CettaEvaluatorOptions options;
     CettaProcessControl process_control;
+    /* Native host authority, never a pragma/environment/MeTTa option. The
+     * host supplies a fresh observation and accepts only closed proposals. */
+    bool speculative;
+    /* Shared by nested evaluations and their workers; never rolled back with
+     * a rejected branch or hidden by an expression's error handling. */
+    _Atomic uint64_t effect_denials;
     /* Optional native assertion observer; execution owns the callback scope.
      * It neither handles exceptions nor changes a dialect's test result. */
     void (*test_verdict)(void *context, bool passed);

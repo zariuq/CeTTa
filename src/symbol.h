@@ -7,6 +7,10 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#ifndef CETTA_SYMBOL_READ_COVERAGE
+#define CETTA_SYMBOL_READ_COVERAGE 0
+#endif
+
 typedef uint32_t SymbolId;
 
 #define SYMBOL_ID_NONE ((SymbolId)0)
@@ -14,18 +18,40 @@ typedef uint32_t SymbolId;
 enum {
     CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP = 1u << 0,
     CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP = 1u << 1,
+    /* Only explicitly data-born entries may be considered for collection.
+     * The legacy intern API owns its result permanently. */
+    CETTA_SYMBOL_FLAG_RUNTIME_DATA = 1u << 4,
+    CETTA_SYMBOL_FLAG_SPECULATIVE_OP = 1u << 2,
+    CETTA_SYMBOL_FLAG_BUILTIN = 1u << 3,
 };
 
 typedef struct {
     const char *bytes;
     uint32_t len;
     uint64_t hash;
-    uint32_t flags;
+    _Atomic uint32_t flags;
     /* The builtin policy of the name, resolved on first use: zero until
      * then, otherwise the policy's position plus one (position zero: none).
      * Read and written only through the accessors below. */
     uint32_t builtin_policy;
 } SymbolEntry;
+
+/* Payload bytes include the terminating NUL. Metadata includes reserved
+ * entry chunks and index slots, rather than only populated entries. These
+ * gauges describe table storage; resetting runtime counters does not reset
+ * them. No entries are reclaimed in the instrumentation phase. */
+typedef struct {
+    uint64_t owned_count;
+    uint64_t data_count;
+    uint64_t retired_count;
+    uint64_t owned_bytes;
+    uint64_t data_bytes;
+    uint64_t metadata_bytes;
+    uint64_t peak_payload_bytes;
+    uint64_t peak_metadata_bytes;
+    uint64_t data_allocated_bytes;
+    uint64_t promotions;
+} SymbolTableStats;
 
 typedef struct {
     uint64_t hash;
@@ -47,7 +73,52 @@ typedef struct {
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
+    SymbolTableStats stats;
 } SymbolTable;
+
+/* Non-destructive marker substrate. Unmarked bytes are diagnostics, never
+ * permission to free: the caller must still qualify every root owner and
+ * mutator/borrow boundary. Late births invalidate the snapshot for sweeping.
+ * This API contains no retirement or payload mutation operation. */
+typedef struct {
+    SymbolTable *table;
+    uint64_t instance_id;
+    uint32_t entry_limit;
+    uint8_t *marked;
+    bool late_mark;
+} SymbolShadowScan;
+
+typedef struct {
+    uint64_t marked_data_count;
+    uint64_t marked_data_bytes;
+    uint64_t unmarked_data_count;
+    uint64_t unmarked_data_bytes;
+    uint64_t late_births;
+    bool snapshot_outdated;
+} SymbolShadowResult;
+
+bool symbol_shadow_begin(SymbolTable *st, SymbolShadowScan *scan);
+bool symbol_shadow_mark(SymbolShadowScan *scan, SymbolId id);
+bool symbol_shadow_finish(SymbolShadowScan *scan, SymbolShadowResult *out);
+void symbol_shadow_destroy(SymbolShadowScan *scan);
+
+#if CETTA_SYMBOL_READ_COVERAGE
+/* Test-only, thread-local read diagnostic for one pre-existing ID. The
+ * collector marks copied atoms; selected symbol accessors check that mark.
+ * This samples neither every holder nor direct ID reads, and cannot see a
+ * borrowed bytes pointer retained across the boundary. It is not permission
+ * to reclaim an entry. */
+bool symbol_read_coverage_watch(SymbolTable *st, SymbolId id);
+void symbol_read_coverage_begin(SymbolTable *st);
+void symbol_read_coverage_mark_copy(SymbolTable *st, SymbolId id);
+void symbol_read_coverage_commit(SymbolTable *st);
+void symbol_read_coverage_cancel(SymbolTable *st);
+void symbol_read_coverage_clear(void);
+void symbol_read_coverage_omit_marks_for_test(bool omit);
+uint64_t symbol_read_coverage_collections(void);
+uint64_t symbol_read_coverage_marked_copies(void);
+uint64_t symbol_read_coverage_checked_reads(void);
+#endif
 
 static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     return st ? st->instance_id : 0u;
@@ -285,6 +356,21 @@ static inline SymbolSpelling symbol_spelling(
     X(min_atom, "min-atom") \
     X(sort_atom, "sort-atom") \
     X(retain_top_k_keyed_atom, "retain-top-k-keyed-atom") \
+    /* Compact native tensor operations, wrapped by lib_tensor.metta. */ \
+    X(tensor_from, "__cetta_lib_tensor_from") \
+    X(tensor_full, "__cetta_lib_tensor_full") \
+    X(tensor_shape, "__cetta_lib_tensor_shape") \
+    X(tensor_dtype, "__cetta_lib_tensor_dtype") \
+    X(tensor_to_expr, "__cetta_lib_tensor_to_expr") \
+    X(tensor_reshape, "__cetta_lib_tensor_reshape") \
+    X(tensor_copy, "__cetta_lib_tensor_copy") \
+    X(tensor_with, "__cetta_lib_tensor_with") \
+    X(tensor_add, "__cetta_lib_tensor_add") \
+    X(tensor_mul, "__cetta_lib_tensor_mul") \
+    X(tensor_sum, "__cetta_lib_tensor_sum") \
+    X(tensor_dot, "__cetta_lib_tensor_dot") \
+    X(tensor_encode, "__cetta_lib_tensor_encode") \
+    X(tensor_decode, "__cetta_lib_tensor_decode") \
     X(unkey_atom, "unkey-atom") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \
@@ -324,6 +410,7 @@ static inline SymbolSpelling symbol_spelling(
     /* ── Library extension hooks ── */ \
     X(lib_list_from_expression, "__cetta_lib_list_from_expression") \
     X(lib_list_to_expression, "__cetta_lib_list_to_expression") \
+    X(lib_list_range, "__cetta_lib_list_range") \
     X(lib_system_args, "__cetta_lib_system_args") \
     X(lib_system_arg, "__cetta_lib_system_arg") \
     X(lib_system_arg_count, "__cetta_lib_system_arg_count") \
@@ -333,6 +420,10 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
+    X(lib_system_host, "__cetta_lib_system_host") \
+    X(lib_system_read_line, "__cetta_lib_system_read_line") \
+    X(lib_fs_tail_text, "__cetta_lib_fs_tail_text") \
+    X(lib_fs_entries, "__cetta_lib_fs_entries") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
@@ -341,15 +432,36 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_try_canonical_from_file, "__cetta_lib_fs_try_canonical_from_file") \
     X(lib_fs_try_canonical_under, "__cetta_lib_fs_try_canonical_under") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
+    X(lib_fs_read_text_result, "__cetta_lib_fs_read_text_result") \
+    X(lib_fs_line_window, "__cetta_lib_fs_line_window") \
+    X(lib_fs_tree_page, "__cetta_lib_fs_tree_page") \
+    X(lib_fs_grep_page, "__cetta_lib_fs_grep_page") \
+    X(lib_fs_update_text, "__cetta_lib_fs_update_text") \
+    X(lib_fs_is_file, "__cetta_lib_fs_is_file") \
     X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
+    X(lib_fs_read_lines_between, "__cetta_lib_fs_read_lines_between") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
+    X(lib_durable_open, "__cetta_lib_durable_open") \
+    X(lib_durable_read, "__cetta_lib_durable_read") \
+    X(lib_durable_commit, "__cetta_lib_durable_commit") \
+    X(lib_durable_checkpoint, "__cetta_lib_durable_checkpoint") \
+    X(lib_durable_close, "__cetta_lib_durable_close") \
     X(lib_io_submit, "__cetta_lib_io_submit") \
     X(lib_io_poll, "__cetta_lib_io_poll") \
+    X(lib_io_status, "__cetta_lib_io_status") \
+    X(lib_io_wait, "__cetta_lib_io_wait") \
+    X(lib_io_wait_ready, "__cetta_lib_io_wait_ready") \
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
+    X(lib_io_signal, "__cetta_lib_io_signal") \
+    X(lib_cwp_call, "__cetta_lib_cwp_call") \
+    X(lib_proc_run, "__cetta_lib_proc_run") \
+    X(lib_sqlite_query, "__cetta_lib_sqlite_query") \
+    X(lib_sqlite_transaction, "__cetta_lib_sqlite_transaction") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
+    X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \
@@ -703,14 +815,13 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom)
 
-/* Builtin grounded operations whose result type is a pure function of their
-   argument atoms.  Compile this effect/type license into SymbolEntry flags
-   during builtin initialization, before the table is exposed, so admission
-   paths do not repeatedly reclassify opcodes. */
-#define CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(X) \
-    X(abt_quote_syntax) \
+/* Grounded value operations without ambient observations or mutation, given
+ * closed values from the host. This is also an execution permission list:
+ * additions require an effect audit, not merely a predictable result type. */
+#define CETTA_PURE_GROUNDED_SYMBOL_FIELDS(X) \
     X(abt_default_signatures) \
     X(abt_signature_admitted) \
     X(abt_shift) \
@@ -769,11 +880,97 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(lib_list_range) \
     X(repeat_atom) \
     X(unique_atom) \
     X(remove_all_atom) \
     X(intersection_atom) \
     X(subtraction_atom)
+
+/* Result-type purity is weaker than effect freedom. Additional type-only
+ * licenses belong here, not in the shared execution-permission list above. */
+#define CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(X) \
+    CETTA_PURE_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_quote_syntax)
+
+/* Additional operations admitted in a host-owned speculative HE context.
+ * Query spaces must be fresh in-memory projections of the supplied observation.
+ * Changes are returned as proposals, never applied through mutation builtins.
+ * Native extensions and future builtins are excluded until explicitly audited. */
+#define CETTA_SPECULATIVE_SYMBOL_FIELDS(X) \
+    X(quote) \
+    X(capture) \
+    X(function) \
+    X(colon) \
+    X(arrow) \
+    X(comma) \
+    X(pipe) \
+    X(match) \
+    X(superpose) \
+    X(hyperpose) \
+    X(collapse) \
+    X(reify) \
+    X(cons_atom) \
+    X(union_atom) \
+    X(decons_atom) \
+    X(car_atom) \
+    X(cdr_atom) \
+    X(unify) \
+    X(case_text) \
+    X(switch_text) \
+    X(switch_minimal) \
+    X(let_star) \
+    X(let) \
+    X(chain) \
+    X(abt_chain_v1) \
+    X(abt_let_v1) \
+    X(collect) \
+    X(fold) \
+    X(fold_by_key) \
+    X(reduce) \
+    X(select) \
+    X(once) \
+    X(return_text) \
+    X(eval) \
+    X(foldl_atom_in_space) \
+    X(get_atoms) \
+    X(count_atoms) \
+    X(collapse_bind) \
+    X(superpose_bind) \
+    X(metta) \
+    X(evalc) \
+    X(nop) \
+    X(get_metatype) \
+    X(get_type) \
+    X(get_type_space) \
+    X(if_text) \
+    X(sealed_text) \
+    X(minimal_foldl_atom) \
+    X(minimal_foldl_llist) \
+    X(minimal_foldl_sequence) \
+    X(minimal_retain_top_k_by_number) \
+    X(minimal_space_contains_exact) \
+    X(minimal_space_revision) \
+    X(size) \
+    X(format_args) \
+    X(parse) \
+    X(parse_first) \
+    X(lib_json_parse_v1) \
+    X(lib_json_to_legacy_v1) \
+    X(lib_json_parse) \
+    X(lib_json_stringify_v1) \
+    X(lib_json_stringify) \
+    X(lib_json_members_v1) \
+    X(lib_json_get_all_v1) \
+    X(lib_json_get_first_v1) \
+    X(lib_json_get_last_v1) \
+    X(lib_json_object_get) \
+    X(lib_str) \
+    X(lib_lts_rho_transitions) \
+    X(lib_rhometta_run) \
+    X(lib_rhometta_run_canonical) \
+    X(lib_rhometta_transitions) \
+    X(lib_rhometta_values)
 
 typedef struct {
 #define CETTA_BUILTIN_SYMBOL_FIELD(field, text) SymbolId field;
@@ -797,9 +994,26 @@ SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len
 SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
                                    uint32_t len, uint64_t hash);
 SymbolId symbol_intern_cstr(SymbolTable *st, const char *text);
+/* Data births preserve the same spelling, ID equality and hash as owned
+ * interning. An owned intern of an existing data spelling promotes it;
+ * subsequent data interns never downgrade it. Interning does not collect. */
+SymbolId symbol_intern_data_bytes(SymbolTable *st, const uint8_t *bytes,
+                                  uint32_t len);
+SymbolId symbol_intern_data_cstr(SymbolTable *st, const char *text);
+/* Registration of a raw ID gives it permanent ownership. */
+bool symbol_pin(SymbolTable *st, SymbolId id);
+void symbol_table_stats_snapshot(SymbolTable *st, SymbolTableStats *out);
 /* The symbol already interned for text, or SYMBOL_ID_NONE.  Never interns. */
 SymbolId symbol_lookup_cstr(SymbolTable *st, const char *text);
+/* A lookup never acquires ownership or inserts a missing spelling. */
+SymbolId symbol_lookup_span_hashed(SymbolTable *st, const uint8_t *bytes,
+                                    uint32_t len, uint64_t hash);
+uint64_t symbol_hash_span(const uint8_t *bytes, uint32_t len);
 
+/* Borrowed text: currently valid until table destruction. A future sweep
+ * must restrict data-text borrows to protected roots/leases or the interval
+ * before the next eligible quiescent boundary. The table mutex alone cannot
+ * protect this unlocked borrow. Owned spellings remain permanent. */
 const char *symbol_bytes(const SymbolTable *st, SymbolId id);
 uint32_t symbol_len(const SymbolTable *st, SymbolId id);
 /* Bytewise spelling order, including bytes after embedded NUL. Equal IDs

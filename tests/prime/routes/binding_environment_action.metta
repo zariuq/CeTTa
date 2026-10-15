@@ -63,3 +63,40 @@
 !(let $p (lp (+ $y 1) 0) (let $r (h $y) (first-of $p)))
 !(let $r (h $y) (once (let $u (println! (in-once $y)) (unify $y 6 yes no)){$u}))
 !(let $r (h $y) (let $s (new-space) (let $u (add-atom $s (fact $y)) (get-atoms $s))))
+
+; An unresolved computation keeps its demand after a later binding.
+; Completed callable-shaped data remains inert until explicit eval.
+; Mixed occurrences preserve order, duplicates, sharing, and effects once.
+
+(= (brc:set $x) (unify $x 5 ok no))
+(= (brc:identity $x) $x)
+(= (brc:first (brc:box $x $ignored)) $x)
+(= (brc:after-effect $x)
+   (let $ignored (println! brc:effect) (+ $x 1)))
+
+; The original open-source return, compared with direct source and a field.
+!(let $t (brc:identity (+ $y 1)) (let $r (brc:set $y) $t))
+!(let $t (+ $y 1) (let $r (brc:set $y) $t))
+!(let $p (brc:box (+ $y 1) 0) (let $r (brc:set $y) (brc:first $p)))
+
+; Constructed callable syntax must retain its earned data role.
+!(let $t (cons-atom + ($y 1)) (let $r (brc:set $y) $t))
+!(let $t (brc:identity (cons-atom + ($y 1))) (let $r (brc:set $y) $t))
+!(let $t (cons-atom + ($y 1)) (let $r (brc:set $y) (eval $t)))
+
+; A producer's earlier effect cannot be replayed by later refinement.
+!(let $t (brc:after-effect $y) (let $r (brc:set $y) $t))
+!(brc:identity (+ 2 1))
+
+(= (brm:set $x) (unify $x 5 ok no))
+(= (brm:identity $x) $x)
+(= (brm:after-effect $x) (let $ignored (println! brm:once) (+ $x 1)))
+
+!(let $t (superpose ((+ $y 1) (cons-atom + ($y 1)))) (let $r (brm:set $y) $t))
+!(let $t (superpose ((cons-atom + ($y 1)) (+ $y 1))) (let $r (brm:set $y) $t))
+!(let $t (superpose ((+ $y 1) (+ $y 1) (cons-atom + ($y 1)) (cons-atom + ($y 1)))) (let $r (brm:set $y) $t))
+!(let $t (brm:identity (superpose ((+ $y 1) (cons-atom + ($y 1))))) (let $r (brm:set $y) $t))
+!(let $t (+ $y 1) (let $r (brm:set $y) (Pair $t $t)))
+!(let $t (cons-atom + ($y 1)) (let $r (brm:set $y) (Pair $t $t)))
+!(let $t (brm:after-effect $y) (let $r (brm:set $y) (Pair $t $t)))
+!(let $t (superpose ((+ $y 1) (cons-atom + ($y 1)))) (let $r (brm:set $y) (eval $t)))

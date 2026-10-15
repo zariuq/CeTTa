@@ -1,9 +1,10 @@
 # CeTTa
 
 CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
-public lane is the base HE-style evaluator (`--lang he`) with no named profile
-selected. Use `--profile extended` when you want the labeled CeTTa
-extension interface.
+build runs the base HE-style evaluator (`--lang he`) with no named profile
+selected. The same source tree also has PeTTa and Prime language modes and
+optional host interfaces for I/O, durable state, and services. Use
+`--profile extended` when you want the labeled CeTTa extension interface.
 
 This branch also carries a working draft of **MeTTa Prime** (`--lang prime`),
 a higher-order MeTTa in which code is a value, programs can be checked by a
@@ -11,6 +12,14 @@ native dependent type kernel, and proofs are terms that the kernel checks.
 The draft is where Prime's semantics is being settled against its formal
 metatheory, so its interfaces may still change. See
 [MeTTa Prime draft](#metta-prime-draft---lang-prime) below.
+
+The `godelclaw/CeTTa` branch `cetta-ours` combines Prime with the native
+process, timer, mailbox, memory and Telegram libraries used by
+[GödelClaw](https://github.com/godelclaw/godelclaw). GödelClaw pins its engine
+revision in `CETTA_REF`; its cognitive loops use `--lang petta`, while Prime
+programs select `--lang prime`. See the
+[integration changes and qualification results](verification/agent-trial/upstream-review.txt).
+The integration adds no automatic tool admission rule or model budget.
 
 ## Requirements
 
@@ -84,6 +93,75 @@ Bridge-capable modes:
 | `BUILD=mork` | same bridge interface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
 | `BUILD=pathmap` | compatibility alias of `BUILD=mork` | no | accepted old spelling for the same no-Python bridge build |
 
+## Optional Host Interfaces
+
+These features are selected at build time. They do not require a separate
+CeTTa checkout or a different source branch.
+
+| Interface | Build selection | Guide |
+| --- | --- | --- |
+| Native HTTP and asynchronous I/O | `ENABLE_HTTP=1` (libcurl) | [I/O boundary](docs/io/README.md) |
+| Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
+| Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
+| Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
+| Shell helper library | `lib/shell.metta` | [Shell module](lib/shell.metta) |
+| Telegram transport and action service | `telegram-service` target with HTTP and durable features | [Durable host](docs/durable/README.md), [unit templates](deploy/systemd/) |
+| Managed spellings and registered-name reclamation | `ENABLE_MANAGED_SYMBOLS=1` | [Symbol lifetime experiment](verification/gc/README.md) |
+| Native memory collection, packed cosine search and journaled space owner | `space-service value-worker` targets | [Local setup and qualification](docs/memory/README.md) |
+
+For example, a Python-enabled CLI and a smaller service executable can be
+built from one checkout:
+
+```bash
+make BUILD=python ENABLE_HTTP=1 ENABLE_DURABLE=1 \
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
+  SQLITE_PROVIDER=vendored cetta
+make BUILD=core ENABLE_HTTP=1 ENABLE_DURABLE=1 \
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
+  SQLITE_PROVIDER=vendored telegram-service
+```
+
+The service is a separate executable so it need not link Python; both builds
+use the same source. Managed symbols are still an experimental memory feature,
+not a complete collector for every legacy numeric symbol ID.
+
+## JSON ingestion
+
+`lib/json.metta` uses a build-time predictive parser for the authored
+RFC-8259 grammar. Regular lexical spans use generated DFA tables; container
+actions construct values while reading the input. Ordinary parsing and
+stringifying do not materialize forests, render certificates, hash a parse
+tree, or reparse emitted output.
+
+Canonical `json:*` values preserve exact number text, ordered duplicate
+members, Unicode scalars, occurrence IDs and source spans. Historical
+`json-parse` values retain their compatibility representation, including NUL
+bytes. Parse failures report a byte position and expectation, and preserve
+the caller's arena and output. Parsing, value conversion, Boolean respelling
+and writing use explicit continuations, with no default nesting cap. C callers
+can request explicit work, depth and byte budgets independently of the grammar.
+
+`json:parse-reference`, `json:parse-legacy-reference` and
+`json:stringify-reference` explicitly select the prepared GLL reference.
+`json:capabilities` identifies the default as `PredictiveDfaV1`; its remaining
+digests describe that reference. Diagnostic preparation is lazy.
+
+The compiler reads the lowered syntax, lexical profile, occurrence-value
+language and elaboration plan. It checks semantic layouts and FIRST/FOLLOW
+conflicts after lexical folding and erasing value-inert whitespace. It
+supports this JSON elaboration fragment and refuses unsupported changes;
+it is not a general parser generator with GLL fallback islands.
+
+The C entry `cetta_json_direct_v1_lines` consumes JSONL one row at a time.
+Its callback borrows the row's value until returning; retaining it requires
+copying it. Completed rows remain delivered if a subsequent row fails.
+
+Run `make test-json-direct-v1` for differential, malformed-input, concurrency,
+streaming and generator-conflict checks. The qualification binary also
+accepts `--bench FILE`, `--check FILE`, `--corpus DIRECTORY` and
+`--corpus-fast DIRECTORY`. Reference resource exhaustion is reported
+separately in corpus checks; complete-file agreement requires every row.
+
 ## Bridge Setup
 
 The bridge-enabled modes build `rust/cetta-space-bridge` and link it
@@ -102,10 +180,16 @@ Default checkout layout:
 CeTTa's optional bridge build currently follows the same sibling-repo layout
 that MORK itself expects.
 
-Current bridge branch expectations:
+The bridge is qualified against these upstream revisions:
 
-- PathMap: [Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap) `master`
-- MORK: [trueagi-io/MORK](https://github.com/trueagi-io/MORK) `main`
+- PathMap 0.4.0: [`cb4e1e4`](https://github.com/Adam-Vandervorst/PathMap/commit/cb4e1e4eecb75f0be9846b4b75c69d5e2d2f647b) on `master`.
+- MORK: [`ed57c671`](https://github.com/trueagi-io/MORK/commit/ed57c6716d8c510296fb5fbb8be6fbfe2df241d7) on `main`.
+
+Cargo uses the checked-in lockfile. Upstream Rust source changes invalidate
+the bridge build. CeTTa's overlay adapter uses PathMap's public zipper traits;
+its traversal controls check branches formed across both source tries. MORK
+integration uses the public expression environment and binding APIs. Both
+upstream repositories remain unmodified.
 
 The checked bridge lane vendors its tiny MM2 regression inputs under
 `tests/support/mork_mm2/`, so it no longer depends on sibling
@@ -143,6 +227,45 @@ for generating a bridge workspace manifest with the resolved Rust paths, so the
 bridge build no longer requires a symlinked sibling mirror just to satisfy
 Cargo path dependencies.
 
+Run the Rust tests and the ordinary C integration gates:
+
+```bash
+make BUILD=mork test-rust-bridge
+make BUILD=mork test-mork-lane test-pathmap-lane
+```
+
+For clients loading the bridge with `dlopen`, build the separate loadable
+profile, which configures jemalloc without initial-exec TLS:
+
+```bash
+make BUILD=mork bridge-shared
+make BUILD=mork test-mork-shared-bridge
+```
+
+`bridge-shared` prints the resulting library path. Static builds retain their
+existing allocator configuration. Returned packets own their bytes until
+`mork_bytes_free`; they can outlive their source space. Query callback bindings
+are borrowed only for that callback. Stable key ordering preserves packet
+layout and residual-variable numbering despite upstream trail-order changes.
+
+Independently owned handles may run on different threads. Calls touching
+MORK's non-atomic process statistics share a synchronization gate, including
+same-thread callback reentry. Concurrent use or destruction of the same handle
+still requires caller synchronization. This boundary does not promise parallel
+kernel execution.
+
+Stopping a MORK query consumer stops answer delivery, while the underlying
+walk finishes so upstream bindings and traversal temporaries are released.
+This prevents the callback's early-exit leak; it does not promise immediate
+termination of the walk. Counted PathMap queries preserve duplicate
+multiplicity and retain stored-variable answers alongside exact ground hits.
+
+The broader MM2 corpus uses the current CeTTa checkout and sibling MORK
+resources. The small Apache-licensed chainer inputs are pinned under
+`tests/support/mm2_chainer/`; `MORK_REPO_DIR` overrides the resource checkout.
+The differential gate checks its full expected program sets and fails when
+required inputs are missing.
+
 If you need MM2 arithmetic sink examples (`i+`, `i-`, `i*`, `f+`, `f-`, `f*`)
 today, use the MORK branch
 [`feature/arithsinks-pr-sync`](https://github.com/zariuq/MORK/tree/feature/arithsinks-pr-sync)
@@ -164,6 +287,13 @@ All bridge-enabled builds (`BUILD=main`, `BUILD=full`, `BUILD=mork`, and
 stores `atom_bytes || count_bytes` as PathMap keys, preserving multiset
 semantics while still benefiting from PathMap's structural matching. See
 `specs/pathmap_counted_space_design.txt` for the full design.
+
+Native spaces remain the default. PathMap provides structural trie operations
+and ACT import/export, but backend choice depends on the workload. ACT files
+are snapshots, not a coordinated durable transaction journal. A remote
+atomspace interface can expose either backend without requiring clients to
+link Rust; such a server and its durability protocol are separate from this
+in-process FFI.
 
 ## Play Here First
 
@@ -377,6 +507,8 @@ The bridge code includes two thin compatibility adapters:
 - Explicit `mork:` helper interface for the MORK/MM2 execution lane
 - Local git-module and module-inventory interfaces
 - Python foreign-module support in the default build
+- Optional HTTP, durable host, process, and Telegram service modules
+- Experimental managed spellings and registered-name reclamation
 - The MeTTa Prime draft described next
 
 ## MeTTa Prime draft (`--lang prime`)
@@ -452,7 +584,7 @@ The bridge code includes two thin compatibility adapters:
   It does not yet host the HE floating-point truth-value evaluator.
 - Substitution into code (`lift`) is an equation-level prototype.
 
-## Test Status
+## Example Runs
 
 Draft verification on 2026-09-28 used the isolated Python-enabled build:
 
@@ -472,6 +604,15 @@ heavy and optional feature lanes. These runs do not qualify every build profile.
 Curriculum execution and source-theorem coverage are separate: the dedicated
 repair gate checks its complete programs and mutations, while unported source
 obligations remain outside those passing counts.
+The merged upstream separately recorded the following predecessor profile results.
+They do not qualify the joined checkout, whose regression gates must run again.
+
+Test results depend on the build mode and enabled features. Use the verified
+test commands above for the checkout and feature set you intend to use.
+- `make test-profiles`: `77 passed, 0 failed`
+- Explicit bridge lanes passed for `BUILD=mork`, `BUILD=main`,
+  and their compatibility aliases `BUILD=pathmap` and `BUILD=full`
+- Explicit runtime-stats lane bodies also passed for the checked bridge builds
 
 ## Examples
 
@@ -690,6 +831,17 @@ Libraries:
 - `lib/mork.metta`: narrow MORK-facing helper interface
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
   extension libraries used by the current profile interfaces
+  - `fs:read-text` preserves all bytes. `fs:read-text-result path max-bytes errors`
+    returns structured success or filesystem failure; `max-bytes` is caller-owned
+    (0 means unlimited), and `errors` is `"raw"` or `"replace"` for malformed UTF-8.
+    `fs:line-window` streams numbered line windows. `fs:tree-page` and
+    `fs:grep-page` return explicit continuation offsets; callers choose skipped
+    directories. Search uses PCRE2 (build with `libpcre2-dev`, run with
+    `libpcre2-8`); unavailable support returns an explicit error.
+    `fs:update-text` supports write, append and exact edits with atomic replacement,
+    permissions, SHA-256 receipts and collision-free backups in a caller-selected
+    directory. `fs:is-file` distinguishes regular files from directories.
+    Oversized files return `("limit" max-bytes)`, never silently truncated text.
 
 Useful workloads:
 

@@ -1,0 +1,7 @@
+[(Power (Power Empty))]
+[(set:check (set:twice Power Empty) set)]
+[True]
+[False]
+[True]
+[False]
+[(set:formed (-> (x : set) (In x x)))]

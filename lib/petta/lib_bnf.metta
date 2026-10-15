@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self langdef)
+!(import! &self (library langdef))
 !(import! &self langdef/petta/generated/plain_bnf_semantic_admission_v1.metta)
 (= (bnf:empty-lexical-environment) (bnf-v1:lexical-environment (bnf-v1:lexical-declarations-nil)))
 (= (bnf:grammar-authority $start-name $lexical-environment) (bnf-v1:grammar-authority (bnf-v1:start $start-name) $lexical-environment))

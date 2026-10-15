@@ -1,0 +1,50 @@
+; Exact metadata selectors over aligned rows of one view.
+; Fields and bounded mask caches are derived; the source remains authoritative.
+!(import! &self (library lib_tensor))
+
+
+(= (index:new $stamp $count $capacity)
+   (case (tensor:full u8 ($count) 0)
+     (((TensorFailure $why) (IndexFailure $why))
+      ($_ (case (tensor:indices ($capacity))
+        (((TensorFailure $bad) (IndexFailure invalid-capacity))
+         ($valid (if (< $capacity 0) (IndexFailure invalid-capacity)
+           (let* (($fields (new-space)) ($masks (new-space)))
+             (RowIndex $stamp $count $fields $masks $capacity))))))))))
+(= (index:insert (RowIndex $stamp $count $fields $masks $capacity) $row $key $value)
+   (case (tensor:indices ($row))
+     (((TensorFailure $why) (IndexFailure $why))
+      ($_ (if (or (< $row 0) (>= $row $count)) (IndexFailure row-out-of-bounds)
+        (let $cleared (collapse (let $old (match $masks $entry $entry)
+                         (remove-atom $masks $old)))
+          (add-atom $fields (Field $key $value $row))))))))
+(= (index:mask $stamp (RowIndex $built $count $fields $masks $capacity) $filter)
+   (if (== $stamp $built) (index:mask-local $count $fields $masks $capacity $filter)
+     (IndexFailure stale-view)))
+(= (index:describe (RowIndex $stamp $count $fields $masks $capacity))
+   (IndexInfo $stamp $count exact row-mask (All Eq And Or) $capacity))
+
+(= (index:eq-mask $n $fields $masks $capacity $key $value)
+   (case (collapse (match $masks (Mask $key $value $mask) $mask))
+     ((() (let* (($indices (tensor:indices (collapse (match $fields (Field $key $value $i) $i))))
+                  ($mask (tensor:mask-indices $n $indices))
+                  ($saved (if (< (size-atom (collapse (get-atoms $masks))) $capacity)
+                    (add-atom $masks (Mask $key $value $mask)) ())))
+            $mask))
+      (($mask) $mask))))
+(= (index:mask-local $n $fields $masks $capacity $filter)
+   (case $filter
+     ((All (tensor:full u8 ($n) 1))
+      ((Eq $key $value) (index:eq-mask $n $fields $masks $capacity $key $value))
+      ((And $filters) (index:mask-fold $n $fields $masks $capacity $filters (tensor:full u8 ($n) 1) And))
+      ((Or $filters) (index:mask-fold $n $fields $masks $capacity $filters (tensor:full u8 ($n) 0) Or))
+      ($_ (IndexFailure unsupported-filter)))))
+(= (index:mask-fold $n $fields $masks $capacity $filters $acc $kind)
+   (case $filters
+     ((() $acc)
+      ($nonempty
+       (let* (($head (car-atom $nonempty)) ($tail (cdr-atom $nonempty))
+              ($next (index:mask-local $n $fields $masks $capacity $head))
+              ($merged (case $kind
+                 ((And (tensor:mask-and $acc $next)) (Or (tensor:mask-or $acc $next))))))
+         (index:mask-fold $n $fields $masks $capacity $tail $merged $kind))))))

@@ -84,6 +84,7 @@ static bool inference_set_error(char *buf, size_t size, const char *fmt, ...) {
 }
 
 static char *inference_format(Arena *arena, const char *fmt, ...) {
+    if (!fmt) return NULL;
     va_list ap;
     va_list copy;
     int len;
@@ -247,7 +248,7 @@ static bool inference_atom_symbol_id(Atom *atom, SymbolId *out) {
     if (!atom || !out)
         return false;
     if (atom->kind == ATOM_SYMBOL) {
-        *out = atom->sym_id;
+        *out = atom_symbol_current_id(atom);
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {

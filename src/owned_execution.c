@@ -37,10 +37,17 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence(
             execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
             return execution->stop;
         }
+        bool final = execution->pending.final &&
+            execution->completion == CETTA_EVAL_COMPLETE;
         execution->has_pending = false;
         memset(&execution->pending, 0, sizeof(execution->pending));
         execution->accepted++;
         allowance--;
+        if (final) {
+            execution->stop = CETTA_OWNED_EXECUTION_COMPLETE;
+            execution->terminal = true;
+            return execution->stop;
+        }
     }
     execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
     return execution->stop;

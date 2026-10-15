@@ -1,3 +1,8 @@
+body
+body
+make
+body
+body
 [home]
 [()]
 [()]
@@ -24,3 +29,12 @@
 [()]
 [17]
 [99]
+[(Pair 3 3)]
+[done]
+[(Pair 7 7)]
+[(Pair 7 7)]
+[6]
+[(Pair 1 1), (Pair 2 2)]
+[(Pair (quote (+ 1 2)) (quote (+ 1 2)))]
+[(Pair (+ 1 2) 3)]
+[(Pair 3 3)]

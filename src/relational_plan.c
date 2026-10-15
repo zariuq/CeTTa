@@ -551,7 +551,8 @@ bool cetta_relational_plan_prepare(
             if (pattern->expr.len && pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
                 AtomId head = tu_child(space->native.universe, id, 0u);
                 if (tu_kind(space->native.universe, head) == ATOM_SYMBOL &&
-                    tu_sym(space->native.universe, head) != pattern->expr.elems[0]->sym_id)
+                    tu_sym(space->native.universe, head) !=
+                        atom_symbol_current_id(pattern->expr.elems[0]))
                     continue;
             }
             if (!relational_exact_key(&keys, space->native.universe, id)) {

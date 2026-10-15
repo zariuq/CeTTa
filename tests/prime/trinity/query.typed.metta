@@ -110,4 +110,3 @@
 !(let (Established (PrimeTypedQuery $type $answers $others))
       (try (type:of (match &kb (edge a $y) $y){$y}))
    $answers)
-

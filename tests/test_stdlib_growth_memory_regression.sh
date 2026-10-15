@@ -6,45 +6,59 @@ set -euo pipefail
 # DAG-to-tree copies in the equation-query path). This test reproduces that
 # setup and asserts exit 0, the 23 expected output lines, and peak RSS under
 # 1 GB.
+#
+# The padded library is private to this run.  The runtime takes its library
+# root from the real path of its executable, so the run uses a hard link of
+# the binary inside a private root whose lib/ holds a padded copy of
+# system.metta and links to every other library entry.  The shared
+# lib/system.metta is never written, so concurrent runs cannot disturb it.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$script_dir/.." && pwd)"
 bin="${1:-${CETTA_BIN:-$root/cetta}}"
+bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
 system_file="$root/lib/system.metta"
 expected="$root/tests/test_gparse_native_dispatch.expected"
 workload="$root/tests/test_gparse_native_dispatch.metta"
-scratch_dir="$root/runtime/test_stdlib_growth_memory_regression_$$"
-snapshot="$scratch_dir/system.metta.snapshot"
+scratch_dir="$(mktemp -d "$root/runtime/test_stdlib_growth_memory_regression.XXXXXX")"
+private_root="$scratch_dir/root"
+private_bin="$private_root/cetta"
+probe="$scratch_dir/padding_probe.metta"
 stdout_raw="$scratch_dir/stdout.raw"
 stdout_filtered="$scratch_dir/stdout.filtered"
 stderr_file="$scratch_dir/stderr"
 time_file="$scratch_dir/time"
+shared_before="$(sha256sum "$system_file" | cut -d' ' -f1)"
 
-restore_status=0
 cleanup() {
   status=$?
-  if [ -f "$snapshot" ]; then
-    if ! cp "$snapshot" "$system_file"; then
-      restore_status=1
-      echo "FAIL: could not restore lib/system.metta" >&2
-    elif ! cmp -s "$snapshot" "$system_file"; then
-      restore_status=1
-      echo "FAIL: lib/system.metta restore was not byte-identical" >&2
-    fi
+  if [ -d "$private_root/lib" ]; then
+    find "$private_root/lib" -mindepth 1 -maxdepth 1 \( -type l -o -type f \) -delete
+    rmdir "$private_root/lib" 2>/dev/null || true
   fi
-  rm -f "$snapshot" "$stdout_raw" "$stdout_filtered" "$stderr_file" "$time_file"
-  rmdir "$scratch_dir" 2>/dev/null || true
-  if [ "$restore_status" -ne 0 ]; then
-    exit "$restore_status"
+  rm -f "$private_bin" "$probe" "$stdout_raw" "$stdout_filtered" \
+    "$stderr_file" "$time_file"
+  rmdir "$private_root" "$scratch_dir" 2>/dev/null || true
+  if [ "$status" -eq 0 ] &&
+     [ "$(sha256sum "$system_file" | cut -d' ' -f1)" != "$shared_before" ]; then
+    echo "FAIL: the shared lib/system.metta changed during the run" >&2
+    exit 1
   fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$scratch_dir"
-cp "$system_file" "$snapshot"
+mkdir -p "$private_root/lib"
+for entry in "$root"/lib/* "$root"/lib/.[!.]*; do
+  [ -e "$entry" ] || continue
+  name="$(basename "$entry")"
+  [ "$name" = system.metta ] && continue
+  ln -s "$entry" "$private_root/lib/$name"
+done
+cp "$system_file" "$private_root/lib/system.metta"
+ln "$bin" "$private_bin" 2>/dev/null || cp "$bin" "$private_bin"
 
-cat >> "$system_file" <<'PAD'
+cat >> "$private_root/lib/system.metta" <<'PAD'
 
 ; stdlib growth memory regression padding: intentionally unused equations.
 (= (system:stdlib-growth-memory-regression-pad-0) ())
@@ -56,8 +70,18 @@ cat >> "$system_file" <<'PAD'
 (= (system:stdlib-growth-memory-regression-pad-6) ())
 PAD
 
+# Positive control: the run must load the padded private copy.
+printf '%s\n' '!(import! &self system)' \
+  '!(system:stdlib-growth-memory-regression-pad-6)' > "$probe"
+probe_out="$("$private_bin" --profile extended --lang he "$probe" 2>&1)"
+if [ "$(printf '%s\n' "$probe_out" | tail -1)" != "[()]" ]; then
+  echo "FAIL: the padded private system library was not the one loaded" >&2
+  printf '%s\n' "$probe_out" >&2
+  exit 1
+fi
+
 if ! (
-  /usr/bin/time -f '%M' -o "$time_file" "$bin" --profile extended --lang he "$workload" >"$stdout_raw" 2>"$stderr_file"
+  /usr/bin/time -f '%M' -o "$time_file" "$private_bin" --profile extended --lang he "$workload" >"$stdout_raw" 2>"$stderr_file"
 ); then
   echo "FAIL: stdlib growth memory regression exited non-zero" >&2
   cat "$stderr_file" >&2

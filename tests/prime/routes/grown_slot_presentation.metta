@@ -1,0 +1,18 @@
+; Returning variable-bearing data through a constructor must preserve both
+; variables' identities and names when a manufactured frame grows.
+!(bind! &kb (new-space))
+!(add-atom &kb (Scheme (Pair $a $b)))
+(= (split $t) (Split (index-atom $t 1) (index-atom $t 2)))
+!(assertEqual (match &kb (Scheme $t)
+    (let (Split $left $right) (split $t)
+      (unify $right ch yes no))) yes)
+!(assertEqual (match &kb (Scheme $t)
+    (let (Split $left $right) (split $t)
+      (unify $left ch yes no))) yes)
+!(assertEqual (match &kb (Scheme $t)
+    (let (Split $left $right) (split $t)
+      (unify $right ch (unify $left other yes no) no))) yes)
+!(add-atom &kb (Shared (Pair $same $same)))
+!(assertEqual (match &kb (Shared $t)
+    (let (Split $left $right) (split $t)
+      (unify $right ch (unify $left other no yes) no))) yes)

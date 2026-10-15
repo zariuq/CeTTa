@@ -143,7 +143,7 @@ bool cetta_pattern_module_call(CettaLibraryContext *context, Space *space,
     (void)space;
     if (!head || head->kind != ATOM_SYMBOL || !cetta_pattern_module_enabled(context))
         return false;
-    SymbolId operation = cetta_pattern_resolve_head(context, head->sym_id);
+    SymbolId operation = cetta_pattern_resolve_head(context, atom_symbol_current_id(head));
     if (operation == g_builtin_syms.pat_is_instance ||
         operation == g_builtin_syms.pat_is_variant) {
         if (count != 2u) {
@@ -171,12 +171,12 @@ bool cetta_pattern_module_call(CettaLibraryContext *context, Space *space,
         operation == g_builtin_syms.pat_match_forward ||
         operation == g_builtin_syms.pat_match_reverse)
         return eval_pattern_query_ready(space, arena, head, arguments, count, out);
-    if (head->sym_id == g_builtin_syms.pat_solve) {
+    if (atom_symbol_current_id(head) == g_builtin_syms.pat_solve) {
         *out = pattern_solve(arena, head, arguments, count);
         return true;
     }
-    bool apply = head->sym_id == g_builtin_syms.pat_apply;
-    bool view = head->sym_id == g_builtin_syms.pat_view;
+    bool apply = atom_symbol_current_id(head) == g_builtin_syms.pat_apply;
+    bool view = atom_symbol_current_id(head) == g_builtin_syms.pat_view;
     if (!apply && !view) return false;
     if (count != (apply ? 2u : 1u)) {
         *out = pattern_fault(arena, head, arguments, count, "IncorrectNumberOfArguments");

@@ -37,11 +37,12 @@ static bool native_symbol_arg(Arena *a, Atom *atom, SymbolId *out) {
     if (!a || !atom || !out)
         return false;
     if (atom->kind == ATOM_SYMBOL) {
-        *out = atom->sym_id;
+        /* Grammar entry points encode the start sort as a numeric key. */
+        *out = atom_symbol_register_id(atom);
         return true;
     }
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
-        *out = atom_symbol(a, atom->ground.sval)->sym_id;
+        *out = atom_symbol_current_id(atom_symbol(a, atom->ground.sval));
         return true;
     }
     return false;

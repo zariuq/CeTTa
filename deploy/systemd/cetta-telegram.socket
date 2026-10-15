@@ -1,0 +1,12 @@
+[Unit]
+Description=CeTTa durable Telegram worker socket
+
+[Socket]
+ListenSequentialPacket=%t/cetta-telegram/worker.sock
+SocketMode=0600
+DirectoryMode=0700
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

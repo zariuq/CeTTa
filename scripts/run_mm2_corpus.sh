@@ -5,9 +5,9 @@
 # The corpus deliberately mixes provenance: CeTTa's own examples, tests and
 # conformance fixtures, MORK's upstream kernel resources, and mm2-chainer's
 # examples pinned to a DIFFERENT MORK fork (marked fork-skip: their kernel is
-# not ours, so a failure there says nothing about CeTTa).  External files are
-# referenced in place rather than vendored, so
-# rows whose source checkout is absent are reported as `missing`, not failed.
+# not ours, so a failure there says nothing about CeTTa). Chainer inputs are
+# pinned fixtures; MORK resources are referenced in the dependency checkout.
+# Rows whose dependency checkout is absent are reported as `missing`.
 #
 # Requires a bridge-enabled binary: build with `make BUILD=mork cetta`.
 # Without it every row reports a bridge error, which the sweep reveals

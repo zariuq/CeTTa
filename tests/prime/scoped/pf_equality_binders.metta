@@ -23,3 +23,11 @@
 ; Negative control: a statement that is false at P is not proved by the
 ; axioms.
 !(pf:theorem &self wrong-P (all P (lam x (eq P x pz))) (pf:fix x (pf:refl P x)))
+
+; The expander inspects written proof syntax, and explicitly activates
+; recognized verbs. Other callable-looking syntax stays data.
+!(pf:verb-head (pf:apply f a))
+!(pf:expand (pf:apply f a))
+!(let $node (cons-atom pf:apply (f a)) (pf:expand $node))
+!(pf:expand (Box (+ 1 2)))
+!(let $node (cons-atom + (1 2)) (pf:expand $node))

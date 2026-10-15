@@ -61,3 +61,16 @@
 !(let $c (cons-atom quote ((Pair $u k))) (Pair *$c *$c))
 !(row lambda-in-code-owns-its-local)
 !(let $c @(lam z (let $y z (g $y))) (let $f *$c (Pair ($f 1) ($f 2))))
+
+; Bound owned names leave the stored scope list; callable positions activate
+; the retained closure while ordinary code values remain data.
+!(let $f (lam z (Pair z $y)) (unify $f (lam z (Pair z 5)) ($f 1) none))
+!(let $f (lam z (Pair z $y)) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (cons-atom lam (z (Pair z $y))) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (lam z (Triple z $y $w)) (unify $f (lam z (Triple z $a $a)) (unify $a 5 ($f 1) none) none))
+!(let $c @(Pair $y k) (unify $c (quote (Pair 5 k)) (Pair $c *$c) none))
+!(let $c (cons-atom quote ((Pair $y k))) (unify $c (quote (Pair 5 k)) (Pair $c *$c) none))
+!(let $f (chain (println! cp:made) $u (lam z (Pair z $y))) (unify $f (lam z (Pair z 5)) (Pair $f ($f 1)) none))
+!(let $f (lam z (chain (println! cp:applied) $u (Pair z $y))) (unify $f (lam z (chain (println! cp:applied) $u (Pair z 5))) (Pair ($f 1) ($f 2)) none))
+!(let $x (cons-atom + (1 2)) (Pair $x (eval $x)))
+!(let $q (quote (println! cp:forbidden)) (Pair $q $q))
