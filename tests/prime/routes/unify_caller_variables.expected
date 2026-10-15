@@ -6,6 +6,8 @@
 [()]
 [()]
 [()]
+[(MkSized 6 (: (quote (lam $x (lam $z (parent $x $z)))) (-> Person (-> Person Bool))))]
+[(MkSized 6 (: (quote (lam $x (lam $z (parent $z $x)))) (-> Person (-> Person Bool))))]
 [True]
 [True]
 [True]

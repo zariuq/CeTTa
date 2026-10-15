@@ -8,6 +8,12 @@
 !(add-atom &kb (nu:bias exists))
 !(add-atom &kb (nu:bias fix))
 !(add-atom &kb (: parent (-> Person (-> Person Bool))))
+; Observe the code directly too: a later matching context must not hide a
+; dangling variable in an apparently alpha-equivalent reconstructed term.
+!(nu:type &kb nil 10
+   (: @(lam $x (lam $z (parent $x $z))) (-> Person (-> Person Bool))))
+!(nu:type &kb nil 10
+   (: @(lam $x (lam $z (parent $z $x))) (-> Person (-> Person Bool))))
 !(let (MkSized $n (: $term $type))
    (nu:type &kb nil 10
      (: @(lam $x (lam $z (parent $x $z))) (-> Person (-> Person Bool))))
