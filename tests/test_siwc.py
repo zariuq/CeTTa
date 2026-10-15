@@ -122,6 +122,7 @@ class Peer(http.server.BaseHTTPRequestHandler):
             id_token=p.sign(claims, p.options.get('key', 0)), token_type='Bearer', expires_in=3600,
             scope=p.options.get('scope', 'openid offline_access chatgpt.tokens.use.direct'),
             earliest_refresh_at={'opaque_fixture': True})
+        token.update(p.options.get('token_override', {}))
         p.refresh_tokens[token['refresh_token']] = info
         self.reply(token)
 
@@ -247,6 +248,7 @@ class NativeSiwcTests(unittest.TestCase):
             ({'iat': 'bad'}, None, 'jwt-time-invalid'),
             ({'aud': ['other', 'oaiapp_fixture'], 'azp': 'oaiapp_fixture'}, None, 'ok'),
             ({'aud': ['other', 'oaiapp_fixture']}, None, 'audience-mismatch'),
+            ({'azp': 'oaiapp_fixture\0other'}, None, 'jwt-claims-invalid'),
             ({}, {'alg': 'HS256', 'kid': self.jwk[0]['kid']}, 'jwt-alg-rejected'),
             ({}, {'alg': 'none', 'kid': self.jwk[0]['kid']}, 'jwt-alg-rejected'),
             ({}, {'alg': 'RS256', 'kid': 'unknown'}, 'jwks-key-not-found')]
@@ -391,6 +393,20 @@ class NativeSiwcTests(unittest.TestCase):
         record = json.loads(path.read_text())
         self.assertNotIn('access_token', record); self.assertNotIn('id_token', record)
         self.assertIn('client_id', record); self.assertEqual(self.revocations, [])
+
+    def test_malformed_optional_token_fields_are_not_treated_as_absent(self):
+        for refresh in (False, True):
+            for override in ({'id_token': None}, {'scope': ['chatgpt.tokens.use.direct']}):
+                with self.subTest(fields=override, refresh=refresh):
+                    self.options = {}
+                    identity = self.login() if refresh else None
+                    if refresh: self.expire(identity)
+                    self.options = {'token_override': override}
+                    if refresh: result = self.run_operation('ensure', identity)
+                    else:
+                        p, status = self.start()
+                        result = self.complete(p, self.callback_url(status))
+                    self.assertEqual(result['code'], 'token-response-invalid')
 
     @unittest.skipUnless(os.environ.get('SIWC_ENGINE'), 'set SIWC_ENGINE to an SIWC_TEST engine')
     def test_native_metta_browser_command_and_owned_completion(self):

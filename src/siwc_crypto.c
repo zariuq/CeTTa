@@ -70,7 +70,7 @@ static bool audience(const json_t *claims, const char *client) {
         if (json_array_size(aud) > 1 && !equal(text(claims, "azp"), client)) return false;
     }
     json_t *azp = json_object_get(claims, "azp");
-    return found && (!azp || equal(json_string_value(azp), client));
+    return found && (!azp || equal(text(claims, "azp"), client));
 }
 json_t *cetta_siwc_verify(const char *jwt, const json_t *jwks, const char *issuer,
                          const char *client, const char *nonce, int64_t now,
@@ -98,7 +98,10 @@ json_t *cetta_siwc_verify(const char *jwt, const json_t *jwks, const char *issue
         if (ops) {
             bool verify = false; size_t k; json_t *op;
             if (!json_is_array(ops)) continue;
-            json_array_foreach(ops, k, op) verify |= equal(json_string_value(op), "verify");
+            json_array_foreach(ops, k, op) {
+                const char *name = json_string_value(op);
+                verify |= name && strlen(name) == json_string_length(op) && equal(name, "verify");
+            }
             if (!verify) continue;
         }
         if (selected) { *error = "jwks-ambiguous-key"; goto done; }

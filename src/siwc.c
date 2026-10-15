@@ -334,6 +334,8 @@ static bool token_update(CettaSiwcOperation *op, int dir, const char *filename, 
     json_t *lifetime = json_object_get(tokens, "expires_in");
     *error = "token-response-invalid";
     if (!access || !*access || strlen(access) > 8000 || strpbrk(access, "\r\n") || !renew || !*renew ||
+        (!refresh && !jwt) || (json_object_get(tokens, "id_token") && !jwt) ||
+        (json_object_get(tokens, "scope") && !s(tokens, "scope")) ||
         !s(tokens, "token_type") || strcasecmp(s(tokens, "token_type"), "Bearer") ||
         !json_is_integer(lifetime) || json_integer_value(lifetime) <= 0 || json_integer_value(lifetime) > INT64_MAX - (int64_t)time(NULL)) return false;
     const char *scopes = s(tokens, "scope");
@@ -349,7 +351,7 @@ static bool token_update(CettaSiwcOperation *op, int dir, const char *filename, 
         json_decref(jwks);
         if (!claims) return false;
         if (s(record, "sub") && !same(s(record, "sub"), s(claims, "sub"))) { *error = "identity-mismatch"; json_decref(claims); return false; }
-        if (refresh && s(claims, "nonce") && !same(s(claims, "nonce"), s(record, "nonce"))) { *error = "nonce-mismatch"; json_decref(claims); return false; }
+        if (refresh && json_object_get(claims, "nonce") && !same(s(claims, "nonce"), s(record, "nonce"))) { *error = "nonce-mismatch"; json_decref(claims); return false; }
     } else if (!refresh) return false;
     if (stopped(op)) { *error = stop_error(op); json_decref(claims); return false; }
     json_t *next = json_deep_copy(record);
