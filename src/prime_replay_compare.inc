@@ -47,7 +47,7 @@ static bool prime_replay_compare_policy(const CettaSearchPolicySpec *a,
 #define RP(f) RC_FIELDS("policy",a,b,f)
     RP(present);RP(lane);RP(order);RP(native_control);RP(implicit_first_value);
     RP(priority);RP(age_share);RP(work_budget);RP(workers);RP(worker_quantum);
-    RP(resource_profile);RP(resource_worlds);RP(retain);RP(receipts);RP(costs);
+    RP(resource_profile);RP(resource_worlds);RP(retain);RP(receipts);RP(costs);RP(cost_compact);
     RP(source_share);RP(prepare_meter);
     RP(additional);RP(all);RP(descending);RP(by_weight);RP(weight_law);RP(selection);
 #undef RP
@@ -329,6 +329,7 @@ static bool prime_replay_compare_cost(const CettaNativeCostLedger *a,
         (a->length&&!a->events)||(b->length&&!b->events))return false;
     RC_I("cost.ledger",CETTA_CHECKPOINT_COST_LEDGER,a->identity,b->identity);
     RC_S("cost.imported",a->imported,b->imported);
+    RC_S("cost.compact",a->compact,b->compact);
     RC_F("cost.rows",a->length,b->length);RC_F("cost.capacity",a->capacity,b->capacity);
     RC_F("cost.storage",(uintptr_t)a->events,(uintptr_t)b->events);
     if(!prime_replay_compare_cost_snapshot(&a->total,&b->total,read))return false;

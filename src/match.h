@@ -601,6 +601,8 @@ Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
  * explicit payload until that boundary. */
 BindingsExclusiveFrame *bindings_exclusive_frame_new(void);
 void bindings_exclusive_frame_free(BindingsExclusiveFrame *frame);
+void bindings_exclusive_frame_storage_census(
+    const BindingsExclusiveFrame *frame, CettaStorageCensus *census);
 bool bindings_exclusive_frame_begin(
     BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
     uint32_t epoch);

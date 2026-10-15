@@ -1,8 +1,8 @@
 /* Transport one owned parent through the enclosing graph-copy session:
  * one quiescent owned Prime parent, no registered child, live worker capsule,
  * foreign provider, resource agenda or compiled scratch. A recording owner
- * needs a separately prepared capability in this same session; the public
- * checkpoint entry does not supply that additional preparation.
+ * needs a separately prepared capability in this same session, or an explicit
+ * erasing session policy. The public entry selects neither automatically.
  * Declines preserve the complete source. External Space/program/universe and
  * registry resources remain borrowed under the stable episode contract.
  * This copies state; it does not authenticate a replay or execute an edge. */
@@ -610,11 +610,14 @@ static bool parent_copy_episode_capture(const PrimeNativeTopEpisode *source,
             &parent_copy_episode_shell_kind, source, image, sizeof(*source)))
         return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if (!prime_need_recording_copy_enable(atoms)) return false;
+    bool has_recording = source->branch.recording || source->receipt.recording;
+    bool erase_recording = has_recording && prime_need_recording_copy_erases(atoms);
+    if (has_recording && !erase_recording && !prime_need_recording_copy_enable(atoms))
+        return false;
     const PrimeNeedReceipt *receipts[] = {&source->branch, &source->receipt};
     for (size_t i = 0u; i < sizeof(receipts) / sizeof(*receipts); i++) {
         PrimeNeedRecording *group = prime_need_receipt_recording_owner(receipts[i]);
-        if (!group) continue;
+        if (!group || erase_recording) continue;
         PrimeNeedRecordingCopy *copy = prime_need_recording_copy_lookup(atoms, group);
         /* This episode owns groups through real arena links, not a direct
          * control-style ownership field. Never manufacture that premise. */
@@ -876,9 +879,11 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
         return false;
     }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    PrimeNeedRecordingCopy *recording = source->history.group
+    bool erase_recording = source->history.spec.enabled &&
+        prime_need_recording_copy_erases(atoms);
+    PrimeNeedRecordingCopy *recording = !erase_recording && source->history.group
         ? prime_need_recording_copy_lookup(atoms, source->history.group) : NULL;
-    if (source->history.group && !recording)
+    if (source->history.group && !erase_recording && !recording)
         {if(refusal)*refusal="RecordingOwner";return false;}
 #endif
     PrimeNativeTopEpisode *episode_image = NULL;
@@ -906,6 +911,10 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->receipt_intervals=NULL;image->query_reads=NULL;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     image->history.group=NULL;image->history.entries=NULL;image->history.active=NULL;
+    if (erase_recording) {
+        image->history=(PrimeNativeHistory){0};
+        image->policy.history=(PrimeNativeHistorySpec){0};
+    }
 #endif
     image->event_cost.events=NULL;image->event_cost.length=0;image->event_cost.capacity=0;
     image->base_environment_initialized=false;memset(&image->base_environment,0,sizeof(image->base_environment));
@@ -927,7 +936,8 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
             &image->space_agenda,transaction)))
         ok=parent_copy_refuse(copy,transaction&&transaction->refusal?transaction->refusal:"TransactionImage");
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if(ok && source->history.spec.enabled && !prime_need_recording_copy_enable(atoms))
+    if(ok && !erase_recording && source->history.spec.enabled &&
+        !prime_need_recording_copy_enable(atoms))
         ok=parent_copy_refuse(copy,"RecordingMode");
     /* The actual control owns history.group directly. Its carrier borrows
      * last until that control retires; no extra paid arena hold is implied.
@@ -941,10 +951,10 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
                 &source->storage,&image->storage);
         if(!ok)parent_copy_refuse(copy,"RecordingLifetime");
     }
-    if(ok && source->history.entries)
+    if(ok && !erase_recording && source->history.entries)
         ok=parent_copy_array(copy,(void **)&image->history.entries,source->history.entries,
             source->history.spec.selections,sizeof(*source->history.entries));
-    for(size_t i=0u;ok && i<source->history.count;i++) {
+    for(size_t i=0u;ok && i<image->history.count;i++) {
         PrimeNativeHistorySelection *entry=&image->history.entries[i];
         ok=prime_need_receipt_copy_with_session(&image->storage,atoms,&entry->operation) &&
             prime_need_receipt_copy_with_session(&image->storage,atoms,&entry->prepared);
@@ -1078,6 +1088,7 @@ struct CettaPrimeCheckpointCopy {
     SpaceCheckpointIssuance target_before,target_after;
     bool target_complete;
     bool reserved;
+    bool keep_source_reserved;
     bool attempted;
     bool prepared;
     CettaContinuationStatus status;
@@ -1251,6 +1262,13 @@ CettaPrimeCheckpointCopy *cetta_prime_checkpoint_copy_new(
     return prime_checkpoint_copy_new_in(context,residual,status,false,SIZE_MAX);
 }
 
+CettaPrimeCheckpointCopy *cetta_prime_checkpoint_copy_new_reserved(
+    CettaLibraryContext *context, Atom *residual, CettaContinuationStatus *status) {
+    CettaPrimeCheckpointCopy *copy = cetta_prime_checkpoint_copy_new(context,residual,status);
+    if (copy) copy->keep_source_reserved = true;
+    return copy;
+}
+
 static bool prime_checkpoint_service_selection_live(const CettaPrimeCheckpointCopy *copy) {
     if(!copy->service_selectors)return true;
     const EquationMatchDecisionCache *s=copy->service_selectors;
@@ -1363,7 +1381,8 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
         copy->status=target?CETTA_CONTINUATION_READY:CETTA_CONTINUATION_UNSUPPORTED;
         if(!target)copy->refusal="TransactionTargetImage";
     }
-    prime_checkpoint_unreserve(copy);
+    if (!copy->keep_source_reserved || !copy->prepared)
+        prime_checkpoint_unreserve(copy);
     return copy->status;
 }
 
@@ -1373,6 +1392,7 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_publish(
         return CETTA_CONTINUATION_UNSUPPORTED;
     if (!copy->context || copy->context != g_library_context)
         return CETTA_CONTINUATION_INVALIDATED;
+    if (copy->keep_source_reserved) return CETTA_CONTINUATION_UNSUPPORTED;
     if (!copy->prepared || !copy->image) return CETTA_CONTINUATION_UNSUPPORTED;
     uint64_t id = 0u;
     if (!cetta_native_handle_alloc(copy->context, "prime-search", copy->image,
@@ -1391,6 +1411,38 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_publish(
     copy->status = CETTA_CONTINUATION_UNSUPPORTED;
     copy->refusal = "Published";
     *residual = handle;
+    return CETTA_CONTINUATION_READY;
+}
+
+CettaContinuationStatus cetta_prime_checkpoint_copy_replace(
+    CettaPrimeCheckpointCopy *copy, CettaNativeHandleUse *source_use) {
+    if (!copy) return CETTA_CONTINUATION_UNSUPPORTED;
+    if (!copy->context || copy->context != g_library_context)
+        return CETTA_CONTINUATION_INVALIDATED;
+    if (!copy->keep_source_reserved || !copy->prepared || !copy->image || !copy->reserved)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    if (!prime_checkpoint_source_live(copy) || !copy->source->leased ||
+        cetta_native_handle_use_resource(source_use) != copy->source)
+        return CETTA_CONTINUATION_INVALIDATED;
+    PrimeNativeControl *image = copy->image;
+    uint64_t former_id = image->handle_id;
+    image->handle_id = copy->source_handle;
+    void *previous = NULL;
+    if (!cetta_native_handle_use_exchange(copy->context,"prime-search",
+            copy->source_holder,source_use,image,&previous)) {
+        image->handle_id = former_id;
+        return CETTA_CONTINUATION_DEFERRED;
+    }
+    /* There are no graph-copy pointer keys live at this boundary. The old
+     * control is no longer the registry payload. Detach all staging roots
+     * before its finalizer can reenter the native services. */
+    copy->source = NULL;
+    copy->image = NULL;
+    copy->reserved = false;
+    copy->prepared = false;
+    copy->status = CETTA_CONTINUATION_UNSUPPORTED;
+    copy->refusal = "Replaced";
+    prime_native_control_destroy(previous);
     return CETTA_CONTINUATION_READY;
 }
 

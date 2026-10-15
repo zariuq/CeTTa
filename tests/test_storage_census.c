@@ -4,6 +4,8 @@
 #include "symbol.h"
 #include "space.h"
 #include "parser.h"
+#include "answer_storage.h"
+#include "delay_service.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -254,6 +256,139 @@ static void private_world_storage(void) {
     space_free(&space); term_universe_free(&universe); arena_free(&arena); hashcons_free(&hash);
 }
 
+static void registry_state_storage(void) {
+    Arena input;
+    arena_init(&input);
+    Registry registry;
+    registry_init(&registry);
+    SymbolId first = symbol_intern_cstr(g_symbols, "storage-state-first");
+    SymbolId second = symbol_intern_cstr(g_symbols, "storage-state-second");
+    const size_t length = 4096u;
+    Atom **items = malloc(length * sizeof(*items));
+    assert(items);
+    for (size_t i = 0u; i < length; i++) items[i] = atom_int(&input, i);
+    Atom *large = atom_expr(&input, items, (CettaExprLen)length);
+    CHECK(registry_state_set(&registry, first, large));
+    free(items);
+    CettaStorageCensus c = {0};
+    registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && !c.invalidated && !c.overflow);
+    size_t large_bytes = c.retained;
+    size_t initial_state_arenas = 0u;
+    for (size_t i = 0u; i < c.capacity; i++)
+        if (c.slots[i].identity && c.slots[i].domain == CETTA_STORAGE_ARENA)
+            initial_state_arenas++;
+    registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+    CHECK(c.retained == large_bytes && c.repeated > 0u);
+    cetta_storage_census_free(&c);
+    arena_free(&input);
+    Atom *kept = registry_state_lookup(&registry, first);
+    CHECK(kept && kept->expr.len == length &&
+        kept->expr.elems[length - 1u]->ground.ival == (int64_t)length - 1);
+
+    arena_init(&input);
+    size_t settled_bytes = 0u;
+    for (unsigned i = 0u; i < 64u; i++) {
+        CHECK(registry_state_set(&registry, first, atom_int(&input, i)));
+        CHECK(registry_state_lookup(&registry, first)->ground.ival == i);
+        registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+        CHECK(!c.incomplete && !c.invalidated && !c.overflow);
+        size_t state_arenas = 0u;
+        for (size_t j = 0u; j < c.capacity; j++)
+            if (c.slots[j].identity && c.slots[j].domain == CETTA_STORAGE_ARENA)
+                state_arenas++;
+        CHECK(state_arenas == initial_state_arenas + 1u);
+        CHECK(c.retained < large_bytes);
+        if (i == 2u) settled_bytes = c.retained;
+        if (i > 2u) CHECK(c.retained == settled_bytes);
+        cetta_storage_census_free(&c);
+    }
+    CHECK(registry_state_set(&registry, second,
+        registry_state_lookup(&registry, first)));
+    CHECK(registry_state_count(&registry) == 2u);
+    CHECK(registry_state_set(&registry, first, atom_int(&input, 100)));
+    CHECK(registry_state_lookup(&registry, second)->ground.ival == 63);
+    registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained > settled_bytes);
+    size_t before_refusal = c.retained;
+    cetta_storage_census_free(&c);
+    CHECK(!registry_state_set_symbol(&registry, atom_int(&input, 0),
+        atom_int(&input, 200)));
+    registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained == before_refusal);
+    CHECK(registry_state_lookup(&registry, first)->ground.ival == 100 &&
+        registry_state_lookup(&registry, second)->ground.ival == 63);
+    cetta_storage_census_free(&c);
+    registry_free(&registry);
+    registry_storage_census(&registry, &c); cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained == 0u);
+    cetta_storage_census_free(&c);
+    arena_free(&input);
+}
+
+static bool has_block(const CettaStorageCensus *census, const void *identity) {
+    for(size_t i=0u;i<census->capacity;i++)
+        if(census->slots[i].identity==identity && census->slots[i].domain==CETTA_STORAGE_BLOCK)
+            return true;
+    return false;
+}
+
+static void answer_collection_storage(void) {
+    CettaAnswerStorageAccount *account=NULL;
+    CettaAnswerStorage *first=cetta_answer_storage_new(&account);
+    CettaAnswerStorage *second=cetta_answer_storage_new(&account);
+    CHECK(first && second && account);
+    Atom *value=atom_expr2(&first->arena,atom_symbol(&first->arena,"RetainedAnswer"),atom_int(&first->arena,7));
+    (void)atom_int(&second->arena,11);
+    Arena receiver;arena_init_detached(&receiver);
+    CHECK(cetta_answer_storage_retain_into(first,&receiver));
+    cetta_answer_storage_release(first);
+    CettaStorageCensus c={0};
+    arena_storage_census(&receiver,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && !c.invalidated && has_block(&c,first) && has_block(&c,account));
+    CHECK(!has_block(&c,second) && first->shares==1u && account->shares==3u);
+    cetta_answer_storage_account_census(account,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && has_block(&c,second));
+    CettaAnswerStorageUsage usage;CHECK(cetta_answer_storage_account_usage(account,&usage) && usage.collections==2u);
+    size_t retained=c.retained,objects=c.length;
+    cetta_answer_storage_account_census(account,&c);arena_storage_census(&receiver,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained==retained && c.length==objects && c.repeated>0u);
+    CHECK(atom_is_symbol(value->expr.elems[0],"RetainedAnswer") && value->expr.elems[1]->ground.ival==7);
+    cetta_storage_census_free(&c);
+    arena_free(&receiver);
+    CHECK(cetta_answer_storage_account_usage(account,&usage) && usage.collections==1u);
+    cetta_answer_storage_account_census(account,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && has_block(&c,second) && c.retained<retained);
+    cetta_storage_census_free(&c);
+    cetta_answer_storage_release(second);cetta_answer_storage_account_release(account);account=NULL;
+    cetta_answer_storage_account_census(account,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && !c.bytes && !c.retained);
+    cetta_storage_census_free(&c);
+}
+
+static void delayed_goal_storage(void) {
+    CettaDelayService *service=cetta_delay_service_new();CHECK(service);
+    Arena input;arena_init_detached(&input);
+    VarId variable=fresh_var_id();
+    Atom *goal=atom_symbol(&input,"DelayedGoal");
+    CHECK(cetta_delay_suspend(service,1u,CETTA_DELAY_CLIENT_PROLOG,goal,&variable,1u,false));
+    arena_free(&input);
+    CHECK(cetta_delay_watches(service,variable) && !cetta_delay_has_woken(service));
+    CettaStorageCensus c={0};cetta_delay_service_storage_census(service,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && !c.invalidated && !c.overflow && has_block(&c,service) && c.retained>0u);
+    size_t retained=c.retained,objects=c.length;
+    cetta_delay_service_storage_census(service,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && c.retained==retained && c.length==objects);
+    CHECK(cetta_delay_watches(service,variable) && !cetta_delay_has_woken(service));
+    cetta_storage_census_free(&c);
+    CHECK(cetta_delay_bound(service,2u,variable) && cetta_delay_has_woken(service));
+    cetta_delay_service_storage_census(service,&c);cetta_storage_finish(&c);
+    CHECK(!c.incomplete && cetta_delay_has_woken(service));
+    CettaDelayGoal taken;CHECK(cetta_delay_take_woken(service,3u,&taken));
+    CHECK(atom_is_symbol(taken.goal,"DelayedGoal") && !cetta_delay_has_woken(service));
+    cetta_storage_census_free(&c);cetta_delay_service_free(service);
+}
+
 int main(void) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     SymbolTable symbols;
@@ -263,6 +398,8 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols; g_var_intern = &variables; g_hashcons = NULL;
     identities(); cycles_and_depth(); arenas_and_owners(); bindings_and_need(); numeric_storage(); private_world_storage();
+    registry_state_storage();
+    answer_collection_storage();delayed_goal_storage();
     var_intern_free(&variables); symbol_table_free(&symbols);
     g_symbols = NULL; g_var_intern = NULL;
     printf("PASS: owned storage census: %u identity, capacity, sharing, cycle and refusal checks\n", checks);

@@ -632,6 +632,7 @@ typedef struct {
     CettaOpenEquationCursor *cursor;
     Atom **vars;
     uint32_t var_count;
+    size_t var_cap;
     /* Pending cold scope receipts keep every shared holder index stable. */
     bool cold_active;
 } PettaOpenAnswers;
@@ -665,6 +666,7 @@ typedef struct {
     union {
         struct {
             PettaEquationSelectionEntry *candidates;
+            size_t candidates_capacity;
             PettaCandidateSnapshotLease catalog;
             PettaEquationProjection *projection;
             size_t selection_first;
@@ -6597,6 +6599,7 @@ static bool petta_machine_collect_choice_heap(
             free(choice->as.answers.open->vars);
             choice->as.answers.open->vars =
                 choice->as.answers.open_moved_vars;
+            choice->as.answers.open->var_cap = choice->as.answers.open->var_count;
             choice->as.answers.open_moved_vars = NULL;
         }
     }
@@ -6815,6 +6818,7 @@ static void petta_owned_continuation_choices_free(
             petta_program_candidate_snapshot_lease_release(&choices[i].as.equation.catalog);
             free(choices[i].as.equation.candidates);
             choices[i].as.equation.candidates = NULL;
+            choices[i].as.equation.candidates_capacity = 0u;
             free(choices[i].as.equation.query_values);
             choices[i].as.equation.query_values = NULL;
             choices[i].as.equation.query_arity = 0u;
@@ -6909,6 +6913,7 @@ static bool petta_owned_continuation_choices_clone(
         if (source[i].kind != PETTA_CHOICE_EQUATION)
             continue;
         (*out)[i].as.equation.candidates = NULL;
+        (*out)[i].as.equation.candidates_capacity = 0u;
         (*out)[i].as.equation.query_values = NULL;
         (*out)[i].as.equation.catalog = (PettaCandidateSnapshotLease){0};
         (*out)[i].as.equation.projection = NULL;
@@ -6955,6 +6960,7 @@ static bool petta_owned_continuation_choices_clone(
         }
         (*out)[i].as.equation.candidates =
             cetta_malloc(len * sizeof(PettaEquationSelectionEntry));
+        (*out)[i].as.equation.candidates_capacity = len;
         memcpy(
             (*out)[i].as.equation.candidates,
             source[i].as.equation.candidates,
@@ -7706,7 +7712,7 @@ static size_t petta_continuation_component_exclusive_bytes(
                 bytes = petta_size_add_saturating(
                     bytes, petta_continuation_array_bytes(
                         continuation->control.choices[i].as.equation.candidates
-                            ? continuation->control.choices[i].as.equation.equation_len : 0u,
+                            ? continuation->control.choices[i].as.equation.candidates_capacity : 0u,
                         sizeof(PettaEquationSelectionEntry)));
                 bytes = petta_size_add_saturating(
                     bytes, petta_continuation_array_bytes(
@@ -7778,6 +7784,285 @@ static bool petta_continuation_component_storage(
                 continuation->terms.pool);
     }
     return true;
+}
+
+static bool petta_machine_storage_array(CettaStorageCensus *census, const void *array,
+        size_t length, size_t capacity, size_t width) {
+    if (length > capacity || (capacity && !array) || !width ||
+        capacity > SIZE_MAX / width) {
+        cetta_storage_refuse(census, "MachineArrayShape");
+        return false;
+    }
+    (void)cetta_storage_array(census, array, capacity, width, 0u);
+    return !census->incomplete && !census->overflow;
+}
+
+static void petta_continuation_term_pool_storage(const PettaContinuationTermPool *pool,
+        CettaStorageCensus *census) {
+    if (!pool || !cetta_storage_object(census, pool, sizeof(*pool), CETTA_STORAGE_BLOCK))
+        return;
+    if (!petta_machine_storage_array(census, pool->resources, pool->resource_len,
+            pool->resource_cap, sizeof(*pool->resources))) return;
+    arena_storage_census(&pool->owner, census);
+}
+
+static void petta_machine_storage_visit(const void *raw, CettaStorageCensus *census);
+
+static void petta_child_storage(const PettaMachine *child, CettaStorageCensus *census) {
+    if (!child) return;
+    (void)cetta_storage_object(census, child, sizeof(*child), CETTA_STORAGE_BLOCK);
+    petta_machine_storage_census(child, census);
+}
+
+static void petta_machine_var_map_storage(const CettaVarMap *map, CettaStorageCensus *census) {
+    cetta_storage_array(census, map->items, map->cap, sizeof(*map->items), 0u);
+    cetta_storage_array(census, map->index.slots, map->index.cap, sizeof(*map->index.slots), 0u);
+}
+
+static void petta_producer_schedule_storage(const PettaProducerSchedule *schedule,
+        CettaStorageCensus *census) {
+    if (!schedule || !cetta_storage_object(census, schedule, sizeof(*schedule), CETTA_STORAGE_BLOCK)) return;
+    cetta_producer_dependencies_storage_census(&schedule->dependencies, census);
+    (void)cetta_storage_object(census, schedule->pending.words,
+        cetta_producer_schedule_bytes(&schedule->pending), CETTA_STORAGE_BLOCK);
+}
+
+/* Atom and plan pointers borrow their declared machine/pool/program owners;
+ * this walk neither substitutes those terms nor advances a retained choice. */
+static void petta_choice_storage(const PettaChoice *choice,
+        CettaStorageCensus *census) {
+    switch (choice->kind) {
+    case PETTA_CHOICE_EQUATION:
+        if (choice->as.equation.candidates) {
+            if (!petta_machine_storage_array(census, choice->as.equation.candidates,
+                    choice->as.equation.equation_len, choice->as.equation.candidates_capacity,
+                    sizeof(*choice->as.equation.candidates))) return;
+        } else if (choice->as.equation.candidates_capacity) {
+            cetta_storage_refuse(census, "MachineArrayShape"); return;
+        }
+        cetta_storage_array(census, choice->as.equation.query_values,
+            choice->as.equation.query_arity, sizeof(*choice->as.equation.query_values), 0u);
+        petta_program_candidate_snapshot_lease_storage_census(&choice->as.equation.catalog, census);
+        petta_program_equation_projection_storage_census(choice->as.equation.projection, census);
+        break;
+    case PETTA_CHOICE_MATCH: {
+        cetta_storage_array(census, choice->as.match.snapshot,
+            choice->as.match.snapshot_len, sizeof(*choice->as.match.snapshot), 0u);
+        const BindingSet *set = &choice->as.match.binding_snapshot;
+        if (!petta_machine_storage_array(census, set->items, set->len,
+                set->cap, sizeof(*set->items))) return;
+        for (CettaCount i = 0u; i < set->len; i++)
+            bindings_storage_census(&set->items[i], census);
+        space_occurrence_cursor_storage_census(&choice->as.match.occurrences, census);
+        break;
+    }
+    case PETTA_CHOICE_TYPED_CALL:
+        cetta_storage_array(census, choice->as.typed_call.calls,
+            choice->as.typed_call.count, sizeof(*choice->as.typed_call.calls), 0u);
+        break;
+    case PETTA_CHOICE_OUTCOMES:
+        if (choice->as.outcomes.moved_outcomes) cetta_storage_refuse(census, "ActiveMachineEvacuation");
+        if (choice->as.outcomes.outcomes && cetta_storage_object(census,
+                choice->as.outcomes.outcomes, sizeof(*choice->as.outcomes.outcomes), CETTA_STORAGE_BLOCK))
+            outcome_set_storage_census(choice->as.outcomes.outcomes, census);
+        break;
+    case PETTA_CHOICE_COLLAPSE:
+        petta_child_storage(choice->as.collapse.machine, census);
+        cetta_storage_array(census, choice->as.collapse.items,
+            choice->as.collapse.item_cap, sizeof(*choice->as.collapse.items), 0u);
+        cetta_storage_array(census, choice->as.collapse.item_control_errors,
+            choice->as.collapse.item_control_error_cap, sizeof(*choice->as.collapse.item_control_errors), 0u);
+        cetta_storage_array(census, choice->as.collapse.item_delayed,
+            choice->as.collapse.item_delayed_cap, sizeof(*choice->as.collapse.item_delayed), 0u);
+        break;
+    case PETTA_CHOICE_COUNT_COLLAPSE:
+        petta_child_storage(choice->as.count_collapse.machine, census);
+        break;
+    case PETTA_CHOICE_TRANSACTION:
+        if (choice->as.transaction.active) cetta_storage_refuse(census, "OpaqueMachineTransaction");
+        break;
+    case PETTA_CHOICE_MUTEX:
+        if (choice->as.mutex.active) cetta_storage_refuse(census, "OpaqueMachineMutex");
+        break;
+    case PETTA_CHOICE_TABLE:
+        petta_child_storage(choice->as.table.generator, census);
+        if (choice->as.table.round_arena) {
+            (void)cetta_storage_object(census, choice->as.table.round_arena,
+                sizeof(*choice->as.table.round_arena), CETTA_STORAGE_BLOCK);
+            arena_storage_census(choice->as.table.round_arena, census);
+        }
+        if (choice->as.table.initial_arena) {
+            (void)cetta_storage_object(census, choice->as.table.initial_arena,
+                sizeof(*choice->as.table.initial_arena), CETTA_STORAGE_BLOCK);
+            arena_storage_census(choice->as.table.initial_arena, census);
+        }
+        cetta_storage_array(census, choice->as.table.round_answers,
+            choice->as.table.round_cap, sizeof(*choice->as.table.round_answers), 0u);
+        cetta_storage_array(census, choice->as.table.initial_answers,
+            choice->as.table.initial_cap, sizeof(*choice->as.table.initial_answers), 0u);
+        petta_machine_var_map_storage(&choice->as.table.goal_instantiation, census);
+        petta_machine_var_map_storage(&choice->as.table.generator_slots, census);
+        petta_producer_schedule_storage(choice->as.table.schedule, census);
+        break;
+    case PETTA_CHOICE_ANSWERS: {
+        if (choice->as.answers.open_moved_vars) cetta_storage_refuse(census, "ActiveMachineEvacuation");
+        cetta_prepared_pure_answer_cursor_storage_census(choice->as.answers.cursor, census);
+        const PettaAnswerAdmission *admission = choice->as.answers.admission;
+        if (admission && cetta_storage_object(census, admission, sizeof(*admission), CETTA_STORAGE_BLOCK)) {
+            if (!petta_machine_storage_array(census, admission->leases, admission->lease_len,
+                    admission->lease_cap, sizeof(*admission->leases))) return;
+            for (size_t i = 0u; i < admission->lease_len; i++)
+                petta_program_candidate_snapshot_lease_storage_census(&admission->leases[i].lease, census);
+        }
+        const PettaOpenAnswers *open = choice->as.answers.open;
+        if (open && cetta_storage_object(census, open, sizeof(*open), CETTA_STORAGE_BLOCK)) {
+            if (!petta_machine_storage_array(census, open->vars, open->var_count,
+                    open->var_cap, sizeof(*open->vars))) return;
+            cetta_open_equation_cursor_storage_census(open->cursor, census);
+        }
+        break;
+    }
+    case PETTA_CHOICE_SUPERPOSE:
+    case PETTA_CHOICE_BOOLEAN:
+    case PETTA_CHOICE_APPEND:
+    case PETTA_CHOICE_MEMBER:
+    case PETTA_CHOICE_RELATIONAL_MEMBER:
+    case PETTA_CHOICE_LIST_LENGTH:
+    case PETTA_CHOICE_TYPE_CANDIDATES:
+    case PETTA_CHOICE_CASE_DEFAULT:
+    case PETTA_CHOICE_EQUAL_DEFAULT:
+    case PETTA_CHOICE_RELATIONAL_EXTENSION:
+    case PETTA_CHOICE_ONCE:
+        break;
+    default:
+        cetta_storage_refuse(census, "UnsupportedCapturedChoice");
+    }
+}
+
+static void petta_continuation_storage_census(const void *payload,
+        CettaStorageCensus *census) {
+    const PettaOwnedContinuationImpl *continuation = payload;
+    if (!continuation || !cetta_storage_object(census, continuation,
+            sizeof(*continuation), CETTA_STORAGE_BLOCK)) return;
+    const PettaContinuationControlComponent *control = &continuation->control;
+    if (control->goal_len > control->goal_initialized_len) {
+        cetta_storage_refuse(census, "MachineArrayShape"); return;
+    }
+    if (!petta_machine_storage_array(census, control->goals,
+            control->goal_initialized_len, control->goal_initialized_len, sizeof(*control->goals)) ||
+        !petta_machine_storage_array(census, control->goal_trail,
+            control->goal_trail_len, control->goal_trail_len, sizeof(*control->goal_trail)) ||
+        !petta_machine_storage_array(census, control->choices,
+            control->choice_len, control->choice_len, sizeof(*control->choices)) ||
+        !petta_machine_storage_array(census, continuation->obligations.visible,
+            continuation->obligations.visible_len, continuation->obligations.visible_len,
+            sizeof(*continuation->obligations.visible)) ||
+        !petta_machine_storage_array(census, continuation->obligations.type_obligations,
+            continuation->obligations.type_obligation_len, continuation->obligations.type_obligation_len,
+            sizeof(*continuation->obligations.type_obligations))) return;
+    petta_continuation_term_pool_storage(continuation->terms.pool, census);
+    bindings_builder_storage_census(&continuation->bindings.bindings, census);
+    for (size_t i = 0u; i < control->choice_len; i++) {
+        PettaChoiceKind kind = control->choices[i].kind;
+        if (kind != PETTA_CHOICE_EQUATION && kind != PETTA_CHOICE_MATCH &&
+            kind != PETTA_CHOICE_TYPED_CALL && kind != PETTA_CHOICE_SUPERPOSE &&
+            kind != PETTA_CHOICE_ONCE) {
+            cetta_storage_refuse(census, "UnsupportedCapturedChoice"); return;
+        }
+        petta_choice_storage(&control->choices[i], census);
+    }
+}
+
+static void petta_machine_table_storage_census(const PettaTableShared *shared,
+        CettaStorageCensus *census) {
+    if (!shared || !cetta_storage_object(census, shared, sizeof(*shared), CETTA_STORAGE_BLOCK)) return;
+    arena_storage_census(&shared->arena, census);
+    cetta_answer_storage_account_census(shared->answer_account, census);
+    if (!petta_machine_storage_array(census, shared->entries, shared->entry_len,
+            shared->entry_cap, sizeof(*shared->entries)) ||
+        !petta_machine_storage_array(census, shared->slots, shared->slot_cap,
+            shared->slot_cap, sizeof(*shared->slots)) ||
+        !petta_machine_storage_array(census, shared->tarjan_stack, shared->tarjan_len,
+            shared->tarjan_cap, sizeof(*shared->tarjan_stack))) return;
+    cetta_storage_array(census, shared->frequency_sketch,
+        PETTA_MEMO_FREQUENCY_SKETCH_SIZE, sizeof(*shared->frequency_sketch), 0u);
+    for (size_t i = 0u; i < shared->entry_len; i++) {
+        const PettaTableEntry *entry = &shared->entries[i];
+        if (!petta_machine_storage_array(census, entry->answers, entry->answer_len,
+                entry->answer_cap, sizeof(*entry->answers))) return;
+        cetta_answer_storage_census(entry->answer_storage, census);
+    }
+    const PettaProducerRounds *rounds = shared->producer_rounds;
+    if (rounds && cetta_storage_object(census, rounds, sizeof(*rounds), CETTA_STORAGE_BLOCK)) {
+        cetta_storage_array(census, rounds->states, rounds->capacity, sizeof(*rounds->states), 0u);
+        for (size_t i = 0u; i < rounds->capacity; i++) {
+            const CettaProducerReads *reads = &rounds->states[i].reads;
+            if (reads->hashed) cetta_storage_array(census, reads->storage.hash.slots,
+                reads->storage.hash.capacity, sizeof(*reads->storage.hash.slots), 0u);
+        }
+        for (const PettaProducerSchedule *schedule = rounds->schedules; schedule; schedule = schedule->next) {
+            if (!cetta_storage_object(census, schedule, 0u, CETTA_STORAGE_VISITED)) break;
+            petta_producer_schedule_storage(schedule, census);
+        }
+    }
+}
+
+static void petta_machine_storage_visit(const void *raw, CettaStorageCensus *census) {
+    const PettaMachineImpl *machine = raw;
+    if (!machine || !cetta_storage_object(census, machine, sizeof(*machine), CETTA_STORAGE_BLOCK)) return;
+    if (machine->pull_frame) {
+        cetta_storage_refuse(census, "ActiveMachinePull"); return;
+    }
+    if (machine->goal_len > machine->goal_initialized_len) {
+        cetta_storage_refuse(census, "MachineArrayShape"); return;
+    }
+#define PETTA_STORAGE_ARRAY(field, length, capacity) \
+    if (!petta_machine_storage_array(census, machine->field, machine->length, \
+            machine->capacity, sizeof(*machine->field))) return
+    PETTA_STORAGE_ARRAY(goals, goal_initialized_len, goal_cap);
+    PETTA_STORAGE_ARRAY(goal_trail, goal_trail_len, goal_trail_cap);
+    PETTA_STORAGE_ARRAY(choices, choice_len, choice_cap);
+    PETTA_STORAGE_ARRAY(visible, visible_len, visible_cap);
+    PETTA_STORAGE_ARRAY(type_obligations, type_obligation_len, type_obligation_cap);
+    PETTA_STORAGE_ARRAY(remainder_plans, remainder_plan_len, remainder_plan_cap);
+    PETTA_STORAGE_ARRAY(equation_callability, equation_callability_len, equation_callability_cap);
+    PETTA_STORAGE_ARRAY(activation_admission, activation_admission_len, activation_admission_cap);
+    PETTA_STORAGE_ARRAY(deterministic_region_source_nodes, deterministic_region_source_nodes_cap,
+        deterministic_region_source_nodes_cap);
+    PETTA_STORAGE_ARRAY(deterministic_region_values, deterministic_region_values_cap, deterministic_region_values_cap);
+    PETTA_STORAGE_ARRAY(source_candidate_refs, source_candidate_refs_cap, source_candidate_refs_cap);
+#undef PETTA_STORAGE_ARRAY
+    arena_storage_census(&machine->heap, census);
+    arena_storage_census(&machine->tenured, census);
+    arena_storage_census(&machine->equation_guard_scratch, census);
+    arena_storage_census(&machine->plan_arena, census);
+    if (machine->search.owns_scratch_arena)
+        arena_storage_census(&machine->search.owned_scratch_arena, census);
+    bindings_builder_storage_census(&machine->search.bindings, census);
+    petta_continuation_term_pool_storage(machine->continuation_term_pool, census);
+    bindings_exclusive_frame_storage_census(machine->equation_frame, census);
+    cetta_gslt_ground_dense_workspace_storage_v1(&machine->equation_template_c0_workspace, census);
+    cetta_delay_service_storage_census(machine->delay, census);
+    (void)cetta_storage_object(census, machine->owned_named_arity_source,
+        sizeof(*machine->owned_named_arity_source), CETTA_STORAGE_BLOCK);
+    const PettaMatchDecisionRepository *repository = machine->match_decision_repository;
+    if (repository && cetta_storage_object(census, repository, 0u, CETTA_STORAGE_VISITED)) {
+        if (repository != &machine->owned_match_decision_repository)
+            (void)cetta_storage_object(census, repository, sizeof(*repository), CETTA_STORAGE_BLOCK);
+        if (!petta_machine_storage_array(census, repository->entries, repository->len,
+                repository->cap, sizeof(*repository->entries))) return;
+        for (size_t i = 0u; i < repository->len; i++) {
+            cetta_storage_array(census, repository->entries[i].equations,
+                repository->entries[i].equation_len, sizeof(*repository->entries[i].equations), 0u);
+            cetta_match_decision_storage_census(repository->entries[i].decision, census);
+        }
+    }
+    petta_machine_table_storage_census(machine->table_shared, census);
+    for (size_t i = 0u; i < machine->choice_len; i++) petta_choice_storage(&machine->choices[i], census);
+}
+
+void petta_machine_storage_census(const PettaMachine *machine, CettaStorageCensus *census) {
+    if (machine) cetta_storage_schedule(census, machine->impl, petta_machine_storage_visit);
 }
 
 static bool petta_continuation_storage(
@@ -8774,6 +9059,7 @@ static const CettaContinuationProvider kPettaContinuationProvider = {
         .restore = petta_continuation_restore,
         .destroy = petta_continuation_destroy,
         .storage = petta_continuation_storage,
+        .storage_census = petta_continuation_storage_census,
     },
     .branching = {
         .expand = petta_relational_continuation_expand,
@@ -19175,7 +19461,7 @@ static bool petta_machine_equation_guard_selects_empty(
 
 static size_t petta_machine_prune_empty_guard_candidates(
         PettaMachineImpl *machine, const PettaCandidateSnapshotLease *catalog,
-        PettaEquationSelectionEntry **selection, size_t first,
+        PettaEquationSelectionEntry **selection, size_t *selection_capacity, size_t first,
         size_t candidate_count, Atom *closed_query,
         bool has_statically_eligible_candidate,
         bool evaluate_result, bool translate_result,
@@ -19198,6 +19484,7 @@ static size_t petta_machine_prune_empty_guard_candidates(
      * vector only when this observer actually requires independent entries. */
     if (!*selection) {
         *selection = cetta_malloc(candidate_count * sizeof(**selection));
+        *selection_capacity = candidate_count;
         for (size_t index = 0u; index < candidate_count; index++) {
             (*selection)[index] = (PettaEquationSelectionEntry){
                 .index = (uint32_t)(first + index),
@@ -19578,6 +19865,7 @@ static bool petta_machine_start_space_query(
         candidate_lease.items = fallback_candidates;
         candidate_lease.len = fallback_len;
         candidate_lease.owned_items = fallback_candidates;
+        candidate_lease.owned_capacity = equation_cap;
     }
     petta_machine_add_u64(
         &machine->stats.candidate_snapshot_calls,
@@ -19620,6 +19908,7 @@ static bool petta_machine_start_space_query(
     size_t source_len = candidate_lease.len;
     PettaEquationSelectionEntry *equations = NULL;
     size_t equation_len = 0u;
+    size_t selection_capacity = 0u;
     size_t selection_first = 0u;
     bool has_statically_eligible_guard = false;
     bool has_ground_template = false;
@@ -19805,6 +20094,7 @@ static bool petta_machine_start_space_query(
                 (selected[index] != selection_first + equation_len ||
                  candidate.rhs_plan != source_candidates[selected[index]].rhs_plan)) {
                 equations = cetta_malloc(sizeof(*equations) * selected_count);
+                selection_capacity = selected_count;
                 for (size_t previous = 0u; previous < equation_len; previous++) {
                     size_t occurrence = selection_first + previous;
                     equations[previous] = (PettaEquationSelectionEntry){
@@ -19933,7 +20223,7 @@ static bool petta_machine_start_space_query(
     }
     if (!machine->host.unmatched_call_is_value && !list_query)
         equation_len = petta_machine_prune_empty_guard_candidates(
-            machine, &candidate_lease, &equations, selection_first,
+            machine, &candidate_lease, &equations, &selection_capacity, selection_first,
             equation_len, whole_query,
             has_statically_eligible_guard,
             evaluate_result, translate_result,
@@ -19968,6 +20258,7 @@ static bool petta_machine_start_space_query(
         .barrier = (uint32_t)entry_depth,
         .as.equation = {
             .candidates = equations,
+            .candidates_capacity = selection_capacity,
             .catalog = candidate_lease,
             .selection_first = selection_first,
             .equation_len = equation_len,
@@ -20036,6 +20327,7 @@ static bool petta_machine_start_space_query(
         if (!identity_projection) {
             choice.as.equation.projection = petta_program_equation_projection_take(
                 &choice.as.equation.catalog, choice.as.equation.candidates,
+                choice.as.equation.candidates_capacity,
                 choice.as.equation.selection_first,
                 choice.as.equation.equation_len);
             if (!choice.as.equation.projection) {
@@ -20046,6 +20338,7 @@ static bool petta_machine_start_space_query(
                 return false;
             }
             choice.as.equation.candidates = NULL;
+            choice.as.equation.candidates_capacity = 0u;
         }
         if (machine->trace.choice) {
             fprintf(
@@ -27263,7 +27556,6 @@ static bool petta_open_answers_collect_vars(
     Atom **work = NULL;
     size_t work_len = 0u;
     size_t work_cap = 0u;
-    size_t var_cap = 0u;
     CettaVarIndex index;
     cetta_var_index_init(&index);
     bool ok = petta_machine_reserve(
@@ -27279,7 +27571,7 @@ static bool petta_open_answers_collect_vars(
                 continue;
             ok = open->var_count < UINT32_MAX - 1u &&
                 petta_machine_reserve(
-                    (void **)&open->vars, &var_cap, open->var_count + 1u,
+                    (void **)&open->vars, &open->var_cap, open->var_count + 1u,
                     sizeof(*open->vars));
             if (ok) {
                 open->vars[open->var_count++] = atom;

@@ -79,6 +79,23 @@ bool cetta_native_handle_acquire_owned(struct CettaLibraryContext *ctx,
  * fresh execution authority or protection against a subsequent close. */
 void *cetta_native_handle_use_resource(const CettaNativeHandleUse *use);
 bool cetta_native_handle_use_is_current(const CettaNativeHandleUse *use);
+/* Exchange the payload of this exact owning handle under its current, sole
+ * exclusive use. Equal IDs or payload addresses do not identify an owner.
+ * Owning Atom
+ * aliases retain their owner and ID and subsequently resolve the replacement.
+ * Representation, finalizer and storage visitor stay the same. Any other
+ * acquired use, including a lifetime use, refuses. Borrowed get callers
+ * still require external exclusion, and the context remains live.
+ *
+ * On success, ownership of the previous payload passes to the caller, which
+ * retires it with that representation's finalizer after releasing its pointer
+ * keys. The output is a separate caller-owned pointer. The replacement must
+ * be independently owned and of the same kind;
+ * this operation grants no semantic authority to substitute it. On refusal
+ * the use, owner, replacement and previous output are unchanged. */
+bool cetta_native_handle_use_exchange(struct CettaLibraryContext *ctx,
+    const char *kind, Atom *handle, CettaNativeHandleUse *use,
+    void *replacement, void **previous);
 bool cetta_native_handle_use_move(CettaNativeHandleUse *destination,
     CettaNativeHandleUse *source);
 bool cetta_native_handle_use_release(CettaNativeHandleUse *use);

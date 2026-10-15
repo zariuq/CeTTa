@@ -584,6 +584,20 @@ void prime_need_recording_copy_free(PrimeNeedRecordingCopy *copy);
  * use the session's captured injective private-arena map; borrowed identity
  * regions cannot become enclosing destinations. No concurrent session use. */
 bool prime_need_recording_copy_enable(AtomDeepCopySession *session);
+/* Project bounded recording evidence out of explicit receipt copies in one
+ * unpublished graph-copy session. Select before the first bounded receipt
+ * copy attempt. The default retains evidence; copy_enable selects an owned
+ * duplicate. A selection is idempotent and cannot change once chosen, so
+ * its receipt copies cannot change from retention to erasure partway through
+ * the session.
+ *
+ * Only the copied bounded receipt is cleared. Operational Need/branch state,
+ * coefficients and permissions follow their existing transport operations;
+ * promotions and nonrecording diagnostic receipts keep their own contracts.
+ * This adds no destination hold on a recording group and revokes no source
+ * observer. Releasing the source remains its holders' responsibility. */
+bool prime_need_recording_copy_forget(AtomDeepCopySession *session);
+bool prime_need_recording_copy_erases(const AtomDeepCopySession *session);
 /* Borrow a completed capability in an explicitly enabled session. Missing,
  * stale and already-taken images refuse. The handle remains caller-owned. */
 PrimeNeedRecordingCopy *prime_need_recording_copy_lookup(
@@ -796,6 +810,14 @@ void prime_need_receipt_graph_free(PrimeNeedReceiptGraph *graph);
  * Allocation refusal is never returned as an empty complete graph. */
 PrimeNeedReceiptGraphStatus prime_need_receipt_graph_validate(
     const PrimeNeedReceiptGraph *graph);
+/* For each node, report whether its exact cache production is present in
+ * this view. Session, cell and update identities all participate. The
+ * temporary index is built only for this requested read; the node order,
+ * graph and borrowed payloads stay unchanged. Output has graph->length
+ * flags and does not overlap the node array. Allocation refusal leaves
+ * every output flag untouched. This is presence, not replay authority. */
+bool prime_need_receipt_graph_producers(
+    const PrimeNeedReceiptGraph *graph, bool *retained);
 /* Legacy event-only projections.  The count has no failure channel; consumers
  * requiring completeness must use the checked graph collection above. */
 size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt);

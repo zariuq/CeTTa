@@ -564,6 +564,11 @@ typedef struct {
     bool (*storage)(
         const void *payload,
         CettaContinuationStorage *storage);
+    /* Optional ownership-graph observation under the provider's quiescence
+     * contract. Shared allocations retain their actual identities across
+     * providers and other live roots. Missing support refuses a complete
+     * census; aggregate advisory bytes cannot supply allocation identity. */
+    CettaStorageVisitor storage_census;
 } CettaContinuationOwnershipOps;
 
 typedef struct {
@@ -660,6 +665,11 @@ CettaContinuationStatus cetta_continuation_restore(
 bool cetta_owned_continuation_storage(
     const CettaOwnedContinuation *continuation,
     CettaContinuationStorage *storage);
+/* Read-only: does not capture, restore, retain or advance the continuation.
+ * The payload and every reachable owner must remain quiescent. */
+void cetta_owned_continuation_storage_census(
+    const CettaOwnedContinuation *continuation,
+    CettaStorageCensus *census);
 const char *cetta_owned_continuation_component_representation(
     const CettaOwnedContinuation *continuation,
     CettaContinuationComponent component);

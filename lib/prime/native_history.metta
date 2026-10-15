@@ -97,3 +97,45 @@
      (recording $capture $correspondence $start $earlier $omitted $missing $overflow)
      $charges $limits (nodes $nodes) (reservations $reservations)
      (admissions $admissions)))))))
+
+; Project a unique labelled field from an already returned report. The result
+; quotes its payload; inspecting a field never grants permission to execute it.
+; Duplicate labels refuse even when their values agree. Observation values
+; participate in the same uniqueness check as its labelled fields.
+(: HistoryField (-> Atom Atom Atom Atom))
+(: history:field-scan (-> Atom Atom Number Atom %Undefined%))
+(: history:field-row (-> Atom Atom Atom Number Atom %Undefined%))
+(: history:field (-> Atom Atom %Undefined%))
+
+(= (history:field-scan $rows $label $count $value)
+   (if (history:empty $rows)
+       (if (== $count 0) (HistoryField Missing $label ())
+           (if (== $count 1) (let $tail (cons-atom $value ()) (let $quoted (cons-atom quote $tail) (HistoryField Found $label $quoted)){$quoted}){$tail}
+               (HistoryField Duplicate $label ())))
+       (let ($row $tail) (decons-atom $rows)
+         (history:field-row $row $tail $label $count $value)){$row $tail}))
+
+(= (history:field-row $row $tail $label $count $value)
+   (if (== (get-metatype $row) Expression)
+       (if (== (size-atom $row) 2)
+           (if (== (car-atom $row) $label)
+               (let $parts (cdr-atom $row)
+                 (let $payload (car-atom $parts)
+                   (let $next (+ $count 1)
+                     (history:field-scan $tail $label $next $payload)){$next}){$payload}){$parts}
+               (history:field-scan $tail $label $count $value))
+           (history:field-scan $tail $label $count $value))
+       (history:field-scan $tail $label $count $value)))
+
+(= (history:field $record $label)
+   (if (== (get-metatype $record) Expression)
+       (if (history:empty $record) (HistoryField Missing $label ())
+           (let ($tag $rows) (decons-atom $record)
+             (if (== $tag Observation)
+                 (if (history:empty $rows) (HistoryField Missing $label ())
+                     (let ($values $fields) (decons-atom $rows)
+                       (if (== $label values)
+                           (history:field-scan $fields $label 1 $values)
+                           (history:field-scan $fields $label 0 ()))){$values $fields})
+                 (history:field-scan $rows $label 0 ()))){$tag $rows})
+       (HistoryField Missing $label ())))

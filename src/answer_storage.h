@@ -57,5 +57,10 @@ typedef struct {
  * resource backing storage are accounted by their respective services. */
 bool cetta_answer_storage_account_usage(
     const CettaAnswerStorageAccount *account, CettaAnswerStorageUsage *out);
+/* Quiescent graph census, including retired builders still held by receivers.
+ * A single collection retains its account header, not sibling collections. */
+void cetta_answer_storage_account_census(
+    const CettaAnswerStorageAccount *account, CettaStorageCensus *census);
+void cetta_answer_storage_census(const void *storage, CettaStorageCensus *census);
 
 #endif

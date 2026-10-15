@@ -232,7 +232,7 @@ static void prime_replay_capsule_storage(const void *raw,CettaStorageCensus *cen
         const CettaPrimeObservationReturn *created=capsule->created.prime_observation;
         cetta_storage_object(census,created,sizeof(*created),CETTA_STORAGE_BLOCK);
         arena_storage_census(&created->holders,census);
-        prime_native_outcomes_storage(&created->pending,census);
+        outcome_set_storage_census(&created->pending,census);
         prime_native_top_episode_storage(created->top.episode,census);
         if(created->top.episode&&!created->top.episode->ready&&
             created->top.episode->request_storage_ready)
@@ -266,7 +266,7 @@ static bool prime_replay_request_policy(Space *space,Arena *arena,Atom *request,
     CettaSearchPolicySpec policy={.native_control=true,.age_share=8u,
         .work_budget=UINT64_MAX,.retain=true,.costs=true,.all=true};
     if(parse_search_policy_atom(arena,expr_arg(request,0u),&policy,NULL)!=CETTA_SEARCH_POLICY_PARSE_OK||
-        !policy.native_control||policy.work_budget!=0u)return false;
+        !policy.native_control||policy.work_budget!=0u||policy.cost_compact)return false;
     policy.costs=policy.retain=policy.all=true;
     if(prime_native_transaction_policy(&policy)) {
         *transaction=true;
@@ -705,19 +705,65 @@ incomplete:
 
 /* The result record can be stored by bind!. Its labelled field is data;
  * only the existing owning native-handle token supplies authority. */
-static Atom *prime_replay_capsule_handle(Atom *input) {
+static Atom *prime_native_history_record_handle(Atom *input,
+    const char *record,const char *label,CettaExprIndex first_field) {
     if(!input||input->kind!=ATOM_EXPR||!input->expr.len||
-        !atom_is_symbol(input->expr.elems[0],"ReplayCheckpoint"))return input;
+        !atom_is_symbol(input->expr.elems[0],record))return input;
     Atom *holder=NULL;
-    for(CettaExprIndex i=1u;i<input->expr.len;i++) {
+    for(CettaExprIndex i=first_field;i<input->expr.len;i++) {
         Atom *field=input->expr.elems[i];
         if(field&&field->kind==ATOM_EXPR&&field->expr.len==2u&&
-            atom_is_symbol(field->expr.elems[0],"capsule")) {
+            atom_is_symbol(field->expr.elems[0],label)) {
             if(holder)return NULL;
             holder=field->expr.elems[1];
         }
     }
     return holder;
+}
+
+static Atom *prime_replay_capsule_handle(Atom *input) {
+    return prime_native_history_record_handle(input,"ReplayCheckpoint","capsule",1u);
+}
+
+static bool prime_native_history_forget(Space *space,Arena *arena,Atom *call,
+    const Bindings *environment,OutcomeSet *target) {
+    (void)space;
+    Atom *argument=bindings_apply_if_vars(environment,arena,expr_arg(call,1u));
+    uint64_t limit=0u;
+    if(!prime_replay_uint(argument,&limit)||limit>SIZE_MAX)return false;
+    Atom *input=bindings_apply_if_vars(environment,arena,expr_arg(call,0u));
+    Atom *registered=registry_lookup_atom(input);if(registered)input=registered;
+    /* An Observation's first payload is positional values, not a field. */
+    input=prime_native_history_record_handle(input,"Observation","residual",2u);
+    input=prime_native_history_record_handle(input,"HistoryPolicy","residual",1u);
+    /* Reserve the return world and its real holder before ownership changes. */
+    Outcome *slot=outcome_set_push_slot(target);
+    if(!slot){eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;}
+    outcome_init(slot);
+    if(!bindings_clone(&slot->env,environment)) {
+        outcome_free_fields(slot);target->len--;eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;
+    }
+    PrimeNativeControl *source=cetta_native_handle_get_owned(g_library_context,"prime-search",input);
+    Atom *holder=source?atom_deep_copy(arena,input):atom_symbol(arena,"None");
+    if(!holder){slot->atom=call;eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;}
+    slot->atom=holder;
+    uint64_t work=source?source->steps:0u;
+    const char *refusal="SourceOwner";
+    CettaContinuationStatus status=source
+        ?prime_checkpoint_forget_recording(input,(size_t)limit,&refusal)
+        :CETTA_CONTINUATION_INVALIDATED;
+    Atom *fields[]={atom_symbol(arena,"HistoryPolicy"),
+        prime_native_history_field(arena,"status",atom_symbol(arena,
+            status==CETTA_CONTINUATION_READY?"Unrecorded":
+            status==CETTA_CONTINUATION_DEFERRED?"Deferred":"Refused")),
+        prime_native_history_field(arena,"reason",refusal?atom_string(arena,refusal):atom_symbol(arena,"None")),
+        prime_native_history_field(arena,"residual",holder),
+        prime_native_history_field(arena,"work",prime_native_occurrence_atom(arena,work)),
+        prime_native_history_field(arena,"earlier",atom_symbol(arena,
+            status==CETTA_CONTINUATION_READY?"Unrecorded":"Unchanged")),
+        prime_native_history_field(arena,"transport-expense",atom_symbol(arena,"Unmetered"))};
+    slot->atom=atom_expr(arena,fields,sizeof(fields)/sizeof(*fields));
+    return true;
 }
 
 static bool prime_native_replay_dispatch(Space *space,Arena *arena,Atom *call,
@@ -730,8 +776,10 @@ static bool prime_native_replay_dispatch(Space *space,Arena *arena,Atom *call,
     bool dispose=head==ids->history_dispose&&nargs==1u;
     bool record=head==ids->history_record&&nargs==2u;
     bool replay=head==ids->history_replay&&nargs==2u;
-    if(!capture&&!inspect&&!dispose&&!record&&!replay)return false;
+    bool forget=head==ids->history_forget&&nargs==2u;
+    if(!capture&&!inspect&&!dispose&&!record&&!replay&&!forget)return false;
     if(!prime_native_replay_caller_admitted())return false;
+    if(forget)return prime_native_history_forget(space,arena,call,environment,target);
     Atom *input=bindings_apply_if_vars(environment,arena,expr_arg(call,0u));
     Atom *registered=registry_lookup_atom(input);if(registered)input=registered;
     PrimeReplayCapsule *capsule=capture?NULL:cetta_native_handle_get_owned(g_library_context,

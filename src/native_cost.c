@@ -9,6 +9,7 @@ _Thread_local CettaNativeCostScope *cetta_native_cost_current_scope;
 #define current_scope cetta_native_cost_current_scope
 static _Atomic uint64_t next_event_identity = 1u;
 static _Atomic uint64_t next_ledger_identity = 1u;
+static _Thread_local bool cost_notifying;
 
 static const char *const names[CETTA_COST_KIND_COUNT] = {
     "quantum", "candidate-row", "index-visit", "match-attempt", "match-node",
@@ -26,6 +27,22 @@ void cetta_native_cost_init(CettaNativeCostLedger *ledger) {
         ledger->identity = cetta_identity_try_take(&next_ledger_identity);
         ledger->total.trace_incomplete = !ledger->identity;
     }
+}
+
+void cetta_native_cost_init_compact(CettaNativeCostLedger *ledger) {
+    cetta_native_cost_init(ledger);
+    if (ledger) ledger->compact = true;
+}
+
+bool cetta_native_cost_forget_events(CettaNativeCostLedger *ledger) {
+    if (!ledger || cost_notifying) return false;
+    for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous)
+        if (scope->ledger == ledger) return false;
+    free(ledger->events);
+    ledger->events = NULL;
+    ledger->length = ledger->capacity = 0u;
+    ledger->compact = true;
+    return true;
 }
 
 void cetta_native_cost_free(CettaNativeCostLedger *ledger) {
@@ -58,6 +75,8 @@ static void append_event(CettaNativeCostLedger *ledger,
         ledger->total.work, units, &ledger->total.overflow);
     ledger->total.span = add_lower_bound(
         ledger->total.span, units, &ledger->total.overflow);
+    if (ledger->compact)
+        return;
     if (!identity)
         ledger->total.trace_incomplete = true;
     if (ledger->total.trace_incomplete)
@@ -96,10 +115,13 @@ static void append_event(CettaNativeCostLedger *ledger,
 
 
 static _Thread_local CettaNativeCostObserver *cost_observer;
-static _Thread_local bool cost_notifying;
 static bool cost_observer_suspended_contains(const CettaNativeCostObserver *);
 
 bool cetta_native_cost_observer_active(void) { return cost_observer != NULL; }
+
+bool cetta_native_cost_events_requested(void) {
+    return cost_observer || (current_scope && current_scope->events_requested);
+}
 
 bool cetta_native_cost_observer_enter(CettaNativeCostObserver *observer,
         CettaNativeCostObserverFn observe, void *context) {
@@ -165,7 +187,7 @@ static void cost_observe_destination(CettaNativeCostChargeView *view,
         append_event(ledger, view->event.kind, view->event.units,
             view->event.occurrence, view->event.identity, view->event.origin);
     view->after = ledger ? ledger->total : (CettaNativeCostSnapshot){0};
-    view->retained = ledger && !duplicate && !ledger->total.trace_incomplete;
+    view->retained = ledger && !duplicate && !ledger->compact && !ledger->total.trace_incomplete;
     cost_observe(view);
 }
 
@@ -182,7 +204,8 @@ void cetta_native_cost_append(CettaNativeCostLedger *ledger,
         CettaNativeCostKind kind, uint64_t units, uint64_t occurrence) {
     if (!ledger || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
         return;
-    uint64_t identity = cetta_identity_try_take(&next_event_identity);
+    uint64_t identity = !ledger->compact || cost_observer
+        ? cetta_identity_try_take(&next_event_identity) : 0u;
     if (!cost_observer) {
         append_event(ledger, kind, units, occurrence, identity, ledger->identity);
         return;
@@ -202,12 +225,24 @@ void cetta_native_cost_scope_enter(CettaNativeCostScope *scope,
         CettaNativeCostLedger *ledger, uint64_t occurrence) {
     *scope = (CettaNativeCostScope){
         .previous = current_scope, .ledger = ledger, .occurrence = occurrence,
+        /* A NULL destination is an explicit legacy event-only scope. */
+        .events_requested = (!ledger || !ledger->compact) ||
+            (current_scope && current_scope->events_requested),
     };
     current_scope = scope;
 }
 
+void cetta_native_cost_scope_enter_source(CettaNativeCostScope *scope,
+        CettaNativeCostLedger *ledger, const uint64_t *occurrence) {
+    assert(occurrence);
+    cetta_native_cost_scope_enter(scope, ledger, 0u);
+    scope->occurrence_source = occurrence;
+}
+
 void cetta_native_cost_scope_leave(CettaNativeCostScope *scope) {
     assert(current_scope == scope);
+    scope->occurrence = cetta_native_cost_scope_occurrence(scope);
+    scope->occurrence_source = NULL;
     current_scope = scope->previous;
 }
 
@@ -225,9 +260,10 @@ void cetta_native_cost_detach_end(CettaNativeCostScope *previous) {
 uint64_t cetta_native_cost_charge_observed(CettaNativeCostKind kind, uint64_t units) {
     if (!current_scope || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
         return 0u;
-    uint64_t identity = cetta_identity_try_take(&next_event_identity);
+    uint64_t identity = cetta_native_cost_events_requested()
+        ? cetta_identity_try_take(&next_event_identity) : 0u;
     uint64_t origin = current_scope->ledger ? current_scope->ledger->identity : 0u;
-    uint64_t occurrence = current_scope->occurrence;
+    uint64_t occurrence = cetta_native_cost_scope_occurrence(current_scope);
     if (!cost_observer) {
         for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
             bool duplicate = false;
@@ -257,6 +293,30 @@ uint64_t cetta_native_cost_charge_observed(CettaNativeCostKind kind, uint64_t un
     }
     cost_observe_end(&view);
     return identity;
+}
+
+/* Import numerical accounts directly when chronology is not available or
+ * not requested. Scheduling supplies span separately at the join boundary. */
+static void cost_import_account(CettaNativeCostLedger *target,
+        const CettaNativeCostLedger *source) {
+    if (target->compact || source->compact || source->total.trace_incomplete) {
+        for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
+            target->total.counts[k] = add_lower_bound(target->total.counts[k],
+                source->total.counts[k], &target->total.overflow);
+        target->total.work = add_lower_bound(target->total.work,
+            source->total.work, &target->total.overflow);
+        if (!target->compact)
+            target->total.trace_incomplete = true;
+    } else {
+        for (size_t j = 0u; j < source->length; j++) {
+            const CettaNativeCostEvent *event = &source->events[j];
+            for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
+                append_event(target, event->kind, event->units, event->occurrence,
+                    event->identity + repetition, event->origin);
+        }
+    }
+    target->total.overflow = target->total.overflow || source->total.overflow;
+    target->total.parallel = target->total.parallel || source->total.parallel;
 }
 
 bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
@@ -306,25 +366,7 @@ bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
         }
         for (size_t i = 0u; i < count; i++) {
             CettaNativeCostLedger *source = children[i];
-            if (source->total.trace_incomplete) {
-                /* Counters still give the declared lower/exact work profile;
-                 * unavailable identities make the event trace incomplete. */
-                for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
-                    target->total.counts[k] = add_lower_bound(target->total.counts[k],
-                        source->total.counts[k], &target->total.overflow);
-                target->total.work = add_lower_bound(target->total.work,
-                    source->total.work, &target->total.overflow);
-                target->total.trace_incomplete = true;
-            } else {
-                for (size_t j = 0u; j < source->length; j++) {
-                    const CettaNativeCostEvent *event = &source->events[j];
-                    for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
-                        append_event(target, event->kind, event->units, event->occurrence,
-                            event->identity + repetition, event->origin);
-                }
-            }
-            target->total.overflow = target->total.overflow || source->total.overflow;
-            target->total.parallel = target->total.parallel || source->total.parallel;
+            cost_import_account(target, source);
         }
         target->total.span = add_lower_bound(before_span, schedule_span, &target->total.overflow);
         target->total.parallel = target->total.parallel || parallel;
@@ -398,23 +440,7 @@ bool cetta_native_cost_join_segments(const CettaNativeCostSegment *segments,
         uint64_t before_span = target->total.span;
         for (size_t i = 0u; i < count; i++) {
             CettaNativeCostLedger *source = segments[i].ledger;
-            if (source->total.trace_incomplete) {
-                for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
-                    target->total.counts[k] = add_lower_bound(target->total.counts[k],
-                        source->total.counts[k], &target->total.overflow);
-                target->total.work = add_lower_bound(target->total.work,
-                    source->total.work, &target->total.overflow);
-                target->total.trace_incomplete = true;
-            } else {
-                for (size_t j = 0u; j < source->length; j++) {
-                    const CettaNativeCostEvent *event = &source->events[j];
-                    for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
-                        append_event(target, event->kind, event->units, event->occurrence,
-                            event->identity + repetition, event->origin);
-                }
-            }
-            target->total.overflow = target->total.overflow || source->total.overflow;
-            target->total.parallel = target->total.parallel || source->total.parallel;
+            cost_import_account(target, source);
         }
         target->total.overflow = target->total.overflow || overflow;
         target->total.span = add_lower_bound(before_span, span, &target->total.overflow);
@@ -429,8 +455,10 @@ bool cetta_native_cost_join(CettaNativeCostLedger *const *children, size_t count
 }
 
 void cetta_native_cost_occurrence(uint64_t occurrence) {
-    if (current_scope)
+    if (current_scope) {
+        current_scope->occurrence_source = NULL;
         current_scope->occurrence = occurrence;
+    }
 }
 
 CettaNativeCostSnapshot cetta_native_cost_read(CettaNativeCostLedger *ledger,
@@ -522,7 +550,8 @@ void cetta_native_cost_receipts_observe(void *raw,const CettaNativeCostChargeVie
         CettaNativeCostDestinationReceipt *d=&out->destinations[out->destination_count++];
         *d=(CettaNativeCostDestinationReceipt){
             .ledger_identity=v->ledger?v->ledger->identity:0u,
-            .scope_occurrence=v->scoped&&v->scope?v->scope->occurrence:v->event.occurrence,
+            .scope_occurrence=v->scoped&&v->scope
+                ?cetta_native_cost_scope_occurrence(v->scope):v->event.occurrence,
             .present=v->ledger!=NULL,.duplicate=v->duplicate,.retained=v->retained,
             .before=v->before,.after=v->after};
         out->commands[out->active_command].destination_count++;

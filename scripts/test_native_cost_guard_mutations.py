@@ -40,7 +40,8 @@ def main():
             (directory / 'native_cost.h').write_text(candidate)
             binary = (directory / 'control').resolve()
             command = shlex.split(args.cc) + ['-std=c11', '-O2', '-Wall', '-Wextra',
-                '-Werror', '-I' + str(directory.resolve()), str(control), '-o', str(binary)]
+                '-Werror', '-I' + str(directory.resolve()), '-I' + str(ROOT / 'src'),
+                str(control), '-o', str(binary)]
             subprocess.run(command, check=True, capture_output=True, text=True)
             run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
             receipt['cases'].append({'name': name, 'compile': command, 'exit': run.returncode,

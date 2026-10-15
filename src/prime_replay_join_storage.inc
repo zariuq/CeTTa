@@ -23,7 +23,7 @@ static void prime_replay_frame_storage(const PrimeReplayRequestFrame *f,CettaSto
     prime_replay_checkpoint_origin_storage(&f->entry,census);prime_replay_checkpoint_origin_storage(&f->post,census);
     if(f->entry.preparation)prime_checkpoint_storage(f->entry.preparation,census);
     if(f->post.preparation)prime_checkpoint_storage(f->post.preparation,census);
-    prime_native_outcomes_storage(&f->pending,census);
+    outcome_set_storage_census(&f->pending,census);
     if(f->results.items!=f->results.inline_items)
         cetta_storage_array(census,f->results.items,f->results.cap,sizeof(*f->results.items),0u);
     cetta_storage_array(census,f->physical.events,f->physical.capacity,sizeof(*f->physical.events),0u);

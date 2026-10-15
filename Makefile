@@ -126,13 +126,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 661
+PRIME_NEED_ALGEBRA_CHECKS := 680
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 669
+PRIME_NEED_ALGEBRA_CHECKS := 688
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -3651,6 +3651,7 @@ OPT_IN_FEATURE_TESTS = \
 	tests/test_io_no_http.metta \
 	tests/test_io_rho_bridge.metta \
 	tests/test_io_syntax.metta \
+	tests/test_json_direct_reference.metta \
 	tests/test_json_gslt_byte_lengths.metta \
 	tests/test_json_gslt_hostile_constructors.metta \
 	tests/test_json_gslt_invalid_number.metta \
@@ -41120,7 +41121,6 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_nik_v1.c \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
-	native/json_direct_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
@@ -41170,8 +41170,6 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	native/json_nik_v1.h \
 	native/json_runtime_v1.h \
 	native/json_value_v1.h \
-	native/json_direct_v1.h \
-	$(JSON_PREDICTIVE_OUTPUTS_V1) \
 	$(LANGUAGE_DEF_CORE_V1_HEADER) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.h \
@@ -41206,13 +41204,13 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 	mv "$$tmp_out" $@
 
 JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
-$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h native/json_direct_v1.c native/json_direct_v1.h $(JSON_PREDICTIVE_OUTPUTS_V1) $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-direct-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c native/json_direct_v1.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread $(if $(filter 1,$(ENABLE_GMP)),$(GMP_LDFLAGS),); \
 	mv "$$tmp_out" $@
 
@@ -44239,7 +44237,9 @@ endif
 .PHONY: test-io-syntax test-io-no-http
 ifeq ($(HTTP_ENABLED),1)
 test-io-syntax: $(BIN)
-	@$(BIN) tests/test_io_syntax.metta
+	@set -eu; result=$$($(BIN) tests/test_io_syntax.metta); \
+	printf '%s\n' "$$result"; \
+	test "$$result" = "$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]')"
 else
 test-io-syntax:
 	@echo "test-io-syntax requires ENABLE_HTTP=1" >&2
@@ -44248,7 +44248,9 @@ endif
 
 ifeq ($(HTTP_ENABLED),0)
 test-io-no-http: $(BIN)
-	@$(BIN) tests/test_io_no_http.metta
+	@set -eu; result=$$($(BIN) tests/test_io_no_http.metta); \
+	printf '%s\n' "$$result"; \
+	test "$$result" = "$$(printf '%s\n' '[()]' '[()]' '[()]')"
 else
 test-io-no-http:
 	@echo "test-io-no-http requires ENABLE_HTTP=0" >&2
@@ -45316,7 +45318,8 @@ test-prime: test-native-cost-guard
 
 .PHONY: test-prime-native-cost
 test-prime-native-cost: $(BIN)
-	@python3 scripts/test_prime_native_cost.py --binary "$(BIN)"
+	@python3 scripts/test_prime_native_cost.py --binary "$(BIN)" \
+		$(if $(filter 1,$(ENABLE_PRIME_CAUSAL_RECEIPTS)),--history-controls,)
 test-prime: test-prime-native-cost
 
 NATIVE_COST_GRAPH_TEST_BIN = runtime/test-native-cost-graph-$(BUILD_OBJ_TAG)
@@ -45364,7 +45367,8 @@ $(NATIVE_CONTROL_LEASES_TEST_BIN): tests/test_native_control_leases.c src/eval.c
 $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) tests/native_parent_checkpoint_compare.inc tests/native_parent_recording_compare.inc tests/native_parent_run_scope.inc src/prime_native_checkpoint.inc src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \
-		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) \
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free,)
 .PHONY: test-native-parent-checkpoint
 test-native-parent-checkpoint: $(NATIVE_PARENT_CHECKPOINT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_PARENT_CHECKPOINT_TEST_BIN))

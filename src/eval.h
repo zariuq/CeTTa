@@ -5,6 +5,7 @@
 #include "call_outcome.h"
 #include "atom.h"
 #include "eval_completion.h"
+#include "native_handle.h"
 #include "search_machine.h"
 #include "space.h"
 #include "term_canon.h"
@@ -73,6 +74,9 @@ void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
 void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
+/* Owned arrays, bindings, variants and payload arenas of a quiescent bag.
+ * The enclosing OutcomeSet header belongs to its caller. */
+void outcome_set_storage_census(const OutcomeSet *os, CettaStorageCensus *census);
 /* Copy a quiescent inline occurrence bag for an owned continuation. One
  * enclosing Atom session preserves sharing between every visible, cached,
  * delayed, logical, variant and Prime occurrence payload. Materialization
@@ -98,6 +102,10 @@ bool outcome_set_copy_to_arena(const OutcomeSet *source, OutcomeSet *destination
  * Add every ARENA_PAIR_AT entry (ARENA_PAIR_COUNT entries) to the enclosing
  * injective Atom session before PREPARE, together with each separately
  * prepared recording-group pair and every admitted borrowed external region.
+ * Alternatively, select prime_need_recording_copy_forget on that session
+ * before PREPARE: bounded recording carriers and the image's recording policy
+ * are erased instead of copied. Other observers and the source stay owned by
+ * their existing holders. Paid cost accounts and operational state remain.
  * ARENA_PAIR returns the first, control-storage pair. PREPARE copies the
  * complete supported frame/frontier/world/licence packet through that session;
  * it does not run an evaluator transition. Refusal releases the reservation
@@ -113,14 +121,26 @@ bool outcome_set_copy_to_arena(const OutcomeSet *source, OutcomeSet *destination
  * is separate from the copied evaluator account.
  *
  * This profile declines nested/registered children, worker/resource/foreign
- * owners and compiled cache owners. Recording requires its separately
- * prepared capability in the same session. An owned top episode additionally
+ * owners and compiled cache owners. Preserving a recording requires its
+ * separately prepared capability in the same session. An owned top episode additionally
  * requires its actual storage holder, initialized private request/region
  * arenas, inactive region stack and no external answer observer. With the Prime stack
  * disabled, NEW returns UNSUPPORTED without consuming its input. Ordinary
  * execution remains available. No new language form is introduced. */
 typedef struct CettaPrimeCheckpointCopy CettaPrimeCheckpointCopy;
 CettaPrimeCheckpointCopy *cetta_prime_checkpoint_copy_new(
+    CettaLibraryContext *context, Atom *residual, CettaContinuationStatus *status);
+/* The reserved variant keeps the source lease after successful PREPARE.
+ * After releasing the Atom copy session, REPLACE transfers the image into
+ * that source's existing native-handle owner under a sole exclusive use.
+ * All owning handle aliases keep their identity and resolve the image; the
+ * old payload retires without running it. Other acquired uses refuse and
+ * retain the staged image for retry. Source close invalidates replacement.
+ * FREE abandons the image and releases the reservation. This variant cannot
+ * PUBLISH a second producer. External borrowed users remain excluded under
+ * the existing stable episode contract. It has the same admission limits as
+ * the copier above; this is not concurrent shared-producer migration. */
+CettaPrimeCheckpointCopy *cetta_prime_checkpoint_copy_new_reserved(
     CettaLibraryContext *context, Atom *residual, CettaContinuationStatus *status);
 bool cetta_prime_checkpoint_copy_arena_pair(
     const CettaPrimeCheckpointCopy *copy, AtomDeepCopyArenaPair *pair);
@@ -131,6 +151,8 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
     CettaPrimeCheckpointCopy *copy, AtomDeepCopySession *atoms);
 CettaContinuationStatus cetta_prime_checkpoint_copy_publish(
     CettaPrimeCheckpointCopy *copy, Arena *arena, Atom **residual);
+CettaContinuationStatus cetta_prime_checkpoint_copy_replace(
+    CettaPrimeCheckpointCopy *copy, CettaNativeHandleUse *source_use);
 const char *cetta_prime_checkpoint_copy_refusal(const CettaPrimeCheckpointCopy *copy);
 void cetta_prime_checkpoint_copy_free(CettaPrimeCheckpointCopy *copy);
 /* Stage an independent outcome vector through one graph relocation session.

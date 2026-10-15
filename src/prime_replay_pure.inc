@@ -328,7 +328,7 @@ static bool prime_replay_source_atom(PrimeReplaySourceScan *scan,PrimeReplaySynt
            is_grounded_op(h)||h==ids->cost_run||h==ids->cost_inspect||h==ids->cost_trace||
            h==ids->cost_storage||h==ids->cost_analyze||
            h==ids->history_capture||h==ids->history_record||h==ids->history_replay||
-           h==ids->history_checkpoint||h==ids->history_dispose||
+           h==ids->history_checkpoint||h==ids->history_dispose||h==ids->history_forget||
            (g_library_context->foreign_runtime&&cetta_foreign_is_callable_atom(head))) {
             scan->refusal="ProducerOperation";return false;
         }

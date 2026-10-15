@@ -19,7 +19,7 @@ struct PettaCandidateSnapshotStorage {
     atomic_size_t references;
     pthread_mutex_t lock;
     PettaEquationCandidate *items;
-    size_t len;
+    size_t len, capacity;
     bool retired;
     PettaEquationProjection *projections;
 };
@@ -31,16 +31,17 @@ struct PettaEquationProjection {
     PettaEquationProjection *previous, *next;
     PettaEquationSelectionEntry *entries;
     PettaEquationCandidate *owned;
-    size_t first, len;
+    size_t first, len, entries_capacity;
 };
 
 static PettaCandidateSnapshotStorage *petta_equation_storage_take(
-        PettaEquationCandidate *items, size_t len) {
+        PettaEquationCandidate *items, size_t len, size_t capacity) {
     PettaCandidateSnapshotStorage *storage = cetta_malloc(sizeof(*storage));
     atomic_init(&storage->references, 1u);
     pthread_mutex_init(&storage->lock, NULL);
     storage->items = items;
     storage->len = len;
+    storage->capacity = capacity;
     storage->retired = false;
     storage->projections = NULL;
     return storage;
@@ -132,6 +133,7 @@ static void petta_equation_storage_retire(PettaCandidateSnapshotStorage *storage
             p->len * sizeof(*owned));
         free(p->entries);
         p->entries = NULL;
+        p->entries_capacity = 0u;
         p->first = 0u;
         petta_equation_projection_unlink(p);
         pthread_mutex_unlock(&p->lock);
@@ -143,9 +145,11 @@ static void petta_equation_storage_retire(PettaCandidateSnapshotStorage *storage
 
 PettaEquationProjection *petta_program_equation_projection_take(
         PettaCandidateSnapshotLease *catalog, PettaEquationSelectionEntry *entries,
-        size_t first, size_t len) {
+        size_t entries_capacity, size_t first, size_t len) {
     if (!catalog || !len || !catalog->storage ||
         len > SIZE_MAX / sizeof(PettaEquationCandidate) ||
+        (entries && (entries_capacity < len || entries_capacity > SIZE_MAX / sizeof(*entries))) ||
+        (!entries && entries_capacity) ||
         (!entries && (first > catalog->len || len > catalog->len - first)))
         return NULL;
     if (entries) {
@@ -164,6 +168,7 @@ PettaEquationProjection *petta_program_equation_projection_take(
         p->next->previous = p;
     p->source->projections = p;
     p->entries = entries;
+    p->entries_capacity = entries_capacity;
     p->owned = NULL;
     p->first = first;
     p->len = len;
@@ -225,12 +230,13 @@ size_t petta_program_equation_projection_retained_bytes(
         const PettaEquationProjection *projection) {
     pthread_mutex_t *lock = (pthread_mutex_t *)&projection->lock;
     pthread_mutex_lock(lock);
-    size_t records = projection->source ? projection->source->len : projection->len;
-    size_t entries = projection->entries ? projection->len : 0u;
+    size_t records = projection->source ? projection->source->capacity : projection->len;
+    size_t entries = projection->entries_capacity;
+    size_t source_header = projection->source ? sizeof(*projection->source) : 0u;
     pthread_mutex_unlock(lock);
-    if (records > (SIZE_MAX - sizeof(*projection)) / sizeof(PettaEquationCandidate))
+    if (records > (SIZE_MAX - sizeof(*projection) - source_header) / sizeof(PettaEquationCandidate))
         return SIZE_MAX;
-    size_t bytes = sizeof(*projection) + records * sizeof(PettaEquationCandidate);
+    size_t bytes = sizeof(*projection) + source_header + records * sizeof(PettaEquationCandidate);
     if (entries > (SIZE_MAX - bytes) / sizeof(PettaEquationSelectionEntry))
         return SIZE_MAX;
     return bytes + entries * sizeof(PettaEquationSelectionEntry);
@@ -1361,9 +1367,10 @@ petta_program_space_find_candidate_snapshot(
 static bool petta_program_space_store_candidate_snapshot_take(
     PettaProgramSpace *space, SymbolId head, SpaceReadToken source,
     PettaProgramCandidateSnapshotKey key,
-    PettaEquationCandidate *candidates, size_t candidate_count) {
+    PettaEquationCandidate *candidates, size_t candidate_count, size_t candidate_capacity) {
     if (!space || !source.space || head == SYMBOL_ID_NONE ||
-        candidate_count > SIZE_MAX / sizeof(*candidates)) {
+        candidate_count > candidate_capacity ||
+        candidate_capacity > SIZE_MAX / sizeof(*candidates)) {
         return false;
     }
 
@@ -1394,7 +1401,7 @@ static bool petta_program_space_store_candidate_snapshot_take(
         .key = key,
         .candidates = candidates,
         .len = candidate_count,
-        .storage = petta_equation_storage_take(candidates, candidate_count),
+        .storage = petta_equation_storage_take(candidates, candidate_count, candidate_capacity),
     };
     return true;
 }
@@ -5430,17 +5437,21 @@ bool petta_program_candidate_snapshot_lease_pin(PettaCandidateSnapshotLease *lea
     if (lease->storage || !lease->len)
         return true;
     PettaEquationCandidate *items = lease->owned_items;
+    size_t capacity = lease->owned_capacity;
+    if (items && capacity < lease->len) return false;
     if (!items) {
+        capacity = lease->len;
         items = cetta_malloc(lease->len * sizeof(*items));
         memcpy(items, lease->items, lease->len * sizeof(*items));
     }
-    lease->storage = petta_equation_storage_take(items, lease->len);
+    lease->storage = petta_equation_storage_take(items, lease->len, capacity);
     /* A private host array has no cache owner to retire it later. Its full
      * observation is owned by this lease; narrower projections may compact
      * immediately when they escape into a suspended choice. */
     lease->storage->retired = true;
     lease->items = items;
     lease->owned_items = NULL;
+    lease->owned_capacity = 0u;
     return true;
 }
 
@@ -5799,7 +5810,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
         space_read_token_matches_live_space(source, space) &&
         petta_program_candidate_snapshot_key_matches_live_space(key, space) &&
         petta_program_space_store_candidate_snapshot_take(
-            publication_authority, head, source, key, items, length)) {
+            publication_authority, head, source, key, items, length, capacity)) {
         const PettaProgramCandidateSnapshot *stored =
             petta_program_space_find_candidate_snapshot(
                 publication_authority, head, space);
@@ -5814,6 +5825,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
         lease->items = items;
         lease->len = length;
         lease->owned_items = items;
+        lease->owned_capacity = capacity;
     }
     return true;
 }
@@ -7019,6 +7031,67 @@ static bool petta_program_storage_array(CettaStorageCensus *census, const void *
     return !census->incomplete && !census->overflow;
 }
 
+static void petta_equation_storage_census(const PettaCandidateSnapshotStorage *storage,
+        CettaStorageCensus *census) {
+    if (!storage || !cetta_storage_object(census, storage, sizeof(*storage), CETTA_STORAGE_BLOCK))
+        return;
+    (void)petta_program_storage_array(census, storage->items, storage->len,
+        storage->capacity, sizeof(*storage->items));
+}
+
+void petta_program_candidate_snapshot_lease_storage_census(
+        const PettaCandidateSnapshotLease *lease, CettaStorageCensus *census) {
+    if (!lease) return;
+    if (lease->storage) {
+        if (lease->owned_items || lease->owned_capacity || lease->items != lease->storage->items ||
+            lease->len != lease->storage->len) {
+            cetta_storage_refuse(census, "ProgramSnapshotShape");
+            return;
+        }
+        petta_equation_storage_census(lease->storage, census);
+    } else if (lease->owned_items) {
+        if (lease->items != lease->owned_items) {
+            cetta_storage_refuse(census, "ProgramSnapshotShape");
+            return;
+        }
+        (void)petta_program_storage_array(census, lease->owned_items,
+            lease->len, lease->owned_capacity, sizeof(*lease->owned_items));
+    } else if (lease->len) {
+        cetta_storage_refuse(census, "UnpinnedProgramSnapshot");
+    }
+}
+
+void petta_program_equation_projection_storage_census(
+        const PettaEquationProjection *projection, CettaStorageCensus *census) {
+    if (!projection || !cetta_storage_object(census, projection,
+            sizeof(*projection), CETTA_STORAGE_BLOCK)) return;
+    if (projection->owned) {
+        if (projection->source || projection->entries) {
+            cetta_storage_refuse(census, "ProgramProjectionShape"); return;
+        }
+        (void)petta_program_storage_array(census, projection->owned,
+            projection->len, projection->len, sizeof(*projection->owned));
+    } else if (projection->source) {
+        const PettaCandidateSnapshotStorage *source = projection->source;
+        if (!projection->entries && (projection->first > source->len ||
+                projection->len > source->len - projection->first)) {
+            cetta_storage_refuse(census, "ProgramProjectionShape"); return;
+        }
+        if (projection->entries) {
+            if (!petta_program_storage_array(census, projection->entries,
+                    projection->len, projection->entries_capacity, sizeof(*projection->entries))) return;
+            for (size_t i = 0u; i < projection->len; i++) {
+                if (projection->entries[i].index >= source->len) {
+                    cetta_storage_refuse(census, "ProgramProjectionShape"); return;
+                }
+            }
+        }
+        petta_equation_storage_census(source, census);
+    } else {
+        cetta_storage_refuse(census, "ProgramProjectionShape");
+    }
+}
+
 static void petta_program_catalog_storage(const PettaProgramSpace *entry,
     CettaStorageCensus *census) {
     if (!entry || !cetta_storage_object(census, entry, 0u, CETTA_STORAGE_VISITED)) return;
@@ -7043,9 +7116,7 @@ static void petta_program_catalog_storage(const PettaProgramSpace *entry,
         if (!storage || snapshot->candidates != storage->items || snapshot->len != storage->len) {
             cetta_storage_refuse(census, "ProgramSnapshotShape"); return;
         }
-        if (cetta_storage_object(census, storage, sizeof(*storage), CETTA_STORAGE_BLOCK))
-            (void)petta_program_storage_array(census, storage->items, storage->len,
-                storage->len, sizeof(*storage->items));
+        petta_equation_storage_census(storage, census);
     }
     for (size_t i = 0u; i < entry->type_family_len; i++) {
         const PettaProgramTypeFamily *family = &entry->type_families[i];
@@ -7053,13 +7124,16 @@ static void petta_program_catalog_storage(const PettaProgramSpace *entry,
                 family->count, family->count, sizeof(*family->calls))) return;
     }
     if (entry->type_families_current) arena_storage_census(&entry->type_family_storage, census);
-    const PettaProgramRevisionView *view = entry->revision_view;
-    if (view && cetta_storage_object(census, view, sizeof(*view), CETTA_STORAGE_BLOCK)) {
-        if (!petta_program_storage_array(census, view->source_equations,
-                view->source_equation_len, view->source_equation_len,
-                sizeof(*view->source_equations))) return;
-        petta_program_catalog_storage(&view->catalog, census);
-    }
+    petta_program_revision_view_storage_census(entry->revision_view, census);
+}
+
+void petta_program_revision_view_storage_census(
+        const PettaProgramRevisionView *view, CettaStorageCensus *census) {
+    if (!view || !cetta_storage_object(census, view, sizeof(*view), CETTA_STORAGE_BLOCK)) return;
+    if (!petta_program_storage_array(census, view->source_equations,
+            view->source_equation_len, view->source_equation_len,
+            sizeof(*view->source_equations))) return;
+    petta_program_catalog_storage(&view->catalog, census);
 }
 
 void petta_program_storage_census(const PettaProgram *program, CettaStorageCensus *census) {

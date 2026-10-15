@@ -332,9 +332,9 @@
     {
       "source": "native_history.metta",
       "output": "native_history.metta",
-      "source_sha256": "4b848a7e0997191b94148e3c7763f23b9813c3c4ebeb1a9fc5d3882add3fa5a9",
-      "output_sha256": "f1f9c3d357f242f2bd3ab540c0ff111f4789242250c2bf23d195ace095239a13",
-      "edits": 12,
+      "source_sha256": "f322dbf4dc8d93b70b5ea2ff7dabd0f2772c5f03eab37d737c826433527f99d3",
+      "output_sha256": "6425f8491dcfc8e8d2c6191ea93483ecc17b36f7dec98f3d78d049dceef4bcb0",
+      "edits": 20,
       "code_diagnostics": 0
     },
     {

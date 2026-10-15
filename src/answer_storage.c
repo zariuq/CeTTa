@@ -75,8 +75,28 @@ void cetta_answer_storage_release(void *opaque) {
 
 bool cetta_answer_storage_retain_into(CettaAnswerStorage *storage, Arena *receiver) {
     return storage && receiver && storage->shares < SIZE_MAX &&
-        arena_retain_owner(receiver, storage,
-            cetta_answer_storage_retain, cetta_answer_storage_release);
+        arena_retain_owner_with_storage(receiver, storage,
+            cetta_answer_storage_retain, cetta_answer_storage_release,
+            cetta_answer_storage_census);
+}
+
+void cetta_answer_storage_census(const void *raw, CettaStorageCensus *census) {
+    const CettaAnswerStorage *storage = raw;
+    if (!storage || !cetta_storage_object(census, storage, sizeof(*storage), CETTA_STORAGE_BLOCK)) return;
+    (void)cetta_storage_object(census, storage->account, sizeof(*storage->account), CETTA_STORAGE_BLOCK);
+    arena_storage_census(&storage->arena, census);
+}
+
+void cetta_answer_storage_account_census(const CettaAnswerStorageAccount *account,
+        CettaStorageCensus *census) {
+    if (!account || !cetta_storage_object(census, account, 0u, CETTA_STORAGE_VISITED)) return;
+    (void)cetta_storage_object(census, account, sizeof(*account), CETTA_STORAGE_BLOCK);
+    for (const CettaAnswerStorage *held = account->head; held; held = held->next) {
+        if (!cetta_storage_object(census, held, 0u, CETTA_STORAGE_VISITED)) {
+            cetta_storage_refuse(census, "AnswerStorageAccountCycle"); return;
+        }
+        cetta_answer_storage_census(held, census);
+    }
 }
 
 bool cetta_answer_storage_account_usage(

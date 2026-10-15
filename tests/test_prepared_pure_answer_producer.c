@@ -536,6 +536,32 @@ static void test_single_result_projection(void) {
     destroy(&fixture);
 }
 
+static void inspect_cursor_storage(Fixture *fixture, CettaPreparedPureAnswerCursor *cursor) {
+    size_t polls=fixture->polls;
+    uint64_t answers=cetta_prepared_pure_answer_cursor_answer_count(cursor);
+    uint64_t tails=cetta_prepared_pure_answer_cursor_tail_call_count(cursor);
+    size_t frames=cetta_prepared_pure_answer_cursor_frame_count(cursor);
+    CettaPreparedPureCursorStorage storage=cetta_prepared_pure_answer_cursor_storage(cursor);
+    CettaStorageCensus census={0};
+    cetta_prepared_pure_answer_cursor_storage_census(cursor,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && !census.overflow &&
+        census.retained>=storage.metadata_bytes+storage.reserved_bytes);
+    CettaStorageCensus program={0};
+    cetta_prepared_pure_program_storage_census(fixture->program,&program);cetta_storage_finish(&program);
+    assert(!program.incomplete && census.bytes==program.bytes+storage.metadata_bytes+storage.live_bytes);
+    cetta_storage_census_free(&program);
+    size_t retained=census.retained,objects=census.length;
+    cetta_prepared_pure_answer_cursor_storage_census(cursor,&census);
+    cetta_prepared_pure_program_storage_census(fixture->program,&census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained==retained && census.length==objects &&
+        census.repeated>0u && fixture->polls==polls &&
+        cetta_prepared_pure_answer_cursor_answer_count(cursor)==answers &&
+        cetta_prepared_pure_answer_cursor_tail_call_count(cursor)==tails &&
+        cetta_prepared_pure_answer_cursor_frame_count(cursor)==frames);
+    cetta_storage_census_free(&census);
+}
+
 static CettaPreparedPureAnswerCursor *open_cursor(
     Fixture *fixture, bool no_match_declines) {
     CettaPreparedPureAnswerCursorOptions options = {
@@ -552,6 +578,7 @@ static CettaPreparedPureAnswerCursor *open_cursor(
     CettaPreparedPureAnswerCursor *cursor =
         cetta_prepared_pure_answer_cursor_open(fixture->program, &options);
     assert(cursor);
+    inspect_cursor_storage(fixture,cursor);
     return cursor;
 }
 
@@ -563,6 +590,7 @@ static void expect_answer(Fixture *fixture,
            CETTA_PREPARED_PURE_CURSOR_ANSWER);
     char *text = atom_to_string(&fixture->source, answer);
     assert(text && strcmp(text, expected) == 0);
+    inspect_cursor_storage(fixture,cursor);
 }
 
 static void expect_frame(Fixture *fixture,

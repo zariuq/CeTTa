@@ -85,6 +85,8 @@ void cetta_gslt_ground_dense_workspace_init_v1(
     CettaGsltGroundDenseWorkspaceV1 *workspace);
 void cetta_gslt_ground_dense_workspace_free_v1(
     CettaGsltGroundDenseWorkspaceV1 *workspace);
+void cetta_gslt_ground_dense_workspace_storage_v1(
+    const CettaGsltGroundDenseWorkspaceV1 *workspace, CettaStorageCensus *census);
 void cetta_gslt_ground_dense_workspace_discard_match_v1(
     CettaGsltGroundDenseWorkspaceV1 *workspace);
 

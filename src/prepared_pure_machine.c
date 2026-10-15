@@ -10920,6 +10920,20 @@ CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
     };
 }
 
+void cetta_prepared_pure_answer_cursor_storage_census(
+        const CettaPreparedPureAnswerCursor *cursor, CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census, cursor, sizeof(*cursor), CETTA_STORAGE_BLOCK)) return;
+    if (cursor->frame_len > cursor->frame_cap || cursor->argument_len > cursor->argument_cap) {
+        cetta_storage_refuse(census, "PreparedCursorStorageShape"); return;
+    }
+    cetta_prepared_pure_program_storage_census(cursor->program, census);
+    if (cursor->owns_arena) arena_storage_census(&cursor->owned_arena, census);
+    cetta_storage_array(census, cursor->frames, cursor->frame_cap, sizeof(*cursor->frames), 0u);
+    cetta_storage_array(census, cursor->arguments, cursor->argument_cap, sizeof(*cursor->arguments), 0u);
+    cetta_storage_array(census, cursor->head_seen, cursor->program->head_len, sizeof(*cursor->head_seen), 0u);
+    cetta_storage_array(census, cursor->seen_heads, cursor->program->head_len, sizeof(*cursor->seen_heads), 0u);
+}
+
 void cetta_prepared_pure_answer_cursor_close(
     CettaPreparedPureAnswerCursor *cursor) {
     if (cursor && cursor->program->execution) return;

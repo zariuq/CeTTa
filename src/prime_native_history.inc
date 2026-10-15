@@ -4,6 +4,13 @@
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static PrimeNeedReceipt prime_native_parallel_history(const PrimeNativeWork *work);
 
+/* The unrecorded loop never enters this scope. Keeping its cleanup inline
+ * lets that specialization omit the recording service call entirely. */
+static inline __attribute__((always_inline)) void prime_native_history_scope_leave(
+    PrimeNeedRecordingScope *scope) {
+    if (scope->entered) prime_need_recording_leave(scope);
+}
+
 static bool prime_native_history_configure(PrimeNativeControl *control,
     const PrimeNativeHistorySpec *spec) {
     PrimeNativeHistory *history = &control->history;
@@ -100,25 +107,23 @@ static bool prime_native_history_root_atom(const PrimeNeedReceipt *root, void *r
         return true;
     }
     if (status != PRIME_NEED_RECEIPT_GRAPH_COMPLETE) roots->complete = false;
+    bool short_retained[32];
+    bool *retained = graph.length <= 32u ? short_retained
+        : malloc(graph.length * sizeof(*retained));
+    if ((graph.length && !retained) ||
+        !prime_need_receipt_graph_producers(&graph, retained)) {
+        roots->complete = false;
+        roots->items[roots->count++] = atom_symbol(arena, "GraphUnavailable");
+        if (retained != short_retained) free(retained);
+        prime_need_receipt_graph_free(&graph);
+        return true;
+    }
     Atom **nodes = graph.length ? cetta_malloc(graph.length * sizeof(*nodes)) : NULL;
     for (size_t i = 0u; i < graph.length; i++) {
         const PrimeNeedReceiptGraphNode *node = &graph.nodes[i];
         const PrimeNeedReceiptEvent *event = &node->event;
         Atom *payload = atom_symbol(arena, "Join");
         if (node->has_event) {
-            bool retained_producer = false;
-            if (event->producer_update_id) {
-                for (size_t j = 0u; j < graph.length; j++) {
-                    const PrimeNeedReceiptEvent *producer = &graph.nodes[j].event;
-                    if (graph.nodes[j].has_event && producer->producer_completed &&
-                        producer->producer_update_id == event->producer_update_id &&
-                        producer->need_session_id == event->need_session_id &&
-                        producer->thunk_id == event->thunk_id) {
-                        retained_producer = true;
-                        break;
-                    }
-                }
-            }
             Atom *fields[] = {atom_symbol(arena, "NeedEvent"),
                 atom_int(arena, event->kind),
                 prime_native_occurrence_atom(arena, event->need_session_id),
@@ -129,7 +134,7 @@ static bool prime_native_history_root_atom(const PrimeNeedReceipt *root, void *r
                 prime_native_occurrence_atom(arena, event->producer_update_id),
                 atom_symbol(arena, event->producer_completed ? "True" : "False"),
                 prime_native_history_field(arena, "producer", atom_symbol(arena,
-                    !event->producer_update_id ? "None" : retained_producer ? "Retained" : "External")),
+                    !event->producer_update_id ? "None" : retained[i] ? "Retained" : "External")),
                 prime_native_history_quote(arena, event->before),
                 prime_native_history_quote(arena, event->after)};
             payload = atom_expr(arena, fields, 12u);
@@ -147,6 +152,7 @@ static bool prime_native_history_root_atom(const PrimeNeedReceipt *root, void *r
         atom_expr(arena, nodes, (CettaExprLen)graph.length)};
     roots->items[roots->count++] = atom_expr(arena, fields, 5u);
     free(nodes);
+    if (retained != short_retained) free(retained);
     prime_need_receipt_graph_free(&graph);
     return true;
 }

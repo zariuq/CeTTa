@@ -503,6 +503,32 @@ void cetta_open_equation_program_release(
     free(program);
 }
 
+void cetta_open_equation_program_storage_census(
+        const CettaOpenEquationProgram *program, CettaStorageCensus *census) {
+    if (!program || !cetta_storage_object(census, program, sizeof(*program), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, program->relations, program->relation_cap, sizeof(*program->relations), 0u);
+    cetta_storage_array(census, program->equations, program->equation_cap, sizeof(*program->equations), 0u);
+    cetta_storage_array(census, program->ops, program->op_cap, sizeof(*program->ops), 0u);
+    cetta_storage_array(census, program->index_paths, program->index_path_cap, sizeof(*program->index_paths), 0u);
+    cetta_storage_array(census, program->index_steps, program->index_step_cap, sizeof(*program->index_steps), 0u);
+    cetta_storage_array(census, program->index_keys, program->index_key_cap, sizeof(*program->index_keys), 0u);
+    cetta_storage_array(census, program->index_tables, program->index_table_cap, sizeof(*program->index_tables), 0u);
+    cetta_storage_array(census, program->index_switchs, program->index_switch_cap, sizeof(*program->index_switchs), 0u);
+    cetta_storage_array(census, program->switch_lengths, program->switch_length_cap, sizeof(*program->switch_lengths), 0u);
+    cetta_storage_array(census, program->switch_entrys, program->switch_entry_cap, sizeof(*program->switch_entrys), 0u);
+    cetta_storage_array(census, program->switch_tables, program->switch_table_cap, sizeof(*program->switch_tables), 0u);
+    cetta_storage_array(census, program->steps, program->step_cap, sizeof(*program->steps), 0u);
+    cetta_storage_array(census, program->step_args, program->step_arg_cap, sizeof(*program->step_args), 0u);
+    cetta_storage_array(census, program->templates, program->template_cap, sizeof(*program->templates), 0u);
+    cetta_storage_array(census, program->template_children, program->template_child_cap, sizeof(*program->template_children), 0u);
+    cetta_storage_array(census, program->host_plans, program->host_plan_cap, sizeof(*program->host_plans), 0u);
+    cetta_storage_array(census, program->slot_stores, program->slot_store_cap, sizeof(*program->slot_stores), 0u);
+    cetta_storage_array(census, program->cell_slots, program->cell_slot_cap, sizeof(*program->cell_slots), 0u);
+    cetta_storage_array(census, program->sources, program->source_cap, sizeof(*program->sources), 0u);
+    cetta_storage_array(census, program->controls, program->control_cap, sizeof(*program->controls), 0u);
+    if (program->atoms_ready) arena_storage_census(&program->atoms, census);
+}
+
 bool cetta_open_equation_program_owns_host_payload(
     const CettaOpenEquationProgram *program) {
     return program && program->atoms_ready;
@@ -4662,6 +4688,7 @@ struct CettaOpenEquationCursor {
     struct OemAbsentHead *absent;
     uint32_t absent_len, absent_cap;
     uint64_t *version_epochs;
+    uint32_t version_epoch_cap;
     uint32_t poll;
     CettaOpenEquationHandoff handoff;
     /* The depth bound failed an activation whose head matched. */
@@ -5905,6 +5932,7 @@ static const CettaOpenEquationProgram *oem_enter_current(
         return NULL;
     }
     cursor->version_epochs = grown;
+    cursor->version_epoch_cap = epochs ? epochs : 1u;
     cursor->versions[cursor->version_len] = program;
     cursor->version_epochs[cursor->version_len++] = cursor->authority_epoch;
     cursor->checked_program = NULL;
@@ -12645,6 +12673,52 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     free(cursor->versions);
     free(cursor->version_epochs);
     free(cursor);
+}
+
+void cetta_open_equation_cursor_storage_census(const CettaOpenEquationCursor *cursor,
+        CettaStorageCensus *census) {
+    if (!cursor || !cetta_storage_object(census, cursor, sizeof(*cursor), CETTA_STORAGE_BLOCK)) return;
+    arena_storage_census(&cursor->region, census); arena_storage_census(&cursor->names, census);
+    if (cursor->old_ready) arena_storage_census(&cursor->old, census);
+    if (cursor->collected_ready) arena_storage_census(&cursor->collected, census);
+    if (cursor->scratch_ready) arena_storage_census(&cursor->scratch, census);
+    cetta_storage_array(census, cursor->cell_names, cursor->cell_name_cap, sizeof(*cursor->cell_names), 0u);
+    cetta_storage_array(census, cursor->cells, cursor->cell_cap, sizeof(*cursor->cells), 0u);
+    cetta_storage_array(census, cursor->trail, cursor->trail_cap, sizeof(*cursor->trail), 0u);
+    cetta_storage_array(census, cursor->stores, cursor->store_cap, sizeof(*cursor->stores), 0u);
+    cetta_storage_array(census, cursor->remembered_cells, cursor->remembered_cell_cap, sizeof(*cursor->remembered_cells), 0u);
+    cetta_storage_array(census, cursor->remembered_slots, cursor->remembered_slot_cap, sizeof(*cursor->remembered_slots), 0u);
+    cetta_storage_array(census, cursor->frames, cursor->frame_cap, sizeof(*cursor->frames), 0u);
+    cetta_storage_array(census, cursor->fresh_vars, cursor->fresh_var_cap, sizeof(*cursor->fresh_vars), 0u);
+    cetta_storage_array(census, cursor->space_rows, cursor->space_row_cap, sizeof(*cursor->space_rows), 0u);
+    cetta_storage_array(census, cursor->schemas, cursor->schema_cap, sizeof(*cursor->schemas), 0u);
+    cetta_storage_array(census, cursor->host_vars, cursor->host_var_cap, sizeof(*cursor->host_vars), 0u);
+    cetta_storage_array(census, cursor->pairs, cursor->pair_cap, sizeof(*cursor->pairs), 0u);
+    cetta_storage_array(census, cursor->walk, cursor->walk_cap, sizeof(*cursor->walk), 0u);
+    cetta_storage_array(census, cursor->ground_facts, cursor->ground_fact_cap, sizeof(*cursor->ground_facts), 0u);
+    cetta_storage_array(census, cursor->regs, cursor->reg_cap, sizeof(*cursor->regs), 0u);
+    cetta_storage_array(census, cursor->probe, cursor->probe_cap, sizeof(*cursor->probe), 0u);
+    cetta_storage_array(census, cursor->answer_fresh, cursor->answer_fresh_cap, sizeof(*cursor->answer_fresh), 0u);
+    cetta_storage_array(census, cursor->fresh_touched, cursor->fresh_touched_cap, sizeof(*cursor->fresh_touched), 0u);
+    cetta_storage_array(census, cursor->resolve_stack, cursor->resolve_cap, sizeof(*cursor->resolve_stack), 0u);
+    cetta_storage_array(census, cursor->resolve_results, cursor->resolve_result_cap, sizeof(*cursor->resolve_results), 0u);
+    cetta_storage_array(census, cursor->absent, cursor->absent_cap, sizeof(*cursor->absent), 0u);
+    cetta_storage_array(census, cursor->versions, cursor->version_cap, sizeof(*cursor->versions), 0u);
+    cetta_storage_array(census, cursor->version_epochs, cursor->version_epoch_cap, sizeof(*cursor->version_epochs), 0u);
+    cetta_storage_array(census, cursor->fresh_index.slots, cursor->fresh_index.cap, sizeof(*cursor->fresh_index.slots), 0u);
+    cetta_storage_array(census, cursor->query_index.slots, cursor->query_index.cap, sizeof(*cursor->query_index.slots), 0u);
+    size_t query_room = cursor->query_var_count ? cursor->query_var_count : 1u;
+    cetta_storage_array(census, cursor->query_cells, query_room, sizeof(*cursor->query_cells), 0u);
+    cetta_storage_array(census, cursor->query_values, query_room, sizeof(*cursor->query_values), 0u);
+    size_t row_room = cursor->space_row_cap ? cursor->space_row_cap : 1u;
+    cetta_storage_array(census, cursor->space_row_keys, row_room, sizeof(*cursor->space_row_keys), 0u);
+    cetta_storage_array(census, cursor->space_row_parts, row_room, OEM_ROW_PARTS * sizeof(*cursor->space_row_parts), 0u);
+    if (cursor->version_len > cursor->version_cap || cursor->version_len > cursor->version_epoch_cap) {
+        cetta_storage_refuse(census, "OpenCursorVersionStorageShape"); return;
+    }
+    cetta_open_equation_program_storage_census(cursor->program, census);
+    for (uint32_t i = 0u; i < cursor->version_len; i++)
+        cetta_open_equation_program_storage_census(cursor->versions[i], census);
 }
 
 void cetta_open_equation_cursor_stats(const CettaOpenEquationCursor *cursor,

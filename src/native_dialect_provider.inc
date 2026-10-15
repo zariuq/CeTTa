@@ -192,13 +192,31 @@ static bool native_dialect_capture_resource(void *raw, const Atom *atom,
     return false;
 }
 
+static void native_dialect_owner_storage(const void *raw, CettaStorageCensus *census) {
+    const NativeDialectOwner *owner = raw;
+    if (!owner || !cetta_storage_object(census, owner, sizeof(*owner), CETTA_STORAGE_BLOCK)) return;
+    petta_eval_machine_context_storage(&owner->context, census);
+    petta_machine_storage_census(&owner->machine, census);
+    petta_program_revision_view_storage_census(owner->projection_lease, census);
+    prime_native_parallel_owner_storage(owner->storage_owner, census);
+    for (const NativeDialectCandidate *candidate = owner->candidates; candidate; candidate = candidate->next) {
+        if (!cetta_storage_object(census, candidate, sizeof(*candidate), CETTA_STORAGE_BLOCK)) break;
+        bindings_storage_census(&candidate->environment, census);
+    }
+}
+
 static void native_dialect_work_storage(const NativeDialectWork *work,
                                         CettaStorageCensus *census) {
     if (!work || !cetta_storage_object(census,work,sizeof(*work),CETTA_STORAGE_BLOCK))
         return;
-    /* Until the actual machine's mutable heaps and repositories enter the
-     * shared census, container sizes are not a complete storage receipt. */
-    cetta_storage_refuse(census, "UnmeasuredDialectMachine");
+    cetta_storage_schedule(census, work->machine, native_dialect_owner_storage);
+    cetta_owned_continuation_storage_census(&work->image, census);
+    cetta_storage_array(census, work->pending.items, work->pending.length,
+        sizeof(*work->pending.items), 0u);
+    for (size_t i = 0u; i < work->pending.length; i++)
+        cetta_owned_continuation_storage_census(&work->pending.items[i], census);
+    if (work->operation_pending) bindings_storage_census(&work->operation_environment, census);
+    if (work->source_return_pending) bindings_storage_census(&work->source_environment, census);
 }
 
 static bool native_dialect_admits(Space *space, Atom *expression) {

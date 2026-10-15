@@ -13073,6 +13073,32 @@ bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
 }
 
 
+static void registry_states_storage_census(const struct RegistryStates *states,
+        CettaStorageCensus *census) {
+    if (!cetta_storage_object(census, states, sizeof(*states), CETTA_STORAGE_BLOCK))
+        return;
+    if (states->names.len > states->storage_cap ||
+        (states->storage_cap && !states->storage)) {
+        cetta_storage_refuse(census, "RegistryStateStorageShape");
+        return;
+    }
+    registry_storage_census(&states->names, census);
+    cetta_storage_array(census, states->storage, states->storage_cap,
+        sizeof(*states->storage), 0u);
+    for (uint32_t i = 0u; i < states->names.len; i++) {
+        const Arena *arena = states->storage[i];
+        if (!arena) cetta_storage_refuse(census, "RegistryStateStorageShape");
+        else {
+            cetta_storage_object(census, arena, sizeof(*arena), CETTA_STORAGE_BLOCK);
+            arena_storage_census(arena, census);
+        }
+    }
+    if (states->spare) {
+        cetta_storage_object(census, states->spare, sizeof(*states->spare), CETTA_STORAGE_BLOCK);
+        arena_storage_census(states->spare, census);
+    }
+}
+
 void registry_storage_census(const Registry *registry, CettaStorageCensus *census) {
     if (!registry) return;
     if (registry->entries != registry->inline_entries)
@@ -13081,7 +13107,7 @@ void registry_storage_census(const Registry *registry, CettaStorageCensus *censu
         cetta_storage_array(census, registry->index_slots, registry->index_cap, sizeof(*registry->index_slots), 0u);
     name_key_table_storage_census(registry->name_keys, census);
     registered_symbols_storage_census(registry->text_keys, census);
-    if (registry->states) cetta_storage_refuse(census, "OpaqueRegistryStates");
+    registry_states_storage_census(registry->states, census);
 }
 
 /* NativeFlatWorldV1 retains initialized native storage at its actual width

@@ -1148,6 +1148,20 @@ void bindings_exclusive_frame_free(BindingsExclusiveFrame *frame) {
     free(frame);
 }
 
+void bindings_exclusive_frame_storage_census(const BindingsExclusiveFrame *frame,
+        CettaStorageCensus *census) {
+    if (!frame || !cetta_storage_object(census, frame, sizeof(*frame), CETTA_STORAGE_BLOCK))
+        return;
+    if (frame->write_len > frame->write_cap ||
+        (frame->value_cap && !frame->values) || (frame->write_cap && !frame->writes)) {
+        cetta_storage_refuse(census, "ExclusiveFrameStorageShape"); return;
+    }
+    cetta_storage_array(census, frame->values, frame->value_cap, sizeof(*frame->values), 0u);
+    cetta_storage_array(census, frame->writes, frame->write_cap, sizeof(*frame->writes), 0u);
+    /* The compiled equation lends the schema; stored terms borrow the
+     * enclosing machine's retained arenas, just as during publication. */
+}
+
 bool bindings_exclusive_frame_begin(
         BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
         uint32_t epoch) {

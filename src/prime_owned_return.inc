@@ -43,7 +43,7 @@ static void prime_native_acquired_operation_storage(const PrimeNativeAcquiredOpe
     cetta_storage_array(census, operation->value_items, operation->value_capacity,
         sizeof(*operation->value_items), 0u);
     atom_deep_copy_session_storage_census(operation->value_copy, census);
-    if (operation->pending_ready) prime_native_outcomes_storage(&operation->pending, census);
+    if (operation->pending_ready) outcome_set_storage_census(&operation->pending, census);
 }
 
 static void prime_native_acquired_operation_free(PrimeNativeAcquiredOperation *operation) {

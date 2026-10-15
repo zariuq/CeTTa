@@ -108,6 +108,20 @@ static void refusal_case(CettaLanguageId language, bool prepared, uint64_t allow
         retained_machines[i]=job->machine->machine;
     }
     control.policy.workers=1u;
+    for(size_t i=0u;i<2u;i++) {
+        NativeDialectWork *job=((PrimeNativeWork *)retained[i].payload)->dialect;
+        CettaStorageCensus census={0};
+        native_dialect_work_storage(job,&census);cetta_storage_finish(&census);
+        if(census.incomplete)fprintf(stderr,"dialect %u prepared %u storage: %s\n",
+            (unsigned)language,(unsigned)prepared,census.incomplete);
+        CHECK(!census.incomplete && !census.invalidated && !census.overflow);
+        CHECK(census.retained>=sizeof(*job)+sizeof(*job->machine));
+        size_t retained_bytes=census.retained,objects=census.length;
+        native_dialect_work_storage(job,&census);cetta_storage_finish(&census);
+        CHECK(census.retained==retained_bytes && census.length==objects && census.repeated>0u);
+        CHECK(memcmp(job,&retained_jobs[i],sizeof(*job))==0);
+        cetta_storage_census_free(&census);
+    }
     uint64_t next_lease=control.hub.store.next_lease;
     control.hub.store.next_lease=0u;
     const CettaSelectionAutomaton retained_schedule=control.hub.schedule;
@@ -337,7 +351,7 @@ static uint64_t mixed_packet_case(CettaLanguageId language,const CettaProfile *p
         control.hub.store.next_lease=lease;
         prime_native_run_enter(&control,&guard);
         uint64_t nodes=control.event_cost.total.counts[CETTA_COST_MATCH_NODE];
-        CHECK(prime_native_control_step(&control,0u)==0u);
+        CHECK(prime_native_control_step(&control,0u,false,false)==0u);
         CHECK(!cetta_space_agenda_match_prepared(control.space_agenda));
         CHECK(control.event_cost.total.counts[CETTA_COST_MATCH_NODE]==nodes);
         prime_native_run_leave(&guard);
@@ -740,7 +754,7 @@ static void retained_licence_case(CettaLanguageId language,const CettaProfile *p
             if(attempt==1u)cetta_shared_transition_scope_enter();
             unsigned scope=cetta_shared_transition_scope_depth;
             PrimeNativeRunGuard guard;prime_native_run_enter(control,&guard);
-            uint64_t spent=prime_native_control_step(control,attempt?1u:0u);
+            uint64_t spent=prime_native_control_step(control,attempt?1u:0u,false,false);
             if(spent)cetta_native_cost_charge(CETTA_COST_QUANTUM,1u);
             control->steps+=spent;
             prime_native_run_leave(&guard);
@@ -3507,6 +3521,200 @@ static void stored_return_role_case(unsigned which) {
     cetta_library_context_free(&context);eval_set_library_context(NULL);
 }
 
+static void capsule_storage_case(PrimeCapsuleSearch *search) {
+    assert(search && search->certificate);
+    uint64_t transitions = search->transitions, resumes = search->resumes;
+    CettaStorageCensus census = {0};
+    prime_capsule_search_storage(search, &census);
+    cetta_storage_finish(&census);
+    if (census.incomplete)
+        fprintf(stderr, "capsule storage refusal: %s\n", census.incomplete);
+    assert(!census.incomplete && !census.overflow && !census.invalidated);
+    assert(census.retained >= sizeof(*search));
+    bool program = false, view = search->projection_lease == NULL;
+    for (size_t i = 0u; i < census.capacity; i++) {
+        if (census.slots[i].domain != CETTA_STORAGE_BLOCK) continue;
+        program |= census.slots[i].identity == search->certificate;
+        view |= census.slots[i].identity == search->projection_lease;
+    }
+    assert(program && view);
+    size_t retained = census.retained;
+    prime_capsule_search_storage(search, &census);
+    petta_program_revision_view_storage_census(search->projection_lease, &census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained == retained && census.repeated > 0u);
+    assert(search->transitions == transitions && search->resumes == resumes);
+    cetta_storage_census_free(&census);
+
+    /* Invalid container bounds still refuse rather than omitting storage. */
+    PettaEvalTransaction unsupported = {.space_len = 1u};
+    assert(!search->context.transaction);
+    search->context.transaction = &unsupported;
+    prime_capsule_search_storage(search, &census);
+    cetta_storage_finish(&census);
+    assert(census.incomplete && !strcmp(census.incomplete, "TransactionStorageShape"));
+    search->context.transaction = NULL;
+    cetta_storage_census_free(&census);
+    if (search->service) {
+        PrimeCapsuleService *service = search->service;
+        PrimeEvalStackTask *active = service->source_driver.active_task;
+        service->source_driver.active_task = &service->source_driver.task;
+        prime_capsule_search_storage(search, &census);
+        cetta_storage_finish(&census);
+        assert(census.incomplete && !strcmp(census.incomplete, "ActiveEvaluationDriver"));
+        service->source_driver.active_task = active;
+        cetta_storage_census_free(&census);
+        size_t length = service->exported_length;
+        assert(service->exported_capacity < SIZE_MAX);
+        service->exported_length = service->exported_capacity + 1u;
+        prime_capsule_search_storage(search, &census);
+        cetta_storage_finish(&census);
+        assert(census.incomplete && !strcmp(census.incomplete, "CapsuleExportShape"));
+        service->exported_length = length;
+        cetta_storage_census_free(&census);
+    }
+}
+
+static bool census_has_block(const CettaStorageCensus *census,
+        const void *identity, size_t bytes) {
+    for (size_t i = 0u; i < census->capacity; i++) {
+        const CettaStorageObject *item = &census->slots[i];
+        if (item->identity == identity && item->domain == CETTA_STORAGE_BLOCK)
+            return item->bytes == bytes;
+    }
+    return false;
+}
+
+static void transaction_storage_case(void) {
+    CettaLibraryContext library;
+    cetta_library_context_init_for_language_profile(&library,
+        CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    eval_set_library_context(&library);
+    Arena arena;
+    arena_init(&arena);
+    Space source;
+    space_init(&source);
+    space_add(&source, br_parse(&arena, "(source A)"));
+    Registry registry;
+    registry_init(&registry);
+    registry_bind(&registry, "&self", atom_space(&arena, &source));
+    for (unsigned i = 0u; i < 20u; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "&storage-%u", i);
+        registry_bind(&registry, name, atom_int(&arena, i));
+    }
+    Registry *previous_registry = g_registry;
+    g_registry = &registry;
+    PettaEvalMachineContext context = {.library_context = &library, .fuel = -1};
+    StateCell original = {.value = atom_int(&arena, 6),
+        .content_type = atom_symbol_id(&arena, g_builtin_syms.undefined_type)};
+    void *outer_handle = NULL, *inner_handle = NULL;
+    Space *outer_space = NULL, *inner_space = NULL;
+    assert(petta_eval_machine_transaction_begin(&context, &source, &arena,
+        &outer_handle, &outer_space));
+    PettaEvalTransaction *outer = outer_handle;
+    StateCell *outer_state = petta_eval_transaction_clone_state(outer, &original);
+    assert(outer_state && context.transaction == outer);
+    assert(petta_eval_machine_transaction_begin(&context, outer_space, &arena,
+        &inner_handle, &inner_space));
+    PettaEvalTransaction *inner = inner_handle;
+    StateCell *inner_state = petta_eval_transaction_clone_state(inner, outer_state);
+    assert(inner_state && inner->parent == outer && context.transaction == inner);
+    inner_state->value = atom_int(&arena, 7);
+    space_add(inner_space, br_parse(&arena, "(private B)"));
+    uint64_t authority = context.semantic_authority_epoch;
+    SpaceReadToken source_read = space_read_token(&source);
+    uint32_t registry_length = registry.len;
+    CettaStorageCensus census = {0};
+    petta_eval_machine_context_storage(&context, &census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && !census.overflow);
+    assert(census_has_block(&census, outer, sizeof(*outer)));
+    assert(census_has_block(&census, inner, sizeof(*inner)));
+    assert(census_has_block(&census, outer_space, sizeof(*outer_space)));
+    assert(census_has_block(&census, inner_space, sizeof(*inner_space)));
+    assert(census_has_block(&census, outer_state, sizeof(*outer_state)));
+    assert(census_has_block(&census, inner_state, sizeof(*inner_state)));
+    assert(census_has_block(&census, inner->initial_registry_values,
+        inner->initial_registry_len * sizeof(*inner->initial_registry_values)));
+    size_t both = census.retained;
+    petta_eval_transaction_storage(outer, &census);
+    petta_eval_machine_context_storage(&context, &census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained == both && census.repeated > 0u);
+    assert(context.semantic_authority_epoch == authority);
+    assert(space_read_token_is_current(source_read) && registry.len == registry_length);
+    assert(original.value->ground.ival == 6 && outer_state->value->ground.ival == 6);
+    assert(inner_state->value->ground.ival == 7 && space_length64(&source) == 1u);
+    cetta_storage_census_free(&census);
+
+    size_t capacity = inner->space_cap;
+    inner->space_cap = 0u;
+    petta_eval_transaction_storage(inner, &census);
+    cetta_storage_finish(&census);
+    assert(census.incomplete && !strcmp(census.incomplete, "TransactionStorageShape"));
+    inner->space_cap = capacity;
+    cetta_storage_census_free(&census);
+
+    petta_eval_machine_transaction_rollback(&context, inner);
+    assert(context.transaction == outer);
+    petta_eval_machine_context_storage(&context, &census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && census.retained < both);
+    assert(census_has_block(&census, outer_state, sizeof(*outer_state)));
+    cetta_storage_census_free(&census);
+    petta_eval_machine_transaction_rollback(&context, outer);
+    assert(!context.transaction && original.value->ground.ival == 6);
+    petta_eval_machine_context_storage(&context, &census);
+    cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained == 0u);
+    cetta_storage_census_free(&census);
+    printf("Nested transaction storage passed\n");
+    g_registry = previous_registry;
+    registry_free(&registry);
+    space_free(&source);
+    arena_free(&arena);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(&library);
+}
+
+static void pinned_revision_storage_case(void) {
+    Arena arena;
+    arena_init(&arena);
+    Space source;
+    space_init(&source);
+    space_add(&source, br_parse(&arena, "(= (storage:revision) A)"));
+    PettaProgram *program = petta_program_new_with_host_intrinsics(NULL);
+    assert(program);
+    assert(petta_program_synchronize_space(program, &source));
+    PettaProgramRevisionView *held = petta_program_revision_view_capture(program, &source);
+    assert(held);
+    CettaStorageCensus before = {0}, after = {0};
+    petta_program_revision_view_storage_census(held, &before);
+    cetta_storage_finish(&before);
+    assert(!before.incomplete && !before.overflow && before.retained > 0u);
+    space_add(&source, br_parse(&arena, "(= (storage:revision) B)"));
+    assert(petta_program_synchronize_space(program, &source));
+    PettaProgramRevisionView *fresh = petta_program_revision_view_capture(program, &source);
+    assert(fresh && fresh != held);
+    petta_program_revision_view_free(fresh);
+    petta_program_free(program);
+    /* The detached old view owns its catalog even after the live program
+     * retires. Source syntax is still held by this test's arena. */
+    petta_program_revision_view_storage_census(held, &after);
+    cetta_storage_finish(&after);
+    assert(!after.incomplete && !after.overflow && after.retained == before.retained);
+    size_t retained = after.retained;
+    petta_program_revision_view_storage_census(held, &after);
+    cetta_storage_finish(&after);
+    assert(!after.incomplete && after.retained == retained && after.repeated > 0u);
+    cetta_storage_census_free(&after);
+    cetta_storage_census_free(&before);
+    petta_program_revision_view_free(held);
+    space_free(&source);
+    arena_free(&arena);
+}
+
 #if CETTA_BUILD_WITH_RUNTIME_STATS
 static uint64_t numeric_capsule_counter(const char *name) {
     CettaRuntimeStats stats; cetta_runtime_stats_snapshot(&stats);
@@ -3637,6 +3845,7 @@ static void numeric_capsule_account_case(unsigned which) {
     assert(admitted);
     PrimeEvalStackFrame *frame=driver.top;assert(frame && frame->kind==PRIME_EVAL_STACK_FRAME_CAPSULE_SEARCH);
     PrimeCapsuleSearch *search=frame->capsule_search;assert(prime_capsule_search_current(search));
+    capsule_storage_case(search);
     assert(numeric_capsule_counter("prepared-capsule-step")==0u);
     assert(numeric_capsule_counter("prepared-capsule-publication")==0u);
     assert(!search->raw_pending && !frame->child.len && !search->transitions && !search->resumes);
@@ -3772,6 +3981,8 @@ static void numeric_capsule_account_case(unsigned which) {
         assert(numeric_capsule_counter("prepared-capsule-publication")==0u);
     }
 complete:
+    if (driver.top && driver.top->capsule_search)
+        capsule_storage_case(driver.top->capsule_search);
     printf("NumericCapsule %u passed\n",which);
     prime_eval_stack_abandon(&driver);assert(driver.prepared_opaque_frames==0u);
     prepared_pure_program_cache_free(&driver.prepared_pure_cache);
@@ -3917,6 +4128,7 @@ static void terminal_open_reply_case(unsigned which) {
     assert(!driver.capacity_blocked && search->last_step==CETTA_PREPARED_CLOSED_SERVICE);
     assert(prime_capsule_service_prepare(search));
     PrimeCapsuleService *service=search->service;assert(service && service->request.normalize_result==(which!=1u));
+    capsule_storage_case(search);
     CettaPreparedClosedState state;
     assert(cetta_prepared_pure_closed_read(search->execution,&state));
     if(which==1u)assert(state.frames>0u);
@@ -3924,6 +4136,7 @@ static void terminal_open_reply_case(unsigned which) {
     for(unsigned n=0u;n<500u && !service->pending && !driver.capacity_blocked;n++)
         prime_capsule_source_resume(search);
     assert(!driver.capacity_blocked && service->pending && service->answer && atom_has_vars(service->answer));
+    capsule_storage_case(search);
     if(which==10u) {
         /* Closing a pending terminal request discards its paid reply and
          * service cursor, while retaining only the reusable compiled graph. */
@@ -4407,11 +4620,81 @@ static void native_data_branch_case(unsigned which) {
     cetta_library_context_free(&context);
 }
 
+static void compact_cost_storage_case(unsigned workers, bool recorded_schedule) {
+    Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
+    Space space; space_init(&space);
+    Registry registry; registry_init(&registry); g_registry = &registry;
+    CettaLibraryContext context;
+    cetta_library_context_init_for_language_profile(&context,
+        CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    eval_set_library_context(&context);
+    const char *rows[] = {
+        "(= (sum $n) (if (== $n 0) 0 (+ $n (sum (- $n 1)))))",
+        "(= (compact-rows) (sum 20))",
+        "(= (compact-rows) (sum 21))",
+        "(= (compact-rows) (sum 21))"};
+    for (size_t i = 0u; i < sizeof(rows) / sizeof(*rows); i++)
+        space_add(&space, parse_one(&arena, rows[i]));
+    CettaSearchPolicySpec policy = {.native_control = true, .all = true,
+        .retain = true, .work_budget = UINT64_MAX, .workers = workers,
+        .worker_quantum = 8u, .costs = true, .cost_compact = true,
+        .receipts = recorded_schedule};
+    PrimeNativeControl control;
+    assert(prime_native_control_init(&control, &space, &arena,
+        parse_one(&arena, "(compact-rows)"), -1, true,
+        (CettaObservationDemand){.completion = CETTA_OBSERVATION_COMPLETE_BAG},
+        &policy, NULL, NULL, NULL));
+    Observed observed = {0};
+    unsigned rounds = 0u;
+    while (!prime_native_control_closed(&control) && rounds++ < 10000u) {
+        prime_native_control_run(&control, 17u, observe, &observed);
+        CHECK(control.event_cost.compact && !control.event_cost.events &&
+              !control.event_cost.length && !control.event_cost.capacity);
+        CHECK(!control.failed && !control.invalidated && !control.driver.capacity_blocked);
+        for (size_t i = 0u; i < cetta_continuation_hub_length(&control.hub); i++) {
+            PrimeNativeWork *work = cetta_continuation_hub_at(&control.hub, i)->payload;
+            if (work->parallel && work->parallel->child) {
+                PrimeNativeControl *child = work->parallel->child;
+                CHECK(child->policy.cost_compact);
+                CHECK(!child->cost_enabled || (child->event_cost.compact &&
+                      !child->event_cost.events && !child->event_cost.capacity));
+            }
+        }
+        if (!recorded_schedule)
+            for (PrimeNativeRefillHistory *h = control.refill_history; h; h = h->next)
+                CHECK(!h->imported || h == control.refill_pending);
+    }
+    CHECK(prime_native_control_closed(&control) && observed.count == 3u);
+    unsigned first = 0u, repeated = 0u;
+    for (CettaCount i = 0u; i < control.output.len; i++) {
+        Atom *value = outcome_atom_materialize(&arena, &control.output.items[i]);
+        first += atom_eq(value, atom_int(&arena, 210));
+        repeated += atom_eq(value, atom_int(&arena, 231));
+    }
+    CHECK(first == 1u && repeated == 2u);
+    CHECK(control.event_cost.total.work > 0u &&
+          control.event_cost.total.span <= control.event_cost.total.work);
+    if (workers > 1u) {
+        CHECK(control.event_cost.total.counts[CETTA_COST_WORKER_DISPATCH] > 0u);
+        CHECK(control.event_cost.total.counts[CETTA_COST_WORKER_JOIN] > 0u);
+    }
+    release_stack_control(&control);
+    eval_set_library_context(NULL); cetta_library_context_free(&context);
+    registry_free(&registry); g_registry = NULL;
+    space_free(&space); arena_free(&arena);
+}
+
 int main(void) {
     outcome_seen_identity_control();
     SymbolTable symbols;symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     VarInternTable variables;var_intern_init(&variables);g_var_intern=&variables;g_hashcons=NULL;
+    for (unsigned workers = 1u; workers <= 4u; workers *= 2u) {
+        compact_cost_storage_case(workers, false);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        compact_cost_storage_case(workers, true);
+#endif
+    }
     guest_read_service_cases();
     for(unsigned which=0u;which<8u;which++)stored_judgment_syntax_case(which);
     for(unsigned which=0u;which<9u;which++)dependency_view_case(which);
@@ -4427,6 +4710,8 @@ int main(void) {
     for(unsigned which=0u;which<12u;which++)cache_return_caller_case(which);
     for(unsigned which=0u;which<11u;which++)terminal_open_reply_case(which);
     for(unsigned which=0u;which<8u;which++)native_data_branch_case(which);
+    pinned_revision_storage_case();
+    transaction_storage_case();
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     for(unsigned which=0u;which<18u;which++)numeric_capsule_account_case(which);
 #endif

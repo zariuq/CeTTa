@@ -41,7 +41,8 @@ static void prime_replay_phase_required(CettaNativeCostKind kind,uint64_t trigge
     }
     PrimeReplayPhase *row=&out->items[out->count++];
     *row=(PrimeReplayPhase){.kind=kind,.trigger=trigger,
-        .origin=head->ledger?head->ledger->identity:0u,.occurrence=head->occurrence,
+        .origin=head->ledger?head->ledger->identity:0u,
+        .occurrence=cetta_native_cost_scope_occurrence(head),
         .command=out->commands->command_count,.first_destination=out->destination_count};
     for(const CettaNativeCostScope *p=head;p;p=p->previous) {
         if(out->destination_count==out->destination_capacity) {
@@ -62,7 +63,7 @@ static void prime_replay_phase_required(CettaNativeCostKind kind,uint64_t trigge
         }
         out->destinations[out->destination_count++]=(CettaNativeCostDestinationReceipt){
             .ledger_identity=p->ledger?p->ledger->identity:0u,
-            .scope_occurrence=p->occurrence,.present=p->ledger!=NULL,
+            .scope_occurrence=cetta_native_cost_scope_occurrence(p),.present=p->ledger!=NULL,
             .duplicate=duplicate,.retained=p->ledger&&!duplicate,
             .before=duplicate?after:before,.after=after};
         row->destination_count++;

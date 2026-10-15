@@ -119,6 +119,8 @@ CettaOpenEquationProgram *cetta_open_equation_program_compile(
 /* Drop the compiler's reference; each open cursor holds its own. */
 void cetta_open_equation_program_retain(CettaOpenEquationProgram *program);
 void cetta_open_equation_program_release(CettaOpenEquationProgram *program);
+void cetta_open_equation_program_storage_census(
+    const CettaOpenEquationProgram *program, CettaStorageCensus *census);
 /* True when exported HOST plans or literals may reside in this program's
  * private payload arena. Programs without such storage borrow their plans
  * from the independently retained authored PeTTa program. This does not
@@ -538,6 +540,10 @@ void cetta_open_equation_cursor_note_authority_change(
     CettaOpenEquationCursor *cursor);
 
 void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor);
+/* Quiescent owned arrays, arenas and retained program versions. Borrowed
+ * answer arenas and runtime services retain their enclosing host lifetime. */
+void cetta_open_equation_cursor_storage_census(
+    const CettaOpenEquationCursor *cursor, CettaStorageCensus *census);
 
 /* Counters for gates and measurements. */
 typedef struct {

@@ -156,3 +156,14 @@ size_t cetta_producer_dependencies_bytes(const CettaProducerDependencies *graph)
     return graph->node_capacity * sizeof(*graph->nodes) +
         graph->edge_capacity * sizeof(*graph->edges);
 }
+
+void cetta_producer_dependencies_storage_census(const CettaProducerDependencies *graph,
+        CettaStorageCensus *census) {
+    if (!graph) return;
+    if (graph->edge_length > graph->edge_capacity || graph->live_edges > graph->edge_length ||
+        (graph->node_capacity && !graph->nodes) || (graph->edge_capacity && !graph->edges)) {
+        cetta_storage_refuse(census, "ProducerDependencyStorageShape"); return;
+    }
+    cetta_storage_array(census, graph->nodes, graph->node_capacity, sizeof(*graph->nodes), 0u);
+    cetta_storage_array(census, graph->edges, graph->edge_capacity, sizeof(*graph->edges), 0u);
+}

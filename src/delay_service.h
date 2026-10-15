@@ -123,6 +123,10 @@ typedef struct {
 } CettaDelayView;
 
 CettaDelayService *cetta_delay_service_new(void);
+/* Inspect native storage without waking goals or invoking solver operations.
+ * A retained opaque solver owner leaves the census explicitly incomplete. */
+void cetta_delay_service_storage_census(
+    const CettaDelayService *service, CettaStorageCensus *census);
 void cetta_delay_service_free(CettaDelayService *service);
 /* A branch's own copy: the same goals and queue, a fresh history. */
 CettaDelayService *cetta_delay_service_clone(const CettaDelayService *service);

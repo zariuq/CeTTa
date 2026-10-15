@@ -66,14 +66,21 @@ typedef struct {
     size_t length;
     size_t capacity;
     bool imported;
+    /* A compact account retains numerical work/span, without chronology. */
+    bool compact;
 } CettaNativeCostLedger;
 
 typedef struct CettaNativeCostScope {
     struct CettaNativeCostScope *previous;
     CettaNativeCostLedger *ledger;
     uint64_t occurrence;
+    const uint64_t *occurrence_source;
+    bool events_requested;
 } CettaNativeCostScope;
 
+static inline uint64_t cetta_native_cost_scope_occurrence(const CettaNativeCostScope *scope) {
+    return scope->occurrence_source ? *scope->occurrence_source : scope->occurrence;
+}
 
 /* A synchronous readout of one actual command and its ordered destination
  * visits. These borrowed views are valid only during the callback. The
@@ -123,6 +130,14 @@ void cetta_native_cost_observer_restore(CettaNativeCostObserverSuspension *);
 
 
 void cetta_native_cost_init(CettaNativeCostLedger *ledger);
+void cetta_native_cost_init_compact(CettaNativeCostLedger *ledger);
+/* Selected at a quiescent boundary. Refuse while this ledger belongs to an
+ * active containing scope; other threads and borrowed readers are excluded
+ * by the owner's lifetime protocol. Paid numerical work is preserved. */
+bool cetta_native_cost_forget_events(CettaNativeCostLedger *ledger);
+/* Whether a private slice needs event identities/chronology for its current
+ * containing accounts or an explicitly installed command observer. */
+bool cetta_native_cost_events_requested(void);
 void cetta_native_cost_free(CettaNativeCostLedger *ledger);
 const char *cetta_native_cost_name(CettaNativeCostKind kind);
 /* Overflow preserves a lower bound and sets OVERFLOW. Trace allocation
@@ -131,6 +146,12 @@ void cetta_native_cost_append(CettaNativeCostLedger *ledger,
     CettaNativeCostKind kind, uint64_t units, uint64_t occurrence);
 void cetta_native_cost_scope_enter(CettaNativeCostScope *scope,
     CettaNativeCostLedger *ledger, uint64_t occurrence);
+/* Borrow an operational occurrence for this scope. The source stays live
+ * throughout the scope; updates are synchronized with observation. Reading
+ * it is cost-observer work, rather than an update on every unobserved step.
+ * Leaving captures its last value and ends the borrow. */
+void cetta_native_cost_scope_enter_source(CettaNativeCostScope *scope,
+    CettaNativeCostLedger *ledger, const uint64_t *occurrence);
 void cetta_native_cost_scope_leave(CettaNativeCostScope *scope);
 /* Detach a private slice from its coordinator observation until a checked
  * join imports that slice. Restore only after all private scopes have left. */

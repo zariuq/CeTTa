@@ -926,6 +926,11 @@ bool petta_machine_answer_delayed(PettaMachine *machine, Atom *answer,
                                   Atom **payload);
 
 void petta_machine_destroy(PettaMachine *machine);
+/* The caller keeps the machine and borrowed host/source services quiescent.
+ * Counts native owned storage by allocation identity without executing it.
+ * Unsupported foreign/cursor owners remain explicit incomplete observations. */
+void petta_machine_storage_census(
+    const PettaMachine *machine, CettaStorageCensus *census);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the
  * head it names, or every head for `*`. */
 bool petta_machine_query_traced(SymbolId head);

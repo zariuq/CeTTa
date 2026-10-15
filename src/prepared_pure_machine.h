@@ -657,6 +657,8 @@ CettaPreparedPureCursorStorage cetta_prepared_pure_answer_cursor_storage(
 
 void cetta_prepared_pure_answer_cursor_close(
     CettaPreparedPureAnswerCursor *cursor);
+void cetta_prepared_pure_answer_cursor_storage_census(
+    const CettaPreparedPureAnswerCursor *cursor, CettaStorageCensus *census);
 
 /* Programs are reference counted: the creator holds one reference and
  * cetta_prepared_pure_program_free releases one. */

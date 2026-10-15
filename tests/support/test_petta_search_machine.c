@@ -3265,6 +3265,28 @@ static Atom *add_compiled_program_equation(
 
 /* Sharing and arena ownership are observable here through native pointers;
  * printing the represented tree would itself require exponential output. */
+static void inspect_open_cursor_storage(CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program) {
+    CettaOpenEquationStats before,after;
+    cetta_open_equation_cursor_stats(cursor,&before);
+    CettaStorageCensus census={0};
+    cetta_open_equation_cursor_storage_census(cursor,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && !census.overflow && census.retained>0u);
+    bool cursor_found=false,program_found=false;
+    for(size_t i=0u;i<census.capacity;i++) if(census.slots[i].domain==CETTA_STORAGE_BLOCK) {
+        cursor_found|=census.slots[i].identity==cursor;
+        program_found|=census.slots[i].identity==program;
+    }
+    assert(cursor_found && program_found);
+    size_t retained=census.retained,objects=census.length;
+    cetta_open_equation_cursor_storage_census(cursor,&census);
+    cetta_open_equation_program_storage_census(program,&census);cetta_storage_finish(&census);
+    cetta_open_equation_cursor_stats(cursor,&after);
+    assert(!census.incomplete && census.retained==retained && census.length==objects &&
+        census.repeated>0u && !memcmp(&before,&after,sizeof(before)));
+    cetta_storage_census_free(&census);
+}
+
 static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) {
     PettaProgram *program = petta_program_new();
     assert(program);
@@ -3305,11 +3327,13 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
+    inspect_open_cursor_storage(cursor,compiled);
     Atom *result = NULL;
     Atom **values = NULL;
     assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     assert(result && values && values[0] == variable);
+    inspect_open_cursor_storage(cursor,compiled);
     cetta_open_equation_cursor_close(cursor);
     Atom *node = result;
     for (unsigned depth = 0u; depth < 32u; depth++) {
@@ -4326,6 +4350,7 @@ static bool test_unknown_cons_fact_snapshot_lease(
     lease->items = items;
     lease->len = len;
     lease->owned_items = items;
+    lease->owned_capacity = len;
     return true;
 }
 
@@ -6128,6 +6153,43 @@ static void *test_read_retained_projection(void *context) {
     return NULL;
 }
 
+static void test_snapshot_spare_storage(const PettaCandidateSnapshotLease *source) {
+    assert(source->len>=2u);
+    const size_t rows_capacity=17u,entries_capacity=23u;
+    PettaEquationCandidate *rows=calloc(rows_capacity,sizeof(*rows));assert(rows);
+    rows[0]=source->items[0];rows[1]=source->items[1];
+    PettaCandidateSnapshotLease lease={.items=rows,.len=2u,.owned_items=rows,
+        .owned_capacity=rows_capacity};
+    CettaStorageCensus census={0};
+    petta_program_candidate_snapshot_lease_storage_census(&lease,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained==rows_capacity*sizeof(*rows));
+    cetta_storage_census_free(&census);
+    assert(petta_program_candidate_snapshot_lease_pin(&lease));
+    PettaEquationSelectionEntry *entries=calloc(entries_capacity,sizeof(*entries));assert(entries);
+    entries[0]=(PettaEquationSelectionEntry){.index=0u,.rhs_plan=rows[0].rhs_plan};
+    entries[1]=(PettaEquationSelectionEntry){.index=1u,.rhs_plan=rows[1].rhs_plan};
+    assert(!petta_program_equation_projection_take(&lease,entries,1u,0u,2u));
+    assert(lease.items==rows && lease.len==2u);
+    PettaEquationProjection *projection=petta_program_equation_projection_take(
+        &lease,entries,entries_capacity,0u,2u);assert(projection && !lease.items);
+    petta_program_equation_projection_storage_census(projection,&census);cetta_storage_finish(&census);
+    bool saw_rows=false,saw_entries=false;
+    for(size_t i=0u;i<census.capacity;i++) if(census.slots[i].domain==CETTA_STORAGE_BLOCK) {
+        if(census.slots[i].identity==rows) {
+            assert(census.slots[i].retained==rows_capacity*sizeof(*rows));saw_rows=true;
+        }
+        if(census.slots[i].identity==entries) {
+            assert(census.slots[i].retained==entries_capacity*sizeof(*entries));saw_entries=true;
+        }
+    }
+    assert(!census.incomplete && saw_rows && saw_entries &&
+        census.retained==petta_program_equation_projection_retained_bytes(projection));
+    size_t retained=census.retained;
+    petta_program_equation_projection_storage_census(projection,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained==retained && census.repeated>0u);
+    cetta_storage_census_free(&census);petta_program_equation_projection_release(projection);
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -6208,13 +6270,14 @@ static void test_program_head_occurrence_index(
     assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, second_lease.len);
     assert(first_lease.items == second_lease.items);
+    test_snapshot_spare_storage(&first_lease);
     PettaCandidateSnapshotLease cloned_lease = {0};
     assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &cloned_lease));
     assert(cloned_lease.items == first_lease.items);
     PettaCandidateSnapshotLease projected_lease = {0};
     assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &projected_lease));
     PettaEquationProjection *projection = petta_program_equation_projection_take(
-        &projected_lease, NULL, 2u, 2u);
+        &projected_lease, NULL, 0u, 2u, 2u);
     assert(projection && projected_lease.items == NULL);
     size_t retained_before = petta_program_equation_projection_retained_bytes(projection);
     /* A borrowed host array has no cache retirement callback. Pinning and
@@ -6224,10 +6287,9 @@ static void test_program_head_occurrence_index(
     };
     assert(petta_program_candidate_snapshot_lease_pin(&private_lease));
     PettaEquationProjection *private_projection = petta_program_equation_projection_take(
-        &private_lease, NULL, 2u, 2u);
+        &private_lease, NULL, 0u, 2u, 2u);
     assert(private_projection);
-    assert(petta_program_equation_projection_retained_bytes(private_projection) ==
-           retained_before - 2u * sizeof(PettaEquationCandidate));
+    assert(petta_program_equation_projection_retained_bytes(private_projection) < retained_before);
     assert(atom_eq(petta_program_equation_projection_get(private_projection, 0u).equation, duplicate));
     assert(atom_eq(petta_program_equation_projection_get(private_projection, 1u).equation, duplicate));
     petta_program_equation_projection_release(private_projection);
@@ -6239,7 +6301,7 @@ static void test_program_head_occurrence_index(
     repeated[0] = (PettaEquationSelectionEntry){2u, first_lease.items[2].rhs_plan};
     repeated[1] = repeated[0];
     PettaEquationProjection *repeated_projection = petta_program_equation_projection_take(
-        &projected_lease, repeated, 0u, 2u);
+        &projected_lease, repeated, 2u, 0u, 2u);
     assert(repeated_projection);
     ProjectionReader reader = {projection, duplicate};
     pthread_t readers[2];
@@ -13540,6 +13602,7 @@ static void test_open_cursor_stable_arena_detach(
                 cursor, NULL, base, &answer, NULL);
     }
     assert(arena_accounted_live_bytes(&stable) > 0u);
+    inspect_open_cursor_storage(cursor,compiled);
     assert(cetta_open_equation_cursor_detach(cursor, &stable));
     arena_free(&stable);
     arena_init(&stable);
@@ -13549,6 +13612,7 @@ static void test_open_cursor_stable_arena_detach(
     assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 2u);
     assert(atom_string_equals_bytes(
         answer->expr.elems[1], "detached-owned-payload", 22u));
+    inspect_open_cursor_storage(cursor,compiled);
     cetta_open_equation_cursor_close(cursor);
     cetta_open_equation_program_release(compiled);
     petta_program_free(program);
