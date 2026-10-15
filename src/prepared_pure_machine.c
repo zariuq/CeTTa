@@ -12966,8 +12966,11 @@ bool cetta_prepared_pure_closed_service_restore(
         cut->memo_keys_length>execution->memo_origins_capacity ||
         cut->memo_keys_length>execution->memo_value_origins_capacity ||
         cut->entry_arguments_length>execution->entry_origins_capacity) {ok=false;goto done;}
+    /* Insertion grows at 70% occupancy, so a valid captured table can be
+     * more than half full. Its retained buckets need room for the entries
+     * and an empty probe terminator, not a new 50% occupancy policy. */
     if (cut->memo_keys_length &&
-        (!p->memo_buckets || p->memo_bucket_cap<cut->memo_keys_length*2u)) {
+        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_keys_length)) {
         ok=false;goto done;
     }
 #define RESTORE(field,length) do { \
