@@ -372,6 +372,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_object_get, "__cetta_lib_json_object_get") \
     X(lib_str, "__cetta_lib_str") \
     X(lib_str_value, "__cetta_lib_str_value") \
+    X(lib_re, "__cetta_lib_re") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \

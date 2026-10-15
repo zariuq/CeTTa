@@ -5,6 +5,7 @@
     {"name": "ebnf-reader", "format": "reader", "reader": "ebnf"},
     {"name": "lbnf-reader", "format": "reader", "reader": "lbnf"},
     {"name": "module-core-reader", "format": "lbnf", "source": "module_core_v1.cf", "start": "Module", "strategy": "general"},
+    {"name": "regex-pattern-reader", "format": "module", "reader": "module-core-reader", "source": "../regex/RegexSyntax.module", "theory": "PatternText", "start": "RxPattern", "profile": "../regex/source_profile_v1.metta", "strategy": "general"},
     {"name": "bnf-program", "format": "bnf", "source": "reusable_v1.bnf", "start": "s"},
     {"name": "ebnf-program", "format": "ebnf", "source": "reusable_v1.ebnf", "start": "s"},
     {"name": "joined-left", "format": "lbnf", "source": "joined_left_v1.cf", "start": "S"},

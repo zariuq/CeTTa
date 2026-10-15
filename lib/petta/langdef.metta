@@ -34,6 +34,7 @@
 (: ParserFailureV1 (-> Atom Atom))
 (: ParserInfoV1 (-> Atom Atom Atom Atom Atom Atom Atom))
 (= (langdef:parser-parse-text $handle $text) (__cetta_lib_parser_parse_text $handle $text))
+(= (langdef:parser-parse-text-forest $handle $text $item-limit) (__cetta_lib_parser_parse_text_forest $handle $text $item-limit))
 (= (langdef:parser-parse-file $handle $path) (__cetta_lib_parser_parse_file $handle $path))
 (= (langdef:parser-info $handle) (__cetta_lib_parser_info $handle))
 (= (langdef:close-parser $handle) (case (__cetta_lib_authored_parser_close $handle) (((return $result) $result) ($result $result))))

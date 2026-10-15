@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef CETTA_OP_LANG_PREPARE_HOST_V1
+#include "runtime/generated/cetta_term_reader_v1.generated.h"
+#endif
+
 enum {
     OP_LANG_NT_DOCUMENT = 100u,
     OP_LANG_NT_TERM,
@@ -383,6 +387,7 @@ const char *cetta_op_lang_v1_status_name(CettaOpLangV1Status status) {
     return "unknown";
 }
 
+#ifdef CETTA_OP_LANG_PREPARE_HOST_V1
 static bool op_lang_grammar_set_production(
     CettaLpNativeGrammar *grammar,
     uint32_t index,
@@ -500,6 +505,7 @@ static bool op_lang_grammar_build(CettaLpNativeGrammar *grammar) {
 
 #undef OP_LANG_TM
 #undef OP_LANG_NT
+#endif
 
 static void op_lang_token_lattice_free(OpLangTokenLattice *tokens) {
     if (!tokens)
@@ -1388,8 +1394,8 @@ static bool op_lang_decode_envelope(CettaOperationalLanguageDefV1 *language,
     CettaOpLangV1SExpr *name;
 
     if (!language || !(root = language->root) ||
-        !cetta_op_lang_v1_application_is(
-            root, "GSLTLanguageDefWireV1", 5u)) {
+        (!cetta_op_lang_v1_application_is(root, "GSLTLanguageDefWireV1", 5u) &&
+         !cetta_op_lang_v1_application_is(root, "LanguageDefV2", 5u))) {
         goto malformed;
     }
     name = root->as.application.arguments[0];
@@ -1428,7 +1434,9 @@ static bool op_lang_parse_document_bytes(
     char *error_buf,
     size_t error_buf_size) {
     CettaOpLangV1Document candidate;
+#ifdef CETTA_OP_LANG_PREPARE_HOST_V1
     CettaLpNativeGrammar grammar;
+#endif
     CettaLpNativeGllPrepared gll;
     CettaLpNativeGlrPrepared glr;
     CettaLpNativeUtf8ScalarBuffer scalar_buffer;
@@ -1451,7 +1459,9 @@ static bool op_lang_parse_document_bytes(
         return false;
     }
     cetta_op_lang_v1_document_init(&candidate);
+#ifdef CETTA_OP_LANG_PREPARE_HOST_V1
     cetta_lp_native_grammar_init(&grammar);
+#endif
     cetta_lp_native_gll_prepared_init(&gll);
     cetta_lp_native_glr_prepared_init(&glr);
     cetta_lp_native_utf8_scalar_buffer_init(&scalar_buffer);
@@ -1459,13 +1469,20 @@ static bool op_lang_parse_document_bytes(
     cetta_lp_native_utf8_forest_init(&gll_forest);
     cetta_lp_native_utf8_forest_init(&glr_forest);
 
-    if (!op_lang_grammar_build(&grammar) ||
-        !cetta_lp_native_gll_prepare(
-            &gll, &grammar, OP_LANG_NT_DOCUMENT,
-            parser_error, sizeof(parser_error)) ||
-        !cetta_lp_native_glr_prepare(
-            &glr, &grammar, OP_LANG_NT_DOCUMENT,
-            parser_error, sizeof(parser_error))) {
+#ifdef CETTA_OP_LANG_PREPARE_HOST_V1
+    bool prepared = op_lang_grammar_build(&grammar) &&
+        cetta_lp_native_gll_prepare(&gll, &grammar, OP_LANG_NT_DOCUMENT,
+            parser_error, sizeof(parser_error)) &&
+        cetta_lp_native_glr_prepare(&glr, &grammar, OP_LANG_NT_DOCUMENT,
+            parser_error, sizeof(parser_error));
+#else
+    bool prepared = cetta_lp_native_gll_prepared_import_program(
+            &gll, &op_lang_gll_program_v1, parser_error, sizeof(parser_error)) &&
+        cetta_lp_native_glr_prepared_import_program(
+            &glr, &op_lang_glr_program_v1, &op_lang_gll_program_v1,
+            parser_error, sizeof(parser_error));
+#endif
+    if (!prepared) {
         op_lang_set_status(status, CETTA_OP_LANG_V1_INTERNAL_FAILURE);
         op_lang_set_error(error_buf, error_buf_size, "%s",
                           parser_error[0] ? parser_error
@@ -1564,7 +1581,9 @@ done:
     cetta_lp_native_utf8_scalar_buffer_free(&scalar_buffer);
     cetta_lp_native_glr_prepared_free(&glr);
     cetta_lp_native_gll_prepared_free(&gll);
+#ifdef CETTA_OP_LANG_PREPARE_HOST_V1
     cetta_lp_native_grammar_free(&grammar);
+#endif
     return ok;
 }
 

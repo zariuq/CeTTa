@@ -14,11 +14,14 @@
  *
  * CarrierAst values are ordinary CeTTa expressions whose head is the exact
  * GrammarRule label and whose children inhabit the rule's declared parameter
- * types.  Built-in carriers use the corresponding grounded Atom kind.  The
+ * types. Built-in carriers additionally admit the corresponding grounded
+ * Atom kind without excluding declared constructors at the same sort. The
  * checker rejects selected unsupported binders, arrows, collections, token
  * carriers, ambiguous declarations, and MeTTa variables; it never assigns
  * them an invented meaning. Unsupported constructor profiles elsewhere in
  * the language do not disable admission of a supported concrete term.
+ * Admission does not assert membership in the narrower reversible Pattern
+ * codec below.
  */
 
 typedef enum {
@@ -81,6 +84,8 @@ bool cetta_language_def_pattern_v1_project_ast(
  * relational execution that may return an empty reduct list). This is a
  * category-wide claim over its reachable constructor dependencies, unlike
  * the term-specific admission operation.
+ * Builtin-plus-constructor carriers require a tagged interpretation: this
+ * codec cannot distinguish a nullary constructor from an equal string leaf.
  */
 bool cetta_language_def_ground_term_v1_supports_pattern_codec(
     const CettaLanguageDefCoreV1 *language,

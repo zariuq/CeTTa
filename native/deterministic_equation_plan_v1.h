@@ -97,8 +97,33 @@ bool cetta_deterministic_equation_plan_v1_load_inputs(
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 
+/* Portable prepared equations, not source text. Names are relocated into the
+ * current symbol table and variables are freshened per rule. The caller's ABI
+ * identifies the meanings of its primitive vocabulary, not a proof that the
+ * callbacks implement those meanings. Restore always checks
+ * framing, shape, dispatch order and primitive classes. Set audit=true for
+ * untrusted images to additionally recheck linearity, exclusivity and descent;
+ * trusted build products need no repeated semantic admission. */
+bool cetta_deterministic_equation_plan_v1_store(
+    const CettaDeterministicEquationPlanV1 *plan, const char *abi,
+    uint8_t **bytes, size_t *length, char *error, size_t error_size);
+bool cetta_deterministic_equation_plan_v1_restore(
+    const uint8_t *bytes, size_t length, const char *abi,
+    const CettaDeterministicVocabularyV1 *vocabulary, bool audit,
+    CettaDeterministicEquationPlanV1 **out, char *error, size_t error_size);
+
+typedef struct {
+    uint64_t source_loads, source_admissions, restores, audits;
+} CettaDeterministicEquationPreparationV1;
+CettaDeterministicEquationPreparationV1 cetta_deterministic_equation_plan_v1_preparation(void);
+
 void cetta_deterministic_equation_plan_v1_free(
     CettaDeterministicEquationPlanV1 *plan);
+
+/* Query the admitted signature already stored in a prepared plan. This does
+ * not execute equations or reconstruct the source presentation. */
+bool cetta_deterministic_equation_plan_v1_declares_operator(
+    const CettaDeterministicEquationPlanV1 *, Atom *head, uint32_t arity);
 
 /* Evaluate one ground call by exact first-order matching.  The loader
  * admits only pairwise exclusive left sides, so at most one rule matches a

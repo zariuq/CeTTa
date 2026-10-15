@@ -13648,6 +13648,9 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
 }
 
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
+    /* Pattern values are immutable, but their handle registry is owned by the
+     * caller. Allocation and close must not escape into speculative workers. */
+    if (head_id == g_builtin_syms.lib_re) return true;
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
         head_id == g_builtin_syms.lib_system_write ||
         head_id == g_builtin_syms.lib_fs_write ||

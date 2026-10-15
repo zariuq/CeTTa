@@ -1,7 +1,22 @@
 #include "native/operational_language_def_v1.h"
+#include "lib_parse_native_grammar.h"
 
 #include <stdio.h>
 #include <string.h>
+
+/* A normal source read must restore build-time decisions, not prepare the
+ * fixed reader grammar. Link wrappers make a regression fail every parse. */
+static unsigned preparation_calls;
+bool __wrap_cetta_lp_native_gll_prepare(CettaLpNativeGllPrepared *out,
+    const CettaLpNativeGrammar *grammar, SymbolId start, char *error, size_t size) {
+    (void)out; (void)grammar; (void)start; (void)error; (void)size;
+    ++preparation_calls; return false;
+}
+bool __wrap_cetta_lp_native_glr_prepare(CettaLpNativeGlrPrepared *out,
+    const CettaLpNativeGrammar *grammar, SymbolId start, char *error, size_t size) {
+    (void)out; (void)grammar; (void)start; (void)error; (void)size;
+    ++preparation_calls; return false;
+}
 
 typedef struct {
     unsigned passed;
@@ -445,6 +460,8 @@ int main(void) {
     unicode_and_disagreement_canary(&counts);
     exact_physical_carrier_gate(&counts);
     generic_document_gate(&counts);
+    (void)expect(&counts, preparation_calls == 0u,
+        "fixed reader restores parser programs without grammar preparation");
     printf("operational LanguageDef native ingress: %u passed, %u failed\n",
            counts.passed, counts.failed);
     return counts.failed == 0u ? 0 : 1;

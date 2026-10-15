@@ -160,11 +160,19 @@
 (: __cetta_lib_parser_parse_file (-> %Undefined% String Atom))
 (: __cetta_lib_parser_info (-> %Undefined% Atom))
 (: langdef:parser-parse-text (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_parser_parse_text_forest (-> %Undefined% String %Undefined% Atom))
+(: langdef:parser-parse-text-forest (-> %Undefined% %Undefined% %Undefined% Atom))
 (: langdef:parser-parse-file (-> %Undefined% %Undefined% Atom))
 (: langdef:parser-info (-> %Undefined% Atom))
 (= (langdef:parser-parse-text $handle $text)
    (function
      (chain (eval (__cetta_lib_parser_parse_text $handle $text))
+       $result (return $result))))
+; Retain the existing complete packed forest alongside the ordinary result.
+; This is evidence generation, not the separate GLL/GLR agreement audit.
+(= (langdef:parser-parse-text-forest $handle $text $item-limit)
+   (function
+     (chain (eval (__cetta_lib_parser_parse_text_forest $handle $text $item-limit))
        $result (return $result))))
 (= (langdef:parser-parse-file $handle $path)
    (function
