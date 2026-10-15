@@ -11,6 +11,7 @@ service's notice; stop and start take effect where sends are dispatched.
 Taps on menu buttons race the same deadline: the tap is always answered in
 time, by the agent's answer or the service's, and the answer redraws the menu.
 """
+import argparse
 import json
 import pathlib
 import signal
@@ -23,7 +24,14 @@ import time
 
 from test_telegram_transport import TOKEN, Peer, peer
 
-BIN = str(pathlib.Path(sys.argv[1]).resolve())
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('binary')
+parser.add_argument('--load-timeout', type=float, default=90,
+                    help='time to generate the full load, e.g. under sanitizers')
+parser.add_argument('--catchup-timeout', type=float, default=60,
+                    help='time for the fixture agent to drain queued load')
+args = parser.parse_args()
+BIN = str(pathlib.Path(args.binary).resolve())
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 NEXT, RESULT, RECEIPT, SUBMIT = 1, 2, 3, 4
 IDLE, TASK, STORED, LIMIT = 64, 65, 66, 72
@@ -247,7 +255,7 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
             def flood_sent():
                 with api.lock:
                     return sum(1 for c in api.calls if c[2].get('chat_id') == OTHER)
-            wait(proc, lambda: flood_sent() >= 400, 'flood past the task queue and the effect queue', 90)
+            wait(proc, lambda: flood_sent() >= 400, 'flood past the task queue and the effect queue', args.load_timeout)
             sent = api.command(8, CHAT, '/help')
             _, latencies['help, task queue full'] = replied(proc, api, 8, sent, SERVICE_BOUND, 'help with full task queue')
             flood_stop.set(); flooder.join(timeout=10)
@@ -301,7 +309,7 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
                 # A temporarily empty worker queue does not mean the last
                 # accepted send has finished producing its receipt.
                 return flood_accepted <= receipts and not pending and not tasks(path)
-            wait(proc, caught_up, 'agent caught up', 60)
+            wait(proc, caught_up, 'agent caught up', args.catchup_timeout)
             flood_receipts = {key for key in receipts if key.startswith('%d.0.' % OTHER)}
             assert flood_receipts == flood_accepted, (len(flood_receipts), len(flood_accepted))
             assert len(flood_receipts) == flood_sent(), (len(flood_receipts), flood_sent())
