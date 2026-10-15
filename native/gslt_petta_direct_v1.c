@@ -3774,7 +3774,6 @@ static bool direct_render_factored_group_v1(
     DirectFactorNodeV1 **arg_nodes = NULL;
     const Atom **subs = NULL;
     size_t slot_count = 0u;
-    size_t input_slots = 0u;
     size_t output_slots = 0u;
     bool aborted = false;
     bool ok = false;
@@ -3857,8 +3856,6 @@ static bool direct_render_factored_group_v1(
             if (node->slot) {
                 if (node->slot_output)
                     output_slots++;
-                else
-                    input_slots++;
                 continue;
             }
             for (size_t child = 0u; child < node->child_count;

@@ -1,0 +1,16 @@
+true
+true
+true
+((reach a d) (reach a c) (reach a b) (reach a a))
+((reach a c) (reach a b) (reach a a))
+((reach a a))
+()
+((reach a a))
+((reach a d) (reach a c) (reach a b) (reach a a))
+((reach a d) (reach a c) (reach a b) (reach a a))
+((reach a a))
+((reach a a))
+((reach a d) (reach a c) (reach a b) (reach a a))
+true
+true
+((reach a e) (reach a d) (reach a c) (reach a b) (reach a a))

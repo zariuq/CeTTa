@@ -4077,8 +4077,9 @@ typedef struct {
 
 static CettaOpenTypeResult test_compiled_type_guard(
     void *context, Space *space, Arena *arena, Atom *value, Atom *required,
-    Atom ***answers, uint32_t *count) {
+    bool dead, Atom ***answers, uint32_t *count) {
     (void)space;
+    (void)dead;
     TestCompiledTypeGuard *test = context;
     assert(atom_eq(value, atom_int(arena, 6)));
     assert(atom_is_symbol(required, "Number"));

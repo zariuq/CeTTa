@@ -1,0 +1,34 @@
+3
+(Error (literal_type_mismatch wrong Number) typecheck)
+(Error (literal_type_mismatch not-a-number Number) typecheck)
+((Error (literal_type_mismatch wrong Number) typecheck))
+true
+(Error (literal_type_mismatch 1 Symbol) typecheck)
+anything
+true
+1
+(Mismatch 5 typecheck)
+(Route via-let same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-case same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-space same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-space-result same ((Error (literal_type_mismatch not-a-number Number) typecheck)))
+(Route via-parameter same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-retrieved-parameter same ((Error (literal_type_mismatch not-a-number Number) typecheck)))
+(Route via-head-pattern same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-partial same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-eval same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-reduce same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-closure same ((Error (literal_type_mismatch not-a-number Number) typecheck)))
+(Route via-map-atom same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-foldall-step same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-body-let same ((Error (literal_type_mismatch wrong Number) typecheck)))
+(Route via-body-space same ((Error (literal_type_mismatch wrong Number) typecheck)))
+()
+(Error car_atom_empty car-atom)
+(Error (literal_type_mismatch wrong Number) typecheck)
+(Error (literal_type_mismatch wrong Number) typecheck)
+(Got wrong)
+(1)
+()
+3
+(Error (literal_type_mismatch (S (S wrong)) Nat) typecheck)

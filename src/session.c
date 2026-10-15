@@ -75,6 +75,18 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .version = CETTA_LANGUAGE_VERSION_PETTA_1_0_6,
 };
 
+static const CettaProfile CETTA_PROFILE_PETTA_CONTRACT_VALUE = {
+    .id = CETTA_PROFILE_PETTA_CONTRACT,
+    .language_id = CETTA_LANGUAGE_PETTA,
+    .name = "contract",
+    .note = "PeTTa's typed line with call contracts: a failed check raises on every route.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = false,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1_C,
+};
+
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .id = CETTA_PROFILE_PETTA_TYPECHECK_V2,
@@ -376,15 +388,30 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 #endif
 }
 
+bool cetta_profile_petta_contracts(const CettaProfile *profile) {
+    return profile && profile->id == CETTA_PROFILE_PETTA_CONTRACT;
+}
+
+bool cetta_language_version_petta_typed_line(
+    const CettaLanguageVersion *version) {
+    return version && (version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1 ||
+                       version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1_C);
+}
+
 /* PeTTa 1.0.6 reads the libraries vendored from release v1.0.6.  PeTTa 1.1
  * reads the typed libraries of PeTTa's main line first (typecheck/), and
- * runs under its checker unless a program names another 1.1 profile. */
+ * runs under its checker unless a program names another 1.1 profile.
+ * PeTTa 1.1.c keeps 1.0.6's type language and libraries, takes the typed
+ * line's evaluation and module laws, and runs declarations as contracts. */
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_LANGUAGE_PETTA, "1.0.6",
      NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default",
      CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
      "typecheck-v2", "typecheck", "PeTTa's typed language",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "1.1.c",
+     "contract", NULL, "CeTTa's contract version of PeTTa's typed line",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
     {CETTA_LANGUAGE_VERSION_HE_0_0_1, CETTA_LANGUAGE_HE, "0.0.1",
      NULL, NULL, "CeTTa HE contract; formal/default and explicit extensions",
@@ -497,6 +524,10 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             strcmp(name, "petta-extended") == 0) {
             return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
         }
+        if (cetta_profile_name_matches(
+                name, &CETTA_PROFILE_PETTA_CONTRACT_VALUE)) {
+            return &CETTA_PROFILE_PETTA_CONTRACT_VALUE;
+        }
     }
     if (language_id == CETTA_LANGUAGE_ZERO &&
         cetta_profile_name_matches(name, &CETTA_PROFILE_ZERO_EXP_VALUE)) {
@@ -547,6 +578,8 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
 #endif
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
+    case CETTA_PROFILE_PETTA_CONTRACT:
+        return CETTA_PROFILE_MASK_PETTA_BASE;
     }
     return 0;
 }
@@ -600,6 +633,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.name,
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_CONTRACT_VALUE.name,
+                CETTA_PROFILE_PETTA_CONTRACT_VALUE.note);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,

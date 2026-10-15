@@ -1,0 +1,36 @@
+; A specialized relation's later equation is tried after an earlier one
+; fails on its callee's result guard: the second equation binds the query's
+; open variable and answers (SWI-PeTTa's answers); a closed query the second
+; equation does not admit answers nothing.
+(: shaky (-> Number Number))
+(= (shaky $k) not-a-nat)
+(= (hop $u $q) ($u 1))
+(= (hop $u a) Got)
+!(collapse (hop shaky $w))
+(= (hop2 $u $c (r $x $y)) (let $n ($u $c) (Next $n)))
+(= (hop2 $u $c (r $x $x)) (r $x $x))
+(= (upd $d) (shaky $d))
+!(collapse (hop2 upd 1 (r a $y)))
+!(collapse (let $w2 b (hop shaky $w2)))
+; The same within a typed chainer over a space: the first equation's step
+; meets the guard, the second equation closes the reach.
+(: Nat Type)
+(: Z Nat)
+(: S (-> Nat Nat))
+(: is-zero (-> Nat Bool))
+(= (is-zero Z) True)
+(= (is-zero (S $k)) False)
+(: stop (-> $a Nat Bool))
+(= (stop $q $d) (is-zero $d))
+!(bind! &hokb (new-space))
+!(add-atom &hokb (link a b))
+(: shaky-nat (-> Nat Nat))
+(= (shaky-nat Z) Z)
+(= (shaky-nat (S $k)) not-a-nat)
+(: shaky-upd (-> $a Nat Nat))
+(= (shaky-upd $q $d) (shaky-nat $d))
+(: chain (-> (-> $a $ct $ct) (-> $a $ct Bool) $ct $a $a))
+(= (chain $u $t $c (reach $x $y)) (if ($t (reach $x $y) $c) (empty) (match &hokb (link $x $z) (let (reach $z $w) (chain $u $t ($u (reach $x $y) $c) (reach $z $y)) (reach $x $w)))))
+(= (chain $u $t $c (reach $x $x)) (reach $x $x))
+!(collapse (chain shaky-upd stop (S Z) (reach a $y)))
+!(collapse (chain shaky-upd stop (S Z) (reach a b)))

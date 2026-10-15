@@ -2,6 +2,7 @@
 #include <time.h>
 #include "space.h"
 #include "space_path_index.h"
+#include "space_type_evidence.h"
 #include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
@@ -9097,6 +9098,62 @@ bool space_type_annotations_have_only_symbol_subjects(Space *s) {
     ensure_ty_ann_index(s);
     return !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
            !s->native.ty_idx.has_non_symbol_subjects;
+}
+
+/* With symbol subjects only, each subject's rows form one chain, and a chain
+ * longer than one row is a second declaration (a duplicated row included). */
+bool space_type_annotations_functional(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        if (rows->chains[slot].head != SYMBOL_ID_NONE &&
+            rows->chains[slot].count > 1u)
+            return false;
+    }
+    return !space_equations_may_match_known_head(s, g_builtin_syms.get_type);
+}
+
+bool space_type_arrow_declarations_visit(
+    Space *s,
+    bool (*visit)(void *context, SymbolId subject, uint32_t declarations,
+                  Atom *arrow),
+    void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || !visit || space_has_overlay_base(s) ||
+        space_has_dependencies(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
+            continue;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *annotation = space_indexed_occurrence_atom(
+                s, rows->atom_indices, rows->atom_ids, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
+                continue;
+            Atom *type = annotation->expr.elems[2];
+            if (type->kind == ATOM_EXPR && type->expr.len > 0u &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow) &&
+                !visit(context, chain->head, chain->count, type))
+                return true;
+        }
+    }
+    return true;
 }
 
 /* Resolve (: atom type) annotations through the native index. Overlay spaces
