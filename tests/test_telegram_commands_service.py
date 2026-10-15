@@ -236,7 +236,19 @@ with tempfile.TemporaryDirectory(prefix='cetta-telegram-commands-') as temp:
                 while not flood_stop.is_set():
                     n += 1
                     key = '%d.0.%020d' % (OTHER, n)
-                    if rpc(path, SUBMIT, key, json.dumps([['send', 'flood %d' % n, 'plain']]))[0] == STORED:
+                    body = json.dumps([['send', 'flood %d' % n, 'plain']])
+                    # Retry an overload reset with the same immutable request.
+                    # Lost replies cannot create an extra send, and a reset
+                    # cannot stop the producer before the required load exists.
+                    while not flood_stop.is_set():
+                        try:
+                            code = rpc(path, SUBMIT, key, body)[0]
+                            break
+                        except OSError:
+                            time.sleep(.005)
+                    else:
+                        break
+                    if code == STORED:
                         flood_accepted.add(key)
             flooder = threading.Thread(target=flood, daemon=True); flooder.start()
             time.sleep(.3)
