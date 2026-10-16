@@ -266,6 +266,9 @@ void rsdfa_v1_plan_free(RSDFAV1Plan *plan);
 
 void rsdfa_v1_program_init(RSDFAV1Program *program);
 void rsdfa_v1_program_free(RSDFAV1Program *program);
+/* Copy immutable decisions, without determinization or language analysis. */
+bool rsdfa_v1_program_copy(RSDFAV1Program *out, const RSDFAV1Program *source,
+    char *error, size_t error_size);
 
 void rsdfa_v1_ascii_transition_index_init(
     RSDFAV1AsciiTransitionIndex *index);

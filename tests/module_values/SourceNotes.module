@@ -1,0 +1,9 @@
+Module SourceNotes {
+  Theory Notes() {
+    Empty Exports { Note; } Terms {
+      SourceNote . Note ::= "proof-source";
+      UserNote . Note ::= "user-source";
+    }
+  }
+  theory Notes()
+}

@@ -1476,7 +1476,7 @@
     {
       "name": "petta-typecheck-v2-boundary-core-v1",
       "provider_requirements": [],
-      "rule_count": 60,
+      "rule_count": 59,
       "rules": [
         {
           "head_arity": 2,
@@ -1772,14 +1772,9 @@
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
           "name": "petta-boundary-open-none"
-        },
-        {
-          "head_arity": 2,
-          "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-open-nonempty-expression"
         }
       ],
-      "source_sha256": "7e1ea071c949dfc4faac8e0a5b8cdf2110b07d847cd4fa1f5355a06bc7829146"
+      "source_sha256": "15b4d1162e96d86a1b18d50eae1ca28a0204517ca628f7f4725f58e21f365b2c"
     }
   ],
   "schema": "cetta-petta-typecheck-v3-intake-v1",

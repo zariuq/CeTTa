@@ -13,6 +13,8 @@ Atom *cetta_syntax_gslt_admit_v1(
     Arena *arena, Atom *language, Atom *profile, Atom *policy, Atom *origins,
     CettaSyntaxGsltAdmissionV1 admit);
 Atom *cetta_syntax_gslt_inspect_v1(
+    Arena *arena, Atom *value);
+Atom *cetta_syntax_gslt_inspect_checked_v1(
     Arena *arena, Atom *value, CettaSyntaxGsltAdmissionV1 admit);
 Atom *cetta_syntax_gslt_join_v1(
     Arena *arena, Atom *name, Atom *start,

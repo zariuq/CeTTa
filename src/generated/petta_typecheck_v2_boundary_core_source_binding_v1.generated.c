@@ -7,7 +7,7 @@ const CettaNikDirectSourceBindingV1
         .schema_id = "finite-horn-gslt-v1",
         .presentation_id = "petta-typecheck-v2-boundary-core-v1",
         .semantic_scope = "petta.typecheck-v2.direct-boundary-requirement-core",
-        .source_sha256 = "7e1ea071c949dfc4faac8e0a5b8cdf2110b07d847cd4fa1f5355a06bc7829146",
-        .package_sha256 = "34f1911721c07bf60a04549623b398a6b944f571f72ebab79e4e5e7d23ce399e",
+        .source_sha256 = "15b4d1162e96d86a1b18d50eae1ca28a0204517ca628f7f4725f58e21f365b2c",
+        .package_sha256 = "35577bae1a836621376ca931689cdd811bf8ae579c7e0cd2e85f98a27c76ea05",
         .coverage = CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT,
     };

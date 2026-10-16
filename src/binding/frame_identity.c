@@ -1,5 +1,6 @@
 #include "frame_identity.h"
 #include "atom.h"
+#include "stats.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -13,6 +14,10 @@ typedef struct {
     _Atomic uint64_t state;
     _Atomic uint32_t next_slot;
     uint32_t next_free;
+    /* Charged to the resource ledger's live gauge by its acquisition; the
+     * last release, which the reference count orders after it, returns the
+     * charge. */
+    bool ledger_counted;
 } FrameIdentityCell;
 
 /* Cells live in segments allocated when their first handle is issued.  A
@@ -156,6 +161,13 @@ bool cetta_frame_identity_acquire(CettaFrameIdentity *identity_out) {
         generation > frame_identity_generation_max(handle))
         abort();
     atomic_store_explicit(&cell->next_slot, 0u, memory_order_relaxed);
+    cell->ledger_counted = cetta_runtime_stats_is_enabled();
+    if (cell->ledger_counted) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_MINT);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE,
+            CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE_PEAK, 1);
+    }
     atomic_store_explicit(&cell->state,
         ((uint64_t)generation << 32u) | UINT64_C(1), memory_order_release);
     *identity_out = frame_identity_spell(handle, generation);
@@ -257,9 +269,18 @@ void cetta_frame_identity_release(CettaFrameIdentity identity) {
                 memory_order_acq_rel, memory_order_relaxed))
             break;
     }
+    if ((uint32_t)state != 1u)
+        return;
+    if (cell->ledger_counted) {
+        cell->ledger_counted = false;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_FREE);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE,
+            CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE_PEAK, -1);
+    }
     /* A handle whose generations are spent is retired: no later identity can
      * spell an incarnation that a stale holder might still present. */
-    if ((uint32_t)state != 1u || generation == parts.generation_max)
+    if (generation == parts.generation_max)
         return;
     FrameIdentityLocalHandles *local = frame_identity_local_handles();
     if (local && local->len < FRAME_IDENTITY_LOCAL_HANDLES) {

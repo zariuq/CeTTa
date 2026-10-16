@@ -1,4 +1,5 @@
 #include "json_value_v1.h"
+#include "json_direct_v1.h"
 
 #include "lib_parse_native_grammar.h"
 

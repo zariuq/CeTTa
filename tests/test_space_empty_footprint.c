@@ -1,8 +1,9 @@
-/* An empty space is its header.  Its large indexes (4096 exact-membership
- * buckets, 256 equation buckets, two 256-bucket bridge indexes) are arrays
- * allocated when the first row is filed in them, so a space that never holds
- * such rows costs sizeof(Space) and nothing more, and reading an empty space
- * builds nothing. */
+/* An empty space is its header.  Its indexes (the exact-membership table,
+ * 256 equation buckets, two 256-bucket bridge indexes) are arrays allocated
+ * when the first row is filed in them, so a space that never holds such rows
+ * costs sizeof(Space) and nothing more, and reading an empty space builds
+ * nothing.  The exact-membership table starts small and grows with its
+ * rows. */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,7 +38,7 @@ int main(void) {
     /* The header bound covers every inline field; the indexes are not. */
     assert(sizeof(Space) <= 1024u);
     assert(sizeof(EqIndex) < sizeof(EqBucket) * 8u);
-    assert(sizeof(ExactAtomIndex) == sizeof(void *));
+    assert(sizeof(ExactAtomIndex) <= 16u * sizeof(void *));
 
     enum { SPACES = 64 };
     Space spaces[SPACES];
@@ -64,13 +65,13 @@ int main(void) {
     query_results_free(&results);
     assert(owned_bytes(empty) == 0u);
 
-    /* A fact queried for exact membership allocates the exact buckets; an
+    /* A fact queried for exact membership allocates the exact table; an
      * equation queried by its head allocates the equation buckets. */
     Space *used = &spaces[1];
     space_add(used, fact);
     assert(space_contains_exact(used, fact));
     size_t with_fact = owned_bytes(used);
-    assert(with_fact >= EXACT_INDEX_BUCKETS * sizeof(ExactAtomBucket));
+    assert(with_fact >= 16u * sizeof(ExactAtomNarrowSlot));
     Atom *eq_items[] = {atom_symbol(&arena, "="),
                         atom_expr(&arena, (Atom *[]){fn}, 1u),
                         atom_int(&arena, 9)};

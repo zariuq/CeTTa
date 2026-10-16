@@ -487,8 +487,8 @@ int main(int argc, char **argv) {
     memset(error, 0, sizeof error);
     CHECK(cetta_gslt_provider_catalog_validate_v1(
               catalog, error, sizeof error) &&
-              catalog->requirement_count == 5u,
-          "the five inherited PeTTa provider identities are authored");
+              catalog->requirement_count == 6u,
+          "type and builtin-mode provider identities are authored");
 
     Atom *environment_facts[] = {
         parse_one(&facts, "(EnvDeclared AliasNum (TAlias TNum))"),
@@ -526,7 +526,7 @@ int main(int argc, char **argv) {
         catalog, providers, &authorized, error, sizeof error);
     CHECK(authorized_ok &&
               authorized.registry.provider_count == catalog->requirement_count,
-          "the v3 runtime authorizes exactly the five inherited providers");
+          "the v3 runtime authorizes the complete provider catalog");
     if (!authorized_ok) {
         fprintf(stderr, "PeTTa typecheck-v3 authorization diagnostic: %s\n",
                 error);
@@ -1053,9 +1053,9 @@ int main(int argc, char **argv) {
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_guarded_expression_selection.metta",
-        "unguarded-expression-head", CETTA_NIK_OUTCOME_REFUTED,
-        CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
-        "an unguarded head selection remains semideterministic");
+        "unguarded-expression-head", CETTA_NIK_OUTCOME_ESTABLISHED,
+        CETTA_PETTA_V3_BOUNDARY_NONE,
+        "upstream car-atom answers once or raises, rather than logical failure");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_effect_instantiation.metta",
@@ -1550,7 +1550,7 @@ int main(int argc, char **argv) {
                 cetta_petta_type_fact_provider_registry_v1(live_provider),
                 &live_authorized, error, sizeof error);
         CHECK(live_bound,
-              "the five providers bind to one live Space revision");
+              "all providers bind to one live Space revision");
         if (live_bound) {
             check_query(
                 program, &live_authorized.registry, &queries, &answers,
@@ -1601,15 +1601,59 @@ int main(int argc, char **argv) {
                 "(EnvDeclaredList and $declarations)",
                 "(EnvDeclaredList and "
                 "  (DCons (Decl and "
-                "    (TArrow MDet "
+                "    (TArrow MNondet "
                 "      (TTCons TBool (TTCons TBool TTNil)) TBool)) DNil))",
                 1u,
                 "the admitted PeTTa builtin catalog supplies one typed signature");
             check_query(
                 program, &live_authorized.registry, &queries, &answers,
+                "(KnownBuiltinCardinalityRule and 2 $rule)",
+                "(KnownBuiltinCardinalityRule and 2 BoundBooleanInputs)", 1u,
+                "an unextended builtin supplies its argument-mode rule");
+            check_query(
+                program, &live_authorized.registry, &queries, &answers,
+                "(KnownBuiltinCardinalityRule and 3 $rule)", NULL, 0u,
+                "a builtin rule is specific to its arity");
+            for (size_t probe = 0u; probe < 3u; probe++) {
+                const char *rows[] = {
+                    "(= (and $x $y) True)",
+                    "(= (and $x $y $z) True)",
+                    "(= ($head $x $y) True)",
+                };
+                Atom *overlay = parse_one(&queries, rows[probe]);
+                CettaPettaTypeFactProviderV1 *candidate =
+                    cetta_petta_type_fact_provider_create_with_overlay_v1(
+                        live_program, &live_space, &overlay, 1u, error, sizeof error);
+                CettaGsltAuthorizedProviderRegistryV1 candidate_authorized = {0};
+                bool ready = candidate && cetta_gslt_provider_registry_authorize_v1(
+                    catalog, cetta_petta_type_fact_provider_registry_v1(candidate),
+                    &candidate_authorized, error, sizeof error);
+                CHECK(ready, "a proposed source block has its own builtin-rule evidence");
+                if (ready) {
+                    check_query(program, &candidate_authorized.registry, &queries, &answers,
+                        "(KnownBuiltinCardinalityRule and 2 $rule)",
+                        probe == 1u ? "(KnownBuiltinCardinalityRule and 2 BoundBooleanInputs)" : NULL,
+                        probe == 1u ? 1u : 0u,
+                        "exact arity and wildcard definitions constrain builtin evidence");
+                    if (probe != 1u)
+                        check_query(program, &candidate_authorized.registry, &queries, &answers,
+                            "(KnownExpressionEffect (and True True) $mode)",
+                            "(KnownExpressionEffect (and True True) MNondet)", 1u,
+                            "added equations defeat a builtin-only answer-count claim");
+                }
+                cetta_gslt_authorized_provider_registry_free_v1(&candidate_authorized);
+                cetta_petta_type_fact_provider_free_v1(candidate);
+            }
+            check_query(
+                program, &live_authorized.registry, &queries, &answers,
                 "(KnownExpressionEffect (and True False) $mode)",
                 "(KnownExpressionEffect (and True False) MDet)", 1u,
-                "builtin execution grade is derived from its admitted signature");
+                "literal Boolean inputs justify a deterministic call");
+            check_query(
+                program, &live_authorized.registry, &queries, &answers,
+                "(KnownExpressionEffect (and $x True) $mode)",
+                NULL, 0u,
+                "a free input needs contextual boundness evidence");
             check_query(
                 program, &live_authorized.registry, &queries, &answers,
                 "(KnownExpressionEffect (recursive-grade 1) $mode)",
@@ -1827,6 +1871,20 @@ int main(int argc, char **argv) {
                   let_bool.verdict == PETTA_ANALYSIS_ESTABLISHED &&
                   let_bool.established_equations == 1u,
               "lexical Boolean evidence reaches a typed builtin call");
+
+        Atom *field_boolean_overlay[] = {
+            parse_one(&queries, "(: field-bool (-[det]-> (Bool) Bool))"),
+            parse_one(&queries, "(= (field-bool ($input)) (let $bound $input (and $bound True)))"),
+        };
+        CettaPettaTypecheckV3BlockResult field_boolean = {0};
+        bool field_checked = field_boolean_overlay[0] && field_boolean_overlay[1] &&
+            cetta_petta_typecheck_v3_declaration_block(
+                product_checker, product_program, &product_space, field_boolean_overlay, 2u,
+                CETTA_PETTA_TYPECHECK_V3_POLICY_STRICT, &field_boolean);
+        CHECK(field_checked && field_boolean.verdict == PETTA_ANALYSIS_REFUTED &&
+                  field_boolean.boundary == CETTA_PETTA_V3_BOUNDARY_CARDINALITY &&
+                  !field_boolean.optimization_license.issued,
+              "a destructured Boolean field does not inherit a direct-parameter boundness proof");
 
         Atom *let_number_overlay[] = {
             parse_one(

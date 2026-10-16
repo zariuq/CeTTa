@@ -46,7 +46,8 @@ typedef enum {
     CETTA_PROFILE_PRIME_IDENTITY_UNIVALENCE = 18,
     CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME = 19,
     CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE = 20,
-    CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN = 21
+    CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN = 21,
+    CETTA_PROFILE_PETTA_CONTRACT = 22
 } CettaProfileId;
 
 /* What the short spelling `&self` denotes inside code evaluated in another
@@ -99,14 +100,20 @@ typedef enum {
         CETTA_PROFILE_MASK_PETTA_BASE_FORMS
 } CettaProfileMask;
 
-/* A language's released versions.  A profile implements one version of its
+/* Registered language contracts. A profile implements one version of its
  * language; PeTTa 1.0.6 is the untyped language of PeTTa release v1.0.6,
  * and PeTTa 1.1 is the typed language PeTTa's main line adopted with its
- * checker.  A version names the libraries its programs import first. */
+ * checker.  PeTTa 1.1.c is CeTTa's own version of that typed line: its
+ * declarations are call contracts whose failed checks raise on every route
+ * a call takes.  A version names the libraries its programs import first. */
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
     CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2
+    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
+    CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
+    CETTA_LANGUAGE_VERSION_HE_0_0_1 = 4,
+    CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10 = 5,
+    CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 6
 } CettaLanguageVersionId;
 
 typedef struct {
@@ -120,6 +127,12 @@ typedef struct {
      * libraries are read before the language's own; NULL: none. */
     const char *library_overlay;
     const char *note;
+    CettaRelativeModulePolicy relative_imports;
+    /* A recursive request for an already loading file is a successful no-op. */
+    bool loading_import_is_noop;
+    /* The contract selected when neither the language nor its profile names
+     * another version. Exactly one registered version per language is default. */
+    bool is_default;
 } CettaLanguageVersion;
 
 typedef struct {
@@ -292,9 +305,15 @@ typedef struct {
     uint32_t entry_len;
 } CettaEvaluatorOptions;
 
+typedef enum {
+    CETTA_EXIT_DISCARD_ANSWER_DISPLAY = 0,
+    CETTA_EXIT_PUBLISH_PRIOR_ANSWERS = 1
+} CettaExitAnswerPolicy;
+
 typedef struct {
     bool exit_requested;
     int exit_code;
+    CettaExitAnswerPolicy answer_policy;
 } CettaProcessControl;
 
 typedef struct {
@@ -332,6 +351,15 @@ const CettaProfile *cetta_profile_petta_typecheck_v2(void);
 const CettaProfile *cetta_profile_petta_typecheck_v3(void);
 #endif
 bool cetta_profile_uses_petta_typing(const CettaProfile *profile);
+/* Whether `profile` runs PeTTa's declarations as call contracts (petta@1.1.c):
+ * a check commits to its first answer, a failed one raises the language's
+ * type error, a position whose declared type is a variable is not checked,
+ * and no run-time dispatch recovers a contract's error. */
+bool cetta_profile_petta_contracts(const CettaProfile *profile);
+/* Whether `version` is of PeTTa's typed line (1.1 and 1.1.c), whose
+ * evaluation laws differ from release 1.0.6's. */
+bool cetta_language_version_petta_typed_line(
+    const CettaLanguageVersion *version);
 bool cetta_language_has_named_profiles(CettaLanguageId language_id);
 bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
                                          const CettaProfile *profile);
@@ -414,6 +442,8 @@ bool cetta_eval_session_record_generic_setting(CettaEvalSession *session,
 void cetta_eval_session_clear_process_exit(CettaEvalSession *session);
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code);
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy);
 bool cetta_eval_session_process_exit_requested(
     const CettaEvalSession *session);
 int cetta_eval_session_process_exit_code(const CettaEvalSession *session);

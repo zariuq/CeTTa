@@ -1,0 +1,7 @@
+(= (head-input $items) (car-atom $items))
+!(catch (head-input ()))
+!(car-atom (left right))
+!(car-atom marker)
+!(cdr-atom ())
+!(catch (let $ignored (head-input ()) reached))
+!(catch (cons-atom before (head-input ())))

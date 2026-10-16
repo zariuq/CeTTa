@@ -33,6 +33,7 @@ typedef struct {
     PPNativeV1CanonicalAtom *data;
     uint32_t len;
     uint32_t cap;
+    bool occurrences;
 } PPNativeV1CanonicalAtomVec;
 
 typedef struct {
@@ -90,6 +91,7 @@ typedef struct {
     Arena *arena;
     PPNativeV1ReplayMemo *memo;
     uint32_t result_limit;
+    bool occurrences;
     PPNativeV1ReplayStatus status;
 } PPNativeV1ReplayContext;
 
@@ -717,6 +719,37 @@ done:
     return ok;
 }
 
+bool ppnative_v1_prepared_start_family_import_programs(
+    PPNativeV1PreparedStartFamily *out, const char *binding_digest,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size) {
+    PPNativeV1PreparedStartFamilyImpl *result = NULL;
+    if (!out || !gll || !glr || !ppnative_v1_digest_is_frozen(binding_digest) ||
+        gll->start_nonterminal != glr->start_nonterminal) {
+        ppnative_v1_set_error(error, error_size, "incompatible stored parser family");
+        return false;
+    }
+    result = calloc(1u, sizeof(*result));
+    if (!result) goto failed;
+    result->start_state_ids = calloc(1u, sizeof(*result->start_state_ids));
+    result->gll = calloc(1u, sizeof(*result->gll));
+    result->glr = calloc(1u, sizeof(*result->glr));
+    if (!result->start_state_ids || !result->gll || !result->glr) goto failed;
+    result->start_state_len = 1u;
+    result->start_state_ids[0] = gll->start_nonterminal;
+    memcpy(result->binding_digest, binding_digest, 65u);
+    if (!cetta_lp_native_gll_prepared_import_program(result->gll, gll, error, error_size) ||
+        !cetta_lp_native_glr_prepared_import_program(result->glr, glr, gll, error, error_size)) goto failed;
+    ppnative_v1_prepared_start_family_free(out);
+    out->implementation = result;
+    return true;
+failed:
+    if (result) { ppnative_v1_prepared_start_family_impl_free(result); free(result); }
+    if (error && error_size && !error[0])
+        ppnative_v1_set_error(error, error_size, "stored parser family allocation failed");
+    return false;
+}
+
 bool ppnative_v1_prepared_start_family_lookup(
     const PPNativeV1PreparedStartFamily *family,
     const char *binding_digest,
@@ -947,6 +980,89 @@ done:
     return ok;
 }
 
+bool ppnative_v1_prepared_immutable_view(
+    const PPNativeV1Prepared *prepared, PPNativeV1PreparedView *view) {
+    const PPNativeV1PreparedImpl *implementation =
+        prepared ? prepared->implementation : NULL;
+    if (!view)
+        return false;
+    memset(view, 0, sizeof(*view));
+    if (!implementation || !implementation->pack ||
+        !implementation->start_state)
+        return false;
+    view->pack = implementation->pack;
+    view->start_state = implementation->start_state;
+    view->start_state_id = implementation->start_state_id;
+    view->terminal_plan = &implementation->terminal_plan;
+    view->gll = &implementation->gll;
+    view->glr = &implementation->glr;
+    return true;
+}
+
+bool ppnative_v1_prepared_import_programs(
+    PPNativeV1Prepared *out, const PPABIV1Pack *pack, uint32_t start_state_id,
+    const PPNativeV1TerminalPlan *terminals,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size) {
+    PPNativeV1PreparedImpl *result = NULL;
+    if (!out || !pack || start_state_id >= pack->state_len || !pack->states ||
+        !pack->states[start_state_id].canonical || !pack->states[start_state_id].identity ||
+        !terminals || terminals->len != pack->terminal_len ||
+        (terminals->len && !terminals->terminals) || !gll || !glr ||
+        gll->start_nonterminal != start_state_id || glr->start_nonterminal != start_state_id) {
+        ppnative_v1_set_error(error, error_size, "incompatible stored ParserPack preparation");
+        return false;
+    }
+    result = calloc(1u, sizeof(*result));
+    if (!result) goto failed;
+    result->pack = pack;
+    result->start_state = pack->states[start_state_id].identity;
+    result->start_state_id = start_state_id;
+    result->state_len = pack->state_len;
+    result->terminal_len = pack->terminal_len;
+    result->production_len = pack->production_len;
+    result->class_clause_len = pack->class_clause_len;
+    result->derivation_len = pack->derivation_len;
+    memcpy(result->source_digest, pack->source_digest, 65u);
+    memcpy(result->compiler_digest, pack->compiler_digest, 65u);
+    memcpy(result->environment_digest, pack->environment_digest, 65u);
+    memcpy(result->pack_digest, pack->pack_digest, 65u);
+    size_t start_len = strlen(pack->states[start_state_id].canonical) + 1u;
+    result->start_canonical = malloc(start_len);
+    if (result->start_canonical)
+        memcpy(result->start_canonical, pack->states[start_state_id].canonical, start_len);
+    result->terminal_plan.terminals = calloc(terminals->len ? terminals->len : 1u,
+        sizeof(*result->terminal_plan.terminals));
+    result->terminal_plan.owned_ranges = calloc(terminals->len ? terminals->len : 1u,
+        sizeof(*result->terminal_plan.owned_ranges));
+    if (!result->start_canonical || !result->terminal_plan.terminals ||
+        !result->terminal_plan.owned_ranges) goto failed;
+    result->terminal_plan.len = terminals->len;
+    for (uint32_t i = 0u; i < terminals->len; ++i) {
+        const CettaLpNativeUtf8Terminal *source = &terminals->terminals[i];
+        result->terminal_plan.terminals[i] = *source;
+        if (source->range_len) {
+            if (!source->ranges) goto failed;
+            CettaLpNativeUnicodeRange *ranges = malloc((size_t)source->range_len * sizeof(*ranges));
+            if (!ranges) goto failed;
+            memcpy(ranges, source->ranges, (size_t)source->range_len * sizeof(*ranges));
+            result->terminal_plan.terminals[i].ranges = ranges;
+            result->terminal_plan.owned_ranges[i] = ranges;
+        } else result->terminal_plan.terminals[i].ranges = NULL;
+    }
+    if (!cetta_lp_native_gll_prepared_import_program(&result->gll, gll, error, error_size) ||
+        !cetta_lp_native_glr_prepared_import_program(&result->glr, glr, gll, error, error_size))
+        goto failed;
+    ppnative_v1_prepared_free(out);
+    out->implementation = result;
+    return true;
+failed:
+    if (result) { ppnative_v1_prepared_impl_free(result); free(result); }
+    if (error && error_size && !error[0])
+        ppnative_v1_set_error(error, error_size, "stored preparation allocation or shape failure");
+    return false;
+}
+
 bool ppnative_v1_prepared_view(
     const PPNativeV1Prepared *prepared,
     PPNativeV1PreparedView *view,
@@ -982,13 +1098,7 @@ bool ppnative_v1_prepared_view(
             "stale prepared ParserPack binding");
         goto done;
     }
-    view->pack = implementation->pack;
-    view->start_state = implementation->start_state;
-    view->start_state_id = implementation->start_state_id;
-    view->terminal_plan = &implementation->terminal_plan;
-    view->gll = &implementation->gll;
-    view->glr = &implementation->glr;
-    ok = true;
+    ok = ppnative_v1_prepared_immutable_view(prepared, view);
 
 done:
     free(start_canonical);
@@ -1663,14 +1773,14 @@ static bool ppnative_v1_canonical_atomvec_push_unique(
     char *canonical = NULL;
     uint32_t index;
 
-    if (vec->len > 0u) {
+    if (!vec->occurrences && vec->len > 0u) {
         canonical = ppnative_v1_render(atom);
         if (!canonical) {
             *status = PPNATIVE_V1_REPLAY_MALFORMED;
             return false;
         }
     }
-    for (index = 0u; index < vec->len; index++) {
+    for (index = 0u; !vec->occurrences && index < vec->len; index++) {
         if (!vec->data[index].canonical) {
             vec->data[index].canonical =
                 ppnative_v1_render(vec->data[index].atom);
@@ -2331,6 +2441,7 @@ static bool ppnative_v1_eval_symbol_ready(
     PPNativeV1ReplayMemo *memo = &context->memo[node_index];
     uint32_t offset;
 
+    memo->values.occurrences = context->occurrences;
     for (offset = 0u; offset < node->choice_len; offset++) {
         uint32_t choice_index = node->choice_begin + offset;
         const CettaLpNativeUtf8ForestChoice *choice;
@@ -2477,7 +2588,7 @@ static bool ppnative_v1_results_sort(PPNativeV1Result *result,
     uint32_t index;
     if (values->len == 0u)
         return true;
-    for (index = 0u; index < values->len; index++) {
+    for (index = 0u; !values->occurrences && index < values->len; index++) {
         if (!values->data[index].canonical) {
             values->data[index].canonical =
                 ppnative_v1_render(values->data[index].atom);
@@ -2485,7 +2596,7 @@ static bool ppnative_v1_results_sort(PPNativeV1Result *result,
                 return false;
         }
     }
-    if (values->len > 1u) {
+    if (!values->occurrences && values->len > 1u) {
         qsort(values->data, values->len, sizeof(*values->data),
               ppnative_v1_canonical_atom_compare);
     }
@@ -2504,6 +2615,7 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
                             const PPNativeV1ForestExtension *extension,
                             uint32_t replay_depth,
                             uint32_t result_limit,
+                            bool occurrences,
                             char *error_buf,
                             size_t error_buf_size) {
     PPNativeV1ReplayContext context;
@@ -2513,11 +2625,18 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
     bool ok = false;
 
     memset(&context, 0, sizeof(context));
+    /* Finishing a new forest replaces, rather than appends to, an older
+     * replay result. The arena keeps returned atoms alive until teardown. */
+    free(result->semantic_results);
+    result->semantic_results = NULL;
+    result->semantic_result_len = 0u;
     context.pack = pack;
     context.forest = &result->forest;
     context.extension = extension;
     context.arena = &result->arena;
     context.result_limit = result_limit;
+    context.occurrences = occurrences;
+    results.occurrences = occurrences;
     context.status = PPNATIVE_V1_REPLAY_OK;
     context.memo = calloc(result->forest.node_len ? result->forest.node_len : 1u,
                           sizeof(*context.memo));
@@ -3144,6 +3263,151 @@ done:
     return ok;
 }
 
+static Atom *binding_storage_form(Arena *arena, const char *head, Atom **items, uint32_t len) {
+    Atom **fields = arena_alloc(arena, ((size_t)len + 1u) * sizeof(*fields));
+    if (!fields) return NULL;
+    fields[0] = atom_symbol(arena, head);
+    for (uint32_t i = 0u; i < len; ++i) {
+        if (!items[i]) return NULL;
+        fields[i + 1u] = items[i];
+    }
+    return atom_expr(arena, fields, len + 1u);
+}
+
+static bool binding_storage_vector(Atom *value, Atom ***items, uint32_t *len) {
+    if (!value || value->kind != ATOM_EXPR || !value->expr.len ||
+        !atom_is_symbol(value->expr.elems[0], "ParserBindingVectorV1")) return false;
+    *items = value->expr.elems + 1u;
+    *len = value->expr.len - 1u;
+    return true;
+}
+
+static bool binding_storage_u32(Atom *value, uint32_t *out) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT ||
+        value->ground.ival < 0 || (uint64_t)value->ground.ival > UINT32_MAX) return false;
+    *out = (uint32_t)value->ground.ival;
+    return true;
+}
+
+Atom *ppnative_v1_token_binding_plan_export_storage(
+    Arena *arena, const PPNativeV1TokenBindingPlan *plan, char *error, size_t size) {
+    if (!arena || !plan) return NULL;
+    const PPNativeV1ForestExtension *extension = &plan->extension;
+    uint32_t maximum = extension->production_len;
+    if (extension->state_len > maximum) maximum = extension->state_len;
+    if (extension->terminal_len > maximum) maximum = extension->terminal_len;
+    Atom **rows = maximum ? arena_alloc(arena, (size_t)maximum * sizeof(*rows)) : NULL;
+    if (maximum && !rows) goto failed;
+    for (uint32_t i = 0u; i < extension->state_len; ++i) {
+        Atom *args[] = {atom_int(arena, extension->states[i].state_id), extension->states[i].identity};
+        rows[i] = binding_storage_form(arena, "ParserBindingStateV1", args, 2u);
+    }
+    Atom *states = binding_storage_form(arena, "ParserBindingVectorV1", rows, extension->state_len);
+    for (uint32_t i = 0u; i < extension->terminal_len; ++i) {
+        Atom *args[] = {atom_int(arena, extension->terminals[i].terminal_id), extension->terminals[i].identity};
+        rows[i] = binding_storage_form(arena, "ParserBindingTerminalV1", args, 2u);
+    }
+    Atom *terminals = binding_storage_form(arena, "ParserBindingVectorV1", rows, extension->terminal_len);
+    for (uint32_t i = 0u; i < extension->production_len; ++i) {
+        const PPNativeV1ProductionExtension *production = &extension->productions[i];
+        Atom **items = production->item_len ? arena_alloc(arena,
+            (size_t)production->item_len * sizeof(*items)) : NULL;
+        if (production->item_len && !items) goto failed;
+        for (uint32_t j = 0u; j < production->item_len; ++j) {
+            Atom *args[] = {atom_int(arena, production->items[j].kind),
+                atom_int(arena, production->items[j].dense_id)};
+            items[j] = binding_storage_form(arena, "ParserBindingItemV1", args, 2u);
+        }
+        Atom *args[] = {atom_int(arena, production->production_id), production->identity,
+            atom_int(arena, production->lhs_state_id),
+            binding_storage_form(arena, "ParserBindingVectorV1", items, production->item_len), production->action};
+        rows[i] = binding_storage_form(arena, "ParserBindingProductionV1", args, 5u);
+    }
+    Atom *productions = binding_storage_form(arena, "ParserBindingVectorV1", rows, extension->production_len);
+    Atom *args[] = {states, terminals, productions};
+    Atom *result = binding_storage_form(arena, "ParserBindingStoredV1", args, 3u);
+    if (result) return atom_deep_copy(arena, result);
+failed:
+    ppnative_v1_set_error(error, size, "token-binding storage allocation failed");
+    return NULL;
+}
+
+bool ppnative_v1_token_binding_plan_import_storage(
+    PPNativeV1TokenBindingPlan *out, const PPABIV1Pack *pack, Atom *storage,
+    char *error, size_t size) {
+    PPNativeV1TokenBindingPlan candidate;
+    Atom **states, **terminals, **productions;
+    uint32_t state_len, terminal_len, production_len, item_len = 0u;
+    bool ok = false;
+    ppnative_v1_token_binding_plan_init(&candidate);
+    if (!out || !pack || !storage || storage->kind != ATOM_EXPR || storage->expr.len != 4u ||
+        !atom_is_symbol(storage->expr.elems[0], "ParserBindingStoredV1")) goto done;
+    storage = atom_deep_copy(&candidate.arena, storage);
+    if (!storage || !binding_storage_vector(storage->expr.elems[1], &states, &state_len) ||
+        !binding_storage_vector(storage->expr.elems[2], &terminals, &terminal_len) ||
+        !binding_storage_vector(storage->expr.elems[3], &productions, &production_len) ||
+        state_len > UINT32_MAX - pack->state_len || terminal_len > UINT32_MAX - pack->terminal_len ||
+        production_len > UINT32_MAX - pack->production_len) goto done;
+    for (uint32_t i = 0u; i < production_len; ++i) {
+        Atom *row = productions[i]; Atom **items; uint32_t length;
+        if (!row || row->kind != ATOM_EXPR || row->expr.len != 6u ||
+            !atom_is_symbol(row->expr.elems[0], "ParserBindingProductionV1") ||
+            !binding_storage_vector(row->expr.elems[4], &items, &length) ||
+            length > UINT32_MAX - item_len) goto done;
+        item_len += length;
+    }
+    candidate.states = state_len ? calloc(state_len, sizeof(*candidate.states)) : NULL;
+    candidate.terminals = terminal_len ? calloc(terminal_len, sizeof(*candidate.terminals)) : NULL;
+    candidate.productions = production_len ? calloc(production_len, sizeof(*candidate.productions)) : NULL;
+    candidate.items = item_len ? calloc(item_len, sizeof(*candidate.items)) : NULL;
+    if ((state_len && !candidate.states) || (terminal_len && !candidate.terminals) ||
+        (production_len && !candidate.productions) || (item_len && !candidate.items)) goto done;
+    for (uint32_t i = 0u; i < state_len; ++i) {
+        Atom *row = states[i]; uint32_t id;
+        if (!row || row->kind != ATOM_EXPR || row->expr.len != 3u ||
+            !atom_is_symbol(row->expr.elems[0], "ParserBindingStateV1") ||
+            !binding_storage_u32(row->expr.elems[1], &id) || id != pack->state_len + i) goto done;
+        candidate.states[i] = (PPNativeV1StateExtension){id, row->expr.elems[2]};
+    }
+    for (uint32_t i = 0u; i < terminal_len; ++i) {
+        Atom *row = terminals[i]; uint32_t id;
+        if (!row || row->kind != ATOM_EXPR || row->expr.len != 3u ||
+            !atom_is_symbol(row->expr.elems[0], "ParserBindingTerminalV1") ||
+            !binding_storage_u32(row->expr.elems[1], &id) || id != pack->terminal_len + i) goto done;
+        candidate.terminals[i] = (PPNativeV1TerminalExtension){id, row->expr.elems[2]};
+    }
+    uint32_t cursor = 0u;
+    for (uint32_t i = 0u; i < production_len; ++i) {
+        Atom *row = productions[i]; Atom **items; uint32_t length, id, lhs;
+        if (!binding_storage_vector(row->expr.elems[4], &items, &length) ||
+            !binding_storage_u32(row->expr.elems[1], &id) || id != pack->production_len + i ||
+            !binding_storage_u32(row->expr.elems[3], &lhs) || lhs >= pack->state_len + state_len) goto done;
+        for (uint32_t j = 0u; j < length; ++j) {
+            Atom *item = items[j]; uint32_t kind, dense;
+            if (!item || item->kind != ATOM_EXPR || item->expr.len != 3u ||
+                !atom_is_symbol(item->expr.elems[0], "ParserBindingItemV1") ||
+                !binding_storage_u32(item->expr.elems[1], &kind) || kind > PPABI_V1_ITEM_NONTERMINAL ||
+                !binding_storage_u32(item->expr.elems[2], &dense) ||
+                dense >= (kind == PPABI_V1_ITEM_TERMINAL
+                    ? pack->terminal_len + terminal_len : pack->state_len + state_len)) goto done;
+            candidate.items[cursor + j] = (PPABIV1Item){kind, dense};
+        }
+        candidate.productions[i] = (PPNativeV1ProductionExtension){id, row->expr.elems[2], lhs,
+            length ? candidate.items + cursor : NULL, length, row->expr.elems[5]};
+        cursor += length;
+    }
+    candidate.extension = (PPNativeV1ForestExtension){candidate.states, state_len,
+        candidate.terminals, terminal_len, candidate.productions, production_len, NULL, 0u};
+    ppnative_v1_token_binding_plan_free(out);
+    *out = candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    ok = true;
+done:
+    ppnative_v1_token_binding_plan_free(&candidate);
+    if (!ok) ppnative_v1_set_error(error, size, "malformed token-binding storage");
+    return ok;
+}
+
 bool ppnative_v1_grammar_extend(
     const PPABIV1Pack *pack,
     const PPNativeV1ForestExtension *extension,
@@ -3337,7 +3601,26 @@ static bool ppnative_v1_finish_validated(
                error_buf, error_buf_size) &&
         ppnative_v1_replay(
                result, pack, extension, replay_depth, result_limit,
-               error_buf, error_buf_size);
+               false, error_buf, error_buf_size);
+}
+
+bool ppnative_v1_finish_values(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!result || !pack || replay_depth == 0u || result_limit == 0u) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "bad ParserPack values arguments");
+        return false;
+    }
+    return ppnative_v1_replay(result, pack, extension, replay_depth,
+                             result_limit, true, error_buf, error_buf_size);
 }
 
 bool ppnative_v1_finish_in_scope(

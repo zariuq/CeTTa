@@ -420,6 +420,114 @@ typedef struct {
     CettaLpNativeSlrSummary summary;
 } CettaLpNativeSlrProgram;
 
+/* Frozen GLL preparation over ParserPack-local dense identities. Production
+ * order is occurrence identity; it is never reconstructed from labels.
+ * The enclosing artifact owns the symbolic identity and projection maps.
+ * FIRST/FOLLOW include the final synthetic end-of-input bit. */
+typedef struct {
+    CettaLpNativeProduction *productions;
+    uint32_t production_len;
+    uint32_t start_nonterminal;
+    uint32_t *nonterminals;
+    uint32_t nonterminal_len;
+    uint32_t *terminals;
+    uint32_t terminal_len;
+    uint8_t *nullable;
+    uint64_t *first;
+    uint64_t *follow;
+    uint32_t word_len;
+} CettaLpNativeGllProgram;
+
+void cetta_lp_native_gll_program_init(CettaLpNativeGllProgram *program);
+void cetta_lp_native_gll_program_free(CettaLpNativeGllProgram *program);
+bool cetta_lp_native_gll_prepared_export_program(
+    const CettaLpNativeGllPrepared *prepared, CettaLpNativeGllProgram *out,
+    char *error_buf, size_t error_buf_size);
+/* Restore the stored decisions, without FIRST/FOLLOW or table construction.
+ * Required ownership/array decoding checks do not replay grammar analysis. */
+bool cetta_lp_native_gll_prepared_import_program(
+    CettaLpNativeGllPrepared *out, const CettaLpNativeGllProgram *program,
+    char *error_buf, size_t error_buf_size);
+/* Explicit audit of stored references and least nullable/FIRST/FOLLOW sets.
+ * This neither installs a new program nor constructs recognizer tables. */
+bool cetta_lp_native_gll_prepared_check_prediction(
+    const CettaLpNativeGllPrepared *, char *, size_t);
+
+/* Predictive execution is a specialization of the same prepared grammar.
+ * Table entries name production occurrences, not constructor labels. An
+ * ineligible grammar has a retained conflict/cycle witness and uses the
+ * general engine unless predictive execution was explicitly requested.
+ * Token-chain input means one selected token per position, with positive
+ * width except for the declared EOF token. It is not a general lattice. */
+typedef enum {
+    CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE = 0,
+    CETTA_LP_NATIVE_PREDICTIVE_SELECT_CONFLICT,
+    CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE
+} CettaLpNativePredictiveStatus;
+
+typedef struct {
+    CettaLpNativePredictiveStatus status;
+    bool token_chain;
+    uint32_t eof_terminal_id;
+    uint32_t nonterminal_len;
+    uint32_t terminal_len;
+    uint32_t production_len;
+    uint32_t start_index;
+    uint32_t *decisions;
+    uint32_t *rhs_offsets;
+    uint32_t *rhs_indices;
+    uint32_t rhs_len;
+    uint32_t conflict_nonterminal;
+    uint32_t conflict_productions[2];
+    uint32_t conflict_terminals[2];
+    uint32_t conflict_scalar;
+    uint32_t *cycle_productions;
+    uint32_t cycle_len;
+} CettaLpNativePredictiveProgram;
+
+void cetta_lp_native_predictive_program_free(CettaLpNativePredictiveProgram *program);
+bool cetta_lp_native_predictive_build(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    bool token_chain, uint32_t eof_terminal_id,
+    CettaLpNativePredictiveProgram *out, char *error, size_t error_size);
+Atom *cetta_lp_native_predictive_export_storage(
+    Arena *arena, const CettaLpNativePredictiveProgram *program);
+bool cetta_lp_native_predictive_import_storage(
+    CettaLpNativePredictiveProgram *out, const Atom *value,
+    const CettaLpNativeGllProgram *grammar, char *error, size_t error_size);
+/* Explicit audit of stored occurrence decisions and refusal witnesses.
+ * Ordinary restoration and execution do not call this operation. */
+bool cetta_lp_native_predictive_check(
+    const CettaLpNativeGllPrepared *, const CettaLpNativePredictiveProgram *,
+    const CettaLpNativeUtf8Terminal *, uint32_t, char *, size_t);
+/* Owned input bindings come from the enclosing immutable parser owner. The
+ * interpreter creates only the derivation needed for value replay; complete
+ * evidence remains an explicit operation on GLL/GLR. No parse-time analysis,
+ * strategy fallback or grammar hashing occurs here. */
+bool cetta_lp_native_predictive_parse_owned_utf8_forest(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t work_limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t error_size);
+bool cetta_lp_native_predictive_parse_owned_lattice_forest(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Lattice *lattice, uint32_t work_limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t error_size);
+
+/* GLR uses the existing action/goto carrier. Identities in this interface
+ * are ParserPack-local indices, not process-local interned symbols. The
+ * paired prediction program retains nullable/FIRST/FOLLOW decisions. */
+bool cetta_lp_native_glr_prepared_export_program(
+    const CettaLpNativeGlrPrepared *prepared, CettaLpNativeSlrProgram *out,
+    char *error_buf, size_t error_buf_size);
+bool cetta_lp_native_glr_prepared_import_program(
+    CettaLpNativeGlrPrepared *out, const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeGllProgram *prediction,
+    char *error_buf, size_t error_buf_size);
+
 typedef enum {
     CETTA_LP_NATIVE_SLR_LATTICE_ACCEPTED = 0,
     CETTA_LP_NATIVE_SLR_LATTICE_NEEDS_GENERAL = 1,
@@ -752,6 +860,27 @@ bool cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
     size_t error_buf_size);
+
+/* Owned execution: the immutable preparation and terminal bindings must have
+ * been constructed together, or decoded from a compatible trusted artifact.
+ * Scalar views/lattices must come from the owning input decoder/scanner.
+ * These entries do not audit borrowed declarations or input certificates.
+ * The ordinary entries above remain validating boundaries for external data. */
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_forest_complete(
+    const CettaLpNativeGllPrepared *, const CettaLpNativeUtf8Terminal *, uint32_t,
+    const uint8_t *, size_t, uint32_t, CettaLpNativeUtf8Forest *, char *, size_t);
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_scalar_view_forest_complete(
+    const CettaLpNativeGllPrepared *, const CettaLpNativeUtf8Terminal *, uint32_t,
+    const CettaLpNativeUtf8ScalarView *, uint32_t, CettaLpNativeUtf8Forest *, char *, size_t);
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_forest(
+    const CettaLpNativeGlrPrepared *, const CettaLpNativeUtf8Terminal *, uint32_t,
+    const uint8_t *, size_t, uint32_t, CettaLpNativeUtf8Forest *, char *, size_t);
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_lattice_forest_from_complete(
+    const CettaLpNativeGllPrepared *, const CettaLpNativeUtf8Lattice *, uint32_t,
+    uint32_t, CettaLpNativeUtf8Forest *, char *, size_t);
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_lattice_forest_from(
+    const CettaLpNativeGlrPrepared *, const CettaLpNativeUtf8Lattice *, uint32_t,
+    uint32_t, CettaLpNativeUtf8Forest *, char *, size_t);
 
 bool cetta_lp_native_slr_summary(const CettaLpNativeGrammar *grammar,
                                  SymbolId start_nt,

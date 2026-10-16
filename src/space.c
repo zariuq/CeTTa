@@ -3,11 +3,15 @@
 #include <time.h>
 #include "space.h"
 #include "space_path_index.h"
+#include "space_type_evidence.h"
 #include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
 #include "rule_binding.h"
 #include "stats.h"
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include "eval.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -1912,6 +1916,13 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         cursor->occurrences = space_pinned_occurrences_acquire(s);
         return space_read_token_prefix_intact(cursor->read);
     }
+    if (space_match_native_exact_occurrences(
+            s, pattern, &cursor->flat, &cursor->flat_len)) {
+        cursor->flat_mode = true;
+        cursor->pinned = true;
+        cursor->occurrences = space_pinned_occurrences_acquire(s);
+        return space_read_token_prefix_intact(cursor->read);
+    }
     bool leads = space_path_index_leads(pattern);
     bool indexed_first = leads && space_path_index_may_select(pattern) &&
         space_path_index_candidates(s, pattern, &cursor->flat,
@@ -3341,57 +3352,309 @@ static void ty_ann_index_note_row(TypeAnnIndex *idx, const Space *s,
         idx->has_open_rows = true;
 }
 
-static void exact_atom_bucket_init(ExactAtomBucket *b) {
-    b->indices = NULL;
-    b->len = 0;
-    b->cap = 0;
-}
-
-static void exact_atom_bucket_free(ExactAtomBucket *b) {
-    free(b->indices);
-    b->indices = NULL;
-    b->len = 0;
-    b->cap = 0;
-}
-
-static void exact_atom_bucket_add(ExactAtomBucket *b, CettaIndex idx) {
-    if (b->len >= b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 4;
-        b->indices = cetta_realloc(b->indices, sizeof(CettaIndex) * b->cap);
-    }
-    b->indices[b->len++] = idx;
-}
-
 static void exact_index_init(ExactAtomIndex *idx) {
-    idx->buckets = NULL;
+    *idx = (ExactAtomIndex){0};
 }
 
 static void exact_index_free(ExactAtomIndex *idx) {
-    if (!idx->buckets)
+    free(idx->slots);
+    free(idx->inexact_heads);
+    exact_index_init(idx);
+}
+
+static inline size_t exact_index_home(uint64_t key, size_t mask) {
+    uint64_t h = key * UINT64_C(0x9E3779B97F4A7C15);
+    return (size_t)(h ^ (h >> 32)) & mask;
+}
+
+static inline bool exact_slot_vacant(const ExactAtomIndex *idx, size_t at) {
+    return idx->wide
+        ? ((const ExactAtomSlot *)idx->slots)[at].id == CETTA_ATOM_ID_NONE
+        : ((const ExactAtomNarrowSlot *)idx->slots)[at].id == UINT32_MAX;
+}
+
+static inline AtomId exact_slot_id(const ExactAtomIndex *idx, size_t at) {
+    return idx->wide ? ((const ExactAtomSlot *)idx->slots)[at].id
+                     : ((const ExactAtomNarrowSlot *)idx->slots)[at].id;
+}
+
+static inline CettaIndex exact_slot_row(const ExactAtomIndex *idx, size_t at) {
+    return idx->wide ? ((const ExactAtomSlot *)idx->slots)[at].row
+                     : ((const ExactAtomNarrowSlot *)idx->slots)[at].row;
+}
+
+/* A narrow table holds the pair only when it fits (exact_slot_fits_narrow). */
+static inline void exact_slot_put(ExactAtomIndex *idx, size_t at, AtomId id,
+                                  CettaIndex row) {
+    if (idx->wide)
+        ((ExactAtomSlot *)idx->slots)[at] = (ExactAtomSlot){id, row};
+    else
+        ((ExactAtomNarrowSlot *)idx->slots)[at] =
+            (ExactAtomNarrowSlot){(uint32_t)id, (uint32_t)row};
+}
+
+static inline void exact_slot_vacate(ExactAtomIndex *idx, size_t at) {
+    if (idx->wide)
+        ((ExactAtomSlot *)idx->slots)[at].id = CETTA_ATOM_ID_NONE;
+    else
+        ((ExactAtomNarrowSlot *)idx->slots)[at].id = UINT32_MAX;
+}
+
+static inline bool exact_slot_fits_narrow(AtomId id, CettaIndex row) {
+    return id < UINT32_MAX && row < UINT32_MAX;
+}
+
+/* A row is filed under its term's content hash, not its id: the universe
+ * gives equal terms one id only when it encodes them, and keeps a term that
+ * holds a runtime spelling or a native handle as an entry of its own, under
+ * an id of its own, each time it is stored.  tu_hash32 hashes both kinds by
+ * content, as atom_hash hashes a query, so equal terms share a probe run. */
+static inline size_t exact_index_id_home(const TermUniverse *universe,
+                                         AtomId id, size_t mask) {
+    return exact_index_home(tu_hash32(universe, id), mask);
+}
+
+static void exact_index_place(const TermUniverse *universe,
+                              ExactAtomIndex *idx, AtomId id, CettaIndex row) {
+    size_t at = exact_index_id_home(universe, id, idx->mask);
+    while (!exact_slot_vacant(idx, at))
+        at = (at + 1u) & idx->mask;
+    exact_slot_put(idx, at, id, row);
+    idx->used++;
+}
+
+/* Room for `count` rows within the table's load bound (seven tenths), wide
+ * once any row needs it. */
+static void exact_index_reserve(const TermUniverse *universe,
+                                ExactAtomIndex *idx, size_t count, bool wide) {
+    size_t capacity = idx->slots ? idx->mask + 1u : 0u;
+    wide = wide || idx->wide;
+    if (idx->slots && wide == idx->wide && count <= capacity / 10u * 7u)
         return;
-    for (uint32_t i = 0; i < EXACT_INDEX_BUCKETS; i++)
-        exact_atom_bucket_free(&idx->buckets[i]);
-    free(idx->buckets);
-    idx->buckets = NULL;
-}
-
-/* Reads see an unallocated index as all-empty buckets. */
-static const ExactAtomBucket g_exact_atom_empty_bucket;
-
-static inline const ExactAtomBucket *exact_index_bucket_view(
-        const ExactAtomIndex *idx, uint32_t i) {
-    return idx->buckets ? &idx->buckets[i] : &g_exact_atom_empty_bucket;
-}
-
-/* Filing a row allocates the bucket array (all buckets empty). */
-static ExactAtomBucket *exact_index_bucket_for_add(ExactAtomIndex *idx,
-                                                   uint32_t i) {
-    if (!idx->buckets) {
-        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EXACT_INDEX_BUCKETS);
-        for (uint32_t b = 0; b < EXACT_INDEX_BUCKETS; b++)
-            exact_atom_bucket_init(&idx->buckets[b]);
+    size_t width = wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot);
+    size_t next = capacity ? capacity : 16u;
+    while (count > next / 10u * 7u) {
+        if (next > SIZE_MAX / 2u / width)
+            cetta_oom(SIZE_MAX);
+        next *= 2u;
     }
-    return &idx->buckets[i];
+    ExactAtomIndex grown = {
+        .slots = cetta_malloc(next * width), .mask = next - 1u, .wide = wide};
+    memset(grown.slots, 0xff, next * width);
+    for (size_t at = 0u; at < capacity; at++) {
+        if (!exact_slot_vacant(idx, at))
+            exact_index_place(universe, &grown, exact_slot_id(idx, at),
+                              exact_slot_row(idx, at));
+    }
+    free(idx->slots);
+    idx->slots = grown.slots;
+    idx->mask = grown.mask;
+    idx->used = grown.used;
+    idx->wide = wide;
+}
+
+static void exact_index_add_row(const TermUniverse *universe,
+                                ExactAtomIndex *idx, AtomId id,
+                                CettaIndex row) {
+    exact_index_reserve(universe, idx, idx->used + 1u,
+                        !exact_slot_fits_narrow(id, row));
+    exact_index_place(universe, idx, id, row);
+}
+
+/* Remove one row, closing the gap by moving later slots of its run back
+ * (no tombstones); false when the row is not there. */
+static bool exact_index_remove_row(const TermUniverse *universe,
+                                   ExactAtomIndex *idx, AtomId id,
+                                   CettaIndex row) {
+    if (!idx->slots)
+        return false;
+    size_t mask = idx->mask;
+    size_t at = exact_index_id_home(universe, id, mask);
+    for (;; at = (at + 1u) & mask) {
+        if (exact_slot_vacant(idx, at))
+            return false;
+        if (exact_slot_id(idx, at) == id && exact_slot_row(idx, at) == row)
+            break;
+    }
+    size_t gap = at;
+    for (size_t next = (gap + 1u) & mask; !exact_slot_vacant(idx, next);
+         next = (next + 1u) & mask) {
+        size_t home = exact_index_id_home(universe, exact_slot_id(idx, next),
+                                          mask);
+        /* The slot may fill the gap only if its home lies cyclically at or
+         * before the gap. */
+        bool stays = gap <= next ? (gap < home && home <= next)
+                                 : (gap < home || home <= next);
+        if (stays)
+            continue;
+        exact_slot_put(idx, gap, exact_slot_id(idx, next),
+                       exact_slot_row(idx, next));
+        gap = next;
+    }
+    exact_slot_vacate(idx, gap);
+    idx->used--;
+    return true;
+}
+
+static int exact_index_row_compare(const void *left, const void *right) {
+    CettaIndex a = *(const CettaIndex *)left;
+    CettaIndex b = *(const CettaIndex *)right;
+    return (a > b) - (a < b);
+}
+
+static void exact_index_rows_push(CettaIndex **out, CettaIndex *count,
+                                  CettaIndex *cap, bool *ascending,
+                                  CettaIndex row) {
+    if (*count == *cap) {
+        *cap = *cap ? *cap * 2u : 4u;
+        *out = cetta_realloc(*out, (size_t)*cap * sizeof(**out));
+    }
+    if (*count && (*out)[*count - 1u] > row)
+        *ascending = false;
+    (*out)[(*count)++] = row;
+}
+
+/* The rows holding `id` itself, ascending, in a fresh array (NULL when
+ * none). */
+static CettaIndex exact_index_rows(const TermUniverse *universe,
+                                   const ExactAtomIndex *idx, AtomId id,
+                                   CettaIndex **out) {
+    *out = NULL;
+    if (!idx->slots)
+        return 0u;
+    CettaIndex count = 0u, cap = 0u;
+    bool ascending = true;
+    for (size_t at = exact_index_id_home(universe, id, idx->mask);
+         !exact_slot_vacant(idx, at); at = (at + 1u) & idx->mask) {
+        if (exact_slot_id(idx, at) == id)
+            exact_index_rows_push(out, &count, &cap, &ascending,
+                                  exact_slot_row(idx, at));
+    }
+    if (!ascending)
+        qsort(*out, (size_t)count, sizeof(**out), exact_index_row_compare);
+    return count;
+}
+
+/* The rows holding a term equal to `query`, ascending: its own id, or, when
+ * the query or the row is a universe entry of its own, an equal term
+ * (`query_id` may be NONE: a query the universe holds no id for). */
+static CettaIndex exact_index_rows_equal(const TermUniverse *universe,
+                                         const ExactAtomIndex *idx,
+                                         AtomId query_id, bool query_canonical,
+                                         Atom *query, CettaIndex **out) {
+    *out = NULL;
+    if (!idx->slots || !query)
+        return 0u;
+    uint32_t hash = query_id != CETTA_ATOM_ID_NONE
+        ? tu_hash32(universe, query_id) : atom_hash(query);
+    CettaIndex count = 0u, cap = 0u;
+    bool ascending = true;
+    for (size_t at = exact_index_home(hash, idx->mask);
+         !exact_slot_vacant(idx, at); at = (at + 1u) & idx->mask) {
+        AtomId candidate = exact_slot_id(idx, at);
+        if (candidate == query_id ||
+            ((!query_canonical || !tu_hdr(universe, candidate)) &&
+             term_universe_atom_id_eq(universe, candidate, query)))
+            exact_index_rows_push(out, &count, &cap, &ascending,
+                                  exact_slot_row(idx, at));
+    }
+    if (!ascending)
+        qsort(*out, (size_t)count, sizeof(**out), exact_index_row_compare);
+    return count;
+}
+
+/* Whether the index files `row` under `id`. */
+static bool exact_index_has_pair(const TermUniverse *universe,
+                                 const ExactAtomIndex *idx, AtomId id,
+                                 CettaIndex row) {
+    if (!idx->slots)
+        return false;
+    for (size_t at = exact_index_id_home(universe, id, idx->mask);
+         !exact_slot_vacant(idx, at); at = (at + 1u) & idx->mask) {
+        if (exact_slot_id(idx, at) == id && exact_slot_row(idx, at) == row)
+            return true;
+    }
+    return false;
+}
+
+/* Whether a row holds a term equal to `query`, by the rule of
+ * exact_index_rows_equal. */
+static bool exact_index_holds_equal(const TermUniverse *universe,
+                                    const ExactAtomIndex *idx,
+                                    AtomId query_id, bool query_canonical,
+                                    Atom *query) {
+    if (!idx->slots || !query)
+        return false;
+    uint32_t hash = query_id != CETTA_ATOM_ID_NONE
+        ? tu_hash32(universe, query_id) : atom_hash(query);
+    for (size_t at = exact_index_home(hash, idx->mask);
+         !exact_slot_vacant(idx, at); at = (at + 1u) & idx->mask) {
+        AtomId candidate = exact_slot_id(idx, at);
+        if (candidate == query_id ||
+            ((!query_canonical || !tu_hdr(universe, candidate)) &&
+             term_universe_atom_id_eq(universe, candidate, query)))
+            return true;
+    }
+    return false;
+}
+
+/* Carry every row through a contraction's monotone renumbering, which keeps
+ * each id's rows in order and never widens a row; false when the index holds
+ * a removed row and must be rebuilt. */
+static bool exact_index_transport(ExactAtomIndex *idx,
+                                  const CettaIndex *source_to_target,
+                                  CettaCount source_len) {
+    for (size_t at = 0u; idx->slots && at <= idx->mask; at++) {
+        if (exact_slot_vacant(idx, at))
+            continue;
+        CettaIndex row = exact_slot_row(idx, at);
+        if (row >= source_len ||
+            source_to_target[row] == SPACE_OCCURRENCE_COORDINATE_REMOVED)
+            return false;
+        exact_slot_put(idx, at, exact_slot_id(idx, at), source_to_target[row]);
+    }
+    return true;
+}
+
+static ExactIndexInexactHead *exact_index_inexact_head(
+        ExactAtomIndex *idx, SymbolId head, bool insert) {
+    if (!idx->inexact_heads) {
+        if (!insert)
+            return NULL;
+        idx->inexact_heads = cetta_malloc(16u * sizeof(*idx->inexact_heads));
+        memset(idx->inexact_heads, 0, 16u * sizeof(*idx->inexact_heads));
+        idx->inexact_head_mask = 15u;
+    } else if (insert && (idx->inexact_head_used + 1u) * 10u >
+                             (idx->inexact_head_mask + 1u) * 7u) {
+        size_t next = (idx->inexact_head_mask + 1u) * 2u;
+        ExactIndexInexactHead *heads = cetta_malloc(next * sizeof(*heads));
+        memset(heads, 0, next * sizeof(*heads));
+        for (size_t i = 0u; i <= idx->inexact_head_mask; i++) {
+            ExactIndexInexactHead entry = idx->inexact_heads[i];
+            if (entry.head == SYMBOL_ID_NONE)
+                continue;
+            size_t at = exact_index_home(entry.head, next - 1u);
+            while (heads[at].head != SYMBOL_ID_NONE)
+                at = (at + 1u) & (next - 1u);
+            heads[at] = entry;
+        }
+        free(idx->inexact_heads);
+        idx->inexact_heads = heads;
+        idx->inexact_head_mask = next - 1u;
+    }
+    size_t mask = idx->inexact_head_mask;
+    for (size_t at = exact_index_home(head, mask);;
+         at = (at + 1u) & mask) {
+        if (idx->inexact_heads[at].head == head)
+            return &idx->inexact_heads[at];
+        if (idx->inexact_heads[at].head == SYMBOL_ID_NONE) {
+            if (!insert)
+                return NULL;
+            idx->inexact_heads[at].head = head;
+            idx->inexact_head_used++;
+            return &idx->inexact_heads[at];
+        }
+    }
 }
 
 /* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
@@ -3579,10 +3842,6 @@ static bool atom_is_exact_indexable(const Atom *atom) {
     return false;
 }
 
-static uint32_t exact_atom_hash(Atom *atom) {
-    return atom_hash(atom) % EXACT_INDEX_BUCKETS;
-}
-
 static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
     if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -3624,14 +3883,40 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
     return false;
 }
 
-static uint32_t exact_atom_hash_id(const Space *s, AtomId atom_id) {
-    if (!s || !s->native.universe || atom_id == CETTA_ATOM_ID_NONE)
-        return 0;
-    const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
-    if (hdr)
-        return tu_hash32(s->native.universe, atom_id) % EXACT_INDEX_BUCKETS;
-    Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
-    return atom ? exact_atom_hash(atom) : 0u;
+/* Account a row in the exact index: an exact row under its AtomId, any other
+ * under its head symbol, or among the rows without one (a variable, a value,
+ * a list with a rest, an expression headed by anything but a symbol). */
+static void exact_index_note_row(Space *s, AtomId atom_id, CettaIndex row) {
+    ExactAtomIndex *idx = &s->native.exact_idx;
+    if (atom_id_is_exact_indexable(s, atom_id)) {
+        exact_index_add_row(s->native.universe, idx, atom_id, row);
+        return;
+    }
+    SymbolId head = tu_head_sym(s->native.universe, atom_id);
+    if (head == SYMBOL_ID_NONE)
+        idx->inexact_unheaded++;
+    else
+        exact_index_inexact_head(idx, head, true)->rows++;
+}
+
+/* Withdraw a row from the exact index; false when the index does not hold
+ * it, and must then be rebuilt. */
+static bool exact_index_forget_row(Space *s, AtomId atom_id, CettaIndex row) {
+    ExactAtomIndex *idx = &s->native.exact_idx;
+    if (atom_id_is_exact_indexable(s, atom_id))
+        return exact_index_remove_row(s->native.universe, idx, atom_id, row);
+    SymbolId head = tu_head_sym(s->native.universe, atom_id);
+    if (head == SYMBOL_ID_NONE) {
+        if (idx->inexact_unheaded == 0u)
+            return false;
+        idx->inexact_unheaded--;
+        return true;
+    }
+    ExactIndexInexactHead *entry = exact_index_inexact_head(idx, head, false);
+    if (!entry || entry->rows == 0u)
+        return false;
+    entry->rows--;
+    return true;
 }
 
 static void eq_index_rebuild(Space *s);
@@ -4279,10 +4564,12 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
         if (native_state->match_trie && !native_state->match_trie_dirty)
             (void)disc_remove_id(native_state->match_trie,
                                  s->native.universe, atom_id, rows[i]);
+        if (!s->native.exact_idx_dirty &&
+            !exact_index_forget_row(s, atom_id, rows[i]))
+            s->native.exact_idx_dirty = true;
         space_path_indexes_note_mark(s, rows[i], atom_id);
     }
     free(rows);
-    s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms_dirty = true;
     s->native.id_present_dirty = true;
     uint64_t followed_prefix = s->prefix_epoch;
@@ -5046,7 +5333,9 @@ static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
     s->native.id_present_incomplete = false;
     s->native.eq_idx_dirty = false;
     s->native.ty_idx_dirty = false;
-    s->native.exact_idx_dirty = false;
+    /* The exact index is built by its first reader and kept current from
+     * then on: a space nobody reads exactly pays nothing for it. */
+    s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms = false;
     s->native.has_non_exact_atoms_dirty = false;
     s->native.has_graded_equations = false;
@@ -5104,9 +5393,22 @@ static void space_reset_moved_from(Space *s) {
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
+/* Heap bytes the C library has handed out, for the resource ledger's
+ * account of what initializing a space allocates; zero where the library
+ * does not report it. */
+static uint64_t space_ledger_heap_in_use(void) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS && defined(__GLIBC__)
+    if (cetta_runtime_stats_is_enabled())
+        return (uint64_t)mallinfo2().uordblks;
+#endif
+    return 0u;
+}
+
 void space_init_with_universe(Space *s, TermUniverse *universe) {
     if (!s)
         return;
+    s->ledger_counted = cetta_runtime_stats_is_enabled();
+    uint64_t heap_before = s->ledger_counted ? space_ledger_heap_in_use() : 0u;
     s->kind = SPACE_KIND_ATOM;
     space_native_storage_init_empty(s, universe);
     s->instance_id = space_fresh_instance_id();
@@ -5128,6 +5430,18 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->module_dependency_epoch = 0u;
     /* Never cleared later: false is the claim that no subtype row exists. */
     s->declares_subtypes = false;
+    if (s->ledger_counted) {
+        uint64_t heap_after = space_ledger_heap_in_use();
+        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
+                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, 1);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
+            (int64_t)sizeof(Space));
+        if (heap_after > heap_before)
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES,
+                                    heap_after - heap_before);
+    }
 }
 
 static bool space_handle_list_push(Space ***items, uint32_t *count,
@@ -5383,67 +5697,38 @@ static bool space_exact_rows(const Space *s, AtomId atom_id, CettaIndex from,
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !atom_id_is_exact_indexable(s, atom_id))
         return false;
-    const ExactAtomBucket *bucket = exact_index_bucket_view(
-        &s->native.exact_idx, exact_atom_hash_id(s, atom_id));
+    CettaIndex *rows = NULL;
+    CettaIndex count = exact_index_rows(s->native.universe,
+                                        &s->native.exact_idx, atom_id, &rows);
     *before_from = false;
     *any_from = false;
-    for (CettaIndex k = 0u; k < bucket->len; k++) {
-        CettaIndex row = bucket->indices[k];
-        if (space_get_atom_id_at64(s, row) != atom_id)
-            continue;
-        if (row < from) {
+    for (CettaIndex k = 0u; k < count; k++) {
+        if (rows[k] < from) {
             *before_from = true;
-        } else if (!*any_from || row < *first_from) {
-            *first_from = row;
+        } else {
+            *first_from = rows[k];
             *any_from = true;
+            break;
         }
     }
+    free(rows);
     return true;
 }
 
 /* An unordered removal moves the last row into the gap: the removed row
- * leaves its bucket and the moved row takes the gap's position, each bucket
- * kept in row order as a rebuild would leave it. False when an entry is
- * missing; the caller then leaves the index to be rebuilt. */
+ * leaves the index and the moved row takes the gap's position.  False when
+ * an entry is missing; the caller then leaves the index to be rebuilt. */
 static bool exact_index_note_swap_remove(Space *s, CettaIndex row,
                                          AtomId removed, CettaIndex moved_from,
                                          AtomId moved) {
-    /* An unallocated index files no row: an indexable row is missing from
-     * it exactly as from an empty bucket. */
-    if (atom_id_is_exact_indexable(s, removed)) {
-        if (!s->native.exact_idx.buckets)
-            return false;
-        ExactAtomBucket *bucket =
-            &s->native.exact_idx.buckets[exact_atom_hash_id(s, removed)];
-        CettaIndex k = 0u;
-        while (k < bucket->len && bucket->indices[k] != row)
-            k++;
-        if (k == bucket->len)
-            return false;
-        memmove(&bucket->indices[k], &bucket->indices[k + 1u],
-                (size_t)(bucket->len - k - 1u) * sizeof(*bucket->indices));
-        bucket->len--;
-    }
+    if (!exact_index_forget_row(s, removed, row))
+        return false;
     if (moved_from != row && atom_id_is_exact_indexable(s, moved)) {
-        if (!s->native.exact_idx.buckets)
+        if (!exact_index_remove_row(s->native.universe, &s->native.exact_idx,
+                                    moved, moved_from))
             return false;
-        ExactAtomBucket *bucket =
-            &s->native.exact_idx.buckets[exact_atom_hash_id(s, moved)];
-        CettaIndex k = 0u;
-        while (k < bucket->len && bucket->indices[k] != moved_from)
-            k++;
-        if (k == bucket->len)
-            return false;
-        memmove(&bucket->indices[k], &bucket->indices[k + 1u],
-                (size_t)(bucket->len - k - 1u) * sizeof(*bucket->indices));
-        bucket->len--;
-        CettaIndex at = 0u;
-        while (at < bucket->len && bucket->indices[at] < row)
-            at++;
-        exact_atom_bucket_add(bucket, row);
-        memmove(&bucket->indices[at + 1u], &bucket->indices[at],
-                (size_t)(bucket->len - 1u - at) * sizeof(*bucket->indices));
-        bucket->indices[at] = row;
+        exact_index_add_row(s->native.universe, &s->native.exact_idx,
+                            moved, row);
     }
     return true;
 }
@@ -5526,6 +5811,15 @@ void space_module_own_view_release(Space *view, Space *storage) {
 void space_free(Space *s) {
     if (!s)
         return;
+    if (s->ledger_counted) {
+        s->ledger_counted = false;
+        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
+                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, -1);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
+            -(int64_t)sizeof(Space));
+    }
     /* A read token may retain this address after the object lifetime ends.
        Retire thread-local execution-analysis entries while the identity is
        still readable; cache lookup also validates against its live query
@@ -5623,13 +5917,12 @@ void space_storage_census(const Space *s, CettaStorageCensus *c) {
     cetta_storage_array(c, s->native.mark_tree,
         s->native.mark_cap ? (size_t)s->native.mark_cap + 1u : 0u,
         sizeof(*s->native.mark_tree), 0u);
-    cetta_storage_array(c, s->native.exact_idx.buckets,
-        s->native.exact_idx.buckets ? EXACT_INDEX_BUCKETS : 0u,
-        sizeof(*s->native.exact_idx.buckets), 0u);
-    for (size_t i = 0u; s->native.exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++) {
-        const ExactAtomBucket *b = &s->native.exact_idx.buckets[i];
-        cetta_storage_array(c, b->indices, b->cap, sizeof(*b->indices), 0u);
-    }
+    const ExactAtomIndex *exact = &s->native.exact_idx;
+    cetta_storage_array(c, exact->slots, exact->slots ? exact->mask + 1u : 0u,
+        exact->wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot), 0u);
+    cetta_storage_array(c, exact->inexact_heads,
+        exact->inexact_heads ? exact->inexact_head_mask + 1u : 0u,
+        sizeof(*exact->inexact_heads), 0u);
     if (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
         cetta_storage_refuse(c, "ForeignSpaceBackendOwner"); return;
@@ -7276,15 +7569,12 @@ static void exact_index_rebuild(Space *s) {
     space_settle_marks(s);
     space_linearize(s);
     exact_index_free(&s->native.exact_idx);
-    exact_index_init(&s->native.exact_idx);
-    for (CettaIndex i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at64(s, i);
-        if (!atom_id_is_exact_indexable(s, atom_id))
-            continue;
-        exact_atom_bucket_add(
-            exact_index_bucket_for_add(&s->native.exact_idx,
-                                       exact_atom_hash_id(s, atom_id)), i);
-    }
+    if (s->native.len)
+        exact_index_reserve(s->native.universe, &s->native.exact_idx,
+                            (size_t)s->native.len,
+                            s->native.len >= UINT32_MAX);
+    for (CettaIndex i = 0; i < s->native.len; i++)
+        exact_index_note_row(s, space_get_atom_id_at64(s, i), i);
     /* id_present is now decoupled from the bucket index -- it is synced lazily at
        membership-query time (id_present_sync), so the bucket rebuild does not
        touch it.  space_linearize preserves logical order, so id_present_synced_len
@@ -7499,11 +7789,8 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
                     ty_ann_index_add(&s->native.ty_idx, subject, idx, atom_id);
             }
         }
-        if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id)) {
-            exact_atom_bucket_add(
-                exact_index_bucket_for_add(&s->native.exact_idx,
-                                           exact_atom_hash_id(s, atom_id)), idx);
-        }
+        if (!s->native.exact_idx_dirty)
+            exact_index_note_row(s, atom_id, idx);
         /* id_present is synced lazily at membership-query time (id_present_sync),
            not per-add, so pure ingress never forces a canonicalizing blob decode. */
         if (!s->native.has_non_exact_atoms_dirty &&
@@ -9447,6 +9734,21 @@ static bool space_contract_occurrence_mask(
         if (transport_result == SPACE_BACKEND_BATCH_APPLIED) {
             SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
                 s, equation_projection, &transport, SPACE_OCCURRENCE_COORDINATE_REMOVED);
+            /* A current exact index holds the live rows: marked rows left it
+             * when marked, and the rows this mask removes leave it now, while
+             * their ids are still stored. */
+            bool exact_current = !s->native.exact_idx_dirty;
+            for (CettaIndex source_index = 0u;
+                 exact_current && !settling && source_index < logical_len;
+                 source_index++) {
+                if (remove_mask[source_index] != 0u &&
+                    !exact_index_forget_row(
+                        s, space_atom_id_storage_load_at(
+                               s->native.atom_ids,
+                               s->native.atom_id_width_bits, source_index),
+                        source_index))
+                    exact_current = false;
+            }
             CettaCount moved = 0u;
             for (CettaIndex source_index = 0u;
                  source_index < logical_len; source_index++) {
@@ -9472,6 +9774,10 @@ static bool space_contract_occurrence_mask(
             space_mark_derived_state_dirty(s);
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
+            s->native.exact_idx_dirty =
+                !exact_current ||
+                !exact_index_transport(&s->native.exact_idx,
+                                       source_to_target, logical_len);
             if (!settling)
                 space_publish_mutation(
                     s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -9802,6 +10108,8 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len) {
 }
 
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
+    /* Settling marks and building the index are physical transitions. */
+    CETTA_SCOPED_SHARED_TRANSITION(exact_match_indices);
     space_settle_marks(s);
     if (out)
         *out = NULL;
@@ -9842,29 +10150,9 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
            term_universe_atom_id_eq(s->native.universe, query_id, atom));
 #endif
     ensure_exact_index(s);
-    const ExactAtomBucket *bucket = exact_index_bucket_view(
-        &s->native.exact_idx, exact_atom_hash(atom));
-    if (bucket->len == 0)
-        return 0;
-    CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
-    CettaIndex n = 0;
-    for (CettaIndex i = 0; i < bucket->len; i++) {
-        CettaIndex idx = bucket->indices[i];
-        if (idx >= s->native.len)
-            continue;
-        AtomId candidate_id = space_get_atom_id_at64(s, idx);
-#ifndef NDEBUG
-        assert(candidate_id != CETTA_ATOM_ID_NONE);
-#endif
-        /* Canonical ids are a complete equality test only for encoded terms.
-           Arena-owned spellings use the same content hash, followed by
-           structural equality; retaining them must not register their names. */
-        if (candidate_id == query_id ||
-            ((!query_canonical ||
-              !tu_hdr(s->native.universe, candidate_id)) &&
-             term_universe_atom_id_eq(s->native.universe, candidate_id, atom)))
-            matches[n++] = idx;
-    }
+    CettaIndex *matches = NULL;
+    CettaIndex n = exact_index_rows_equal(s->native.universe,
+        &s->native.exact_idx, query_id, query_canonical, atom, &matches);
     if (n == 0) {
         free(matches);
         return 0;
@@ -9927,6 +10215,22 @@ bool space_contains_exact(Space *s, Atom *atom) {
     if (native_membership_authoritative && atom &&
         !(s->native.universe && s->native.universe->snapshot_entries) &&
         atom_is_exact_indexable(atom)) {
+        /* A removal leaves the presence bitset to a full resync; the exact
+           index, which marked and swapped removals keep current, answers in
+           its place. */
+        CETTA_SCOPED_SHARED_TRANSITION(exact_membership);
+        if (s->native.id_present_dirty && !s->native.exact_idx_dirty &&
+            !space_has_overlay_base(s) &&
+            (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+             s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
+            s->native.universe) {
+            AtomId qid = term_universe_lookup_atom_id(s->native.universe, atom);
+            return exact_index_holds_equal(
+                s->native.universe, &s->native.exact_idx, qid,
+                qid != CETTA_ATOM_ID_NONE &&
+                    tu_hdr(s->native.universe, qid) != NULL,
+                atom);
+        }
         /* Membership only needs the presence bitset, not the exact-index buckets,
            so bring id_present up to date lazily (append-only suffix sync; full
            resync only after a removal) -- never a full bucket rebuild inside a
@@ -9992,25 +10296,32 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
         !atom_is_exact_indexable(pattern) || space_has_dependencies(s)) {
         return false;
     }
+    /* An identical row is a match.  A miss is an answer only where every
+     * match is by identity: HE also matches a number with another spelling
+     * of it (1 with 1.0), which only the matcher looks for. */
+    bool by_identity = space_match_ground_pattern_matches_by_identity(pattern);
 
     if (space_engine_uses_pathmap(s->match_backend.kind)) {
         /* Backend-primary PathMap maintains this one-bit row-class summary as
            exact AtomIds are added.  A dirty summary would require projecting
            the backend to prove the premise, so decline and leave the ordinary
            matcher in charge. */
-        if (s->native.has_non_exact_atoms_dirty ||
+        if (!by_identity || s->native.has_non_exact_atoms_dirty ||
             s->native.has_non_exact_atoms ||
             !space_match_backend_contains_atom_structural_direct(
                 s, pattern, &found)) {
             return false;
         }
-    } else {
-        if (space_contains_only_exact_atoms(s)) {
-            found = space_contains_exact(s, pattern);
-        } else if (!space_match_backend_ground_exact_exists_frontier(
-                       s, pattern, &found)) {
-            return false;
-        }
+    } else if (space_contains_exact(s, pattern)) {
+        /* A present pattern matches its own occurrence, whatever rows with
+         * variables the space also holds; only a miss needs the frontier's
+         * proof that none of them could match. */
+        found = true;
+    } else if (!by_identity ||
+               (!space_contains_only_exact_atoms(s) &&
+                !space_match_backend_ground_exact_exists_frontier(
+                    s, pattern, &found))) {
+        return false;
     }
 
     if (out_applicable)
@@ -10129,6 +10440,52 @@ bool space_contains_only_exact_atoms(Space *s) {
 
 bool space_atom_is_exact_indexable(Atom *atom) {
     return atom_is_exact_indexable(atom);
+}
+
+CettaIndex space_exact_index_rows64(Space *s, Atom *pattern,
+                                    CettaIndex **out) {
+    *out = NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(exact_rows);
+    if (!s || !pattern || !s->native.universe || s->native.exact_idx_dirty)
+        return 0u;
+    AtomId id = term_universe_lookup_atom_id(s->native.universe, pattern);
+    /* A pattern holding a runtime spelling has no id of its own; its equal
+     * rows are found by content all the same. */
+    return exact_index_rows_equal(
+        s->native.universe, &s->native.exact_idx, id,
+        id != CETTA_ATOM_ID_NONE && tu_hdr(s->native.universe, id) != NULL,
+        pattern, out);
+}
+
+bool space_exact_frontier_certified(Space *s, Atom *pattern) {
+    if (!s || !pattern || pattern->kind != ATOM_EXPR ||
+        pattern->expr.len == 0u ||
+        pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
+        space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    /* The index is read, and rebuilt by its first reader, as one physical
+     * transition of the space. */
+    CETTA_SCOPED_SHARED_TRANSITION(exact_frontier);
+    if (s->native.exact_idx_dirty) {
+        /* Inside a deferral window rows arrive without index upkeep, so a
+         * rebuild per query would cost the whole space each time; a rebuild
+         * would also settle marks a query leaves to their own schedule. */
+        if (s->native.secondary_index_deferral_depth > 0u ||
+            s->native.marked != 0u)
+            return false;
+        exact_index_rebuild(s);
+    }
+    ExactAtomIndex *idx = &s->native.exact_idx;
+    SymbolId head = atom_symbol_current_id(pattern->expr.elems[0]);
+    if (idx->inexact_unheaded != 0u || head == SYMBOL_ID_NONE)
+        return false;
+    ExactIndexInexactHead *entry = exact_index_inexact_head(idx, head, false);
+    if (entry && entry->rows != 0u)
+        return false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_EXACT_FRONTIER_CERTIFIED);
+    return true;
 }
 
 /* ── Type Expression Normalization ───────────────────────────────────────── */
@@ -10356,6 +10713,62 @@ bool space_type_annotations_have_only_symbol_subjects(Space *s) {
     ensure_ty_ann_index(s);
     return !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
            !s->native.ty_idx.has_non_symbol_subjects;
+}
+
+/* With symbol subjects only, each subject's rows form one chain, and a chain
+ * longer than one row is a second declaration (a duplicated row included). */
+bool space_type_annotations_functional(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!space_type_annotations_have_only_symbol_subjects(s))
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    if (rows->headless.count != 0u)
+        return false;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        if (rows->chains[slot].head != SYMBOL_ID_NONE &&
+            rows->chains[slot].count > 1u)
+            return false;
+    }
+    return !space_equations_may_match_known_head(s, g_builtin_syms.get_type);
+}
+
+bool space_type_arrow_declarations_visit(
+    Space *s,
+    bool (*visit)(void *context, SymbolId subject, uint32_t declarations,
+                  Atom *arrow),
+    void *context) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || !visit || space_has_overlay_base(s) ||
+        space_has_dependencies(s) ||
+        s->match_backend.kind != SPACE_ENGINE_NATIVE)
+        return false;
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows)
+        return false;
+    const SpaceHeadChains *rows = &s->native.ty_idx.rows;
+    for (uint32_t slot = 0u; slot < rows->chain_cap; slot++) {
+        const SpaceHeadChain *chain = &rows->chains[slot];
+        if (chain->head == SYMBOL_ID_NONE || chain->count == 0u)
+            continue;
+        for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END;
+             i = rows->next[i]) {
+            Atom *annotation = space_indexed_occurrence_atom(
+                s, rows->atom_indices, rows->atom_ids, i);
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0],
+                                   g_builtin_syms.colon) ||
+                !atom_is_symbol_id(annotation->expr.elems[1], chain->head))
+                continue;
+            Atom *type = annotation->expr.elems[2];
+            if (type->kind == ATOM_EXPR && type->expr.len > 0u &&
+                atom_is_symbol_id(type->expr.elems[0],
+                                  g_builtin_syms.arrow) &&
+                !visit(context, chain->head, chain->count, type))
+                return true;
+        }
+    }
+    return true;
 }
 
 /* Resolve (: atom type) annotations through the native index. Overlay spaces
@@ -14912,12 +15325,21 @@ bool space_checkpoint_native_admitted(const Space *space,
             ? &space->eq_idx.wildcard : eq_index_bucket_view(&space->eq_idx, (uint32_t)i);
         if (!space_checkpoint_equation_admitted(space, row, budget)) return false;
     }
-    for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
-        const ExactAtomBucket *row =
-            exact_index_bucket_view(&space->exact_idx, (uint32_t)i);
-        if (!space_checkpoint_extent_admitted(row->indices, row->len,
-                row->cap, sizeof(*row->indices), budget)) return false;
-    }
+    /* The exact index is two tables, each admitted by its shape. */
+    const ExactAtomIndex *exact = &space->exact_idx;
+    size_t exact_slots = exact->slots ? exact->mask + 1u : 0u;
+    size_t exact_heads = exact->inexact_heads
+        ? exact->inexact_head_mask + 1u : 0u;
+    if (!space_checkpoint_extent_admitted(exact->slots, exact->used,
+            exact_slots, exact->wide ? sizeof(ExactAtomSlot)
+                                     : sizeof(ExactAtomNarrowSlot), budget) ||
+        !space_checkpoint_extent_admitted(exact->inexact_heads,
+            exact->inexact_head_used, exact_heads,
+            sizeof(*exact->inexact_heads), budget))
+        return false;
+    if ((exact_slots & (exact_slots - 1u)) ||
+        (exact_heads & (exact_heads - 1u)))
+        return space_checkpoint_refuse(budget, "WorldArrayShape");
     return true;
 }
 
@@ -15083,22 +15505,32 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
         image->mark_rows = source->mark_rows;
         image->marked = source->marked;
     }
-    image->exact_idx.buckets = source->exact_idx.buckets
-        ? space_checkpoint_array_copy(NULL, 0u, EXACT_INDEX_BUCKETS,
-              sizeof(*image->exact_idx.buckets), budget)
-        : NULL;
-    if (budget->refusal) return false;
-    for (size_t i = 0u; image->exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++)
-        exact_atom_bucket_init(&image->exact_idx.buckets[i]);
-    for (size_t i = 0u; source->exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++) {
-        const ExactAtomBucket *src = &source->exact_idx.buckets[i];
-        ExactAtomBucket *dst = &image->exact_idx.buckets[i];
-        dst->cap = src->cap;
-        dst->indices = space_checkpoint_array_copy(src->indices,
-            src->len, src->cap, sizeof(*src->indices), budget);
+    /* The exact index is copied as it is laid out: every slot of its table
+     * (a vacant one included) and every slot of its head counts. */
+    image->exact_idx = (ExactAtomIndex){0};
+    if (source->exact_idx.slots) {
+        size_t slots = source->exact_idx.mask + 1u;
+        image->exact_idx.slots = space_checkpoint_array_copy(
+            source->exact_idx.slots, slots, slots,
+            source->exact_idx.wide ? sizeof(ExactAtomSlot)
+                                   : sizeof(ExactAtomNarrowSlot), budget);
         if (budget->refusal) return false;
-        dst->len = src->len;
+        image->exact_idx.mask = source->exact_idx.mask;
+        image->exact_idx.used = source->exact_idx.used;
+        image->exact_idx.wide = source->exact_idx.wide;
     }
+    if (source->exact_idx.inexact_heads) {
+        size_t heads = source->exact_idx.inexact_head_mask + 1u;
+        image->exact_idx.inexact_heads = space_checkpoint_array_copy(
+            source->exact_idx.inexact_heads, heads, heads,
+            sizeof(*source->exact_idx.inexact_heads), budget);
+        if (budget->refusal) return false;
+        image->exact_idx.inexact_head_mask =
+            source->exact_idx.inexact_head_mask;
+        image->exact_idx.inexact_head_used =
+            source->exact_idx.inexact_head_used;
+    }
+    image->exact_idx.inexact_unheaded = source->exact_idx.inexact_unheaded;
     image->revision = source->revision;
     image->equation_revision = source->equation_revision;
     image->declaration_revision = source->declaration_revision;
@@ -15296,13 +15728,54 @@ bool space_checkpoint_native_compare(const Space *a, const Space *b,
     }
     if (!space_checkpoint_head_chains_compare("world.type",
             &a->ty_idx.rows, &b->ty_idx.rows, read)) return false;
-    for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
-        if (!read->scalar(read->context, "world.exact.ordinal", i, i)) return false;
-        const ExactAtomBucket *left = exact_index_bucket_view(&a->exact_idx, (uint32_t)i);
-        const ExactAtomBucket *right = exact_index_bucket_view(&b->exact_idx, (uint32_t)i);
-        if (!space_checkpoint_compare_array("world.exact.indices", left->indices,
-                left->len, left->cap, right->indices, right->len, right->cap,
-                sizeof(*left->indices), read)) return false;
+    const ExactAtomIndex *left = &a->exact_idx, *right = &b->exact_idx;
+    size_t left_slots = left->slots ? left->mask + 1u : 0u;
+    size_t right_slots = right->slots ? right->mask + 1u : 0u;
+    size_t left_heads = left->inexact_heads ? left->inexact_head_mask + 1u : 0u;
+    size_t right_heads =
+        right->inexact_heads ? right->inexact_head_mask + 1u : 0u;
+    if (!read->scalar(read->context, "world.exact.wide",
+                      left->wide, right->wide) ||
+        !read->scalar(read->context, "world.exact.used",
+                      left->used, right->used) ||
+        !read->scalar(read->context, "world.exact.unheaded",
+                      left->inexact_unheaded, right->inexact_unheaded) ||
+        !read->scalar(read->context, "world.exact.heads",
+                      left->inexact_head_used, right->inexact_head_used))
+        return false;
+    /* A slot's position follows the table's size and width, so tables of
+     * different shapes compare by what they file: the same rows under the
+     * same ids, and the same counts under the same heads. */
+    if (left->wide != right->wide || left_slots != right_slots ||
+        left_heads != right_heads) {
+        bool same = true;
+        for (size_t at = 0u; same && at < left_slots; at++) {
+            if (!exact_slot_vacant(left, at))
+                same = exact_index_has_pair(b->universe, right,
+                                            exact_slot_id(left, at),
+                                            exact_slot_row(left, at));
+        }
+        for (size_t at = 0u; same && at < left_heads; at++) {
+            const ExactIndexInexactHead *entry = &left->inexact_heads[at];
+            if (entry->head == SYMBOL_ID_NONE)
+                continue;
+            const ExactIndexInexactHead *other = exact_index_inexact_head(
+                (ExactAtomIndex *)right, entry->head, false);
+            same = other && other->rows == entry->rows;
+        }
+        return read->physical(read->context, "world.exact.capacity",
+                              left_slots, right_slots) &&
+               read->physical(read->context, "world.exact.head_capacity",
+                              left_heads, right_heads) &&
+               read->scalar(read->context, "world.exact.filed",
+                            same ? 1u : 0u, 1u);
     }
-    return true;
+    return space_checkpoint_compare_array("world.exact.slots", left->slots,
+            left_slots, left_slots, right->slots, right_slots, right_slots,
+            left->wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot),
+            read) &&
+        space_checkpoint_compare_array("world.exact.heads",
+            left->inexact_heads, left_heads, left_heads,
+            right->inexact_heads, right_heads, right_heads,
+            sizeof(*left->inexact_heads), read);
 }

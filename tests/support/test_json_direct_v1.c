@@ -297,6 +297,7 @@ static bool corpus(const CettaJsonRuntimeV1 *runtime,const char *directory,bool 
         else policy++;
         unsigned before=reference_limits;
         if(use_reference && !agree(runtime,bytes,n) && reference_limits==before) { bad++; fprintf(stderr,"corpus disagreement: %s\n",name); }
+        if(reference_limits!=before) fprintf(stderr,"reference limit: %s\n",name);
         arena_free(&arena); free(bytes);
     }
     closedir(dir); printf("{\"valid\":%u,\"invalid\":%u,\"policy\":%u,\"failed\":%u,\"reference_limits\":%u}\n",yes,no,policy,bad,reference_limits); return !bad;

@@ -9,8 +9,8 @@
 #include <stddef.h>
 
 /*
- * Revision-pinned realization of the five PeTTa type-fact relations shared by
- * the generated v2 fragment and native v3.  The provider reads declarations
+ * Revision-pinned realization of the PeTTa type-fact relations: the five
+ * inherited relations and the v3 builtin cardinality rule. It reads declarations
  * and expressions directly from live program state; it never invokes either
  * checker.  Answers use the established v2 wire vocabulary, which v3
  * elaborates explicitly into its native core.

@@ -4889,10 +4889,20 @@ static bool prepared_pure_is_list_carrier(const Atom *value) {
 }
 
 /* Whether a list carrier's chain of cells ends in a list value or a list
- * pattern rather than in an expression. */
-static bool prepared_pure_carrier_ends_in_list_form(const Atom *value) {
-    while (prepared_pure_is_list_carrier(value))
+ * pattern rather than in an expression, for a pattern of `length` elements.
+ * A chain of more than `length` cells spells a longer list than the pattern
+ * whatever it ends in, so reading stops there: the pattern's own length
+ * check refuses it, and a recursion over a long chain stays linear. */
+static bool prepared_pure_carrier_ends_in_list_form(
+    const Atom *value, CettaExprLen length) {
+    for (CettaExprLen cells = 0u; prepared_pure_is_list_carrier(value);
+         cells++) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_LIST_CARRIER_CELL_READ);
+        if (cells >= length)
+            return false;
         value = value->expr.elems[2];
+    }
     return atom_is_list_form(value);
 }
 
@@ -5160,7 +5170,8 @@ prepared_pure_match_into(
              * kind, and a list pattern reads a list by its own elements:
              * both are decided by the language's own list matching. */
             if (atom_is_list_form(pattern) ||
-                prepared_pure_carrier_ends_in_list_form(value))
+                prepared_pure_carrier_ends_in_list_form(
+                    value, pattern->expr.len))
                 return PREPARED_PURE_MATCH_ERROR;
             PreparedPureMatchState read = prepared_pure_read_list_carrier(
                 value, pattern->expr.len, NULL);
@@ -6206,7 +6217,10 @@ static Atom *prepared_pure_execute_intrinsic(
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS: {
         Atom *const *tail_elems;
         CettaExprLen tail_len;
+        /* A cons cell tail is a logical list cell, never three children:
+         * the canonical evaluator builds on it. */
         if (arity != 2u || !arguments[0] ||
+            petta_semantics_is_open_cons_value(arguments[1]) ||
             !atom_sequence_view(arguments[1], &tail_elems, &tail_len) ||
             tail_len == UINT64_MAX)
             return NULL;
@@ -6240,9 +6254,22 @@ static Atom *prepared_pure_execute_intrinsic(
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
         Atom *const *left_elems, *const *right_elems;
         CettaExprLen left_len, right_len;
-        if (arity != 2u ||
-            !atom_sequence_view(arguments[0], &left_elems, &left_len) ||
-            !atom_sequence_view(arguments[1], &right_elems, &right_len) ||
+        if (arity != 2u)
+            return NULL;
+        /* PeTTa's union-atom is append/3 over logical lists: a chain of
+         * cons cells that closes reads as the flat list it spells; an open
+         * or improper one, which has no flat image, is the canonical
+         * evaluator's. */
+        Atom *left = arguments[0];
+        Atom *right = arguments[1];
+        if (petta_semantics_is_open_cons_value(left))
+            left = petta_semantics_materialize_closed_logical_list(arena, left);
+        if (left && petta_semantics_is_open_cons_value(right))
+            right = petta_semantics_materialize_closed_logical_list(
+                arena, right);
+        if (!left || !right ||
+            !atom_sequence_view(left, &left_elems, &left_len) ||
+            !atom_sequence_view(right, &right_elems, &right_len) ||
             left_len > UINT64_MAX - right_len)
             return NULL;
         CettaExprLen length = left_len + right_len;
@@ -6259,7 +6286,7 @@ static Atom *prepared_pure_execute_intrinsic(
             memcpy(elements + left_len, right_elems,
                    sizeof(*elements) * (size_t)right_len);
         }
-        return atom_is_list(arguments[0])
+        return atom_is_list(left)
             ? atom_list(arena, elements, length)
             : atom_expr(arena, elements, length);
     }
@@ -10572,11 +10599,16 @@ static void prepared_pure_answer_owned_release(void *computation) {
     cetta_prepared_pure_answer_cursor_close(computation);
 }
 
+static bool prepared_pure_answer_final_is_current(void *computation) {
+    return cetta_prepared_pure_answer_cursor_frontier_is_complete(computation);
+}
+
 void cetta_prepared_pure_answer_cursor_own_execution(
     CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor) {
     if (cursor && cursor->program->execution) return;
     cetta_owned_execution_init(execution, cursor,
         cetta_prepared_pure_answer_cursor_return, prepared_pure_answer_owned_release);
+    execution->final_is_current = prepared_pure_answer_final_is_current;
 }
 
 bool cetta_prepared_pure_answer_cursor_can_detach(
@@ -13391,6 +13423,14 @@ bool cetta_prepared_pure_program_value_is_fully_evaluated(
     return program && value &&
            !prepared_pure_value_tree_any(
                program, value, prepared_pure_value_has_callable_node, program);
+}
+
+Arena *cetta_prepared_pure_program_closed_survivor_arena(
+    CettaPreparedPureProgram *program) {
+    /* A held execution keeps the survivors past release: they are not the
+     * closed call's to give up. */
+    return program && !program->execution && program->gc_survivor_ready
+        ? &program->gc_survivor : NULL;
 }
 
 void cetta_prepared_pure_program_release_closed_execution(

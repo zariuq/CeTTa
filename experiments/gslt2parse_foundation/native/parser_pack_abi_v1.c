@@ -1223,6 +1223,317 @@ bool ppabi_v1_pack_load_structural(
         error_buf, error_buf_size);
 }
 
+static Atom *ppabi_storage_form(Arena *arena, const char *name, Atom **fields, size_t len) {
+    Atom **items = arena_alloc(arena, (len + 1u) * sizeof(*items));
+    if (!items) return NULL;
+    items[0] = atom_symbol(arena, name);
+    if (len) memcpy(items + 1u, fields, len * sizeof(*items));
+    return atom_expr(arena, items, len + 1u);
+}
+
+#define PPSTORED(arena, name, ...) ppabi_storage_form(arena, name, \
+    (Atom *[]){__VA_ARGS__}, sizeof((Atom *[]){__VA_ARGS__}) / sizeof(Atom *))
+
+static Atom **ppabi_storage_fields(Arena *arena, uint32_t len) {
+    return arena_alloc(arena, ((size_t)len + 1u) * sizeof(Atom *));
+}
+
+static Atom *ppabi_storage_optional(Arena *arena, Atom *atom) {
+    return atom ? atom : atom_symbol(arena, "PackStoredAbsentV1");
+}
+
+Atom *ppabi_v1_pack_export_storage(
+    Arena *arena, const PPABIV1Pack *pack, char *error, size_t error_size) {
+    if (!arena || !pack || (pack->state_len && !pack->states) ||
+        (pack->terminal_len && !pack->terminals) ||
+        (pack->production_len && !pack->productions) ||
+        (pack->class_clause_len && !pack->class_clauses) ||
+        (pack->derivation_len && !pack->derivations)) {
+        ppabi_v1_set_error(error, error_size, "missing immutable pack storage");
+        return NULL;
+    }
+    Atom **rows;
+    rows = ppabi_storage_fields(arena, pack->state_len);
+    if (!rows) return NULL;
+    for (uint32_t i = 0u; i < pack->state_len; ++i) {
+        const PPABIV1State *state = &pack->states[i];
+        rows[i] = PPSTORED(arena, "PackStoredStateV1", state->identity,
+            atom_string(arena, state->canonical), atom_int(arena, state->defined));
+    }
+    Atom *states = ppabi_storage_form(arena, "PackStoredVectorV1", rows, pack->state_len);
+    rows = ppabi_storage_fields(arena, pack->terminal_len);
+    if (!rows) return NULL;
+    for (uint32_t i = 0u; i < pack->terminal_len; ++i) {
+        const PPABIV1Terminal *terminal = &pack->terminals[i];
+        rows[i] = PPSTORED(arena, "PackStoredTerminalV1", terminal->identity,
+            atom_string(arena, terminal->canonical), atom_int(arena, terminal->kind),
+            atom_int(arena, terminal->codepoint), ppabi_storage_optional(arena, terminal->class_expression));
+    }
+    Atom *terminals = ppabi_storage_form(arena, "PackStoredVectorV1", rows, pack->terminal_len);
+    rows = ppabi_storage_fields(arena, pack->production_len);
+    if (!rows) return NULL;
+    for (uint32_t i = 0u; i < pack->production_len; ++i) {
+        const PPABIV1Production *production = &pack->productions[i];
+        Atom **items = ppabi_storage_fields(arena, production->item_len);
+        if (!items) return NULL;
+        for (uint32_t j = 0u; j < production->item_len; ++j)
+            items[j] = PPSTORED(arena, "PackStoredItemV1",
+                atom_int(arena, production->items[j].kind), atom_int(arena, production->items[j].dense_id));
+        Atom *rhs = ppabi_storage_form(arena, "PackStoredVectorV1", items, production->item_len);
+        rows[i] = PPSTORED(arena, "PackStoredProductionV1", production->identity,
+            atom_string(arena, production->canonical), atom_int(arena, production->lhs_state_id),
+            rhs, production->action, atom_int(arena, production->evidence_begin),
+            atom_int(arena, production->evidence_len));
+    }
+    Atom *productions = ppabi_storage_form(arena, "PackStoredVectorV1", rows, pack->production_len);
+    rows = ppabi_storage_fields(arena, pack->class_clause_len);
+    if (!rows) return NULL;
+    for (uint32_t i = 0u; i < pack->class_clause_len; ++i) {
+        const PPABIV1ClassClause *clause = &pack->class_clauses[i];
+        Atom **points = ppabi_storage_fields(arena, clause->excluded_len);
+        if (!points) return NULL;
+        for (uint32_t j = 0u; j < clause->excluded_len; ++j)
+            points[j] = atom_int(arena, clause->excluded_points[j]);
+        Atom *excluded = ppabi_storage_form(arena, "PackStoredVectorV1", points, clause->excluded_len);
+        rows[i] = PPSTORED(arena, "PackStoredClassV1", clause->identity,
+            atom_string(arena, clause->canonical), clause->class_identity,
+            atom_int(arena, clause->kind), atom_int(arena, clause->point), excluded,
+            atom_int(arena, clause->evidence_begin), atom_int(arena, clause->evidence_len));
+    }
+    Atom *classes = ppabi_storage_form(arena, "PackStoredVectorV1", rows, pack->class_clause_len);
+    rows = ppabi_storage_fields(arena, pack->derivation_len);
+    if (!rows) return NULL;
+    for (uint32_t i = 0u; i < pack->derivation_len; ++i) {
+        const PPABIV1Derivation *derivation = &pack->derivations[i];
+        rows[i] = PPSTORED(arena, "PackStoredDerivationV1", atom_int(arena, derivation->kind),
+            atom_int(arena, derivation->artifact_index), derivation->answer, derivation->certificate,
+            atom_string(arena, derivation->canonical));
+    }
+    Atom *derivations = ppabi_storage_form(arena, "PackStoredVectorV1", rows, pack->derivation_len);
+    Atom *result = PPSTORED(arena, "ParserPackStoredV1", atom_string(arena, pack->source_digest),
+        atom_string(arena, pack->compiler_digest), atom_string(arena, pack->environment_digest),
+        atom_string(arena, pack->pack_digest), states, terminals, productions, classes, derivations);
+    return result ? atom_deep_copy(arena, result) : NULL;
+}
+
+static bool ppabi_storage_is(const Atom *atom, const char *head, size_t len) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == len + 1u &&
+        atom_is_symbol(atom->expr.elems[0], head);
+}
+
+static bool ppabi_storage_u32(const Atom *atom, uint32_t *out) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_INT ||
+        atom->ground.ival < 0 || (uint64_t)atom->ground.ival > UINT32_MAX) return false;
+    *out = (uint32_t)atom->ground.ival;
+    return true;
+}
+
+static char *ppabi_storage_string(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING
+        ? ppabi_v1_text_dup(atom->ground.sval) : NULL;
+}
+
+static bool ppabi_storage_digest(const Atom *atom, char out[65]) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_STRING ||
+        !ppabi_v1_digest_valid(atom->ground.sval)) return false;
+    memcpy(out, atom->ground.sval, 65u);
+    return true;
+}
+
+static bool ppabi_storage_rows(const Atom *atom, Atom ***rows, uint32_t *len) {
+    if (!atom || atom->kind != ATOM_EXPR || !atom->expr.len ||
+        atom->expr.len - 1u > UINT32_MAX ||
+        !atom_is_symbol(atom->expr.elems[0], "PackStoredVectorV1")) return false;
+    *len = (uint32_t)(atom->expr.len - 1u);
+    *rows = atom->expr.elems + 1u;
+    return true;
+}
+
+bool ppabi_v1_pack_import_storage(
+    PPABIV1Pack *out, const Atom *storage, char *error, size_t error_size) {
+    PPABIV1Pack candidate;
+    Atom **rows;
+    uint32_t len;
+    bool ok = false;
+    ppabi_v1_pack_init(&candidate);
+    candidate.arena.hashcons = NULL;
+    if (error && error_size) error[0] = '\0';
+    if (!out || !ppabi_storage_is(storage, "ParserPackStoredV1", 9u)) goto done;
+    Atom *root = atom_deep_copy(&candidate.arena, (Atom *)storage);
+    if (!root || !ppabi_storage_digest(root->expr.elems[1], candidate.source_digest) ||
+        !ppabi_storage_digest(root->expr.elems[2], candidate.compiler_digest) ||
+        !ppabi_storage_digest(root->expr.elems[3], candidate.environment_digest) ||
+        !ppabi_storage_digest(root->expr.elems[4], candidate.pack_digest)) goto done;
+    if (!ppabi_storage_rows(root->expr.elems[5], &rows, &len)) goto done;
+    candidate.states = calloc(len ? len : 1u, sizeof(*candidate.states));
+    if (!candidate.states) goto done;
+    candidate.state_len = len;
+    for (uint32_t i = 0u; i < len; ++i) {
+        Atom *row = rows[i];
+        uint32_t defined;
+        PPABIV1State *state = &candidate.states[i];
+        if (!ppabi_storage_is(row, "PackStoredStateV1", 3u) ||
+            !(state->canonical = ppabi_storage_string(row->expr.elems[2])) ||
+            !ppabi_storage_u32(row->expr.elems[3], &defined) || defined > 1u) goto done;
+        state->identity = row->expr.elems[1];
+        state->dense_id = i;
+        state->defined = defined != 0u;
+    }
+    if (!ppabi_storage_rows(root->expr.elems[6], &rows, &len)) goto done;
+    candidate.terminals = calloc(len ? len : 1u, sizeof(*candidate.terminals));
+    if (!candidate.terminals) goto done;
+    candidate.terminal_len = len;
+    for (uint32_t i = 0u; i < len; ++i) {
+        Atom *row = rows[i];
+        uint32_t kind;
+        PPABIV1Terminal *terminal = &candidate.terminals[i];
+        if (!ppabi_storage_is(row, "PackStoredTerminalV1", 5u) ||
+            !(terminal->canonical = ppabi_storage_string(row->expr.elems[2])) ||
+            !ppabi_storage_u32(row->expr.elems[3], &kind) || kind > PPABI_V1_TERMINAL_CLASS ||
+            !ppabi_storage_u32(row->expr.elems[4], &terminal->codepoint)) goto done;
+        terminal->identity = row->expr.elems[1];
+        terminal->dense_id = i;
+        terminal->kind = (PPABIV1TerminalKind)kind;
+        terminal->class_expression = atom_is_symbol(row->expr.elems[5], "PackStoredAbsentV1")
+            ? NULL : row->expr.elems[5];
+    }
+    if (!ppabi_storage_rows(root->expr.elems[7], &rows, &len)) goto done;
+    candidate.productions = calloc(len ? len : 1u, sizeof(*candidate.productions));
+    if (!candidate.productions) goto done;
+    candidate.production_len = len;
+    for (uint32_t i = 0u; i < len; ++i) {
+        Atom *row = rows[i];
+        Atom **items;
+        uint32_t count;
+        PPABIV1Production *production = &candidate.productions[i];
+        if (!ppabi_storage_is(row, "PackStoredProductionV1", 7u) ||
+            !(production->canonical = ppabi_storage_string(row->expr.elems[2])) ||
+            !ppabi_storage_u32(row->expr.elems[3], &production->lhs_state_id) ||
+            production->lhs_state_id >= candidate.state_len ||
+            !ppabi_storage_rows(row->expr.elems[4], &items, &count) ||
+            !ppabi_storage_u32(row->expr.elems[6], &production->evidence_begin) ||
+            !ppabi_storage_u32(row->expr.elems[7], &production->evidence_len)) goto done;
+        production->identity = row->expr.elems[1];
+        production->dense_id = i;
+        production->action = row->expr.elems[5];
+        production->items = calloc(count ? count : 1u, sizeof(*production->items));
+        if (!production->items) goto done;
+        production->item_len = count;
+        for (uint32_t j = 0u; j < count; ++j) {
+            uint32_t kind, id;
+            if (!ppabi_storage_is(items[j], "PackStoredItemV1", 2u) ||
+                !ppabi_storage_u32(items[j]->expr.elems[1], &kind) || kind > PPABI_V1_ITEM_NONTERMINAL ||
+                !ppabi_storage_u32(items[j]->expr.elems[2], &id) ||
+                id >= (kind == PPABI_V1_ITEM_TERMINAL ? candidate.terminal_len : candidate.state_len)) goto done;
+            production->items[j] = (PPABIV1Item){(PPABIV1ItemKind)kind, id};
+        }
+    }
+    if (!ppabi_storage_rows(root->expr.elems[8], &rows, &len)) goto done;
+    candidate.class_clauses = calloc(len ? len : 1u, sizeof(*candidate.class_clauses));
+    if (!candidate.class_clauses) goto done;
+    candidate.class_clause_len = len;
+    for (uint32_t i = 0u; i < len; ++i) {
+        Atom *row = rows[i];
+        Atom **points;
+        uint32_t kind, count;
+        PPABIV1ClassClause *clause = &candidate.class_clauses[i];
+        if (!ppabi_storage_is(row, "PackStoredClassV1", 8u) ||
+            !(clause->canonical = ppabi_storage_string(row->expr.elems[2])) ||
+            !ppabi_storage_u32(row->expr.elems[4], &kind) || kind > PPABI_V1_CLASS_EXCEPT ||
+            !ppabi_storage_u32(row->expr.elems[5], &clause->point) ||
+            !ppabi_storage_rows(row->expr.elems[6], &points, &count) ||
+            !ppabi_storage_u32(row->expr.elems[7], &clause->evidence_begin) ||
+            !ppabi_storage_u32(row->expr.elems[8], &clause->evidence_len)) goto done;
+        clause->identity = row->expr.elems[1];
+        clause->class_identity = row->expr.elems[3];
+        clause->kind = (PPABIV1ClassClauseKind)kind;
+        clause->excluded_points = calloc(count ? count : 1u, sizeof(*clause->excluded_points));
+        if (!clause->excluded_points) goto done;
+        clause->excluded_len = count;
+        for (uint32_t j = 0u; j < count; ++j)
+            if (!ppabi_storage_u32(points[j], &clause->excluded_points[j])) goto done;
+    }
+    if (!ppabi_storage_rows(root->expr.elems[9], &rows, &len)) goto done;
+    candidate.derivations = calloc(len ? len : 1u, sizeof(*candidate.derivations));
+    if (!candidate.derivations) goto done;
+    candidate.derivation_len = len;
+    for (uint32_t i = 0u; i < len; ++i) {
+        Atom *row = rows[i];
+        uint32_t kind;
+        PPABIV1Derivation *derivation = &candidate.derivations[i];
+        if (!ppabi_storage_is(row, "PackStoredDerivationV1", 5u) ||
+            !ppabi_storage_u32(row->expr.elems[1], &kind) || kind > PPABI_V1_EVIDENCE_CLASS ||
+            !ppabi_storage_u32(row->expr.elems[2], &derivation->artifact_index) ||
+            derivation->artifact_index >= (kind == PPABI_V1_EVIDENCE_PRODUCTION
+                ? candidate.production_len : candidate.class_clause_len) ||
+            !(derivation->canonical = ppabi_storage_string(row->expr.elems[5]))) goto done;
+        derivation->kind = (PPABIV1EvidenceKind)kind;
+        derivation->answer = row->expr.elems[3];
+        derivation->certificate = row->expr.elems[4];
+    }
+    for (uint32_t i = 0u; i < candidate.production_len; ++i)
+        if (candidate.productions[i].evidence_begin > candidate.derivation_len ||
+            candidate.productions[i].evidence_len > candidate.derivation_len - candidate.productions[i].evidence_begin)
+            goto done;
+    for (uint32_t i = 0u; i < candidate.class_clause_len; ++i)
+        if (candidate.class_clauses[i].evidence_begin > candidate.derivation_len ||
+            candidate.class_clauses[i].evidence_len > candidate.derivation_len - candidate.class_clauses[i].evidence_begin)
+            goto done;
+    ppabi_v1_pack_free(out);
+    *out = candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    ok = true;
+done:
+    ppabi_v1_pack_free(&candidate);
+    if (!ok) ppabi_v1_set_error(error, error_size, "malformed immutable ParserPack storage");
+    return ok;
+}
+
+bool ppabi_v1_pack_check_storage(const PPABIV1Pack *pack, char *error, size_t error_size) {
+    PPABIV1Pack checked;
+    Arena arena;
+    bool ok = false;
+    if (!pack) return false;
+    ppabi_v1_pack_init(&checked);
+    arena_init(&arena);
+    Atom **productions = calloc(pack->production_len ? pack->production_len : 1u, sizeof(Atom *));
+    Atom **classes = calloc(pack->class_clause_len ? pack->class_clause_len : 1u, sizeof(Atom *));
+    PPABIV1DerivationInput *derivations = calloc(pack->derivation_len ? pack->derivation_len : 1u,
+        sizeof(*derivations));
+    if (!productions || !classes || !derivations) goto done;
+    for (uint32_t i = 0u; i < pack->production_len; ++i) productions[i] = pack->productions[i].identity;
+    for (uint32_t i = 0u; i < pack->class_clause_len; ++i) classes[i] = pack->class_clauses[i].identity;
+    for (uint32_t i = 0u; i < pack->derivation_len; ++i) {
+        const PPABIV1Derivation *entry = &pack->derivations[i];
+        uint32_t bound = entry->kind == PPABI_V1_EVIDENCE_PRODUCTION ? pack->production_len : pack->class_clause_len;
+        if (entry->artifact_index >= bound) goto done;
+        derivations[i] = (PPABIV1DerivationInput){entry->kind,
+            entry->kind == PPABI_V1_EVIDENCE_PRODUCTION ? productions[entry->artifact_index] : classes[entry->artifact_index],
+            entry->answer, entry->certificate};
+    }
+    PPABIV1ProvenanceInput provenance = {pack->source_digest, pack->compiler_digest,
+        pack->environment_digest, derivations, pack->derivation_len};
+    if (!(pack->derivation_len
+        ? ppabi_v1_pack_load(&checked, productions, pack->production_len, classes, pack->class_clause_len,
+            &provenance, error, error_size)
+        : ppabi_v1_pack_load_structural(&checked, productions, pack->production_len, classes, pack->class_clause_len,
+            pack->source_digest, pack->compiler_digest, pack->environment_digest, error, error_size))) goto done;
+    Atom *stored = ppabi_v1_pack_export_storage(&arena, pack, error, error_size);
+    Atom *admitted = ppabi_v1_pack_export_storage(&arena, &checked, error, error_size);
+    ok = stored && admitted && atom_eq(stored, admitted);
+done:
+    if (!ok && error && error_size && !error[0])
+        ppabi_v1_set_error(error, error_size, "stored pack disagrees with structural admission");
+    free(productions);
+    free(classes);
+    free(derivations);
+    arena_free(&arena);
+    ppabi_v1_pack_free(&checked);
+    return ok;
+}
+
+#undef PPSTORED
+
 bool ppabi_v1_pack_start_is_closed(const PPABIV1Pack *pack,
                                    const Atom *start_state,
                                    char *error_buf,

@@ -1,0 +1,16 @@
+{
+  "format": "ParserBuildManifestV1",
+  "parsers": [
+    {"name": "module-core-reader", "format": "lbnf", "source": "../../langdef/parsers/module_core_v1.cf", "start": "Module", "strategy": "general"},
+    {
+      "name": "composed-binding", "format": "module", "reader": "module-core-reader",
+      "source": "ComposedDerived.module", "theory": "Complete", "start": "Expr", "strategy": "general",
+      "catalog": {
+        "RewriteBundles": "RewriteBundles.module",
+        "DerivedSubstitution": "DerivedSubstitution.module",
+        "DerivedTuples": "DerivedTuples.module",
+        "BindingValues": "BindingValues.module"
+      }
+    }
+  ]
+}

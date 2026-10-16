@@ -38,7 +38,9 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence(
             return execution->stop;
         }
         bool final = execution->pending.final &&
-            execution->completion == CETTA_EVAL_COMPLETE;
+            execution->completion == CETTA_EVAL_COMPLETE &&
+            (!execution->final_is_current ||
+             execution->final_is_current(execution->computation));
         execution->has_pending = false;
         memset(&execution->pending, 0, sizeof(execution->pending));
         execution->accepted++;

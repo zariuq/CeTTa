@@ -490,7 +490,10 @@ static bool membership_read(MembershipReaderTask *task, Atom *query) {
         found = space_match_exists_ground_exact(task->space, query, &applicable);
         break;
     }
-    assert(applicable);
+    /* A ground match finds an identical row by identity; a miss of a row
+     * holding a number is left to the matcher, which HE lets match another
+     * spelling of that number (1 with 1.0). */
+    assert(applicable || (task->mode == 4u && !found));
     task->checks++;
     return found;
 }

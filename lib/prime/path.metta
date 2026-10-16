@@ -15,15 +15,18 @@
 (= (path:is-absolute $path)
    (str:starts-with $path "/"))
 
-(= (path:pop-stack $stack $absolute)
+(= (path:pop-stack $stack True)
    (if (== $stack ())
-       (if $absolute () (".."))
-       (if $absolute
-           (cdr-atom $stack)
-           (let ($head $tail) (decons-atom $stack)
-             (if (== $head "..")
-                 (cons-atom ".." $stack)
-                 $tail)){$head $tail})))
+       ()
+       (cdr-atom $stack)))
+
+(= (path:pop-stack $stack False)
+   (if (== $stack ())
+       ("..")
+       (let ($head $tail) (decons-atom $stack)
+         (if (== $head "..")
+             (cons-atom ".." $stack)
+             $tail)){$head $tail}))
 
 (= (path:normalize-parts $parts $stack $absolute)
    (if (== $parts ())

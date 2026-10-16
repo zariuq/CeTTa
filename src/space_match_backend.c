@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "atom.h"
 #include "term_universe.h"
 
 #include "space.h"
@@ -240,11 +241,6 @@ static void pathmap_record_indexed_query_stats(
         space_match_backend_clear_error();
 }
 
-static int cmp_cetta_index(const void *a, const void *b) {
-    CettaIndex va = *(const CettaIndex *)a, vb = *(const CettaIndex *)b;
-    return (va > vb) - (va < vb);
-}
-
 static bool pathmap_local_ensure_bridge_space(PathmapLocalState *st);
 static bool mork_imported_ensure_bridge_space(MorkImportedState *st);
 static bool backend_rebuild_bridge(Space *s);
@@ -294,10 +290,56 @@ static bool imported_bridge_packet_count_sum_ok(uint64_t total,
 static AtomId space_match_backend_candidate_atom_id_at64(
     const Space *s, CettaIndex idx);
 
+/* The length of the ascending run of `items` that starts at `from`. */
+static CettaIndex cetta_index_run_end(const CettaIndex *items, CettaIndex from,
+                                      CettaIndex len) {
+    CettaIndex end = from + 1u;
+    while (end < len && items[end - 1u] <= items[end])
+        end++;
+    return end;
+}
+
+/* Candidates arrive as ascending runs, one per trie leaf: merge neighbouring
+ * runs pass by pass, so k candidates in r runs cost k log r, and a sorted
+ * list one scan. */
+static void cetta_index_merge_runs(CettaIndex *items, CettaIndex len) {
+    if (cetta_index_run_end(items, 0u, len) == len)
+        return;
+    if (len > SIZE_MAX / sizeof(*items))
+        cetta_oom(SIZE_MAX);
+    CettaIndex *spare = cetta_malloc((size_t)len * sizeof(*items));
+    CettaIndex *from = items, *to = spare;
+    for (;;) {
+        CettaIndex runs = 0u;
+        for (CettaIndex start = 0u; start < len; runs++) {
+            CettaIndex middle = cetta_index_run_end(from, start, len);
+            CettaIndex end = middle < len
+                ? cetta_index_run_end(from, middle, len) : len;
+            CettaIndex left = start, right = middle, out = start;
+            while (left < middle && right < end)
+                to[out++] = from[right] < from[left] ? from[right++]
+                                                     : from[left++];
+            while (left < middle)
+                to[out++] = from[left++];
+            while (right < end)
+                to[out++] = from[right++];
+            start = end;
+        }
+        CettaIndex *merged = to;
+        to = from;
+        from = merged;
+        if (runs == 1u)
+            break;
+    }
+    if (from != items)
+        memcpy(items, from, (size_t)len * sizeof(*items));
+    free(spare);
+}
+
 static CettaIndex sort_unique_cetta_index(CettaIndex *items, CettaIndex len) {
     if (!items || len <= 1)
         return len;
-    qsort(items, len, sizeof(CettaIndex), cmp_cetta_index);
+    cetta_index_merge_runs(items, len);
     CettaIndex w = 1;
     for (CettaIndex r = 1; r < len; r++) {
         if (items[r] != items[r - 1])
@@ -1233,8 +1275,26 @@ static bool native_cold_flat_candidates(
 
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out);
 
+bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
+                                          CettaIndex **out, CettaIndex *count) {
+    if (!s || !pattern || !out || !count || pattern->kind != ATOM_EXPR ||
+        atom_has_vars(pattern) || !space_atom_is_exact_indexable(pattern) ||
+        !space_match_ground_pattern_matches_by_identity(pattern))
+        return false;
+    /* The certificate and the occurrences read one state of the space. */
+    CETTA_SCOPED_SHARED_TRANSITION(exact_occurrences);
+    if (!space_exact_frontier_certified(s, pattern))
+        return false;
+    *count = space_exact_index_rows64(s, pattern, out);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_EXACT_OCCURRENCES);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES,
+                            *count);
+    return true;
+}
+
 /* Candidates while rows are marked: the match trie answers rows, so marked
- * rows are dropped and the rest renumbered to logical positions.  The cold
+ * rows are dropped and the rest renumbered to logical positions.  The exact
+ * index follows the marks and answers physical rows alike; the cold
  * and path selectors, which answer rows of their own snapshot, wait for the
  * marks to be settled. */
 static __attribute__((noinline)) CettaIndex native_candidates_marked(
@@ -1249,6 +1309,9 @@ static __attribute__((noinline)) CettaIndex native_candidates_marked(
         for (CettaIndex i = 0; i < live; i++) (*out)[i] = i;
         return live;
     }
+    CettaIndex exact_count = 0u;
+    if (space_match_native_exact_occurrences(s, pattern, out, &exact_count))
+        return space_marks_physical_to_logical(s, *out, exact_count);
     native_ensure_match_trie(s);
     if (!space_has_marks(s))
         return native_candidates(s, pattern, out);
@@ -1287,6 +1350,9 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
         for (CettaIndex i = 0; i < s->native.len; i++) (*out)[i] = i;
         return s->native.len;
     }
+    CettaIndex exact_count = 0u;
+    if (space_match_native_exact_occurrences(s, pattern, out, &exact_count))
+        return exact_count;
     CettaIndex cold_count = 0u;
     bool leads = space_path_index_leads(pattern);
     if (leads && space_path_index_may_select(pattern) &&
@@ -11231,8 +11297,14 @@ bool space_match_backend_ground_exact_exists_frontier(
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
         return false;
     }
-
     CETTA_SCOPED_SHARED_TRANSITION(candidate_frontier_observation);
+    /* The exact index's account of non-exact rows by head proves the
+     * frontier exact without reading it. */
+    if (space_exact_frontier_certified(s, pattern)) {
+        *out_found = space_contains_exact(s, pattern);
+        return true;
+    }
+
     CettaIndex *candidates = NULL;
     CettaIndex candidate_count = native_candidates(s, pattern, &candidates);
     bool frontier_exact = true;
@@ -11325,6 +11397,22 @@ void space_match_backend_print_inventory(FILE *out) {
 #endif
     fprintf(out, "\n");
     fprintf(out, "  native-candidate-exact diagnostic native exact-matcher lane\n");
+}
+
+bool space_match_candidates_expression_coordinates64(
+    Space *s, Atom **coordinates, CettaExprLen length,
+    CettaIndex **out, CettaIndex *count) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (!s || !out || !count || s->overlay_base ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    AtomExprBorrowedView view;
+    if (!atom_expr_borrowed_view_init(&view, coordinates, length))
+        return false;
+    space_linearize(s);
+    *count = native_candidates(s, &view.root, out);
+    return true;
 }
 
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out) {
@@ -11546,30 +11634,52 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
 }
 
 static bool atom_contains_he_promotable_number(const Atom *atom) {
-    if (!atom)
-        return false;
-    switch (atom->kind) {
-    case ATOM_GROUNDED:
-        return atom->ground.gkind == GV_INT ||
-               atom->ground.gkind == GV_FLOAT;
-    case ATOM_EXPR:
-        for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            if (atom_contains_he_promotable_number(atom->expr.elems[i]))
-                return true;
+    enum { INLINE_PENDING = 32u };
+    const Atom *inline_pending[INLINE_PENDING];
+    const Atom **pending = inline_pending;
+    size_t len = 0u, cap = INLINE_PENDING;
+    bool found = false;
+    if (atom)
+        pending[len++] = atom;
+    while (len && !found) {
+        const Atom *cur = pending[--len];
+        if (cur->kind == ATOM_GROUNDED) {
+            found = atom_is_number(cur);
+            continue;
         }
-        return false;
-    default:
-        return false;
+        if (cur->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex i = 0; i < cur->expr.len; i++) {
+            if (len == cap) {
+                if (cap > SIZE_MAX / 2u / sizeof(*pending))
+                    cetta_oom(SIZE_MAX);
+                cap *= 2u;
+                const Atom **grown = cetta_malloc(cap * sizeof(*pending));
+                memcpy(grown, pending, len * sizeof(*pending));
+                if (pending != inline_pending)
+                    free(pending);
+                pending = grown;
+            }
+            pending[len++] = cur->expr.elems[i];
+        }
     }
+    if (pending != inline_pending)
+        free(pending);
+    return found;
 }
 
-/* The syntactic exact index identifies one AtomId.  HE 1 and 1.0 are
- * different atoms that compare equal, so a number query cannot stop at
- * that index. */
+/* The syntactic exact index identifies one AtomId.  HE numbers compare by
+ * value across representations (1, 1.0, 2/2 and a big integer are different
+ * atoms that compare equal) and NaN differs from itself, so a number query
+ * cannot stop at that index. */
 static bool he_number_query_needs_promoted_candidates(const Atom *query) {
     return eval_current_language_id &&
            eval_current_language_id() == CETTA_LANGUAGE_HE &&
            atom_contains_he_promotable_number(query);
+}
+
+bool space_match_ground_pattern_matches_by_identity(const Atom *pattern) {
+    return !he_number_query_needs_promoted_candidates(pattern);
 }
 
 /* A module space answers its own atoms before the atoms of the modules it
@@ -11821,6 +11931,17 @@ bool space_query_is_connective(const Atom *pattern) {
     return pattern && pattern->kind == ATOM_EXPR && pattern->expr.len >= 1u &&
            (atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma) ||
             atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe));
+}
+
+/* A later binding may turn a query variable, or its head, into a query
+ * connective. It must be interpreted after that binding, not flattened as
+ * one atomic leg of an earlier match. */
+bool space_query_can_flatten(const Atom *pattern) {
+    if (!pattern || pattern->kind == ATOM_VAR ||
+        space_query_is_connective(pattern))
+        return false;
+    return pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        pattern->expr.elems[0]->kind != ATOM_VAR;
 }
 
 static bool match_query_push_seed_or_unit(BindingSet *out,

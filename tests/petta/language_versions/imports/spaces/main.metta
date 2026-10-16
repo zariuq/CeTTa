@@ -1,0 +1,7 @@
+!(add-atom &a (row earlier))
+!(bind! &b (new-space))
+!(import! &a payload)
+!(import! &a ./payload.metta)
+!(import! &b payload)
+!(collapse (match &a (row $x) $x))
+!(collapse (match &b (row $x) $x))

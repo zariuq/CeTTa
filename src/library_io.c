@@ -2,7 +2,7 @@
 
 #include "library_io.h"
 #include "http_worker.h"
-#include "library_proc.h"
+#include "library_proc_run.h"
 #include "proc_owner.h"
 #include "ipc_client.h"
 #include "library_cwp.h"

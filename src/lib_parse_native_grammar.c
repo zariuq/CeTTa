@@ -9,6 +9,13 @@
 
 #include "parser.h"
 
+#ifdef CETTA_PARSER_QUALIFICATION
+extern void cetta_parser_qualification_input_audit(void);
+#define PARSER_INPUT_AUDIT() cetta_parser_qualification_input_audit()
+#else
+#define PARSER_INPUT_AUDIT() ((void)0)
+#endif
+
 #ifndef CETTA_LP_NATIVE_GLL_DISABLE_INDEX
 #define CETTA_LP_NATIVE_GLL_DISABLE_INDEX 0
 #endif
@@ -8320,10 +8327,8 @@ bool cetta_lp_native_utf8_scalar_buffer_decode(
         .decoded_byte_len = (uint32_t)input_byte_len,
         .source_pass_count = 1u,
     };
-    if (!cetta_lp_native_utf8_scalar_view_validate(
-            &result.view, error_buf, error_buf_size)) {
-        goto done;
-    }
+    /* The decoder just established scalar validity and increasing source
+     * offsets. External views still cross the validating parse boundary. */
     cetta_lp_native_utf8_scalar_buffer_free(buffer);
     *buffer = result;
     memset(&result, 0, sizeof(result));
@@ -8466,6 +8471,7 @@ static bool utf8_terminals_validate(
     char *error_buf,
     size_t error_buf_size) {
     uint32_t index;
+    PARSER_INPUT_AUDIT();
     uint32_t other;
 
     if (terminal_len > 0u && !terminals) {
@@ -8538,6 +8544,8 @@ typedef struct {
     const CettaLpNativeUtf8Terminal *terminals;
     uint32_t terminal_len;
     const CettaLpNativeUtf8Lattice *lattice;
+    /* Only an owned parser/input pair may bypass declaration audits. */
+    bool immutable_binding;
 } CettaLpNativeParseInput;
 
 typedef struct {
@@ -8576,6 +8584,7 @@ bool cetta_lp_native_utf8_scalar_view_validate(
     char *error_buf,
     size_t error_buf_size) {
     uint32_t index;
+    PARSER_INPUT_AUDIT();
 
     if (!view ||
         !utf8_decode_receipt_valid(
@@ -8666,6 +8675,7 @@ bool cetta_lp_native_utf8_lattice_validate(
     size_t error_buf_size) {
     uint32_t position;
     uint32_t index;
+    PARSER_INPUT_AUDIT();
 
     if (!lattice ||
         (lattice->terminal_len > 0u && !lattice->terminal_ids) ||
@@ -8780,6 +8790,7 @@ bool cetta_lp_native_utf8_lattice_validate(
 static bool native_parse_input_terminal_declared(
     const CettaLpNativeParseInput *input,
     uint32_t terminal_id) {
+    PARSER_INPUT_AUDIT();
     if (input->kind == CETTA_LP_NATIVE_PARSE_INPUT_UTF8) {
         return utf8_terminal_find(
                    input->terminals, input->terminal_len, terminal_id) != NULL;
@@ -10551,6 +10562,866 @@ bool cetta_lp_native_gll_prepare(
     return true;
 }
 
+void cetta_lp_native_gll_program_init(CettaLpNativeGllProgram *program) {
+    if (program)
+        memset(program, 0, sizeof(*program));
+}
+
+void cetta_lp_native_gll_program_free(CettaLpNativeGllProgram *program) {
+    if (!program)
+        return;
+    if (program->productions)
+        for (uint32_t i = 0u; i < program->production_len; ++i)
+            free(program->productions[i].rhs);
+    free(program->productions);
+    free(program->nonterminals);
+    free(program->terminals);
+    free(program->nullable);
+    free(program->first);
+    free(program->follow);
+    memset(program, 0, sizeof(*program));
+}
+
+bool cetta_lp_native_gll_prepared_export_program(
+    const CettaLpNativeGllPrepared *prepared, CettaLpNativeGllProgram *out,
+    char *error_buf, size_t error_buf_size) {
+    const CettaLpNativeGllPreparedImpl *source =
+        prepared ? prepared->implementation : NULL;
+    CettaLpNativeGllProgram result = {0};
+    if (error_buf && error_buf_size)
+        error_buf[0] = '\0';
+    if (!source || !out || !source->full_prediction ||
+        source->terminals.len == UINT32_MAX) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "GLL export requires full-input preparation");
+        return false;
+    }
+    result.start_nonterminal = source->start_nt;
+    result.nonterminal_len = source->nonterminals.len;
+    result.terminal_len = source->terminals.len;
+    result.word_len = cetta_gslt_dense_bitset_word_count_v1(result.terminal_len + 1u);
+    size_t words = (size_t)result.nonterminal_len * result.word_len;
+    if (words > SIZE_MAX / sizeof(uint64_t)) goto failed;
+    result.productions = calloc(source->production_len, sizeof(*result.productions));
+    result.nonterminals = malloc((size_t)result.nonterminal_len * sizeof(uint32_t));
+    result.terminals = malloc((size_t)result.terminal_len * sizeof(uint32_t));
+    result.nullable = calloc(result.nonterminal_len, sizeof(uint8_t));
+    result.first = calloc(words, sizeof(uint64_t));
+    result.follow = calloc(words, sizeof(uint64_t));
+    if (!result.productions || !result.nonterminals || !result.nullable ||
+        !result.first || !result.follow || (result.terminal_len && !result.terminals)) goto failed;
+    memcpy(result.nonterminals, source->nonterminals.data,
+           (size_t)result.nonterminal_len * sizeof(uint32_t));
+    if (result.terminal_len)
+        memcpy(result.terminals, source->terminals.data,
+               (size_t)result.terminal_len * sizeof(uint32_t));
+    for (uint32_t i = 0u; i < source->production_len; ++i) {
+        result.production_len = i + 1u;
+        result.productions[i].lhs = source->productions[i].lhs;
+        if (!copy_rhs_symbol_array(&result.productions[i].rhs,
+                &result.productions[i].rhs_len, source->productions[i].rhs,
+                source->productions[i].rhs_len)) goto failed;
+    }
+    for (uint32_t i = 0u; i < result.nonterminal_len; ++i) {
+        result.nullable[i] = source->nullable[i];
+        memcpy(result.first + (size_t)i * result.word_len, source->first[i].words,
+               (size_t)result.word_len * sizeof(uint64_t));
+        memcpy(result.follow + (size_t)i * result.word_len, source->follow[i].words,
+               (size_t)result.word_len * sizeof(uint64_t));
+    }
+    cetta_lp_native_gll_program_free(out);
+    *out = result;
+    return true;
+failed:
+    cetta_lp_native_gll_program_free(&result);
+    slr_summary_set_error(error_buf, error_buf_size, "GLL program export allocation failed");
+    return false;
+}
+
+bool cetta_lp_native_gll_prepared_import_program(
+    CettaLpNativeGllPrepared *out, const CettaLpNativeGllProgram *program,
+    char *error_buf, size_t error_buf_size) {
+    CettaLpNativeGllPreparedImpl *result = NULL;
+    if (error_buf && error_buf_size)
+        error_buf[0] = '\0';
+    if (!out || !program || !program->production_len || !program->productions ||
+        !program->nonterminal_len || !program->nonterminals || !program->nullable ||
+        !program->first || !program->follow ||
+        program->terminal_len == UINT32_MAX ||
+        (program->terminal_len && !program->terminals) ||
+        program->word_len != cetta_gslt_dense_bitset_word_count_v1(program->terminal_len + 1u)) {
+        slr_summary_set_error(error_buf, error_buf_size, "malformed GLL program arrays");
+        return false;
+    }
+    result = calloc(1u, sizeof(*result));
+    if (!result) goto failed;
+    result->full_prediction = true;
+    result->start_nt = program->start_nonterminal;
+    result->productions = calloc(program->production_len, sizeof(*result->productions));
+    result->nonterminals.data = malloc((size_t)program->nonterminal_len * sizeof(uint32_t));
+    result->terminals.data = malloc((size_t)program->terminal_len * sizeof(uint32_t));
+    result->nullable = calloc(program->nonterminal_len, sizeof(bool));
+    result->first = calloc(program->nonterminal_len, sizeof(*result->first));
+    result->follow = calloc(program->nonterminal_len, sizeof(*result->follow));
+    if (!result->productions || !result->nonterminals.data || !result->nullable ||
+        !result->first || !result->follow || (program->terminal_len && !result->terminals.data)) goto failed;
+    result->nonterminals.len = result->nonterminals.cap = program->nonterminal_len;
+    result->terminals.len = result->terminals.cap = program->terminal_len;
+    memcpy(result->nonterminals.data, program->nonterminals,
+           (size_t)program->nonterminal_len * sizeof(uint32_t));
+    if (program->terminal_len)
+        memcpy(result->terminals.data, program->terminals,
+               (size_t)program->terminal_len * sizeof(uint32_t));
+    for (uint32_t i = 0u; i < program->production_len; ++i) {
+        result->production_len = i + 1u;
+        result->productions[i].lhs = program->productions[i].lhs;
+        if ((program->productions[i].rhs_len && !program->productions[i].rhs) ||
+            !copy_rhs_symbol_array(&result->productions[i].rhs, &result->productions[i].rhs_len,
+                program->productions[i].rhs, program->productions[i].rhs_len)) goto failed;
+    }
+    for (uint32_t i = 0u; i < program->nonterminal_len; ++i) {
+        result->nullable[i] = program->nullable[i] != 0u;
+        if (!bitset_init(&result->first[i], program->terminal_len + 1u) ||
+            !bitset_init(&result->follow[i], program->terminal_len + 1u)) goto failed;
+        memcpy(result->first[i].words, program->first + (size_t)i * program->word_len,
+               (size_t)program->word_len * sizeof(uint64_t));
+        memcpy(result->follow[i].words, program->follow + (size_t)i * program->word_len,
+               (size_t)program->word_len * sizeof(uint64_t));
+    }
+    result->max_rhs_len = gll_max_rhs_len(result->productions, result->production_len);
+    cetta_lp_native_gll_prepared_free(out);
+    out->implementation = result;
+    return true;
+failed:
+    if (result) {
+        gll_prepared_impl_free(result);
+        free(result);
+    }
+    slr_summary_set_error(error_buf, error_buf_size, "GLL program import allocation or shape failure");
+    return false;
+}
+
+bool cetta_lp_native_gll_prepared_check_prediction(
+    const CettaLpNativeGllPrepared *prepared, char *error, size_t error_size) {
+    const CettaLpNativeGllPreparedImpl *grammar = prepared ? prepared->implementation : NULL;
+    bool *nullable = NULL;
+    CettaLpNativeBitset *first = NULL, *follow = NULL;
+    bool ok = false;
+    PARSER_INPUT_AUDIT();
+    if (error && error_size) error[0] = '\0';
+    if (!grammar || !grammar->full_prediction || !grammar->productions ||
+        !grammar->production_len || !grammar->nonterminals.len ||
+        idvec_find(&grammar->nonterminals, grammar->start_nt) < 0) goto done;
+    for (uint32_t i = 0u; i < grammar->nonterminals.len; ++i)
+        for (uint32_t j = 0u; j < i; ++j)
+            if (grammar->nonterminals.data[i] == grammar->nonterminals.data[j]) goto done;
+    for (uint32_t i = 0u; i < grammar->terminals.len; ++i)
+        for (uint32_t j = 0u; j < i; ++j)
+            if (grammar->terminals.data[i] == grammar->terminals.data[j]) goto done;
+    for (uint32_t p = 0u; p < grammar->production_len; ++p) {
+        const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+        if (idvec_find(&grammar->nonterminals, prod->lhs) < 0 ||
+            (prod->rhs_len && !prod->rhs)) goto done;
+        for (uint32_t j = 0u; j < prod->rhs_len; ++j) {
+            const CettaLpNativeSymbol *symbol = &prod->rhs[j];
+            if (symbol->kind > CETTA_LP_NATIVE_SYMBOL_HLB ||
+                idvec_find(symbol->kind == CETTA_LP_NATIVE_SYMBOL_TM
+                    ? &grammar->terminals : &grammar->nonterminals, symbol->name) < 0) goto done;
+        }
+    }
+    if (!slr_compute_nullable_first_follow(grammar->productions, grammar->production_len,
+            &grammar->nonterminals, &grammar->terminals, grammar->start_nt,
+            &nullable, &first, &follow, error, error_size)) goto done;
+    for (uint32_t i = 0u; i < grammar->nonterminals.len; ++i) {
+        size_t size = (size_t)first[i].word_len * sizeof(uint64_t);
+        if (nullable[i] != grammar->nullable[i] ||
+            grammar->first[i].word_len != first[i].word_len ||
+            grammar->follow[i].word_len != follow[i].word_len ||
+            memcmp(first[i].words, grammar->first[i].words, size) ||
+            memcmp(follow[i].words, grammar->follow[i].words, size)) goto done;
+    }
+    ok = true;
+done:
+    for (uint32_t i = 0u; grammar && i < grammar->nonterminals.len; ++i) {
+        if (first) bitset_free(&first[i]);
+        if (follow) bitset_free(&follow[i]);
+    }
+    free(nullable); free(first); free(follow);
+    if (!ok && error && error_size && !error[0])
+        slr_summary_set_error(error, error_size, "stored grammar references or prediction sets are inconsistent");
+    return ok;
+}
+
+void cetta_lp_native_predictive_program_free(CettaLpNativePredictiveProgram *program) {
+    if (!program) return;
+    free(program->decisions);
+    free(program->rhs_offsets);
+    free(program->rhs_indices);
+    free(program->cycle_productions);
+    memset(program, 0, sizeof(*program));
+}
+
+static bool predictive_terminal_zero_width(
+    const CettaLpNativeGllPreparedImpl *grammar, uint32_t index,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    bool token_chain, uint32_t eof_terminal) {
+    if (token_chain) return grammar->terminals.data[index] == eof_terminal;
+    const CettaLpNativeUtf8Terminal *terminal = utf8_terminal_find(
+        terminals, terminal_len, grammar->terminals.data[index]);
+    return terminal && terminal->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_EOF;
+}
+
+static bool predictive_terminal_overlap(
+    const CettaLpNativeUtf8Terminal *left,
+    const CettaLpNativeUtf8Terminal *right, uint32_t *scalar) {
+    /* NULL denotes the synthetic end-of-input column. */
+    bool left_eof = !left || left->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_EOF;
+    bool right_eof = !right || right->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_EOF;
+    if (left_eof || right_eof) {
+        *scalar = UINT32_MAX;
+        return left_eof && right_eof;
+    }
+    CettaLpNativeUnicodeRange all = {0u, 0x10ffffu};
+    CettaLpNativeUnicodeRange lchar = {left->scalar, left->scalar};
+    CettaLpNativeUnicodeRange rchar = {right->scalar, right->scalar};
+    const CettaLpNativeUnicodeRange *lr = left->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_ANY
+        ? &all : left->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_SCALAR ? &lchar : left->ranges;
+    const CettaLpNativeUnicodeRange *rr = right->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_ANY
+        ? &all : right->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_SCALAR ? &rchar : right->ranges;
+    uint32_t ln = left->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES ? left->range_len : 1u;
+    uint32_t rn = right->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES ? right->range_len : 1u;
+    for (uint32_t l = 0u, r = 0u; l < ln && r < rn;) {
+        uint32_t low = lr[l].low > rr[r].low ? lr[l].low : rr[r].low;
+        uint32_t high = lr[l].high < rr[r].high ? lr[l].high : rr[r].high;
+        if (low >= 0xd800u && low <= 0xdfffu) low = 0xe000u;
+        if (low <= high) { *scalar = low; return true; }
+        if (lr[l].high < rr[r].high) ++l; else ++r;
+    }
+    return false;
+}
+
+typedef struct { uint32_t source, target, production; } PredictiveZeroEdge;
+
+static bool predictive_find_zero_cycle(
+    const CettaLpNativeGllPreparedImpl *grammar,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    CettaLpNativePredictiveProgram *program) {
+    uint32_t n = grammar->nonterminals.len;
+    uint8_t *zero = calloc(n, 1u), *colors = calloc(n, 1u);
+    uint32_t *offsets = calloc((size_t)n + 1u, sizeof(*offsets));
+    uint32_t *stack = malloc((size_t)n * sizeof(*stack));
+    uint32_t *next = malloc((size_t)n * sizeof(*next));
+    uint32_t *entered_by = malloc((size_t)n * sizeof(*entered_by));
+    PredictiveZeroEdge *edges = calloc(program->rhs_len ? program->rhs_len : 1u, sizeof(*edges));
+    PredictiveZeroEdge *ordered = NULL;
+    uint32_t edge_len = 0u;
+    bool ok = false, changed = true;
+    if (!zero || !colors || !offsets || !stack || !next || !entered_by || !edges) goto done;
+    for (uint32_t i = 0u; i < n; ++i) zero[i] = grammar->nullable[i];
+    while (changed) {
+        changed = false;
+        for (uint32_t p = 0u; p < grammar->production_len; ++p) {
+            const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+            int32_t lhs = idvec_find(&grammar->nonterminals, prod->lhs);
+            if (lhs < 0) goto done;
+            if (zero[lhs]) continue;
+            bool empty = true;
+            for (uint32_t j = 0u; empty && j < prod->rhs_len; ++j) {
+                uint32_t index = program->rhs_indices[program->rhs_offsets[p] + j];
+                empty = prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM
+                    ? predictive_terminal_zero_width(grammar, index, terminals, terminal_len,
+                        program->token_chain, program->eof_terminal_id) : zero[index];
+            }
+            if (empty) { zero[lhs] = 1u; changed = true; }
+        }
+    }
+    for (uint32_t p = 0u; p < grammar->production_len; ++p) {
+        const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+        int32_t lhs = idvec_find(&grammar->nonterminals, prod->lhs);
+        if (lhs < 0) goto done;
+        for (uint32_t j = 0u; j < prod->rhs_len; ++j) {
+            uint32_t index = program->rhs_indices[program->rhs_offsets[p] + j];
+            if (prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                if (!predictive_terminal_zero_width(grammar, index, terminals, terminal_len,
+                        program->token_chain, program->eof_terminal_id)) break;
+            } else {
+                if (edge_len >= program->rhs_len) goto done;
+                edges[edge_len++] = (PredictiveZeroEdge){(uint32_t)lhs, index, p};
+                ++offsets[lhs + 1u];
+                if (!zero[index]) break;
+            }
+        }
+    }
+    for (uint32_t i = 1u; i <= n; ++i) offsets[i] += offsets[i - 1u];
+    ordered = calloc(edge_len ? edge_len : 1u, sizeof(*ordered));
+    if (!ordered) goto done;
+    memcpy(next, offsets, (size_t)n * sizeof(*next));
+    for (uint32_t i = 0u; i < edge_len; ++i) ordered[next[edges[i].source]++] = edges[i];
+    for (uint32_t root = 0u; root < n; ++root) {
+        if (colors[root]) continue;
+        uint32_t depth = 1u;
+        stack[0] = root; next[0] = offsets[root]; colors[root] = 1u;
+        while (depth) {
+            uint32_t at = stack[depth - 1u];
+            if (next[depth - 1u] == offsets[at + 1u]) {
+                colors[at] = 2u; --depth; continue;
+            }
+            PredictiveZeroEdge edge = ordered[next[depth - 1u]++];
+            if (colors[edge.target] == 1u) {
+                uint32_t begin = 0u;
+                while (begin < depth && stack[begin] != edge.target) ++begin;
+                if (begin == depth) goto done;
+                program->cycle_len = depth - begin;
+                program->cycle_productions = malloc((size_t)program->cycle_len * sizeof(uint32_t));
+                if (!program->cycle_productions) goto done;
+                for (uint32_t i = begin + 1u; i < depth; ++i)
+                    program->cycle_productions[i - begin - 1u] = entered_by[i];
+                program->cycle_productions[program->cycle_len - 1u] = edge.production;
+                program->status = CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE;
+                program->conflict_nonterminal = grammar->nonterminals.data[edge.target];
+                ok = true; goto done;
+            }
+            if (!colors[edge.target]) {
+                if (depth == n) goto done;
+                stack[depth] = edge.target; next[depth] = offsets[edge.target];
+                entered_by[depth] = edge.production; colors[edge.target] = 1u; ++depth;
+            }
+        }
+    }
+    ok = true;
+done:
+    free(zero); free(colors); free(offsets); free(stack); free(next);
+    free(entered_by); free(edges); free(ordered);
+    return ok;
+}
+
+static int32_t predictive_select(
+    const CettaLpNativeGllPreparedImpl *grammar, uint32_t p,
+    CettaLpNativeBitset *select) {
+    const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+    int32_t lhs = idvec_find(&grammar->nonterminals, prod->lhs);
+    if (lhs < 0) return -1;
+    memset(select->words, 0, (size_t)select->word_len * sizeof(uint64_t));
+    bool nullable = true;
+    for (uint32_t j = 0u; nullable && j < prod->rhs_len; ++j) {
+        int32_t index = idvec_find(prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM
+            ? &grammar->terminals : &grammar->nonterminals, prod->rhs[j].name);
+        if (index < 0) return -1;
+        if (prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+            bitset_set(select, (uint32_t)index); nullable = false;
+        } else {
+            for (uint32_t w = 0u; w < select->word_len; ++w)
+                select->words[w] |= grammar->first[index].words[w];
+            nullable = grammar->nullable[index];
+        }
+    }
+    if (nullable)
+        for (uint32_t w = 0u; w < select->word_len; ++w)
+            select->words[w] |= grammar->follow[lhs].words[w];
+    return lhs;
+}
+
+static bool predictive_columns_overlap(
+    const CettaLpNativeGllPreparedImpl *grammar,
+    const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    uint32_t t, uint32_t u, uint32_t *scalar) {
+    *scalar = UINT32_MAX;
+    if (program->token_chain) {
+        bool teof = t == program->terminal_len || grammar->terminals.data[t] == program->eof_terminal_id;
+        bool ueof = u == program->terminal_len || grammar->terminals.data[u] == program->eof_terminal_id;
+        return t == u || (teof && ueof);
+    }
+    return predictive_terminal_overlap(
+        t == program->terminal_len ? NULL : utf8_terminal_find(terminals, terminal_len, grammar->terminals.data[t]),
+        u == program->terminal_len ? NULL : utf8_terminal_find(terminals, terminal_len, grammar->terminals.data[u]), scalar);
+}
+
+bool cetta_lp_native_predictive_build(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    bool token_chain, uint32_t eof_terminal_id,
+    CettaLpNativePredictiveProgram *out, char *error, size_t error_size) {
+    const CettaLpNativeGllPreparedImpl *grammar = prepared ? prepared->implementation : NULL;
+    CettaLpNativePredictiveProgram result = {0};
+    bool ok = false;
+    if (error && error_size) error[0] = '\0';
+    if (!grammar || !out || !grammar->full_prediction || grammar->terminals.len == UINT32_MAX ||
+        (!token_chain && !utf8_terminals_validate(terminals, terminal_len, error, error_size)))
+        return slr_summary_set_error(error, error_size, "bad predictive preparation arguments"), false;
+    result.token_chain = token_chain;
+    result.eof_terminal_id = eof_terminal_id;
+    result.nonterminal_len = grammar->nonterminals.len;
+    result.terminal_len = grammar->terminals.len;
+    result.production_len = grammar->production_len;
+    int32_t start = idvec_find(&grammar->nonterminals, grammar->start_nt);
+    if (start < 0) goto failed;
+    result.start_index = (uint32_t)start;
+    size_t cells = (size_t)result.nonterminal_len * ((size_t)result.terminal_len + 1u);
+    if (cells > SIZE_MAX / sizeof(uint32_t)) goto failed;
+    result.decisions = malloc((cells ? cells : 1u) * sizeof(uint32_t));
+    result.rhs_offsets = calloc((size_t)result.production_len + 1u, sizeof(uint32_t));
+    if (!result.decisions || !result.rhs_offsets) goto failed;
+    for (size_t i = 0u; i < cells; ++i) result.decisions[i] = UINT32_MAX;
+    for (uint32_t p = 0u; p < result.production_len; ++p) {
+        uint32_t len = grammar->productions[p].rhs_len;
+        if (len > UINT32_MAX - result.rhs_len) goto failed;
+        result.rhs_len += len; result.rhs_offsets[p + 1u] = result.rhs_len;
+    }
+    result.rhs_indices = malloc((result.rhs_len ? (size_t)result.rhs_len : 1u) * sizeof(uint32_t));
+    if (!result.rhs_indices) goto failed;
+    for (uint32_t p = 0u; p < result.production_len; ++p)
+        for (uint32_t j = 0u; j < grammar->productions[p].rhs_len; ++j) {
+            const CettaLpNativeSymbol *symbol = &grammar->productions[p].rhs[j];
+            int32_t index = idvec_find(symbol->kind == CETTA_LP_NATIVE_SYMBOL_TM
+                ? &grammar->terminals : &grammar->nonterminals, symbol->name);
+            if (index < 0) goto failed;
+            result.rhs_indices[result.rhs_offsets[p] + j] = (uint32_t)index;
+        }
+    if (!token_chain)
+        for (uint32_t t = 0u; t < grammar->terminals.len; ++t)
+            if (!utf8_terminal_find(terminals, terminal_len, grammar->terminals.data[t])) goto failed;
+    if (!predictive_find_zero_cycle(grammar, terminals, terminal_len, &result)) goto failed;
+    if (result.status == CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE) goto completed;
+    CettaLpNativeBitset select = {0};
+    if (!bitset_init(&select, result.terminal_len + 1u)) goto failed;
+    for (uint32_t p = 0u; p < result.production_len; ++p) {
+        const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+        int32_t lhs = predictive_select(grammar, p, &select);
+        if (lhs < 0) { bitset_free(&select); goto failed; }
+        uint32_t *row = result.decisions + (size_t)lhs * (result.terminal_len + 1u);
+        for (uint32_t t = 0u; t <= result.terminal_len; ++t) {
+            if (!bitset_test(&select, t)) continue;
+            for (uint32_t u = 0u; u <= result.terminal_len; ++u) {
+                if (row[u] == UINT32_MAX || row[u] == p) continue;
+                uint32_t scalar = UINT32_MAX;
+                bool overlap = predictive_columns_overlap(grammar, &result, terminals, terminal_len, t, u, &scalar);
+                if (!overlap) continue;
+                result.status = CETTA_LP_NATIVE_PREDICTIVE_SELECT_CONFLICT;
+                result.conflict_nonterminal = prod->lhs;
+                result.conflict_productions[0] = row[u]; result.conflict_productions[1] = p;
+                result.conflict_terminals[0] = u == result.terminal_len ? UINT32_MAX : grammar->terminals.data[u];
+                result.conflict_terminals[1] = t == result.terminal_len ? UINT32_MAX : grammar->terminals.data[t];
+                result.conflict_scalar = scalar;
+                bitset_free(&select); goto completed;
+            }
+            row[t] = p;
+        }
+    }
+    bitset_free(&select);
+completed:
+    cetta_lp_native_predictive_program_free(out);
+    *out = result; memset(&result, 0, sizeof(result)); ok = true;
+    goto done;
+failed:
+    slr_summary_set_error(error, error_size, "predictive preparation allocation or grammar binding failed");
+done:
+    cetta_lp_native_predictive_program_free(&result);
+    return ok;
+}
+
+static Atom *predictive_u32_vector(Arena *arena, const uint32_t *values, uint32_t length) {
+    Atom **items = length ? arena_alloc(arena, (size_t)length * sizeof(*items)) : NULL;
+    if (length && (!items || !values)) return NULL;
+    for (uint32_t i = 0u; i < length; ++i) {
+        items[i] = atom_int(arena, values[i]);
+        if (!items[i]) return NULL;
+    }
+    return atom_expr(arena, items, length);
+}
+
+Atom *cetta_lp_native_predictive_export_storage(
+    Arena *arena, const CettaLpNativePredictiveProgram *program) {
+    if (!arena || !program || program->terminal_len == UINT32_MAX) return NULL;
+    uint64_t cells = (uint64_t)program->nonterminal_len * (program->terminal_len + 1u);
+    if (cells > UINT32_MAX || program->production_len == UINT32_MAX) return NULL;
+    Atom *args[] = {atom_symbol(arena, "PredictiveProgramStoredV1"), atom_int(arena, 1u),
+        atom_int(arena, program->status), atom_int(arena, program->token_chain),
+        atom_int(arena, program->eof_terminal_id), atom_int(arena, program->nonterminal_len),
+        atom_int(arena, program->terminal_len), atom_int(arena, program->production_len),
+        atom_int(arena, program->start_index), predictive_u32_vector(arena, program->decisions, (uint32_t)cells),
+        predictive_u32_vector(arena, program->rhs_offsets, program->production_len + 1u),
+        predictive_u32_vector(arena, program->rhs_indices, program->rhs_len),
+        atom_int(arena, program->conflict_nonterminal),
+        predictive_u32_vector(arena, program->conflict_productions, 2u),
+        predictive_u32_vector(arena, program->conflict_terminals, 2u),
+        atom_int(arena, program->conflict_scalar),
+        predictive_u32_vector(arena, program->cycle_productions, program->cycle_len)};
+    for (uint32_t i = 0u; i < sizeof(args) / sizeof(*args); ++i) if (!args[i]) return NULL;
+    return atom_expr(arena, args, sizeof(args) / sizeof(*args));
+}
+
+static bool predictive_u32(const Atom *value, uint32_t *out) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT ||
+        value->ground.ival < 0 || value->ground.ival > UINT32_MAX) return false;
+    *out = (uint32_t)value->ground.ival;
+    return true;
+}
+
+static bool predictive_read_vector(const Atom *value, uint32_t **out, uint32_t length) {
+    if (!value || value->kind != ATOM_EXPR || value->expr.len != length) return false;
+    uint32_t *result = malloc((length ? (size_t)length : 1u) * sizeof(uint32_t));
+    if (!result) return false;
+    for (uint32_t i = 0u; i < length; ++i)
+        if (!predictive_u32(value->expr.elems[i], &result[i])) { free(result); return false; }
+    *out = result; return true;
+}
+
+bool cetta_lp_native_predictive_import_storage(
+    CettaLpNativePredictiveProgram *out, const Atom *value,
+    const CettaLpNativeGllProgram *grammar, char *error, size_t error_size) {
+    CettaLpNativePredictiveProgram result = {0};
+    uint32_t version, status, chain;
+    if (error && error_size) error[0] = '\0';
+    if (!out || !grammar || !grammar->productions || !grammar->nonterminals ||
+        (grammar->terminal_len && !grammar->terminals) || !value || value->kind != ATOM_EXPR ||
+        value->expr.len != 17u || !atom_is_symbol(value->expr.elems[0], "PredictiveProgramStoredV1") ||
+        !predictive_u32(value->expr.elems[1], &version) || version != 1u ||
+        !predictive_u32(value->expr.elems[2], &status) || status > CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE ||
+        !predictive_u32(value->expr.elems[3], &chain) || chain > 1u ||
+        !predictive_u32(value->expr.elems[4], &result.eof_terminal_id) ||
+        !predictive_u32(value->expr.elems[5], &result.nonterminal_len) ||
+        !predictive_u32(value->expr.elems[6], &result.terminal_len) ||
+        !predictive_u32(value->expr.elems[7], &result.production_len) ||
+        !predictive_u32(value->expr.elems[8], &result.start_index) ||
+        !predictive_u32(value->expr.elems[12], &result.conflict_nonterminal) ||
+        !predictive_u32(value->expr.elems[15], &result.conflict_scalar) ||
+        result.nonterminal_len != grammar->nonterminal_len ||
+        result.terminal_len != grammar->terminal_len || result.terminal_len == UINT32_MAX ||
+        result.production_len != grammar->production_len || result.production_len == UINT32_MAX ||
+        result.start_index >= result.nonterminal_len ||
+        grammar->nonterminals[result.start_index] != grammar->start_nonterminal) goto failed;
+    result.status = (CettaLpNativePredictiveStatus)status; result.token_chain = chain;
+    uint64_t cells = (uint64_t)result.nonterminal_len * (result.terminal_len + 1u);
+    if (cells > UINT32_MAX || !predictive_read_vector(value->expr.elems[9], &result.decisions, (uint32_t)cells) ||
+        !predictive_read_vector(value->expr.elems[10], &result.rhs_offsets, result.production_len + 1u) ||
+        result.rhs_offsets[0] != 0u) goto failed;
+    result.rhs_len = result.rhs_offsets[result.production_len];
+    if (!predictive_read_vector(value->expr.elems[11], &result.rhs_indices, result.rhs_len)) goto failed;
+    for (uint32_t p = 0u; p < result.production_len; ++p) {
+        const CettaLpNativeProduction *prod = &grammar->productions[p];
+        uint32_t begin = result.rhs_offsets[p], end = result.rhs_offsets[p + 1u];
+        if (end < begin || end > result.rhs_len || end - begin != prod->rhs_len ||
+            (prod->rhs_len && !prod->rhs)) goto failed;
+        for (uint32_t j = 0u; j < prod->rhs_len; ++j) {
+            uint32_t index = result.rhs_indices[begin + j];
+            if (prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                if (index >= result.terminal_len || grammar->terminals[index] != prod->rhs[j].name) goto failed;
+            } else if (index >= result.nonterminal_len || grammar->nonterminals[index] != prod->rhs[j].name)
+                goto failed;
+        }
+    }
+    for (uint32_t nt = 0u; nt < result.nonterminal_len; ++nt)
+        for (uint32_t t = 0u; t <= result.terminal_len; ++t) {
+            uint32_t p = result.decisions[(size_t)nt * (result.terminal_len + 1u) + t];
+            if (p != UINT32_MAX && (p >= result.production_len ||
+                grammar->productions[p].lhs != grammar->nonterminals[nt])) goto failed;
+        }
+    uint32_t *pair = NULL;
+    if (!predictive_read_vector(value->expr.elems[13], &pair, 2u)) goto failed;
+    memcpy(result.conflict_productions, pair, 2u * sizeof(uint32_t)); free(pair); pair = NULL;
+    if (!predictive_read_vector(value->expr.elems[14], &pair, 2u)) goto failed;
+    memcpy(result.conflict_terminals, pair, 2u * sizeof(uint32_t)); free(pair);
+    if (!value->expr.elems[16] || value->expr.elems[16]->kind != ATOM_EXPR) goto failed;
+    result.cycle_len = value->expr.elems[16]->expr.len;
+    if (result.cycle_len > result.nonterminal_len ||
+        !predictive_read_vector(value->expr.elems[16], &result.cycle_productions, result.cycle_len)) goto failed;
+    for (uint32_t i = 0u; i < result.cycle_len; ++i)
+        if (result.cycle_productions[i] >= result.production_len) goto failed;
+    if ((status == CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE) != (result.cycle_len != 0u)) goto failed;
+    if (status == CETTA_LP_NATIVE_PREDICTIVE_SELECT_CONFLICT &&
+        (result.conflict_productions[0] >= result.production_len ||
+         result.conflict_productions[1] >= result.production_len ||
+         result.conflict_productions[0] == result.conflict_productions[1])) goto failed;
+    cetta_lp_native_predictive_program_free(out); *out = result; return true;
+failed:
+    cetta_lp_native_predictive_program_free(&result);
+    slr_summary_set_error(error, error_size, "incompatible stored predictive program");
+    return false;
+}
+
+bool cetta_lp_native_predictive_check(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    char *error, size_t error_size) {
+    const CettaLpNativeGllPreparedImpl *grammar = prepared ? prepared->implementation : NULL;
+    CettaLpNativePredictiveProgram cycle = {0};
+    CettaLpNativeBitset select = {0};
+    bool ok = false;
+    PARSER_INPUT_AUDIT();
+    if (!program || !cetta_lp_native_gll_prepared_check_prediction(prepared, error, error_size) ||
+        program->nonterminal_len != grammar->nonterminals.len ||
+        program->terminal_len != grammar->terminals.len ||
+        program->production_len != grammar->production_len ||
+        program->start_index >= program->nonterminal_len ||
+        grammar->nonterminals.data[program->start_index] != grammar->start_nt ||
+        !program->decisions || !program->rhs_offsets ||
+        (program->rhs_len && !program->rhs_indices) || program->rhs_offsets[0] ||
+        program->rhs_offsets[program->production_len] != program->rhs_len ||
+        (!program->token_chain && !utf8_terminals_validate(terminals, terminal_len, error, error_size))) goto done;
+    if (!program->token_chain)
+        for (uint32_t t = 0u; t < program->terminal_len; ++t)
+            if (!utf8_terminal_find(terminals, terminal_len, grammar->terminals.data[t])) goto done;
+    for (uint32_t p = 0u; p < program->production_len; ++p) {
+        const CettaLpNativeSlrProduction *prod = &grammar->productions[p];
+        uint32_t begin = program->rhs_offsets[p], end = program->rhs_offsets[p + 1u];
+        if (end < begin || end > program->rhs_len || end - begin != prod->rhs_len) goto done;
+        for (uint32_t j = 0u; j < prod->rhs_len; ++j) {
+            int32_t index = idvec_find(prod->rhs[j].kind == CETTA_LP_NATIVE_SYMBOL_TM
+                ? &grammar->terminals : &grammar->nonterminals, prod->rhs[j].name);
+            if (index < 0 || (uint32_t)index != program->rhs_indices[begin + j]) goto done;
+        }
+    }
+    cycle = *program;
+    cycle.status = CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE;
+    cycle.cycle_productions = NULL; cycle.cycle_len = 0u;
+    if (!predictive_find_zero_cycle(grammar, terminals, terminal_len, &cycle)) goto done;
+    if (cycle.status == CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE) {
+        ok = program->status == cycle.status && program->cycle_len == cycle.cycle_len &&
+            program->conflict_nonterminal == cycle.conflict_nonterminal &&
+            program->cycle_productions && !memcmp(program->cycle_productions,
+                cycle.cycle_productions, (size_t)cycle.cycle_len * sizeof(uint32_t));
+        goto done;
+    }
+    if (program->status == CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE ||
+        !bitset_init(&select, program->terminal_len + 1u)) goto done;
+    if (program->status == CETTA_LP_NATIVE_PREDICTIVE_SELECT_CONFLICT) {
+        uint32_t columns[2];
+        for (uint32_t i = 0u; i < 2u; ++i) {
+            uint32_t p = program->conflict_productions[i], t = program->conflict_terminals[i];
+            if (p >= program->production_len || grammar->productions[p].lhs != program->conflict_nonterminal ||
+                predictive_select(grammar, p, &select) < 0) goto done;
+            int32_t index = t == UINT32_MAX ? (int32_t)program->terminal_len : idvec_find(&grammar->terminals, t);
+            if (index < 0 || !bitset_test(&select, (uint32_t)index)) goto done;
+            columns[i] = (uint32_t)index;
+        }
+        uint32_t scalar;
+        ok = program->conflict_productions[0] != program->conflict_productions[1] &&
+            predictive_columns_overlap(grammar, program, terminals, terminal_len,
+                columns[0], columns[1], &scalar) && scalar == program->conflict_scalar;
+        goto done;
+    }
+    if (program->status != CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE || program->cycle_len) goto done;
+    /* Check both coverage and absence of unsolicited decisions. No decision
+     * table is reconstructed or installed by this audit. */
+    for (uint32_t p = 0u; p < program->production_len; ++p) {
+        int32_t lhs = predictive_select(grammar, p, &select);
+        if (lhs < 0) goto done;
+        const uint32_t *row = program->decisions + (size_t)lhs * (program->terminal_len + 1u);
+        for (uint32_t t = 0u; t <= program->terminal_len; ++t)
+            if (bitset_test(&select, t) != (row[t] == p)) goto done;
+    }
+    for (uint32_t nt = 0u; nt < program->nonterminal_len; ++nt) {
+        const uint32_t *row = program->decisions + (size_t)nt * (program->terminal_len + 1u);
+        for (uint32_t t = 0u; t <= program->terminal_len; ++t) {
+            if (row[t] == UINT32_MAX) continue;
+            if (row[t] >= program->production_len || grammar->productions[row[t]].lhs != grammar->nonterminals.data[nt])
+                goto done;
+            for (uint32_t u = 0u; u < t; ++u) {
+                uint32_t scalar;
+                if (row[u] != UINT32_MAX && row[u] != row[t] &&
+                    predictive_columns_overlap(grammar, program, terminals, terminal_len, t, u, &scalar)) goto done;
+            }
+        }
+    }
+    ok = true;
+done:
+    free(cycle.cycle_productions);
+    bitset_free(&select);
+    if (!ok && error && error_size && !error[0])
+        slr_summary_set_error(error, error_size, "stored predictive decisions or refusal witness are inconsistent");
+    return ok;
+}
+
+static bool predictive_choose(
+    const CettaLpNativeGllPreparedImpl *grammar,
+    const CettaLpNativePredictiveProgram *program, uint32_t nt,
+    CettaLpNativeParseInput *input, uint32_t position,
+    uint32_t *production, CettaLpNativeU32Vec *expected,
+    char *error, size_t error_size) {
+    const uint32_t *row = program->decisions + (size_t)nt * (program->terminal_len + 1u);
+    *production = UINT32_MAX;
+    for (uint32_t t = 0u; t <= program->terminal_len; ++t) {
+        if (row[t] == UINT32_MAX) continue;
+        bool matched = false;
+        if (t == program->terminal_len) {
+            if (!native_parse_input_at_end(input, position, &matched, error, error_size)) return false;
+        } else {
+            CettaLpNativeInputMatchIter iter;
+            CettaLpNativeInputMatch match;
+            if (!native_parse_input_match_begin(input, grammar->terminals.data[t], position,
+                    &iter, error, error_size)) return false;
+            matched = native_parse_input_match_next(input, &iter, &match);
+        }
+        if (matched) {
+            if (*production != UINT32_MAX && *production != row[t]) {
+                slr_summary_set_error(error, error_size, "predictive input violates the compiled decision contract");
+                return false;
+            }
+            *production = row[t];
+        }
+    }
+    if (*production == UINT32_MAX)
+        for (uint32_t t = 0u; t < program->terminal_len; ++t)
+            if (row[t] != UINT32_MAX && !u32vec_push_unique(expected, grammar->terminals.data[t])) return false;
+    return true;
+}
+
+typedef struct { uint32_t production, dot, prefix, start; } PredictiveFrame;
+
+static bool predictive_frame_push(
+    PredictiveFrame **frames, uint32_t *length, uint32_t *capacity,
+    uint32_t production, uint32_t position) {
+    if (*length == *capacity) {
+        uint32_t next = *capacity ? *capacity * 2u : 32u;
+        if (next < *capacity || (size_t)next > SIZE_MAX / sizeof(**frames)) return false;
+        PredictiveFrame *grown = realloc(*frames, (size_t)next * sizeof(**frames));
+        if (!grown) return false;
+        *frames = grown; *capacity = next;
+    }
+    (*frames)[(*length)++] = (PredictiveFrame){production, 0u, CETTA_LP_NATIVE_NODE_NONE, position};
+    return true;
+}
+
+static bool predictive_parse_input(
+    const CettaLpNativeGllPreparedImpl *grammar,
+    const CettaLpNativePredictiveProgram *program, CettaLpNativeParseInput *input,
+    uint32_t work_limit, CettaLpNativeUtf8Forest *out, char *error, size_t error_size) {
+    CettaLpNativeGllNodeVec nodes = {0};
+    CettaLpNativeU32Vec roots = {0}, expected = {0};
+    CettaLpNativeUtf8Forest result = {0};
+    PredictiveFrame *frames = NULL;
+    uint32_t length = 0u, capacity = 0u, position = 0u, steps = 0u, peak = 0u;
+    bool ok = false;
+    if (error && error_size) error[0] = '\0';
+    if (!grammar || !program || !out || !work_limit ||
+        program->status != CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE ||
+        !program->decisions || !program->rhs_offsets || !program->rhs_indices ||
+        program->production_len != grammar->production_len ||
+        program->nonterminal_len != grammar->nonterminals.len ||
+        program->terminal_len != grammar->terminals.len ||
+        program->start_index >= program->nonterminal_len) {
+        slr_summary_set_error(error, error_size, "bad or ineligible predictive program binding");
+        goto done;
+    }
+    /* Decode once, then every position and byte span is available. */
+    if (!native_parse_input_finish(input, error, error_size)) goto done;
+    uint32_t production = UINT32_MAX;
+    if (!predictive_choose(grammar, program, program->start_index, input, position,
+            &production, &expected, error, error_size)) goto done;
+    if (production == UINT32_MAX) goto finish;
+    if (!predictive_frame_push(&frames, &length, &capacity, production, position)) goto allocation;
+    while (length) {
+        if (steps == work_limit) {
+            result.outcome = CETTA_LP_NATIVE_UTF8_FOREST_RESOURCE_LIMIT; goto finish;
+        }
+        ++steps;
+        if (length > peak) peak = length;
+        PredictiveFrame *frame = &frames[length - 1u];
+        if (frame->production >= grammar->production_len) goto binding;
+        CettaLpNativeSlrProduction *prod = &grammar->productions[frame->production];
+        uint32_t child = CETTA_LP_NATIVE_NODE_NONE;
+        if (frame->dot == prod->rhs_len) {
+            child = frame->prefix;
+            if (!prod->rhs_len) {
+                int32_t symbol = gll_node_get_sym(&nodes, prod->lhs, position, position);
+                int32_t epsilon = gll_node_get_eps(&nodes, position);
+                if (symbol < 0 || epsilon < 0 || !gll_node_push_packed_unique(&nodes,
+                        (uint32_t)symbol, CETTA_LP_NATIVE_NODE_NONE, (uint32_t)epsilon,
+                        position, (int32_t)frame->production)) goto allocation;
+                child = (uint32_t)symbol;
+            }
+            --length;
+            if (!length) {
+                if (position == native_parse_input_scalar_len(input) && !u32vec_push_unique(&roots, child))
+                    goto allocation;
+                goto finish;
+            }
+            frame = &frames[length - 1u];
+        } else {
+            CettaLpNativeSymbol symbol = prod->rhs[frame->dot];
+            if (symbol.kind != CETTA_LP_NATIVE_SYMBOL_TM) {
+                uint32_t nt = program->rhs_indices[program->rhs_offsets[frame->production] + frame->dot];
+                if (nt >= program->nonterminal_len) goto binding;
+                if (!predictive_choose(grammar, program, nt, input, position, &production,
+                        &expected, error, error_size)) goto done;
+                if (production == UINT32_MAX) goto finish;
+                if (!predictive_frame_push(&frames, &length, &capacity, production, position)) goto allocation;
+                continue;
+            }
+            CettaLpNativeInputMatchIter iter;
+            CettaLpNativeInputMatch match, extra;
+            if (!native_parse_input_match_begin(input, symbol.name, position, &iter, error, error_size)) goto done;
+            if (!native_parse_input_match_next(input, &iter, &match)) {
+                if (!u32vec_push_unique(&expected, symbol.name)) goto allocation;
+                goto finish;
+            }
+            if (native_parse_input_match_next(input, &iter, &extra)) goto binding;
+            int32_t terminal = gll_node_get_term_value(&nodes, symbol.name, position, match.right,
+                match.value_kind, match.value);
+            if (terminal < 0) goto allocation;
+            child = (uint32_t)terminal;
+            position = match.right;
+        }
+        int32_t parent = gll_sppf_get_node(&nodes, grammar->productions, grammar->production_len,
+            grammar->start_nt, (int32_t)frame->production, frame->dot + 1u,
+            frame->prefix, child, error, error_size);
+        if (parent < 0) goto done;
+        frame->prefix = (uint32_t)parent; ++frame->dot;
+    }
+finish:
+    if (!native_forest_copy_input(&result, input, error, error_size) ||
+        !native_forest_export(&result, input, &nodes, &roots, error, error_size)) goto done;
+    if (expected.len > 1u) qsort(expected.data, expected.len, sizeof(uint32_t), utf8_u32_compare);
+    result.expected_terminal_ids = expected.data; result.expected_terminal_len = expected.len;
+    expected.data = NULL; expected.len = 0u;
+    result.farthest_scalar = position;
+    result.farthest_byte = native_parse_input_byte_offset(input, position);
+    result.work_item_len = steps; result.stack_node_len = peak;
+    cetta_lp_native_utf8_forest_free(out); *out = result; memset(&result, 0, sizeof(result));
+    ok = true; goto done;
+allocation:
+    slr_summary_set_error(error, error_size, "predictive execution allocation failed"); goto done;
+binding:
+    slr_summary_set_error(error, error_size, "predictive input or stored program violates its binding");
+done:
+    cetta_lp_native_utf8_forest_free(&result); gll_nodevec_free(&nodes);
+    free(roots.data); free(expected.data); free(frames);
+    return ok;
+}
+
+bool cetta_lp_native_predictive_parse_owned_utf8_forest(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t work_limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t error_size) {
+    if (!program || program->token_chain || length > UINT32_MAX || (length && !bytes)) {
+        slr_summary_set_error(error, error_size, "bad predictive scalar input"); return false;
+    }
+    CettaLpNativeUtf8Input decoded;
+    utf8_input_init(&decoded, bytes, length);
+    CettaLpNativeParseInput input = {.kind = CETTA_LP_NATIVE_PARSE_INPUT_UTF8,
+        .utf8 = &decoded, .terminals = terminals, .terminal_len = terminal_len, .immutable_binding = true};
+    bool ok = predictive_parse_input(prepared ? prepared->implementation : NULL, program,
+        &input, work_limit, out, error, error_size);
+    utf8_input_free(&decoded);
+    return ok;
+}
+
+bool cetta_lp_native_predictive_parse_owned_lattice_forest(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativePredictiveProgram *program,
+    const CettaLpNativeUtf8Lattice *lattice, uint32_t work_limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t error_size) {
+    if (!program || !program->token_chain || !lattice) {
+        slr_summary_set_error(error, error_size, "bad predictive token-chain input"); return false;
+    }
+    CettaLpNativeParseInput input = {.kind = CETTA_LP_NATIVE_PARSE_INPUT_LATTICE,
+        .lattice = lattice, .immutable_binding = true};
+    return predictive_parse_input(prepared ? prepared->implementation : NULL, program,
+        &input, work_limit, out, error, error_size);
+}
+
 static bool native_gll_parse_input_forest(
     const CettaLpNativeGllPreparedImpl *prepared,
     CettaLpNativeParseInput *input,
@@ -10604,7 +11475,7 @@ static bool native_gll_parse_input_forest(
             lhs_indices[prod_idx] =
                 idvec_find(&nonterminals, productions[prod_idx].lhs);
     }
-    for (prod_idx = 0u; prod_idx < production_len; prod_idx++) {
+    for (prod_idx = 0u; !input->immutable_binding && prod_idx < production_len; prod_idx++) {
         uint32_t item_idx;
         for (item_idx = 0u; item_idx < productions[prod_idx].rhs_len;
              item_idx++) {
@@ -11035,12 +11906,13 @@ bool cetta_lp_native_gll_parse_utf8_forest_complete(
         out, error_buf, error_buf_size);
 }
 
-bool cetta_lp_native_gll_prepared_parse_utf8_forest_complete(
+static bool native_gll_prepared_parse_utf8_forest_complete(
     const CettaLpNativeGllPrepared *prepared,
     const CettaLpNativeUtf8Terminal *terminals,
     uint32_t terminal_len,
     const uint8_t *input_bytes,
     size_t input_byte_len,
+    bool immutable_binding,
     uint32_t descriptor_limit,
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
@@ -11061,7 +11933,7 @@ bool cetta_lp_native_gll_prepared_parse_utf8_forest_complete(
             "bad prepared native GLL UTF-8 arguments");
         return false;
     }
-    if (!utf8_terminals_validate(
+    if (!immutable_binding && !utf8_terminals_validate(
             terminals, terminal_len, error_buf, error_buf_size)) {
         return false;
     }
@@ -11072,12 +11944,31 @@ bool cetta_lp_native_gll_prepared_parse_utf8_forest_complete(
         .terminals = terminals,
         .terminal_len = terminal_len,
         .lattice = NULL,
+        .immutable_binding = immutable_binding,
     };
     ok = native_gll_parse_input_forest(
         implementation, &input, 0u, descriptor_limit,
         out, error_buf, error_buf_size);
     utf8_input_free(&decoded);
     return ok;
+}
+
+bool cetta_lp_native_gll_prepared_parse_utf8_forest_complete(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_forest_complete(prepared, terminals,
+        terminal_len, bytes, length, false, limit, out, error, size);
+}
+
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_forest_complete(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_forest_complete(prepared, terminals,
+        terminal_len, bytes, length, true, limit, out, error, size);
 }
 
 static bool native_gll_parse_utf8_scalar_view_forest_policy(
@@ -11163,11 +12054,12 @@ bool cetta_lp_native_gll_parse_utf8_scalar_view_forest_complete(
         descriptor_limit, out, error_buf, error_buf_size);
 }
 
-bool cetta_lp_native_gll_prepared_parse_utf8_scalar_view_forest_complete(
+static bool native_gll_prepared_parse_utf8_scalar_view_forest_complete(
     const CettaLpNativeGllPrepared *prepared,
     const CettaLpNativeUtf8Terminal *terminals,
     uint32_t terminal_len,
     const CettaLpNativeUtf8ScalarView *view,
+    bool immutable_binding,
     uint32_t descriptor_limit,
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
@@ -11181,8 +12073,8 @@ bool cetta_lp_native_gll_prepared_parse_utf8_scalar_view_forest_complete(
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (!implementation || !out || descriptor_limit == 0u ||
-        !cetta_lp_native_utf8_scalar_view_validate(
-            view, error_buf, error_buf_size)) {
+        !view || (!immutable_binding && !cetta_lp_native_utf8_scalar_view_validate(
+            view, error_buf, error_buf_size))) {
         if (!error_buf || error_buf[0] == '\0') {
             slr_summary_set_error(
                 error_buf, error_buf_size,
@@ -11190,7 +12082,7 @@ bool cetta_lp_native_gll_prepared_parse_utf8_scalar_view_forest_complete(
         }
         return false;
     }
-    if (!utf8_terminals_validate(
+    if (!immutable_binding && !utf8_terminals_validate(
             terminals, terminal_len, error_buf, error_buf_size)) {
         return false;
     }
@@ -11201,12 +12093,31 @@ bool cetta_lp_native_gll_prepared_parse_utf8_scalar_view_forest_complete(
         .terminals = terminals,
         .terminal_len = terminal_len,
         .lattice = NULL,
+        .immutable_binding = immutable_binding,
     };
     ok = native_gll_parse_input_forest(
         implementation, &input, 0u, descriptor_limit,
         out, error_buf, error_buf_size);
     utf8_input_free(&decoded);
     return ok;
+}
+
+bool cetta_lp_native_gll_prepared_parse_utf8_scalar_view_forest_complete(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const CettaLpNativeUtf8ScalarView *view, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_scalar_view_forest_complete(prepared,
+        terminals, terminal_len, view, false, limit, out, error, size);
+}
+
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_scalar_view_forest_complete(
+    const CettaLpNativeGllPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const CettaLpNativeUtf8ScalarView *view, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_scalar_view_forest_complete(prepared,
+        terminals, terminal_len, view, true, limit, out, error, size);
 }
 
 bool cetta_lp_native_gll_parse_utf8_lattice_forest(
@@ -11308,10 +12219,11 @@ bool cetta_lp_native_gll_parse_utf8_lattice_forest_from_complete(
         descriptor_limit, out, error_buf, error_buf_size);
 }
 
-bool cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
+static bool native_gll_prepared_parse_utf8_lattice_forest_from_complete(
     const CettaLpNativeGllPrepared *prepared,
     const CettaLpNativeUtf8Lattice *lattice,
     uint32_t start_scalar,
+    bool immutable_binding,
     uint32_t descriptor_limit,
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
@@ -11324,8 +12236,8 @@ bool cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
         error_buf[0] = '\0';
     if (!implementation || !out || descriptor_limit == 0u || !lattice ||
         start_scalar > lattice->scalar_len ||
-        !cetta_lp_native_utf8_lattice_validate(
-            lattice, error_buf, error_buf_size)) {
+        (!immutable_binding && !cetta_lp_native_utf8_lattice_validate(
+            lattice, error_buf, error_buf_size))) {
         if (!error_buf || error_buf[0] == '\0') {
             slr_summary_set_error(
                 error_buf, error_buf_size,
@@ -11339,10 +12251,27 @@ bool cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
         .terminals = NULL,
         .terminal_len = 0u,
         .lattice = lattice,
+        .immutable_binding = immutable_binding,
     };
     return native_gll_parse_input_forest(
         implementation, &input, start_scalar, descriptor_limit,
         out, error_buf, error_buf_size);
+}
+
+bool cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start, uint32_t limit, CettaLpNativeUtf8Forest *out,
+    char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_lattice_forest_from_complete(prepared,
+        lattice, start, false, limit, out, error, size);
+}
+
+bool cetta_lp_native_gll_prepared_parse_owned_utf8_lattice_forest_from_complete(
+    const CettaLpNativeGllPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start, uint32_t limit, CettaLpNativeUtf8Forest *out,
+    char *error, size_t size) {
+    return native_gll_prepared_parse_utf8_lattice_forest_from_complete(prepared,
+        lattice, start, true, limit, out, error, size);
 }
 
 typedef struct {
@@ -11565,6 +12494,125 @@ bool cetta_lp_native_glr_prepare(
     cetta_lp_native_glr_prepared_free(prepared);
     prepared->implementation = implementation;
     return true;
+}
+
+bool cetta_lp_native_glr_prepared_export_program(
+    const CettaLpNativeGlrPrepared *prepared, CettaLpNativeSlrProgram *out,
+    char *error_buf, size_t error_buf_size) {
+    const CettaLpNativeGlrPreparedImpl *source = prepared ? prepared->implementation : NULL;
+    if (!source || !out) {
+        slr_summary_set_error(error_buf, error_buf_size, "missing prepared GLR program");
+        return false;
+    }
+    const CettaLpNativeGlrUtf8Table *table = &source->table;
+    CettaLpNativeSlrPreparedImpl view = {
+        .start_nt = source->start_nt,
+        .grammar_production_len = table->grammar_production_len,
+        .productions = table->productions, .production_len = table->production_len,
+        .nonterminals = table->nonterminals, .terminals = table->terminals,
+        .symbols = table->symbols, .edges = table->edges, .actions = table->actions,
+        .summary = {.state_len = table->states.len, .conflict_len = table->conflict_len},
+    };
+    /* Dense production occurrence indices are sufficient here. The enclosing
+     * ParserPack retains each symbolic constructor and origin independently. */
+    view.production_labels = calloc(table->grammar_production_len, sizeof(SymbolId));
+    if (table->grammar_production_len && !view.production_labels) {
+        slr_summary_set_error(error_buf, error_buf_size, "GLR export allocation failed");
+        return false;
+    }
+    for (uint32_t i = 0u; i < table->grammar_production_len; ++i)
+        view.production_labels[i] = i;
+    for (uint32_t i = 0u; i < table->edges.len; ++i)
+        if (!table->symbols.data[table->edges.data[i].symbol].is_terminal)
+            ++view.summary.goto_len;
+    CettaLpNativeSlrPrepared owner = {.implementation = &view};
+    bool ok = cetta_lp_native_slr_prepared_export_program(&owner, out, error_buf, error_buf_size);
+    free(view.production_labels);
+    return ok;
+}
+
+bool cetta_lp_native_glr_prepared_import_program(
+    CettaLpNativeGlrPrepared *out, const CettaLpNativeSlrProgram *program,
+    const CettaLpNativeGllProgram *prediction,
+    char *error_buf, size_t error_buf_size) {
+    CettaLpNativeGlrPreparedImpl *result = NULL;
+    CettaLpNativeGllPrepared decoded = {0};
+    uint32_t goto_len = 0u;
+    if (!out || !program || !prediction || !program->summary.state_len ||
+        !program->glr_action_len || !program->glr_actions ||
+        program->production_len != prediction->production_len ||
+        program->authored_production_len > program->production_len ||
+        program->start_nonterminal != prediction->start_nonterminal ||
+        program->nonterminal_len != prediction->nonterminal_len ||
+        program->terminal_len != prediction->terminal_len ||
+        !program->nonterminals || !prediction->nonterminals ||
+        (program->terminal_len && (!program->terminals || !prediction->terminals)) ||
+        !slr_program_product_u32(program->summary.state_len, program->nonterminal_len, &goto_len) ||
+        goto_len != program->goto_len || (goto_len && !program->gotos) ||
+        memcmp(program->nonterminals, prediction->nonterminals,
+            (size_t)program->nonterminal_len * sizeof(uint32_t)) ||
+        (program->terminal_len && memcmp(program->terminals, prediction->terminals,
+            (size_t)program->terminal_len * sizeof(uint32_t)))) {
+        slr_summary_set_error(error_buf, error_buf_size, "incompatible GLR program arrays");
+        return false;
+    }
+    if (!cetta_lp_native_gll_prepared_import_program(&decoded, prediction, error_buf, error_buf_size))
+        return false;
+    result = calloc(1u, sizeof(*result));
+    if (!result) goto failed;
+    result->start_nt = program->start_nonterminal;
+    CettaLpNativeGlrUtf8Table *table = &result->table;
+    CettaLpNativeGllPreparedImpl *prepared = decoded.implementation;
+    table->productions = prepared->productions;
+    table->production_len = prepared->production_len;
+    table->grammar_production_len = program->authored_production_len;
+    table->nonterminals = prepared->nonterminals;
+    table->terminals = prepared->terminals;
+    table->nullable = prepared->nullable;
+    table->first = prepared->first;
+    table->follow = prepared->follow;
+    table->conflict_len = program->summary.conflict_len;
+    memset(prepared, 0, sizeof(*prepared));
+    /* Restore state identities, not LR item-set construction. Item sets are
+     * only construction evidence and are never needed by GLR execution. */
+    table->states.data = calloc(program->summary.state_len, sizeof(*table->states.data));
+    if (!table->states.data) goto failed;
+    table->states.len = table->states.cap = program->summary.state_len;
+    for (uint32_t n = 0u; n < program->nonterminal_len; ++n) {
+        if (!symbolvec_push_unique(&table->symbols, false, program->nonterminals[n]) ||
+            table->symbols.len != n + 1u) goto failed;
+        for (uint32_t state = 0u; state < program->summary.state_len; ++state) {
+            uint32_t target = program->gotos[(size_t)state * program->nonterminal_len + n];
+            if (target == UINT32_MAX) continue;
+            if (target >= program->summary.state_len ||
+                !edgevec_push(&table->edges, state, n, target)) goto failed;
+        }
+    }
+    table->actions.data = calloc(program->glr_action_len, sizeof(*table->actions.data));
+    if (!table->actions.data) goto failed;
+    table->actions.len = table->actions.cap = program->glr_action_len;
+    for (uint32_t i = 0u; i < program->glr_action_len; ++i) {
+        const CettaLpNativeGlrAction *action = &program->glr_actions[i];
+        uint8_t kind = action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT ? 's'
+            : action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ? 'r'
+            : action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT ? 'a' : 0u;
+        if (!kind || action->state >= program->summary.state_len ||
+            action->token_idx > program->terminal_len || action->value < 0 ||
+            (kind == 's' && (action->token_idx == program->terminal_len ||
+                (uint32_t)action->value >= program->summary.state_len)) ||
+            (kind == 'r' && (uint32_t)action->value >= program->production_len) ||
+            (kind == 'a' && (action->value || action->token_idx != program->terminal_len))) goto failed;
+        table->actions.data[i] = (CettaLpNativeAction){action->state, action->token_idx, kind, action->value};
+    }
+    cetta_lp_native_gll_prepared_free(&decoded);
+    cetta_lp_native_glr_prepared_free(out);
+    out->implementation = result;
+    return true;
+failed:
+    cetta_lp_native_gll_prepared_free(&decoded);
+    if (result) { glr_utf8_table_free(&result->table); free(result); }
+    slr_summary_set_error(error_buf, error_buf_size, "GLR program import allocation or shape failure");
+    return false;
 }
 
 static bool glr_utf8_collect_roots(
@@ -12401,7 +13449,7 @@ static bool native_glr_parse_input_forest_prepared(
         goto done;
     }
     table = *prepared_table;
-    for (index = 0u; index < table.terminals.len; index++) {
+    for (index = 0u; !input->immutable_binding && index < table.terminals.len; index++) {
         if (!native_parse_input_terminal_declared(
                 input, table.terminals.data[index])) {
             slr_summary_set_error(
@@ -12749,12 +13797,13 @@ bool cetta_lp_native_glr_parse_utf8_forest(
     return ok;
 }
 
-bool cetta_lp_native_glr_prepared_parse_utf8_forest(
+static bool native_glr_prepared_parse_utf8_forest(
     const CettaLpNativeGlrPrepared *prepared,
     const CettaLpNativeUtf8Terminal *terminals,
     uint32_t terminal_len,
     const uint8_t *input_bytes,
     size_t input_byte_len,
+    bool immutable_binding,
     uint32_t work_limit,
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
@@ -12775,7 +13824,7 @@ bool cetta_lp_native_glr_prepared_parse_utf8_forest(
             "bad prepared native GLR UTF-8 arguments");
         return false;
     }
-    if (!utf8_terminals_validate(
+    if (!immutable_binding && !utf8_terminals_validate(
             terminals, terminal_len, error_buf, error_buf_size)) {
         return false;
     }
@@ -12786,12 +13835,31 @@ bool cetta_lp_native_glr_prepared_parse_utf8_forest(
         .terminals = terminals,
         .terminal_len = terminal_len,
         .lattice = NULL,
+        .immutable_binding = immutable_binding,
     };
     ok = native_glr_parse_input_forest_prepared(
         &implementation->table, implementation->start_nt,
         &input, 0u, work_limit, out, error_buf, error_buf_size);
     utf8_input_free(&decoded);
     return ok;
+}
+
+bool cetta_lp_native_glr_prepared_parse_utf8_forest(
+    const CettaLpNativeGlrPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_glr_prepared_parse_utf8_forest(prepared, terminals,
+        terminal_len, bytes, length, false, limit, out, error, size);
+}
+
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_forest(
+    const CettaLpNativeGlrPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t limit,
+    CettaLpNativeUtf8Forest *out, char *error, size_t size) {
+    return native_glr_prepared_parse_utf8_forest(prepared, terminals,
+        terminal_len, bytes, length, true, limit, out, error, size);
 }
 
 bool cetta_lp_native_glr_parse_utf8_scalar_view_forest(
@@ -12933,10 +14001,11 @@ bool cetta_lp_native_glr_parse_utf8_lattice_forest_from(
         out, error_buf, error_buf_size);
 }
 
-bool cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(
+static bool native_glr_prepared_parse_utf8_lattice_forest_from(
     const CettaLpNativeGlrPrepared *prepared,
     const CettaLpNativeUtf8Lattice *lattice,
     uint32_t start_scalar,
+    bool immutable_binding,
     uint32_t work_limit,
     CettaLpNativeUtf8Forest *out,
     char *error_buf,
@@ -12949,8 +14018,8 @@ bool cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(
         error_buf[0] = '\0';
     if (!implementation || !out || work_limit == 0u || !lattice ||
         start_scalar > lattice->scalar_len ||
-        !cetta_lp_native_utf8_lattice_validate(
-            lattice, error_buf, error_buf_size)) {
+        (!immutable_binding && !cetta_lp_native_utf8_lattice_validate(
+            lattice, error_buf, error_buf_size))) {
         if (!error_buf || error_buf[0] == '\0') {
             slr_summary_set_error(
                 error_buf, error_buf_size,
@@ -12964,11 +14033,28 @@ bool cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(
         .terminals = NULL,
         .terminal_len = 0u,
         .lattice = lattice,
+        .immutable_binding = immutable_binding,
     };
     return native_glr_parse_input_forest_prepared(
         &implementation->table, implementation->start_nt,
         &input, start_scalar, work_limit,
         out, error_buf, error_buf_size);
+}
+
+bool cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(
+    const CettaLpNativeGlrPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start, uint32_t limit, CettaLpNativeUtf8Forest *out,
+    char *error, size_t size) {
+    return native_glr_prepared_parse_utf8_lattice_forest_from(prepared,
+        lattice, start, false, limit, out, error, size);
+}
+
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_lattice_forest_from(
+    const CettaLpNativeGlrPrepared *prepared, const CettaLpNativeUtf8Lattice *lattice,
+    uint32_t start, uint32_t limit, CettaLpNativeUtf8Forest *out,
+    char *error, size_t size) {
+    return native_glr_prepared_parse_utf8_lattice_forest_from(prepared,
+        lattice, start, true, limit, out, error, size);
 }
 
 Atom *cetta_lp_native_glr_parse_class(const CettaLpNativeGrammar *grammar,

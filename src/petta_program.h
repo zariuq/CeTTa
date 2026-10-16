@@ -7,6 +7,7 @@
 #include "match.h"
 #include "space.h"
 #include "petta_type_policy.h"
+#include "petta_semantics.h"
 #include "term_universe.h"
 
 /*
@@ -400,6 +401,10 @@ bool petta_program_interprets_graded_equations(const PettaProgram *program);
  * Such occurrences are calls, not inert data or user relation slots. */
 PettaProgram *petta_program_new_with_host_intrinsics(
     bool (*is_host_intrinsic)(SymbolId head));
+/* Select live callability at creation, before any source is registered.
+ * New calls then revalidate source translation when named relations change;
+ * an already retained invocation continues with its captured plan. */
+bool petta_program_enable_callability_refresh(PettaProgram *program);
 /* Declaration admission is fixed for this owned program and retained by its
  * revision views. The ordinary constructor admits only base equations. */
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);
@@ -522,14 +527,35 @@ bool petta_program_head_declared(
 const PettaPlanNode *petta_program_plan_current(
     PettaProgram *program, Atom *atom);
 
+/* Derive semantic occurrence plans in the caller's storage. The caller keeps
+ * the source syntax live through compilation; physical source-specific
+ * workers are separate from these plans. No plan is retained by the program. */
+const PettaPlanNode *petta_program_plan_current_in(
+    PettaProgram *program, Arena *plans, Atom *atom);
+
 /*
  * Translate a runtime term at an explicit forcing boundary (eval, a computed
  * hyperpose branch).  The plan records the term's code, a call-free subtree
  * being one VALUE place, and equal plans are one program object, so the
  * program keeps a plan per distinct code shape rather than per event.
  */
+/* Exact context read by runtime translation. The source arena only licenses
+ * weak pointer reuse until its next reset; it never grants ownership. */
+typedef struct {
+    const Arena *const *source_arenas;
+    size_t source_arena_count;
+    const void *host_identity;
+    uint64_t foreign_instance;
+    uint64_t foreign_revision;
+    uint64_t admission_revision;
+    uint64_t symbol_table_instance;
+    uint64_t profile_identity;
+    uint64_t features;
+} PettaTranslationEnvironment;
+
 const PettaPlanNode *petta_program_plan_transient(
-    PettaProgram *program, Atom *atom);
+    PettaProgram *program, Atom *atom,
+    const PettaTranslationEnvironment *environment);
 
 /*
  * A declaration block is the maximal run of non-executable top-level forms
@@ -730,6 +756,10 @@ void petta_program_inferred_signatures_rebase_under_authority(
  * without copying transitive annotation atoms into the caller's Space.
  * Returned types are fresh copies owned by `arena`; the caller owns only the
  * pointer array. */
+/* Alias, Newtype, Foreign and SpaceOf declarations compete for one
+ * source-ordered meaning. Ordinary value and arrow declarations do not. */
+bool petta_program_type_is_exclusive_kind(const Atom *type);
+
 uint32_t petta_program_declared_types(
     PettaProgram *program, Atom *subject,
     Arena *arena, Atom ***types_out);
@@ -776,6 +806,30 @@ static inline const PettaPlanNode *petta_plan_child(
     const PettaPlanNode *plan, CettaExprIndex index) {
     return plan && index < plan->child_count
         ? &plan->children[index] : NULL;
+}
+
+/* Link one projection's prepared-call meaning to its authored argument.
+ * The interpreter still installs dispatch/type/effect protocols separately.
+ * A VALUE occurrence can contain an unbound variable. */
+typedef struct {
+    CettaSequenceProjectionCall call;
+    const PettaPlanNode *argument;
+    bool source_arguments_are_values;
+} PettaSequenceCallInterpretation;
+
+static inline PettaSequenceCallInterpretation petta_plan_sequence_call(
+    const PettaPlanNode *plan, SymbolId head, CettaExprLen nargs,
+    CettaSequenceProjectionPolicy policy) {
+    const PettaPlanNode *argument = nargs == 1u ? petta_plan_child(plan, 1u) : NULL;
+    CettaSequenceProjectionCall call = cetta_sequence_projection_call(head, nargs, policy);
+    return (PettaSequenceCallInterpretation){
+        .call = call,
+        .argument = argument,
+        .source_arguments_are_values = call.projection != CETTA_SEQUENCE_PROJECTION_NONE &&
+            plan && plan->role == PETTA_PLAN_STATIC_CALL && argument &&
+            (argument->role == PETTA_PLAN_VALUE ||
+             (argument->role == PETTA_PLAN_DATA && !argument->contains_call)),
+    };
 }
 
 #endif /* CETTA_PETTA_PROGRAM_H */

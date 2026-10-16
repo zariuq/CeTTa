@@ -3631,7 +3631,6 @@ static bool pposlf_native_type_vm_v1_compact_search_bindings(
     uint32_t *marks = NULL;
     uint32_t **mark_fields = NULL;
     size_t mark_len = 0u;
-    size_t mark_cap;
     uint32_t *entry_marks = NULL;
     uint32_t **entry_mark_fields = NULL;
     size_t entry_mark_len = 0u;
@@ -3640,13 +3639,14 @@ static bool pposlf_native_type_vm_v1_compact_search_bindings(
     uint64_t discarded_trail = 0u;
     bool ok = false;
 
+    size_t mark_bytes, mark_field_bytes;
     if (!search || !frames || frame_len == 0u ||
-        frame_len > SIZE_MAX / (2u * sizeof(*marks)) ||
-        frame_len > SIZE_MAX / (2u * sizeof(*mark_fields)))
+        __builtin_mul_overflow(frame_len, 2u * sizeof(*marks), &mark_bytes) ||
+        __builtin_mul_overflow(frame_len, 2u * sizeof(*mark_fields),
+                               &mark_field_bytes))
         return false;
-    mark_cap = (size_t)frame_len * 2u;
-    marks = malloc(mark_cap * sizeof(*marks));
-    mark_fields = malloc(mark_cap * sizeof(*mark_fields));
+    marks = malloc(mark_bytes);
+    mark_fields = malloc(mark_field_bytes);
     if (!marks || !mark_fields)
         goto done;
 
@@ -3884,9 +3884,7 @@ static bool pposlf_native_type_vm_v1_collect_deterministic_tail(
     bool survivor_entry_ready = false;
     bool ok = false;
 
-    if (!search || !frames || frame_len == 0u ||
-        frame_len > SIZE_MAX / sizeof(*frame_pending_copies) ||
-        frame_len > SIZE_MAX / sizeof(*frame_goal_copies))
+    if (!search || !frames || frame_len == 0u)
         return false;
     if (pposlf_native_type_vm_v1_builder_has_prime_state(
             &search->bindings))

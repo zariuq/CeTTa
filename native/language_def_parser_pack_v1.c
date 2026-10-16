@@ -12,6 +12,78 @@
 #include <stdlib.h>
 #include <string.h>
 
+static Atom *ldpp_storage_form(Arena *arena, const char *head, Atom **args, uint32_t length) {
+    Atom **fields = arena_alloc(arena, ((size_t)length + 1u) * sizeof(*fields));
+    if (!fields) return NULL;
+    fields[0] = atom_symbol(arena, head);
+    for (uint32_t i = 0u; i < length; ++i) {
+        if (!args[i]) return NULL;
+        fields[i + 1u] = args[i];
+    }
+    return atom_expr(arena, fields, length + 1u);
+}
+
+Atom *cetta_ld_parser_pack_v1_export_storage(
+    Arena *arena, const CettaLdParserPackV1 *compiled, char *error, size_t size) {
+    if (!arena || !compiled) return NULL;
+    Atom *pack = ppabi_v1_pack_export_storage(arena, &compiled->pack, error, size);
+    Atom *bindings = ppnative_v1_token_binding_plan_export_storage(arena,
+        &compiled->token_bindings, error, size);
+    Atom *args[] = {atom_string(arena, compiled->language_authority_sha256),
+        atom_string(arena, compiled->profile_authority_sha256),
+        atom_string(arena, compiled->binding_sha256), atom_string(arena, compiled->compiler_sha256),
+        atom_int(arena, compiled->authored_rule_len), atom_int(arena, compiled->lexical_rule_len),
+        atom_int(arena, compiled->entry_rule_len), atom_int(arena, compiled->tokenized),
+        compiled->start_state, pack, bindings};
+    Atom *result = ldpp_storage_form(arena, "LanguageParserStoredV1", args, 11u);
+    return result ? atom_deep_copy(arena, result) : NULL;
+}
+
+bool cetta_ld_parser_pack_v1_import_storage(
+    CettaLdParserPackV1 *out, Atom *value, char *error, size_t size) {
+    CettaLdParserPackV1 candidate;
+    bool ok = false;
+    cetta_ld_parser_pack_v1_init(&candidate);
+    if (error && size) error[0] = '\0';
+    if (!out || !value || value->kind != ATOM_EXPR || value->expr.len != 12u ||
+        !atom_is_symbol(value->expr.elems[0], "LanguageParserStoredV1")) goto done;
+    char *digests[] = {candidate.language_authority_sha256, candidate.profile_authority_sha256,
+        candidate.binding_sha256, candidate.compiler_sha256};
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        Atom *field = value->expr.elems[i + 1u];
+        if (!field || field->kind != ATOM_GROUNDED || field->ground.gkind != GV_STRING ||
+            !field->ground.sval || strlen(field->ground.sval) != 64u ||
+            strspn(field->ground.sval, "0123456789abcdef") != 64u) goto done;
+        memcpy(digests[i], field->ground.sval, 65u);
+    }
+    uint32_t counts[4];
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        Atom *field = value->expr.elems[i + 5u];
+        if (!field || field->kind != ATOM_GROUNDED || field->ground.gkind != GV_INT ||
+            field->ground.ival < 0 || (uint64_t)field->ground.ival > UINT32_MAX) goto done;
+        counts[i] = (uint32_t)field->ground.ival;
+    }
+    if (counts[3] > 1u || !ppabi_v1_pack_import_storage(&candidate.pack,
+            value->expr.elems[10], error, size) ||
+        !ppnative_v1_token_binding_plan_import_storage(&candidate.token_bindings,
+            &candidate.pack, value->expr.elems[11], error, size)) goto done;
+    candidate.start_state = atom_deep_copy(&candidate.pack.arena, value->expr.elems[9]);
+    if (!candidate.start_state || ppnative_v1_state_find(&candidate.pack, candidate.start_state) < 0) goto done;
+    candidate.authored_rule_len = counts[0];
+    candidate.lexical_rule_len = counts[1];
+    candidate.entry_rule_len = counts[2];
+    candidate.tokenized = counts[3] != 0u;
+    cetta_ld_parser_pack_v1_free(out);
+    *out = candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    ok = true;
+done:
+    cetta_ld_parser_pack_v1_free(&candidate);
+    if (!ok && error && size && !error[0])
+        (void)snprintf(error, size, "malformed stored language parser");
+    return ok;
+}
+
 typedef struct {
     uint32_t used;
     uint32_t limit;
@@ -985,6 +1057,123 @@ static Atom *ldpp_pack_state(const PPABIV1Pack *pack, Atom *needle) {
             return pack->states[index].identity;
     }
     return NULL;
+}
+
+static bool ldpp_name_valid(const CettaLdTextV1 *name) {
+    return name && name->len && name->bytes && !memchr(name->bytes, 0, name->len);
+}
+
+static bool ldpp_rule_is_internal(const CettaLdParserProfileV1 *profile, uint32_t index) {
+    if (!profile->tokens) return false;
+    Atom *row = profile->tokens->productions;
+    while (index--) row = row->expr.elems[2];
+    return atom_is_symbol(row->expr.elems[1]->expr.elems[2], "ParserInternalV1");
+}
+
+bool cetta_language_def_parser_pack_v1_validate_structure(
+    const CettaLanguageDefCoreV1 *language,
+    const CettaLdParserProfileV1 *profile, uint32_t work_limit,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    LdppWorkV1 work = {.limit = work_limit};
+    uint8_t *reachable = NULL;
+    uint32_t *queue = NULL, head = 0u, len = 0u;
+    bool ok = false;
+    if (error && error_size) error[0] = '\0';
+    if (status) *status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    if (!language || !profile || !work_limit || !language->term_len ||
+        !ldpp_name_valid(&profile->start_sort))
+        return ldpp_error(error, error_size, "bad parser structural validation arguments");
+    if (language->equation_len || language->rewrite_len) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_OUTSIDE_FRAGMENT;
+        return ldpp_error(error, error_size, "syntax compiler does not erase LanguageDef equations or rewrites");
+    }
+    if (!ldpp_profile_sorts_valid(language, profile, status, error, error_size) ||
+        (!profile->tokens && !ldpp_labels_unique(language, profile, status, error, error_size)))
+        return false;
+    if (profile->tokens && !cetta_parser_token_profile_v1_validate_language(
+            profile->tokens, language, error, error_size)) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_MALFORMED_PROFILE;
+        return false;
+    }
+    for (uint32_t i = 0u; i < language->term_len; ++i) {
+        const CettaLdGrammarRuleV1 *rule = &language->terms[i];
+        if (!ldpp_take_work(&work, 1u, status, error, error_size) ||
+            !ldpp_rule_fragment_valid(language, rule, profile->tokens != NULL,
+                status, error, error_size)) return false;
+        if (!ldpp_name_valid(&rule->label) || !ldpp_name_valid(&rule->category)) {
+            if (status) *status = CETTA_LD_PARSER_PACK_V1_OUTSIDE_FRAGMENT;
+            return ldpp_error(error, error_size, "parser names must be nonempty and NUL-free");
+        }
+        for (uint32_t j = 0u; j < rule->syntax_pattern.len; ++j) {
+            const CettaLdSyntaxItemV1 *item = &rule->syntax_pattern.items[j];
+            if (!ldpp_take_work(&work, 1u, status, error, error_size)) return false;
+            if (item->kind == CETTA_LD_SYNTAX_TERMINAL_V1) {
+                CettaLpNativeUtf8ScalarBuffer text;
+                cetta_lp_native_utf8_scalar_buffer_init(&text);
+                bool valid = cetta_lp_native_utf8_scalar_buffer_decode(&text,
+                    item->as.text.bytes, item->as.text.len, error, error_size);
+                cetta_lp_native_utf8_scalar_buffer_free(&text);
+                if (!valid) {
+                    if (status) *status = CETTA_LD_PARSER_PACK_V1_INVALID_UTF8;
+                    return false;
+                }
+            }
+        }
+    }
+    /* The same reachable closure criterion as ParserPack admission, directly
+     * on declared sorts. Token bindings and lexical states define sorts too;
+     * internal rules do not contribute executable productions. */
+    reachable = calloc(language->type_len, 1u);
+    queue = calloc(language->type_len, sizeof(*queue));
+    if (!reachable || !queue) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
+        ldpp_error(error, error_size, "cannot allocate parser declaration closure");
+        goto done;
+    }
+    const CettaLdTypeDeclV1 *start = ldpp_type_find(language, &profile->start_sort);
+    uint32_t start_id = (uint32_t)(start - language->types);
+    reachable[start_id] = 1u;
+    queue[len++] = start_id;
+    while (head < len) {
+        const CettaLdTextV1 *sort = &language->types[queue[head++]].name;
+        bool defined = false;
+        for (uint32_t i = 0u; i < profile->state_len; ++i)
+            if (ldpp_text_equal(sort, &profile->states[i].sort)) defined = true;
+        if (profile->tokens) {
+            for (Atom *p = profile->tokens->declarations; ldpp_is_app(p, "LCons", 2u);
+                 p = p->expr.elems[2]) {
+                Atom *row = p->expr.elems[1];
+                if (ldpp_is_app(row, "RegularTokenDeclV1", 5u)) {
+                    const char *name = row->expr.elems[1]->ground.sval;
+                    if (strlen(name) == sort->len && !memcmp(name, sort->bytes, sort->len))
+                        defined = true;
+                }
+            }
+        }
+        for (uint32_t i = 0u; i < language->term_len; ++i) {
+            const CettaLdGrammarRuleV1 *rule = &language->terms[i];
+            if (!ldpp_take_work(&work, 1u, status, error, error_size)) goto done;
+            if (!ldpp_text_equal(sort, &rule->category) || ldpp_rule_is_internal(profile, i))
+                continue;
+            defined = true;
+            for (uint32_t j = 0u; j < rule->param_len; ++j) {
+                const CettaLdTypeDeclV1 *type = ldpp_type_find(language, &rule->params[j].type.as.base);
+                uint32_t id = (uint32_t)(type - language->types);
+                if (!reachable[id]) { reachable[id] = 1u; queue[len++] = id; }
+            }
+        }
+        if (!defined) {
+            if (status) *status = CETTA_LD_PARSER_PACK_V1_OPEN_GRAMMAR;
+            ldpp_error(error, error_size, "reachable parser sort has no production or lexical binding");
+            goto done;
+        }
+    }
+    if (status) *status = CETTA_LD_PARSER_PACK_V1_OK;
+    ok = true;
+done:
+    free(queue);
+    free(reachable);
+    return ok;
 }
 
 static bool ldpp_token_bindings(

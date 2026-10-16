@@ -1,0 +1,43 @@
+Language contracts and parser compilation
+=========================================
+
+CeTTa's binary version and a selected language contract are separate.
+--version reports the binary version. --lang language@version selects a
+registered dialect contract; --profile chooses a profile of that contract.
+Unversioned language names retain their existing defaults.
+
+  he@0.0.1       CeTTa's formal/default HE contract, including explicitly
+                 selected extended and he-prime profiles.
+  he@0.2.10      The existing Rust Hyperon Experimental compatibility profile.
+                 This does not certify full upstream equivalence.
+  petta@1.0.6    Untyped default PeTTa; extended remains an explicit profile.
+  petta@1.1      Typed PeTTa; typecheck-v2 remains its default checker and
+                 typecheck-v3 is selected explicitly when built in.
+  prime@0.0.1    This line's Prime runtime and its named profiles, under the
+                 registry's 0.0.1 spelling; it is not frozen here.
+
+An explicit version does not install equations, load a module or change
+the unversioned default. Versions, default profiles and library overlays
+are described by the shared language registry. Both translation endpoints
+use the same selection procedure.
+
+.module declarations already reach the reusable parser compiler:
+
+  module:assemble -> module:language -> module:language-syntax
+    -> langdef:compile-parser -> live, saved or baked preparation
+
+The complete module core remains separate from its syntax-only parser view.
+Freezing a parser is not freezing its complete theory or rewrite authority.
+ParserPack is the native execution artifact, not another language definition.
+The build manifest supports module inputs with explicit catalogs and builds
+their readers through the same pipeline without a baked-reader cycle.
+
+The parser build driver uses petta@1.0.6 with the extended profile. It does
+not execute through Prime. Module and artifact tests share one host runner:
+HE extended, PeTTa extended and the Prime lane remain
+separate. A legacy reader fixture called "prime" may describe the grammar
+being parsed rather than the host evaluator.
+
+Low-level scannerless and guarded ParserPack fixtures are not automatically
+converted to .module declarations. A translation must preserve their lexical
+policies, lookahead, entry boundary, occurrence identity and projection.

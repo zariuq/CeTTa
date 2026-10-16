@@ -55,6 +55,14 @@ void pp_table_snapshot_v1_free(PPTableSnapshotV1 *snap) {
         return;
     rsdfa_v1_program_free(&snap->dfa);
     cetta_lp_native_slr_program_free(&snap->slr);
+    cetta_lp_native_gll_program_free(&snap->gll);
+    if (snap->scalar_terminals.owned_ranges) {
+        for (i = 0u; i < snap->scalar_terminals.len; ++i)
+            free(snap->scalar_terminals.owned_ranges[i]);
+    }
+    free(snap->scalar_terminals.owned_ranges);
+    free(snap->scalar_terminals.terminals);
+    free(snap->general_metadata);
     if (snap->tag_names) {
         for (i = 0u; i < snap->tag_name_len; i++)
             free(snap->tag_names[i]);
@@ -154,7 +162,7 @@ static void put_u32(uint8_t **cur, uint32_t v) {
 }
 
 static bool get_u32(const uint8_t **cur, const uint8_t *end, uint32_t *out) {
-    if (!cur || !*cur || !end || !out || *cur + 4u > end)
+    if (!cur || !*cur || !end || !out || *cur > end || (size_t)(end - *cur) < 4u)
         return false;
     *out = (uint32_t)(*cur)[0] | ((uint32_t)(*cur)[1] << 8) |
            ((uint32_t)(*cur)[2] << 16) | ((uint32_t)(*cur)[3] << 24);
@@ -169,7 +177,7 @@ static void put_bytes(uint8_t **cur, const void *p, size_t n) {
 }
 
 static bool get_bytes(const uint8_t **cur, const uint8_t *end, void *p, size_t n) {
-    if (!cur || !*cur || *cur + n > end)
+    if (!cur || !*cur || !end || *cur > end || n > (size_t)(end - *cur))
         return false;
     if (n)
         memcpy(p, *cur, n);
@@ -226,15 +234,16 @@ static bool names_add(SnapNames *n, SymbolId id) {
     memcpy(copy, text, tlen + 1u);
     if (n->len == n->cap) {
         uint32_t ncap = n->cap ? n->cap * 2u : 16u;
+        if (ncap <= n->cap || (size_t)ncap > SIZE_MAX / sizeof(*n->ids) ||
+            (size_t)ncap > SIZE_MAX / sizeof(*n->names)) { free(copy); return false; }
         SymbolId *ids = realloc(n->ids, sizeof(*ids) * ncap);
+        if (!ids) { free(copy); return false; }
+        n->ids = ids;
         char **nms = realloc(n->names, sizeof(*nms) * ncap);
-        if (!ids || !nms) {
+        if (!nms) {
             free(copy);
-            free(ids);
-            free(nms);
             return false;
         }
-        n->ids = ids;
         n->names = nms;
         n->cap = ncap;
     }
@@ -280,6 +289,10 @@ static uint32_t map_id(const SnapNames *n, SymbolId id) {
     return f < 0 ? UINT32_MAX : (uint32_t)f;
 }
 
+static uint32_t wire_id(const PPTableSnapshotV1 *snap, const SnapNames *names, SymbolId id) {
+    return snap->kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL ? id : map_id(names, id);
+}
+
 bool pp_table_snapshot_v1_size(
     const PPTableSnapshotV1 *snap,
     size_t *out_size,
@@ -299,7 +312,8 @@ bool pp_table_snapshot_v1_size(
         snap_error(error_buf, error_buf_size, "invalid snapshot for size");
         return false;
     }
-    if (!rsdfa_v1_program_validate(&snap->dfa, dfa_err, sizeof(dfa_err))) {
+    if ((snap->kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL || snap->dfa.state_len) &&
+        !rsdfa_v1_program_validate(&snap->dfa, dfa_err, sizeof(dfa_err))) {
         snap_error(error_buf, error_buf_size,
                    dfa_err[0] ? dfa_err : "invalid DFA program");
         return false;
@@ -318,7 +332,8 @@ bool pp_table_snapshot_v1_size(
         return false;
     }
     names_init(&names);
-    if (!collect_slr_names(&snap->slr, &names)) {
+    if (snap->kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL &&
+        !collect_slr_names(&snap->slr, &names)) {
         names_free(&names);
         snap_error(error_buf, error_buf_size, "cannot collect SLR names");
         return false;
@@ -328,7 +343,7 @@ bool pp_table_snapshot_v1_size(
         snap_error(error_buf, error_buf_size, "helper origins missing");
         return false;
     }
-    for (i = 0u; i < snap->origin_len; i++) {
+    for (i = 0u; snap->kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL && i < snap->origin_len; i++) {
         if (names_find(&names, snap->origins[i].helper) < 0 ||
             names_find(&names, snap->origins[i].owner) < 0) {
             names_free(&names);
@@ -363,6 +378,55 @@ bool pp_table_snapshot_v1_size(
     size += 4u * 6u; /* summary */
     size += (size_t)snap->slr.glr_action_len * 4u * 4u;
     size += 4u + (size_t)snap->origin_len * 4u * 4u;
+    if (snap->kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL) {
+        const CettaLpNativeGllProgram *gll = &snap->gll;
+        if (!gll->productions || !gll->production_len ||
+            !gll->nonterminals || !gll->nonterminal_len ||
+            !gll->nullable || !gll->first || !gll->follow ||
+            (gll->terminal_len && !gll->terminals) ||
+            gll->terminal_len == UINT32_MAX ||
+            gll->word_len != (gll->terminal_len / 64u + 1u) ||
+            (snap->general_metadata_len && !snap->general_metadata)) {
+            names_free(&names);
+            snap_error(error_buf, error_buf_size, "invalid general snapshot arrays");
+            return false;
+        }
+        size += 5u * 4u + (size_t)gll->production_len * 8u;
+        for (i = 0u; i < gll->production_len; ++i) {
+            if (gll->productions[i].rhs_len && !gll->productions[i].rhs) {
+                names_free(&names);
+                snap_error(error_buf, error_buf_size, "missing general production rhs");
+                return false;
+            }
+            size += (size_t)gll->productions[i].rhs_len * 12u;
+        }
+        size += (size_t)gll->nonterminal_len * 5u + (size_t)gll->terminal_len * 4u;
+        size_t words = (size_t)gll->nonterminal_len * gll->word_len;
+        if (words > (SIZE_MAX - size - 4u - snap->general_metadata_len) / 16u) {
+            names_free(&names);
+            snap_error(error_buf, error_buf_size, "general snapshot size overflow");
+            return false;
+        }
+        size += words * 16u + 4u + snap->general_metadata_len;
+        const PPNativeV1TerminalPlan *plan = &snap->scalar_terminals;
+        if (plan->len && !plan->terminals) {
+            names_free(&names);
+            snap_error(error_buf, error_buf_size, "scalar terminal program missing");
+            return false;
+        }
+        size += 4u;
+        for (i = 0u; i < plan->len; ++i) {
+            const CettaLpNativeUtf8Terminal *terminal = &plan->terminals[i];
+            if (terminal->kind > CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES ||
+                (terminal->range_len && !terminal->ranges) ||
+                terminal->range_len > (SIZE_MAX - size - 16u) / 8u) {
+                names_free(&names);
+                snap_error(error_buf, error_buf_size, "invalid stored scalar terminal");
+                return false;
+            }
+            size += 16u + (size_t)terminal->range_len * 8u;
+        }
+    }
     names_free(&names);
     *out_size = size;
     return true;
@@ -389,14 +453,16 @@ bool pp_table_snapshot_v1_write(
         return false;
     }
     names_init(&names);
-    if (!collect_slr_names(&snap->slr, &names)) {
+    if (snap->kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL &&
+        !collect_slr_names(&snap->slr, &names)) {
         names_free(&names);
         snap_error(error_buf, error_buf_size, "cannot collect SLR names");
         return false;
     }
     cur = out_bytes;
     put_bytes(&cur, PP_TABLE_SNAPSHOT_V1_MAGIC, 4u);
-    put_u32(&cur, PP_TABLE_SNAPSHOT_V1_VERSION);
+    put_u32(&cur, snap->kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL
+        ? PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION : PP_TABLE_SNAPSHOT_V1_VERSION);
     put_bytes(&cur, snap->syntax_digest, 64u);
     put_bytes(&cur, snap->artifact_digest, 64u);
     put_u32(&cur, (uint32_t)strlen(snap->profile));
@@ -449,7 +515,7 @@ bool pp_table_snapshot_v1_write(
         put_u32(&cur, nlen);
         put_bytes(&cur, names.names[i], nlen);
     }
-    put_u32(&cur, map_id(&names, snap->slr.start_nonterminal));
+    put_u32(&cur, wire_id(snap, &names, snap->slr.start_nonterminal));
     put_u32(&cur, snap->slr.terminal_len);
     put_u32(&cur, snap->slr.nonterminal_len);
     put_u32(&cur, snap->slr.production_len);
@@ -460,13 +526,13 @@ bool pp_table_snapshot_v1_write(
     put_u32(&cur, snap->slr.glr_action_len);
     put_u32(&cur, 0u);
     for (i = 0u; i < snap->slr.terminal_len; i++)
-        put_u32(&cur, map_id(&names, snap->slr.terminals[i]));
+        put_u32(&cur, wire_id(snap, &names, snap->slr.terminals[i]));
     for (i = 0u; i < snap->slr.nonterminal_len; i++)
-        put_u32(&cur, map_id(&names, snap->slr.nonterminals[i]));
+        put_u32(&cur, wire_id(snap, &names, snap->slr.nonterminals[i]));
     for (i = 0u; i < snap->slr.production_len; i++) {
         const CettaLpNativeSlrProgramProduction *p = &snap->slr.productions[i];
-        put_u32(&cur, map_id(&names, p->label));
-        put_u32(&cur, map_id(&names, p->lhs));
+        put_u32(&cur, wire_id(snap, &names, p->label));
+        put_u32(&cur, wire_id(snap, &names, p->lhs));
         put_u32(&cur, p->rhs_begin);
         put_u32(&cur, p->rhs_len);
         put_u32(&cur, (p->authored ? 1u : 0u) | (p->avoided ? 2u : 0u));
@@ -474,8 +540,8 @@ bool pp_table_snapshot_v1_write(
     for (i = 0u; i < snap->slr.rhs_len; i++) {
         const CettaLpNativeSymbol *s = &snap->slr.rhs[i];
         put_u32(&cur, (uint32_t)s->kind);
-        put_u32(&cur, map_id(&names, s->name));
-        put_u32(&cur, map_id(&names, s->scope));
+        put_u32(&cur, wire_id(snap, &names, s->name));
+        put_u32(&cur, wire_id(snap, &names, s->scope));
     }
     for (i = 0u; i < snap->slr.action_len; i++) {
         put_u32(&cur, (uint32_t)snap->slr.actions[i].kind);
@@ -498,10 +564,56 @@ bool pp_table_snapshot_v1_write(
     }
     put_u32(&cur, snap->origin_len);
     for (i = 0u; i < snap->origin_len; i++) {
-        put_u32(&cur, map_id(&names, snap->origins[i].helper));
-        put_u32(&cur, map_id(&names, snap->origins[i].owner));
+        put_u32(&cur, wire_id(snap, &names, snap->origins[i].helper));
+        put_u32(&cur, wire_id(snap, &names, snap->origins[i].owner));
         put_u32(&cur, snap->origins[i].kind);
         put_u32(&cur, snap->origins[i].repeat);
+    }
+    if (snap->kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL) {
+        const CettaLpNativeGllProgram *gll = &snap->gll;
+        put_u32(&cur, gll->start_nonterminal);
+        put_u32(&cur, gll->production_len);
+        put_u32(&cur, gll->nonterminal_len);
+        put_u32(&cur, gll->terminal_len);
+        put_u32(&cur, gll->word_len);
+        for (i = 0u; i < gll->production_len; ++i) {
+            const CettaLpNativeProduction *production = &gll->productions[i];
+            put_u32(&cur, production->lhs);
+            put_u32(&cur, production->rhs_len);
+            for (uint32_t j = 0u; j < production->rhs_len; ++j) {
+                put_u32(&cur, production->rhs[j].kind);
+                put_u32(&cur, production->rhs[j].name);
+                put_u32(&cur, production->rhs[j].scope);
+            }
+        }
+        for (i = 0u; i < gll->nonterminal_len; ++i)
+            put_u32(&cur, gll->nonterminals[i]);
+        for (i = 0u; i < gll->terminal_len; ++i)
+            put_u32(&cur, gll->terminals[i]);
+        put_bytes(&cur, gll->nullable, gll->nonterminal_len);
+        size_t words = (size_t)gll->nonterminal_len * gll->word_len;
+        for (uint32_t set = 0u; set < 2u; ++set) {
+            const uint64_t *values = set ? gll->follow : gll->first;
+            for (size_t j = 0u; j < words; ++j) {
+                put_u32(&cur, (uint32_t)values[j]);
+                put_u32(&cur, (uint32_t)(values[j] >> 32));
+            }
+        }
+        put_u32(&cur, snap->scalar_terminals.len);
+        for (i = 0u; i < snap->scalar_terminals.len; ++i) {
+            const CettaLpNativeUtf8Terminal *terminal = &snap->scalar_terminals.terminals[i];
+            put_u32(&cur, terminal->terminal_id);
+            put_u32(&cur, (uint32_t)terminal->kind);
+            put_u32(&cur, terminal->scalar);
+            put_u32(&cur, terminal->range_len);
+            for (uint32_t j = 0u; j < terminal->range_len; ++j) {
+                put_u32(&cur, terminal->ranges[j].low);
+                put_u32(&cur, terminal->ranges[j].high);
+            }
+        }
+        put_u32(&cur, snap->general_metadata_len);
+        if (snap->general_metadata_len)
+            put_bytes(&cur, snap->general_metadata, snap->general_metadata_len);
     }
     names_free(&names);
     if ((size_t)(cur - out_bytes) != required) {
@@ -519,6 +631,32 @@ static bool alloc_u32(uint32_t **out, uint32_t n) {
     }
     *out = calloc(n, sizeof(uint32_t));
     return *out != NULL;
+}
+
+/* Format safety, not lexical-language analysis: decoded indices must be safe
+ * for the immutable executor. No DFA construction or provenance audit occurs. */
+static bool general_dfa_storage_safe(const RSDFAV1Program *program) {
+    if (!program->state_len)
+        return !program->transition_len && !program->accept_tag_len && !program->eof_accept_tag_len;
+    if (program->start_state >= program->state_len) return false;
+    for (uint32_t i = 0u; i < program->state_len; ++i) {
+        const RSDFAV1ProgramState *state = &program->states[i];
+        if (state->transition_begin > program->transition_len ||
+            state->transition_len > program->transition_len - state->transition_begin ||
+            state->accept_begin > program->accept_tag_len ||
+            state->accept_len > program->accept_tag_len - state->accept_begin ||
+            state->eof_accept_begin > program->eof_accept_tag_len ||
+            state->eof_accept_len > program->eof_accept_tag_len - state->eof_accept_begin) return false;
+    }
+    for (uint32_t i = 0u; i < program->transition_len; ++i)
+        if (program->transitions[i].target >= program->state_len ||
+            program->transitions[i].low > program->transitions[i].high ||
+            program->transitions[i].high > 0x10ffffu) return false;
+    for (uint32_t i = 0u; i < program->accept_tag_len; ++i)
+        if (program->accept_tags[i] >= program->tag_len) return false;
+    for (uint32_t i = 0u; i < program->eof_accept_tag_len; ++i)
+        if (program->eof_accept_tags[i] >= program->tag_len) return false;
+    return true;
 }
 
 bool pp_table_snapshot_v1_read(
@@ -552,7 +690,8 @@ bool pp_table_snapshot_v1_read(
         snap_error(error_buf, error_buf_size, "bad snapshot magic");
         return false;
     }
-    if (!get_u32(&cur, end, &version) || version != PP_TABLE_SNAPSHOT_V1_VERSION) {
+    if (!get_u32(&cur, end, &version) ||
+        (version != PP_TABLE_SNAPSHOT_V1_VERSION && version != PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION)) {
         snap_error(error_buf, error_buf_size, "unsupported snapshot version");
         return false;
     }
@@ -573,8 +712,12 @@ bool pp_table_snapshot_v1_read(
         !get_u32(&cur, end, &snap.conflict_len))
         goto fail;
     snap.kernel = (PPTableSnapshotV1Kernel)kernel;
+    if ((version == PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION &&
+         kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL) ||
+        (version == PP_TABLE_SNAPSHOT_V1_VERSION && kernel > PP_TABLE_SNAPSHOT_V1_KERNEL_GLR)) goto fail;
     if (!get_u32(&cur, end, &snap.tag_name_len))
         goto fail;
+    if (snap.tag_name_len > (size_t)(end - cur) / 4u) goto fail;
     if (snap.tag_name_len) {
         snap.tag_names = calloc(snap.tag_name_len, sizeof(*snap.tag_names));
         if (!snap.tag_names)
@@ -582,7 +725,8 @@ bool pp_table_snapshot_v1_read(
     }
     for (i = 0u; i < snap.tag_name_len; i++) {
         uint32_t nlen = 0u;
-        if (!get_u32(&cur, end, &nlen) || cur + nlen > end)
+        if (!get_u32(&cur, end, &nlen) || nlen > (size_t)(end - cur) ||
+            nlen == UINT32_MAX || memchr(cur, 0, nlen))
             goto fail;
         snap.tag_names[i] = malloc(nlen + 1u);
         if (!snap.tag_names[i])
@@ -593,6 +737,7 @@ bool pp_table_snapshot_v1_read(
     }
     if (!get_u32(&cur, end, &snap.skip_tag_len))
         goto fail;
+    if (snap.skip_tag_len > (size_t)(end - cur) / 4u) goto fail;
     if (!alloc_u32(&snap.skip_tags, snap.skip_tag_len))
         goto fail;
     for (i = 0u; i < snap.skip_tag_len; i++) {
@@ -611,6 +756,9 @@ bool pp_table_snapshot_v1_read(
         if (!get_u32(&cur, end, &pad0) || !get_u32(&cur, end, &pad1))
             goto fail;
     }
+    if ((uint64_t)snap.dfa.state_len * 24u + (uint64_t)snap.dfa.transition_len * 12u +
+        ((uint64_t)snap.dfa.accept_tag_len + snap.dfa.eof_accept_tag_len) * 4u >
+        (size_t)(end - cur)) goto fail;
     if (snap.dfa.state_len) {
         snap.dfa.states = calloc(snap.dfa.state_len, sizeof(*snap.dfa.states));
         if (!snap.dfa.states)
@@ -651,6 +799,7 @@ bool pp_table_snapshot_v1_read(
     }
     if (!get_u32(&cur, end, &name_len))
         goto fail;
+    if (name_len > (size_t)(end - cur) / 4u) goto fail;
     if (name_len) {
         sym_names = calloc(name_len, sizeof(*sym_names));
         sym_ids = calloc(name_len, sizeof(*sym_ids));
@@ -659,7 +808,8 @@ bool pp_table_snapshot_v1_read(
     }
     for (i = 0u; i < name_len; i++) {
         uint32_t nlen = 0u;
-        if (!get_u32(&cur, end, &nlen) || cur + nlen > end)
+        if (!get_u32(&cur, end, &nlen) || nlen > (size_t)(end - cur) ||
+            nlen == UINT32_MAX || memchr(cur, 0, nlen))
             goto fail;
         sym_names[i] = malloc(nlen + 1u);
         if (!sym_names[i])
@@ -677,8 +827,9 @@ bool pp_table_snapshot_v1_read(
             goto fail;
         }
     }
-#define MAP(idx) (((idx) == UINT32_MAX) ? SYMBOL_ID_NONE : \
-        (((idx) < name_len) ? sym_ids[(idx)] : SYMBOL_ID_NONE))
+#define MAP(idx) (snap.kernel == PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL ? (idx) : \
+        (((idx) == UINT32_MAX) ? SYMBOL_ID_NONE : \
+        (((idx) < name_len) ? sym_ids[(idx)] : SYMBOL_ID_NONE)))
     {
         uint32_t start_idx = 0u;
         if (!get_u32(&cur, end, &start_idx))
@@ -699,6 +850,10 @@ bool pp_table_snapshot_v1_read(
             goto fail;
         snap.slr.glr_action_len = glr_len;
     }
+    if (((uint64_t)snap.slr.terminal_len + snap.slr.nonterminal_len) * 4u +
+        (uint64_t)snap.slr.production_len * 20u + (uint64_t)snap.slr.rhs_len * 12u +
+        (uint64_t)snap.slr.action_len * 8u + (uint64_t)snap.slr.goto_len * 4u +
+        (uint64_t)snap.slr.glr_action_len * 16u + 24u > (size_t)(end - cur)) goto fail;
     if (snap.slr.terminal_len) {
         snap.slr.terminals = calloc(snap.slr.terminal_len, sizeof(*snap.slr.terminals));
         if (!snap.slr.terminals)
@@ -814,8 +969,98 @@ bool pp_table_snapshot_v1_read(
         snap.origins[i].owner = MAP(owner);
     }
 #undef MAP
+    if (version == PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION) {
+        CettaLpNativeGllProgram *gll = &snap.gll;
+        if (!get_u32(&cur, end, &gll->start_nonterminal) ||
+            !get_u32(&cur, end, &gll->production_len) ||
+            !get_u32(&cur, end, &gll->nonterminal_len) ||
+            !get_u32(&cur, end, &gll->terminal_len) ||
+            !get_u32(&cur, end, &gll->word_len) ||
+            !gll->production_len || !gll->nonterminal_len ||
+            gll->terminal_len == UINT32_MAX ||
+            gll->word_len != gll->terminal_len / 64u + 1u ||
+            gll->production_len > (size_t)(end - cur) / 8u) goto fail;
+        gll->productions = calloc(gll->production_len, sizeof(*gll->productions));
+        if (!gll->productions) { gll->production_len = 0u; goto fail; }
+        for (i = 0u; i < gll->production_len; ++i) {
+            CettaLpNativeProduction *production = &gll->productions[i];
+            if (!get_u32(&cur, end, &production->lhs) ||
+                !get_u32(&cur, end, &production->rhs_len) ||
+                production->rhs_len > (size_t)(end - cur) / 12u) goto fail;
+            if (production->rhs_len) {
+                production->rhs = calloc(production->rhs_len, sizeof(*production->rhs));
+                if (!production->rhs) goto fail;
+            }
+            for (uint32_t j = 0u; j < production->rhs_len; ++j) {
+                uint32_t kind;
+                if (!get_u32(&cur, end, &kind) || kind > CETTA_LP_NATIVE_SYMBOL_HLB ||
+                    !get_u32(&cur, end, &production->rhs[j].name) ||
+                    !get_u32(&cur, end, &production->rhs[j].scope)) goto fail;
+                production->rhs[j].kind = (CettaLpNativeSymbolKind)kind;
+            }
+        }
+        if (gll->nonterminal_len > (size_t)(end - cur) / 4u ||
+            !alloc_u32(&gll->nonterminals, gll->nonterminal_len)) goto fail;
+        for (i = 0u; i < gll->nonterminal_len; ++i)
+            if (!get_u32(&cur, end, &gll->nonterminals[i])) goto fail;
+        if (gll->terminal_len > (size_t)(end - cur) / 4u ||
+            !alloc_u32(&gll->terminals, gll->terminal_len)) goto fail;
+        for (i = 0u; i < gll->terminal_len; ++i)
+            if (!get_u32(&cur, end, &gll->terminals[i])) goto fail;
+        if (gll->nonterminal_len > (size_t)(end - cur)) goto fail;
+        gll->nullable = malloc(gll->nonterminal_len);
+        if (!gll->nullable || !get_bytes(&cur, end, gll->nullable, gll->nonterminal_len)) goto fail;
+        size_t words = (size_t)gll->nonterminal_len * gll->word_len;
+        if (words > (size_t)(end - cur) / 16u) goto fail;
+        gll->first = calloc(words, sizeof(uint64_t));
+        gll->follow = calloc(words, sizeof(uint64_t));
+        if (!gll->first || !gll->follow) goto fail;
+        for (uint32_t set = 0u; set < 2u; ++set) {
+            uint64_t *values = set ? gll->follow : gll->first;
+            for (size_t j = 0u; j < words; ++j) {
+                uint32_t low, high;
+                if (!get_u32(&cur, end, &low) || !get_u32(&cur, end, &high)) goto fail;
+                values[j] = ((uint64_t)high << 32) | low;
+            }
+        }
+        uint32_t terminal_len;
+        if (!get_u32(&cur, end, &terminal_len) || terminal_len > (size_t)(end - cur) / 16u) goto fail;
+        snap.scalar_terminals.terminals = calloc(terminal_len ? terminal_len : 1u,
+            sizeof(*snap.scalar_terminals.terminals));
+        snap.scalar_terminals.owned_ranges = calloc(terminal_len ? terminal_len : 1u,
+            sizeof(*snap.scalar_terminals.owned_ranges));
+        if (!snap.scalar_terminals.terminals || !snap.scalar_terminals.owned_ranges) goto fail;
+        snap.scalar_terminals.len = terminal_len;
+        for (i = 0u; i < terminal_len; ++i) {
+            CettaLpNativeUtf8Terminal *terminal = &snap.scalar_terminals.terminals[i];
+            uint32_t kind;
+            if (!get_u32(&cur, end, &terminal->terminal_id) || !get_u32(&cur, end, &kind) ||
+                kind > CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES ||
+                !get_u32(&cur, end, &terminal->scalar) || !get_u32(&cur, end, &terminal->range_len) ||
+                terminal->range_len > (size_t)(end - cur) / 8u) goto fail;
+            terminal->kind = (CettaLpNativeUtf8TerminalKind)kind;
+            CettaLpNativeUnicodeRange *ranges = calloc(terminal->range_len ? terminal->range_len : 1u,
+                sizeof(*ranges));
+            if (!ranges) goto fail;
+            snap.scalar_terminals.owned_ranges[i] = ranges;
+            terminal->ranges = ranges;
+            for (uint32_t j = 0u; j < terminal->range_len; ++j)
+                if (!get_u32(&cur, end, &ranges[j].low) || !get_u32(&cur, end, &ranges[j].high)) goto fail;
+        }
+        if (!get_u32(&cur, end, &snap.general_metadata_len) ||
+            snap.general_metadata_len > (size_t)(end - cur)) goto fail;
+        if (snap.general_metadata_len) {
+            snap.general_metadata = malloc(snap.general_metadata_len);
+            if (!snap.general_metadata || !get_bytes(&cur, end, snap.general_metadata,
+                snap.general_metadata_len)) goto fail;
+        }
+    }
     if (cur != end) {
         snap_error(error_buf, error_buf_size, "snapshot trailing bytes");
+        goto fail;
+    }
+    if (version == PP_TABLE_SNAPSHOT_V1_GENERAL_VERSION && !general_dfa_storage_safe(&snap.dfa)) {
+        snap_error(error_buf, error_buf_size, "unsafe stored DFA indices");
         goto fail;
     }
     if (sym_names) {
@@ -826,7 +1071,8 @@ bool pp_table_snapshot_v1_read(
     free(sym_ids);
     sym_ids = NULL;
     sym_names = NULL;
-    if (!pp_table_snapshot_v1_derive_tag_facts(&snap, error_buf, error_buf_size))
+    if (version == PP_TABLE_SNAPSHOT_V1_VERSION &&
+        !pp_table_snapshot_v1_derive_tag_facts(&snap, error_buf, error_buf_size))
         goto fail;
     pp_table_snapshot_v1_free(out);
     *out = snap;
