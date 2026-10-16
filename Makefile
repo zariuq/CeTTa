@@ -29080,23 +29080,37 @@ test-petta-search-machine: test-petta-prepared-head-matching
 # body that acts first, cdr-atom and open arguments are unaffected; both
 # routes agree, as they do with a repeated head variable, an output that names
 # the input, an equation added while the call is suspended, and PeTTa's refusal
-# of an authored decons-atom.
+# of an authored decons-atom.  For closed values of every kind the answers are
+# the unguarded ones (none, and no error) in each PeTTa version, and a
+# declared contract that refuses the value still raises under 1.1.c.
 test-petta-search-machine: test-petta-entry-guard-retirement
 ENTRY_GUARD_CASES = entry_guard_retirement entry_guard_controls entry_guard_authored_decons
-test-petta-entry-guard-retirement: $(BIN) $(foreach c,$(ENTRY_GUARD_CASES),tests/petta/$(c).metta tests/petta/$(c).expected)
+ENTRY_GUARD_VERSIONED_CASES = entry_guard_closed_values
+ENTRY_GUARD_CONTRACT_CASES = entry_guard_contract_values
+ENTRY_GUARD_VERSIONS = petta $(if $(filter 1,$(ENABLE_PETTA_TYPECHECK_V2)),petta@1.1) petta@1.1.c
+test-petta-entry-guard-retirement: $(BIN) $(foreach c,$(ENTRY_GUARD_CASES) $(ENTRY_GUARD_VERSIONED_CASES) $(ENTRY_GUARD_CONTRACT_CASES),tests/petta/$(c).metta tests/petta/$(c).expected)
 	@set -e; \
-	for case in $(ENTRY_GUARD_CASES); do \
+	for case in $(ENTRY_GUARD_CASES) $(ENTRY_GUARD_VERSIONED_CASES) $(ENTRY_GUARD_CONTRACT_CASES); do \
+		case " $(ENTRY_GUARD_VERSIONED_CASES) | $(ENTRY_GUARD_CONTRACT_CASES) " in \
+			*" $$case "*"|"*) languages="$(ENTRY_GUARD_VERSIONS)";; \
+			*" $$case "*) languages=petta@1.1.c;; \
+			*) languages=petta;; \
+		esac; \
+		for language in $$languages; do \
 		for route in tier machine; do \
 			if [ $$route = machine ]; then reference=1; else reference=; fi; \
-			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --lang petta tests/petta/$$case.metta 2>&1 || true); \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --lang $$language tests/petta/$$case.metta 2>&1 || true); \
 			test "$$actual" = "$$(cat tests/petta/$$case.expected)" || \
-				{ echo "FAIL: $$case differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
+				{ echo "FAIL: $$case differs on the $$route route under $$language"; printf '%s\n' "$$actual"; exit 1; }; \
+		done; \
 		done; \
 	done; \
-	depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
-		tests/petta/entry_guard_retirement.metta 2>&1 >/dev/null | \
-		sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
-	test "$${depth:-0}" -le 4 || { echo "FAIL: choice depth $$depth over a 200-iteration loop"; exit 1; }; \
+	for case in entry_guard_retirement entry_guard_closed_values; do \
+		depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
+			tests/petta/$$case.metta 2>&1 >/dev/null | \
+			sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
+		test "$${depth:-0}" -le 4 || { echo "FAIL: choice depth $$depth over a 200-iteration loop in $$case"; exit 1; }; \
+	done; \
 	echo "PASS: decons-guarded equations leave no alternative behind (max depth $${depth:-0})"
 
 .PHONY: test-petta-library-choice-retirement

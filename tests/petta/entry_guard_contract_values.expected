@@ -1,0 +1,10 @@
+((Error (literal_type_mismatch foo Expression) typecheck))
+((Error (literal_type_mismatch 5 Expression) typecheck))
+((Error (literal_type_mismatch "abc" Expression) typecheck))
+(0)
+(2)
+true
+true
+true
+true
+true
