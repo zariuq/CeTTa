@@ -679,11 +679,33 @@ typedef struct {
     CettaCount next;
 } PettaLibplEvalState;
 
+/* eval/2 states allocated and not yet freed: a state lives from the first
+ * call that evaluates until its answers are exhausted, the call fails, or
+ * SWI prunes the choice point, so outside a running eval/2 this is zero. */
+static _Atomic uint64_t g_petta_libpl_eval_states_live;
+
+uint64_t petta_libpl_eval_states_live(void) {
+    return atomic_load_explicit(&g_petta_libpl_eval_states_live,
+                                memory_order_relaxed);
+}
+
+static PettaLibplEvalState *petta_libpl_eval_state_new(void) {
+    PettaLibplEvalState *state = cetta_malloc(sizeof(*state));
+    memset(state, 0, sizeof(*state));
+    atomic_fetch_add_explicit(&g_petta_libpl_eval_states_live, 1u,
+                              memory_order_relaxed);
+    return state;
+}
+
+/* The one disposal path of a state: every terminal transition of the
+ * predicate reaches it exactly once. */
 static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
     if (!state)
         return;
     result_set_free(&state->results);
     free(state);
+    atomic_fetch_sub_explicit(&g_petta_libpl_eval_states_live, 1u,
+                              memory_order_relaxed);
 }
 
 static foreign_t petta_libpl_raise(Atom *error);
@@ -691,18 +713,24 @@ static foreign_t petta_libpl_raise(Atom *error);
 static foreign_t petta_libpl_standard_eval(
     term_t arguments, int supplied_arity,
     control_t control) {
-    if (!arguments || supplied_arity != 2)
-        return false;
     int phase = PL_foreign_control(control);
-    PettaLibplEvalState *state = NULL;
+    /* SWI prunes with no argument vector, only the context: the state must
+     * be released before the arguments are examined. */
     if (phase == PL_PRUNED) {
         petta_libpl_eval_state_free(
             PL_foreign_context_address(control));
         return true;
     }
-    if (phase == PL_REDO) {
-        state = PL_foreign_context_address(control);
-    } else if (phase == PL_FIRST_CALL) {
+    /* Without a retry no prune follows, so a redo that ends here releases
+     * its state itself. */
+    PettaLibplEvalState *state = phase == PL_REDO
+        ? PL_foreign_context_address(control) : NULL;
+    if (!arguments || supplied_arity != 2 ||
+        (phase != PL_FIRST_CALL && phase != PL_REDO)) {
+        petta_libpl_eval_state_free(state);
+        return false;
+    }
+    if (phase == PL_FIRST_CALL) {
         if (!g_petta_libpl_active_arena)
             return false;
         PettaLibplVarMap variables = {0};
@@ -714,8 +742,7 @@ static foreign_t petta_libpl_standard_eval(
         petta_libpl_back_map_free(&unknown);
         if (!expression)
             return false;
-        state = cetta_malloc(sizeof(*state));
-        memset(state, 0, sizeof(*state));
+        state = petta_libpl_eval_state_new();
         if (!eval_petta_from_lib_prolog(
                 g_petta_libpl_active_arena,
                 expression, &state->results)) {
@@ -724,8 +751,6 @@ static foreign_t petta_libpl_standard_eval(
             petta_libpl_eval_state_free(state);
             return raised ? petta_libpl_raise(raised) : false;
         }
-    } else {
-        return false;
     }
 
     while (state && state->next < state->results.len) {

@@ -1,0 +1,17 @@
+true
+true
+true
+true
+true
+true
+true
+true
+true
+(held-while-pending 2 then 0)
+(cut-with-answers-pending 1 0)
+(exhausted (1 2 3 4 5) 0)
+(failed failed 0)
+(pruned-by-if-then-else (found 2) 0)
+(exception caught 0)
+(raised caught 0)
+(nested 1 0)

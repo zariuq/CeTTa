@@ -44,6 +44,10 @@ uint64_t petta_libpl_capability_revision(
     return 0u;
 }
 
+uint64_t petta_libpl_eval_states_live(void) {
+    return 0u;
+}
+
 CettaLibPrologQueryStatus cetta_lib_prolog_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *goal, Atom *projection, Atom **answers) {

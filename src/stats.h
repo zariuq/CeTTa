@@ -1041,7 +1041,10 @@ typedef enum {
      * global roots holds; filled by runtime-stats!. */
     CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT = 1010,
     CETTA_RUNTIME_COUNTER_SPACE_UNREACHABLE_COUNT = 1011,
-    CETTA_RUNTIME_COUNTER_COUNT = 1012
+    /* States of the Prolog eval/2 bridge held now (live gauge): zero
+     * whenever no eval/2 call is running or holds pending answers. */
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE = 1012,
+    CETTA_RUNTIME_COUNTER_COUNT = 1013
 } CettaRuntimeCounter;
 
 typedef struct {

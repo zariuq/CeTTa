@@ -3,6 +3,7 @@
 #include "space.h"
 #include "symbol.h"
 #include "registered_symbols.h"
+#include "petta_libpl.h"
 
 #include <limits.h>
 #if defined(__GLIBC__)
@@ -1037,6 +1038,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "heap-in-use-bytes",
     "space-tracked-count",
     "space-unreachable-count",
+    "petta-libpl-eval-state-live",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -1185,6 +1187,8 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     registered_symbols_live_totals(
         &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT],
         &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES]);
+    out->counters[CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE] =
+        petta_libpl_eval_states_live();
 #if defined(__GLIBC__) && \
     (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
     /* Live bytes as the allocator sees them, unlike RSS, which keeps pages

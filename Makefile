@@ -19594,7 +19594,8 @@ test-petta-memory-leak-free-body: $(BIN)
 	@set -eu; \
 	lsan_options="suppressions=$(abspath tests/sanitizers/lsan.supp):print_suppressions=0:exitcode=23"; \
 	asan_options="detect_leaks=1:halt_on_error=1:fast_unwind_on_malloc=0:malloc_context_size=40"; \
-	for run in "tests/petta/space_reachability.metta" "tests/petta/memory_plateau.metta 100"; do \
+	for run in "tests/petta/space_reachability.metta" "tests/petta/memory_plateau.metta 100" \
+			$(if $(filter 1,$(LIB_PROLOG_ENABLED)),"tests/petta/libpl_eval_state_release.metta"); do \
 		status=0; \
 		result=$$(LSAN_OPTIONS="$$lsan_options" ASAN_OPTIONS="$$asan_options" \
 			UBSAN_OPTIONS=halt_on_error=1 ./$(BIN) --profile extended --lang petta \
@@ -30162,6 +30163,26 @@ test-petta-callable-name-symbol-births: $(BIN)
 		echo "PASS: crossing fresh callables births no symbols, and their names still resolve"; \
 	else \
 		echo "SKIP: callable name births need the Prolog build"; \
+	fi
+# Every way an eval/2 call from Prolog ends releases its state exactly once,
+# including SWI's prune, which passes no arguments.
+.PHONY: test-petta-libpl-eval-state-release
+test-petta-libpl: test-petta-libpl-eval-state-release
+test-petta-libpl-eval-state-release: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for machine in 0 1; do for route in 0 1; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine CETTA_OPEN_EQUATIONS_REFERENCE=$$route \
+				$(CETTA_BIN_INVOKE) --profile extended --lang petta \
+				tests/petta/libpl_eval_state_release.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/libpl_eval_state_release.expected)" ]; then \
+				echo "FAIL: eval/2 state release (search machine $$machine, route $$route)"; \
+				diff -u tests/petta/libpl_eval_state_release.expected <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; done; \
+		echo "PASS: eval/2 releases its state on prune, exhaustion, failure, exception and nesting"; \
+	else \
+		echo "SKIP: eval/2 state release needs the Prolog build"; \
 	fi
 .PHONY: test-petta-callable-foreign-values
 test-petta-callable-foreign-values: $(BIN)

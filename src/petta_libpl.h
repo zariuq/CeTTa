@@ -19,6 +19,11 @@ PeTTaNamedArity petta_libpl_named_arity(
 uint64_t petta_libpl_capability_revision(
     const CettaLibPrologRuntime *runtime);
 
+/* States of the Prolog eval/2 bridge allocated and not yet released, over
+ * every runtime: zero whenever no eval/2 call is running or holds pending
+ * answers.  Zero in a build without Prolog. */
+uint64_t petta_libpl_eval_states_live(void);
+
 /*
  * Plan-time resolution of a source application head against the live
  * engine, mirroring the reference translator: a name current_predicate/1
