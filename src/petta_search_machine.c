@@ -29177,7 +29177,11 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
-    return petta_open_answer_unify(machine, open, values);
+    /* The answer is the machine's now; the cursor waits for a backtrack. */
+    if (!petta_open_answer_unify(machine, open, values))
+        return false;
+    cetta_open_equation_cursor_suspend(open->cursor);
+    return true;
 }
 
 /* A once in a cursor committed through host goals whose choices remain:
@@ -29306,6 +29310,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    cetta_open_equation_cursor_suspend(open->cursor);
     return true;
 }
 
@@ -29484,6 +29489,7 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
     }
     if (!petta_open_answer_unify(machine, open, values))
         return false;
+    cetta_open_equation_cursor_suspend(open->cursor);
     if (last)
         petta_choice_retire_exhausted(machine);
     return true;
@@ -29526,6 +29532,8 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
              * restarted and the rest of the enumeration is not dropped. */
             Atom *value = petta_semantics_materialize_value(
                 &machine->heap, answer);
+            if (value)
+                cetta_prepared_pure_answer_cursor_suspend(cursor);
             if (!value || !petta_push_solve(
                     machine, value, choice->as.answers.expected,
                     choice->barrier)) {
@@ -29540,7 +29548,11 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
         return petta_machine_answer_handoff(machine, failure);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_ANSWER);
+    /* The machine keeps its own copy of the answer; the cursor stays only
+     * for its alternatives. */
     Atom *value = petta_semantics_materialize_value(&machine->heap, answer);
+    if (value)
+        cetta_prepared_pure_answer_cursor_suspend(cursor);
     if (!value || !petta_push_unify(
             machine, value, choice->as.answers.expected, choice->barrier)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -29647,6 +29659,7 @@ static __attribute__((noinline)) bool petta_machine_start_answer_producer(
         machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    cetta_prepared_pure_answer_cursor_suspend(choice.as.answers.cursor);
     return petta_machine_unify(machine, value, expected);
 }
 

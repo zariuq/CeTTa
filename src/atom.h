@@ -578,6 +578,9 @@ typedef struct {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
+    /* block_capacity is the first block's size; a later block matches what
+     * the arena already holds (arena_set_block_growth). */
+    bool block_growth;
     /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
      * owner named it (otherwise it follows the runtime kind). */
     uint8_t ledger_tag;
@@ -633,6 +636,12 @@ void  arena_init_detached(Arena *a);
  * ARENA_BLOCK_SIZE; an allocation larger than that still gets a block of its
  * own size. */
 void  arena_set_block_capacity(Arena *a, size_t capacity);
+/* The first block has `first` bytes, and each later block claimed from the
+ * allocator is as large as all the blocks the arena holds, up to
+ * ARENA_BLOCK_SIZE: what an arena holds grows geometrically with what it
+ * allocates, and an arena that gives back every block starts small again.
+ * An allocation larger than that still gets a block of its own size. */
+void  arena_set_block_growth(Arena *a, size_t first);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);

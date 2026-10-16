@@ -761,6 +761,24 @@ static bool prepared_pure_reserve(
     return true;
 }
 
+/* Give back a vector's capacity beyond twice its length when that frees at
+ * least PREPARED_PURE_SHRINK_MIN_BYTES: a later push grows it geometrically
+ * again, so a shrink is paid for by the pushes that make the next one
+ * possible.  A failed reallocation keeps the vector as it is. */
+enum { PREPARED_PURE_SHRINK_MIN_BYTES = 1024u };
+static void prepared_pure_shrink(
+    void **items, size_t item_size, size_t *capacity, size_t length) {
+    size_t keep = length ? length : 1u;
+    if (!*items || *capacity / 2u <= keep ||
+        (*capacity - keep) * item_size < PREPARED_PURE_SHRINK_MIN_BYTES)
+        return;
+    void *shrunk = realloc(*items, item_size * keep);
+    if (!shrunk)
+        return;
+    *items = shrunk;
+    *capacity = keep;
+}
+
 static size_t prepared_pure_symbol_hash(SymbolId symbol) {
     uint64_t bits = (uint64_t)symbol;
     bits ^= bits >> 33u;
@@ -8731,6 +8749,10 @@ static bool prepared_pure_project_answer_value(
     return ok && *value_out != NULL;
 }
 
+/* A cursor's arena starts with a small block and grows geometrically: most
+ * cursors build little, and a suspended one keeps only what it holds. */
+#define PREPARED_PURE_CURSOR_FIRST_BLOCK 256u
+
 struct CettaPreparedPureAnswerCursor {
     CettaPreparedPureProgram *program;
     Arena *arena;
@@ -9005,6 +9027,8 @@ static void prepared_pure_answer_cursor_collect(
     Arena fresh;
     arena_init_detached(&fresh);
     arena_set_runtime_kind(&fresh, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_ledger_tag(&fresh, CETTA_ARENA_LEDGER_CURSOR);
+    arena_set_block_growth(&fresh, PREPARED_PURE_CURSOR_FIRST_BLOCK);
     Atom **arguments = cursor->argument_len
         ? malloc(sizeof(*arguments) * cursor->argument_len) : NULL;
     PreparedPureAnswerFrame *frames =
@@ -9138,6 +9162,9 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
         arena_init(&cursor->owned_arena);
         arena_set_runtime_kind(
             &cursor->owned_arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_ledger_tag(&cursor->owned_arena, CETTA_ARENA_LEDGER_CURSOR);
+        arena_set_block_growth(
+            &cursor->owned_arena, PREPARED_PURE_CURSOR_FIRST_BLOCK);
         arena_set_hashcons(&cursor->owned_arena, NULL);
         cursor->arena = &cursor->owned_arena;
         cursor->owns_arena = true;
@@ -9148,6 +9175,13 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
     for (uint32_t index = 0u; ok && index < arity; index++)
         ok = program->entry_arguments[index] != NULL;
     cursor->base_live = arena_accounted_live_bytes(cursor->arena);
+    /* Sized for the entry call: most cursors stay one frame deep, and a
+     * deeper one doubles from here. */
+    cursor->frames = ok ? malloc(sizeof(*cursor->frames)) : NULL;
+    cursor->frame_cap = cursor->frames ? 1u : 0u;
+    cursor->arguments = ok && arity
+        ? malloc(sizeof(*cursor->arguments) * arity) : NULL;
+    cursor->argument_cap = cursor->arguments ? arity : 0u;
     ok = ok && prepared_pure_answer_cursor_reserve(cursor, arity);
     if (ok) {
         prepared_pure_answer_cursor_push_reserved(
@@ -9932,6 +9966,24 @@ bool cetta_prepared_pure_answer_cursor_detach(
     free(changed);
     free(arguments);
     return ok;
+}
+
+void cetta_prepared_pure_answer_cursor_suspend(
+    CettaPreparedPureAnswerCursor *cursor) {
+    if (!cursor)
+        return;
+    cursor->undo_valid = false;
+    if (cursor->answer_pending) {
+        arena_reset(cursor->arena, cursor->answer_mark);
+        cursor->answer_pending = false;
+    }
+    if (cursor->owns_arena)
+        arena_release_spare(cursor->arena, 0u);
+    prepared_pure_shrink((void **)&cursor->frames, sizeof(*cursor->frames),
+                         &cursor->frame_cap, cursor->frame_len);
+    prepared_pure_shrink((void **)&cursor->arguments,
+                         sizeof(*cursor->arguments), &cursor->argument_cap,
+                         cursor->argument_len);
 }
 
 bool cetta_prepared_pure_answer_cursor_unyield(
