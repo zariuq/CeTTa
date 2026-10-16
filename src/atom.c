@@ -4,6 +4,7 @@
 #include "lang.h"
 #include "petta_numeric.h"
 #include "stats.h"
+#include "binding/name_space.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <ctype.h>
 #include <errno.h>
@@ -95,7 +96,6 @@ static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
 static void cetta_rational_free_owned(CettaRational *rat);
 static Atom *atom_prime_context_deep_copy(
     Arena *dst, const CettaPrimeContext *context);
-static _Atomic(uint32_t) g_arena_identity_counter = 1u;
 static _Atomic(uint64_t) g_hashcons_reclamation_epoch = 1u;
 
 typedef struct {
@@ -129,6 +129,20 @@ typedef struct {
 
 /* The arena id of an atom whose copy it records; never an arena's. */
 #define ATOM_ARENA_ID_FORWARDED UINT32_MAX
+/* The identity of a freed arena struct: never an atom's.  Allocating from
+ * it is fatal until arena_init opens it again. */
+#define ARENA_ID_DEAD (UINT32_MAX - 1u)
+
+/* Arena identities are reclaimable names (binding/name_space.h): an arena
+ * owns its name from arena_init to arena_free, and a younger arena linked
+ * to it as its older generation owns it too, so the name is reused only
+ * once neither can name the arena's atoms.  An identity's generation is the
+ * arena's reset epoch, which continues across incarnations of the name, so
+ * an (identity, reset epoch) pair never repeats. */
+static CettaNameSpace g_arena_names =
+    CETTA_NAME_SPACE_INITIALIZER("arena identities", 1u, ARENA_ID_DEAD);
+static _Thread_local CettaNameLocal g_arena_name_local;
+CETTA_NAME_SPACE_ONCE_FUNCTION(arena_names_once, g_arena_names)
 
 typedef struct {
     AtomDeepCopyMemoSlot inline_slots[CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP];
@@ -259,6 +273,68 @@ static void arena_runtime_note_alloc(const Arena *a, size_t size) {
                                    (uint64_t)a->reserved_bytes);
 }
 
+/* ── Resource ledger (runtime statistics only) ─────────────────────────
+ * An arena created while statistics are enabled is charged, under its
+ * ledger tag, one live arena and the bytes of every block it holds (spare
+ * blocks included), until it is freed.  Each charge is returned by the
+ * arena that made it, so the gauges return to zero with the arenas. */
+
+static CettaArenaLedgerTag arena_ledger_tag_for_kind(
+        CettaArenaRuntimeKind kind) {
+    switch (kind) {
+    case CETTA_ARENA_RUNTIME_KIND_PERSISTENT: return CETTA_ARENA_LEDGER_PERSISTENT;
+    case CETTA_ARENA_RUNTIME_KIND_EVAL: return CETTA_ARENA_LEDGER_EVAL;
+    case CETTA_ARENA_RUNTIME_KIND_SCRATCH: return CETTA_ARENA_LEDGER_SCRATCH;
+    case CETTA_ARENA_RUNTIME_KIND_SURVIVOR: return CETTA_ARENA_LEDGER_SURVIVOR;
+    default: return CETTA_ARENA_LEDGER_OTHER;
+    }
+}
+
+static void arena_ledger_charge(CettaArenaLedgerTag tag, int64_t arenas,
+                                int64_t bytes) {
+    if (tag == CETTA_ARENA_LEDGER_NONE)
+        return;
+    CettaRuntimeCounter base = (CettaRuntimeCounter)(
+        CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE +
+        4u * ((uint32_t)tag - (uint32_t)CETTA_ARENA_LEDGER_OTHER));
+    if (arenas)
+        cetta_runtime_stats_gauge_add(base, (CettaRuntimeCounter)(base + 1u),
+                                      arenas);
+    if (bytes)
+        cetta_runtime_stats_gauge_add((CettaRuntimeCounter)(base + 2u),
+                                      (CettaRuntimeCounter)(base + 3u),
+                                      bytes);
+}
+
+static void arena_ledger_open(Arena *a) {
+    a->ledger_tag_named = false;
+    a->ledger_tag = cetta_runtime_stats_is_enabled()
+        ? (uint8_t)arena_ledger_tag_for_kind(a->runtime_kind)
+        : (uint8_t)CETTA_ARENA_LEDGER_NONE;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 1, 0);
+}
+
+static void arena_ledger_close(Arena *a) {
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, -1,
+                        -(int64_t)a->reserved_bytes);
+    a->ledger_tag = (uint8_t)CETTA_ARENA_LEDGER_NONE;
+}
+
+static void arena_ledger_retag(Arena *a, CettaArenaLedgerTag tag) {
+    if (a->ledger_tag == CETTA_ARENA_LEDGER_NONE || a->ledger_tag == tag)
+        return;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, -1,
+                        -(int64_t)a->reserved_bytes);
+    a->ledger_tag = (uint8_t)tag;
+    arena_ledger_charge(tag, 1, (int64_t)a->reserved_bytes);
+}
+
+static void arena_ledger_stock(int64_t bytes) {
+    cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES,
+                                  CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES_PEAK,
+                                  bytes);
+}
+
 void *cetta_malloc(size_t size) {
     void *ptr = malloc(size == 0 ? 1 : size);
     if (!ptr) cetta_oom(size);
@@ -310,6 +386,7 @@ static void arena_stock_release(void *unused) {
     while (block) {
         ArenaBlock *next = block->next;
         ARENA_STOCK_UNPOISON(block);
+        arena_ledger_stock(-(int64_t)block->capacity);
         free(block);
         block = next;
     }
@@ -336,6 +413,7 @@ static void arena_retire_block(ArenaBlock *block, bool recycle) {
     ARENA_STOCK_POISON(block);
     g_arena_stock = block;
     g_arena_stock_len++;
+    arena_ledger_stock((int64_t)block->capacity);
 }
 
 static ArenaBlock *arena_stock_take(void) {
@@ -347,6 +425,7 @@ static ArenaBlock *arena_stock_take(void) {
     g_arena_stock_len--;
     block->next = NULL;
     block->used = 0;
+    arena_ledger_stock(-(int64_t)block->capacity);
     return block;
 }
 
@@ -392,7 +471,17 @@ static ArenaBlock *arena_take_spare_block(Arena *a, size_t min_capacity) {
     return NULL;
 }
 
+/* An arena's storage ends with arena_free; only arena_init opens it again.
+ * Every allocation from a freed arena reaches a block claim first, since
+ * freeing drops all its blocks, so the check costs nothing elsewhere. */
+static __attribute__((cold, noinline)) void arena_used_after_free(void) {
+    fputs("fatal: arena used after arena_free without arena_init\n", stderr);
+    abort();
+}
+
 static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
+    if (__builtin_expect(a->identity == ARENA_ID_DEAD, 0))
+        arena_used_after_free();
     ArenaBlock *block = arena_take_spare_block(a, min_capacity);
     if (block)
         return block;
@@ -405,6 +494,8 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
     block = arena_block_alloc(capacity, a->recycle_blocks);
     a->reserved_bytes += block->capacity;
     a->block_count++;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
+                        (int64_t)block->capacity);
     arena_runtime_note_usage(a);
     return block;
 }
@@ -842,6 +933,21 @@ static void arena_symbol_cache_free(Arena *a) {
     a->symbol_cache_bytes = 0u;
 }
 
+/* Name an arena for a new incarnation: its identity, and a reset epoch
+ * above every epoch an earlier incarnation of that name used. */
+static void arena_take_name(Arena *a) {
+    uint32_t name = 0u;
+    uint64_t generation = 0u;
+    if (!cetta_name_acquire(&g_arena_names, &g_arena_name_local,
+                            arena_names_once, &name, &generation)) {
+        fputs("fatal: resource exhausted: every arena identity names a live "
+              "arena\n", stderr);
+        abort();
+    }
+    a->identity = name;
+    a->reset_epoch = generation;
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
@@ -855,21 +961,15 @@ void arena_init(Arena *a) {
     a->block_count = 0;
     a->spare_block_count = 0;
     a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
-    uint32_t identity = atomic_fetch_add_explicit(
-        &g_arena_identity_counter, 1u, memory_order_relaxed);
-    if (identity == 0u || identity == ATOM_ARENA_ID_FORWARDED) {
-        fputs("fatal: arena allocation identity space exhausted\n", stderr);
-        abort();
-    }
-    a->identity = identity;
+    arena_take_name(a);
     a->older_identity = 0u;
     a->block_capacity = 0u;
-    a->reset_epoch = 1u;
     a->finalizers = NULL;
     a->retained_owners = NULL;
     a->frame_identities = NULL;
     a->scalar_cache = false;
     a->recycle_blocks = false;
+    arena_ledger_open(a);
 }
 
 void arena_init_detached(Arena *a) {
@@ -1321,6 +1421,26 @@ static void arena_invalidate_allocations(
     a->reset_epoch++;
 }
 
+/* End the incarnation: release the older generation this arena kept named
+ * and its own name, whose next incarnation starts above the epochs this one
+ * used.  The struct is left dead until arena_init opens it again. */
+static void arena_release_names(Arena *a) {
+    if (a->older_identity != 0u) {
+        cetta_name_release(&g_arena_names, &g_arena_name_local,
+                           arena_names_once, a->older_identity, 0u);
+        a->older_identity = 0u;
+    }
+    if (a->identity != 0u && a->identity != ARENA_ID_DEAD) {
+        /* The next incarnation starts above every epoch this one used; with
+         * none left, the name is retired. */
+        uint64_t next = a->reset_epoch == UINT64_MAX ? UINT64_MAX
+                                                     : a->reset_epoch + 1u;
+        cetta_name_release(&g_arena_names, &g_arena_name_local,
+                           arena_names_once, a->identity, next);
+        a->identity = ARENA_ID_DEAD;
+    }
+}
+
 void arena_free(Arena *a) {
     if (!a)
         return;
@@ -1332,6 +1452,8 @@ void arena_free(Arena *a) {
     arena_symbol_cache_free(a);
     arena_release_frame_identities(a);
     arena_release_retained_owner_set(a);
+    arena_ledger_close(a);
+    arena_release_names(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -1379,14 +1501,34 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     provenance_unregister_arena(a);
     a->runtime_kind = kind;
     provenance_register_arena(a);
+    if (!a->ledger_tag_named)
+        arena_ledger_retag(a, arena_ledger_tag_for_kind(kind));
     arena_runtime_note_usage(a);
+}
+
+void arena_set_ledger_tag(Arena *a, CettaArenaLedgerTag tag) {
+    if (!a || tag == CETTA_ARENA_LEDGER_NONE)
+        return;
+    a->ledger_tag_named = true;
+    arena_ledger_retag(a, tag);
 }
 
 void arena_set_older_generation(Arena *young, const Arena *older) {
     if (!young)
         return;
-    young->older_identity = older && older != young &&
-        older->older_identity == 0u ? older->identity : 0u;
+    uint32_t linked = older && older != young &&
+        older->older_identity == 0u && older->identity != 0u &&
+        older->identity != ARENA_ID_DEAD ? older->identity : 0u;
+    if (linked == young->older_identity)
+        return;
+    /* The link owns the older arena's name, so the name cannot pass to
+     * another arena while this one still takes its atoms as settled. */
+    if (linked)
+        cetta_name_retain(&g_arena_names, linked);
+    if (young->older_identity)
+        cetta_name_release(&g_arena_names, &g_arena_name_local,
+                           arena_names_once, young->older_identity, 0u);
+    young->older_identity = linked;
 }
 
 extern inline size_t arena_accounted_live_bytes(const Arena *a);
@@ -1464,6 +1606,8 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
         a->spare_block_count--;
         a->reserved_bytes -= block->capacity;
         a->block_count--;
+        arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
+                            -(int64_t)block->capacity);
         arena_retire_block(block, a->recycle_blocks);
     }
     arena_runtime_note_usage(a);
@@ -2316,6 +2460,7 @@ bool fresh_var_id_try(VarId *id_out) {
 
     if (!id_out || !fresh_var_base_try(&base))
         return false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_FRESH_VAR_BASE_MINT);
     *id_out = (VarId)base;
     return true;
 }
@@ -2343,6 +2488,18 @@ void fresh_var_id_test_reset(uint64_t next_base) {
  * with variable occurrences. */
 uint32_t arena_frame_identity_count_test(const Arena *a) {
     return a && a->frame_identities ? a->frame_identities->len : 0u;
+}
+
+void arena_identity_test_start_fresh_at(uint32_t next) {
+    pthread_mutex_lock(&g_arena_names.mutex);
+    if (next >= g_arena_names.first && next <= g_arena_names.limit)
+        g_arena_names.next_fresh = next;
+    pthread_mutex_unlock(&g_arena_names.mutex);
+}
+
+uint64_t arena_identity_test_stale_releases(void) {
+    return atomic_load_explicit(&g_arena_names.stale_releases,
+                                memory_order_relaxed);
 }
 
 uint32_t arena_frame_identity_capacity_test(const Arena *a) {

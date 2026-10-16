@@ -263,6 +263,11 @@ typedef struct {
     /* The body has an EQUATION_CUT step: its slot vectors record the
      * height beneath the call's own frame (oem_slot_header). */
     bool cuts;
+    /* The body begins by destructuring register `entry_guard_reg` with
+     * PeTTa's decons-atom (oem_note_entry_guard): a call whose value there
+     * is closed and not a non-empty list cannot answer from this equation. */
+    bool has_entry_guard;
+    uint32_t entry_guard_reg;
 } OemEquation;
 
 /* A path from an argument into its structure, each step a child of an
@@ -4188,6 +4193,59 @@ static bool oem_build_typed_protocol(OemCompile *compile,
     return ok || oem_reject(compile, "typed protocol compile");
 }
 
+/* PeTTa's decons-atom has no answer, and no effect, for a closed value that
+ * is not a non-empty list (oem_list_step).  When an equation's body begins
+ * by destructuring a head variable that way, with nothing before it, a call
+ * whose argument there is such a value cannot answer from the equation:
+ * selection may refute it as it refutes a head that cannot match, and a call
+ * whose other equations all fall that way leaves no alternative behind its
+ * answer.  Only a failure that cannot be observed is skipped; an equation
+ * whose body could answer, or act, is always tried. */
+static void oem_note_entry_guard(const OemCompile *compile,
+                                 OemEquation *equation) {
+    const CettaOpenEquationProgram *program = compile->program;
+    equation->has_entry_guard = false;
+    if (!compile->petta || equation->first_step >= program->step_len)
+        return;
+    /* A let's pattern shapes the call's output before the call
+     * (`(let ($h $t) (decons-atom $xs) ...)` binds the output's fresh cell to
+     * ($h $t) first): such a binding cannot fail and has no effect. */
+    uint32_t pc = equation->first_step;
+    while (pc < program->step_len && program->steps[pc].kind == OEM_S_BIND)
+        pc++;
+    if (pc >= program->step_len)
+        return;
+    const OemStep *step = &program->steps[pc];
+    if (step->kind != OEM_S_HOST || step->target != OEM_HOST_LIST ||
+        (step->op != g_builtin_syms.decons_atom &&
+         step->op != g_builtin_syms.petta_decons))
+        return;
+    const OemTemplate *output = &program->templates[step->pattern];
+    if (output->kind != OEM_T_SLOT)
+        return;
+    for (uint32_t shaping = equation->first_step; shaping < pc; shaping++) {
+        const OemTemplate *shaped =
+            &program->templates[program->steps[shaping].value];
+        if (shaped->kind != OEM_T_SLOT || shaped->slot != output->slot)
+            return;
+    }
+    const OemTemplate *goal = &program->templates[step->value];
+    if (goal->kind != OEM_T_BUILD || goal->count != 2u)
+        return;
+    const OemTemplate *arg =
+        &program->templates[program->template_children[goal->first + 1u]];
+    if (arg->kind != OEM_T_SLOT)
+        return;
+    for (uint32_t index = 0u; index < equation->op_count; index++) {
+        const OemMatchOp *op = &program->ops[equation->first_op + index];
+        if (op->kind == OEM_M_BIND && op->operand == arg->slot) {
+            equation->has_entry_guard = true;
+            equation->entry_guard_reg = op->reg;
+            return;
+        }
+    }
+}
+
 static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  PettaProgram *petta,
                                  const CettaOpenEquationHost *host,
@@ -4276,6 +4334,8 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
     equation.register_count = compile.register_count;
     equation.slot_count = compile.slot_count;
     equation.cuts = compile.cuts;
+    if (ok)
+        oem_note_entry_guard(&compile, &equation);
     ok = ok && oem_mark_first_stores(&compile, &equation);
     uint32_t index = 0u;
     ok = ok && (OEM_PUSH(program, equation, equation, &index) ||
@@ -5366,6 +5426,8 @@ struct CettaOpenEquationCursor {
     /* The entry version; the versions a call entered after a change stay
      * callers may still run their code. */
     CettaOpenEquationProgram *program;
+    /* Charged to the resource ledger's open-cursor gauge at open. */
+    bool ledger_counted;
     /* Verdicts for the entry facts of trusted versions, made on demand. */
     PettaContractMemo *contract_memo;
     CettaOpenEquationProgram **versions;
@@ -6147,6 +6209,7 @@ static Arena *oem_scratch(CettaOpenEquationCursor *cursor) {
         arena_init(&cursor->scratch);
         arena_set_runtime_kind(&cursor->scratch,
                                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_ledger_tag(&cursor->scratch, CETTA_ARENA_LEDGER_CURSOR);
         arena_set_hashcons(&cursor->scratch, NULL);
         cursor->scratch_ready = true;
     }
@@ -9565,6 +9628,7 @@ static __attribute__((noinline)) OemRun oem_local_step(
         arena_init(&cursor->collected);
         arena_set_runtime_kind(&cursor->collected,
                                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_ledger_tag(&cursor->collected, CETTA_ARENA_LEDGER_CURSOR);
         arena_set_hashcons(&cursor->collected, NULL);
         cursor->collected_ready = true;
     }
@@ -10906,6 +10970,18 @@ static bool oem_may_match(CettaOpenEquationCursor *cursor,
             return false;
         for (uint32_t child = 0u; child < op->length; child++)
             regs[op->operand + child] = open ? NULL : term->expr.elems[child];
+    }
+    if (eq->has_entry_guard && !cursor->runtime.unmatched_call_is_value &&
+        regs[eq->entry_guard_reg]) {
+        Atom *term = oem_deref(cursor, regs[eq->entry_guard_reg]);
+        uint32_t cell = 0u;
+        if (!oem_is_cell(cursor, term, &cell) && !oem_is_list_cell(term) &&
+            (term->kind != ATOM_EXPR || term->expr.len == 0u) &&
+            oem_version_current(cursor, program)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ENTRY_GUARD_REFUTED);
+            return false;
+        }
     }
     return true;
 }
@@ -12308,6 +12384,7 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
     if (major || !cursor->old_ready) {
         arena_init(&fresh);
         arena_set_runtime_kind(&fresh, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_ledger_tag(&fresh, CETTA_ARENA_LEDGER_CURSOR);
         arena_set_hashcons(&fresh, NULL);
     }
     Arena *to_arena = major || !cursor->old_ready ? &fresh : &cursor->old;
@@ -13142,6 +13219,11 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     CettaOpenEquationCursor *cursor = calloc(1u, sizeof(*cursor));
     if (!cursor)
         return NULL;
+    cursor->ledger_counted = cetta_runtime_stats_is_enabled();
+    if (cursor->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE,
+            CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE_PEAK, 1);
     cursor->program = program;
     atomic_fetch_add_explicit(&program->refs, 1u, memory_order_relaxed);
     cursor->answer_arena = answer_arena;
@@ -13151,10 +13233,12 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
         cursor->runtime = *runtime;
     arena_init(&cursor->region);
     arena_set_runtime_kind(&cursor->region, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_ledger_tag(&cursor->region, CETTA_ARENA_LEDGER_CURSOR);
     arena_set_hashcons(&cursor->region, NULL);
     oem_link_generations(cursor);
     arena_init(&cursor->names);
     arena_set_runtime_kind(&cursor->names, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_ledger_tag(&cursor->names, CETTA_ARENA_LEDGER_CURSOR);
     arena_set_hashcons(&cursor->names, NULL);
     if (!cetta_frame_identity_acquire(&cursor->epoch)) {
         cursor->epoch = 0u;
@@ -14649,6 +14733,10 @@ void cetta_open_equation_cursor_note_authority_change(
 void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     if (!cursor)
         return;
+    if (cursor->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE,
+            CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE_PEAK, -1);
     arena_free(&cursor->region);
     if (cursor->old_ready)
         arena_free(&cursor->old);

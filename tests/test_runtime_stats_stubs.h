@@ -20,6 +20,9 @@
 #ifdef cetta_runtime_stats_update_max
 #undef cetta_runtime_stats_update_max
 #endif
+#ifdef cetta_runtime_stats_gauge_add
+#undef cetta_runtime_stats_gauge_add
+#endif
 
 static uint64_t g_test_runtime_stats_counters[CETTA_RUNTIME_COUNTER_COUNT];
 static _Thread_local CettaSurvivorAllocationRole
@@ -68,6 +71,21 @@ void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value)
         return;
     if (value > g_test_runtime_stats_counters[counter])
         g_test_runtime_stats_counters[counter] = value;
+}
+
+void cetta_runtime_stats_gauge_add(CettaRuntimeCounter gauge,
+                                   CettaRuntimeCounter peak, int64_t delta) {
+    if ((uint32_t)gauge >= CETTA_RUNTIME_COUNTER_COUNT ||
+        (uint32_t)peak >= CETTA_RUNTIME_COUNTER_COUNT)
+        return;
+    uint64_t value = g_test_runtime_stats_counters[gauge];
+    if (delta >= 0)
+        value += (uint64_t)delta;
+    else
+        value = (uint64_t)(-delta) > value ? 0u : value - (uint64_t)(-delta);
+    g_test_runtime_stats_counters[gauge] = value;
+    if (value > g_test_runtime_stats_counters[peak])
+        g_test_runtime_stats_counters[peak] = value;
 }
 
 CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(

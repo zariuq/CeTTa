@@ -5155,6 +5155,8 @@ static bool petta_choice_push_at_goal_trail_mark(
         machine->protected_goal_height = choice.goal_height;
     if (machine->choice_len > machine->stats.maximum_choice_depth)
         machine->stats.maximum_choice_depth = machine->choice_len;
+    cetta_runtime_stats_update_max(CETTA_RUNTIME_COUNTER_PETTA_CHOICE_DEPTH_PEAK,
+                                   (uint64_t)machine->choice_len);
     return true;
 }
 

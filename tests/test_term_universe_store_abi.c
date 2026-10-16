@@ -1450,12 +1450,16 @@ static void test_source_arena_id_memo_contract(void) {
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_HIT) == 0u);
 
-    /* Free is an allocation-invalidating transition just like reset.  The
-       arena remains reusable by its owner, so a free/reuse cycle must move
-       the memo epoch even when the Arena object keeps its identity. */
+    /* Free ends the arena's incarnation and its owner reopens it.  The
+       reopened arena may take back the same identity, but then under a reset
+       epoch above every epoch the ended incarnation used, so a free/reopen
+       cycle can never meet a memo entry of the incarnation that ended. */
+    uint32_t before_free_identity = source.identity;
     uint64_t before_free_epoch = source.reset_epoch;
     arena_free(&source);
-    assert(source.reset_epoch == before_free_epoch + 1u);
+    arena_init(&source);
+    assert(source.identity != before_free_identity ||
+           source.reset_epoch > before_free_epoch + 1u);
     Atom *after_free = atom_expr2(
         &source, atom_symbol(&source, "source-memo-after-free"),
         atom_int(&source, 17));

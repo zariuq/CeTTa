@@ -300,6 +300,8 @@ typedef struct Space {
     /* Unique stamp of changes read through the live module handles.
        Dependency appends change this, but preserve the storage prefix. */
     uint64_t module_dependency_epoch;
+    /* Charged to the resource ledger's space gauges at initialization. */
+    bool ledger_counted;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
