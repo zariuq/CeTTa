@@ -11707,6 +11707,12 @@ bool cetta_prepared_pure_program_value_is_fully_evaluated(
                value, prepared_pure_value_has_callable_node, program);
 }
 
+Arena *cetta_prepared_pure_program_closed_survivor_arena(
+    CettaPreparedPureProgram *program) {
+    return program && program->gc_survivor_ready
+        ? &program->gc_survivor : NULL;
+}
+
 void cetta_prepared_pure_program_release_closed_execution(
     CettaPreparedPureProgram *program) {
     if (!program)

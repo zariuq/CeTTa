@@ -21117,6 +21117,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-list-carrier-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-activation-without-template-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-control-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-match-decision-stats
@@ -28074,6 +28075,51 @@ test-petta-collapse-keeps-cells: $(BIN) tests/petta/collapse_keeps_cells.metta t
 		fi; \
 	done; \
 	echo "PASS: collapse keeps improper cons cells as cells for the list builtins, on the tier and in the machine"
+
+.PHONY: test-petta-pure-results-moved
+# A pure call's result leaves the storage that dies with the call by moving,
+# keeping its sharing, variables and nesting, with collections frequent or not.
+test-petta-semantics: test-petta-pure-results-moved
+test-petta-pure-results-moved: $(BIN) tests/petta/pure_results_moved.metta tests/petta/pure_results_moved.expected
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for budget in 64 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_GC_BUDGET_MB=$$budget \
+				$(CETTA_BIN_INVOKE) --lang petta tests/petta/pure_results_moved.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/pure_results_moved.expected)" ]; then \
+				echo "FAIL: pure call results moved out of dying storage, on the $$route route, $$budget MB budget"; \
+				diff <(cat tests/petta/pure_results_moved.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: pure call results keep sharing, variables and nesting when moved, on the tier and in the machine"
+
+.PHONY: test-pure-results-moved-stats
+# The results are moved: the atoms of the dying storage record their copies
+# in place, and the copy table holds only what lives elsewhere.
+test-pure-results-moved-stats: $(BIN) tests/petta/pure_results_moved.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		report=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --emit-runtime-stats \
+			--lang petta tests/petta/pure_results_moved.metta 2>&1); \
+		in_place=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "atom-deep-copy-recorded-in-place" { print $$3 }'); \
+		in_table=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "atom-deep-copy-recorded-in-table" { print $$3 }'); \
+		if [ -z "$$in_place" ] || [ -z "$$in_table" ] || [ "$$in_place" -lt 100000 ] || \
+				[ "$$in_place" -le $$((20 * in_table)) ]; then \
+			echo "FAIL: copies recorded in place $$in_place, in the table $$in_table, on the $$route route"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: pure call results move out of dying storage without a copy table, on the tier and in the machine"
+else
+	@echo "INFO: the moved-results check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
+endif
 
 .PHONY: test-petta-dispatch-error-scope
 # An error raised inside a call dispatched at run time fails that path alone,
