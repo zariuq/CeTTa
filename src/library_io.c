@@ -1027,7 +1027,16 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
             }
         }
         request->file_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-        if (request->file_fd < 0 || inotify_add_watch(request->file_fd, directory,
+        if (request->file_fd < 0) {
+            /* No watch instance: the user's inotify instances or the
+             * process's descriptors are used up, whatever the directory. */
+            bool exhausted = errno == EMFILE || errno == ENFILE || errno == ENOMEM;
+            io_request_free(NULL, request);
+            return io_error(arena, head, args, nargs, exhausted
+                ? "file-watch cannot start: no inotify instance or descriptor is available"
+                : "file-watch cannot start");
+        }
+        if (inotify_add_watch(request->file_fd, directory,
             IN_CREATE | IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF) < 0) {
             io_request_free(NULL, request);
             return io_error(arena, head, args, nargs, "file-watch directory is unavailable");
