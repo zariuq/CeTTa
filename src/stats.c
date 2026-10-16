@@ -1072,6 +1072,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "petta-choice-heap-collections",
     "petta-choice-heap-major-collections",
     "petta-choice-heap-collection-declined",
+    "open-equation-cursor-versions-live",
+    "open-equation-cursor-versions-live-peak",
+    "open-equation-programs-live",
+    "open-equation-programs-live-peak",
 };
 
 static int64_t clamp_counter(uint64_t value) {

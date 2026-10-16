@@ -25,6 +25,9 @@ typedef struct {
      * then, otherwise the policy's position plus one (position zero: none).
      * Read and written only through the accessors below. */
     uint32_t builtin_policy;
+    /* The symbol's canonical atom, owned by the table rather than an arena:
+     * made on first request (atom_symbol_canonical), freed with the table. */
+    _Atomic(void *) canonical_atom;
 } SymbolEntry;
 
 typedef struct {
@@ -755,6 +758,12 @@ uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
 /* The value depends only on the name, so concurrent callers record the same. */
 void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);
+/* The symbol's canonical atom, or NULL until one is published. */
+void *symbol_canonical_atom(const SymbolTable *st, SymbolId id);
+/* Publish `atom` as the symbol's canonical atom unless one is already:
+ * the published atom, which is `atom` only when it won; NULL for an id the
+ * table does not hold.  The table frees the published atom. */
+void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
 

@@ -142,6 +142,10 @@ void symbol_table_free(SymbolTable *st) {
         if (!entry) continue;
         free((void *)entry->bytes);
         entry->bytes = NULL;
+        free(atomic_load_explicit(&entry->canonical_atom,
+                                  memory_order_relaxed));
+        atomic_store_explicit(&entry->canonical_atom, NULL,
+                              memory_order_relaxed);
     }
     if (st->entry_chunks) {
         for (uint32_t i = 0; i < SYMBOL_ENTRY_CHUNK_COUNT; i++) {
@@ -330,6 +334,33 @@ void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value) {
     SymbolEntry *entry = symbol_table_entry_mut(st, id);
     if (entry)
         __atomic_store_n(&entry->builtin_policy, value, __ATOMIC_RELAXED);
+}
+
+void *symbol_canonical_atom(const SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE ||
+        id >= atomic_load_explicit(&st->entry_len, memory_order_acquire))
+        return NULL;
+    SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    return chunk
+        ? atomic_load_explicit(
+              &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom,
+              memory_order_acquire)
+        : NULL;
+}
+
+void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom) {
+    if (!st || !atom || id == SYMBOL_ID_NONE ||
+        id >= atomic_load_explicit(&st->entry_len, memory_order_acquire))
+        return NULL;
+    SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    if (!chunk)
+        return NULL;
+    void *published = NULL;
+    if (atomic_compare_exchange_strong_explicit(
+            &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom, &published,
+            atom, memory_order_acq_rel, memory_order_acquire))
+        return atom;
+    return published;
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {

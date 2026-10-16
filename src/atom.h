@@ -856,6 +856,10 @@ Atom *atom_symbol(Arena *a, const char *name);
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
+/* The symbol's one atom owned by the symbol table (no arena): for atoms a
+ * compiled program hands to terms that may outlive it.  NULL without a
+ * table or for an id it does not hold. */
+Atom *atom_symbol_canonical(SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
@@ -1167,6 +1171,8 @@ Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
 
 Atom *atom_empty(Arena *a);     /* Symbol "Empty" */
 Atom *atom_unit(Arena *a);      /* Expression () — empty expr */
+/* The empty expression's one atom for the process, owned by no arena. */
+Atom *atom_unit_canonical(void);
 Atom *atom_true(Arena *a);      /* Symbol "True" */
 Atom *atom_false(Arena *a);     /* Symbol "False" */
 

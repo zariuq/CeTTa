@@ -27776,6 +27776,22 @@ test-petta-transaction-collection: $(BIN) tests/petta/transaction_collection.met
 	done; \
 	echo "PASS: transactions keep their working state across heap collections"
 
+.PHONY: test-petta-code-version-lifecycle
+# Compiled code lives as long as something runs it: a call suspended under
+# one definition answers from it after the definition changes, a new call
+# enters the new one, and loops that change code or authorities every step
+# run to the end.  The expected output is SWI-PeTTa's.
+test-petta-search-machine: test-petta-code-version-lifecycle
+test-petta-code-version-lifecycle: $(BIN) tests/petta/code_version_lifecycle.metta tests/petta/code_version_lifecycle.expected
+	@set -e; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --lang petta tests/petta/code_version_lifecycle.metta 2>&1 || true); \
+		test "$$actual" = "$$(cat tests/petta/code_version_lifecycle.expected)" || \
+			{ echo "FAIL: code version lifecycle differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
+	done; \
+	echo "PASS: suspended calls keep the code they entered while new calls enter the current code"
+
 .PHONY: test-petta-library-choice-retirement
 # Library recursions with exclusive clauses answer once and leave no
 # alternative behind: a deterministic loop over them keeps a constant choice
@@ -28307,7 +28323,7 @@ test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/h
 # arenas and spaces are charged while live and returned when released, so the
 # gauges come back to zero, and each space is charged its struct.
 # tools/resource_ledger_probe.py reports the same counters per iteration.
-test-resource-ledger-stats: $(BIN) tests/petta/resource_ledger_overlap.metta tests/petta/resource_ledger_spaces.metta tests/petta/entry_guard_retirement.metta tests/petta/suspended_alternative_budget.metta tests/petta/suspended_alternatives.metta tests/petta/suspended_alternatives.expected tests/petta/libpl_pruned_eval.metta tests/petta/transaction_budget.metta
+test-resource-ledger-stats: $(BIN) tests/petta/resource_ledger_overlap.metta tests/petta/resource_ledger_spaces.metta tests/petta/entry_guard_retirement.metta tests/petta/suspended_alternative_budget.metta tests/petta/suspended_alternatives.metta tests/petta/suspended_alternatives.expected tests/petta/libpl_pruned_eval.metta tests/petta/transaction_budget.metta tests/petta/code_version_budget.metta
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/resource_ledger_overlap.metta 2>&1); \
@@ -28359,6 +28375,16 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: long transaction: answer $$answer, $$commits commits, machine heap held $$heap_peak bytes at peak"; \
 		exit 1; \
 	fi; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/code_version_budget.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tr '\n' ' '); \
+	compiles=$$(counter open-equation-program-compile); tx_commits=$$(counter petta-transaction-commit); \
+	versions=$$(counter open-equation-cursor-versions-live); versions_peak=$$(counter open-equation-cursor-versions-live-peak); \
+	programs_peak=$$(counter open-equation-programs-live-peak); \
+	if [ "$$answers" != "done done " ] || [ "$$compiles" -lt 2000 ] || [ "$$tx_commits" != 20000 ] || \
+			[ "$$versions" != 0 ] || [ "$$versions_peak" -gt 32 ] || [ "$$programs_peak" -gt 64 ]; then \
+		echo "FAIL: code versions: answers $$answers, $$compiles compiles, $$tx_commits commits, versions live $$versions (peak $$versions_peak), programs live at peak $$programs_peak"; \
+		exit 1; \
+	fi; \
 	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
 		report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/libpl_pruned_eval.metta 2>&1); \
 		answer=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tail -1); \
@@ -28369,7 +28395,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 			exit 1; \
 		fi; \
 	fi; \
-	echo "PASS: the resource ledger returns cursors and their arenas, and charges each space its struct ($$((bytes / spaces)) bytes); decons guards retired $$refuted alternatives; a suspended pair of calls holds $$((held_peak / 300)) bytes of cursor arenas; a long transaction's heap stays collected ($$heap_peak bytes at peak); cut Prolog evals dispose their states"
+	echo "PASS: the resource ledger returns cursors and their arenas, and charges each space its struct ($$((bytes / spaces)) bytes); decons guards retired $$refuted alternatives; a suspended pair of calls holds $$((held_peak / 300)) bytes of cursor arenas; a long transaction's heap stays collected ($$heap_peak bytes at peak); a loop compiling $$compiles versions keeps $$versions_peak at most; cut Prolog evals dispose their states"
 else
 	@echo "INFO: the resource-ledger check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-resource-ledger-stats
