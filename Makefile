@@ -4646,6 +4646,17 @@ test-petta-memory-plateau: $(BIN)
 test-petta-memory-plateau-long:
 	@$(MAKE) --no-print-directory test-petta-memory-plateau PETTA_MEMORY_PLATEAU_TURNS=50000
 
+# The turn's shapes that do not plateau yet, in bytes the allocator holds per
+# turn (a plateau reads about 0): facts that differ in every turn and are
+# removed again, a space made in every turn, an equation added and removed
+# again, and the turns run as one top-level evaluation. A measurement, not
+# part of test.
+.PHONY: probe-petta-memory-plateau-pending
+probe-petta-memory-plateau-pending: $(BIN)
+	@$(CETTA_BIN_INVOKE) --profile extended --lang petta \
+		tests/petta/memory_plateau_pending.metta $(PETTA_MEMORY_PLATEAU_TURNS) 2>&1 | \
+		grep -E '^\((fresh-facts|fresh-spaces|rules|one-form-evaluation) '
+
 # The space root seam, traced in shadow from the global roots: a space
 # stored in an older space, in named state or in a closure is reached; a
 # cycle and dropped spaces are not, and neither yet is a space held only by
