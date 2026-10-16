@@ -1754,20 +1754,56 @@ static bool oem_observation_call(const OemCompile *compile, const Atom *expr,
           form == PETTA_FORM_IS_GROUND || form == PETTA_FORM_IS_SPACE));
 }
 
-/* The template of an existence observer's match, when it is one value the
- * observation can ignore: an atomic constant, as the search machine
- * requires before it answers the observer by membership. */
-static bool oem_existence_constant(const Atom *expr) {
-    const Atom *observed =
-        expr->expr.elems[1]->kind == ATOM_EXPR &&
-                expr->expr.elems[1]->expr.len == 0u
-            ? expr->expr.elems[2] : expr->expr.elems[1];
-    const Atom *match = observed->expr.elems[1]->expr.elems[1];
-    Atom *template = match->expr.elems[3];
+/* The position of an existence observer's reification: the side of the
+ * comparison that is not the empty expression. */
+static uint32_t oem_existence_observed_index(const Atom *expr) {
+    return expr->expr.elems[1]->kind == ATOM_EXPR &&
+            expr->expr.elems[1]->expr.len == 0u ? 2u : 1u;
+}
+
+/* An atomic constant: a template the observation can ignore. */
+static bool oem_existence_constant_template(Atom *template) {
     return !atom_has_vars(template) && !atom_is_error(template) &&
         (template->kind == ATOM_SYMBOL ||
          (template->kind == ATOM_GROUNDED &&
           term_universe_atom_is_stable(template)));
+}
+
+/* The template of an existence observer's match, when the observation can
+ * ignore it, as the search machine requires before it answers the observer
+ * by membership: an atomic constant, or a position the plan reads as a
+ * value, which the step checks to be one when it runs (oem_exists_step).
+ * No intrinsic of the observer (the comparison, the reification, once,
+ * match) may have acquired authored equations, which the host runs. */
+static bool oem_existence_admitted(const OemCompile *compile, const Atom *expr,
+                                   const PettaPlanNode *plan) {
+    uint32_t observed_index = oem_existence_observed_index(expr);
+    const Atom *observed = expr->expr.elems[observed_index];
+    const Atom *once = observed->expr.elems[1];
+    const Atom *match = once->expr.elems[1];
+    const PettaPlanNode *observed_plan = petta_plan_child(plan, observed_index);
+    const PettaPlanNode *once_plan = petta_plan_child(observed_plan, 1u);
+    const PettaPlanNode *match_plan = petta_plan_child(once_plan, 1u);
+    const PettaPlanNode *template_plan = petta_plan_child(match_plan, 3u);
+    if (!oem_existence_constant_template(match->expr.elems[3]) &&
+        (!template_plan || template_plan->role != PETTA_PLAN_VALUE))
+        return false;
+    if (!compile->host || !compile->host->builtin_equations)
+        return true;
+    const Atom *heads[] = {expr, observed, once, match};
+    const PettaPlanNode *plans[] = {plan, observed_plan, once_plan, match_plan};
+    for (uint32_t index = 0u; index < 4u; index++) {
+        const PettaPlanNode *head_plan = plans[index];
+        if (head_plan && (head_plan->role == PETTA_PLAN_DATA ||
+                          head_plan->role == PETTA_PLAN_VALUE))
+            continue;
+        if (compile->host->builtin_equations(
+                compile->host->context, compile->program->space,
+                heads[index]->expr.elems[0]->sym_id,
+                heads[index]->expr.len - 1u))
+            return false;
+    }
+    return true;
 }
 
 /* PeTTa's named state: `(get-state name)` and `(change-state! name value)`,
@@ -1850,7 +1886,7 @@ static uint32_t oem_host_fast_path(const OemCompile *compile, Atom *expr,
     if (petta_semantics_match_existence_observer_shape(
             expr, compile->host ? compile->host->reify_head
                                 : SYMBOL_ID_NONE) &&
-        oem_existence_constant(expr))
+        oem_existence_admitted(compile, expr, plan))
         return OEM_HOST_EXISTS;
     /* PeTTa's `repra`, SWI's term_to_atom, is the language's grounded
      * rendering of its argument's value: a ground value renders here, the
@@ -9095,12 +9131,14 @@ static uint32_t oem_template_child(const CettaOpenEquationProgram *program,
                                       child];
 }
 
-/* An existence observer, `(== () (collapse (once (match S P T))))` with an
- * atomic constant T: whether the space S has a row matching P, as the
- * search machine answers it where the space proves that ground matching is
- * structural membership (space_match_exists_ground_exact).  A named space
- * with a schema, a symbol naming no space, a pattern with variables and a
- * space that cannot prove it are the host's, which answers the goal
+/* An existence observer, `(== () (collapse (once (match S P T))))` with a
+ * template T the observation ignores (an atomic constant, or a value):
+ * whether the space S has a row matching P, as the search machine answers
+ * it where the space proves that ground matching is structural membership
+ * (space_match_exists_ground_exact).  A template that is no value when the
+ * step runs (with variables, the empty expression, Empty, an error), a named
+ * space with a schema, a symbol naming no space, a pattern with variables
+ * and a space that cannot prove it are the host's, which answers the goal
  * whole. */
 static __attribute__((noinline)) OemRun oem_exists_step(
         CettaOpenEquationCursor *cursor,
@@ -9113,6 +9151,22 @@ static __attribute__((noinline)) OemRun oem_exists_step(
         side = oem_template_child(program, step->value, 2u);
     uint32_t once = oem_template_child(program, side, 1u);
     uint32_t match = oem_template_child(program, once, 1u);
+    uint32_t template_index = oem_template_child(program, match, 3u);
+    const OemTemplate *template_source = &program->templates[template_index];
+    if (template_source->kind != OEM_T_LITERAL ||
+        !oem_existence_constant_template(template_source->literal)) {
+        Atom *template = oem_instantiate(cursor, program, locals,
+                                         template_index);
+        if (!template)
+            return OEM_RUN_HANDOFF;
+        template = oem_resolve_mode(cursor, template, true);
+        if (!template)
+            return OEM_RUN_HANDOFF;
+        if (atom_has_vars(template) ||
+            (template->kind == ATOM_EXPR && template->expr.len == 0u) ||
+            atom_is_empty(template) || atom_is_error(template))
+            return OEM_RUN_HOST;
+    }
     Atom *reference = oem_instantiate(cursor, program, locals,
                                       oem_template_child(program, match, 1u));
     Atom *pattern = oem_instantiate(cursor, program, locals,

@@ -136,15 +136,42 @@ typedef struct {
     bool has_non_symbol_subjects;
 } TypeAnnIndex;
 
-#define EXACT_INDEX_BUCKETS 4096
+/* One exact row: its AtomId and its position, in 32 bits each while every
+ * id and row fits there (UINT32_MAX marks an empty narrow slot), in 64 bits
+ * otherwise (CETTA_ATOM_ID_NONE marks an empty wide slot).  A row occurring
+ * several times holds one slot per occurrence. */
+typedef struct {
+    uint32_t id;
+    uint32_t row;
+} ExactAtomNarrowSlot;
 
 typedef struct {
-    CettaIndex *indices;
-    CettaIndex len, cap;
-} ExactAtomBucket;
+    AtomId id;
+    CettaIndex row;
+} ExactAtomSlot;
 
+/* How many non-exact rows (rows with variables, among others) one head
+ * symbol leads. */
 typedef struct {
-    ExactAtomBucket buckets[EXACT_INDEX_BUCKETS];
+    SymbolId head;      /* SYMBOL_ID_NONE marks an empty slot */
+    CettaCount rows;
+} ExactIndexInexactHead;
+
+/* Exact rows by AtomId, in a table that grows with the space (linear
+ * probing, a row per slot), built by its first reader.  The rows the index
+ * cannot hold, the non-exact ones, are counted by head symbol instead, and
+ * apart when they have none: a ground pattern whose head counts none, while
+ * no non-exact row lacks a head, can match only an exact row, and only by
+ * being it. */
+typedef struct {
+    void *slots;                    /* NULL until the first exact row */
+    size_t mask;                    /* slot count - 1 */
+    size_t used;
+    bool wide;                      /* ExactAtomSlot, else ExactAtomNarrowSlot */
+    ExactIndexInexactHead *inexact_heads;
+    size_t inexact_head_mask;
+    size_t inexact_head_used;
+    CettaCount inexact_unheaded;
 } ExactAtomIndex;
 
 typedef enum {
@@ -677,6 +704,15 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
+/* Whether every row that could match the ground expression `pattern` is an
+ * exact row, read from the exact index's count of the other rows by head
+ * symbol.  False when the index cannot answer: an overlay, a backend-primary
+ * space, or a stale index it may not rebuild here (inside a deferral window,
+ * or while rows are marked). */
+bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* The rows holding a ground pattern, ascending, read from a current exact
+ * index without settling marks: physical rows while rows are marked. */
+CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
 void space_begin_secondary_index_deferral(Space *s);
 void space_end_secondary_index_deferral(Space *s);
 

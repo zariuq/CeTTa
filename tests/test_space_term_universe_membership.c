@@ -123,6 +123,20 @@ bool space_match_backend_ground_exact_exists_frontier(
     return false;
 }
 
+bool space_match_ground_pattern_matches_by_identity(const Atom *pattern) {
+    (void)pattern;
+    return true;
+}
+
+bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
+                                          CettaIndex **out, CettaIndex *count) {
+    (void)s;
+    (void)pattern;
+    (void)out;
+    (void)count;
+    return false;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     (void)s;
     (void)a;
