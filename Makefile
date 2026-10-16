@@ -3782,6 +3782,34 @@ $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN): tests/test_arena_frame_identity_owne
 test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN))
 
+# Reclaimable names (src/binding/name_space.h): watermarks survive non-final
+# releases, a failed weak upgrade that releases last recycles the name, owner
+# counts never wrap and spent names retire, quarantine never reuses, and live
+# names are distinct across threads with only-growing generations.
+NAME_SPACE_TEST_BIN = runtime/test_name_space-$(BUILD_OBJ_TAG)
+
+$(NAME_SPACE_TEST_BIN): tests/test_name_space.c src/binding/name_space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_name_space.c $(LDFLAGS)
+
+.PHONY: test-name-space
+test-name-space: $(NAME_SPACE_TEST_BIN)
+	@$(call cetta_exec,./$(NAME_SPACE_TEST_BIN))
+
+# Arena identities are reclaimable names: reused only after their arenas are
+# freed (a run creates arenas past the end of the name space), each reuse
+# starting its reset epochs above the last, an older generation's name owned
+# by the younger arena that links it, and no name live twice under threads.
+ARENA_IDENTITY_NAMES_TEST_BIN = runtime/test_arena_identity_names-$(BUILD_OBJ_TAG)
+
+$(ARENA_IDENTITY_NAMES_TEST_BIN): tests/test_arena_identity_names.c src/atom.c src/binding/frame_identity.c src/binding/name_space.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_arena_identity_names.c src/symbol.c src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-arena-identity-names
+test-arena-identity-names: $(ARENA_IDENTITY_NAMES_TEST_BIN)
+	@$(call cetta_exec,./$(ARENA_IDENTITY_NAMES_TEST_BIN))
+
 # The delay service against ConstraintPropagation's goal-table laws: wake
 # each waiting goal once, in suspension order; queue a goal suspended on a
 # bound variable; roll back to any mark; rebase onto compacted checkpoints.
@@ -18333,7 +18361,7 @@ test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test: test-plain-bnf-reader-v1
 test: test-plain-bnf-denotation-v1
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
 .PHONY: test-lean test-rhocalc-lean test-lean-corpus
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean
@@ -21119,6 +21147,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-activation-without-template-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-exact-index-frontier-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-resource-ledger-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-control-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-match-decision-stats
@@ -27671,6 +27700,48 @@ test-petta-work-control: $(BIN) tests/petta/work_control.metta tests/petta/work_
 test-petta-search-machine: test-petta-answer-producer-handoff
 test-petta-search-machine: test-petta-prepared-head-matching
 
+.PHONY: test-petta-entry-guard-retirement
+# An equation whose body begins by destructuring its argument with
+# decons-atom has no answer for a value decons-atom has none for: selection
+# refutes it, so a call whose other equation answered leaves no alternative,
+# and a loop over it keeps a constant choice depth.  Duplicate answers, a
+# body that acts first, cdr-atom and open arguments are unaffected; both
+# routes agree, as they do with a repeated head variable, an output that names
+# the input, an equation added while the call is suspended, and PeTTa's refusal
+# of an authored decons-atom.
+test-petta-search-machine: test-petta-entry-guard-retirement
+ENTRY_GUARD_CASES = entry_guard_retirement entry_guard_controls entry_guard_authored_decons
+test-petta-entry-guard-retirement: $(BIN) $(foreach c,$(ENTRY_GUARD_CASES),tests/petta/$(c).metta tests/petta/$(c).expected)
+	@set -e; \
+	for case in $(ENTRY_GUARD_CASES); do \
+		for route in tier machine; do \
+			if [ $$route = machine ]; then reference=1; else reference=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --lang petta tests/petta/$$case.metta 2>&1 || true); \
+			test "$$actual" = "$$(cat tests/petta/$$case.expected)" || \
+				{ echo "FAIL: $$case differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
+		done; \
+	done; \
+	depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
+		tests/petta/entry_guard_retirement.metta 2>&1 >/dev/null | \
+		sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
+	test "$${depth:-0}" -le 4 || { echo "FAIL: choice depth $$depth over a 200-iteration loop"; exit 1; }; \
+	echo "PASS: decons-guarded equations leave no alternative behind (max depth $${depth:-0})"
+
+.PHONY: test-petta-library-choice-retirement
+# Library recursions with exclusive clauses answer once and leave no
+# alternative behind: a deterministic loop over them keeps a constant choice
+# depth rather than retaining one record, and its heap, per iteration.
+test-petta-search-machine: test-petta-library-choice-retirement
+test-petta-library-choice-retirement: $(BIN)
+	@set -e; \
+	actual=$$(./$(BIN) --lang petta tests/petta/library_choice_retirement.metta); \
+	test "$$actual" = "$$(cat tests/petta/library_choice_retirement.expected)"; \
+	depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
+		tests/petta/library_choice_retirement.metta 2>&1 >/dev/null | \
+		sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
+	test "$${depth:-0}" -le 4; \
+	echo "PASS: library recursions retire their choices (max depth $${depth:-0})"
+
 .PHONY: test-petta-prepared-head-matching
 # Prepared programs match equation heads without equation search, and must
 # decline wherever PeTTa matching differs: a call below a head is evaluated,
@@ -28181,6 +28252,46 @@ test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/h
 		exit 1; \
 	fi; \
 	echo "PASS: HE ground matches keep promoted numbers, NaN, rows with variables and a row with no head"
+
+.PHONY: test-resource-ledger-stats
+# The resource ledger accounts for what a run holds: cursors, their working
+# arenas and spaces are charged while live and returned when released, so the
+# gauges come back to zero, and each space is charged its struct.
+# tools/resource_ledger_probe.py reports the same counters per iteration.
+test-resource-ledger-stats: $(BIN) tests/petta/resource_ledger_overlap.metta tests/petta/resource_ledger_spaces.metta tests/petta/entry_guard_retirement.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/resource_ledger_overlap.metta 2>&1); \
+	counter() { printf '%s\n' "$$report" | awk -v key="$$1" '$$1 == "runtime-counter" && $$2 == key { print $$3 }'; }; \
+	answer=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tail -1); \
+	cursors=$$(counter open-equation-cursor-live); cursor_peak=$$(counter open-equation-cursor-live-peak); \
+	arenas=$$(counter arena-ledger-cursor-live); held=$$(counter arena-ledger-cursor-held-bytes); \
+	held_peak=$$(counter arena-ledger-cursor-held-bytes-peak); depth=$$(counter petta-choice-depth-peak); \
+	recorded=$$(counter runtime-statistics-recorded); \
+	if [ "$$recorded" != 1 ] || [ "$$answer" != done ] || [ "$$cursors" != 0 ] || [ "$$arenas" != 0 ] || [ "$$held" != 0 ] || \
+			[ "$$cursor_peak" -lt 1 ] || [ "$$held_peak" -lt 1 ] || [ "$$depth" -lt 1 ]; then \
+		echo "FAIL: cursor ledger: statistics recorded $$recorded, answer $$answer, live cursors $$cursors (peak $$cursor_peak), live cursor arenas $$arenas, held $$held (peak $$held_peak), choice depth $$depth"; \
+		exit 1; \
+	fi; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/resource_ledger_spaces.metta 2>&1); \
+	answer=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tail -1); \
+	spaces=$$(counter space-live-peak); bytes=$$(counter space-struct-bytes-peak); \
+	if [ "$$answer" != done ] || [ "$$spaces" -lt 100 ] || [ "$$bytes" -lt "$$spaces" ] || \
+			[ $$((bytes % spaces)) -ne 0 ]; then \
+		echo "FAIL: space ledger: answer $$answer, live spaces at peak $$spaces, struct bytes $$bytes"; \
+		exit 1; \
+	fi; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/entry_guard_retirement.metta 2>&1); \
+	refuted=$$(counter open-equation-entry-guard-refuted); live=$$(counter open-equation-cursor-live-peak); \
+	if [ "$$refuted" -lt 200 ] || [ "$$live" -gt 4 ]; then \
+		echo "FAIL: entry guard: $$refuted refutations, $$live cursors live at once over a 200-iteration loop"; \
+		exit 1; \
+	fi; \
+	echo "PASS: the resource ledger returns cursors and their arenas, and charges each space its struct ($$((bytes / spaces)) bytes); decons guards retired $$refuted alternatives"
+else
+	@echo "INFO: the resource-ledger check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-resource-ledger-stats
+endif
 
 .PHONY: test-exact-index-frontier-stats
 # The ground matches take the exact route on both routes: the frontier is

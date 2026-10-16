@@ -1,0 +1,1 @@
+error: (Error (permission_error modify static_procedure (/ decons-atom 2)) (context (: system (/ assertz 2)) $_))

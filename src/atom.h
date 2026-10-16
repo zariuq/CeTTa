@@ -501,6 +501,22 @@ typedef enum {
     CETTA_ARENA_RUNTIME_KIND_SURVIVOR = 4,
 } CettaArenaRuntimeKind;
 
+/* The resource-ledger category an arena's blocks are charged to under
+ * runtime statistics.  It follows the runtime kind unless an owner names a
+ * category (cursor working storage, space storage); NONE marks an arena
+ * created while statistics were off, which is never charged.  Diagnostic
+ * only: no category changes allocation or evaluation. */
+typedef enum {
+    CETTA_ARENA_LEDGER_NONE = 0,
+    CETTA_ARENA_LEDGER_OTHER = 1,
+    CETTA_ARENA_LEDGER_PERSISTENT = 2,
+    CETTA_ARENA_LEDGER_EVAL = 3,
+    CETTA_ARENA_LEDGER_SCRATCH = 4,
+    CETTA_ARENA_LEDGER_SURVIVOR = 5,
+    CETTA_ARENA_LEDGER_CURSOR = 6,
+    CETTA_ARENA_LEDGER_SPACE = 7,
+} CettaArenaLedgerTag;
+
 typedef struct ArenaBlock {
     struct ArenaBlock *next;
     size_t capacity;
@@ -562,6 +578,10 @@ typedef struct {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
+    /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
+     * owner named it (otherwise it follows the runtime kind). */
+    uint8_t ledger_tag;
+    bool ledger_tag_named;
 } Arena;
 
 typedef struct {
@@ -617,6 +637,9 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Charge this arena's blocks to `tag` in the resource ledger from now on,
+ * moving what it already holds there. */
+void  arena_set_ledger_tag(Arena *a, CettaArenaLedgerTag tag);
 void  arena_set_block_recycling(Arena *a, bool enabled);
 /* Name `older` as the older generation of `young`, whose atoms may then share
  * its storage.  The owner releases `older` only together with `young`.  An
@@ -634,6 +657,10 @@ bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
 /* Ownership observations for the arena frame-identity lifetime tests. */
 uint32_t arena_frame_identity_count_test(const Arena *a);
 uint32_t arena_frame_identity_capacity_test(const Arena *a);
+/* Mint the next fresh arena name at `next` (a test starting near the end of
+ * the name space), and count releases of names nobody owned. */
+void arena_identity_test_start_fresh_at(uint32_t next);
+uint64_t arena_identity_test_stale_releases(void);
 bool arena_frame_identity_owned_test(const Arena *a,
                                      CettaFrameIdentity identity);
 #endif

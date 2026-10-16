@@ -8,6 +8,9 @@
 #include "search_machine.h"
 #include "rule_binding.h"
 #include "stats.h"
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include "eval.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -5042,9 +5045,22 @@ static void space_reset_moved_from(Space *s) {
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
 
+/* Heap bytes the C library has handed out, for the resource ledger's
+ * account of what initializing a space allocates; zero where the library
+ * does not report it. */
+static uint64_t space_ledger_heap_in_use(void) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS && defined(__GLIBC__)
+    if (cetta_runtime_stats_is_enabled())
+        return (uint64_t)mallinfo2().uordblks;
+#endif
+    return 0u;
+}
+
 void space_init_with_universe(Space *s, TermUniverse *universe) {
     if (!s)
         return;
+    s->ledger_counted = cetta_runtime_stats_is_enabled();
+    uint64_t heap_before = s->ledger_counted ? space_ledger_heap_in_use() : 0u;
     s->kind = SPACE_KIND_ATOM;
     space_native_storage_init_empty(s, universe);
     s->instance_id = space_fresh_instance_id();
@@ -5064,6 +5080,18 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->importer_count = 0u;
     s->importer_cap = 0u;
     s->module_dependency_epoch = 0u;
+    if (s->ledger_counted) {
+        uint64_t heap_after = space_ledger_heap_in_use();
+        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
+                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, 1);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
+            (int64_t)sizeof(Space));
+        if (heap_after > heap_before)
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES,
+                                    heap_after - heap_before);
+    }
 }
 
 static bool space_handle_list_push(Space ***items, uint32_t *count,
@@ -5430,6 +5458,15 @@ void space_module_own_view_release(Space *view, Space *storage) {
 void space_free(Space *s) {
     if (!s)
         return;
+    if (s->ledger_counted) {
+        s->ledger_counted = false;
+        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
+                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, -1);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
+            -(int64_t)sizeof(Space));
+    }
     /* A read token may retain this address after the object lifetime ends.
        Retire thread-local execution-analysis entries while the identity is
        still readable; cache lookup also validates against its live query

@@ -1021,7 +1021,73 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_TABLE = 995,
     CETTA_RUNTIME_COUNTER_MATCH_NATIVE_EXACT_OCCURRENCES = 996,
     CETTA_RUNTIME_COUNTER_SPACE_EXACT_FRONTIER_CERTIFIED = 997,
-    CETTA_RUNTIME_COUNTER_COUNT = 998
+    /* The resource ledger.  Gauges hold what is live now and peaks their
+     * high-water marks; both count only resources created while statistics
+     * were enabled, so every gauge returns to zero when they are released.
+     * Arena gauges come in fours per ledger tag (live arenas, its peak, held
+     * block bytes, its peak), in CettaArenaLedgerTag order from OTHER. */
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE = 998,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE_PEAK = 999,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_HELD_BYTES = 1000,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_HELD_BYTES_PEAK = 1001,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_LIVE = 1002,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_LIVE_PEAK = 1003,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_HELD_BYTES = 1004,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_HELD_BYTES_PEAK = 1005,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_LIVE = 1006,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_LIVE_PEAK = 1007,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_HELD_BYTES = 1008,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_HELD_BYTES_PEAK = 1009,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_LIVE = 1010,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_LIVE_PEAK = 1011,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_HELD_BYTES = 1012,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_HELD_BYTES_PEAK = 1013,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_LIVE = 1014,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_LIVE_PEAK = 1015,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_HELD_BYTES = 1016,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_HELD_BYTES_PEAK = 1017,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_LIVE = 1018,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_LIVE_PEAK = 1019,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_HELD_BYTES = 1020,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_HELD_BYTES_PEAK = 1021,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_LIVE = 1022,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_LIVE_PEAK = 1023,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_HELD_BYTES = 1024,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_HELD_BYTES_PEAK = 1025,
+    /* Full-size blocks retired into thread stocks, held for reuse. */
+    CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES = 1026,
+    CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES_PEAK = 1027,
+    /* Open-equation cursors open now, suspended or running. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE = 1028,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE_PEAK = 1029,
+    /* Spaces initialized and not yet freed, and their structs' bytes, which
+     * live in whatever storage their creator chose. */
+    CETTA_RUNTIME_COUNTER_SPACE_LIVE = 1030,
+    CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK = 1031,
+    CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES = 1032,
+    CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK = 1033,
+    /* Heap bytes allocated while a space was initialized (C library heap
+     * accounting; zero where it is unavailable). */
+    CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES = 1034,
+    /* Activation identities: acquisitions, handles returned at their last
+     * release (retired ones included), and the gauge of those live. */
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_MINT = 1035,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_FREE = 1036,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE = 1037,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE_PEAK = 1038,
+    /* Global fresh-variable bases minted, and the symbol table's entries
+     * when the snapshot is taken: both are permanent. */
+    CETTA_RUNTIME_COUNTER_FRESH_VAR_BASE_MINT = 1039,
+    CETTA_RUNTIME_COUNTER_SYMBOL_TABLE_ENTRIES = 1040,
+    /* The deepest PeTTa search-machine choice stack. */
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_DEPTH_PEAK = 1041,
+    /* One when this binary records statistics: a build without them still
+     * prints every counter, all zero, which is not a measurement. */
+    CETTA_RUNTIME_COUNTER_STATISTICS_RECORDED = 1042,
+    /* Untried equations selection refuted because their bodies begin by
+     * destructuring a value decons-atom has no answer for. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ENTRY_GUARD_REFUTED = 1043,
+    CETTA_RUNTIME_COUNTER_COUNT = 1044
 } CettaRuntimeCounter;
 
 typedef struct {
@@ -1063,6 +1129,10 @@ bool cetta_runtime_stats_is_enabled(void);
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta);
 void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value);
 void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value);
+/* Change a gauge and raise its peak in one step under the statistics lock,
+ * so the peak is the gauge's exact maximum. */
+void cetta_runtime_stats_gauge_add(CettaRuntimeCounter gauge,
+                                   CettaRuntimeCounter peak, int64_t delta);
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out);
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats);
 void cetta_runtime_stats_populate_space(Space *space, Arena *a,
@@ -1110,6 +1180,8 @@ static inline void cetta_runtime_stats_note_survivor_allocation(
     ((void)sizeof((cetta_runtime_stats_set)((counter), (value)), 0))
 #define cetta_runtime_stats_update_max(counter, value)                           \
     ((void)sizeof((cetta_runtime_stats_update_max)((counter), (value)), 0))
+#define cetta_runtime_stats_gauge_add(gauge, peak, delta)                        \
+    ((void)sizeof((cetta_runtime_stats_gauge_add)((gauge), (peak), (delta)), 0))
 #define cetta_runtime_stats_inc(counter)                                         \
     ((void)sizeof((cetta_runtime_stats_add)((counter), 1u), 0))
 #else
