@@ -1038,7 +1038,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "registered-name-bytes",
     "heap-in-use-bytes",
     "space-tracked-count",
-    "space-unreachable-count",
+    "space-shadow-unreached-count",
     "petta-libpl-eval-state-live",
     "bindings-frame-storage-bytes",
     "bindings-frame-storage-bytes-peak",

@@ -1,6 +1,6 @@
 ;; The space root seam, traced in shadow: runtime-stats! counts the spaces the
 ;; evaluator created and keeps (space-tracked-count) and those that nothing
-;; reachable from the global roots holds (space-unreachable-count). The roots
+;; reachable from the global roots holds (space-shadow-unreached-count). The roots
 ;; are the registry's bindings and named states; a reached value reaches the
 ;; spaces it holds, a reached space the spaces its rows hold. Spaces form
 ;; cycles, so this is a trace: two spaces holding only each other are
@@ -8,7 +8,7 @@
 ;; entries and foreign code also hold values, so the count is not yet a
 ;; collector's verdict.
 (= (gauge $name) (match (runtime-stats!) (runtime-counter $name $n) $n))
-(= (spaces) ((gauge space-tracked-count) (gauge space-unreachable-count)))
+(= (spaces) ((gauge space-tracked-count) (gauge space-shadow-unreached-count)))
 !(let $_ (spaces) settled)
 !(empty-run (spaces))
 ;; A space stored into an older space is reached through that space's row.

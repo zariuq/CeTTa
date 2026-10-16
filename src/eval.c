@@ -23800,7 +23800,7 @@ static Atom *runtime_stats_inventory_atom(Arena *a) {
     cetta_runtime_stats_snapshot(&stats);
     stats.counters[CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT] =
         g_new_space_track.len;
-    stats.counters[CETTA_RUNTIME_COUNTER_SPACE_UNREACHABLE_COUNT] =
+    stats.counters[CETTA_RUNTIME_COUNTER_SPACE_SHADOW_UNREACHED_COUNT] =
         eval_tracked_spaces_unreached(g_registry);
     cetta_runtime_stats_populate_space(inventory, a, &stats);
     return atom_space(a, inventory);

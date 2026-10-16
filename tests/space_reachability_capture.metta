@@ -4,7 +4,7 @@
 ;; closure, the space is unreached. The runtime-stats! gauges are those of
 ;; tests/petta/space_reachability.metta.
 (= (gauge $name) (match (runtime-stats!) (runtime-counter $name $n) $n))
-(= (spaces) ((gauge space-tracked-count) (gauge space-unreachable-count)))
+(= (spaces) ((gauge space-tracked-count) (gauge space-shadow-unreached-count)))
 !(let $_ (spaces) settled)
 !(bind! &keep (new-state (nothing)))
 !(let $s (new-space) (change-state! &keep (metta capture %Undefined% $s)))
