@@ -1033,7 +1033,10 @@ typedef enum {
     /* Counted runtime names held by every registry (live storage gauges). */
     CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT = 1007,
     CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES = 1008,
-    CETTA_RUNTIME_COUNTER_COUNT = 1009
+    /* Bytes the C allocator holds for live allocations (glibc mallinfo2:
+     * in-use arena chunks plus mmapped blocks); 0 where unavailable. */
+    CETTA_RUNTIME_COUNTER_HEAP_IN_USE_BYTES = 1009,
+    CETTA_RUNTIME_COUNTER_COUNT = 1010
 } CettaRuntimeCounter;
 
 typedef struct {

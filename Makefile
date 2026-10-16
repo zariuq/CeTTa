@@ -4622,6 +4622,30 @@ test: test-space-init-state
 test-space-init-state: $(SPACE_INIT_STATE_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_INIT_STATE_TEST_BIN))
 
+# A long-running agent's turn, repeated, keeps every live storage gauge at a
+# plateau after warm-up: symbol table, managed spellings and counted names
+# exactly, the allocator's live bytes within 512 KiB. The workload reads
+# fresh words from text, which only managed spellings reclaim. The long
+# variant runs windows fifty times longer.
+PETTA_MEMORY_PLATEAU_TURNS ?= 1000
+.PHONY: test-petta-memory-plateau test-petta-memory-plateau-long
+test: test-petta-memory-plateau
+test-petta-memory-plateau: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ] || [ "$(ENABLE_MANAGED_SYMBOLS)" != 1 ]; then \
+		echo "SKIP: the memory plateau needs the Prolog build with managed spellings"; \
+		exit 0; \
+	fi; \
+	actual=$$($(CETTA_BIN_INVOKE) --profile extended --lang petta \
+		tests/petta/memory_plateau.metta $(PETTA_MEMORY_PLATEAU_TURNS) 2>&1 | tail -n 1); \
+	if [ "$$actual" != "((counts-flat true) (heap-within-512-KiB true))" ]; then \
+		echo "FAIL: memory plateau over $(PETTA_MEMORY_PLATEAU_TURNS)-turn windows: $$actual"; \
+		exit 1; \
+	fi; \
+	echo "PASS: live storage gauges plateau over three $(PETTA_MEMORY_PLATEAU_TURNS)-turn windows"
+test-petta-memory-plateau-long:
+	@$(MAKE) --no-print-directory test-petta-memory-plateau PETTA_MEMORY_PLATEAU_TURNS=50000
+
 # runtime-stats! reports counters[i] under CETTA_RUNTIME_COUNTER_NAMES[i].
 .PHONY: test-runtime-counter-names
 test: test-runtime-counter-names

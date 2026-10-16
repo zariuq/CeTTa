@@ -5,6 +5,9 @@
 #include "registered_symbols.h"
 
 #include <limits.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -1031,6 +1034,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-mark-settle-row",
     "registered-name-count",
     "registered-name-bytes",
+    "heap-in-use-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -1179,6 +1183,14 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     registered_symbols_live_totals(
         &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT],
         &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES]);
+#if defined(__GLIBC__) && \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+    /* Live bytes as the allocator sees them, unlike RSS, which keeps pages
+     * that were freed but not yet returned to the system. */
+    struct mallinfo2 heap = mallinfo2();
+    out->counters[CETTA_RUNTIME_COUNTER_HEAP_IN_USE_BYTES] =
+        (uint64_t)heap.uordblks + (uint64_t)heap.hblkhd;
+#endif
 }
 
 uint64_t cetta_runtime_stats_survivor_role_total(
