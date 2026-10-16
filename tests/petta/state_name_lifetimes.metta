@@ -20,12 +20,15 @@
        (let $_ (change-state! (state-key rebound_ 1) $n)
          (rebind-loop (- $n 1)))))
 !(let $_ (names) settled)
+;; Each branch holds its own name while it runs; whether it also sees the
+;; other's depends on how the two branches are scheduled.
+(= (holds-own $held) (and (>= $held 1) (<= $held 2)))
 !(let* (($c (names))
         ($inside (collapse (hyperpose
                    ((let $k (state-key worker_probe_ 1)
-                      (progn (change-state! $k 1) (- (names) $c)))
+                      (progn (change-state! $k 1) (holds-own (- (names) $c))))
                     (let $k (state-key worker_probe_ 2)
-                      (progn (change-state! $k 2) (- (names) $c))))))))
+                      (progn (change-state! $k 2) (holds-own (- (names) $c)))))))))
    (workers-hold $inside then-release (- (names) $c)))
 !(let* (($c (names)) ($_ (worker-loop 100)))
    (workers-release (- (names) $c)))
