@@ -114,7 +114,9 @@ typedef struct {
 } EqHeadSet;
 
 typedef struct {
-    EqBucket buckets[EQ_INDEX_BUCKETS];
+    /* EQ_INDEX_BUCKETS buckets, allocated when the first headed equation is
+     * filed; until then every bucket reads as empty. */
+    EqBucket *buckets;
     EqBucket wildcard; /* equations with variable/structured LHS head */
     /* Each exact head's equations.  Bucket collisions in the pattern index
      * must not turn a head-scoped question into a scan of colliding rows. */
@@ -145,8 +147,11 @@ typedef struct {
     CettaIndex len, cap;
 } ExactAtomBucket;
 
+/* EXACT_INDEX_BUCKETS buckets, allocated when the first row is filed: until
+ * then every bucket is empty, and a space that never indexes an exact row
+ * does not carry the 96 KiB array. */
 typedef struct {
-    ExactAtomBucket buckets[EXACT_INDEX_BUCKETS];
+    ExactAtomBucket *buckets;
 } ExactAtomIndex;
 
 typedef enum {

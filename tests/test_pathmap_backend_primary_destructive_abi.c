@@ -462,10 +462,8 @@ static void test_fallback_bucket_lifetime(Arena *arena,
     smset_free(&matches);
     assert(space_truncate(&space, 0u));
     assert(!space.match_backend.pathmap.bridge.flat_has_entries);
-    for (uint32_t i = 0u; i < STREE_BUCKETS; i++) {
-        assert(space.match_backend.pathmap.bridge.buckets[i].entries == NULL);
-        assert(space.match_backend.pathmap.bridge.buckets[i].len == 0u);
-    }
+    /* Clearing releases the headed buckets with their array. */
+    assert(space.match_backend.pathmap.bridge.buckets == NULL);
     assert(space.match_backend.pathmap.bridge.wildcard.entries == NULL);
 
     space_add(&space, row);

@@ -3158,8 +3158,7 @@ static void space_head_chains_append(SpaceHeadChains *rows, SymbolId head,
 }
 
 static void eq_index_init(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_init(&idx->buckets[i]);
+    idx->buckets = NULL;
     eq_bucket_init(&idx->wildcard);
     space_head_chains_init(&idx->head_rows);
     eq_head_set_init(&idx->directional_heads);
@@ -3168,11 +3167,33 @@ static void eq_index_init(EqIndex *idx) {
 }
 
 static void eq_index_free(EqIndex *idx) {
-    for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
-        eq_bucket_free(&idx->buckets[i]);
+    if (idx->buckets) {
+        for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
+            eq_bucket_free(&idx->buckets[i]);
+        free(idx->buckets);
+        idx->buckets = NULL;
+    }
     eq_bucket_free(&idx->wildcard);
     space_head_chains_free(&idx->head_rows);
     eq_head_set_free(&idx->directional_heads);
+}
+
+/* Reads see an unallocated index as all-empty buckets. */
+static const EqBucket g_eq_empty_bucket;
+
+static inline const EqBucket *eq_index_bucket_view(const EqIndex *idx,
+                                                   uint32_t i) {
+    return idx->buckets ? &idx->buckets[i] : &g_eq_empty_bucket;
+}
+
+/* Filing an equation allocates the bucket array (all buckets empty). */
+static EqBucket *eq_index_bucket_for_add(EqIndex *idx, uint32_t i) {
+    if (!idx->buckets) {
+        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EQ_INDEX_BUCKETS);
+        for (uint32_t b = 0; b < EQ_INDEX_BUCKETS; b++)
+            eq_bucket_init(&idx->buckets[b]);
+    }
+    return &idx->buckets[i];
 }
 
 static void eq_index_note_directional_row(EqIndex *idx, const Space *s,
@@ -3200,8 +3221,8 @@ static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
-                      equation_id);
+        eq_bucket_add(eq_index_bucket_for_add(idx, symbol_hash(head)), lhs,
+                      atom_idx, equation_id);
     } else {
         eq_bucket_add(&idx->wildcard, lhs, atom_idx, equation_id);
     }
@@ -3212,8 +3233,8 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
         space_head_chains_append(&idx->head_rows, head, atom_idx, equation_id);
-        eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
-                         equation_id);
+        eq_bucket_add_id(eq_index_bucket_for_add(idx, symbol_hash(head)), s,
+                         lhs_id, atom_idx, equation_id);
     } else {
         eq_bucket_add_id(&idx->wildcard, s, lhs_id, atom_idx, equation_id);
     }
@@ -3342,13 +3363,35 @@ static void exact_atom_bucket_add(ExactAtomBucket *b, CettaIndex idx) {
 }
 
 static void exact_index_init(ExactAtomIndex *idx) {
-    for (uint32_t i = 0; i < EXACT_INDEX_BUCKETS; i++)
-        exact_atom_bucket_init(&idx->buckets[i]);
+    idx->buckets = NULL;
 }
 
 static void exact_index_free(ExactAtomIndex *idx) {
+    if (!idx->buckets)
+        return;
     for (uint32_t i = 0; i < EXACT_INDEX_BUCKETS; i++)
         exact_atom_bucket_free(&idx->buckets[i]);
+    free(idx->buckets);
+    idx->buckets = NULL;
+}
+
+/* Reads see an unallocated index as all-empty buckets. */
+static const ExactAtomBucket g_exact_atom_empty_bucket;
+
+static inline const ExactAtomBucket *exact_index_bucket_view(
+        const ExactAtomIndex *idx, uint32_t i) {
+    return idx->buckets ? &idx->buckets[i] : &g_exact_atom_empty_bucket;
+}
+
+/* Filing a row allocates the bucket array (all buckets empty). */
+static ExactAtomBucket *exact_index_bucket_for_add(ExactAtomIndex *idx,
+                                                   uint32_t i) {
+    if (!idx->buckets) {
+        idx->buckets = cetta_malloc(sizeof(*idx->buckets) * EXACT_INDEX_BUCKETS);
+        for (uint32_t b = 0; b < EXACT_INDEX_BUCKETS; b++)
+            exact_atom_bucket_init(&idx->buckets[b]);
+    }
+    return &idx->buckets[i];
 }
 
 /* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
@@ -4659,6 +4702,8 @@ static SpaceDispatchRetention space_transport_dispatch_coordinates(
     const CettaIndex *coordinates = transport ? transport->source_to_target : NULL;
     if (retained.equations) {
         for (uint32_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
+            if (i < EQ_INDEX_BUCKETS && !s->native.eq_idx.buckets)
+                continue;
             EqBucket *bucket = i == EQ_INDEX_BUCKETS
                 ? &s->native.eq_idx.wildcard : &s->native.eq_idx.buckets[i];
             if (!space_transport_dispatch_bucket(
@@ -5338,8 +5383,8 @@ static bool space_exact_rows(const Space *s, AtomId atom_id, CettaIndex from,
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !atom_id_is_exact_indexable(s, atom_id))
         return false;
-    const ExactAtomBucket *bucket =
-        &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)];
+    const ExactAtomBucket *bucket = exact_index_bucket_view(
+        &s->native.exact_idx, exact_atom_hash_id(s, atom_id));
     *before_from = false;
     *any_from = false;
     for (CettaIndex k = 0u; k < bucket->len; k++) {
@@ -5363,7 +5408,11 @@ static bool space_exact_rows(const Space *s, AtomId atom_id, CettaIndex from,
 static bool exact_index_note_swap_remove(Space *s, CettaIndex row,
                                          AtomId removed, CettaIndex moved_from,
                                          AtomId moved) {
+    /* An unallocated index files no row: an indexable row is missing from
+     * it exactly as from an empty bucket. */
     if (atom_id_is_exact_indexable(s, removed)) {
+        if (!s->native.exact_idx.buckets)
+            return false;
         ExactAtomBucket *bucket =
             &s->native.exact_idx.buckets[exact_atom_hash_id(s, removed)];
         CettaIndex k = 0u;
@@ -5376,6 +5425,8 @@ static bool exact_index_note_swap_remove(Space *s, CettaIndex row,
         bucket->len--;
     }
     if (moved_from != row && atom_id_is_exact_indexable(s, moved)) {
+        if (!s->native.exact_idx.buckets)
+            return false;
         ExactAtomBucket *bucket =
             &s->native.exact_idx.buckets[exact_atom_hash_id(s, moved)];
         CettaIndex k = 0u;
@@ -5560,7 +5611,10 @@ void space_storage_census(const Space *s, CettaStorageCensus *c) {
     cetta_storage_array(c, s->native.eq_idx.directional_heads.slots,
         s->native.eq_idx.directional_heads.cap,
         sizeof(*s->native.eq_idx.directional_heads.slots), 0u);
-    for (size_t i = 0u; i < EQ_INDEX_BUCKETS; i++)
+    cetta_storage_array(c, s->native.eq_idx.buckets,
+        s->native.eq_idx.buckets ? EQ_INDEX_BUCKETS : 0u,
+        sizeof(*s->native.eq_idx.buckets), 0u);
+    for (size_t i = 0u; s->native.eq_idx.buckets && i < EQ_INDEX_BUCKETS; i++)
         eq_bucket_storage_census(&s->native.eq_idx.buckets[i], c);
     eq_bucket_storage_census(&s->native.eq_idx.wildcard, c);
     space_head_chains_storage_census(&s->native.ty_idx.rows, c);
@@ -5569,7 +5623,10 @@ void space_storage_census(const Space *s, CettaStorageCensus *c) {
     cetta_storage_array(c, s->native.mark_tree,
         s->native.mark_cap ? (size_t)s->native.mark_cap + 1u : 0u,
         sizeof(*s->native.mark_tree), 0u);
-    for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
+    cetta_storage_array(c, s->native.exact_idx.buckets,
+        s->native.exact_idx.buckets ? EXACT_INDEX_BUCKETS : 0u,
+        sizeof(*s->native.exact_idx.buckets), 0u);
+    for (size_t i = 0u; s->native.exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++) {
         const ExactAtomBucket *b = &s->native.exact_idx.buckets[i];
         cetta_storage_array(c, b->indices, b->cap, sizeof(*b->indices), 0u);
     }
@@ -6156,8 +6213,8 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
         return SPACE_EQUATION_CURSOR_END;
     }
 
-    EqBucket *exact =
-        &s->native.eq_idx.buckets[symbol_hash(cursor->head)];
+    const EqBucket *exact =
+        eq_index_bucket_view(&s->native.eq_idx, symbol_hash(cursor->head));
     EqBucket *wildcard = &s->native.eq_idx.wildcard;
     CettaIndex exact_index = 0u;
     CettaIndex wildcard_index = 0u;
@@ -7225,7 +7282,8 @@ static void exact_index_rebuild(Space *s) {
         if (!atom_id_is_exact_indexable(s, atom_id))
             continue;
         exact_atom_bucket_add(
-            &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)], i);
+            exact_index_bucket_for_add(&s->native.exact_idx,
+                                       exact_atom_hash_id(s, atom_id)), i);
     }
     /* id_present is now decoupled from the bucket index -- it is synced lazily at
        membership-query time (id_present_sync), so the bucket rebuild does not
@@ -7443,7 +7501,8 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         }
         if (!s->native.exact_idx_dirty && atom_id_is_exact_indexable(s, atom_id)) {
             exact_atom_bucket_add(
-                &s->native.exact_idx.buckets[exact_atom_hash_id(s, atom_id)], idx);
+                exact_index_bucket_for_add(&s->native.exact_idx,
+                                           exact_atom_hash_id(s, atom_id)), idx);
         }
         /* id_present is synced lazily at membership-query time (id_present_sync),
            not per-add, so pure ingress never forces a canonicalizing blob decode. */
@@ -9783,8 +9842,8 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
            term_universe_atom_id_eq(s->native.universe, query_id, atom));
 #endif
     ensure_exact_index(s);
-    ExactAtomBucket *bucket =
-        &s->native.exact_idx.buckets[exact_atom_hash(atom)];
+    const ExactAtomBucket *bucket = exact_index_bucket_view(
+        &s->native.exact_idx, exact_atom_hash(atom));
     if (bucket->len == 0)
         return 0;
     CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * bucket->len);
@@ -12299,7 +12358,7 @@ query_equations_member(Space *s, Atom *query, Arena *a,
     int first_pass = imported ? 0 : -1;
     int end_pass = !imported ? 0 : own_only ? 1 : 2;
     for (int pass = first_pass; pass < end_pass && !sink->stop; pass++) {
-        if (head != SYMBOL_ID_NONE) {
+        if (head != SYMBOL_ID_NONE && s->native.eq_idx.buckets) {
             /* Query has a known head symbol — look up matching bucket */
             query_bucket(s, &s->native.eq_idx.buckets[symbol_hash(head)],
                          query, selection, &visible, a, sink, pass);
@@ -12434,7 +12493,7 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
 #endif
         }
     }
-    const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
+    const EqBucket *b = eq_index_bucket_view(&s->native.eq_idx, symbol_hash(head));
     if (!(b->head == head && !b->mixed_heads && b->len == 1))
         return NULL;
     CettaIndex idx = b->atom_indices[0];
@@ -14577,8 +14636,9 @@ static bool space_checkpoint_bridge_empty(const ImportedBridgeState *bridge,
         return space_checkpoint_refuse(budget, "WorldForeignStorage");
     for (size_t i = 0u; i <= STREE_BUCKETS; i++) {
         if (!space_checkpoint_work(budget, 1u)) return false;
+        static const ImportedFlatBucket empty;
         const ImportedFlatBucket *row = i == STREE_BUCKETS
-            ? &bridge->wildcard : &bridge->buckets[i];
+            ? &bridge->wildcard : bridge->buckets ? &bridge->buckets[i] : &empty;
         if (row->entries || row->len || row->cap)
             return space_checkpoint_refuse(budget, "WorldForeignStorage");
     }
@@ -14849,11 +14909,12 @@ bool space_checkpoint_native_admitted(const Space *space,
         return false;
     for (size_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
         const EqBucket *row = i == EQ_INDEX_BUCKETS
-            ? &space->eq_idx.wildcard : &space->eq_idx.buckets[i];
+            ? &space->eq_idx.wildcard : eq_index_bucket_view(&space->eq_idx, (uint32_t)i);
         if (!space_checkpoint_equation_admitted(space, row, budget)) return false;
     }
     for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
-        const ExactAtomBucket *row = &space->exact_idx.buckets[i];
+        const ExactAtomBucket *row =
+            exact_index_bucket_view(&space->exact_idx, (uint32_t)i);
         if (!space_checkpoint_extent_admitted(row->indices, row->len,
                 row->cap, sizeof(*row->indices), budget)) return false;
     }
@@ -14990,7 +15051,17 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
     image->eq_idx.directional_heads.len = source->eq_idx.directional_heads.len;
     image->eq_idx.directional_wildcard = source->eq_idx.directional_wildcard;
     image->eq_idx.directional_present = source->eq_idx.directional_present;
+    image->eq_idx.buckets = source->eq_idx.buckets
+        ? space_checkpoint_array_copy(NULL, 0u, EQ_INDEX_BUCKETS,
+              sizeof(*image->eq_idx.buckets), budget)
+        : NULL;
+    if (budget->refusal) return false;
+    /* An image keeps no tries or substitution trees; they start empty. */
+    for (size_t i = 0u; image->eq_idx.buckets && i < EQ_INDEX_BUCKETS; i++)
+        eq_bucket_init(&image->eq_idx.buckets[i]);
     for (size_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
+        if (i < EQ_INDEX_BUCKETS && !source->eq_idx.buckets)
+            continue;
         const EqBucket *src = i == EQ_INDEX_BUCKETS
             ? &source->eq_idx.wildcard : &source->eq_idx.buckets[i];
         EqBucket *dst = i == EQ_INDEX_BUCKETS
@@ -15012,7 +15083,14 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
         image->mark_rows = source->mark_rows;
         image->marked = source->marked;
     }
-    for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
+    image->exact_idx.buckets = source->exact_idx.buckets
+        ? space_checkpoint_array_copy(NULL, 0u, EXACT_INDEX_BUCKETS,
+              sizeof(*image->exact_idx.buckets), budget)
+        : NULL;
+    if (budget->refusal) return false;
+    for (size_t i = 0u; image->exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++)
+        exact_atom_bucket_init(&image->exact_idx.buckets[i]);
+    for (size_t i = 0u; source->exact_idx.buckets && i < EXACT_INDEX_BUCKETS; i++) {
         const ExactAtomBucket *src = &source->exact_idx.buckets[i];
         ExactAtomBucket *dst = &image->exact_idx.buckets[i];
         dst->cap = src->cap;
@@ -15211,16 +15289,17 @@ bool space_checkpoint_native_compare(const Space *a, const Space *b,
     for (size_t i = 0u; i <= EQ_INDEX_BUCKETS; i++) {
         if (!read->scalar(read->context, "world.eq.ordinal", i, i)) return false;
         const EqBucket *left = i == EQ_INDEX_BUCKETS
-            ? &a->eq_idx.wildcard : &a->eq_idx.buckets[i];
+            ? &a->eq_idx.wildcard : eq_index_bucket_view(&a->eq_idx, (uint32_t)i);
         const EqBucket *right = i == EQ_INDEX_BUCKETS
-            ? &b->eq_idx.wildcard : &b->eq_idx.buckets[i];
+            ? &b->eq_idx.wildcard : eq_index_bucket_view(&b->eq_idx, (uint32_t)i);
         if (!space_checkpoint_equation_compare(left, right, read)) return false;
     }
     if (!space_checkpoint_head_chains_compare("world.type",
             &a->ty_idx.rows, &b->ty_idx.rows, read)) return false;
     for (size_t i = 0u; i < EXACT_INDEX_BUCKETS; i++) {
         if (!read->scalar(read->context, "world.exact.ordinal", i, i)) return false;
-        const ExactAtomBucket *left = &a->exact_idx.buckets[i], *right = &b->exact_idx.buckets[i];
+        const ExactAtomBucket *left = exact_index_bucket_view(&a->exact_idx, (uint32_t)i);
+        const ExactAtomBucket *right = exact_index_bucket_view(&b->exact_idx, (uint32_t)i);
         if (!space_checkpoint_compare_array("world.exact.indices", left->indices,
                 left->len, left->cap, right->indices, right->len, right->cap,
                 sizeof(*left->indices), read)) return false;

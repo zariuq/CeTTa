@@ -137,7 +137,8 @@ typedef struct {
 } ImportedFlatBucket;
 
 typedef struct {
-    ImportedFlatBucket buckets[STREE_BUCKETS];
+    /* STREE_BUCKETS buckets, allocated when the first row is filed. */
+    ImportedFlatBucket *buckets;
     ImportedFlatBucket wildcard;
     /* Ownership of the fallback buckets, independent of bridge validity. */
     bool flat_has_entries;

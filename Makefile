@@ -4602,6 +4602,16 @@ test-index-key-symbol-births: $(BIN)
 	done; \
 	echo 'PASS: transient string and number index keys birth no symbols (HE, PeTTa)'
 
+# An empty space is its header; its index arrays allocate with a first row.
+SPACE_EMPTY_FOOTPRINT_TEST_BIN = runtime/test_space_empty_footprint-$(BUILD_OBJ_TAG)
+$(SPACE_EMPTY_FOOTPRINT_TEST_BIN): tests/test_space_empty_footprint.c $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(LDFLAGS)
+.PHONY: test-space-empty-footprint
+test: test-space-empty-footprint
+test-space-empty-footprint: $(SPACE_EMPTY_FOOTPRINT_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_EMPTY_FOOTPRINT_TEST_BIN))
+
 # A space initialized over unzeroed storage starts in a defined state.
 SPACE_INIT_STATE_TEST_BIN = runtime/test_space_init_state-$(BUILD_OBJ_TAG)
 $(SPACE_INIT_STATE_TEST_BIN): tests/test_space_init_state.c $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(BUILD_CONFIG_HEADER)
