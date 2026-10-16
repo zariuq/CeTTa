@@ -514,6 +514,11 @@ bool cetta_prepared_pure_program_value_is_fully_evaluated(
  * invocation survivor arena.  The result remains valid until the next
  * execution, program destruction, or this explicit release.  A caller which
  * publishes the result into another arena must copy or materialize it first. */
+/* The arena holding a closed execution's collection survivors, or NULL when
+ * no collection ran; it dies with
+ * cetta_prepared_pure_program_release_closed_execution. */
+Arena *cetta_prepared_pure_program_closed_survivor_arena(
+    CettaPreparedPureProgram *program);
 void cetta_prepared_pure_program_release_closed_execution(
     CettaPreparedPureProgram *program);
 
