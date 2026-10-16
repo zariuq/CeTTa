@@ -214,7 +214,6 @@
   (holder src/petta_compiled_reader.c PeTTaVariableEntryV1.spelling transient)
   (holder src/petta_libpl.c CettaLibPrologRuntime.probe_misses unresolved)
   (holder src/petta_libpl.c PettaLibplAtomSymbols.symbols unresolved)
-  (holder src/petta_libpl.c PettaLibplCallable.name program-structure)
   (holder src/petta_libpl.c PettaLibplImport.symbol program-structure)
   (holder src/petta_program.c PettaCallabilityDomain.named_heads program-structure)
   (holder src/petta_program.c PettaIntrinsicNameIds.data owned-vocabulary)

@@ -66,8 +66,11 @@ typedef struct {
     uint64_t generation;
 } PettaLibplPlrefHandle;
 
+/* A generated callable crosses as the atom lambda_<identity>. The runtime
+ * keys its code by the identity itself, never by an interned name: interning
+ * would make every transient closure that crosses a permanent symbol. */
 typedef struct {
-    SymbolId name;
+    uint64_t identity; /* zero marks an empty slot */
     Atom *code;
 } PettaLibplCallable;
 
@@ -2207,45 +2210,79 @@ static bool petta_libpl_to_term(
     PettaLibplVarMap *variables, uint32_t depth);
 
 static size_t petta_libpl_callable_slot(
-    const PettaLibplCallable *entries, size_t capacity, SymbolId name) {
-    size_t slot = ((uint64_t)name * UINT64_C(11400714819323198485)) & (capacity - 1u);
-    while (entries[slot].name != SYMBOL_ID_NONE && entries[slot].name != name)
+    const PettaLibplCallable *entries, size_t capacity, uint64_t identity) {
+    size_t slot = (identity * UINT64_C(11400714819323198485)) & (capacity - 1u);
+    while (entries[slot].identity != 0u && entries[slot].identity != identity)
         slot = (slot + 1u) & (capacity - 1u);
     return slot;
 }
 
-static Atom *petta_libpl_callable_find(CettaLibPrologRuntime *runtime, SymbolId name) {
-    if (!runtime || !runtime->callable_cap || name == SYMBOL_ID_NONE)
+static Atom *petta_libpl_callable_find(CettaLibPrologRuntime *runtime,
+                                       uint64_t identity) {
+    if (!runtime || !runtime->callable_cap || identity == 0u)
         return NULL;
-    size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, name);
-    return runtime->callables[slot].name == name ? runtime->callables[slot].code : NULL;
+    size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, identity);
+    return runtime->callables[slot].identity == identity ? runtime->callables[slot].code : NULL;
 }
 
-static SymbolId petta_libpl_callable_name(CettaLibPrologRuntime *runtime, Atom *code) {
-    int64_t identity = 0;
-    if (!runtime || !atom_petta_callable_identity(code, &identity))
-        return SYMBOL_ID_NONE;
-    char spelling[64];
-    int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
+/* The identity a generated name spells: exactly lambda_<n>, n a positive
+ * decimal without leading zeros, as petta_libpl_callable_register writes it. */
+static bool petta_libpl_callable_name_identity(const char *bytes, size_t length,
+                                               uint64_t *identity) {
+    static const char prefix[] = "lambda_";
+    const size_t start = sizeof(prefix) - 1u;
+    if (!bytes || length <= start || length - start > 19u ||
+        memcmp(bytes, prefix, start) != 0 || bytes[start] == '0')
+        return false;
+    uint64_t value = 0u;
+    for (size_t i = start; i < length; i++) {
+        if (bytes[i] < '0' || bytes[i] > '9')
+            return false;
+        value = value * 10u + (uint64_t)(bytes[i] - '0');
+    }
+    if (value == 0u || value > (uint64_t)INT64_MAX)
+        return false;
+    *identity = value;
+    return true;
+}
+
+/* The code of the generated callable a crossing atom names, if any. */
+static Atom *petta_libpl_callable_find_name(CettaLibPrologRuntime *runtime,
+                                            const char *bytes, size_t length) {
+    uint64_t identity = 0u;
+    return runtime && runtime->callable_len &&
+               petta_libpl_callable_name_identity(bytes, length, &identity)
+        ? petta_libpl_callable_find(runtime, identity) : NULL;
+}
+
+/* Register a generated callable's code under its identity and write the atom
+ * text it crosses as.  The table keeps the code while the runtime lives:
+ * Prolog may store the atom and return it at any later crossing. */
+static bool petta_libpl_callable_register(CettaLibPrologRuntime *runtime,
+                                          Atom *code, char *name,
+                                          size_t name_cap, size_t *name_len) {
+    int64_t signed_identity = 0;
+    if (!runtime || !atom_petta_callable_identity(code, &signed_identity))
+        return false;
+    uint64_t identity = (uint64_t)signed_identity;
+    int length = snprintf(name, name_cap, "lambda_%llu",
                           (unsigned long long)identity);
-    if (length <= 0 || (size_t)length >= sizeof(spelling))
-        return SYMBOL_ID_NONE;
-    SymbolId name = symbol_intern_bytes(g_symbols, (const uint8_t *)spelling, (uint32_t)length);
-    if (name == SYMBOL_ID_NONE)
-        return name;
-    Atom *existing = petta_libpl_callable_find(runtime, name);
+    if (length <= 0 || (size_t)length >= name_cap)
+        return false;
+    *name_len = (size_t)length;
+    Atom *existing = petta_libpl_callable_find(runtime, identity);
     if (existing)
-        return atom_eq(existing, code) ? name : SYMBOL_ID_NONE;
+        return atom_eq(existing, code);
     if (!runtime->callable_cap || (runtime->callable_len + 1u) * 10u > runtime->callable_cap * 7u) {
         size_t capacity = runtime->callable_cap ? runtime->callable_cap * 2u : 16u;
         if (capacity <= runtime->callable_cap || capacity > SIZE_MAX / sizeof(*runtime->callables))
-            return SYMBOL_ID_NONE;
+            return false;
         PettaLibplCallable *entries = calloc(capacity, sizeof(*entries));
         if (!entries)
-            return SYMBOL_ID_NONE;
+            return false;
         for (size_t i = 0u; i < runtime->callable_cap; i++) {
-            if (runtime->callables[i].name != SYMBOL_ID_NONE)
-                entries[petta_libpl_callable_slot(entries, capacity, runtime->callables[i].name)] = runtime->callables[i];
+            if (runtime->callables[i].identity != 0u)
+                entries[petta_libpl_callable_slot(entries, capacity, runtime->callables[i].identity)] = runtime->callables[i];
         }
         free(runtime->callables);
         runtime->callables = entries;
@@ -2253,12 +2290,12 @@ static SymbolId petta_libpl_callable_name(CettaLibPrologRuntime *runtime, Atom *
     }
     Atom *retained = atom_deep_copy(&runtime->callable_codes, code);
     if (!retained)
-        return SYMBOL_ID_NONE;
+        return false;
     atom_pin_syntax_symbols(retained);
-    size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, name);
-    runtime->callables[slot] = (PettaLibplCallable){name, retained};
+    size_t slot = petta_libpl_callable_slot(runtime->callables, runtime->callable_cap, identity);
+    runtime->callables[slot] = (PettaLibplCallable){identity, retained};
     runtime->callable_len++;
-    return name;
+    return true;
 }
 
 static bool petta_libpl_quote_body(
@@ -2502,9 +2539,12 @@ static bool petta_libpl_to_term(
     case ATOM_EXPR: {
         if (petta_semantics_lambda_body(atom, NULL) ||
             petta_semantics_nullary_lambda_body(atom, NULL)) {
-            SymbolId name = petta_libpl_callable_name(g_petta_libpl_active_runtime, atom);
-            return name != SYMBOL_ID_NONE && petta_libpl_put_utf8(
-                output, PL_ATOM, symbol_bytes(g_symbols, name), symbol_len(g_symbols, name));
+            char name[64];
+            size_t name_len = 0u;
+            return petta_libpl_callable_register(
+                       g_petta_libpl_active_runtime, atom, name, sizeof(name),
+                       &name_len) &&
+                   petta_libpl_put_utf8(output, PL_ATOM, name, name_len);
         }
         Atom *partial_base = NULL;
         Atom *partial_arguments = NULL;
@@ -3325,8 +3365,11 @@ static Atom *petta_libpl_from_term_mode(
     if (type == PL_ATOM) {
         Atom *value = petta_libpl_atom_term_value(arena, term, variables);
         if (!value) return NULL;
-        SymbolId symbol = atom_symbol_current_id(value);
-        Atom *code = petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol);
+        Atom *code = value->kind == ATOM_SYMBOL
+            ? petta_libpl_callable_find_name(g_petta_libpl_active_runtime,
+                                             atom_symbol_bytes(value),
+                                             atom_symbol_length(value))
+            : NULL;
         if (code)
             return atom_deep_copy(arena, code);
         return value;
@@ -5651,7 +5694,9 @@ static Atom *petta_libpl_static_row(Arena *arena, term_t arguments, int arity,
                 ? petta_libpl_atom_symbols_find(cache, handle, argument)
                 : SYMBOL_ID_NONE;
             if (symbol != SYMBOL_ID_NONE)
-                item = petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol);
+                item = petta_libpl_callable_find_name(
+                    g_petta_libpl_active_runtime, symbol_bytes(g_symbols, symbol),
+                    symbol_len(g_symbols, symbol));
             item = item ? atom_deep_copy(arena, item)
                         : symbol != SYMBOL_ID_NONE ? atom_symbol_id(arena, symbol) : NULL;
             break;
@@ -5698,7 +5743,9 @@ static bool petta_libpl_static_literal(
                 ? petta_libpl_atom_symbols_find(cache, handle, argument)
                 : SYMBOL_ID_NONE;
             if (symbol == SYMBOL_ID_NONE ||
-                petta_libpl_callable_find(g_petta_libpl_active_runtime, symbol) ||
+                petta_libpl_callable_find_name(
+                    g_petta_libpl_active_runtime, symbol_bytes(g_symbols, symbol),
+                    symbol_len(g_symbols, symbol)) ||
                 (index == 0 && (symbol == g_builtin_syms.equals ||
                                 symbol == g_builtin_syms.colon ||
                                 petta_semantics_form(symbol) == PETTA_FORM_CONS)))

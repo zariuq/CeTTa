@@ -30040,6 +30040,23 @@ test-petta-callable-name-hygiene: $(BIN)
 		done; \
 		echo "PASS: fresh callable names preserve authored functions and foreign term roles"; \
 	fi
+# A crossing callable is named by its identity, never by an interned symbol.
+.PHONY: test-petta-callable-name-symbol-births
+test-petta-libpl: test-petta-callable-name-symbol-births
+test-petta-callable-name-symbol-births: $(BIN)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		for route in 0 1; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --profile extended --lang petta tests/petta/callable_name_symbol_births.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/callable_name_symbol_births.expected)" ]; then \
+				echo "FAIL: callable name symbol births on route $$route"; \
+				diff <(cat tests/petta/callable_name_symbol_births.expected) <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+		echo "PASS: crossing fresh callables births no symbols, and their names still resolve"; \
+	else \
+		echo "SKIP: callable name births need the Prolog build"; \
+	fi
 .PHONY: test-petta-callable-foreign-values
 test-petta-callable-foreign-values: $(BIN)
 	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
