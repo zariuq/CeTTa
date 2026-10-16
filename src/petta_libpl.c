@@ -51,6 +51,13 @@ typedef struct {
      * the engine.
      */
     bool reference_stdlib;
+    /*
+     * A reference-stdlib name whose SWI implementation reads only its
+     * arguments: it changes no database, file, clock, random state, hook
+     * or loaded code (the effect_free list where reference names are
+     * registered).  An explicit import clears it with reference_stdlib.
+     */
+    bool effect_free;
 } PettaLibplImport;
 
 typedef struct {
@@ -2097,6 +2104,19 @@ static void petta_libpl_register_reference_stdlib(
         "assertaPredicate", "assertzPredicate", "retractPredicate",
         "add-translator-rule!", "remove-translator-rule!",
     };
+    /* The functions above that SWI implements without effects: each reads
+     * only its arguments (arithmetic, comparison, text, terms, lists and
+     * finite-domain constraints on its own variables).  The rest may write
+     * the database, read files or the clock, draw random numbers, install
+     * hooks or load code. */
+    static const char *const effect_free[] = {
+        "min", "max", "!=", "=?", "implies",
+        "sqrt", "exp", "log", "cos", "sin",
+        "atom_concat", "atom_chars", "copy_term", "term_hash",
+        "last", "sort", "member", "get-mettatype", "decons", "concat",
+        "#+", "#-", "#*", "#div", "#//", "#mod", "#min", "#max",
+        "#<", "#>", "#=", "#\\=",
+    };
     if (!runtime || !g_symbols)
         return;
     for (size_t index = 0u;
@@ -2114,8 +2134,16 @@ static void petta_libpl_register_reference_stdlib(
             continue;
         PettaLibplImport *entry =
             petta_libpl_register_import(runtime, symbol);
-        if (entry)
-            entry->reference_stdlib = true;
+        if (!entry)
+            continue;
+        entry->reference_stdlib = true;
+        for (size_t pure = 0u;
+             pure < sizeof(effect_free) / sizeof(effect_free[0]); pure++) {
+            if (strcmp(name, effect_free[pure]) == 0) {
+                entry->effect_free = true;
+                break;
+            }
+        }
     }
 }
 
@@ -5114,21 +5142,26 @@ static bool petta_libpl_reference_stdlib_arity(
  * the engine has started, when the locked path below answers. */
 static bool petta_libpl_unstarted_named_arity(
     CettaLibPrologRuntime *runtime, SymbolId head,
-    CettaExprLen supplied, PeTTaNamedArity *result) {
+    CettaExprLen supplied, bool effect_free_only, PeTTaNamedArity *result) {
     if (atomic_load_explicit(&g_petta_libpl_started,
                              memory_order_acquire) ||
         PL_is_initialised(NULL, NULL) ||
         pthread_mutex_lock(&g_petta_libpl_lock) != 0)
         return false;
+    PettaLibplImport *entry = petta_libpl_find_import(runtime, head);
     bool answered = petta_libpl_reference_stdlib_arity(
-        petta_libpl_find_import(runtime, head), head, supplied, result);
+        entry, head, supplied, result);
+    if (answered && effect_free_only && !entry->effect_free)
+        *result = (PeTTaNamedArity){0};
     (void)pthread_mutex_unlock(&g_petta_libpl_lock);
     return answered;
 }
 
+/* `effect_free_only`: answer only for a reference function marked
+ * effect_free, and nothing for any other name. */
 static PeTTaNamedArity petta_libpl_named_arity_impl(
     CettaLibPrologRuntime *runtime, SymbolId head,
-    CettaExprLen supplied) {
+    CettaExprLen supplied, bool effect_free_only) {
     PeTTaNamedArity result = {0};
     if (!runtime ||
         supplied > (CettaExprLen)SIZE_MAX) {
@@ -5145,6 +5178,8 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
             runtime, head)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_LIBPL_ADMISSION_NEGATIVE);
+        if (effect_free_only)
+            return result;
         size_t standard_arities[2] = {0u, 0u};
         size_t standard_arity_count =
             petta_libpl_standard_function_arities(
@@ -5167,7 +5202,8 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
         }
         return result;
     }
-    if (petta_libpl_unstarted_named_arity(runtime, head, supplied, &result))
+    if (petta_libpl_unstarted_named_arity(
+            runtime, head, supplied, effect_free_only, &result))
         return result;
     bool claimed = false;
     if (!petta_libpl_enter(&claimed))
@@ -5186,6 +5222,12 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
                 entry ? (int)entry->auto_resolved : -1);
     }
     if (petta_libpl_reference_stdlib_arity(entry, head, supplied, &result)) {
+        if (effect_free_only && !entry->effect_free)
+            result = (PeTTaNamedArity){0};
+        petta_libpl_leave(claimed);
+        return result;
+    }
+    if (effect_free_only) {
         petta_libpl_leave(claimed);
         return result;
     }
@@ -5252,9 +5294,19 @@ PeTTaNamedArity petta_libpl_named_arity(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
     PeTTaNamedArity result =
-        petta_libpl_named_arity_impl(runtime, head, supplied);
+        petta_libpl_named_arity_impl(runtime, head, supplied, false);
     petta_libpl_debug_named_arity(
         "named-arity", head, supplied, result);
+    return result;
+}
+
+PeTTaNamedArity petta_libpl_effect_free_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied) {
+    PeTTaNamedArity result =
+        petta_libpl_named_arity_impl(runtime, head, supplied, true);
+    petta_libpl_debug_named_arity(
+        "effect-free-named-arity", head, supplied, result);
     return result;
 }
 
@@ -6294,6 +6346,7 @@ static bool petta_libpl_call_raising(
         if (entry) {
             entry->auto_resolved = false;
             entry->reference_stdlib = false;
+            entry->effect_free = false;
         }
         if (native_form || entry) {
             Bindings empty;

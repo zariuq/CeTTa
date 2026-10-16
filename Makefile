@@ -46200,6 +46200,25 @@ test-petta-transaction-state-names: $(BIN)
 	done; \
 	echo "PASS: named state written inside transactions, literal and computed, commit and failure"
 
+# Effect-free reference functions are calls inside a transaction too.
+.PHONY: test-petta-transaction-effect-free-calls
+test: test-petta-transaction-effect-free-calls
+test-petta-transaction-effect-free-calls: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: effect-free calls in transactions need the Prolog build"; exit 0; \
+	fi; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/transaction_effect_free_calls.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/transaction_effect_free_calls.expected)" ]; then \
+			echo "FAIL: effect-free calls in a transaction on route $$route"; \
+			diff -u tests/petta/transaction_effect_free_calls.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: effect-free reference functions answer inside a transaction as outside"
+
 ifeq ($(ENABLE_MANAGED_SYMBOLS),1)
 test: test-registered-registry
 endif

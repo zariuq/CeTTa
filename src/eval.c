@@ -56809,20 +56809,26 @@ static bool petta_eval_machine_tabled_relation_set(
                eval_context->library_context, head, arity, enabled);
 }
 
+/* A transaction hides the foreign calls whose effects its commit and
+ * rollback would not cover.  A reference function without effects has
+ * nothing to cover, and hiding it would turn its call into data, so inside
+ * a transaction exactly those stay calls. */
 static PeTTaNamedArity petta_eval_machine_foreign_named_arity(
     void *context, SymbolId head, CettaExprLen supplied) {
     PettaEvalMachineContext *eval_context = context;
-    if (!eval_context || eval_context->transaction ||
-        !eval_context->library_context) {
+    if (!eval_context || !eval_context->library_context) {
         if (getenv("CETTA_PETTA_LIBPL_DEBUG"))
             fprintf(stderr,
-                    "[petta-libpl] hook-guard %s ctx=%d txn=%d lib=%d\n",
+                    "[petta-libpl] hook-guard %s ctx=%d lib=%d\n",
                     g_symbols ? symbol_bytes(g_symbols, head) : "?",
                     eval_context != NULL,
-                    eval_context && eval_context->transaction,
                     eval_context && eval_context->library_context != NULL);
         return (PeTTaNamedArity){0};
     }
+    if (eval_context->transaction)
+        return petta_libpl_effect_free_named_arity(
+            eval_context->library_context->lib_prolog,
+            head, supplied);
     return petta_libpl_named_arity(
         eval_context->library_context->lib_prolog,
         head, supplied);
@@ -56846,10 +56852,13 @@ static PeTTaNamedArity petta_eval_machine_native_named_arity(
 static PeTTaNamedArity petta_eval_machine_foreign_named_arity_resolved(
     void *context, SymbolId head, CettaExprLen supplied) {
     PettaEvalMachineContext *eval_context = context;
-    if (!eval_context || eval_context->transaction ||
-        !eval_context->library_context) {
+    if (!eval_context || !eval_context->library_context) {
         return (PeTTaNamedArity){0};
     }
+    if (eval_context->transaction)
+        return petta_libpl_effect_free_named_arity(
+            eval_context->library_context->lib_prolog,
+            head, supplied);
     return petta_libpl_named_arity_including_resolved(
         eval_context->library_context->lib_prolog,
         head, supplied);
@@ -56858,10 +56867,16 @@ static PeTTaNamedArity petta_eval_machine_foreign_named_arity_resolved(
 static PeTTaNamedArity petta_eval_machine_foreign_named_arity_resolving(
     void *context, SymbolId head, CettaExprLen supplied) {
     PettaEvalMachineContext *eval_context = context;
-    if (!eval_context || eval_context->transaction ||
-        !eval_context->library_context) {
+    if (!eval_context || !eval_context->library_context) {
         return (PeTTaNamedArity){0};
     }
+    /* Resolution registers names: session state a transaction does not
+     * roll back, so inside one only the effect-free reference functions,
+     * registered from the start, are calls. */
+    if (eval_context->transaction)
+        return petta_libpl_effect_free_named_arity(
+            eval_context->library_context->lib_prolog,
+            head, supplied);
     return petta_libpl_named_arity_resolving(
         eval_context->library_context->lib_prolog,
         head, supplied);
@@ -57978,12 +57993,29 @@ static bool petta_eval_machine_extension_call(
         *recognized = false;
     if (end)
         *end = cetta_call_failure();
-    if (!eval_context || eval_context->transaction ||
+    if (!eval_context ||
         !eval_context->library_context || !arena ||
         !expression || !expected || !environment ||
         !outcomes || !recognized) {
         return eval_context && arena && expression && expected &&
                environment && outcomes && recognized;
+    }
+    if (eval_context->transaction) {
+        /* Imports, memo and table control, library paths and foreign
+         * predicates with effects stay unavailable inside a transaction,
+         * whose commit and rollback do not cover them; an effect-free
+         * reference function is called as outside one. */
+        CettaExprLen supplied =
+            expression->kind == ATOM_EXPR && expression->expr.len > 0u
+                ? expression->expr.len - 1u : 0u;
+        if (!petta_libpl_effect_free_named_arity(
+                eval_context->library_context->lib_prolog,
+                atom_head_symbol_id(expression), supplied).known)
+            return true;
+        return petta_libpl_call(
+            eval_context->library_context->lib_prolog,
+            arena, expression, expected, environment,
+            outcomes, recognized, end, delay);
     }
     bool memo_import_called = petta_memo_native_import_try(
         eval_context->library_context, arena,

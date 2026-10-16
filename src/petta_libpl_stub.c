@@ -69,6 +69,15 @@ PeTTaNamedArity petta_libpl_named_arity(
     return (PeTTaNamedArity){0};
 }
 
+PeTTaNamedArity petta_libpl_effect_free_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied) {
+    (void)runtime;
+    (void)head;
+    (void)supplied;
+    return (PeTTaNamedArity){0};
+}
+
 PeTTaNamedArity petta_libpl_named_arity_including_resolved(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
