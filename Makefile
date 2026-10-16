@@ -4550,18 +4550,25 @@ test: test-symbol-lifetimes
 test-symbol-lifetimes: runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_symbol_lifetimes-$(BUILD_OBJ_TAG))
 
+# Managed spellings are the configuration every deployed runtime uses, so
+# their gates belong to every `make test`. The value fixture and its mutants
+# compile atom.c and symbol.c themselves; they always do so with managed
+# spellings, in their own configuration, whatever the runtime selects. The
+# owner fixture runs the selected runtime and holds in either configuration.
+MANAGED_SYMBOL_TEST_CPPFLAGS = $(CPPFLAGS) -UCETTA_MANAGED_SYMBOLS -DCETTA_MANAGED_SYMBOLS=1
+test: test-managed-symbol-values test-managed-symbol-mutants test-managed-symbol-owners
 runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG): tests/test_managed_symbol_values.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_managed_symbol_values.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+	$(CC) $(MANAGED_SYMBOL_TEST_CPPFLAGS) $(CFLAGS) -o $@ tests/test_managed_symbol_values.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 .PHONY: test-managed-symbol-values
 test-managed-symbol-values: runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_managed_symbol_values-$(BUILD_OBJ_TAG))
 
 .PHONY: test-managed-symbol-mutants
 test-managed-symbol-mutants: test-managed-symbol-values
-	@test "$(ENABLE_MANAGED_SYMBOLS)" = 1 || { echo 'Set ENABLE_MANAGED_SYMBOLS=1'; exit 2; }
 	python3 verification/gc/experiments/engine_mutants.py --cc='$(CC)' \
-		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)'
+		--cppflags='$(MANAGED_SYMBOL_TEST_CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--output runtime/gc-experiments/engine-mutants-$(BUILD_OBJ_TAG)
 
 .PHONY: test-managed-symbol-owners
 test-managed-symbol-owners: $(BIN)
