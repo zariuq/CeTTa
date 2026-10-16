@@ -1,0 +1,20 @@
+settled
+(empty-run (0 0))
+true
+(stored-in-older (2 0))
+linked
+(cycle-unreached (4 2))
+true
+(state-reaches (5 2))
+done
+(dropped-unreached (205 202))
+true
+(closure-reaches (206 202))
+(running-binding-unreached (207 203))
+true
+(outer-unreached-in-transaction (209 208))
+(removed-unreached-after-commit (209 204))
+rows
+((between-answers 1 (212 204)) (between-answers 2 (212 204)))
+true
+(stale-state-ignored (212 204))

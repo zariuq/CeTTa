@@ -4646,6 +4646,32 @@ test-petta-memory-plateau: $(BIN)
 test-petta-memory-plateau-long:
 	@$(MAKE) --no-print-directory test-petta-memory-plateau PETTA_MEMORY_PLATEAU_TURNS=50000
 
+# The space root seam, traced in shadow from the global roots: a space
+# stored in an older space, in named state or in a closure is reached; a
+# cycle and dropped spaces are not, and neither yet is a space held only by
+# a running form or, inside a transaction, by the registry outside it.
+.PHONY: test-petta-space-reachability
+test: test-petta-space-reachability
+test-petta-space-reachability: $(BIN)
+	@set -eu; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --profile extended \
+			--lang petta tests/petta/space_reachability.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/space_reachability.expected)" ]; then \
+			echo "FAIL: space reachability on route $$route"; \
+			diff -u tests/petta/space_reachability.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	actual=$$($(CETTA_BIN_INVOKE) --profile extended --lang he \
+		tests/space_reachability_capture.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/space_reachability_capture.expected)" ]; then \
+		echo "FAIL: space reachability through a captured context"; \
+		diff -u tests/space_reachability_capture.expected <(printf '%s\n' "$$actual"); \
+		exit 1; \
+	fi; \
+	echo "PASS: spaces reached through rows, state and closures; a cycle and dropped spaces are unreached"
+
 # runtime-stats! reports counters[i] under CETTA_RUNTIME_COUNTER_NAMES[i].
 .PHONY: test-runtime-counter-names
 test: test-runtime-counter-names

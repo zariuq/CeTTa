@@ -1036,7 +1036,12 @@ typedef enum {
     /* Bytes the C allocator holds for live allocations (glibc mallinfo2:
      * in-use arena chunks plus mmapped blocks); 0 where unavailable. */
     CETTA_RUNTIME_COUNTER_HEAP_IN_USE_BYTES = 1009,
-    CETTA_RUNTIME_COUNTER_COUNT = 1010
+    /* Spaces the evaluator created and still keeps (new-space, named and
+     * algebra spaces), and how many of them nothing reachable from the
+     * global roots holds; filled by runtime-stats!. */
+    CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT = 1010,
+    CETTA_RUNTIME_COUNTER_SPACE_UNREACHABLE_COUNT = 1011,
+    CETTA_RUNTIME_COUNTER_COUNT = 1012
 } CettaRuntimeCounter;
 
 typedef struct {

@@ -23529,12 +23529,210 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom) {
     return eval_read_registry_words(registry, a, atom);
 }
 
+/* ── Space root seam (shadow) ─────────────────────────────────────────────
+ * Which tracked spaces the global roots reach: the current registry's
+ * bindings and named states, then everything a reached value holds (a
+ * space, a state cell's value and content type, a captured closure's
+ * space, an expression's elements) and everything a reached space holds
+ * (its rows, its overlay base, its imports). Spaces form cycles, so this
+ * is a trace, never a count of references: two spaces holding only each
+ * other are unreached.
+ *
+ * This marks and frees nothing. It is not yet a collector's root set:
+ * values held by a form still running (its bindings and outcomes), by
+ * choice points and trail entries (whose old values can come back on
+ * undo), by suspended cursors, by foreign code (Python objects, Prolog
+ * terms), and inside a transaction or a hyperpose worker by the registry
+ * the current one stands in for, are not enumerated, so an unreached space
+ * is not yet safe to free.
+ * Rows are traced only for native spaces, and only rows stored by pointer
+ * can hold a space (encoded rows are term-stable, and a space is not).
+ * A space atom in a value is followed only to a space known to be live: one
+ * the evaluator tracks, a temporary space of the current form, a space bound
+ * in the registry, or an overlay base or import of such a space. A value can
+ * still name a temporary space whose form has ended; the trace never reads
+ * through such a pointer. Nor does it read other spaces (a module's, or one
+ * a backend or foreign code made), so a tracked space held only through one
+ * of those counts as unreached too. */
+typedef struct {
+    const void **slots;
+    size_t cap, len;
+} EvalPointerSet;
+
+static bool eval_pointer_set_add(EvalPointerSet *set, const void *p) {
+    if ((set->len + 1u) * 2u > set->cap) {
+        size_t cap = set->cap ? set->cap * 2u : 64u;
+        const void **slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            cetta_oom(cap * sizeof(*slots));
+        for (size_t i = 0u; i < set->cap; i++) {
+            if (!set->slots[i])
+                continue;
+            size_t at = ((uintptr_t)set->slots[i] >> 4) & (cap - 1u);
+            while (slots[at])
+                at = (at + 1u) & (cap - 1u);
+            slots[at] = set->slots[i];
+        }
+        free(set->slots);
+        set->slots = slots;
+        set->cap = cap;
+    }
+    size_t at = ((uintptr_t)p >> 4) & (set->cap - 1u);
+    while (set->slots[at]) {
+        if (set->slots[at] == p)
+            return false;
+        at = (at + 1u) & (set->cap - 1u);
+    }
+    set->slots[at] = p;
+    set->len++;
+    return true;
+}
+
+static bool eval_pointer_set_has(const EvalPointerSet *set, const void *p) {
+    if (!set->cap)
+        return false;
+    size_t at = ((uintptr_t)p >> 4) & (set->cap - 1u);
+    while (set->slots[at]) {
+        if (set->slots[at] == p)
+            return true;
+        at = (at + 1u) & (set->cap - 1u);
+    }
+    return false;
+}
+
+typedef struct {
+    EvalPointerSet seen;   /* spaces, state cells and visited atoms */
+    EvalPointerSet spaces; /* reached spaces */
+    EvalPointerSet live;   /* spaces known to be live, the only ones read */
+    Atom **atoms;
+    size_t atom_len, atom_cap;
+    Space **pending;
+    size_t pending_len, pending_cap;
+} EvalSpaceTrace;
+
+static void eval_space_trace_atom(EvalSpaceTrace *trace, Atom *atom) {
+    if (!atom)
+        return;
+    if (trace->atom_len == trace->atom_cap) {
+        trace->atom_cap = trace->atom_cap ? trace->atom_cap * 2u : 64u;
+        trace->atoms = cetta_realloc(trace->atoms,
+                                     sizeof(*trace->atoms) * trace->atom_cap);
+    }
+    trace->atoms[trace->atom_len++] = atom;
+}
+
+static void eval_space_trace_space(EvalSpaceTrace *trace, const Space *space) {
+    if (!space || !eval_pointer_set_has(&trace->live, space) ||
+        !eval_pointer_set_add(&trace->spaces, space))
+        return;
+    if (trace->pending_len == trace->pending_cap) {
+        trace->pending_cap = trace->pending_cap ? trace->pending_cap * 2u : 16u;
+        trace->pending = cetta_realloc(
+            trace->pending, sizeof(*trace->pending) * trace->pending_cap);
+    }
+    trace->pending[trace->pending_len++] = (Space *)space;
+}
+
+static void eval_space_trace_drain(EvalSpaceTrace *trace) {
+    while (trace->atom_len || trace->pending_len) {
+        while (trace->atom_len) {
+            Atom *atom = trace->atoms[--trace->atom_len];
+            if (atom->kind == ATOM_EXPR) {
+                if (!eval_pointer_set_add(&trace->seen, atom))
+                    continue;
+                for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+                    eval_space_trace_atom(trace, atom->expr.elems[i]);
+            } else if (atom->kind == ATOM_GROUNDED &&
+                       atom->ground.gkind == GV_SPACE) {
+                eval_space_trace_space(trace, (const Space *)atom->ground.ptr);
+            } else if (atom->kind == ATOM_GROUNDED &&
+                       atom->ground.gkind == GV_STATE) {
+                StateCell *cell = (StateCell *)atom->ground.ptr;
+                if (cell && eval_pointer_set_add(&trace->seen, cell)) {
+                    eval_space_trace_atom(trace, cell->value);
+                    eval_space_trace_atom(trace, cell->content_type);
+                }
+            } else if (atom->kind == ATOM_GROUNDED &&
+                       atom->ground.gkind == GV_CAPTURE) {
+                const CaptureClosure *closure = atom->ground.ptr;
+                if (closure)
+                    eval_space_trace_space(trace, closure->space_ptr);
+            }
+        }
+        if (!trace->pending_len)
+            break;
+        Space *space = trace->pending[--trace->pending_len];
+        /* A live space's own links name live spaces. */
+        if (space->overlay_base)
+            eval_pointer_set_add(&trace->live, space->overlay_base);
+        eval_space_trace_space(trace, space->overlay_base);
+        uint32_t dependencies = space_dependency_count(space);
+        for (uint32_t d = 0u; d < dependencies; d++) {
+            Space *dependency = space_dependency_at(space, d);
+            if (dependency)
+                eval_pointer_set_add(&trace->live, dependency);
+            eval_space_trace_space(trace, dependency);
+        }
+        if (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
+            space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)
+            continue;
+        TermUniverse *universe = space->native.universe;
+        CettaCount rows = space_length64(space);
+        for (CettaIndex i = 0u; universe && i < rows; i++) {
+            AtomId id = space_get_atom_id_at64(space, i);
+            if (id == CETTA_ATOM_ID_NONE || tu_hdr(universe, id))
+                continue;
+            eval_space_trace_atom(trace, term_universe_get_atom(universe, id));
+        }
+    }
+}
+
+/* The tracked spaces not reached from the global roots (see above). */
+static uint64_t eval_tracked_spaces_unreached(Registry *registry) {
+    EvalSpaceTrace trace = {0};
+    Arena keys;
+    arena_init(&keys);
+    for (CettaCount i = 0u; i < g_new_space_track.len; i++)
+        eval_pointer_set_add(&trace.live, g_new_space_track.items[i].space);
+    for (CettaCount i = 0u; i < g_temp_spaces.len; i++)
+        eval_pointer_set_add(&trace.live, g_temp_spaces.items[i].space);
+    for (uint32_t i = 0u; registry && i < registry->len; i++) {
+        const Atom *value = registry->entries[i].value;
+        if (value && value->kind == ATOM_GROUNDED &&
+            value->ground.gkind == GV_SPACE && value->ground.ptr)
+            eval_pointer_set_add(&trace.live, value->ground.ptr);
+    }
+    for (uint32_t i = 0u; registry && i < registry->len; i++)
+        eval_space_trace_atom(&trace, registry->entries[i].value);
+    for (uint32_t i = 0u; registry && i < registry_state_count(registry); i++) {
+        Atom *key = NULL, *value = NULL;
+        if (registry_state_entry(registry, i, &keys, &key, &value))
+            eval_space_trace_atom(&trace, value);
+    }
+    eval_space_trace_drain(&trace);
+    uint64_t unreached = 0u;
+    for (CettaCount i = 0u; i < g_new_space_track.len; i++)
+        if (!eval_pointer_set_has(&trace.spaces, g_new_space_track.items[i].space))
+            unreached++;
+    arena_free(&keys);
+    free(trace.seen.slots);
+    free(trace.spaces.slots);
+    free(trace.live.slots);
+    free(trace.atoms);
+    free(trace.pending);
+    return unreached;
+}
+
 static Atom *runtime_stats_inventory_atom(Arena *a) {
     Space *inventory = cetta_malloc(sizeof(Space));
     CettaRuntimeStats stats;
     space_init_with_universe(inventory, eval_current_term_universe());
     temp_space_register(inventory);
     cetta_runtime_stats_snapshot(&stats);
+    stats.counters[CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT] =
+        g_new_space_track.len;
+    stats.counters[CETTA_RUNTIME_COUNTER_SPACE_UNREACHABLE_COUNT] =
+        eval_tracked_spaces_unreached(g_registry);
     cetta_runtime_stats_populate_space(inventory, a, &stats);
     return atom_space(a, inventory);
 }
