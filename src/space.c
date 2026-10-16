@@ -5081,6 +5081,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->importer_count = 0u;
     s->importer_cap = 0u;
     s->module_dependency_epoch = 0u;
+    /* Never cleared later: false is the claim that no subtype row exists. */
+    s->declares_subtypes = false;
 }
 
 static bool space_handle_list_push(Space ***items, uint32_t *count,
