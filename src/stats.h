@@ -1087,7 +1087,18 @@ typedef enum {
     /* Untried equations selection refuted because their bodies begin by
      * destructuring a value decons-atom has no answer for. */
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ENTRY_GUARD_REFUTED = 1043,
-    CETTA_RUNTIME_COUNTER_COUNT = 1044
+    /* States of Prolog `eval` calls that may still be retried: created at the
+     * first call, disposed by its last answer, its failure or its prune. */
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE = 1044,
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK = 1045,
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED = 1046,
+    /* Collections of the search machine's heap while choices are pending,
+     * the major ones among them, and those due but declined because a
+     * pending choice cannot move its atoms. */
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTIONS = 1047,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_MAJOR_COLLECTIONS = 1048,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED = 1049,
+    CETTA_RUNTIME_COUNTER_COUNT = 1050
 } CettaRuntimeCounter;
 
 typedef struct {

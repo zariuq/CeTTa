@@ -705,6 +705,21 @@ typedef struct {
         void *context, void *transaction);
     void (*transaction_rollback)(
         void *context, void *transaction);
+    /*
+     * A begun transaction's working state may hold atoms of the machine heap
+     * (the registry values and state cells it works on).  A heap collection
+     * copies them through its own session into staged storage, then
+     * publishes the copies when the collection commits or drops them when it
+     * fails, so a transaction never blocks collection.  A host without these
+     * hooks leaves the heap uncollected while a transaction is open.
+     */
+    bool (*transaction_relocate)(
+        void *context, void *transaction, AtomDeepCopySession *session,
+        void **staged);
+    void (*transaction_relocate_commit)(
+        void *context, void *transaction, void *staged);
+    void (*transaction_relocate_discard)(
+        void *context, void *staged);
     bool (*mutex_acquire)(
         void *context, Arena *arena, Atom *name,
         void **mutex);

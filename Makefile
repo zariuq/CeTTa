@@ -24940,7 +24940,8 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-r
 				generic_goal_revision \
 				predicate_function \
 				predicate_atom_parameter \
-				prolog_compound_values; do \
+				prolog_compound_values \
+				libpl_pruned_eval; do \
 			CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 				--profile extended "tests/petta/$$fixture.metta" \
 				> "$$actual"; \
@@ -27759,6 +27760,22 @@ test-petta-suspended-alternatives: $(BIN) tests/petta/suspended_alternatives.met
 	done; \
 	echo "PASS: suspended calls resume with the answers, duplicates and effects of an uninterrupted enumeration"
 
+.PHONY: test-petta-transaction-collection
+# A transaction's working state is relocated with the heap it lives in, so
+# a long transaction body is collected as any other work: what it wrote reads
+# back after collections, and commits or rolls back as without them.  The
+# expected output is SWI-PeTTa's.
+test-petta-search-machine: test-petta-transaction-collection
+test-petta-transaction-collection: $(BIN) tests/petta/transaction_collection.metta tests/petta/transaction_collection.expected
+	@set -e; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --lang petta tests/petta/transaction_collection.metta 2>&1 || true); \
+		test "$$actual" = "$$(cat tests/petta/transaction_collection.expected)" || \
+			{ echo "FAIL: transaction collection differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
+	done; \
+	echo "PASS: transactions keep their working state across heap collections"
+
 .PHONY: test-petta-library-choice-retirement
 # Library recursions with exclusive clauses answer once and leave no
 # alternative behind: a deterministic loop over them keeps a constant choice
@@ -28290,7 +28307,7 @@ test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/h
 # arenas and spaces are charged while live and returned when released, so the
 # gauges come back to zero, and each space is charged its struct.
 # tools/resource_ledger_probe.py reports the same counters per iteration.
-test-resource-ledger-stats: $(BIN) tests/petta/resource_ledger_overlap.metta tests/petta/resource_ledger_spaces.metta tests/petta/entry_guard_retirement.metta tests/petta/suspended_alternative_budget.metta
+test-resource-ledger-stats: $(BIN) tests/petta/resource_ledger_overlap.metta tests/petta/resource_ledger_spaces.metta tests/petta/entry_guard_retirement.metta tests/petta/suspended_alternative_budget.metta tests/petta/suspended_alternatives.metta tests/petta/suspended_alternatives.expected tests/petta/libpl_pruned_eval.metta tests/petta/transaction_budget.metta
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/resource_ledger_overlap.metta 2>&1); \
@@ -28328,7 +28345,31 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: suspended alternatives: answer $$answer, choice depth $$depth, open cursors live $$open_live, cursor arenas held $$held_peak bytes over 300 iterations"; \
 		exit 1; \
 	fi; \
-	echo "PASS: the resource ledger returns cursors and their arenas, and charges each space its struct ($$((bytes / spaces)) bytes); decons guards retired $$refuted alternatives; a suspended pair of calls holds $$((held_peak / 300)) bytes of cursor arenas"
+	report=$$(CETTA_PETTA_COLLECT_STRESS=1 ./$(BIN) --emit-runtime-stats --lang petta tests/petta/suspended_alternatives.metta 2>&1); \
+	majors=$$(counter petta-choice-heap-major-collections); declined=$$(counter petta-choice-heap-collection-declined); \
+	if [ "$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ')" != "$$(cat tests/petta/suspended_alternatives.expected)" ] || \
+			[ "$$majors" -lt 1 ] || [ "$$declined" != 0 ]; then \
+		echo "FAIL: collections with suspended calls: $$majors major collections, $$declined declined, or answers differ"; \
+		exit 1; \
+	fi; \
+	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/transaction_budget.metta 2>&1); \
+	answer=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tail -1); \
+	commits=$$(counter petta-transaction-commit); heap_peak=$$(counter arena-ledger-survivor-held-bytes-peak); \
+	if [ "$$answer" != done ] || [ "$$commits" != 1 ] || [ "$$heap_peak" -gt $$((16 * 1024 * 1024)) ]; then \
+		echo "FAIL: long transaction: answer $$answer, $$commits commits, machine heap held $$heap_peak bytes at peak"; \
+		exit 1; \
+	fi; \
+	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/libpl_pruned_eval.metta 2>&1); \
+		answer=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ' | tail -1); \
+		eval_live=$$(counter petta-libpl-eval-state-live); eval_peak=$$(counter petta-libpl-eval-state-live-peak); \
+		pruned=$$(counter petta-libpl-eval-pruned); \
+		if [ "$$answer" != 1 ] || [ "$$eval_live" != 0 ] || [ "$$pruned" -lt 202 ] || [ "$$eval_peak" -gt 4 ]; then \
+			echo "FAIL: pruned Prolog evals: answer $$answer, eval states live $$eval_live (peak $$eval_peak), $$pruned prunes"; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo "PASS: the resource ledger returns cursors and their arenas, and charges each space its struct ($$((bytes / spaces)) bytes); decons guards retired $$refuted alternatives; a suspended pair of calls holds $$((held_peak / 300)) bytes of cursor arenas; a long transaction's heap stays collected ($$heap_peak bytes at peak); cut Prolog evals dispose their states"
 else
 	@echo "INFO: the resource-ledger check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-resource-ledger-stats

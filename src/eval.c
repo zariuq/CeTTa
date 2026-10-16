@@ -39422,6 +39422,125 @@ static void petta_eval_machine_transaction_rollback(
     petta_eval_transaction_destroy(transaction);
 }
 
+/* A heap collection's copy of a begun transaction's working state: the
+ * values of the registry it works on, their images at the transaction's
+ * start, and its state cells' working and initial values.  Staged with the
+ * collection's session; published only when the collection commits. */
+typedef struct {
+    uint32_t registry_len;
+    Atom **registry_values;
+    uint32_t initial_len;
+    Atom **initial_values;
+    size_t state_len;
+    /* Four per state cell: value, content type, initial value, initial
+     * content type. */
+    Atom **state_values;
+} PettaEvalTransactionRelocation;
+
+static void petta_eval_machine_transaction_relocate_discard(
+    void *context, void *staged) {
+    (void)context;
+    PettaEvalTransactionRelocation *relocation = staged;
+    if (!relocation)
+        return;
+    free(relocation->registry_values);
+    free(relocation->initial_values);
+    free(relocation->state_values);
+    free(relocation);
+}
+
+static Atom *petta_eval_transaction_relocate_atom(
+    AtomDeepCopySession *session, Atom *atom, bool *ok) {
+    if (!atom || !*ok)
+        return atom;
+    Atom *copy = atom_deep_copy_session_copy(session, atom);
+    if (!copy)
+        *ok = false;
+    return copy;
+}
+
+static bool petta_eval_machine_transaction_relocate(
+    void *context, void *handle, AtomDeepCopySession *session,
+    void **staged) {
+    (void)context;
+    PettaEvalTransaction *transaction = handle;
+    *staged = NULL;
+    if (!transaction || !session)
+        return false;
+    PettaEvalTransactionRelocation *relocation =
+        calloc(1u, sizeof(*relocation));
+    if (!relocation)
+        return false;
+    relocation->registry_len = transaction->registry.len;
+    relocation->initial_len = transaction->initial_registry_len;
+    relocation->state_len = transaction->state_len;
+    relocation->registry_values = calloc(
+        relocation->registry_len ? relocation->registry_len : 1u,
+        sizeof(Atom *));
+    relocation->initial_values = calloc(
+        relocation->initial_len ? relocation->initial_len : 1u,
+        sizeof(Atom *));
+    relocation->state_values = relocation->state_len <= SIZE_MAX / 4u
+        ? calloc(relocation->state_len ? 4u * relocation->state_len : 1u,
+                 sizeof(Atom *))
+        : NULL;
+    bool ok = relocation->registry_values && relocation->initial_values &&
+        relocation->state_values;
+    for (uint32_t index = 0u; ok && index < relocation->registry_len;
+         index++)
+        relocation->registry_values[index] =
+            petta_eval_transaction_relocate_atom(
+                session, transaction->registry.entries[index].value, &ok);
+    for (uint32_t index = 0u; ok && index < relocation->initial_len; index++)
+        relocation->initial_values[index] =
+            petta_eval_transaction_relocate_atom(
+                session, transaction->initial_registry_values[index], &ok);
+    for (size_t index = 0u; ok && index < relocation->state_len; index++) {
+        const PettaEvalTransactionState *state = &transaction->states[index];
+        Atom **slots = &relocation->state_values[4u * index];
+        slots[0] = petta_eval_transaction_relocate_atom(
+            session, state->working->value, &ok);
+        slots[1] = petta_eval_transaction_relocate_atom(
+            session, state->working->content_type, &ok);
+        slots[2] = petta_eval_transaction_relocate_atom(
+            session, state->initial_value, &ok);
+        slots[3] = petta_eval_transaction_relocate_atom(
+            session, state->initial_content_type, &ok);
+    }
+    if (!ok) {
+        petta_eval_machine_transaction_relocate_discard(context, relocation);
+        return false;
+    }
+    *staged = relocation;
+    return true;
+}
+
+static void petta_eval_machine_transaction_relocate_commit(
+    void *context, void *handle, void *staged) {
+    PettaEvalTransaction *transaction = handle;
+    PettaEvalTransactionRelocation *relocation = staged;
+    if (!transaction || !relocation)
+        return;
+    assert(relocation->registry_len == transaction->registry.len &&
+           relocation->initial_len == transaction->initial_registry_len &&
+           relocation->state_len == transaction->state_len);
+    for (uint32_t index = 0u; index < relocation->registry_len; index++)
+        transaction->registry.entries[index].value =
+            relocation->registry_values[index];
+    for (uint32_t index = 0u; index < relocation->initial_len; index++)
+        transaction->initial_registry_values[index] =
+            relocation->initial_values[index];
+    for (size_t index = 0u; index < relocation->state_len; index++) {
+        PettaEvalTransactionState *state = &transaction->states[index];
+        Atom *const *slots = &relocation->state_values[4u * index];
+        state->working->value = slots[0];
+        state->working->content_type = slots[1];
+        state->initial_value = slots[2];
+        state->initial_content_type = slots[3];
+    }
+    petta_eval_machine_transaction_relocate_discard(context, relocation);
+}
+
 static bool petta_eval_machine_permit_transition(void *context) {
     PettaEvalMachineContext *eval_context = context;
     if (eval_unwinding() || eval_cancel_check() ||
@@ -43705,6 +43824,12 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_transaction_commit,
         .transaction_rollback =
             petta_eval_machine_transaction_rollback,
+        .transaction_relocate =
+            petta_eval_machine_transaction_relocate,
+        .transaction_relocate_commit =
+            petta_eval_machine_transaction_relocate_commit,
+        .transaction_relocate_discard =
+            petta_eval_machine_transaction_relocate_discard,
         .mutex_acquire =
             petta_eval_machine_mutex_acquire,
         .mutex_release =
