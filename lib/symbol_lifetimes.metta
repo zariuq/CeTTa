@@ -381,7 +381,7 @@
   (holder src/space_match_backend.h anonymous[sym_id,arity,ival,fval,bval].sym_id unresolved)
   (holder src/space_path_index.c CettaSpacePathIndex.head compare-only-cache)
   (holder src/space_path_index.c CettaSpacePathIndex.probed_head compare-only-cache)
-  (holder src/subst_tree.c anonymous[sym_id,arity,ival].sym_id unresolved)
+  (holder src/subst_tree.c anonymous[sym_id,arity,ival,text].sym_id unresolved)
   (holder src/subst_tree.h SubstSymBranch.key compare-only-cache)
   (holder src/subst_tree.h SymHashEntry.key compare-only-cache)
   (holder src/subst_tree.h SubstNode.vars.spelling unresolved)

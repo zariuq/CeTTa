@@ -4584,6 +4584,24 @@ test-managed-symbol-owners: $(BIN)
 	diff -u tests/petta/managed_symbol_owners.expected "$$actual"; \
 	echo "PASS: managed symbol owners, computed keys, late calls and foreign text"
 
+# Substitution-index keys for strings and numbers are compared by content:
+# filing or looking up a transient key births no permanent symbol.
+.PHONY: test-index-key-symbol-births
+test: test-index-key-symbol-births
+test-index-key-symbol-births: $(BIN)
+	@set -eu; \
+	for lang in he petta; do \
+		actual=$$($(CETTA_BIN_INVOKE) --profile extended --lang $$lang \
+			tests/index_key_symbol_births.metta 2>&1); \
+		expected=$$(cat tests/index_key_symbol_births.$$lang.expected); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: index key symbol births ($$lang)"; \
+			diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: transient string and number index keys birth no symbols (HE, PeTTa)'
+
 # runtime-stats! reports counters[i] under CETTA_RUNTIME_COUNTER_NAMES[i].
 .PHONY: test-runtime-counter-names
 test: test-runtime-counter-names
