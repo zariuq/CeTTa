@@ -666,14 +666,35 @@ static foreign_t petta_libpl_standard_not_equal(
         arguments + 2u, equal ? "false" : "true");
 }
 
+/* The answers of one Prolog `eval` call that SWI may still retry.  It lives
+ * from the first call to whichever terminal transition comes first: the last
+ * answer, failure, an exception raised to Prolog, or a prune when the caller
+ * cuts the remaining answers.  Each of these disposes it exactly once. */
 typedef struct {
     ResultSet results;
     CettaCount next;
+    /* Charged to the resource ledger when created (statistics were on). */
+    bool ledger_counted;
 } PettaLibplEvalState;
+
+static PettaLibplEvalState *petta_libpl_eval_state_new(void) {
+    PettaLibplEvalState *state = cetta_malloc(sizeof(*state));
+    memset(state, 0, sizeof(*state));
+    state->ledger_counted = cetta_runtime_stats_is_enabled();
+    if (state->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE,
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK, 1);
+    return state;
+}
 
 static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
     if (!state)
         return;
+    if (state->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE,
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK, -1);
     result_set_free(&state->results);
     free(state);
 }
@@ -683,15 +704,22 @@ static foreign_t petta_libpl_raise(Atom *error);
 static foreign_t petta_libpl_standard_eval(
     term_t arguments, int supplied_arity,
     control_t control) {
-    if (!arguments || supplied_arity != 2)
-        return false;
+    /* The phase comes first: a prune passes no arguments, only the context
+     * of the call being cut. */
     int phase = PL_foreign_control(control);
-    PettaLibplEvalState *state = NULL;
     if (phase == PL_PRUNED) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED);
         petta_libpl_eval_state_free(
             PL_foreign_context_address(control));
         return true;
     }
+    if (!arguments || supplied_arity != 2) {
+        if (phase == PL_REDO)
+            petta_libpl_eval_state_free(
+                PL_foreign_context_address(control));
+        return false;
+    }
+    PettaLibplEvalState *state = NULL;
     if (phase == PL_REDO) {
         state = PL_foreign_context_address(control);
     } else if (phase == PL_FIRST_CALL) {
@@ -706,8 +734,7 @@ static foreign_t petta_libpl_standard_eval(
         petta_libpl_back_map_free(&unknown);
         if (!expression)
             return false;
-        state = cetta_malloc(sizeof(*state));
-        memset(state, 0, sizeof(*state));
+        state = petta_libpl_eval_state_new();
         if (!eval_petta_from_lib_prolog(
                 g_petta_libpl_active_arena,
                 expression, &state->results)) {

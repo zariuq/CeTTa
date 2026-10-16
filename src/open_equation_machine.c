@@ -5509,6 +5509,15 @@ struct CettaOpenEquationCursor {
     Arena collected;
     bool collected_ready;
     Arena *answer_arena;
+    /* Whether the cursor may hold atoms of the host's answer arena or of its
+     * stable storage (runtime.stable): set when an import shares them or an
+     * export or the generation link refers to them, cleared when a detach
+     * copies them in.  A detach from storage the cursor does not borrow from
+     * has nothing to copy. */
+    bool borrows_answer_arena;
+    bool borrows_stable;
+    /* Atoms detaching collections have copied in, in all. */
+    uint64_t detach_copied;
     CettaFrameIdentity epoch;
     Atom **cells;
     uint32_t cell_len, cell_cap;
@@ -6704,6 +6713,9 @@ static Atom *oem_resolve_operand(CettaOpenEquationCursor *cursor,
 }
 
 static Atom *oem_resolve_stable(CettaOpenEquationCursor *cursor, Atom *root) {
+    /* The export may leave stable copies as the region's expressions'
+     * images (`name_key`). */
+    cursor->borrows_stable = true;
     return oem_resolve_in(cursor, root, false, cursor->answer_arena,
                           cursor->runtime.stable, false);
 }
@@ -9885,6 +9897,21 @@ static Atom *oem_import_copy(CettaOpenEquationCursor *cursor,
  * cell, or a term the import keeps or copies whole.  NULL with `*descend`
  * set asks for an expression's image from its elements' images; NULL
  * otherwise is a failure. */
+/* An import shares `atom`: note the host storage the cursor now borrows
+ * from.  An answer-arena atom may name stable atoms too; a stable atom names
+ * only stable and longer-lived ones. */
+static inline void oem_note_borrow(CettaOpenEquationCursor *cursor,
+                                   const Atom *atom) {
+    uint32_t identity = atom->arena_id;
+    if (cursor->answer_arena && identity == cursor->answer_arena->identity) {
+        cursor->borrows_answer_arena = true;
+        cursor->borrows_stable = true;
+    } else if (cursor->runtime.stable &&
+               identity == cursor->runtime.stable->identity) {
+        cursor->borrows_stable = true;
+    }
+}
+
 static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
                              OemImport *import, Atom *atom,
                              bool *descend) {
@@ -9911,8 +9938,10 @@ static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
         }
         break;
     case OEM_IMPORT_COLLECTED:
-        if (atom->arena_id != cursor->collected.identity)
+        if (atom->arena_id != cursor->collected.identity) {
+            oem_note_borrow(cursor, atom);
             return atom;
+        }
         if (atom->kind == ATOM_VAR)
             return oem_fresh_var(cursor, atom->var_id);
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
@@ -9941,8 +9970,10 @@ static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
         *descend = true;
         return NULL;
     }
-    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom)) {
+        oem_note_borrow(cursor, atom);
         return atom;
+    }
     *descend = true;
     return NULL;
 }
@@ -11309,8 +11340,11 @@ static inline __attribute__((always_inline)) OemRun oem_activate(
 static void oem_link_generations(CettaOpenEquationCursor *cursor) {
     Arena *stable = cursor->runtime.stable;
     if (stable && cursor->region.older_identity == 0u &&
-        arena_accounted_live_bytes(stable) != 0u)
+        arena_accounted_live_bytes(stable) != 0u) {
         arena_set_older_generation(&cursor->region, stable);
+        /* Copies into the region may now share stable atoms as settled. */
+        cursor->borrows_stable = true;
+    }
 }
 
 /* ---- region collection --------------------------------------------------- */
@@ -11355,6 +11389,8 @@ typedef struct {
     size_t first;
     size_t steady;
     size_t major;
+    /* The stress sizes are in force (a test). */
+    bool stress;
 } OemCollectSizes;
 
 static const OemCollectSizes *oem_collect_sizes(void) {
@@ -11365,7 +11401,7 @@ static const OemCollectSizes *oem_collect_sizes(void) {
         sizes = stress && stress[0] && strcmp(stress, "0") != 0
             ? (OemCollectSizes){
                   .first = 16u * 1024u, .steady = 16u * 1024u,
-                  .major = 64u * 1024u}
+                  .major = 64u * 1024u, .stress = true}
             : (OemCollectSizes){
                   .first = OEM_COLLECT_MIN_BYTES,
                   .steady = OEM_COLLECT_STEADY_BYTES,
@@ -11439,12 +11475,15 @@ typedef struct {
     uint32_t marked_len, marked_cap;
     size_t reached_old;
     bool record;
+    /* Atoms of the storage `detach_identity` names, and export copies there,
+     * that this collection found the cursor holding. */
+    uint64_t detach_copied;
 } OemCollect;
 
 /* A table size, a power of two of at least 1024, that holds `hint`
  * entries at the table's load bound. */
 static size_t oem_collect_table_size(size_t hint) {
-    size_t cap = 1024u;
+    size_t cap = 16u;
     while (cap < SIZE_MAX / 4u && (hint + 1u) * 2u > cap)
         cap *= 2u;
     return cap;
@@ -11708,6 +11747,17 @@ static inline bool oem_collect_kept(const OemCollect *collect,
  * ends the cursor), so marking it needs no side table. */
 static Atom oem_traced_mark;
 
+/* Whether an export's stable copy, which serves as an expression's copy,
+ * outlives this collection.  A detaching collection runs because the host is
+ * about to release `detach_identity`: a copy there would forward the cursor
+ * into storage about to be freed, so the expression is traced and copied
+ * like any other. */
+static inline bool oem_export_copy_outlives(const OemCollect *collect,
+                                            const Atom *copy) {
+    return collect->detach_identity == 0u ||
+        copy->arena_id != collect->detach_identity;
+}
+
 /* The copy a collection made of an expression, or NULL. */
 static inline Atom *oem_collected_copy(const Atom *atom) {
     Atom *copy = atom->name_key;
@@ -11758,8 +11808,13 @@ static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
                 if (!oem_collect_put(collect, atom, atom))
                     return false;
             } else {
-                if (atom->name_key && atom->name_key != &oem_exported_mark)
-                    continue;
+                if (atom->name_key && atom->name_key != &oem_exported_mark) {
+                    if (atom->name_key == &oem_traced_mark ||
+                        oem_export_copy_outlives(collect, atom->name_key))
+                        continue;
+                    /* An export's copy in the storage being released. */
+                    collect->detach_copied++;
+                }
                 atom->name_key = &oem_traced_mark;
                 if (collect->record) {
                     if (!oem_reserve((void **)&collect->marked,
@@ -11780,8 +11835,13 @@ static bool oem_trace_atom(CettaOpenEquationCursor *cursor,
                 collect->reached_old += bytes;
             continue;
         }
-        if (atom->name_key && atom->name_key != &oem_exported_mark)
-            continue;
+        if (atom->name_key && atom->name_key != &oem_exported_mark) {
+            if (atom->name_key == &oem_traced_mark ||
+                oem_export_copy_outlives(collect, atom->name_key))
+                continue;
+            /* An export's copy in the storage being released. */
+            collect->detach_copied++;
+        }
         atom->name_key = &oem_traced_mark;
         bool view = oem_long_view(atom);
         bool header_only = view && collect->detach_identity == 0u &&
@@ -11900,6 +11960,7 @@ static Atom *oem_collect_atom(CettaOpenEquationCursor *cursor,
         } else if (collect->detach_identity != 0u &&
                    atom->arena_id == collect->detach_identity) {
             result = atom_deep_copy_session_copy(collect->detach, atom);
+            collect->detach_copied++;
         } else if (!oem_collect_from(collect, atom)) {
             result = atom;
         } else if (((atom->kind == ATOM_EXPR && atom->expr.len > 0u) ||
@@ -12641,6 +12702,7 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         cursor->major_declines = 0u;
     }
     cursor->stats.collections++;
+    cursor->detach_copied += collect.detach_copied;
     return true;
 }
 
@@ -13050,8 +13112,29 @@ static bool oem_collect(CettaOpenEquationCursor *cursor) {
 
 bool cetta_open_equation_cursor_detach(CettaOpenEquationCursor *cursor,
                                        const Arena *arena) {
-    return cursor && arena &&
-        oem_collect_generation(cursor, arena->identity, true);
+    if (!cursor || !arena)
+        return false;
+    bool answers = arena == cursor->answer_arena;
+    bool stable = arena == cursor->runtime.stable;
+    bool unborrowed = (answers && !cursor->borrows_answer_arena) ||
+        (stable && !cursor->borrows_stable);
+    /* Under the collection stress test the skip is checked: the detach runs
+     * anyway, and must find nothing of that storage to copy. */
+    if (unborrowed && !oem_collect_sizes()->stress)
+        return true;
+    uint64_t copied = cursor->detach_copied;
+    if (!oem_collect_generation(cursor, arena->identity, true))
+        return false;
+    if (unborrowed && cursor->detach_copied != copied) {
+        fprintf(stderr, "fatal: an open-equation cursor held storage it did "
+                        "not record borrowing\n");
+        abort();
+    }
+    if (answers)
+        cursor->borrows_answer_arena = false;
+    if (stable)
+        cursor->borrows_stable = false;
+    return true;
 }
 
 /* ---- cursor -------------------------------------------------------------- */
