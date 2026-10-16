@@ -4715,11 +4715,15 @@ test-petta-memory-plateau: $(BIN)
 	fi; \
 	actual=$$($(CETTA_BIN_INVOKE) --profile extended --lang petta \
 		tests/petta/memory_plateau.metta $(PETTA_MEMORY_PLATEAU_TURNS) 2>&1 | tail -n 1); \
-	if [ "$$actual" != "((counts-flat true) (heap-within-512-KiB true))" ]; then \
+	case "$$actual" in \
+	"((counts-flat true) (heap-measured true) (heap-within-512-KiB true))") \
+		echo "PASS: live storage gauges plateau over three $(PETTA_MEMORY_PLATEAU_TURNS)-turn windows";; \
+	"((counts-flat true) (heap-measured false) "*) \
+		echo "SKIP: the allocator's live bytes cannot be read here; the symbol and name counts plateau, the heap is not measured";; \
+	*) \
 		echo "FAIL: memory plateau over $(PETTA_MEMORY_PLATEAU_TURNS)-turn windows: $$actual"; \
-		exit 1; \
-	fi; \
-	echo "PASS: live storage gauges plateau over three $(PETTA_MEMORY_PLATEAU_TURNS)-turn windows"
+		exit 1;; \
+	esac
 test-petta-memory-plateau-long:
 	@$(MAKE) --no-print-directory test-petta-memory-plateau PETTA_MEMORY_PLATEAU_TURNS=50000
 

@@ -26,6 +26,9 @@
 !(turns (* 3 (argv 1)) (* 4 (argv 1)))
 !(change-state! &heap-2 (gauge heap-in-use-bytes))
 !(change-state! &counts-2 (counts))
+;; Where the allocator's live bytes cannot be read the gauge stays 0, which
+;; would read as a plateau: the heap must have been measured.
 !(let* (($growth (- (get-state &heap-2) (get-state &heap-1))))
    ((counts-flat (== (get-state &counts-2) (get-state &counts-1)))
+    (heap-measured (> (get-state &heap-1) 0))
     (heap-within-512-KiB (<= $growth 524288))))
