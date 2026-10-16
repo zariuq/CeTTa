@@ -345,6 +345,18 @@ bool space_checkpoint_native_copy(const Space *source, Space *destination,
 bool space_checkpoint_native_compare(const Space *, const Space *,
     CettaCheckpointCompare *, SpaceCheckpointBudget *);
 
+#ifdef CETTA_TEST_HOOKS
+/* The exact-membership index, observed by its sizing tests: its slot count
+ * (0 while no reader has built it), the rows it files, whether it is
+ * current, how many tables were built to resize one, and how many of the
+ * next table allocations fail as an exhausted allocator would. */
+size_t space_exact_index_test_slots(const Space *s);
+size_t space_exact_index_test_used(const Space *s);
+bool space_exact_index_test_current(const Space *s);
+size_t space_exact_index_test_resizes(void);
+void space_exact_index_test_refuse(size_t allocations);
+#endif
+
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);

@@ -4675,6 +4675,20 @@ test: test-space-empty-footprint
 test-space-empty-footprint: $(SPACE_EMPTY_FOOTPRINT_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_EMPTY_FOOTPRINT_TEST_BIN))
 
+# The exact-membership index follows its rows: sizes at the promotion and
+# halving bounds, no back-and-forth at either, a refused table allocation,
+# removals, duplicates, overlays and checkpoint images across capacities.
+# The space is compiled with its test observations.
+SPACE_EXACT_INDEX_SIZING_TEST_BIN = runtime/test_space_exact_index_sizing-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+SPACE_EXACT_INDEX_SIZING_TEST_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/space.$(BUILD_OBJ_TAG).o src/space.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))
+$(SPACE_EXACT_INDEX_SIZING_TEST_BIN): tests/test_space_exact_index_sizing.c src/space.c src/space.h $(SPACE_EXACT_INDEX_SIZING_TEST_OBJ) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_HOOKS=1 -o $@ tests/test_space_exact_index_sizing.c src/space.c $(SPACE_EXACT_INDEX_SIZING_TEST_OBJ) $(LDFLAGS)
+.PHONY: test-space-exact-index-sizing
+test: test-space-exact-index-sizing
+test-space-exact-index-sizing: $(SPACE_EXACT_INDEX_SIZING_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_EXACT_INDEX_SIZING_TEST_BIN))
+
 # A space initialized over unzeroed storage starts in a defined state.
 SPACE_INIT_STATE_TEST_BIN = runtime/test_space_init_state-$(BUILD_OBJ_TAG)
 $(SPACE_INIT_STATE_TEST_BIN): tests/test_space_init_state.c $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) $(BUILD_CONFIG_HEADER)

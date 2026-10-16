@@ -3423,42 +3423,107 @@ static void exact_index_place(const TermUniverse *universe,
     idx->used++;
 }
 
-/* Room for `count` rows within the table's load bound (seven tenths), wide
- * once any row needs it. */
-static void exact_index_reserve(const TermUniverse *universe,
-                                ExactAtomIndex *idx, size_t count, bool wide) {
-    size_t capacity = idx->slots ? idx->mask + 1u : 0u;
-    wide = wide || idx->wide;
-    if (idx->slots && wide == idx->wide && count <= capacity / 10u * 7u)
-        return;
-    size_t width = wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot);
-    size_t next = capacity ? capacity : 16u;
-    while (count > next / 10u * 7u) {
-        if (next > SIZE_MAX / 2u / width)
-            cetta_oom(SIZE_MAX);
-        next *= 2u;
+/* The table's size follows its rows: it starts at EXACT_INDEX_MIN_SLOTS,
+ * doubles when a row would take it past seven tenths full, and halves when
+ * removals leave it an eighth full or less.  A halved table is a quarter
+ * full and a doubled one about a third, so neither change is undone
+ * without as many row changes as the table has slots. */
+#define EXACT_INDEX_MIN_SLOTS 16u
+
+static inline bool exact_index_within_bound(size_t slots, size_t count) {
+    return count <= slots / 10u * 7u;
+}
+
+#ifdef CETTA_TEST_HOOKS
+static size_t g_exact_index_test_refusals;
+static size_t g_exact_index_test_resizes;
+#endif
+
+/* A table of `slots` vacant slots, or NULL when it cannot be allocated. */
+static void *exact_index_table_new(size_t slots, size_t width) {
+#ifdef CETTA_TEST_HOOKS
+    if (g_exact_index_test_refusals != 0u) {
+        g_exact_index_test_refusals--;
+        return NULL;
     }
-    ExactAtomIndex grown = {
-        .slots = cetta_malloc(next * width), .mask = next - 1u, .wide = wide};
-    memset(grown.slots, 0xff, next * width);
+#endif
+    if (slots == 0u || slots > SIZE_MAX / width)
+        return NULL;
+    void *table = malloc(slots * width);
+    if (table)
+        memset(table, 0xff, slots * width);
+    return table;
+}
+
+/* Move every row into a table of `slots` slots, built whole before it
+ * replaces the current one; false, with the index unchanged, when it cannot
+ * be allocated. */
+static bool exact_index_resize(const TermUniverse *universe,
+                               ExactAtomIndex *idx, size_t slots, bool wide) {
+    size_t width = wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot);
+    ExactAtomIndex next = {.slots = exact_index_table_new(slots, width),
+                           .mask = slots - 1u, .wide = wide};
+    if (!next.slots)
+        return false;
+    size_t capacity = idx->slots ? idx->mask + 1u : 0u;
     for (size_t at = 0u; at < capacity; at++) {
         if (!exact_slot_vacant(idx, at))
-            exact_index_place(universe, &grown, exact_slot_id(idx, at),
+            exact_index_place(universe, &next, exact_slot_id(idx, at),
                               exact_slot_row(idx, at));
     }
     free(idx->slots);
-    idx->slots = grown.slots;
-    idx->mask = grown.mask;
-    idx->used = grown.used;
+    idx->slots = next.slots;
+    idx->mask = next.mask;
+    idx->used = next.used;
     idx->wide = wide;
+#ifdef CETTA_TEST_HOOKS
+    g_exact_index_test_resizes++;
+#endif
+    return true;
 }
 
-static void exact_index_add_row(const TermUniverse *universe,
+/* Room for `count` rows, wide once any row needs it.  When the larger table
+ * cannot be allocated the current one keeps its rows, and takes these too
+ * while it keeps a vacant slot (every probe ends at one); false when the
+ * index cannot take them. */
+static bool exact_index_reserve(const TermUniverse *universe,
+                                ExactAtomIndex *idx, size_t count, bool wide) {
+    size_t capacity = idx->slots ? idx->mask + 1u : 0u;
+    wide = wide || idx->wide;
+    if (idx->slots && wide == idx->wide &&
+        exact_index_within_bound(capacity, count))
+        return true;
+    size_t width = wide ? sizeof(ExactAtomSlot) : sizeof(ExactAtomNarrowSlot);
+    size_t next = capacity ? capacity : EXACT_INDEX_MIN_SLOTS;
+    while (!exact_index_within_bound(next, count)) {
+        if (next > SIZE_MAX / 2u / width) {
+            next = 0u;
+            break;
+        }
+        next *= 2u;
+    }
+    if (next != 0u && exact_index_resize(universe, idx, next, wide))
+        return true;
+    return idx->slots && wide == idx->wide && count < capacity;
+}
+
+static bool exact_index_add_row(const TermUniverse *universe,
                                 ExactAtomIndex *idx, AtomId id,
                                 CettaIndex row) {
-    exact_index_reserve(universe, idx, idx->used + 1u,
-                        !exact_slot_fits_narrow(id, row));
+    if (!exact_index_reserve(universe, idx, idx->used + 1u,
+                             !exact_slot_fits_narrow(id, row)))
+        return false;
     exact_index_place(universe, idx, id, row);
+    return true;
+}
+
+/* After a removal: halve a table an eighth full or less.  A table that
+ * cannot be replaced stays as it is, as large as before. */
+static void exact_index_settle(const TermUniverse *universe,
+                               ExactAtomIndex *idx) {
+    size_t capacity = idx->slots ? idx->mask + 1u : 0u;
+    if (capacity > EXACT_INDEX_MIN_SLOTS && idx->used <= capacity / 8u)
+        (void)exact_index_resize(universe, idx, capacity / 2u, idx->wide);
 }
 
 /* Remove one row, closing the gap by moving later slots of its run back
@@ -3493,6 +3558,7 @@ static bool exact_index_remove_row(const TermUniverse *universe,
     }
     exact_slot_vacate(idx, gap);
     idx->used--;
+    exact_index_settle(universe, idx);
     return true;
 }
 
@@ -3616,45 +3682,51 @@ static bool exact_index_transport(ExactAtomIndex *idx,
     return true;
 }
 
+/* A head's count of non-exact rows, entered when `insert` asks for it;
+ * NULL when it has none, or when its entry needs a larger table that
+ * cannot be allocated (the current table is then left as it was). */
 static ExactIndexInexactHead *exact_index_inexact_head(
         ExactAtomIndex *idx, SymbolId head, bool insert) {
-    if (!idx->inexact_heads) {
-        if (!insert)
-            return NULL;
-        idx->inexact_heads = cetta_malloc(16u * sizeof(*idx->inexact_heads));
-        memset(idx->inexact_heads, 0, 16u * sizeof(*idx->inexact_heads));
-        idx->inexact_head_mask = 15u;
-    } else if (insert && (idx->inexact_head_used + 1u) * 10u >
-                             (idx->inexact_head_mask + 1u) * 7u) {
-        size_t next = (idx->inexact_head_mask + 1u) * 2u;
-        ExactIndexInexactHead *heads = cetta_malloc(next * sizeof(*heads));
-        memset(heads, 0, next * sizeof(*heads));
-        for (size_t i = 0u; i <= idx->inexact_head_mask; i++) {
-            ExactIndexInexactHead entry = idx->inexact_heads[i];
-            if (entry.head == SYMBOL_ID_NONE)
-                continue;
-            size_t at = exact_index_home(entry.head, next - 1u);
-            while (heads[at].head != SYMBOL_ID_NONE)
-                at = (at + 1u) & (next - 1u);
-            heads[at] = entry;
-        }
-        free(idx->inexact_heads);
-        idx->inexact_heads = heads;
-        idx->inexact_head_mask = next - 1u;
-    }
-    size_t mask = idx->inexact_head_mask;
-    for (size_t at = exact_index_home(head, mask);;
-         at = (at + 1u) & mask) {
+    size_t capacity = idx->inexact_heads ? idx->inexact_head_mask + 1u : 0u;
+    size_t at = 0u;
+    for (at = capacity ? exact_index_home(head, capacity - 1u) : 0u;
+         capacity && idx->inexact_heads[at].head != SYMBOL_ID_NONE;
+         at = (at + 1u) & (capacity - 1u)) {
         if (idx->inexact_heads[at].head == head)
             return &idx->inexact_heads[at];
-        if (idx->inexact_heads[at].head == SYMBOL_ID_NONE) {
-            if (!insert)
-                return NULL;
-            idx->inexact_heads[at].head = head;
-            idx->inexact_head_used++;
-            return &idx->inexact_heads[at];
-        }
     }
+    if (!insert)
+        return NULL;
+    if ((idx->inexact_head_used + 1u) * 10u > capacity * 7u) {
+        size_t next = capacity ? capacity * 2u : EXACT_INDEX_MIN_SLOTS;
+        ExactIndexInexactHead *heads = next <= SIZE_MAX / sizeof(*heads)
+            ? exact_index_table_new(next, sizeof(*heads)) : NULL;
+        if (heads) {
+            for (size_t i = 0u; i < next; i++)
+                heads[i] = (ExactIndexInexactHead){.head = SYMBOL_ID_NONE};
+            for (size_t i = 0u; i < capacity; i++) {
+                ExactIndexInexactHead entry = idx->inexact_heads[i];
+                if (entry.head == SYMBOL_ID_NONE)
+                    continue;
+                size_t to = exact_index_home(entry.head, next - 1u);
+                while (heads[to].head != SYMBOL_ID_NONE)
+                    to = (to + 1u) & (next - 1u);
+                heads[to] = entry;
+            }
+            free(idx->inexact_heads);
+            idx->inexact_heads = heads;
+            idx->inexact_head_mask = next - 1u;
+            capacity = next;
+        } else if (idx->inexact_head_used + 1u >= capacity) {
+            return NULL;
+        }
+        at = exact_index_home(head, capacity - 1u);
+        while (idx->inexact_heads[at].head != SYMBOL_ID_NONE)
+            at = (at + 1u) & (capacity - 1u);
+    }
+    idx->inexact_heads[at].head = head;
+    idx->inexact_head_used++;
+    return &idx->inexact_heads[at];
 }
 
 /* Dense AtomId presence bitset -- doctrine-1 exact-membership at the store seam.
@@ -3885,19 +3957,53 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
 
 /* Account a row in the exact index: an exact row under its AtomId, any other
  * under its head symbol, or among the rows without one (a variable, a value,
- * a list with a rest, an expression headed by anything but a symbol). */
-static void exact_index_note_row(Space *s, AtomId atom_id, CettaIndex row) {
+ * a list with a rest, an expression headed by anything but a symbol).  False
+ * when the index cannot take the row; the caller then gives the index up to
+ * be rebuilt by its next reader. */
+static bool exact_index_note_row(Space *s, AtomId atom_id, CettaIndex row) {
     ExactAtomIndex *idx = &s->native.exact_idx;
-    if (atom_id_is_exact_indexable(s, atom_id)) {
-        exact_index_add_row(s->native.universe, idx, atom_id, row);
-        return;
-    }
+    if (atom_id_is_exact_indexable(s, atom_id))
+        return exact_index_add_row(s->native.universe, idx, atom_id, row);
     SymbolId head = tu_head_sym(s->native.universe, atom_id);
-    if (head == SYMBOL_ID_NONE)
+    if (head == SYMBOL_ID_NONE) {
         idx->inexact_unheaded++;
-    else
-        exact_index_inexact_head(idx, head, true)->rows++;
+        return true;
+    }
+    ExactIndexInexactHead *entry = exact_index_inexact_head(idx, head, true);
+    if (!entry)
+        return false;
+    entry->rows++;
+    return true;
 }
+
+/* An index that missed a row describes no space: free it, so the next reader
+ * rebuilds it whole, or answers without it. */
+static void exact_index_give_up(Space *s) {
+    exact_index_free(&s->native.exact_idx);
+    s->native.exact_idx_dirty = true;
+}
+
+#ifdef CETTA_TEST_HOOKS
+size_t space_exact_index_test_slots(const Space *s) {
+    return s && s->native.exact_idx.slots ? s->native.exact_idx.mask + 1u : 0u;
+}
+
+size_t space_exact_index_test_used(const Space *s) {
+    return s ? s->native.exact_idx.used : 0u;
+}
+
+bool space_exact_index_test_current(const Space *s) {
+    return s && !s->native.exact_idx_dirty;
+}
+
+size_t space_exact_index_test_resizes(void) {
+    return g_exact_index_test_resizes;
+}
+
+void space_exact_index_test_refuse(size_t allocations) {
+    g_exact_index_test_refusals = allocations;
+}
+#endif
 
 /* Withdraw a row from the exact index; false when the index does not hold
  * it, and must then be rebuilt. */
@@ -3921,7 +4027,7 @@ static bool exact_index_forget_row(Space *s, AtomId atom_id, CettaIndex row) {
 
 static void eq_index_rebuild(Space *s);
 static void ty_ann_index_rebuild(Space *s);
-static void exact_index_rebuild(Space *s);
+static bool exact_index_rebuild(Space *s);
 static void recompute_has_non_exact_atoms(Space *s);
 
 static TermUniverse g_space_default_universe = {0};
@@ -5267,9 +5373,9 @@ static void ensure_ty_ann_index(Space *s) {
     }
 }
 
-static void ensure_exact_index(Space *s) {
-    if (s && s->native.exact_idx_dirty)
-        exact_index_rebuild(s);
+/* Whether the exact index is current, building it when it is not. */
+static bool ensure_exact_index(Space *s) {
+    return s && (!s->native.exact_idx_dirty || exact_index_rebuild(s));
 }
 
 static bool ensure_has_non_exact_atoms(Space *s) {
@@ -5727,8 +5833,8 @@ static bool exact_index_note_swap_remove(Space *s, CettaIndex row,
         if (!exact_index_remove_row(s->native.universe, &s->native.exact_idx,
                                     moved, moved_from))
             return false;
-        exact_index_add_row(s->native.universe, &s->native.exact_idx,
-                            moved, row);
+        return exact_index_add_row(s->native.universe, &s->native.exact_idx,
+                                   moved, row);
     }
     return true;
 }
@@ -7565,21 +7671,32 @@ static bool id_present_sync(Space *s) {
     return true;
 }
 
-static void exact_index_rebuild(Space *s) {
+/* Build the exact index from the rows; false, leaving no index, when its
+ * tables cannot be allocated (readers then answer without it). */
+static bool exact_index_rebuild(Space *s) {
     space_settle_marks(s);
     space_linearize(s);
     exact_index_free(&s->native.exact_idx);
-    if (s->native.len)
-        exact_index_reserve(s->native.universe, &s->native.exact_idx,
-                            (size_t)s->native.len,
-                            s->native.len >= UINT32_MAX);
-    for (CettaIndex i = 0; i < s->native.len; i++)
-        exact_index_note_row(s, space_get_atom_id_at64(s, i), i);
+    s->native.exact_idx_dirty = true;
+    if (s->native.len &&
+        !exact_index_reserve(s->native.universe, &s->native.exact_idx,
+                             (size_t)s->native.len,
+                             s->native.len >= UINT32_MAX)) {
+        exact_index_give_up(s);
+        return false;
+    }
+    for (CettaIndex i = 0; i < s->native.len; i++) {
+        if (!exact_index_note_row(s, space_get_atom_id_at64(s, i), i)) {
+            exact_index_give_up(s);
+            return false;
+        }
+    }
     /* id_present is now decoupled from the bucket index -- it is synced lazily at
        membership-query time (id_present_sync), so the bucket rebuild does not
        touch it.  space_linearize preserves logical order, so id_present_synced_len
        stays valid across a bucket rebuild. */
     s->native.exact_idx_dirty = false;
+    return true;
 }
 
 static void recompute_has_non_exact_atoms(Space *s) {
@@ -7789,8 +7906,9 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
                     ty_ann_index_add(&s->native.ty_idx, subject, idx, atom_id);
             }
         }
-        if (!s->native.exact_idx_dirty)
-            exact_index_note_row(s, atom_id, idx);
+        if (!s->native.exact_idx_dirty &&
+            !exact_index_note_row(s, atom_id, idx))
+            exact_index_give_up(s);
         /* id_present is synced lazily at membership-query time (id_present_sync),
            not per-add, so pure ingress never forces a canonicalizing blob decode. */
         if (!s->native.has_non_exact_atoms_dirty &&
@@ -9432,9 +9550,15 @@ bool space_remove(Space *s, Atom *atom) {
         swap_moved_from = moved_from;
         swap_moved_id = tail_id;
     }
+    /* A swap moves one row, which the exact index follows as
+     * space_remove_atom_id's does; a shift renumbers the rest. */
+    bool exact_current = !s->native.exact_idx_dirty;
     space_mark_indexes_dirty(s);
     s->native.eq_idx_dirty = !retained.equations;
     s->native.ty_idx_dirty = !retained.declarations;
+    if (exact_current && swap_removed_id != CETTA_ATOM_ID_NONE)
+        s->native.exact_idx_dirty = !exact_index_note_swap_remove(
+            s, remove_idx, swap_removed_id, swap_moved_from, swap_moved_id);
     uint64_t followed_prefix = s->prefix_epoch;
     if (swap_removed_id != CETTA_ATOM_ID_NONE)
         space_match_backend_note_swap_remove(s, remove_idx, swap_removed_id,
@@ -9505,7 +9629,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
     bool before = false, found = false;
     CettaIndex first = 0u;
     if (!space_is_ordered(s))
-        ensure_exact_index(s);
+        (void)ensure_exact_index(s);
     if (!space_is_ordered(s) &&
         space_exact_rows(s, atom_id, s->imported_len, &before, &found, &first)) {
         if (!found)
@@ -10107,6 +10231,29 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len) {
         out_len);
 }
 
+/* The rows equal to `atom`, ascending, read row by row. */
+static CettaIndex space_exact_match_scan(Space *s, Atom *atom,
+                                         CettaIndex **out) {
+    CettaCount logical_len = space_length64(s);
+    CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * (size_t)logical_len);
+    CettaIndex n = 0;
+    for (CettaIndex i = 0; i < logical_len; i++) {
+        Atom *candidate = space_get_at64(s, i);
+        if (candidate && atom_eq(candidate, atom))
+            matches[n++] = i;
+    }
+    if (n == 0) {
+        free(matches);
+        return 0;
+    }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT, n);
+    if (out)
+        *out = matches;
+    else
+        free(matches);
+    return n;
+}
+
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     /* Settling marks and building the index are physical transitions. */
     CETTA_SCOPED_SHARED_TRANSITION(exact_match_indices);
@@ -10117,26 +10264,8 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     if (!s || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
         return 0;
     if (space_has_overlay_base(s) ||
-        (s->native.universe && s->native.universe->snapshot_entries)) {
-        CettaCount logical_len = space_length64(s);
-        CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * (size_t)logical_len);
-        CettaIndex n = 0;
-        for (CettaIndex i = 0; i < logical_len; i++) {
-            Atom *candidate = space_get_at64(s, i);
-            if (candidate && atom_eq(candidate, atom))
-                matches[n++] = i;
-        }
-        if (n == 0) {
-            free(matches);
-            return 0;
-        }
-        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_HIT, n);
-        if (out)
-            *out = matches;
-        else
-            free(matches);
-        return n;
-    }
+        (s->native.universe && s->native.universe->snapshot_entries))
+        return space_exact_match_scan(s, atom, out);
     if (!space_sync_exact_membership_from_backend(s))
         return 0;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASH_SPACE_EXACT_LOOKUP);
@@ -10149,7 +10278,9 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     assert(query_id == CETTA_ATOM_ID_NONE ||
            term_universe_atom_id_eq(s->native.universe, query_id, atom));
 #endif
-    ensure_exact_index(s);
+    /* Without memory for the index the rows answer themselves. */
+    if (!ensure_exact_index(s))
+        return space_exact_match_scan(s, atom, out);
     CettaIndex *matches = NULL;
     CettaIndex n = exact_index_rows_equal(s->native.universe,
         &s->native.exact_idx, query_id, query_canonical, atom, &matches);
@@ -10473,9 +10604,8 @@ bool space_exact_frontier_certified(Space *s, Atom *pattern) {
          * rebuild per query would cost the whole space each time; a rebuild
          * would also settle marks a query leaves to their own schedule. */
         if (s->native.secondary_index_deferral_depth > 0u ||
-            s->native.marked != 0u)
+            s->native.marked != 0u || !exact_index_rebuild(s))
             return false;
-        exact_index_rebuild(s);
     }
     ExactAtomIndex *idx = &s->native.exact_idx;
     SymbolId head = atom_symbol_current_id(pattern->expr.elems[0]);
