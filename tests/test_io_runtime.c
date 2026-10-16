@@ -368,11 +368,19 @@ int main(int argc, char **argv) {
 
     Atom *capabilities = dispatch(runtime, &arena,
                                   "__cetta_lib_io_capabilities", NULL, 0u);
+    /* A build with ChatGPT sign-in advertises that provider first. */
+#if defined(CETTA_BUILD_WITH_SIWC) && CETTA_BUILD_WITH_SIWC
+    const uint32_t first = 1u;
+#else
+    const uint32_t first = 0u;
+#endif
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 7u &&
-              atom_is_symbol(capabilities->expr.elems[0], "http") &&
-              atom_is_symbol(capabilities->expr.elems[1], "proc") &&
-              atom_is_symbol(capabilities->expr.elems[2], "timer"),
+              capabilities->expr.len == 7u + first &&
+              (first == 0u ||
+               atom_is_symbol(capabilities->expr.elems[0], "siwc")) &&
+              atom_is_symbol(capabilities->expr.elems[first], "http") &&
+              atom_is_symbol(capabilities->expr.elems[first + 1u], "proc") &&
+              atom_is_symbol(capabilities->expr.elems[first + 2u], "timer"),
           "native providers advertise HTTP, processes and timers");
 
     if (getenv("CETTA_IO_REPLAY_ONLY")) {
