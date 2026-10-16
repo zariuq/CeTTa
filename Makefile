@@ -21118,6 +21118,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-list-carrier-walk-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-activation-without-template-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-exact-index-frontier-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-control-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-match-decision-stats
@@ -25252,6 +25253,7 @@ test-petta-match-existence-fusion: $(BIN)
 		decline_off=$$(mktemp runtime/petta-existence-$$engine-decline-off.XXXXXX); \
 		decline_stats=$$(mktemp runtime/petta-existence-$$engine-decline-stats.XXXXXX); \
 		trap 'rm -f "$$positive_on" "$$positive_off" "$$positive_stats" "$$decline_on" "$$decline_off" "$$decline_stats"' EXIT INT TERM; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=1 \
 		CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
 			./$(BIN) --space-engine "$$engine" --lang petta \
 			tests/petta/search_machine_match_existence.metta \
@@ -25268,6 +25270,17 @@ test-petta-match-existence-fusion: $(BIN)
 			echo "FAIL: PeTTa $$engine existence observer folded no positive case"; \
 			exit 1; \
 		fi; \
+		if [ "$$engine" = native ]; then \
+			handed=$$(CETTA_OPEN_EQUATIONS_DEBUG=host CETTA_PETTA_SEARCH_MACHINE=1 \
+				./$(BIN) --space-engine "$$engine" --lang petta \
+				tests/petta/search_machine_match_existence.metta 2>&1 >/dev/null | \
+				grep -c 'open-equations host ==/2' || true); \
+			if [ "$$handed" -ne 0 ]; then \
+				echo "FAIL: PeTTa $$engine compiled tier handed back $$handed positive existence observers"; \
+				exit 1; \
+			fi; \
+		fi; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=1 \
 		CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
 			./$(BIN) --space-engine "$$engine" --lang petta \
 			tests/petta/search_machine_match_existence_decline.metta \
@@ -25283,6 +25296,16 @@ test-petta-match-existence-fusion: $(BIN)
 		if [ "$$folds" -ne 0 ]; then \
 			echo "FAIL: PeTTa $$engine existence observer crossed a decline boundary"; \
 			exit 1; \
+		fi; \
+		if [ "$$engine" = native ]; then \
+			handed=$$(CETTA_OPEN_EQUATIONS_DEBUG=host CETTA_PETTA_SEARCH_MACHINE=1 \
+				./$(BIN) --space-engine "$$engine" --lang petta \
+				tests/petta/search_machine_match_existence_decline.metta 2>&1 >/dev/null | \
+				grep -c 'open-equations host ==/2' || true); \
+			if [ "$$handed" -ne 1 ]; then \
+				echo "FAIL: PeTTa $$engine compiled tier answered a declined existence observer ($$handed handed back)"; \
+				exit 1; \
+			fi; \
 		fi; \
 		rm -f "$$positive_on" "$$positive_off" "$$positive_stats" \
 			"$$decline_on" "$$decline_off" "$$decline_stats"; \
@@ -28120,6 +28143,99 @@ else
 	@echo "INFO: the moved-results check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pure-results-moved-stats
 endif
+
+.PHONY: test-petta-exact-index-frontier
+# Ground matches over a space whose other rows hold variables: the exact
+# occurrences answer while no row with variables under the pattern's head
+# could join them, and duplicates, removals (marked and contracted), terms
+# deeper than the trie's coordinates and an opaque callable row keep their
+# answers.  The expected output is pinned SWI-PeTTa's.
+test-petta-semantics: test-petta-exact-index-frontier
+test-petta-exact-index-frontier: $(BIN) tests/petta/exact_index_frontier.metta tests/petta/exact_index_frontier.expected
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/exact_index_frontier.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/exact_index_frontier.expected)" ]; then \
+			echo "FAIL: ground matches over exact occurrences on the $$route route"; \
+			diff <(cat tests/petta/exact_index_frontier.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: ground matches over exact occurrences keep rows with variables, duplicates and removals, on the tier and in the machine"
+
+.PHONY: test-he-exact-index-frontier
+# The same under HE's rules, where a number matches a number of the other
+# kind, NaN does not match itself, and a row with no head matches every
+# pattern.  The expected output is upstream HE's.
+test: test-he-exact-index-frontier
+test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/he/exact_index_frontier.expected
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he@0.2.10 tests/he/exact_index_frontier.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/he/exact_index_frontier.expected)" ]; then \
+		echo "FAIL: HE ground matches over exact occurrences"; \
+		diff <(cat tests/he/exact_index_frontier.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: HE ground matches keep promoted numbers, NaN, rows with variables and a row with no head"
+
+.PHONY: test-exact-index-frontier-stats
+# The ground matches take the exact route on both routes: the frontier is
+# certified from the exact index and the candidates are the occurrences, so
+# the trie is read only while a row with variables shares the head.
+test-exact-index-frontier-stats: $(BIN) tests/petta/exact_index_frontier.metta
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		report=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) --emit-runtime-stats \
+			--lang petta tests/petta/exact_index_frontier.metta 2>&1); \
+		counter() { printf '%s\n' "$$report" | awk -v key="$$1" '$$1 == "runtime-counter" && $$2 == key { print $$3 }'; }; \
+		certified=$$(counter space-exact-frontier-certified); \
+		occurrences=$$(counter match-native-exact-occurrences); \
+		lookups=$$(counter match-native-trie-lookup); \
+		if [ -z "$$certified" ] || [ -z "$$occurrences" ] || [ -z "$$lookups" ] || \
+				[ "$$certified" -lt 150 ] || [ "$$occurrences" -lt 150 ] || [ "$$lookups" -gt 10 ]; then \
+			echo "FAIL: exact route on the $$route route: certified $$certified, occurrences $$occurrences, trie lookups $$lookups"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: ground matches are answered from exact occurrences on the tier and in the machine"
+else
+	@echo "INFO: the exact-route check requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-exact-index-frontier-stats
+endif
+
+.PHONY: test-petta-existence-value-templates
+# Existence observers whose match template is a run-time value are answered
+# by membership in the compiled tier, as in the search machine; a template
+# that is no value (the empty expression, Empty, an error) stays the host's.
+# The expected output is pinned SWI-PeTTa's; the tier's host census counts
+# the goals it still hands back.
+test-petta-semantics: test-petta-existence-value-templates
+test-petta-existence-value-templates: $(BIN) tests/petta/existence_value_templates.metta tests/petta/existence_value_templates.expected
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/existence_value_templates.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/existence_value_templates.expected)" ]; then \
+			echo "FAIL: existence observers with value templates on the $$route route"; \
+			diff <(cat tests/petta/existence_value_templates.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	handed=$$(CETTA_OPEN_EQUATIONS_DEBUG=host $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/existence_value_templates.metta 2>&1 >/dev/null | grep -c 'open-equations host ==/2' || true); \
+	if [ "$$handed" != "3" ]; then \
+		echo "FAIL: the tier handed back $$handed existence observers (expected 3)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: existence observers with value templates are answered in the tier; templates that are no value stay the host's"
 
 .PHONY: test-petta-dispatch-error-scope
 # An error raised inside a call dispatched at run time fails that path alone,

@@ -1017,6 +1017,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "petta-equation-activation-plan-declined-no-template",
     "atom-deep-copy-recorded-in-place",
     "atom-deep-copy-recorded-in-table",
+    "match-native-exact-occurrences",
+    "space-exact-frontier-certified",
 };
 
 static int64_t clamp_counter(uint64_t value) {
