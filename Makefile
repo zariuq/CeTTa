@@ -4577,6 +4577,12 @@ test-managed-symbol-owners: $(BIN)
 	diff -u tests/petta/managed_symbol_owners.expected "$$actual"; \
 	echo "PASS: managed symbol owners, computed keys, late calls and foreign text"
 
+# runtime-stats! reports counters[i] under CETTA_RUNTIME_COUNTER_NAMES[i].
+.PHONY: test-runtime-counter-names
+test: test-runtime-counter-names
+test-runtime-counter-names:
+	@python3 tests/support/check_runtime_counter_names.py
+
 SYMBOL_BIRTH_TEST_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).o src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/durable_value.$(BUILD_OBJ_TAG).o src/durable_value.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))
 runtime/test_runtime_symbol_births-$(BUILD_OBJ_TAG): tests/test_runtime_symbol_births.c src/durable_value.c $(SYMBOL_BIRTH_TEST_OBJ) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
