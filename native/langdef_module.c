@@ -4041,7 +4041,9 @@ static Atom *authored_parser_parse_values(
     CettaParserTokenScanV1 scan;
     Atom *result = NULL;
     char error[512] = {0};
-    uint32_t work_limit = authored_parser_work_limit(len);
+    bool unbounded = forest_item_limit == UINT32_MAX;
+    uint32_t work_limit = unbounded ? UINT32_MAX : authored_parser_work_limit(len);
+    uint32_t result_limit = unbounded ? UINT32_MAX : LANGDEF_DEFAULT_RESULT_LIMIT;
     /* Value replay and AST projection are iterative. Their allowance follows
      * execution work, not a C-stack recursion bound. */
     uint32_t replay_depth = work_limit;
@@ -4063,7 +4065,7 @@ static Atom *authored_parser_parse_values(
     if (predictive && resource->compiled.tokenized) {
         executed = cetta_parser_token_runtime_v1_parse_predictive_values(&resource->token_runtime,
             &resource->predictive, &scan, work_limit, replay_depth,
-            LANGDEF_DEFAULT_RESULT_LIMIT, &parsed, error, sizeof(error));
+            result_limit, &parsed, error, sizeof(error));
     } else if (predictive) {
         PPNativeV1PreparedView view;
         executed = ppnative_v1_prepared_immutable_view(&resource->prepared, &view) &&
@@ -4076,16 +4078,16 @@ static Atom *authored_parser_parse_values(
         } else if (executed) {
             parsed.accepted = parsed.forest.root_len != 0u;
             executed = ppnative_v1_finish_values(&parsed, &resource->compiled.pack, NULL,
-                replay_depth, LANGDEF_DEFAULT_RESULT_LIMIT, error, sizeof(error));
+                replay_depth, result_limit, error, sizeof(error));
         }
     } else {
         executed = resource->compiled.tokenized
           ? cetta_parser_token_runtime_v1_parse_values(&resource->token_runtime,
                 &scan, false, work_limit, replay_depth,
-                LANGDEF_DEFAULT_RESULT_LIMIT, &parsed, error, sizeof(error))
+                result_limit, &parsed, error, sizeof(error))
           : ppgll_v1_prepared_parse_values(&resource->prepared, bytes, len,
                 work_limit, replay_depth,
-                LANGDEF_DEFAULT_RESULT_LIMIT, &parsed, error, sizeof(error));
+                result_limit, &parsed, error, sizeof(error));
     }
     if (!executed) goto failed;
     if (parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST) {
@@ -8435,11 +8437,11 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         }
         if (with_forest) {
             if (!args[2] || args[2]->kind != ATOM_GROUNDED || args[2]->ground.gkind != GV_INT ||
-                args[2]->ground.ival <= 0 || (uint64_t)args[2]->ground.ival > UINT32_MAX) {
-                Atom *args[] = {atom_string(arena, "expected a positive packed-forest item allowance")};
+                args[2]->ground.ival < 0 || (uint64_t)args[2]->ground.ival > UINT32_MAX) {
+                Atom *args[] = {atom_string(arena, "expected a nonnegative packed-forest item allowance (zero is unbounded)")};
                 return langdef_expr(arena, "ParserFailureV1", args, 1u);
             }
-            forest_limit = (uint32_t)args[2]->ground.ival;
+            forest_limit = args[2]->ground.ival ? (uint32_t)args[2]->ground.ival : UINT32_MAX;
         }
         bytes = (const uint8_t *)input;
         len = !file && args[1]->kind == ATOM_GROUNDED ? atom_string_len(args[1]) : strlen(input);

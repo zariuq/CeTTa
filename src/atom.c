@@ -5473,7 +5473,7 @@ Atom *atom_error(Arena *a, Atom *source, Atom *message) {
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
 bool atom_is_symbol(Atom *a, const char *name) {
-    return atom_is_symbol_id(a, symbol_cached_literal(name));
+    return a && a->kind == ATOM_SYMBOL && symbol_eq_cstr(g_symbols, a->sym_id, name);
 }
 
 bool atom_is_empty(Atom *a) {

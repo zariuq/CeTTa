@@ -1161,6 +1161,8 @@ bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
 
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
+/* Compare name contents; unlike literal constructors, mutable buffers and
+ * names belonging to a separately owned prepared artifact are valid here. */
 bool atom_is_symbol(Atom *a, const char *name);
 bool atom_is_empty(Atom *a);
 bool atom_is_error(Atom *a);

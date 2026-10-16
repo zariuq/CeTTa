@@ -132,7 +132,8 @@ bool cetta_deterministic_equation_plan_v1_declares_operator(
  * with.
  * Undefined heads are constructors after their children are evaluated.
  * `let` is the sole built-in binder; other effects enter only through the
- * explicit primitive handler. */
+ * explicit primitive handler. Zero depth/work allowances mean no caller-
+ * imposed bound. Nonzero allowances remain explicit incomplete outcomes. */
 bool cetta_deterministic_equation_plan_v1_run(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,

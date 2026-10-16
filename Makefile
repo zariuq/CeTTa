@@ -40474,16 +40474,23 @@ REGEX_SELECTION_V1_TEST_SOURCES = tests/support/test_regex_selection_v1.c \
 	$(filter-out tools/prepare_equation_plan_v1.c,$(EQUATION_PREPARE_V1_SRC)) \
 	$(LDPP_COMPILER_EMBEDDED_C_V1)
 $(REGEX_SELECTION_V1_TEST_BIN): $(REGEX_SELECTION_V1_TEST_SOURCES) \
-		native/regex_selection_v1.h native/regex_compiler_v1.h native/prepared_bytes_v1.h $(BUILD_CONFIG_HEADER)
+		native/regex_selection_v1.h native/regex_compiler_v1.h native/prepared_bytes_v1.h native/prepared_unary_index_v1.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o $@ $(REGEX_SELECTION_V1_TEST_SOURCES) -Wl,--gc-sections $(LDFLAGS)
-.PHONY: test-regex-selection-v1 test-regex-workflow-v1
+.PHONY: test-regex-selection-v1 test-regex-workflow-v1 test-regex-portable-differential-v1
 test-regex-selection-v1: $(REGEX_SELECTION_V1_TEST_BIN)
 	@$(REGEX_SELECTION_V1_TEST_BIN)
 test-regex-workflow-v1: $(BIN)
 	python3 tools/test_regex_workflow_v1.py --cetta $(BIN)
-test: test-regex-selection-v1 test-regex-workflow-v1
+test-regex-portable-differential-v1: $(REGEX_SELECTION_V1_TEST_BIN) $(BIN)
+	python3 tools/test_regex_selection_v1.py --native $(REGEX_SELECTION_V1_TEST_BIN) \
+		--python-random 150 --output runtime/regex-portable-differential-v1.json
+	python3 tools/test_regex_workflow_v1.py --cetta $(BIN) --generated 50 \
+		--output runtime/regex-generated-workflow-v1
+	python3 tools/test_regex_workflow_v1.py --cetta $(BIN) --count-identities 40 \
+		--output runtime/regex-count-identities-v1
+test: test-regex-selection-v1 test-regex-workflow-v1 test-regex-portable-differential-v1
 
 REGEX_SELECTION_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/capture-example.crp
 REGEX_SELECTION_BAKED_V1_C = $(EQUATION_PREPARED_V1_DIR)/capture-example.generated.c
