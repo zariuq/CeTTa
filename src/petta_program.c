@@ -866,7 +866,9 @@ static bool petta_program_rhs_binds_variables(Atom *lhs, Atom *rhs) {
         !petta_program_collect_variables(rhs, &rhs_variables) ||
         petta_program_variables_beyond(&lhs_variables, &rhs_variables);
     free(lhs_variables.items);
+    free(lhs_variables.variables);
     free(rhs_variables.items);
+    free(rhs_variables.variables);
     return binds;
 }
 

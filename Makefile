@@ -19571,6 +19571,31 @@ test-petta-libpl-leak-ownership:
 		SANITIZERS=address,undefined \
 		test-petta-libpl-leak-ownership-body
 
+# The PeTTa memory tests free at exit everything they no longer reach, under
+# LeakSanitizer with the libpl gate's narrow SWI-Prolog suppressions.
+.PHONY: test-petta-memory-leak-free test-petta-memory-leak-free-body
+test-petta-memory-leak-free:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 \
+		SANITIZERS=address,undefined \
+		test-petta-memory-leak-free-body
+
+test-petta-memory-leak-free-body: $(BIN)
+	@set -eu; \
+	lsan_options="suppressions=$(abspath tests/sanitizers/lsan.supp):print_suppressions=0:exitcode=23"; \
+	asan_options="detect_leaks=1:halt_on_error=1:fast_unwind_on_malloc=0:malloc_context_size=40"; \
+	for run in "tests/petta/space_reachability.metta" "tests/petta/memory_plateau.metta 100"; do \
+		status=0; \
+		result=$$(LSAN_OPTIONS="$$lsan_options" ASAN_OPTIONS="$$asan_options" \
+			UBSAN_OPTIONS=halt_on_error=1 ./$(BIN) --profile extended --lang petta \
+			$$run 2>&1) || status=$$?; \
+		if [ "$$status" -ne 0 ]; then \
+			echo "FAIL: $$run under LeakSanitizer (status $$status)"; \
+			printf '%s\n' "$$result" | grep -A8 'leak of' | head -60; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the PeTTa memory tests leak nothing under LeakSanitizer"
+
 test-petta-libpl-leak-ownership-body: $(BIN) $(LSAN_SCOPE_PROBE_BIN)
 	@if [ "$(ENABLE_SANITIZERS)" != "1" ] || \
 			! printf '%s\n' "$(SANITIZER_WORDS)" | grep -qw address; then \
