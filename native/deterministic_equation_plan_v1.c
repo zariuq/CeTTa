@@ -71,6 +71,8 @@ typedef struct {
     AtomDeepCopySession *copy_session;
     uint32_t depth_limit;
     uint64_t work_remaining;
+    uint64_t work_used;
+    bool work_bounded;
     CettaDeterministicEquationStatusV1 status;
     char *error;
     size_t error_size;
@@ -135,15 +137,16 @@ static bool equation_take_work(
     DeterministicEquationContextV1 *context, uint32_t depth) {
     if (!context)
         return false;
-    if (depth > context->depth_limit)
+    if (context->depth_limit && depth > context->depth_limit)
         return equation_fail(
             context, CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
             "deterministic equation evaluation exceeded its depth limit");
-    if (context->work_remaining == 0u)
+    if (context->work_bounded && context->work_remaining == 0u)
         return equation_fail(
             context, CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
             "deterministic equation evaluation exhausted its work limit");
-    context->work_remaining--;
+    if (context->work_bounded) context->work_remaining--;
+    if (context->work_used != UINT64_MAX) context->work_used++;
     return true;
 }
 
@@ -964,14 +967,15 @@ static bool equation_stack_push(
 
     if (!context || !stack || !frame)
         return false;
-    if (stack->count >= context->depth_limit)
+    if (context->depth_limit && stack->count >= context->depth_limit)
         return equation_fail(
             context, CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT,
             "deterministic equation evaluation exceeded its continuation depth limit");
     if (stack->count == stack->capacity) {
         next = stack->capacity ? stack->capacity * 2u : 64u;
-        if (next < stack->capacity || next > context->depth_limit)
-            next = context->depth_limit;
+        uint32_t maximum = context->depth_limit ? context->depth_limit : UINT32_MAX;
+        if (next < stack->capacity || next > maximum)
+            next = maximum;
         if (next <= stack->capacity ||
             (size_t)next > SIZE_MAX / sizeof(*grown))
             return equation_fail(
@@ -1648,8 +1652,7 @@ static bool deterministic_equation_execute(
         *out = NULL;
     if (work_used)
         *work_used = 0u;
-    if (!plan || !call || !arena || !out || depth_limit == 0u ||
-        work_limit == 0u)
+    if (!plan || !call || !arena || !out)
         return equation_error(
             error, error_size,
             "invalid deterministic equation execution request");
@@ -1665,6 +1668,7 @@ static bool deterministic_equation_execute(
         .arena = arena,
         .depth_limit = depth_limit,
         .work_remaining = work_limit,
+        .work_bounded = work_limit != 0u,
         .status = CETTA_DETERMINISTIC_EQUATION_V1_OK,
         .error = error,
         .error_size = error_size,
@@ -1680,7 +1684,7 @@ static bool deterministic_equation_execute(
     *out = evaluate_term(&context, call, &environment,
                          entry_arguments_are_values);
     if (work_used)
-        *work_used = work_limit - context.work_remaining;
+        *work_used = context.work_used;
     free(environment.items);
     free(context.memo_heads);
     free(context.memo_values);

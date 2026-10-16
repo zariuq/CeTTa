@@ -171,6 +171,15 @@ int main(void) {
                                    colliding_names[(i + 1u) % 3u]));
         }
     }
+    /* A generic symbol predicate also accepts mutable names. Unlike a
+       literal constructor, it must not cache the buffer's address. */
+    char mutable_name[64];
+    strcpy(mutable_name, colliding_names[0]);
+    assert(atom_is_symbol(colliding_symbols[0], mutable_name));
+    strcpy(mutable_name, colliding_names[1]);
+    assert(atom_is_symbol(colliding_symbols[1], mutable_name));
+    assert(!atom_is_symbol(colliding_symbols[0], mutable_name));
+    assert(!atom_is_symbol(atom_int(&source, 1), mutable_name));
     SymbolTable other_symbols;
     symbol_table_init(&other_symbols);
     (void)symbol_intern_cstr(&other_symbols, "different-table-prefix");

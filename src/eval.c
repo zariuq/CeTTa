@@ -8443,20 +8443,17 @@ static bool collect_saved_binding_support(Atom *atom, FreeVarSet *free_vars) {
     return true;
 }
 
-static bool collect_structural_vars_rec(Atom *atom, FreeVarSet *free_vars) {
-    if (!atom)
-        return true;
+static bool collect_structural_var_failed(const Atom *atom, void *context) {
+    FreeVarSet *free_vars = context;
     if (atom->kind == ATOM_VAR)
-        return free_var_set_add(free_vars, atom);
+        return !free_var_set_add(free_vars, (Atom *)atom);
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BINDINGS)
-        return collect_saved_binding_support(atom, free_vars);
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        if (!collect_structural_vars_rec(atom->expr.elems[i], free_vars))
-            return false;
-    }
-    return true;
+        return !collect_saved_binding_support((Atom *)atom, free_vars);
+    return false;
+}
+
+static bool collect_structural_vars(Atom *atom, FreeVarSet *free_vars) {
+    return !atom_tree_any(atom, collect_structural_var_failed, free_vars);
 }
 
 static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *free_vars);
@@ -8832,7 +8829,7 @@ static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *
     SymbolId head_id = atom_head_symbol_id(atom);
 
     if (head_id == g_builtin_syms.quote && nargs == 1)
-        return collect_structural_vars_rec(expr_arg(atom, 0), free_vars);
+        return collect_structural_vars(expr_arg(atom, 0), free_vars);
 
     if (head_id == g_builtin_syms.let && nargs == 3) {
         if (!collect_free_vars_rec(expr_arg(atom, 1), bound, free_vars))
@@ -9075,7 +9072,7 @@ static bool bindings_project_body_visible_env(Arena *a, Atom *body,
         return true;
 
     free_var_set_init(&body_vars);
-    if (!collect_structural_vars_rec(body, &body_vars)) {
+    if (!collect_structural_vars(body, &body_vars)) {
         free_var_set_free(&body_vars);
         bindings_free(out);
         return false;
@@ -9197,7 +9194,7 @@ static bool bindings_project_body_exact_env(Arena *a, Atom *body,
         return true;
     }
     free_var_set_init(&body_vars);
-    if (!collect_structural_vars_rec(body, &body_vars)) {
+    if (!collect_structural_vars(body, &body_vars)) {
         free_var_set_free(&body_vars);
         bindings_init(out);
         return false;
@@ -14407,7 +14404,7 @@ static Atom *hyperpose_branch_caller_vars(Arena *arena, Atom *branch) {
         return NULL;
     FreeVarSet vars;
     free_var_set_init(&vars);
-    bool collected = collect_structural_vars_rec(branch, &vars);
+    bool collected = collect_structural_vars(branch, &vars);
     Atom **items = collected && vars.len
         ? arena_alloc(arena, sizeof(*items) * vars.len) : NULL;
     for (CettaExprLen i = 0u; items && i < vars.len; i++) {
