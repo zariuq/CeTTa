@@ -46033,6 +46033,26 @@ test-registered-symbol-names: $(BIN)
 	echo "PASS: runtime registry names, workers, transactions and late callables on both routes"
 
 test: test-registered-symbols test-registered-symbol-names
+# Counted runtime names live exactly as long as the registry binding them:
+# scoped registries release theirs; a global binding never ends.
+.PHONY: test-petta-state-name-lifetimes
+test: test-petta-state-name-lifetimes
+test-petta-state-name-lifetimes: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: state name lifetimes need the Prolog build"; exit 0; \
+	fi; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --profile extended \
+			--lang petta tests/petta/state_name_lifetimes.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/state_name_lifetimes.expected)" ]; then \
+			echo "FAIL: state name lifetimes on route $$route"; \
+			diff -u tests/petta/state_name_lifetimes.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: worker names end with their workers; rebinding and rollback keep one global name"
+
 ifeq ($(ENABLE_MANAGED_SYMBOLS),1)
 test: test-registered-registry
 endif

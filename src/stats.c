@@ -2,6 +2,7 @@
 #include "stats.h"
 #include "space.h"
 #include "symbol.h"
+#include "registered_symbols.h"
 
 #include <limits.h>
 #include <pthread.h>
@@ -1028,6 +1029,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-marked-row",
     "space-mark-settle",
     "space-mark-settle-row",
+    "registered-name-count",
+    "registered-name-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -1173,6 +1176,9 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
         g_hashcons ? g_hashcons->used : 0u;
     out->counters[CETTA_RUNTIME_COUNTER_HASHCONS_THREAD_INDEX_BYTES] =
         hashcons_index_reserved_bytes(g_hashcons);
+    registered_symbols_live_totals(
+        &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT],
+        &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES]);
 }
 
 uint64_t cetta_runtime_stats_survivor_role_total(
