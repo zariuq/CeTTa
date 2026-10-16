@@ -28698,6 +28698,21 @@ test-petta-search-machine: test-petta-relational-head-phases
 test-petta-search-machine: test-petta-answer-producer-handoff
 test-petta-search-machine: test-petta-prepared-head-matching
 
+.PHONY: test-petta-library-choice-retirement
+# Library recursions with exclusive clauses answer once and leave no
+# alternative behind: a deterministic loop over them keeps a constant choice
+# depth rather than retaining one record, and its heap, per iteration.
+test-petta-search-machine: test-petta-library-choice-retirement
+test-petta-library-choice-retirement: $(BIN)
+	@set -e; \
+	actual=$$(./$(BIN) --lang petta tests/petta/library_choice_retirement.metta); \
+	test "$$actual" = "$$(cat tests/petta/library_choice_retirement.expected)"; \
+	depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
+		tests/petta/library_choice_retirement.metta 2>&1 >/dev/null | \
+		sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
+	test "$${depth:-0}" -le 4; \
+	echo "PASS: library recursions retire their choices (max depth $${depth:-0})"
+
 .PHONY: test-petta-str-chars-and-lines
 # Unicode-scalar length and slices beside the byte-based ones, ASCII lower
 # case, and the complete lines of a byte range of a file.

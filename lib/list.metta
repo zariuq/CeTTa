@@ -57,13 +57,12 @@
    (let $items (list:to-expression $xs)
      (list:like $xs (list:reverse-acc $items ()))))
 
-(= (list:reverse-acc () $acc)
-   $acc)
-
 (= (list:reverse-acc $xs $acc)
-   (let ($head $tail) (decons-atom $xs)
-     (let $next (eval (cons-atom $head $acc))
-       (list:reverse-acc $tail $next))))
+   (if (== $xs ())
+       $acc
+       (let ($head $tail) (decons-atom $xs)
+         (let $next (eval (cons-atom $head $acc))
+           (list:reverse-acc $tail $next)))))
 
 ; Structural equality is the default equivalence for list filtering.  The
 ; explicit predicate argument on the -by forms also admits alpha, key-only,
