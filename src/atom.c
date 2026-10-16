@@ -3706,6 +3706,70 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     return at;
 }
 
+/* One atom per symbol of the current table, owned by the table rather than
+ * an arena (arena identity 0, as the shared list tags), with its hash fixed
+ * when made, so every thread reads it and none writes it.  For symbols that
+ * code compiled into a program hands to the terms it builds: those terms may
+ * outlive the program. */
+Atom *atom_symbol_canonical(SymbolId sym_id) {
+    if (!g_symbols || sym_id == SYMBOL_ID_NONE)
+        return NULL;
+    Atom *atom = symbol_canonical_atom(g_symbols, sym_id);
+    if (atom)
+        return atom;
+    Atom *made = cetta_malloc(sizeof(*made));
+    *made = (Atom){
+        .kind = ATOM_SYMBOL,
+        .flags = atom_flags_for_symbol_id(sym_id),
+        .var_id = VAR_ID_NONE,
+        .sym_id = sym_id,
+        .arena_id = 0u,
+        .name_key = NULL,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+    };
+    made->hash_cache = atom_hash_compute(made);
+    if (atom_is_hash_stable(made))
+        made->flags |= ATOM_FLAG_HASH_VALID;
+    atom = symbol_publish_canonical_atom(g_symbols, sym_id, made);
+    if (atom != made)
+        free(made);
+    return atom;
+}
+
+static _Atomic(Atom *) g_atom_unit_canonical;
+
+/* The empty expression's one atom for the process, owned by no arena, as
+ * atom_symbol_canonical's are owned by the symbol table. */
+Atom *atom_unit_canonical(void) {
+    Atom *atom = atomic_load_explicit(&g_atom_unit_canonical,
+                                      memory_order_acquire);
+    if (atom)
+        return atom;
+    uint32_t structural_facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, NULL, 0u,
+                                              &structural_facts);
+    Atom *made = cetta_malloc(sizeof(*made));
+    *made = (Atom){
+        .kind = ATOM_EXPR,
+        .flags = flags,
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = 0u,
+        .name_key = NULL,
+        .structural_facts = structural_facts,
+        .expr = {.elems = NULL, .len = 0u},
+    };
+    made->hash_cache = atom_hash_compute(made);
+    if (atom_is_hash_stable(made))
+        made->flags |= ATOM_FLAG_HASH_VALID;
+    if (atomic_compare_exchange_strong_explicit(
+            &g_atom_unit_canonical, &atom, made,
+            memory_order_acq_rel, memory_order_acquire))
+        return made;
+    free(made);
+    return atom;
+}
+
 Atom *atom_symbol(Arena *a, const char *name) {
     return atom_symbol_id(a, symbol_intern_cstr(g_symbols, name));
 }
