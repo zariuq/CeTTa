@@ -46180,6 +46180,26 @@ test-petta-state-name-lifetimes: $(BIN)
 	done; \
 	echo "PASS: worker names end with their workers; rebinding and rollback keep one global name"
 
+# Named state written inside a transaction, by literal and computed names,
+# under commit, failure and nesting.
+.PHONY: test-petta-transaction-state-names
+test: test-petta-transaction-state-names
+test-petta-transaction-state-names: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: transaction state names need the Prolog build"; exit 0; \
+	fi; \
+	for route in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/transaction_state_names.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/transaction_state_names.expected)" ]; then \
+			echo "FAIL: transaction state names on route $$route"; \
+			diff -u tests/petta/transaction_state_names.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: named state written inside transactions, literal and computed, commit and failure"
+
 ifeq ($(ENABLE_MANAGED_SYMBOLS),1)
 test: test-registered-registry
 endif

@@ -1,0 +1,16 @@
+(before-literal-commit (true) 2)
+true
+(before-foreign-commit () 1)
+true
+(before-native-commit (true) 2)
+(inside-literal-commit (true) 3)
+(inside-foreign-commit () unbound)
+(inside-native-commit (true) 3)
+(inside-literal-failure () 4)
+(inside-foreign-failure () unbound)
+(inside-native-failure () 4)
+(nested-foreign-commit () unbound)
+(nested-native-inner-failure (()) 6)
+(nested-native-outer-failure () 7)
+(computed-before-inside-commit (true) 8)
+(reported unbound)
