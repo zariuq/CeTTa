@@ -393,6 +393,13 @@ bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
 bool cetta_prepared_pure_answer_cursor_unyield(
     CettaPreparedPureAnswerCursor *cursor);
 
+/* The consumer has taken the answer just produced for good and keeps the
+ * cursor only for its remaining alternatives: the answer can no longer be
+ * withdrawn, its storage is released now rather than at the next step, and
+ * the blocks the frontier does not use go back to the allocator. */
+void cetta_prepared_pure_answer_cursor_suspend(
+    CettaPreparedPureAnswerCursor *cursor);
+
 CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
     const CettaPreparedPureAnswerCursor *cursor);
 

@@ -489,6 +489,9 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
 
     size_t capacity = a->block_capacity ? a->block_capacity
                                         : ARENA_BLOCK_SIZE;
+    if (a->block_growth && a->reserved_bytes > capacity)
+        capacity = a->reserved_bytes < ARENA_BLOCK_SIZE
+            ? a->reserved_bytes : ARENA_BLOCK_SIZE;
     if (min_capacity > capacity)
         capacity = min_capacity;
     block = arena_block_alloc(capacity, a->recycle_blocks);
@@ -969,6 +972,7 @@ void arena_init(Arena *a) {
     a->frame_identities = NULL;
     a->scalar_cache = false;
     a->recycle_blocks = false;
+    a->block_growth = false;
     arena_ledger_open(a);
 }
 
@@ -980,6 +984,13 @@ void arena_init_detached(Arena *a) {
 void arena_set_block_capacity(Arena *a, size_t capacity) {
     a->block_capacity = capacity > ARENA_BLOCK_SIZE ? 0u
                                                     : (uint32_t)capacity;
+    a->block_growth = false;
+}
+
+void arena_set_block_growth(Arena *a, size_t first) {
+    arena_set_block_capacity(a, first);
+    a->block_growth = a->block_capacity != 0u &&
+        a->block_capacity < ARENA_BLOCK_SIZE;
 }
 
 static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {

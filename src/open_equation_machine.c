@@ -535,6 +535,28 @@ static bool oem_reserve(void **items, uint32_t *cap, uint32_t needed,
     return true;
 }
 
+/* Give back a vector's capacity beyond twice its length when that frees at
+ * least OEM_SHRINK_MIN_BYTES: a later push grows it geometrically again, so
+ * a shrink is paid for by the pushes that make the next one possible.  A
+ * failed reallocation keeps the vector as it is. */
+enum { OEM_SHRINK_MIN_BYTES = 1024u };
+static void oem_shrink(void **items, uint32_t *cap, uint32_t len,
+                       size_t size) {
+    uint32_t keep = len ? len : 1u;
+    if (!*items || *cap / 2u <= keep ||
+        (size_t)(*cap - keep) * size < OEM_SHRINK_MIN_BYTES)
+        return;
+    void *shrunk = realloc(*items, (size_t)keep * size);
+    if (!shrunk)
+        return;
+    *items = shrunk;
+    *cap = keep;
+}
+
+/* A cursor's arenas start with a small block and grow geometrically: most
+ * cursors hold little, and a suspended one keeps about what it holds. */
+enum { OEM_FIRST_BLOCK_BYTES = 256u, OEM_FIRST_FRAMES = 4u };
+
 #define OEM_PUSH(program, field, value, index_out)                          \
     (oem_reserve((void **)&(program)->field##s, &(program)->field##_cap,    \
                  (program)->field##_len + 1u,                              \
@@ -6210,6 +6232,7 @@ static Arena *oem_scratch(CettaOpenEquationCursor *cursor) {
         arena_set_runtime_kind(&cursor->scratch,
                                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         arena_set_ledger_tag(&cursor->scratch, CETTA_ARENA_LEDGER_CURSOR);
+        arena_set_block_growth(&cursor->scratch, OEM_FIRST_BLOCK_BYTES);
         arena_set_hashcons(&cursor->scratch, NULL);
         cursor->scratch_ready = true;
     }
@@ -9629,6 +9652,7 @@ static __attribute__((noinline)) OemRun oem_local_step(
         arena_set_runtime_kind(&cursor->collected,
                                CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         arena_set_ledger_tag(&cursor->collected, CETTA_ARENA_LEDGER_CURSOR);
+        arena_set_block_growth(&cursor->collected, OEM_FIRST_BLOCK_BYTES);
         arena_set_hashcons(&cursor->collected, NULL);
         cursor->collected_ready = true;
     }
@@ -12385,6 +12409,7 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         arena_init(&fresh);
         arena_set_runtime_kind(&fresh, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         arena_set_ledger_tag(&fresh, CETTA_ARENA_LEDGER_CURSOR);
+        arena_set_block_growth(&fresh, OEM_FIRST_BLOCK_BYTES);
         arena_set_hashcons(&fresh, NULL);
     }
     Arena *to_arena = major || !cursor->old_ready ? &fresh : &cursor->old;
@@ -13234,11 +13259,13 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     arena_init(&cursor->region);
     arena_set_runtime_kind(&cursor->region, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     arena_set_ledger_tag(&cursor->region, CETTA_ARENA_LEDGER_CURSOR);
+    arena_set_block_growth(&cursor->region, OEM_FIRST_BLOCK_BYTES);
     arena_set_hashcons(&cursor->region, NULL);
     oem_link_generations(cursor);
     arena_init(&cursor->names);
     arena_set_runtime_kind(&cursor->names, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     arena_set_ledger_tag(&cursor->names, CETTA_ARENA_LEDGER_CURSOR);
+    arena_set_block_growth(&cursor->names, OEM_FIRST_BLOCK_BYTES);
     arena_set_hashcons(&cursor->names, NULL);
     if (!cetta_frame_identity_acquire(&cursor->epoch)) {
         cursor->epoch = 0u;
@@ -13252,6 +13279,9 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
         cetta_open_equation_cursor_close(cursor);
         return NULL;
     }
+    /* Most searches stay a few frames deep; a deeper one doubles from here. */
+    cursor->frames = malloc(OEM_FIRST_FRAMES * sizeof(*cursor->frames));
+    cursor->frame_cap = cursor->frames ? OEM_FIRST_FRAMES : 0u;
     cursor->query_cells = calloc(query_var_count ? query_var_count : 1u,
                                  sizeof(*cursor->query_cells));
     cursor->query_values = calloc(query_var_count ? query_var_count : 1u,
@@ -14728,6 +14758,27 @@ void cetta_open_equation_cursor_note_authority_change(
         cursor->authority_epoch++;
         cursor->checked_program = NULL;
     }
+}
+
+void cetta_open_equation_cursor_suspend(CettaOpenEquationCursor *cursor) {
+    if (!cursor)
+        return;
+    arena_release_spare(&cursor->region, 0u);
+    if (cursor->old_ready)
+        arena_release_spare(&cursor->old, 0u);
+    arena_release_spare(&cursor->names, 0u);
+    if (cursor->scratch_ready)
+        arena_release_spare(&cursor->scratch, 0u);
+    if (cursor->collected_ready)
+        arena_release_spare(&cursor->collected, 0u);
+    oem_shrink((void **)&cursor->cells, &cursor->cell_cap, cursor->cell_len,
+               sizeof(*cursor->cells));
+    oem_shrink((void **)&cursor->trail, &cursor->trail_cap, cursor->trail_len,
+               sizeof(*cursor->trail));
+    oem_shrink((void **)&cursor->stores, &cursor->store_cap,
+               cursor->store_len, sizeof(*cursor->stores));
+    oem_shrink((void **)&cursor->frames, &cursor->frame_cap,
+               cursor->frame_len, sizeof(*cursor->frames));
 }
 
 void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
