@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <pthread.h>
+#include "scalar_trie.h"
 
 typedef uint32_t SymbolId;
 
@@ -50,6 +51,10 @@ typedef struct {
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
+    /* Lazily populated spelling index, protected by write_mutex. Entries are
+     * immutable scalar sequences; opaque non-UTF-8 spellings are counted. */
+    CettaScalarTrie *name_trie;
+    uint32_t name_trie_count, name_trie_invalid;
 } SymbolTable;
 
 static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
@@ -60,6 +65,22 @@ typedef struct {
     const char *bytes;
     uint32_t len;
 } SymbolSpelling;
+
+typedef struct {
+    SymbolId *ids;
+    size_t len;
+    /* Exclusive upper bound on the captured table: IDs 1..count-1. */
+    uint32_t snapshot_count, invalid_utf8_count;
+    CettaTrieWalkStats stats;
+} SymbolNameQueryResult;
+/* NULL automaton obtains the valid-text snapshot for an independently
+ * interpreted fallback. Product callbacks must not intern into this table.
+ * IDs are returned once each in interning order. Invalid UTF-8 names remain
+ * in the symbol table and are reported, not interpreted as absent matches.
+ * Replacement is atomic; initialize result to zero before first use. */
+bool symbol_table_query_names(SymbolTable *, const CettaTrieAutomaton *,
+                             const void *initial, SymbolNameQueryResult *);
+void symbol_name_query_free(SymbolNameQueryResult *);
 
 /* One publication check for both parts of a spelling. Interned bytes and
  * lengths never change; the bytes remain borrowed from the table until it
@@ -326,6 +347,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
     X(lib_system_write, "__cetta_lib_system_write") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
+    X(lib_system_entry_directory, "__cetta_lib_system_entry_directory") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
     X(lib_proc_spawn, "__cetta_lib_proc_spawn") \
     X(lib_proc_poll, "__cetta_lib_proc_poll") \
@@ -347,6 +369,16 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
+    X(lib_fs_metadata, "__cetta_lib_fs_metadata") \
+    X(lib_fs_walk_open, "__cetta_lib_fs_walk_open") \
+    X(lib_fs_walk_current, "__cetta_lib_fs_walk_current") \
+    X(lib_fs_walk_step, "__cetta_lib_fs_walk_step") \
+    X(lib_fs_walk_metadata, "__cetta_lib_fs_walk_metadata") \
+    X(lib_fs_open_directory, "__cetta_lib_fs_open_directory") \
+    X(lib_fs_next_entry, "__cetta_lib_fs_next_entry") \
+    X(lib_fs_open_read, "__cetta_lib_fs_open_read") \
+    X(lib_fs_read_chunk, "__cetta_lib_fs_read_chunk") \
+    X(lib_fs_close, "__cetta_lib_fs_close") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
     X(lib_io_submit, "__cetta_lib_io_submit") \
     X(lib_io_poll, "__cetta_lib_io_poll") \
@@ -363,6 +395,8 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_get_last_v1, "__cetta_lib_json_get_last_v1") \
     X(lib_json_object_get, "__cetta_lib_json_object_get") \
     X(lib_str, "__cetta_lib_str") \
+    X(lib_str_value, "__cetta_lib_str_value") \
+    X(lib_re, "__cetta_lib_re") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \

@@ -175,19 +175,32 @@ def parse_sexprs(text: str, *, source: str = "<text>") -> list[SExpr]:
 
 
 def render(term: SExpr) -> str:
-    if isinstance(term, Symbol):
-        if not _SAFE_SYMBOL.fullmatch(term.text):
-            raise SchemaError(f"symbol cannot be serialized canonically: {term.text!r}")
-        return term.text
-    if isinstance(term, Variable):
-        if not term.name or term.name == "_" or not _SAFE_SYMBOL.fullmatch(term.name):
-            raise SchemaError(f"invalid variable name: {term.name!r}")
-        return f"?{term.name}"
-    if isinstance(term, StringLiteral):
-        return json.dumps(term.text, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(term, int):
-        return str(term)
-    return "(" + " ".join(render(item) for item in term) + ")"
+    output: list[str] = []
+    pending: list[SExpr | str] = [term]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, Symbol):
+            if not _SAFE_SYMBOL.fullmatch(item.text):
+                raise SchemaError(f"symbol cannot be serialized canonically: {item.text!r}")
+            output.append(item.text)
+        elif isinstance(item, Variable):
+            if not item.name or item.name == "_" or not _SAFE_SYMBOL.fullmatch(item.name):
+                raise SchemaError(f"invalid variable name: {item.name!r}")
+            output.append(f"?{item.name}")
+        elif isinstance(item, StringLiteral):
+            output.append(json.dumps(item.text, ensure_ascii=False, separators=(",", ":")))
+        elif isinstance(item, int):
+            output.append(str(item))
+        elif isinstance(item, str):
+            output.append(item)
+        else:
+            output.append("(")
+            pending.append(")")
+            for index in range(len(item) - 1, -1, -1):
+                pending.append(item[index])
+                if index:
+                    pending.append(" ")
+    return "".join(output)
 
 
 def parse_rule(form: SExpr, source: Path) -> RuleDecl:

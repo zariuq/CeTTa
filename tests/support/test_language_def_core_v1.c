@@ -124,6 +124,9 @@ static bool premise_heads_are_declared(
     case CETTA_LD_PREMISE_FOR_ALL_V1:
         return premise_heads_are_declared(
             language, premise->as.for_all.body);
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        return pattern_heads_are_declared(language, &premise->as.scoped_step.source) &&
+            pattern_heads_are_declared(language, &premise->as.scoped_step.target);
     }
     return false;
 }
@@ -541,6 +544,38 @@ static void exact_arithmetic_operational_gate(TestCounts *counts) {
     cetta_op_lang_v1_free(&wire);
 }
 
+static void portable_core_gate(TestCounts *counts) {
+    const char *paths[] = {"tests/module_portable/regex.sexpr", "tests/module_portable/complete.sexpr"};
+    for (size_t i = 0; i < 2u; ++i) {
+        CettaOperationalLanguageDefV1 wire;
+        CettaLanguageDefCoreV1 core;
+        CettaOpLangV1Status wire_status;
+        CettaLdCoreV1Status status;
+        char error[512] = {0};
+        cetta_op_lang_v1_init(&wire); cetta_language_def_core_v1_init(&core);
+        bool ok = cetta_op_lang_v1_parse_file(&wire, paths[i], 4000000u, 4000000u,
+            &wire_status, error, sizeof(error)) && cetta_language_def_core_v1_decode(&core,
+            &wire, 4000000u, &status, error, sizeof(error));
+        expect(counts, ok, error[0] ? error : paths[i]);
+        if (ok && i == 0u) {
+            expect(counts, core.type_len == 4u && core.term_len == 16u && core.rewrite_len == 26u,
+                "canonical regex has all declarations");
+            expect(counts, text_is(&core.rewrites[0].name, "OR-FF"), "regex names retain exact spelling");
+        } else if (ok) {
+            expect(counts, core.type_len == 9u && core.term_len == 8u && core.equation_len == 2u && core.rewrite_len == 3u,
+                "complete finite carrier declaration counts");
+            expect(counts, core.terms[5].algebra.present && core.terms[5].algebra.flatten &&
+                core.terms[5].algebra.unit.present && text_is(&core.terms[5].algebra.unit.value, "Nil"),
+                "collection algebra survives decoding");
+            expect(counts, core.rewrites[0].bindings.present && core.rewrites[0].bindings.dependency_len == 2u &&
+                core.rewrites[0].bindings.occurrence_len == 4u, "rule binding and occurrence specifications survive");
+            expect(counts, core.rewrites[0].premises.items[2].kind == CETTA_LD_PREMISE_SCOPED_STEP_V1 &&
+                core.rewrites[0].premises.items[2].as.scoped_step.binder_len == 2u, "scoped-step binder context survives");
+        }
+        cetta_language_def_core_v1_free(&core); cetta_op_lang_v1_free(&wire);
+    }
+}
+
 int main(void) {
     TestCounts counts = {0};
 
@@ -548,6 +583,7 @@ int main(void) {
     constructor_coverage_gate(&counts);
     external_call_machine_operational_gate(&counts);
     exact_arithmetic_operational_gate(&counts);
+    portable_core_gate(&counts);
     printf("typed LanguageDef core decode: %u passed, %u failed\n",
            counts.passed, counts.failed);
     return counts.failed == 0u ? 0 : 1;

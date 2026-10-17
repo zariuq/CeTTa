@@ -77,6 +77,12 @@ bool cetta_parser_token_runtime_v1_parse_values(
     const CettaParserTokenScanV1 *scan, bool use_glr,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
     PPNativeV1Result *out, char *error, size_t error_size);
+bool cetta_parser_token_runtime_v1_parse_values_selected(
+    const CettaParserTokenRuntimeV1 *runtime,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size);
 bool cetta_parser_token_runtime_v1_build_predictive(
     const CettaParserTokenRuntimeV1 *runtime,
     CettaLpNativePredictiveProgram *out, char *error, size_t error_size);
@@ -86,6 +92,12 @@ bool cetta_parser_token_runtime_v1_parse_predictive_values(
     const CettaParserTokenRuntimeV1 *runtime,
     const CettaLpNativePredictiveProgram *program, const CettaParserTokenScanV1 *scan,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    PPNativeV1Result *out, char *error, size_t error_size);
+bool cetta_parser_token_runtime_v1_parse_predictive_values_selected(
+    const CettaParserTokenRuntimeV1 *runtime,
+    const CettaLpNativePredictiveProgram *program, const CettaParserTokenScanV1 *scan,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
     PPNativeV1Result *out, char *error, size_t error_size);
 bool cetta_parser_token_runtime_v1_materialize(
     const CettaParserTokenRuntimeV1 *runtime,

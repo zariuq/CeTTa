@@ -19,6 +19,8 @@
 #include "langdef_pack.h"
 #include "library_io.h"
 #include "library_proc.h"
+#include "library_fs.h"
+#include "library_re.h"
 #include "library_json.h"
 #include "str_natives.h"
 #include <ctype.h>
@@ -132,6 +134,7 @@ enum {
     CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
     CETTA_LIBRARY_MATH = 1u << 13,
     CETTA_LIBRARY_PROC = 1u << 14,
+    CETTA_LIBRARY_RE = 1u << 15,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -148,6 +151,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
+    {"re", CETTA_LIBRARY_RE, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -4484,6 +4488,12 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
     if (head_id == g_builtin_syms.lib_system_cwd) {
         return system_cwd(a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_system_entry_directory) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:entry-directory)");
+        return ctx->script_dir[0] ? atom_string(a, ctx->script_dir)
+            : library_signature_error(a, head, args, nargs, "entry directory is not established");
+    }
     if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
         return system_monotonic_ns(a, head, args, nargs);
     }
@@ -5279,32 +5289,52 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
  * A refusal is (Error (str:name args...) (Reason offset)); a call outside an
  * operation's signature is (Error (str:name args...) expectation). */
 
+static Atom *str_operation_refusal(Arena *a, Atom *call, Atom *detail, bool data) {
+    return data ? atom_expr3(a, atom_symbol(a, "StrRefusedV1"), call, detail)
+                : atom_error(a, call, detail);
+}
+
 static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
-                                        Atom **args, uint32_t nargs) {
-    if (head->kind != ATOM_SYMBOL || head->sym_id != g_builtin_syms.lib_str)
+                                        Atom **args, uint32_t nargs,
+                                        CettaCallResultForm *result_form) {
+    if (head->kind != ATOM_SYMBOL || (head->sym_id != g_builtin_syms.lib_str &&
+        head->sym_id != g_builtin_syms.lib_str_value))
         return NULL;
+    bool values = head->sym_id == g_builtin_syms.lib_str_value;
+    if (values) *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
     const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
         ? atom_name_cstr(args[0]) : NULL;
     const CettaStrNative *native = cetta_str_native(name);
     if (!native)
-        return library_signature_error(a, head, args, nargs,
-                                       "unknown string operation");
+        return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                                     atom_symbol(a, "unknown string operation"), values);
+    Atom **operands = args + 1u;
+    uint32_t count = nargs - 1u;
+    if (values) {
+        if (nargs != 2u || !args[1] || args[1]->kind != ATOM_EXPR)
+            return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                atom_symbol(a, "expected string operation and inert argument tuple"), values);
+        if (args[1]->expr.len > UINT32_MAX)
+            return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                atom_symbol(a, "argument tuple exceeds native arity"), values);
+        operands = args[1]->expr.elems;
+        count = (uint32_t)args[1]->expr.len;
+    }
+    CettaStrRefusal refusal = {0};
+    Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
+    if (result)
+        return result;
     size_t public_len = strlen(name) + 5u;
     char *public_name = arena_alloc(a, public_len);
     snprintf(public_name, public_len, "str:%s", name);
-    Atom *call = library_call_expr(a, atom_symbol(a, public_name), args + 1,
-                                   nargs - 1u);
-    if (nargs - 1u != native->arity)
-        return atom_error(a, call, atom_symbol(a, "wrong number of arguments"));
-    CettaStrRefusal refusal = {0};
-    Atom *result = native->fn(a, args + 1, &refusal);
-    if (result)
-        return result;
+    Atom *call = library_call_expr(a, atom_symbol(a, public_name), operands, count);
+    if (count != native->arity)
+        return str_operation_refusal(a, call, atom_symbol(a, "wrong number of arguments"), values);
     if (refusal.reason)
-        return atom_error(a, call,
+        return str_operation_refusal(a, call,
                           atom_expr2(a, atom_symbol(a, refusal.reason),
-                                     atom_int(a, (int64_t)refusal.offset)));
-    return atom_error(a, call, atom_symbol(a, refusal.expected));
+                                     atom_int(a, (int64_t)refusal.offset)), values);
+    return str_operation_refusal(a, call, atom_symbol(a, refusal.expected), values);
 }
 
 static CettaMorkSpaceResource *library_mork_space_resource(CettaLibraryContext *ctx,
@@ -11638,7 +11668,7 @@ static Atom *cetta_library_dispatch_native_value(
     }
 #endif
     if (ctx->active_mask & CETTA_LIBRARY_STR) {
-        Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
+        Atom *result = cetta_library_dispatch_str(a, head, args, nargs, result_form);
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) {
@@ -11652,6 +11682,10 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
+        cetta_re_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&
+        cetta_fs_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_PROC) &&
         cetta_proc_call(ctx, a, head, args, nargs, out)) return true;
     CettaCallResultForm result_form = CETTA_CALL_RESULT_EXPRESSION;

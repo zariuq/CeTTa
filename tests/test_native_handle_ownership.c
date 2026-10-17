@@ -364,17 +364,40 @@ int main(void) {
     expect_dead(ctx, reentrant_id);
     assert(released == 10);
 
+    /* Grow while old holders are copied on other threads: new segments and a
+     * larger index must not invalidate a previously published value. */
+    enum { growth_count = 257 };
+    uint64_t growing[growth_count];
+    growing[0] = new_resource(ctx);
+    handle = cetta_native_handle_owned_atom(ctx, &source, kind, growing[0]);
+    copy = atom_deep_copy(&survivor, handle);
+    for (unsigned i = 0; i < 4; ++i)
+        assert(!pthread_create(&workers[i], NULL, copy_worker, handle->expr.elems[2]));
+    for (unsigned i = 1; i < growth_count; ++i) {
+        growing[i] = new_resource(ctx);
+        assert(cetta_native_handle_owned_atom(ctx, &source, kind, growing[i]));
+    }
+    for (unsigned i = 0; i < 4; ++i) assert(!pthread_join(workers[i], NULL));
+    for (unsigned i = 0; i < growth_count; ++i) expect_live(ctx, growing[i]);
+    arena_reset(&source, source_start);
+    expect_live(ctx, growing[0]);
+    for (unsigned i = 1; i < growth_count; ++i) expect_dead(ctx, growing[i]);
+    assert(released == 10 + growth_count - 1);
+    arena_reset(&survivor, survivor_start);
+    expect_dead(ctx, growing[0]);
+    assert(released == 10 + growth_count);
+
     /* Teardown before surviving arenas: callbacks must not dereference ctx. */
     id = new_resource(ctx);
     handle = cetta_native_handle_owned_atom(ctx, &source, kind, id);
     copy = atom_deep_copy(&survivor, handle);
     cetta_native_handle_cleanup_all(ctx);
-    assert(released == 11);
+    assert(released == 11 + growth_count);
     free(ctx);
     assert(atom_int_copy(&source, copy->expr.elems[2]));
     arena_free(&source);
     arena_free(&survivor);
-    assert(released == 11);
+    assert(released == 11 + growth_count);
     exercise_concurrent_registry();
     exercise_growth();
 #ifdef CETTA_NATIVE_HANDLE_ALLOCATION_TEST

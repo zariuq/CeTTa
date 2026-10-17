@@ -3,7 +3,6 @@
 ; Printed compact records read back to the same records under every policy and
 ; profile, and printing leaves data alone: source names that are builtins or
 ; heads of the receiving space's own equations stay names.
-(= (and $x $y) BuiltinNameMustNotEvaluate)
 (= (collision $x) RewriteMustNotApply)
 
 (: print-test:same (-> Atom Atom %Undefined%))

@@ -1,0 +1,5 @@
+!(import! &self str)
+!(let $initial (str:line-new)
+  (let $pending (str:advance-lines $initial "held" False)
+    (let $observed (str:feed-lines $pending "-tail\nrest" True)
+      (function (return (LineViewsPrefix $observed))))))

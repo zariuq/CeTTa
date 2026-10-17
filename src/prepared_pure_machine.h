@@ -63,7 +63,8 @@ typedef struct {
     CettaPreparedPureValueObservation observation;
 } CettaPreparedPureExpressionView;
 /* Classify dialect-owned expression forms before the generic constructor
- * fallback.  A projection names the source child which is the form's value;
+ * fallback, and the symbols a dialect reserves for its own evaluator (only
+ * canonical-only is read for a symbol).  A projection names the source child which is the form's value;
  * an observation names a pure outer-value discriminator whose operand is
  * data rather than an evaluation position.  Decline prevents an unhandled
  * form from falling through as inert syntax after shared prepared

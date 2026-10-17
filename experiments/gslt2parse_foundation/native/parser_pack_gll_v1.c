@@ -15,6 +15,7 @@ static bool ppgll_v1_parse_input(
     uint32_t result_limit,
     bool materialize_semantics,
     bool occurrence_values,
+    const PPNativeV1FamilySelection *selection,
     PPNativeV1Result *out,
     char *error_buf,
     size_t error_buf_size) {
@@ -133,9 +134,9 @@ static bool ppgll_v1_parse_input(
     }
     if (materialize_semantics &&
         !(occurrence_values
-          ? ppnative_v1_finish_values(
+          ? ppnative_v1_finish_values_selected(
                 &result, pack, NULL, replay_depth, result_limit,
-                error_buf, error_buf_size)
+                selection, error_buf, error_buf_size)
           : ppnative_v1_finish(
             &result, pack, start_state, replay_depth, result_limit,
             error_buf, error_buf_size))) {
@@ -167,7 +168,7 @@ bool ppgll_v1_parse(const PPABIV1Pack *pack,
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, input_bytes, input_byte_len, NULL,
-        descriptor_limit, replay_depth, result_limit, true, false,
+        descriptor_limit, replay_depth, result_limit, true, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -183,7 +184,7 @@ bool ppgll_v1_parse_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, NULL, 0u, view,
-        descriptor_limit, replay_depth, result_limit, true, false,
+        descriptor_limit, replay_depth, result_limit, true, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -198,7 +199,7 @@ bool ppgll_v1_recognize(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, input_bytes, input_byte_len, NULL,
-        descriptor_limit, 0u, 0u, false, false,
+        descriptor_limit, 0u, 0u, false, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -212,7 +213,7 @@ bool ppgll_v1_recognize_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, NULL, 0u, view,
-        descriptor_limit, 0u, 0u, false, false,
+        descriptor_limit, 0u, 0u, false, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -228,7 +229,7 @@ bool ppgll_v1_prepared_parse(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
-        descriptor_limit, replay_depth, result_limit, true, false,
+        descriptor_limit, replay_depth, result_limit, true, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -243,7 +244,7 @@ bool ppgll_v1_prepared_parse_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, NULL, 0u, view,
-        descriptor_limit, replay_depth, result_limit, true, false,
+        descriptor_limit, replay_depth, result_limit, true, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -257,7 +258,7 @@ bool ppgll_v1_prepared_recognize(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
-        descriptor_limit, 0u, 0u, false, false,
+        descriptor_limit, 0u, 0u, false, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -270,7 +271,7 @@ bool ppgll_v1_prepared_recognize_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, NULL, 0u, view,
-        descriptor_limit, 0u, 0u, false, false,
+        descriptor_limit, 0u, 0u, false, false, NULL,
         out, error_buf, error_buf_size);
 }
 
@@ -279,11 +280,22 @@ bool ppgll_v1_prepared_parse_values(
     const uint8_t *input_bytes, size_t input_byte_len,
     uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
     PPNativeV1Result *out, char *error_buf, size_t error_buf_size) {
+    return ppgll_v1_prepared_parse_values_selected(prepared, input_bytes,
+        input_byte_len, descriptor_limit, replay_depth, result_limit, NULL,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_prepared_parse_values_selected(
+    const PPNativeV1Prepared *prepared,
+    const uint8_t *input_bytes, size_t input_byte_len,
+    uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error_buf, size_t error_buf_size) {
     if (!prepared)
         return false;
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
-        descriptor_limit, replay_depth, result_limit, true, true,
+        descriptor_limit, replay_depth, result_limit, true, true, selection,
         out, error_buf, error_buf_size);
 }
 
@@ -292,10 +304,21 @@ bool ppgll_v1_prepared_parse_scalar_view_values(
     const CettaLpNativeUtf8ScalarView *view,
     uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
     PPNativeV1Result *out, char *error_buf, size_t error_buf_size) {
+    return ppgll_v1_prepared_parse_scalar_view_values_selected(prepared, view,
+        descriptor_limit, replay_depth, result_limit, NULL,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_prepared_parse_scalar_view_values_selected(
+    const PPNativeV1Prepared *prepared,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error_buf, size_t error_buf_size) {
     if (!prepared)
         return false;
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, NULL, 0u, view,
-        descriptor_limit, replay_depth, result_limit, true, true,
+        descriptor_limit, replay_depth, result_limit, true, true, selection,
         out, error_buf, error_buf_size);
 }

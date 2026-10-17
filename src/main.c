@@ -1394,6 +1394,19 @@ static bool endpoint_resolve_version(CettaCliEndpoint *endpoint,
     return true;
 }
 
+/* The languages whose profiles include this name. */
+static void endpoint_note_profile_languages(const char *profile_name) {
+    static const char *const names[] = {
+        "petta", "he", "prime", "hol-light", "rhocalc", "mm2"};
+    for (size_t i = 0u; i < sizeof names / sizeof names[0]; i++) {
+        const CettaLanguageSpec *lang = cetta_language_lookup(names[i]);
+        if (lang && cetta_language_has_named_profiles(lang->id) &&
+            cetta_profile_from_name_for_language(lang->id, profile_name))
+            fprintf(stderr, "note: profile '%s' is a profile of --lang %s\n",
+                    profile_name, lang->canonical);
+    }
+}
+
 static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
                              const char *exec_path) {
     char langdef_error[256] = {0};
@@ -1443,6 +1456,7 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
             fprintf(stderr, "error: unknown %s profile '%s' for language '%s'\n",
                     role, endpoint->profile_name, endpoint->lang->canonical);
             cetta_profile_print_inventory_for_language(stderr, endpoint->lang->id);
+            endpoint_note_profile_languages(endpoint->profile_name);
             return false;
         }
     }
@@ -1796,6 +1810,7 @@ done:
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
+    fputs("       note: without --lang, cetta runs petta (petta@1.0.6)\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
@@ -2323,6 +2338,13 @@ static int main_petta_compiled_text_backend(
     return petta_compiled_reader_v1_parse_text_ids(
         context, text, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+}
+
+static int main_petta_compiled_term_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId *out_id, char *error_buf, size_t error_buf_size) {
+    return petta_compiled_reader_v1_parse_term_bytes_id(
+        context, bytes, length, universe, out_id, error_buf, error_buf_size);
 }
 
 static int main_petta_compiled_file_backend(
@@ -2912,7 +2934,8 @@ static int cetta_main(int argc, char **argv) {
         CETTA_GSLT_REALIZATION_HORN_REFERENCE;
     bool gslt_realization_requested = false;
 
-    endpoint_init(&source_endpoint, "he");
+    /* PeTTa is the most widely used dialect: a program names another. */
+    endpoint_init(&source_endpoint, "petta");
     endpoint_init(&target_endpoint, NULL);
     current_endpoint = &source_endpoint;
 
@@ -3818,6 +3841,7 @@ static int cetta_main(int argc, char **argv) {
             .context = petta_compiled_reader,
             .parse_text_ids = main_petta_compiled_text_backend,
             .parse_file_ids = main_petta_compiled_file_backend,
+            .parse_term_bytes_id = main_petta_compiled_term_backend,
         };
         if (!parser_set_document_ids_backend(&reader_backend)) {
             fprintf(stderr,

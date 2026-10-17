@@ -98,7 +98,7 @@ test-native-mm0-mutation:
 test: test-native-mm0-core test-native-mm0-host
 
 NATIVE_MM0_BRIDGE_SRC = $(NATIVE_MM0_CORE_SRC) native/mm0/mm0_cetta_module.c \
-	src/seal.c src/native_handle.c src/atom.c src/symbol.c src/binding/frame_identity.c
+	src/seal.c src/native_handle.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c
 NATIVE_MM0_BRIDGE_BIN = runtime/test_mm0_bridge-$(BUILD_OBJ_TAG)
 $(NATIVE_MM0_BRIDGE_BIN): tests/mm0/test_bridge.c $(NATIVE_MM0_BRIDGE_SRC) $(NATIVE_MM0_HEADERS) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DMM0_ADAPTER_FAULTS -DCETTA_TEST_HOOKS -Inative/mm0 \

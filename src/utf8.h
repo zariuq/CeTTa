@@ -91,6 +91,24 @@ static inline bool cetta_utf8_decode_one(const uint8_t *bytes,
     return false;
 }
 
+/* A proper prefix of one valid scalar at the end of a buffer. Malformed
+ * prefixes are refused now, not retained waiting for another chunk. */
+static inline bool cetta_utf8_incomplete_prefix(const uint8_t *bytes, size_t len) {
+    if (!bytes || !len || len > 3u) return false;
+    uint8_t first = bytes[0];
+    size_t needed = first >= 0xc2u && first <= 0xdfu ? 2u :
+        first >= 0xe0u && first <= 0xefu ? 3u :
+        first >= 0xf0u && first <= 0xf4u ? 4u : 0u;
+    if (!needed || len >= needed) return false;
+    for (size_t i = 1u; i < len; i++)
+        if ((bytes[i] & 0xc0u) != 0x80u) return false;
+    if (len > 1u && ((first == 0xe0u && bytes[1] < 0xa0u) ||
+        (first == 0xedu && bytes[1] > 0x9fu) ||
+        (first == 0xf0u && bytes[1] < 0x90u) ||
+        (first == 0xf4u && bytes[1] > 0x8fu))) return false;
+    return true;
+}
+
 /* The UTF-8 encoding of a scalar value, NUL included, into four bytes. */
 static inline size_t cetta_utf8_encode(uint32_t scalar, uint8_t out[4]) {
     if (scalar < 0x80u) {

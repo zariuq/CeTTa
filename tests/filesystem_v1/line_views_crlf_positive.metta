@@ -1,0 +1,6 @@
+!(import! &self str)
+!(let $initial (str:line-new)
+  (let $first (str:advance-lines $initial "one\r" False)
+    (let $unchanged (str:advance-lines $first "" False)
+      (let $observed (str:feed-lines $unchanged "\n\nlast" True)
+        (function (return (LineViewsCRLF $observed)))))))

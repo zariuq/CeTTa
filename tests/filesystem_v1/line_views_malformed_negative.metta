@@ -1,0 +1,6 @@
+!(import! &self str)
+!(let $initial (str:line-new)
+  (let $bad (str:unescape metta "one\\xff")
+    (let $values (str:feed-lines $initial $bad True)
+      (let $positions (str:advance-lines $initial $bad True)
+        (function (return (LineViewRefusals $values $positions)))))))

@@ -45,14 +45,25 @@
        $value (return $value))))
 
 (= (module:read-text $reader $source $text)
-   (let $result (langdef:parser-parse-text $reader $text)
-     (module:finish-read $source $result)))
+   (case $reader
+     ((ModulePortableV1 (__cetta_lib_module_read_portable_v1 $source text $text))
+      ($other (let $result (langdef:parser-parse-text $other $text)
+        (module:finish-read $source $result))))))
 
 (= (module:read-file $reader $source $path)
-   (let $result (langdef:parser-parse-file $reader $path)
-     (module:finish-read $source $result)))
+   (case $reader
+     ((ModulePortableV1 (__cetta_lib_module_read_portable_v1 $source file $path))
+      ($other (let $result (langdef:parser-parse-file $other $path)
+        (module:finish-read $source $result))))))
 
 (= (module:inspect $value) $value)
+
+; Serialization is explicit; ordinary inspection performs no text work.
+(: module:write-text (-> Atom Atom Atom))
+(: __cetta_lib_module_write_portable_v1 (-> Atom Atom))
+(= (module:write-text ModulePortableV1 $value)
+   (function
+     (chain (eval (__cetta_lib_module_write_portable_v1 $value)) $text (return $text))))
 
 (= (module:try-interpret $required $supplied $method)
    (function

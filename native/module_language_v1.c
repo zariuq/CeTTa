@@ -444,6 +444,34 @@ done:
     module_clear_v1(&l->bound); module_clear_v1(&l->captures); return out;
 }
 
+/* Legacy row tags are a presentation spelling, not different core fields.
+ * Canonicalization adds exactly the formerly implicit None annotations. */
+static Atom *complete_row(ModuleWorkV1 *w, Atom *row) {
+    if (!row || !module_spend_v1(w)) return NULL;
+    if (w->depth >= 512u) {
+        module_fail_v1(w, "incomplete", "Core spelling normalization reached its nesting budget.");
+        return NULL;
+    }
+    if (row->kind != ATOM_EXPR) return row;
+    if (!row->expr.len || row->expr.elems[0]->kind != ATOM_SYMBOL) return NULL;
+    const char *head = atom_name_cstr(row->expr.elems[0]);
+    static const char *from[] = {"TermAbstractionNamed", "TermMultiAbstractionNamed", "SyntaxTerminal", "SyntaxNonTerminal", "SyntaxSeparator", "SyntaxDelimiter"};
+    static const char *to[] = {"TermAbstraction", "TermMultiAbstraction", "Terminal", "NonTerminal", "Separator", "Delimiter"};
+    for (size_t i = 0; i < 6u; ++i) if (!strcmp(head, from[i])) { head = to[i]; break; }
+    Atom *extra = NULL;
+    if (module_form_v1(row, "GrammarRule", 5u)) { head = "GrammarRuleV2"; extra = atom_symbol(w->arena, "AlgebraNone"); }
+    if (module_form_v1(row, "Equation", 5u)) { head = "ScopedEquationV1"; extra = atom_symbol(w->arena, "RuleBindingNone"); }
+    if (module_form_v1(row, "RewriteRule", 5u)) { head = "ScopedRewriteRuleV1"; extra = atom_symbol(w->arena, "RuleBindingNone"); }
+    ModuleValuesV1 args = {0}; Atom *out = NULL;
+    ++w->depth;
+    for (CettaExprIndex i = 1; i < row->expr.len; ++i)
+        if (!module_push_v1(w, &args, complete_row(w, row->expr.elems[i]))) goto done;
+    if (extra && !module_push_v1(w, &args, extra)) goto done;
+    out = module_make_v1(w->arena, head, args.items, args.len);
+done:
+    --w->depth; module_clear_v1(&args); return out;
+}
+
 static bool build_core(ModuleLanguageV1 *l, Atom *p, Atom *name,
     Atom **complete, Atom **document, Atom **refusal) {
     Arena *arena = l->work.arena;
@@ -456,7 +484,9 @@ static bool build_core(ModuleLanguageV1 *l, Atom *p, Atom *name,
             !module_string_v1(entry->expr.elems[1]->expr.elems[1]) || !module_string_v1(entry->expr.elems[1]->expr.elems[2]))
             return module_fail_v1(&l->work, "malformed-entry", "Expected origin-bearing declarations.");
         l->work.site = entry->expr.elems[1]; Atom *body = entry->expr.elems[3];
-        if (module_form_v1(body, "ModuleEquationV1", 4u) || module_form_v1(body, "ModuleRewriteV1", 4u) || module_form_v1(body, "ModuleExportV1", 2u)) continue;
+        if (module_form_v1(body, "ModuleCoreTypeV1", 1u) || module_form_v1(body, "ModuleCoreTermV1", 1u) ||
+            module_form_v1(body, "ModuleCoreEquationV1", 1u) || module_form_v1(body, "ModuleCoreRewriteV1", 1u) ||
+            module_form_v1(body, "ModuleEquationV1", 4u) || module_form_v1(body, "ModuleRewriteV1", 4u) || module_form_v1(body, "ModuleExportV1", 2u)) continue;
         Atom *definition = module_form_v1(body, "ModuleTermV1", 4u) ? term_definition(l, body) : body;
         if (module_form_v1(body, "ModuleListMacroV1", 4u)) {
             if (!atom_is_symbol(body->expr.elems[1], "separator") && !atom_is_symbol(body->expr.elems[1], "terminator"))
@@ -478,8 +508,18 @@ static bool build_core(ModuleLanguageV1 *l, Atom *p, Atom *name,
     if (!module_unlist_v1(&l->work, declarations->expr.elems[3], &l->terms) ||
         !module_unlist_v1(&l->work, declarations->expr.elems[2], &l->types) ||
         !scope_declarations(l, sites)) return false;
+    bool complete_format = false;
     for (size_t i = 0; i < l->entries.len; ++i) {
         Atom *entry = l->entries.items[i], *body = entry->expr.elems[3]; l->work.site = entry->expr.elems[1];
+        if (module_form_v1(body, "ModuleCoreTypeV1", 1u) || module_form_v1(body, "ModuleCoreTermV1", 1u) ||
+            module_form_v1(body, "ModuleCoreEquationV1", 1u) || module_form_v1(body, "ModuleCoreRewriteV1", 1u)) {
+            complete_format = true;
+            ModuleValuesV1 *rows = module_form_v1(body, "ModuleCoreTypeV1", 1u) ? &l->types :
+                module_form_v1(body, "ModuleCoreTermV1", 1u) ? &l->terms :
+                module_form_v1(body, "ModuleCoreEquationV1", 1u) ? &l->equations : &l->rewrites;
+            if (!module_push_v1(&l->work, rows, body->expr.elems[1])) return false;
+            continue;
+        }
         bool rewrite = module_form_v1(body, "ModuleRewriteV1", 4u);
         if (rewrite || module_form_v1(body, "ModuleEquationV1", 4u)) {
             if (!module_string_v1(body->expr.elems[1]))
@@ -496,9 +536,17 @@ static bool build_core(ModuleLanguageV1 *l, Atom *p, Atom *name,
             }
         }
     }
+    if (complete_format) {
+        ModuleValuesV1 *groups[] = {&l->terms, &l->equations, &l->rewrites};
+        for (size_t g = 0; g < 3u; ++g)
+            for (size_t i = 0; i < groups[g]->len; ++i) {
+                groups[g]->items[i] = complete_row(&l->work, groups[g]->items[i]);
+                if (!groups[g]->items[i]) return false;
+            }
+    }
     Atom *fields[] = {name, module_list_v1(arena, &l->types), module_list_v1(arena, &l->terms),
         module_list_v1(arena, &l->equations), module_list_v1(arena, &l->rewrites)};
-    *complete = module_make_v1(arena, "GSLTLanguageDefWireV1", fields, 5u);
+    *complete = module_make_v1(arena, complete_format ? "LanguageDefV2" : "GSLTLanguageDefWireV1", fields, 5u);
     return *complete != NULL;
 }
 
@@ -517,6 +565,8 @@ static void core_refusal(ModuleLanguageV1 *l, Atom **refusal) {
 }
 
 Atom *module_core_v1(ModuleWorkV1 *work, Atom *p, Atom *name) {
+    if (module_form_v1(p, "ModulePortableValueV1", 2u))
+        return cetta_module_portable_v1_core(work, p, name);
     ModuleLanguageV1 l = {.work = {.arena = work->arena, .remaining = work->remaining}};
     Atom *core = NULL, *document = NULL, *failure = NULL;
     bool ok = build_core(&l, p, name, &core, &document, &failure);
@@ -548,22 +598,26 @@ static Atom *interpretation_unknown(ModuleWorkV1 *w, Atom *method, Atom *obligat
  * necessary conditions on all interpretations. In particular it does not
  * search for derived equations. Concrete constructor notation is irrelevant
  * to this core signature check. Ordered rewrite occurrences remain distinct. */
-static bool same_interface_row(Atom *required, Atom *supplied, size_t family) {
+static bool same_interface_row(ModuleWorkV1 *w, Atom *required, Atom *supplied, size_t family) {
+    required = complete_row(w, required);
+    supplied = complete_row(w, supplied);
+    if (!required || !supplied) return false;
     if (family >= 4u) {
-        const char *head = family == 4u ? "Equation" : "RewriteRule";
-        if (!module_form_v1(required, head, 5u) || !module_form_v1(supplied, head, 5u)) return false;
+        const char *head = family == 4u ? "ScopedEquationV1" : "ScopedRewriteRuleV1";
+        if (!module_form_v1(required, head, 6u) || !module_form_v1(supplied, head, 6u)) return false;
         /* Names identify the matched occurrences; the correspondence retains
          * their indices in both cores. A law need not share its display name. */
-        for (size_t i = 2u; i <= 5u; ++i)
+        for (size_t i = 2u; i <= 6u; ++i)
             if (!atom_eq(required->expr.elems[i], supplied->expr.elems[i])) return false;
         return true;
     }
     if (family != 3u) return atom_eq(required, supplied);
-    if (!module_form_v1(required, "GrammarRule", 5u) || !module_form_v1(supplied, "GrammarRule", 5u)) return false;
+    if (!module_form_v1(required, "GrammarRuleV2", 6u) || !module_form_v1(supplied, "GrammarRuleV2", 6u)) return false;
     return atom_eq(required->expr.elems[1], supplied->expr.elems[1]) &&
         atom_eq(required->expr.elems[2], supplied->expr.elems[2]) &&
         atom_eq(required->expr.elems[3], supplied->expr.elems[3]) &&
-        atom_eq(required->expr.elems[5], supplied->expr.elems[5]);
+        atom_eq(required->expr.elems[5], supplied->expr.elems[5]) &&
+        atom_eq(required->expr.elems[6], supplied->expr.elems[6]);
 }
 
 Atom *module_interpret_v1(ModuleWorkV1 *w, Atom *required, Atom *supplied, Atom *method) {
@@ -588,7 +642,8 @@ Atom *module_interpret_v1(ModuleWorkV1 *w, Atom *required, Atom *supplied, Atom 
             size_t j = family == 5u ? next : 0u;
             for (; j < b.len; ++j) {
                 if (!module_spend_v1(w)) { ok = false; break; }
-                if (same_interface_row(a.items[i], b.items[j], family)) break;
+                if (same_interface_row(w, a.items[i], b.items[j], family)) break;
+                if (w->refusal) { ok = false; break; }
             }
             if (!ok) break;
             if (j == b.len) {
@@ -639,7 +694,8 @@ bool cetta_module_value_v1_rewrite_rules(Arena *arena, Atom *p, Atom *name,
     size_t index = 0;
     for (size_t i = 0; ok && i < l.entries.len; ++i) {
         Atom *entry = l.entries.items[i];
-        if (!module_form_v1(entry->expr.elems[3], "ModuleRewriteV1", 4u)) continue;
+        if (!module_form_v1(entry->expr.elems[3], "ModuleRewriteV1", 4u) &&
+            !module_form_v1(entry->expr.elems[3], "ModuleCoreRewriteV1", 1u)) continue;
         if (index >= l.rewrites.len) { ok = false; break; }
         Atom *fields[] = {entry->expr.elems[1], l.rewrites.items[index++]};
         ok = module_push_v1(&l.work, &occurrences,
@@ -664,8 +720,18 @@ bool cetta_module_value_v1_language(Arena *arena, Atom *p, Atom *name, Atom *sta
     CettaLbnfLoweredV1 candidate = {0}; bool ok = false;
     Atom *language = NULL, *document = NULL, *failure = NULL;
     ModuleValuesV1 metadata = {0}, origins = {0}, type_origins = {0}, syntax_types = {0};
-    if (!build_core(&l, p, name, &language, &document, &failure) ||
-        !cetta_lbnf_document_v1_lower(arena, document, name, start, policy, l.work.remaining, &candidate, &failure)) goto done;
+    if (!build_core(&l, p, name, &language, &document, &failure)) goto done;
+    for (size_t i = 0; i < l.entries.len; ++i) {
+        if (module_form_v1(l.entries.items[i]->expr.elems[3], "ModuleCoreTermV1", 1u)) {
+            /* The legacy BNFC projection must not silently omit declarations
+             * from the complete core. Other checked syntax interpretations may
+             * extend this partial consumer; this is not an impossibility test. */
+            Atom *fields[] = {atom_symbol(arena, "TypedCoreSyntaxV1"), l.entries.items[i]};
+            l.work.refusal = module_make_v1(arena, "ModuleInterpretationUnknownV1", fields, 2u);
+            goto done;
+        }
+    }
+    if (!cetta_lbnf_document_v1_lower(arena, document, name, start, policy, l.work.remaining, &candidate, &failure)) goto done;
     if (!module_unlist_v1(&l.work, candidate.profile->expr.elems[5]->expr.elems[4], &metadata)) { module_clear_v1(&metadata); goto done; }
     for (size_t i = 0; i < metadata.len; ++i) {
         Atom *row = metadata.items[i], *occurrence = row->expr.elems[1];

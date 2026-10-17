@@ -365,4 +365,13 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
     AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *receipt,
     char *error_buf, size_t error_buf_size);
 
+/* One term of the form LanguageDef, from input that holds exactly that term
+ * between the form's separators.  The document layer takes no part: there is
+ * no comment, runnable marker or splitter.  The projection sees one form that
+ * is not runnable.  0 on success, -1 otherwise. */
+int gslt_direct_petta_reader_v1_parse_term_bytes_id(
+    const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
+    size_t input_len, const GSLTDirectPeTTaProjectionV1 *projection,
+    AtomId *out_id, char *error_buf, size_t error_buf_size);
+
 #endif /* CETTA_GSLT_DIRECT_READER_V1_H */

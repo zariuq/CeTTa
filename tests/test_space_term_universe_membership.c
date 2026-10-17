@@ -1575,12 +1575,22 @@ int main(void) {
             Atom *call = atom_expr(
                 &equation_scratch, call_elems, 2u);
             Atom *result = NULL;
+#if CETTA_BUILD_WITH_GMP
             assert(space_prepared_equation_run_register_recursion(
                        &plan, call, &equation_scratch, 512u, &result) ==
                    SPACE_PREPARED_REGISTER_VALUE);
             assert(result && result->kind == ATOM_GROUNDED &&
                    result->ground.gkind == GV_INT &&
                    result->ground.ival == 55);
+#else
+            /* This exact-register specialization uses GMP cells. A portable
+             * build declines it so callers retain ordinary evaluation; it
+             * must not publish a value or error on behalf of that fallback. */
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan, call, &equation_scratch, 512u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(result == NULL);
+#endif
 
             Atom *noninteger_elems[2] = {
                 atom_symbol_id(&equation_scratch, recursive_head),

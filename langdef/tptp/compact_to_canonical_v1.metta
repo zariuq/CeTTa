@@ -43,10 +43,10 @@
     (operator tptp-canonical:digits 1)
     (operator tptp-canonical:truth 1) (operator tptp-canonical:and 2)
     (operator tptp-canonical:after 2) (operator tptp-canonical:lower-word-token 2)
-    (operator str:all-in? 2) (operator str:byte-length 1) (operator str:byte-slice 3)
-    (operator str:concat 2) (operator str:escape 2) (operator str:lower-word? 1)
-    (operator str:set 1) (operator str:set-member? 2) (operator str:starts-with 2)
-    (operator str:symbol->string 1) (operator str:upper-initial? 1)
+    (operator str:is-all-in 2) (operator str:byte-length 1) (operator str:byte-slice 3)
+    (operator str:concat 2) (operator str:escape 2) (operator str:is-lower-word 1)
+    (operator str:set 1) (operator str:is-set-member 2) (operator str:starts-with 2)
+    (operator str:symbol->string 1) (operator str:is-upper-initial 1)
     (operator tptp-canonical:disjunction 1)
     (operator tptp-canonical:each 2)
     (operator tptp-canonical:file 1)
@@ -435,7 +435,7 @@
     ; variable; § is two bytes.
     (rule spelled-leaf
       (head (metta-equation (tptp-canonical:spelled-leaf ?spelling)
-                            (tptp-canonical:spelled-at (str:starts-with ?spelling "§") (str:starts-with ?spelling "?") (str:upper-initial? ?spelling) ?spelling)))
+                            (tptp-canonical:spelled-at (str:starts-with ?spelling "§") (str:starts-with ?spelling "?") (str:is-upper-initial ?spelling) ?spelling)))
       (body))
     (rule spelled-sigil (head (metta-equation (tptp-canonical:spelled-at True ?question ?upper ?spelling) (tptp-canonical:sigil-leaf (tptp-canonical:after ?spelling 2)))) (body))
     (rule spelled-escaped
@@ -474,8 +474,8 @@
       (head (metta-equation (tptp-canonical:word-token ?text)
                             (tptp-canonical:word-token-at
                               (tptp-canonical:lower-word-token
-                                (str:lower-word? ?text)
-                                (str:set-member? (tptp-canonical:keywords) ?text))
+                                (str:is-lower-word ?text)
+                                (str:is-set-member (tptp-canonical:keywords) ?text))
                               ?text)))
       (body))
     (rule keywords
@@ -491,7 +491,7 @@
     (rule word-quoted (head (metta-equation (tptp-canonical:word-token-at False ?text) (bnf single_quoted (tptp-canonical:quoted 39 ?text)))) (body))
     ; A defined spelling that is alphanumeric is a dollar word; any other is
     ; the grammar's literal of that spelling.
-    (rule defined-token (head (metta-equation (tptp-canonical:defined-token ?text) (tptp-canonical:defined-token-at (str:all-in? word ?text) ?text))) (body))
+    (rule defined-token (head (metta-equation (tptp-canonical:defined-token ?text) (tptp-canonical:defined-token-at (str:is-all-in word ?text) ?text))) (body))
     (rule defined-word
       (head (metta-equation (tptp-canonical:defined-token-at True ?text)
                             (bnf dollar_word (str:concat "$" ?text))))

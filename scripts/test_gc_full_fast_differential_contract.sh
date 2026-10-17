@@ -54,4 +54,25 @@ grep -Fq \
     'FAIL: tests/test_arithmetic.metta (GC-on timeout after 0.05s)' \
     "$scratch/gc-on-timeout.log"
 
-echo "PASS: GC differential accepts exact agreement and rejects both timeout directions"
+# Empty default profiles are valid. Selection and the final row must survive
+# both adjacent delimiters and a file without a terminal newline.
+printf '%s\n' \
+    $'path\tlang\tsyntax\tprofile\tbuild\tspace_engine\tlane\texpect\tnotes' \
+    $'tests/test_arithmetic.metta\the\tmetta\textended\tmain\tnative\ttest\tgolden\textended fixture' \
+    >"$manifest"
+printf '%s' \
+    $'tests/test_arithmetic.metta\the\tmetta\t\tmain\tnative\ttest\tgolden\t' \
+    >>"$manifest"
+env "${common_env[@]}" GC_DIFFERENTIAL_FIXTURE_MODE=pass \
+    "$AUDIT" >"$scratch/empty-profile.log" 2>&1
+grep -Fq '2 passed, 0 failed, 2 considered' "$scratch/empty-profile.log"
+
+printf '%s\n' $'tests/test_arithmetic.metta\the\tmetta\t' >"$manifest"
+if env "${common_env[@]}" GC_DIFFERENTIAL_FIXTURE_MODE=pass \
+        "$AUDIT" >"$scratch/malformed.log" 2>&1; then
+    echo "FAIL: GC differential accepted an incomplete manifest" >&2
+    exit 1
+fi
+grep -Fq 'FAIL: malformed GC differential manifest row' "$scratch/malformed.log"
+
+echo "PASS: GC differential preserves empty profiles and final rows, and rejects timeouts and incomplete manifests"

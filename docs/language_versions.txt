@@ -16,7 +16,8 @@ Unversioned language names retain their existing defaults.
   prime@0.0.1    The frozen local Prime draft, not the evolving Prime runtime.
 
 An explicit version does not install equations, load a module or change
-the unversioned default. Versions, default profiles and library overlays
+the unversioned default. Without --lang, cetta runs petta, that is
+petta@1.0.6. Versions, default profiles and library overlays
 are described by the shared language registry. Both translation endpoints
 use the same selection procedure.
 
