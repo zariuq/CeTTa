@@ -1076,6 +1076,14 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-cursor-versions-live-peak",
     "open-equation-programs-live",
     "open-equation-programs-live-peak",
+    "open-equation-minor-collections",
+    "open-equation-major-collections",
+    "open-equation-minor-collections-declined",
+    "open-equation-major-collections-declined",
+    "open-equation-promoted-bytes",
+    "open-equation-old-bytes-peak",
+    "open-equation-region-at-collection-bytes-peak",
+    "open-equation-major-survivor-bytes-peak",
 };
 
 static int64_t clamp_counter(uint64_t value) {
