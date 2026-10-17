@@ -18,4 +18,9 @@ struct CettaLibraryContext;
 Atom *cetta_hol_dispatch(struct CettaLibraryContext *ctx, Space *space, Arena *a, Atom *head,
                          Atom **args, uint32_t nargs);
 
+#ifdef CETTA_TEST_HOOKS
+bool cetta_hol_test_is_value(Atom *atom, const char *kind);
+size_t cetta_hol_test_live_values(void);
+#endif
+
 #endif

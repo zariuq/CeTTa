@@ -262,25 +262,28 @@ that its hypotheses cannot be silently dropped.
 Ownership, worlds and authority
 ------------------------------
 
-A session and its values use CeTTa's retained native-handle identifiers.
-Copying a real handle retains its owner. Printing/reparsing its number or
-computing the same integer cannot acquire access. Kernel operations reject
-foreign sessions; stale owners and incompatible declaration branches are
-refused. One session is thread-confined, and the existing native resource
-rules prohibit concurrent use with explicit close or context destruction.
+A session and its values use CeTTa's opaque seal value kind. The HOL issuing
+brand and payload kinds are private to the native adapter. Copying a value
+retains its owner; matching cannot expose its brand identity or payload.
+The printed form (Sealed hol) is display data and cannot be read back as
+authority. An ordinary seal with the same nickname cannot open a HOL value.
+Kernel operations reject foreign sessions and incompatible declaration
+branches. Session operations and root release share a recursive mutex;
+different threads may use retained values while their input arenas remain
+live. This does not authorize concurrent destruction of an input arena.
 
 Each native operation holds temporary references in a generation-tagged
 owner. Publication transfers only returned values/current environment to a
 surviving owner. Released owner slots are reused under fresh generations;
 generation exhaustion retires a slot instead of reviving an old token.
 
-The CeTTa native registry grows in segments without a fixed handle-count
-ceiling. Occupied slot addresses stay stable; an exact identity index serves
-all native resource kinds. Empty segments and oversized indexes are reclaimed
-as resources retire. Visible identities are not reused; stale holders cannot
-resolve a new resource. Allocation failure publishes no partial HOL result.
-Large proof streams additionally use the kernel's own reference tables and
-do not consume one host registry slot per proof step.
+Native seal payloads retain the session and their returned kernel roots.
+Releasing the last copy releases those roots and, eventually, the session.
+Equality follows capsule identity throughout matching and storage operations.
+Allocation failure publishes no partial HOL result. Large proof streams use
+the kernel's own reference tables; only returned values need host capsules.
+Private brand creation caches only a successful result. A temporary allocation
+failure can be retried, while a successfully created brand keeps its identity.
 
 Session policy can only tighten. Restoring an older environment or replaying
 another stream cannot loosen the policy. A completed replay replaces the
@@ -324,7 +327,7 @@ The C test harnesses and the CeTTa service execute the same inference-rule
 implementation; a separate standalone prover is not an integration deliverable.
 The current kernel retains its own typed immutable nodes,
 intern tables, proof journal and collector. The adapter already uses CeTTa's
-arena ownership, authenticated native handles, interruption and completed-value
+arena ownership, authenticated seals, interruption and completed-value
 protocol. A second storage backend is not implemented by this checkpoint.
 
 Further sharing belongs below the logical API, behind explicit representation

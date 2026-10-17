@@ -23,15 +23,25 @@ test-hol-light-host: $(BIN) tests/hol_light/test_host.py
 
 HOL_LIGHT_BRIDGE_TEST_BIN = runtime/test_hol_bridge-$(BUILD_OBJ_TAG)
 HOL_LIGHT_BRIDGE_SRC = native/hol_light/hol_cetta_module.c native/hol_light/hol_cli.c \
-	src/native_handle.c src/atom.c src/symbol.c src/binding/frame_identity.c
+	src/seal.c src/native_handle.c src/atom.c src/symbol.c src/binding/frame_identity.c
 $(HOL_LIGHT_BRIDGE_TEST_BIN): tests/hol_light/test_bridge.c tests/hol_light/test_util.h $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_BRIDGE_SRC) $(HOL_LIGHT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS -Inative/hol_light -ffunction-sections -fdata-sections -Wl,--gc-sections \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_HOOKS -Inative/hol_light -ffunction-sections -fdata-sections -Wl,--gc-sections \
 		-o $@ $< $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_BRIDGE_SRC) $(LDFLAGS)
 
 .PHONY: test-hol-light-bridge
 test-hol-light-bridge: $(HOL_LIGHT_BRIDGE_TEST_BIN)
 	$(HOL_LIGHT_BRIDGE_TEST_BIN)
+
+$(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized: tests/hol_light/test_bridge.c tests/hol_light/test_util.h $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_BRIDGE_SRC) $(HOL_LIGHT_HEADERS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -O1 -g -DCETTA_TEST_HOOKS -Inative/hol_light \
+		-ffunction-sections -fdata-sections -Wl,--gc-sections \
+		-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+		-o $@ $< $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_BRIDGE_SRC) $(LDFLAGS)
+
+.PHONY: test-hol-light-bridge-sanitized
+test-hol-light-bridge-sanitized: $(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 $(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized
 
 test: test-hol-light-kernel test-hol-light-host test-hol-light-bridge
 

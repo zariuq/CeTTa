@@ -1,0 +1,11 @@
+((cons 1 foo))
+(1 2 3)
+2
+(cons 0 (cons 1 foo))
+1
+foo
+(cons 1 foo)
+1
+foo
+true
+(1 3)

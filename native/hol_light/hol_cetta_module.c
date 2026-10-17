@@ -1,3 +1,6 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 /* Owned HOL values and checked operations for CeTTa. Kernel structures are
  * borrowed read-only during observation while their root references are held.
  * All input construction goes through the checked kernel API. */
@@ -5,7 +8,9 @@
 #include "hol_internal.h"
 #include "hol_replay.h"
 #include "hol_cli.h"
-#include "native_handle.h"
+#include "seal.h"
+#include <pthread.h>
+#include <stdatomic.h>
 #include "eval.h"
 
 #include <limits.h>
@@ -22,7 +27,8 @@
 typedef struct {
     HolKernel *kernel;
     HolRef env;
-    size_t refs;
+    atomic_size_t refs;
+    pthread_mutex_t gate;
     HolAxiomPolicy policy;
     uint64_t budget;
     char **labels;
@@ -30,7 +36,7 @@ typedef struct {
     size_t nlabels;
 } Session;
 
-typedef struct { Session *session; HolRef ref; } Held;
+typedef struct { atomic_size_t refs; Session *session; HolRef ref; } Held;
 typedef struct {
     const void *key;
     unsigned kind;
@@ -68,18 +74,63 @@ static void labels_free(Session *s) {
     s->nlabels = 0;
 }
 
+/* The kernel brand and native payload kinds never enter MeTTa data. */
+static CettaSealBrandCell g_brand = CETTA_SEAL_BRAND_CELL_INIT("hol");
+static const char g_payload_kinds[5] = {0};
+
+#ifdef CETTA_TEST_HOOKS
+static atomic_size_t g_live_values;
+#define TRACK_VALUE() ((void)atomic_fetch_add(&g_live_values, 1u))
+#define UNTRACK_VALUE() ((void)atomic_fetch_sub(&g_live_values, 1u))
+size_t cetta_hol_test_live_values(void) { return atomic_load(&g_live_values); }
+#else
+#define TRACK_VALUE() ((void)0)
+#define UNTRACK_VALUE() ((void)0)
+#endif
+
+static const void *payload_kind(const char *kind) {
+    const char *kinds[] = {KIND_SESSION, KIND_THM, KIND_ENV, KIND_TERM, KIND_TYPE};
+    for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; ++i)
+        if (!strcmp(kind, kinds[i])) return &g_payload_kinds[i];
+    return NULL;
+}
+static void session_ref(void *value) {
+    Session *s = value;
+    if (atomic_fetch_add(&s->refs, 1u) == SIZE_MAX) abort();
+}
 static void session_unref(Session *s) {
-    if (--s->refs) return;
+    if (atomic_fetch_sub(&s->refs, 1u) != 1u) return;
     labels_free(s);
     hol_kernel_free(s->kernel);
+    pthread_mutex_destroy(&s->gate);
+    UNTRACK_VALUE();
     free(s);
 }
 static void free_session(void *p) { session_unref(p); }
+static void held_ref(void *value) {
+    Held *h = value;
+    if (atomic_fetch_add(&h->refs, 1u) == SIZE_MAX) abort();
+}
 static void free_held(void *p) {
-    Held *held = p;
-    if (held->ref) hol_ref_release(held->session->kernel, held->ref);
-    session_unref(held->session);
-    free(held);
+    Held *h = p;
+    if (atomic_fetch_sub(&h->refs, 1u) != 1u) return;
+    Session *s = h->session;
+    pthread_mutex_lock(&s->gate);
+    if (h->ref) { hol_ref_release(s->kernel, h->ref); UNTRACK_VALUE(); }
+    pthread_mutex_unlock(&s->gate);
+    free(h);
+    session_unref(s);
+}
+static Atom *sealed_value(Arena *arena, const char *kind, void *value,
+                          void (*retain)(void *), void (*release)(void *)) {
+    CettaSealObject *brand = cetta_seal_brand_get(&g_brand, NULL);
+    if (!brand) return NULL;
+    CettaSealNativePayload payload = {payload_kind(kind), value, retain, release};
+    CettaSealObject *box = NULL;
+    if (cetta_seal_native(brand, &payload, &box) != CETTA_SEAL_OK) return NULL;
+    Atom *atom = cetta_seal_object_atom(arena, box);
+    cetta_seal_release(box);
+    return atom;
 }
 
 static Atom *symbol(Arena *a, const char *name) { return atom_symbol(a, name); }
@@ -128,8 +179,19 @@ static bool policy_arg(Atom *x, HolAxiomPolicy *out) {
     return true;
 }
 static void *handle_arg(struct CettaLibraryContext *host, Atom *x, const char *kind) {
-    return cetta_native_handle_get_owned(host, x, kind);
+    (void)host;
+    CettaSealObject *brand = cetta_seal_brand_get(&g_brand, NULL);
+    void *value = NULL;
+    if (!brand || cetta_seal_unseal_native(brand, cetta_seal_atom_object(x),
+                                            payload_kind(kind), &value) != CETTA_SEAL_OK)
+        return NULL;
+    return value;
 }
+#ifdef CETTA_TEST_HOOKS
+bool cetta_hol_test_is_value(Atom *atom, const char *kind) {
+    return handle_arg(NULL, atom, kind) != NULL;
+}
+#endif
 static Held *held(Call *c, Atom *x, const char *kind) {
     Held *h = handle_arg(c->host, x, kind);
     if (!h) { fail(c, HOL_MALFORMED, "expected a live HOL handle"); return NULL; }
@@ -392,25 +454,27 @@ static Atom *value_data(Call *c, HolRef ref, bool type) {
 static Atom *publish(Call *c, const char *kind, HolRef ref) {
     Session *s = c->session;
     Held *h = calloc(1, sizeof *h);
-    if (!h) { fail(c, HOL_NOMEM, "HOL handle allocation"); return NULL; }
-    h->session = s; ++s->refs;
-    uint64_t id;
-    if (!cetta_native_handle_alloc(c->host, kind, h, free_held, &id)) {
-        free_held(h); fail(c, HOL_LIMIT, "native handle registry"); return NULL;
-    }
+    if (!h) { fail(c, HOL_NOMEM, "HOL value allocation"); return NULL; }
+    atomic_init(&h->refs, 1u);
+    h->session = s; session_ref(s);
     if (!check(c, hol_ref_move(s->kernel, ref, HOL_OWNER_KERNEL))) {
-        cetta_native_handle_close(c->host, kind, id); return NULL;
+        free_held(h); return NULL;
     }
-    h->ref = ref;
-    Atom *out = cetta_native_handle_owned_atom(c->host, c->arena, kind, id);
-    if (!out) { cetta_native_handle_close(c->host, kind, id); fail(c, HOL_NOMEM, "owned handle"); }
+    h->ref = ref; TRACK_VALUE();
+    Atom *out = sealed_value(c->arena, kind, h, held_ref, free_held);
+    free_held(h); /* the capsule now owns the retained resource */
+    if (!out) fail(c, HOL_NOMEM, "sealed HOL value");
     return out;
 }
 static void abandon_publication(Call *c, Atom *value, const char *kind) {
-    uint64_t id;
-    if (value && cetta_native_handle_arg(value, kind, &id))
-        cetta_native_handle_close(c->host, kind, id);
+    Held *h = handle_arg(c->host, value, kind);
+    if (h && h->ref) {
+        hol_ref_release(h->session->kernel, h->ref);
+        h->ref = HOL_NULL;
+        UNTRACK_VALUE();
+    }
 }
+
 static bool set_env(Call *c, HolRef env) {
     Session *s = c->session;
     if (!check(c, hol_ref_move(s->kernel, env, HOL_OWNER_KERNEL))) return false;
@@ -421,9 +485,17 @@ static Atom *new_session(struct CettaLibraryContext *host, Arena *arena,
                          HolAxiomPolicy policy, bool recording) {
     Session *s = calloc(1, sizeof *s);
     if (!s) return error_atom(arena, HOL_NOMEM, "session allocation");
+    atomic_init(&s->refs, 1u);
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr)) { free(s); return error_atom(arena, HOL_NOMEM, "session lock"); }
+    int locked = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    if (!locked) locked = pthread_mutex_init(&s->gate, &attr);
+    pthread_mutexattr_destroy(&attr);
+    if (locked) { free(s); return error_atom(arena, HOL_NOMEM, "session lock"); }
+    TRACK_VALUE();
+    s->policy = policy; s->budget = UINT64_MAX;
     s->kernel = hol_kernel_new(NULL);
-    s->refs = 1; s->policy = policy; s->budget = UINT64_MAX;
-    if (!s->kernel) { free(s); return error_atom(arena, HOL_NOMEM, "kernel allocation"); }
+    if (!s->kernel) { session_unref(s); return error_atom(arena, HOL_NOMEM, "kernel allocation"); }
     HolRef bare = HOL_NULL;
     HolStatus status = hol_env_bare(s->kernel, &bare);
     if (status == HOL_OK) status = hol_env_set_axiom_policy(s->kernel, bare, policy, &s->env);
@@ -432,16 +504,10 @@ static Atom *new_session(struct CettaLibraryContext *host, Arena *arena,
     hol_set_fuel(s->kernel, 0);
     hol_set_interrupt_poll(s->kernel, interrupted, NULL);
     hol_journal_enable(s->kernel, recording);
-    uint64_t id;
-    if (!cetta_native_handle_alloc(host, KIND_SESSION, s, free_session, &id)) {
-        session_unref(s); return error_atom(arena, HOL_LIMIT, "native handle registry");
-    }
-    Atom *result = cetta_native_handle_owned_atom(host, arena, KIND_SESSION, id);
-    if (!result) {
-        cetta_native_handle_close(host, KIND_SESSION, id);
-        return error_atom(arena, HOL_NOMEM, "owned session handle");
-    }
-    return result;
+    (void)host;
+    Atom *result = sealed_value(arena, KIND_SESSION, s, session_ref, free_session);
+    session_unref(s);
+    return result ? result : error_atom(arena, HOL_NOMEM, "sealed HOL session");
 }
 
 static Atom *replay_file(Call *c, const char *path, HolAxiomPolicy policy) {
@@ -927,10 +993,15 @@ Atom *cetta_hol_dispatch(struct CettaLibraryContext *host, Space *space, Arena *
         if (h) { session = h->session; kind = kinds[i]; }
     }
     if (!session) return error_atom(arena, HOL_MALFORMED, "expected a live HOL session or value");
-    Call c = {.session = session, .host = host, .arena = arena, .remaining = session->budget};
     if (interrupted(NULL)) return error_atom(arena, HOL_INTERRUPTED, "interrupted");
+    pthread_mutex_lock(&session->gate);
+    Call c = {.session = session, .host = host, .arena = arena, .remaining = session->budget};
     HolOwner owner = hol_owner_new(session->kernel);
-    if (!owner) return error_atom(arena, hol_last_status(session->kernel), hol_reason_name(hol_last_reason(session->kernel)));
+    if (!owner) {
+        Atom *error = error_atom(arena, hol_last_status(session->kernel), hol_reason_name(hol_last_reason(session->kernel)));
+        pthread_mutex_unlock(&session->gate);
+        return error;
+    }
     HolOwner previous = hol_owner_set_current(session->kernel, owner);
     Atom *result = NULL;
     if (!h) result = session_call(&c, op, args, n);
@@ -942,6 +1013,7 @@ Atom *cetta_hol_dispatch(struct CettaLibraryContext *host, Space *space, Arena *
     hol_owner_set_current(session->kernel, previous);
     hol_owner_release(session->kernel, owner);
     free(c.memo);
+    pthread_mutex_unlock(&session->gate);
     if (c.status != HOL_OK) return error_atom(arena, c.status, c.reason);
     return result ? result : error_atom(arena, HOL_MALFORMED, "missing result");
 }

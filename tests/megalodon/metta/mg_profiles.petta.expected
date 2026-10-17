@@ -1,0 +1,22 @@
+true
+true
+true
+true
+true
+true
+(Megalodon.profile HF (revision-label "native") (primitives (Megalodon.primitive 1 "In" (Tp.arr (Tp.base 0) (Tp.arr (Tp.base 0) (Tp.prop)))) (Megalodon.primitive 2 "Empty" (Tp.base 0)) (Megalodon.primitive 3 "Union" (Tp.arr (Tp.base 0) (Tp.base 0))) (Megalodon.primitive 4 "Power" (Tp.arr (Tp.base 0) (Tp.base 0))) (Megalodon.primitive 5 "Repl" (Tp.arr (Tp.base 0) (Tp.arr (Tp.arr (Tp.base 0) (Tp.base 0)) (Tp.base 0))))) (reserved) (proofgold-theory "6ffc9680fbe00a58d70cdeb319f11205ed998131ce51bb96f16c7904faf74a3d"))
+(Megalodon.profile Egal (revision-label "native") (primitives (Megalodon.primitive 1 "In" (Tp.arr (Tp.base 0) (Tp.arr (Tp.base 0) (Tp.prop)))) (Megalodon.primitive 2 "Empty" (Tp.base 0)) (Megalodon.primitive 3 "Union" (Tp.arr (Tp.base 0) (Tp.base 0))) (Megalodon.primitive 4 "Power" (Tp.arr (Tp.base 0) (Tp.base 0))) (Megalodon.primitive 5 "Repl" (Tp.arr (Tp.base 0) (Tp.arr (Tp.arr (Tp.base 0) (Tp.base 0)) (Tp.base 0)))) (Megalodon.primitive 6 "UnivOf" (Tp.arr (Tp.base 0) (Tp.base 0)))) (reserved) (proofgold-theory "29c988c5e6c620410ef4e61bcfcbe4213c77013974af40759d8b732c07d61967"))
+(Megalodon.profile Mizar (revision-label "native") (primitives (Megalodon.primitive 1 "In" (Tp.arr (Tp.base 0) (Tp.arr (Tp.base 0) (Tp.prop)))) (Megalodon.primitive 3 "Union" (Tp.arr (Tp.base 0) (Tp.base 0)))) (reserved) (proofgold-theory "5ab3df7b0b4ef20889de0517a318df8746940971ad9b2021e54c820eb9e74dce"))
+(Megalodon.profile HOAS (revision-label "native") (primitives) (reserved) (proofgold-theory "513140056e2032628f48d11e221efe29892e9a03a661d3b691793524a5176ede"))
+(SetMM 1292 (reserved "wi" "wal") (proofgold-theory "85ecfdcf26657b94532af5af2393c6945cee05c4aabccb8a819f793a7dbc4acf"))
+(Megalodon.inventory (revision 0))
+(Megalodon.inventory (revision 0))
+(Tp.arr (Tp.base 0) (Tp.base 0))
+(refused (MegalodonRefused "not a primitive of the selected theory"))
+(Tp.arr (Tp.base 0) (Tp.base 0))
+(refused (MegalodonRefused "not a primitive of the selected theory"))
+(refused (MegalodonRefused "not a primitive of the selected theory"))
+(refused (MegalodonRefused "name is not fresh"))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.all (Tp.base 0) (Tm.imp (Tm.app (Tm.app (Tm.prim 1) (Tm.db 0)) (Tm.db 0)) (Tm.app (Tm.app (Tm.prim 1) (Tm.db 0)) (Tm.db 0)))))
+(Megalodon.theorem-info (profile Egal) (theory-label "native") (checked-at 1) (origin declaration) (valid-now True) (closed True) (declaration "In_refl_imp" theorem))
+(refused (MegalodonRefused "unknown proposition"))
