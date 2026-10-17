@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/prepared_artifact_v1.h"
+#include "native/prepared_bytes_v1.h"
 #include "native/language_def_parser_pack_v1.h"
 #include "native/parser_token_profile_v1.h"
 #include "native/parser_token_runtime_v1.h"
@@ -76,7 +77,9 @@ static int compare_answer(const void *left, const void *right) {
 static Atom *data(Arena *arena, const char *source) {
     Atom **values = NULL;
     int count = parse_metta_text(source, arena, &values);
-    return count == 1 ? values[0] : NULL;
+    Atom *value = count == 1 ? values[0] : NULL;
+    free(values);
+    return value;
 }
 
 static bool compile_lowered(Arena *arena, const CettaLbnfLoweredV1 *lowered,
@@ -781,6 +784,77 @@ done:
     return ok;
 }
 
+/* CEQ1 permits tuple heads that the authored source frontend does not emit.
+ * Exercise that public restoration boundary, including its checked mode. */
+static void template_fixture_atom(CettaPreparedWriterV1 *writer, Atom *term) {
+    if (!term) { writer->failed = true; return; }
+    if (term->kind == ATOM_SYMBOL || term->kind == ATOM_VAR) {
+        cpw_u64(writer, term->kind == ATOM_SYMBOL ? 1u : 2u);
+        if (term->kind == ATOM_VAR) cpw_u64(writer, 0u); /* One variable per fixture. */
+        const char *name = atom_name_cstr(term);
+        cpw_text(writer, name, strlen(name));
+    } else if (term->kind == ATOM_EXPR) {
+        cpw_u64(writer, 8u); cpw_u64(writer, term->expr.len);
+        cpw_u64(writer, CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE);
+        for (CettaExprIndex i = 0; i < term->expr.len; ++i)
+            template_fixture_atom(writer, term->expr.elems[i]);
+    } else writer->failed = true;
+}
+
+static bool check_compiled_tuple_heads(Arena *arena, char *error, size_t size) {
+    static const struct {
+        const char *left, *right, *call, *expected;
+        CettaDeterministicEquationStatusV1 status;
+    } cases[] = {
+        {"(a)", "((f) (f))", "(a)", "((f) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f))", "(a)", "((f))", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((C (f)) (f))", "(a)", "((C (f)) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f A) (f))", "(a)", "((f A) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f) (f A))", "(a)", NULL, CETTA_DETERMINISTIC_EQUATION_V1_NO_RULE},
+        {"(a $x)", "($x (f))", "(a Head)", NULL, CETTA_DETERMINISTIC_EQUATION_V1_NON_GROUND_TERM},
+    };
+    unsigned checks = 0u;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {
+        CettaPreparedWriterV1 writer = {0};
+        cpw_bytes(&writer, "CEQ1", 4u); cpw_text(&writer, "tuple-test-v1", 13u);
+        cpw_u64(&writer, 2u); cpw_u64(&writer, 0u);
+        cpw_text(&writer, "a-rule", 6u);
+        template_fixture_atom(&writer, data(arena, cases[i].left));
+        template_fixture_atom(&writer, data(arena, cases[i].right));
+        cpw_text(&writer, "f-rule", 6u);
+        template_fixture_atom(&writer, data(arena, "(f)"));
+        template_fixture_atom(&writer, data(arena, "B"));
+        bool valid = !writer.failed;
+        for (unsigned audit = 0; valid && audit < 2u; ++audit) {
+            CettaDeterministicEquationPlanV1 *plan = NULL;
+            valid = cetta_deterministic_equation_plan_v1_restore(writer.data, writer.len,
+                "tuple-test-v1", NULL, audit != 0u, &plan, error, size);
+            if (valid) {
+                Atom *call = data(arena, cases[i].call), *fast = NULL, *reference = NULL;
+                Atom *expected = cases[i].expected ? data(arena, cases[i].expected) : NULL;
+                CettaDeterministicEquationStatusV1 fast_status, reference_status;
+                uint64_t used = 0u;
+                bool reference_ok = cetta_deterministic_equation_plan_v1_apply_counted(plan, call,
+                    NULL, NULL, arena, 0u, 0u, &used, &reference, &reference_status, error, size);
+                bool fast_ok = cetta_deterministic_equation_plan_v1_apply(plan, call,
+                    NULL, NULL, arena, 0u, 0u, &fast, &fast_status, error, size);
+                valid = fast_ok == reference_ok && fast_ok == (expected != NULL) &&
+                    fast_status == cases[i].status && reference_status == cases[i].status &&
+                    (expected ? atom_eq(expected, reference) && atom_eq(expected, fast) : !fast && !reference);
+                ++checks;
+            }
+            cetta_deterministic_equation_plan_v1_free(plan);
+        }
+        free(writer.data);
+        if (!valid) {
+            snprintf(error, size, "compiled tuple-head observation differs in restored case %zu", i);
+            return false;
+        }
+    }
+    printf("(EquationTemplateTupleHeadsV1Summary %u 0)\n", checks);
+    return true;
+}
+
 static bool check_prepared(Arena *arena, const PPABIV1Pack *classes, char *error, size_t size) {
     const char *path = "langdef/bnf/regular_token_value_compiler_v1.metta";
     CettaDeterministicEquationPlanV1 *source = NULL, *restored = NULL, *bad = NULL;
@@ -924,6 +998,7 @@ int main(int argc, char **argv) {
         preparation_after.audits != preparation_before.audits) {
         snprintf(error, sizeof(error), "built-in parser compilers admitted embedded source"); goto done;
     }
+    if (!check_compiled_tuple_heads(&arena, error, sizeof(error))) goto done;
     if (!check_prepared(&arena, &classes, error, sizeof(error))) goto done;
     if (!cetta_deterministic_equation_plan_v1_load(paths, 1u, NULL, &compiler,
             &status, error, sizeof(error))) goto done;

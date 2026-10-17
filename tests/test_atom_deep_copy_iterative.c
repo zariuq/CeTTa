@@ -135,6 +135,57 @@ static void check_map(Arena *source, Arena *destination) {
 #endif
 }
 
+typedef struct {
+    unsigned releases;
+} SessionInventoryProbe;
+
+static void release_session_inventory(void *value) {
+    SessionInventoryProbe *probe = value;
+    assert(probe->releases == 0u);
+    probe->releases++;
+}
+
+static void check_session_companion_cleanup(Arena *destination) {
+    static const int first_kind = 1, second_kind = 2;
+    for (unsigned fail = 0u; fail < 2u; ++fail) {
+        Arena nursery;
+        arena_init(&nursery);
+        Atom *retained = atom_int(&nursery, 11);
+        ArenaMark mark = arena_mark(&nursery);
+        Atom *young = atom_expr2(&nursery, retained, atom_int(&nursery, 23));
+        SessionInventoryProbe first = {0}, second = {0}, rejected = {0};
+        AtomDeepCopySession *session = atom_deep_copy_session_new(destination);
+        assert(session != NULL);
+        assert(atom_deep_copy_session_forward_region(session, &nursery, mark));
+        assert(!atom_deep_copy_session_forward_region(session, &nursery, mark));
+        assert(atom_deep_copy_session_install_inventory(session, &first_kind,
+            &first, release_session_inventory));
+        assert(atom_deep_copy_session_install_inventory(session, &second_kind,
+            &second, release_session_inventory));
+        assert(!atom_deep_copy_session_install_inventory(session, &first_kind,
+            &rejected, release_session_inventory));
+        assert(atom_deep_copy_session_inventory(session, &first_kind) == &first);
+        if (fail) {
+            assert(atom_deep_copy_session_copy(session, NULL) == NULL);
+            assert(atom_deep_copy_session_failed(session));
+        } else {
+            Atom *copy = atom_deep_copy_session_copy(session, young);
+            assert(copy && atom_eq(copy->expr.elems[0], retained));
+            assert(copy->expr.elems[1]->kind == ATOM_GROUNDED);
+            assert(copy->expr.elems[1]->ground.gkind == GV_INT);
+            assert(copy->expr.elems[1]->ground.ival == 23);
+        }
+        atom_deep_copy_session_free(session);
+        assert(first.releases == 1u && second.releases == 1u);
+        assert(rejected.releases == 0u);
+        arena_reset(&nursery, mark);
+        assert(retained->kind == ATOM_GROUNDED &&
+               retained->ground.gkind == GV_INT && retained->ground.ival == 11);
+        arena_free(&nursery);
+    }
+    atom_deep_copy_session_free(NULL);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -153,6 +204,7 @@ int main(void) {
     arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
     check_map(&source, &destination);
+    check_session_companion_cleanup(&destination);
 
     /* Names 64 bytes apart collide in the literal cache. Hits, evictions
        and fallback lookup must all preserve positive and negative tests. */

@@ -7605,7 +7605,8 @@ static inline bool eval_grounded_result_is_final(void) {
 /* The final value as PeTTa spells it: a truth value is true or false. */
 static Atom *eval_grounded_final_value(Arena *a, Atom *result) {
     bool truth = false;
-    if (result && petta_semantics_truth_value(result, &truth)) {
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        result && petta_semantics_truth_value(result, &truth)) {
         Atom *spelled = petta_semantics_boolean_value(a, truth);
         if (spelled)
             return spelled;
@@ -46708,6 +46709,28 @@ static bool prepared_pure_closed_call_plan(
     return true;
 }
 
+/* A closed call's result, copied out of the storage that dies when the call
+ * is released: its scratch above the call's mark and its collection
+ * survivors.  Their atoms record their copies in place, so the copy keeps
+ * the result's sharing without a table; anything else the result reaches
+ * is copied, or shared when the destination already owns it, as usual. */
+static Atom *prepared_pure_closed_result_copy(
+    Arena *destination, Atom *result, Arena *scratch, ArenaMark mark,
+    CettaPreparedPureProgram *program) {
+    AtomDeepCopySession *session = atom_deep_copy_session_new(destination);
+    if (!session)
+        return NULL;
+    (void)atom_deep_copy_session_forward_region(session, scratch, mark);
+    Arena *survivors =
+        cetta_prepared_pure_program_closed_survivor_arena(program);
+    if (survivors)
+        (void)atom_deep_copy_session_forward_region(
+            session, survivors, (ArenaMark){0});
+    Atom *copy = atom_deep_copy_session_copy(session, result);
+    atom_deep_copy_session_free(session);
+    return copy;
+}
+
 static Atom *prepared_pure_closed_call_try(
     Space *space, Arena *destination, Atom *call, int fuel,
     bool entry_arguments_are_values,
@@ -46839,12 +46862,12 @@ static Atom *prepared_pure_closed_call_try(
         (eval_unwinding() || eval_cancel_check());
     (void)interrupted;
     Atom *result = executed && machine_result
-        ? (language_id == CETTA_LANGUAGE_PETTA
-               ? (preserve_internal_values
-                      ? atom_deep_copy(destination, machine_result)
-                      : petta_semantics_materialize_value(
-                            destination, machine_result))
-               : atom_deep_copy(destination, machine_result))
+        ? (language_id == CETTA_LANGUAGE_PETTA && !preserve_internal_values
+               ? petta_semantics_materialize_value(
+                     destination, machine_result)
+               : prepared_pure_closed_result_copy(
+                     destination, machine_result, machine_arena,
+                     machine_arena_mark, program))
         : NULL;
     cetta_prepared_pure_program_release_closed_execution(program);
     cetta_prepared_pure_program_clear_closed_entry_call(program);

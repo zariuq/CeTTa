@@ -1,0 +1,14 @@
+Module Typed {
+  Theory Base() {
+    Empty
+    Types { T; }
+    Terms {
+      "Z". |- "z" : T;
+      "S". x:T |- "s" x : T;
+    }
+    Equations { "reflexive". x:T |- x = x; }
+    Rewrites { "step". x:T |- "S"(x) ~> x; }
+  }
+  Theory Use(t: Base) { t }
+  Theory Example() { let t = Base() in (Use(t)) }
+}
