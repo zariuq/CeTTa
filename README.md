@@ -554,6 +554,37 @@ The bridge code includes two thin compatibility adapters:
   meaning.
 - **Contexts** are persistent lazy environments; see
   `examples/prime/context_tutorial/`.
+- **Owned execution control.** `select` retains unfinished computation across
+  bounded runs. FIFO, priority/age selection, resource agendas and worker
+  policies use the same owned evaluator. A scheduling priority does not grant
+  permission to duplicate a shared producer or consume an unavailable resource.
+  See [competing resource worlds](tests/prime/native_resources/competing_worlds.metta)
+  [self-budgeted search](tests/prime/native_cost/self_budgeted_search.metta),
+  and the [unrecorded monitor](examples/prime/native_control/responsive_monitor.metta).
+  The monitor returns after each native-work allowance and resumes its retained
+  counter; an allowance is not a wall-clock response guarantee.
+- **Optional history and debugging.** A requested `history` policy records
+  bounded occurrences and dependency graphs. `history:explain` distinguishes
+  rejected, pending and unexamined work; `history:dependencies` exposes retained
+  graph packets. Stopping recording and physically forgetting an owned diary
+  are separate operations. Forgetting preserves live continuations and other
+  readers; recording again starts a suffix. Missing history cannot certify an
+  empty search. See [admission explanations](tests/prime/need_admission_history.metta)
+  and [retained replay](examples/prime/native_control/retained_replay.metta).
+  An owned sequential Prime Transaction can also stop before live publication
+  with `(breakpoint pattern)`. The [publication client](examples/prime/native_control/controlled_publication.metta)
+  lets a competing consumer use the permit, then resumes the retained proposal
+  against the current world. This control does not require history recording.
+
+The optional [resource-history reader](tools/native_resource_history.py)
+checks recorded ground `read`/`take`/`+` words from supplied initial rows.
+Its causal view forgets independent firing order while retaining consuming
+conflicts. `--resource-cost` requests firing work and dependency depth;
+`--resource-checker` additionally invokes an external source checker for actions,
+ordered premises, output identities and final rows. These checks run only when
+requested. They authenticate neither the starting state nor execution rights,
+and do not establish that a supplied word is a complete execution. Dependency
+depth is distinct from measured worker span.
 
 **Example programs** (all in `examples/prime/`, each with its expected output):
 - **Learning:**
