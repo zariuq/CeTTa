@@ -1,0 +1,28 @@
+true
+true
+true
+true
+true
+true
+()
+(seal:snapshot (fact 1))
+(raw-denied (SealFault wrong-facet))
+(admin-denied (SealFault wrong-facet))
+(unsealer-denied (SealFault wrong-facet))
+(promotion-denied (SealFault wrong-facet))
+true
+(seal:snapshot (fact 1) (fact 2))
+()
+(revoked (SealFault denied))
+true
+true
+()
+(nested-denied (SealFault not-portable))
+true
+(seal:snapshot (fact 1) (fact 2))
+(consumed (SealFault denied))
+true
+()
+(capsule-denied (SealFault not-portable))
+true
+(owner-still-controls-space)

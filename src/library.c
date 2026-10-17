@@ -472,8 +472,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->retired_modules = NULL;
     ctx->retired_module_len = 0u;
     ctx->retired_module_cap = 0u;
-    memset(ctx->native_handles, 0, sizeof(ctx->native_handles));
-    ctx->native_handle_len = 0;
+    ctx->native_handle_registry = NULL;
     ctx->native_handle_next_id = 1;
     ctx->petta_translator_rules = NULL;
     ctx->petta_translator_rule_len = 0u;

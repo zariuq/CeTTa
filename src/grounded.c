@@ -312,6 +312,21 @@ static bool petta_repra_render(
                 petta_repra_append_string(output, atom->ground.sval,
                                           atom->ground.slen);
                 break;
+            case GV_SEAL: {
+                /* The public observer, (Sealed NICK): never authority. */
+                char text[256];
+                size_t length = atom_seal_display_text(atom, text,
+                                                       sizeof(text));
+                if (length < sizeof(text)) {
+                    sb_append(output, text);
+                } else {
+                    char *long_text = cetta_malloc(length + 1u);
+                    atom_seal_display_text(atom, long_text, length + 1u);
+                    sb_append(output, long_text);
+                    free(long_text);
+                }
+                break;
+            }
             case GV_SPACE:
             case GV_STATE:
             case GV_CAPTURE:

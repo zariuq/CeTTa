@@ -1,0 +1,149 @@
+# HOLR v1 — checked replay stream
+
+A HOLR stream is a chronological list of kernel instructions: declarations,
+constructors, primitive rules, theory extensions, checks and deliveries.
+Replay executes each instruction with the kernel's own operations.  **No record
+states a sequent that becomes a theorem**: theorems arise only from rules,
+definitional principles and axioms, exactly as in HOL Light; `EXPECT*` records
+only compare. CeTTa's implementation is `native/hol_light/hol_stream.c`.
+The source archive identified in `docs/hol_light_origin.txt` also supplies
+OCaml, Candle and MeTTa-guest comparison tools. Those tools are separate
+qualification inputs, not an authenticated certificate pipeline supplied
+by this integration.
+
+## Encoding
+
+```
+stream  := header record* end
+header  := "HOLRPLY1"                     8 bytes, magic
+           kernel-id                      32 bytes: raw SHA-256 of the pinned fusion.ml
+           version u   (= 1)
+           profile u   (= 0)
+           policy  u   (0 OPEN, 1 STANDARD, 2 SEALED)
+           flags   u   (bit 0 PROBE; other bits must be 0)
+record  := opcode:byte operands
+end     := 0x7f count:u checksum:8 bytes  (count = records before END;
+           checksum = FNV-1a 64 of every byte before the END opcode, little endian)
+```
+
+`u` is unsigned LEB128 **in minimal form, at most 9 bytes, value < 2^62**
+(every value is then an OCaml `int` too).  Anything else is `bad integer
+encoding`.  Bytes after END are `trailing bytes`; a stream that ends before
+END is `missing END` or `truncated`.
+
+## Records
+
+Operand kinds, in encoding order: `N` name id, `Y`/`T`/`H` type/term/theorem
+id, `u` plain value, `y`/`t`/`h` id to drop, `*X` counted list of `X`,
+`%XZ` counted list of pairs, `b` counted bytes.  One table drives decoding,
+validation and the dumpers (`op_table` in `native/hol_light/hol_stream.c`, `layout` in
+the oracle and the Candle driver).
+
+| op | name | layout | defines | kernel operation |
+|----|------|--------|---------|------------------|
+| 01 | NAME | `b` | N | intern a byte string |
+| 02 | TYVAR | `N` | Y | `mk_vartype` |
+| 03 | TYAPP | `N*Y` | Y | `mk_type (op, args)` |
+| 04 | VAR | `NY` | T | `mk_var` |
+| 05 | CONST | `NY` | T | `mk_const (name, theta)`, theta found by matching the generic type |
+| 06 | COMB | `TT` | T | `mk_comb` |
+| 07 | ABS | `TT` | T | `mk_abs` |
+| 10 | REFL | `T` | H | `REFL` |
+| 11 | TRANS | `HH` | H | `TRANS` |
+| 12 | MK_COMB | `HH` | H | `MK_COMB` |
+| 13 | ABS_RULE | `TH` | H | `ABS` |
+| 14 | BETA | `T` | H | `BETA` |
+| 15 | ASSUME | `T` | H | `ASSUME` |
+| 16 | EQ_MP | `HH` | H | `EQ_MP` |
+| 17 | DEDUCT | `HH` | H | `DEDUCT_ANTISYM_RULE` |
+| 18 | INST_TYPE | `%YYH` | H | `INST_TYPE [(replacement, tyvar)...]` |
+| 19 | INST | `%TTH` | H | `INST [(replacement, var)...]` |
+| 20 | NEW_TYPE | `Nu` | – | `new_type (name, arity)` |
+| 21 | NEW_CONSTANT | `NY` | – | `new_constant (name, type)` |
+| 22 | NEW_AXIOM | `T` | H | `new_axiom` (subject to the axiom policy) |
+| 23 | NEW_DEFINITION | `T` | H | `new_basic_definition` |
+| 24 | NEW_TYPEDEF | `NNNH` | H H | `new_basic_type_definition tyname (abs, rep) witness` |
+| 25 | POLICY | `u` | – | tighten the axiom policy (never loosens) |
+| 30 | EXPECT | `H*TT` | – | check: theorem is exactly `hyps ⊢ concl` |
+| 35 | EXPECT_ALPHA | `H*TT` | – | check up to alpha (hypotheses as alpha-sets) |
+| 34 | EXPECT_AXIOMS | `H*H` | – | check: the listed NEW_AXIOM outputs, as a set without repetition, are exactly the theorem's axiom dependencies |
+| 33 | EXPECT_REFUSED | – | – | check: the previous record was refused or a dependent failure |
+| 31 | LABEL | `HN` | – | name a theorem for the reader |
+| 32 | EMIT | `H` | – | one delivery occurrence of a theorem |
+| 40/41/42 | DROP_TYPE/TERM/THM | `y`/`t`/`h` | – | the id is never used again |
+| 7f | END | – | – | count and checksum |
+
+## Semantics
+
+**Validation precedes execution.**  A record is first decoded completely
+(truncation, integer, limit and opcode errors are malformed input).  Then
+every id operand is checked *in encoding order*: the first id that is not yet
+defined or was dropped makes the stream malformed (`future reference`,
+`dropped reference`).  Only then, if some operand is a FAILED placeholder,
+the record is a dependent failure (DEPFAIL); otherwise the operation runs.
+
+**Strict mode** (default): the first refusal, dependent failure or failed
+check stops the replay with state REFUSED; that record is not committed.
+**Probe mode** (flag bit 0): a refused record commits FAILED placeholders
+for the ids it would define and replay continues; `EXPECT_REFUSED` checks
+that the previous record failed.  Malformed input always stops.
+
+**Records are atomic.**  A record commits all of its outputs (ids,
+environment, labels, deliveries) or none.  A resource failure
+(allocation, depth limit, fuel, interrupt) leaves the replay exactly before
+the record and in state RESOURCE; resuming retries that record only.
+
+**Environment.**  Replay starts from the bare bootstrap (types `bool`/0,
+`fun`/2, constant `=`), under the larger of the host's and the header's
+axiom policy.  Theory records extend the replay's environment value.
+
+**Deliveries.**  Each EMIT is one delivery occurrence: equal theorems
+emitted twice are delivered twice (`hol_replay_next`), each as a fresh
+reference with its own proof event.
+
+**Liveness.**  DROP records are optional; `build/holr-compact` inserts
+them after each id's last use (keeping LABEL/EMIT targets), which bounds
+every replayer's memory by the live part of the proof.
+
+## Laws (tested in `tests/test_stream.c`)
+
+1. Every proper prefix of a well-formed stream, fed as non-final input, is
+   NEED_INPUT, never malformed; completing it gives the reference history.
+2. Any split of the input bytes and any split of record budgets reach the
+   same committed history; no committed record runs twice (each record is
+   observed exactly once, with identical digests).
+3. Resource failures are invisible in the committed history (allocation
+   failure injected at every allocation site, fuel, interrupt).
+4. Collection at every record boundary, and total hash collision, do not
+   change the history.
+5. A clone at any record boundary continues independently; theory events
+   after the checkpoint form incompatible branches (the kernel refuses to
+   mix their theorems).
+6. Every single-bit flip of a stream is rejected (the END checksum covers
+   every byte); truncations, splices and random garbage are rejected
+   without crashing.
+
+## Canonical syntax
+
+Types, terms and theorems print as S-expressions; this text is the shared
+object identity across implementations (digests are FNV-1a 64 of it):
+
+```
+type  := (V name) | (T name type*)
+term  := (v name type) | (c name type) | (A term term) | (L var term)
+thm   := (thm (term*) term)        hypotheses in the kernel's order
+name  := "..."  with \" and \\ escaped and bytes outside 0x20..0x7e as \xNN
+```
+
+The **alpha-normal** form replaces bound variables by de Bruijn indices:
+a binder prints as `(L type body)` and a bound occurrence as `(b i)`, so two
+objects print alike iff `alphaorder` says they are equal.  Reports made with
+`--alpha` show both digests as `exact~alpha`.
+
+## Limits
+
+Native defaults (configurable, `HolReplayLimits`): 1 GiB buffered input,
+2^40 records, 2^32 ids per space, names of 2^20 bytes, lists of 2^20
+elements.  The format limits (lists and names of at most 2^20) are applied
+by the OCaml oracle as well, so the two classify such input alike.
+Exceeding a limit is reported as malformed with reason `limit exceeded`.

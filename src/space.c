@@ -3626,6 +3626,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -3669,6 +3670,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -9316,6 +9318,11 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol_literal(a, "Bindings");
     case GV_FOREIGN:
         return atom_symbol_literal(a, "Foreign");
+    case GV_SEAL: {
+        /* Sealed, SealFacet or Key: the kind of authority, never its brand. */
+        const char *name = atom_seal_type_name(atom);
+        return name ? atom_symbol(a, name) : atom_undefined_type(a);
+    }
     case GV_TERM_GRAPH:
         /* A rational term is a list or a compound term: an expression. */
         return atom_symbol_literal(a, "Expression");

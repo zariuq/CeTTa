@@ -722,6 +722,17 @@ SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
+# Shared opaque authority (lib_seal): runtime objects and the seal library.
+SRC += src/seal.c native/seal_module.c
+# Native Megalodon kernel and its CeTTa library (lib/megalodon.metta).
+MEGALODON_SRC = native/megalodon/mg_store.c native/megalodon/mg_ops.c \
+	native/megalodon/mg_rules.c native/megalodon/mg_conv.c \
+	native/megalodon/mg_theory.c native/megalodon/mg_session.c \
+	native/megalodon/mg_sexpr.c native/megalodon/mg_profiles.c \
+	native/megalodon/mg_hash.c native/megalodon/mg_library.c \
+	native/megalodon/mg_worker.c native/megalodon/mg_atom.c \
+	native/megalodon/mg_cetta_module.c
+SRC += $(MEGALODON_SRC)
 SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
@@ -883,6 +894,8 @@ endif
 endif
 export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
 export CETTA_PARENT_BINARY := $(abspath $(BIN))
+include native/hol_light/build.mk
+include native/mm0/build.mk
 RUNTIME_STATS_SECTIONED_OBJ = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o,)
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
@@ -4317,7 +4330,7 @@ test-atom-intern-vars: $(ATOM_INTERN_VARS_TEST_BIN)
 
 runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_ALLOCATION_TEST -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
 
 .PHONY: test-native-handle-ownership
 test-native-handle-ownership: runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG)
@@ -33056,7 +33069,7 @@ test-help-flags: $(BIN)
 	@help_long=$$($(CETTA_BIN_INVOKE) --help 2>&1); \
 	help_short=$$($(CETTA_BIN_INVOKE) -h 2>&1); \
 	lang_list=$$($(CETTA_BIN_INVOKE) --list-languages 2>&1); \
-	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>' && \
+	if printf '%s\n' "$$help_long" | grep -Fq 'usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-reduction-limit <n> <file>' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --rho-scheduler <canonical|rotating> <file>' && \
@@ -42583,8 +42596,8 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io
-LIBRARY_PRIME_SPELLING_SOURCES_V1 = json
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io holkernel mm0kernel
+LIBRARY_PRIME_SPELLING_SOURCES_V1 = json holkernel mm0kernel
 .PHONY: test-library-spellings-v1
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		tests/support/test_library_spelling_v1.py \
@@ -44447,3 +44460,6 @@ $(PETTA_PLAN_OWNER_TEST_BIN): $(PETTA_PLAN_OWNER_TEST_OBJ) $(FALLBACK_EVAL_TEST_
 test-petta-search-machine: test-petta-plan-owner
 test-petta-plan-owner: $(PETTA_PLAN_OWNER_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_OWNER_TEST_BIN))
+
+# Native Megalodon tests (native/megalodon/test.mk).
+include native/megalodon/test.mk
