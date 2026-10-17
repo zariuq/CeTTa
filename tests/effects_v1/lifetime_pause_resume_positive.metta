@@ -1,0 +1,8 @@
+(= (saved-choice) 1)
+(= (saved-choice) 2)
+!(let $owner (work-new (saved-choice))
+  (let $budget (work-budget $owner 1)
+    (let $paused (work-take $owner 1)
+      (let $unbounded (work-budget $owner 0)
+        (let $resumed (work-take $owner 3)
+          (let $closed (work-cancel $owner) (LifetimePaused $paused $resumed)))))))

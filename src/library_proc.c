@@ -1,732 +1,554 @@
 #define _GNU_SOURCE
 #include "library_proc.h"
+#include "library.h"
 #include "eval.h"
-#include "symbol.h"
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
-#include <math.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stddef.h>
+#include <spawn.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-#ifndef CLOSE_RANGE_CLOEXEC
-#define CLOSE_RANGE_CLOEXEC (1U << 2)
-#endif
-
-enum { PROC_FD_SWEEP = 65536 };
 extern char **environ;
 
-/* Where a child that could not become the program stopped. */
-enum { START_STDIO = 1, START_CWD = 2, START_EXEC = 3 };
+typedef struct {
+    unsigned char *bytes;
+    size_t kept, capacity;
+    uint64_t observed;
+    bool eof;
+} ProcCapture;
 
-static const char *text(Atom *a) {
-    if (a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING)
-        return memchr(a->ground.sval, '\0', a->ground.slen) ? NULL : a->ground.sval;
-    /* PeTTa's Python/Prolog text is an atom, including strings returned by
-     * py-call and read by sread. HE retains its grounded-string contract. */
-    if (a && a->kind == ATOM_SYMBOL && eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA)
-        return atom_name_cstr(a);
-    return NULL;
+typedef struct {
+    pthread_t thread;
+    pthread_mutex_t lock;
+    pthread_cond_t changed;
+    bool started, done, consumed, cancel;
+    int wake[2];
+    char **argv, **env;
+    char *cwd, *program;
+    unsigned char *input;
+    size_t input_len, input_written, limit;
+    uint64_t timeout_ms;
+    int launch_error, host_error, wait_status;
+    const char *launch_stage;
+    bool waited, timed_out, cancelled;
+    ProcCapture output[2];
+} ProcJob;
+
+static uint64_t monotonic_ms(void) {
+    struct timespec value;
+    clock_gettime(CLOCK_MONOTONIC, &value);
+    return (uint64_t)value.tv_sec * 1000u + (uint64_t)value.tv_nsec / 1000000u;
 }
 
-static bool integer(Atom *a, int64_t lo, int64_t hi, int64_t *out) {
-    if (!a || a->kind != ATOM_GROUNDED) return false;
-    if (a->ground.gkind == GV_INT) {
-        if (a->ground.ival < lo || a->ground.ival > hi) return false;
-        *out = a->ground.ival;
-    } else if (a->ground.gkind == GV_FLOAT) {
-        double value = a->ground.fval;
-        /* HE's ceil returns an integral float. Exclude the rounded 2^63
-         * boundary before converting it to a signed integer. */
-        if (!isfinite(value) || value < lo || value >= 0x1p63 ||
-            trunc(value) != value) return false;
-        *out = (int64_t)value;
-        if (*out > hi) return false;
-    } else return false;
+static bool bytes_arg(Atom *value, const char **bytes, size_t *length) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_STRING)
+        return false;
+    *bytes = value->ground.sval;
+    *length = atom_string_len(value);
     return true;
 }
 
-static Atom *invalid(Arena *arena, const char *message) {
-    Atom *operation = atom_symbol(arena, "proc:run");
-    return atom_error(arena, atom_expr(arena, &operation, 1u), atom_string(arena, message));
-}
-
-static Atom *failed(Arena *arena, const char *reason) {
-    return atom_expr2(arena, atom_symbol(arena, "proc:failed"), atom_string(arena, reason));
-}
-
-static Atom *failed_errno(Arena *arena, const char *stage, int error) {
-    char reason[256];
-    snprintf(reason, sizeof(reason), "%s: %s", stage, strerror(error));
-    return failed(arena, reason);
-}
-
-static uint64_t now_ms(void) {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
-}
-
-/* The length of the well-formed UTF-8 sequence at p, or 0 if there is none
- * (a NUL, a stray or overlong byte, a surrogate, a truncated sequence). */
-static size_t utf8_sequence(const unsigned char *p, size_t left) {
-    unsigned char c = p[0], lo = 0x80, hi = 0xBF;
-    size_t n;
-    if (c == 0) return 0;
-    if (c < 0x80) return 1;
-    if (c >= 0xC2 && c <= 0xDF) n = 2;
-    else if (c >= 0xE0 && c <= 0xEF) {
-        n = 3;
-        if (c == 0xE0) lo = 0xA0;
-        else if (c == 0xED) hi = 0x9F;
-    } else if (c >= 0xF0 && c <= 0xF4) {
-        n = 4;
-        if (c == 0xF0) lo = 0x90;
-        else if (c == 0xF4) hi = 0x8F;
-    } else return 0;
-    if (left < n || p[1] < lo || p[1] > hi) return 0;
-    for (size_t k = 2; k < n; ++k)
-        if ((p[k] & 0xC0) != 0x80) return 0;
-    return n;
-}
-
-/* Captured bytes as text: anything that is not well-formed UTF-8 reads as
- * U+FFFD, one per byte. */
-static Atom *as_text(Arena *arena, const char *bytes, size_t len) {
-    size_t bad = 0;
-    for (size_t i = 0; i < len;) {
-        /* Most tool output is ASCII. Validate eight bytes together without
-         * allocating a three-times-sized copy of an already valid string. */
-        if (len - i >= sizeof(uint64_t)) {
-            uint64_t word;
-            memcpy(&word, bytes + i, sizeof(word));
-            uint64_t high = UINT64_C(0x8080808080808080);
-            if (!(word & high) &&
-                !((word - UINT64_C(0x0101010101010101)) & ~word & high)) {
-                i += sizeof(word);
-                continue;
-            }
-        }
-        size_t n = utf8_sequence((const unsigned char *)bytes + i, len - i);
-        if (!n) ++bad;
-        i += n ? n : 1;
+static char *text_copy(Atom *value) {
+    const char *bytes;
+    size_t length;
+    if (!bytes_arg(value, &bytes, &length) || memchr(bytes, 0, length)) {
+        errno = EINVAL; return NULL;
     }
-    if (!bad) return atom_string_n(arena, bytes, len);
-    if (bad > (SIZE_MAX - len - 1) / 2)
-        return atom_string(arena, "[output unavailable: text is too large]");
-    char *out = malloc(len + bad * 2 + 1);
-    if (!out) return atom_string(arena, "[output unavailable: out of memory]");
-    size_t o = 0;
-    for (size_t i = 0; i < len;) {
-        size_t n = utf8_sequence((const unsigned char *)bytes + i, len - i);
-        if (n) {
-            memcpy(out + o, bytes + i, n);
-            o += n;
-            i += n;
-        } else {
-            memcpy(out + o, "\xEF\xBF\xBD", 3);
-            o += 3;
-            i += 1;
-        }
-    }
-    out[o] = 0;
-    Atom *value = atom_string_n(arena, out, o);
-    free(out);
+    return strndup(bytes, length);
+}
+
+static Atom *failed(Arena *arena, const char *kind, const char *message) {
+    return atom_expr3(arena, atom_symbol(arena, "proc:failed"),
+        atom_symbol(arena, kind), atom_string(arena, message));
+}
+
+static void free_vector(char **values) {
+    if (!values) return;
+    for (size_t i = 0; values[i]; i++) free(values[i]);
+    free(values);
+}
+
+static bool cancelled(ProcJob *job) {
+    pthread_mutex_lock(&job->lock);
+    bool value = job->cancel;
+    pthread_mutex_unlock(&job->lock);
     return value;
 }
 
-/* One of the child's output streams: kept up to its limit, drained past it
- * so that the child never blocks on a full pipe. */
-typedef struct {
-    int fd;
-    bool open;
-    char *data;
-    size_t len, cap, limit, total;
-    int error;
-} Stream;
-
-static void stream_read(Stream *s) {
-    char chunk[65536];
-    /* Give the other stream, deadline and observer a turn even when a child
-     * writes continuously. Nothing is discarded by this read quantum. */
-    for (unsigned reads = 0; s->open && reads < 16; ++reads) {
-        ssize_t n = read(s->fd, chunk, sizeof(chunk));
-        if (n > 0) {
-            s->total += (size_t)n;
-            size_t room = s->limit > s->len ? s->limit - s->len : 0;
-            size_t take = (size_t)n < room ? (size_t)n : room;
-            if (take && s->len + take > s->cap) {
-                size_t cap = s->cap ? s->cap : 4096;
-                while (cap < s->len + take) {
-                    if (cap > SIZE_MAX / 2) { cap = s->len + take; break; }
-                    cap *= 2;
-                }
-                if (cap > s->limit) cap = s->limit;
-                char *grown = realloc(s->data, cap);
-                if (!grown) { s->error = ENOMEM; take = 0; }
-                else { s->data = grown; s->cap = cap; }
-            }
-            if (take) {
-                memcpy(s->data + s->len, chunk, take);
-                s->len += take;
-            }
-            continue;
-        }
-        if (n < 0 && errno == EINTR) continue;
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
-        if (n < 0) s->error = errno;
-        close(s->fd);
-        s->fd = -1;
-        s->open = false;
-    }
+static void wake_job(ProcJob *job) {
+    unsigned char wake = 1;
+    ssize_t count;
+    do count = write(job->wake[1], &wake, 1); while (count < 0 && errno == EINTR);
+    /* A full nonblocking pipe is already a wakeup; polling also checks the
+     * cancellation flag. No byte delivery is claimed by this notification. */
 }
 
-static void file_capture(Stream *s, FILE *file) {
-    struct stat st;
-    int fd = fileno(file);
-    if (fstat(fd, &st) || st.st_size < 0) { s->error = errno ? errno : EIO; return; }
-    s->total = (size_t)st.st_size;
-    size_t keep = s->total < s->limit ? s->total : s->limit;
-    if (!keep) return;
-    s->data = malloc(keep);
-    if (!s->data) { s->error = ENOMEM; return; }
-    s->cap = keep;
-    while (s->len < keep) {
-        size_t count = keep - s->len;
-        if (count > 65536) count = 65536;
-        ssize_t got = pread(fd, s->data + s->len, count, (off_t)s->len);
-        if (got < 0 && errno == EINTR) continue;
-        if (got <= 0) { s->error = got < 0 ? errno : EIO; return; }
-        s->len += (size_t)got;
+static int owned_pipe(int descriptors[2], int flags) {
+    /* A closed standard descriptor may be reused transiently by pipe2.
+     * Standard FILE writes take these same stream locks, so they cannot
+     * accidentally publish into an internal pipe before it is relocated. */
+    flockfile(stdout);
+    flockfile(stderr);
+    int status = pipe2(descriptors, flags);
+    if (status) goto done;
+    for (int i = 0; i < 2; i++) {
+        if (descriptors[i] >= 3) continue;
+        int moved = fcntl(descriptors[i], F_DUPFD_CLOEXEC, 3);
+        if (moved < 0) { status = -1; goto failed; }
+        close(descriptors[i]); descriptors[i] = moved;
     }
-}
-
-static Atom *stream_text(Arena *arena, const Stream *s) {
-    if (s->total == s->len) return as_text(arena, s->data, s->len);
-    char note[160];
-    int count = snprintf(note, sizeof(note),
-        "\n[output truncated: kept %zu of %zu bytes]\n", s->len, s->total);
-    size_t length = s->len + (size_t)count;
-    char *joined = malloc(length);
-    if (!joined) return atom_string(arena, "[output unavailable: out of memory]");
-    if (s->len) memcpy(joined, s->data, s->len);
-    memcpy(joined + s->len, note, (size_t)count);
-    Atom *value = as_text(arena, joined, length);
-    free(joined);
-    return value;
-}
-
-/* Optional observation of a blocking call. This never admits, refuses or
- * interrupts work: it only refreshes a progress file and the service watchdog.
- * Like libuv's exit callback, process identity belongs to the parent. */
-void cetta_proc_observe_wait(const char *path, uint64_t sequence) {
-    const char *address = getenv("NOTIFY_SOCKET");
-    if (address && address[0]) {
-        struct sockaddr_un peer = {.sun_family = AF_UNIX};
-        size_t length = strlen(address);
-        if (length < sizeof(peer.sun_path)) {
-            memcpy(peer.sun_path, address, length + 1);
-            if (address[0] == '@') peer.sun_path[0] = 0;
-            int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-            if (fd >= 0) {
-                socklen_t size = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + length +
-                                             (address[0] != '@'));
-                (void)sendto(fd, "WATCHDOG=1", 10, MSG_NOSIGNAL, (struct sockaddr *)&peer, size);
-                close(fd);
-            }
-        }
-    }
-    if (!path || !path[0]) return;
-    char owner[96], stat[4096];
-    snprintf(owner, sizeof(owner), "%ld:portable", (long)getpid());
-    FILE *file = fopen("/proc/self/stat", "r");
-    if (file) {
-        if (fgets(stat, sizeof(stat), file)) {
-            char *p = strrchr(stat, ')');
-            if (p) {
-                p += 2;
-                for (int field = 3; field < 22 && p; ++field) {
-                    p = strchr(p, ' ');
-                    if (p) ++p;
-                }
-                if (p) snprintf(owner, sizeof(owner), "%ld:%llu", (long)getpid(), strtoull(p, NULL, 10));
-            }
-        }
-        fclose(file);
-    }
-    struct timespec wall, clock;
-    clock_gettime(CLOCK_REALTIME, &wall);
-    clock_gettime(CLOCK_MONOTONIC, &clock);
-    char body[512];
-    int length = snprintf(body, sizeof(body),
-        "{\"pid\":%ld,\"owner\":\"%s\",\"sequence\":%llu,\"phase\":\"process-wait\","
-        "\"progress_at\":%llu.%09lu,\"progress_clock\":%llu.%09lu,"
-        "\"wait_until\":%llu,\"memory_bytes\":null}\n",
-        (long)getpid(), owner, (unsigned long long)sequence,
-        (unsigned long long)wall.tv_sec, (unsigned long)wall.tv_nsec,
-        (unsigned long long)clock.tv_sec, (unsigned long)clock.tv_nsec,
-        (unsigned long long)clock.tv_sec + 60);
-    char *temporary = malloc(strlen(path) + 20);
-    if (!temporary) return;
-    sprintf(temporary, "%s.proc-XXXXXX", path);
-    int fd = mkstemp(temporary);
-    if (fd >= 0) {
-        ssize_t written = write(fd, body, (size_t)length);
-        close(fd);
-        if (written == length) (void)rename(temporary, path);
-        (void)unlink(temporary);
-    }
-    free(temporary);
-}
-
-/* The program's path: as given when it names a path (a relative one then
- * resolves in the child's working directory), otherwise the first
- * executable regular file of that name on the PATH of the child's own
- * environment. Without a PATH there, only a path runs. */
-static char *resolve_program(const char *program, const char *path_env, const char *cwd) {
-    if (strchr(program, '/')) return strdup(program);
-    if (!path_env) return NULL;
-    for (const char *p = path_env;;) {
-        const char *colon = strchr(p, ':');
-        size_t dir_len = colon ? (size_t)(colon - p) : strlen(p);
-        size_t size = strlen(cwd) + dir_len + strlen(program) + 3;
-        char *candidate = malloc(size);
-        if (!candidate) return NULL;
-        if (dir_len == 0)
-            snprintf(candidate, size, "%s/%s", cwd, program);
-        else if (p[0] == '/')
-            snprintf(candidate, size, "%.*s/%s", (int)dir_len, p, program);
-        else
-            snprintf(candidate, size, "%s/%.*s/%s", cwd, (int)dir_len, p, program);
-        struct stat st;
-        if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode) && access(candidate, X_OK) == 0)
-            return candidate;
-        free(candidate);
-        if (!colon) return NULL;
-        p = colon + 1;
-    }
-}
-
-/* In the child, between fork and exec, only async-signal-safe calls. */
-static void child_stop(int fd, int stage, int error) {
-    int report[2] = {stage, error};
-    ssize_t ignored;
-    do { ignored = write(fd, report, sizeof(report)); } while (ignored < 0 && errno == EINTR);
-    (void)ignored;
-    _exit(127);
-}
-
-static void child_start(const char *program, char **argv, char **envp, const char *cwd,
-                        int out, int err, int report) {
-    setpgid(0, 0);
-    struct sigaction standard;
-    memset(&standard, 0, sizeof(standard));
-    standard.sa_handler = SIG_DFL;
-    sigemptyset(&standard.sa_mask);
-    for (int sig = 1; sig < NSIG; ++sig)
-        if (sig != SIGKILL && sig != SIGSTOP) sigaction(sig, &standard, NULL);
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    int in = open("/dev/null", O_RDONLY | O_CLOEXEC);
-    if (in < 0 || dup2(in, 0) < 0 || dup2(out, 1) < 0 || dup2(err, 2) < 0)
-        child_stop(report, START_STDIO, errno);
-    /* Nothing of this process but the three streams reaches the program. */
-    if (syscall(SYS_close_range, 3u, ~0u, CLOSE_RANGE_CLOEXEC) != 0)
-        for (int fd = 3; fd < PROC_FD_SWEEP; ++fd) fcntl(fd, F_SETFD, FD_CLOEXEC);
-    if (chdir(cwd) != 0) child_stop(report, START_CWD, errno);
-    execve(program, argv, envp);
-    child_stop(report, START_EXEC, errno);
-}
-
-struct CettaProcChild {
-    pid_t pid;
-    int pidfd, report, status, error;
-    bool finished, timed_out, killed;
-    uint64_t started, deadline, finished_at;
-    char *out, *err;
-};
-
-CettaProcChild *cetta_proc_start(Atom *arguments, const char *cwd, Atom *environment,
-    uint64_t timeout_ms, const char *out, const char *err, char *error, size_t error_size) {
-    struct sigaction child_exit;
-    if (sigaction(SIGCHLD, NULL, &child_exit) || child_exit.sa_handler == SIG_IGN ||
-        (child_exit.sa_flags & SA_NOCLDWAIT)) {
-        snprintf(error, error_size, "process start: host discards child exit status (SIGCHLD)");
-        return NULL;
-    }
-    bool inherit = environment && environment->kind == ATOM_SYMBOL &&
-                   !strcmp(atom_name_cstr(environment), "inherit");
-    if (!arguments || arguments->kind != ATOM_EXPR || !arguments->expr.len ||
-        (!inherit && (!environment || environment->kind != ATOM_EXPR)) ||
-        !cwd || !*cwd || !out || !*out || !err || !*err) {
-        snprintf(error, error_size, "expected argv, cwd, environment and two output paths");
-        return NULL;
-    }
-    size_t argc = arguments->expr.len, envc = inherit ? 0 : environment->expr.len;
-    char **argv = calloc(argc + 1, sizeof(*argv)), **envp = calloc(envc + 1, sizeof(*envp));
-    char *program = NULL;
-    int output = -1, errors = -1, report[2] = {-1, -1};
-    CettaProcChild *child = calloc(1, sizeof(*child));
-    if (child) { child->pidfd = -1; child->report = -1; }
-    if (!argv || !envp || !child) { errno = ENOMEM; goto failed; }
-    for (size_t i = 0; i < argc; ++i) {
-        argv[i] = (char *)text(arguments->expr.elems[i]);
-        if (!argv[i]) { errno = EINVAL; goto failed; }
-    }
-    if (!argv[0][0]) { errno = EINVAL; goto failed; }
-    const char *path = inherit ? getenv("PATH") : NULL;
-    for (size_t i = 0; i < envc; ++i) {
-        Atom *pair = environment->expr.elems[i];
-        const char *name = pair && pair->kind == ATOM_EXPR && pair->expr.len == 2
-                         ? text(pair->expr.elems[0]) : NULL;
-        const char *value = name ? text(pair->expr.elems[1]) : NULL;
-        if (!name || !value || !*name || strchr(name, '=')) { errno = EINVAL; goto failed; }
-        size_t length = strlen(name) + strlen(value) + 2;
-        envp[i] = malloc(length);
-        if (!envp[i]) { errno = ENOMEM; goto failed; }
-        snprintf(envp[i], length, "%s=%s", name, value);
-        if (!strcmp(name, "PATH")) path = value;
-    }
-    program = resolve_program(argv[0], path, cwd);
-    if (!program) { errno = ENOENT; goto failed; }
-    child->out = strdup(out); child->err = strdup(err);
-    if (!child->out || !child->err) { errno = ENOMEM; goto failed; }
-    output = open(out, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (output < 0) goto failed;
-    errors = !strcmp(out, err) ? fcntl(output, F_DUPFD_CLOEXEC, 3)
-           : open(err, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (errors < 0 || pipe2(report, O_CLOEXEC | O_NONBLOCK)) goto failed;
-    struct stat a, b;
-    if (!fstat(output, &a) && !fstat(errors, &b) && a.st_dev == b.st_dev && a.st_ino == b.st_ino) {
-        close(errors); errors = fcntl(output, F_DUPFD_CLOEXEC, 3);
-        if (errors < 0) goto failed;
-    }
-    child->started = now_ms();
-    child->deadline = timeout_ms ? child->started + timeout_ms : UINT64_MAX;
-    /* The child resets inherited handlers before unblocking. An immediate
-     * io:signal must never run the embedding host's handlers before exec. */
-    sigset_t blocked, previous;
-    sigfillset(&blocked);
-    int mask_error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
-    if (mask_error) { errno = mask_error; goto failed; }
-    child->pid = fork();
-    if (!child->pid) child_start(program, argv, inherit ? environ : envp, cwd, output, errors, report[1]);
-    int fork_error = errno;
-    (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    if (child->pid < 0) { child->pid = 0; errno = fork_error; goto failed; }
-    setpgid(child->pid, child->pid);
-    close(report[1]); report[1] = -1;
-#ifndef CETTA_PROC_NO_PIDFD
-    child->pidfd = (int)syscall(SYS_pidfd_open, child->pid, 0);
-#endif
-    /* Only inspect the atomic child report after reaping. Another subsystem's
-     * fork can inherit the pipe, so waiting for EOF here can hang indefinitely. */
-    child->report = report[0]; report[0] = -1;
     goto done;
-failed:
-    snprintf(error, error_size, "process start: %s", strerror(errno));
-    cetta_proc_free(child); child = NULL;
-done:
-    if (output >= 0) close(output);
-    if (errors >= 0) close(errors);
-    if (report[0] >= 0) close(report[0]);
-    if (report[1] >= 0) close(report[1]);
-    if (envp) for (size_t i = 0; i < envc; ++i) free(envp[i]);
-    free(envp); free(argv); free(program);
-    return child;
+failed: {
+    int saved_error = errno;
+    for (int i = 0; i < 2; i++) {
+        close(descriptors[i]); descriptors[i] = -1;
+    }
+    errno = saved_error;
+}
+done: {
+    int saved_error = errno;
+    funlockfile(stderr);
+    funlockfile(stdout);
+    errno = saved_error;
+    return status;
+}
 }
 
-bool cetta_proc_poll(CettaProcChild *child) {
-    if (!child || child->finished) return true;
-    pid_t observed;
-    do { observed = waitpid(child->pid, &child->status, WNOHANG); } while (observed < 0 && errno == EINTR);
-    if (observed == child->pid) {
-        int stopped[2];
-        ssize_t got;
-        do { got = read(child->report, stopped, sizeof(stopped)); } while (got < 0 && errno == EINTR);
-        if (got == (ssize_t)sizeof(stopped)) child->error = stopped[1];
-        else if (got > 0) child->error = EIO;
-        child->finished = true;
+static void stop_job(void *resource) {
+    ProcJob *job = resource;
+    if (!job) return;
+    if (job->started) {
+        pthread_mutex_lock(&job->lock);
+        job->cancel = true;
+        pthread_mutex_unlock(&job->lock);
+        wake_job(job);
+        pthread_join(job->thread, NULL);
     }
-    else if (observed < 0) { child->error = errno; child->finished = true; }
-    else if (!child->killed && now_ms() >= child->deadline) {
-        child->timed_out = true;
-        kill(-child->pid, SIGKILL); kill(child->pid, SIGKILL);
-        child->killed = true;
+    for (int i = 0; i < 2; i++) {
+        if (job->wake[i] >= 0) close(job->wake[i]);
+        free(job->output[i].bytes);
     }
-    if (child->finished) {
-        child->finished_at = now_ms();
-        if (child->report >= 0) { close(child->report); child->report = -1; }
-    }
-    return child->finished;
-}
-int cetta_proc_descriptor(const CettaProcChild *child) { return child ? child->pidfd : -1; }
-uint64_t cetta_proc_deadline(const CettaProcChild *child) { return child && !child->killed ? child->deadline : UINT64_MAX; }
-bool cetta_proc_signal(CettaProcChild *child, int number) {
-    if (!child || number < 0 || number >= NSIG || child->finished) return false;
-    bool sent = kill(-child->pid, number) == 0;
-    /* The owned leader can move to another group. Its unreaped PID is still
-     * ours, so cancellation must reach it as well as its original group. */
-    if (number == SIGKILL) {
-        bool leader_sent = kill(child->pid, number) == 0;
-        sent = sent || leader_sent;
-        if (sent) child->killed = true;
-    }
-    return sent;
-}
-void cetta_proc_snapshot(const CettaProcChild *child, CettaProcSnapshot *out) {
-    *out = (CettaProcSnapshot){ .pid = child->pid,
-        .elapsed_ms = (child->finished ? child->finished_at : now_ms()) - child->started,
-        .status = child->status, .error = child->error,
-        .finished = child->finished, .timed_out = child->timed_out };
-}
-Atom *cetta_proc_information(Arena *arena, CettaProcChild *child) {
-    Atom *parts[] = {atom_symbol(arena, "proc:running"), atom_int(arena, child->pid),
-                    atom_int(arena, (int64_t)(now_ms() - child->started)),
-                    atom_string(arena, child->out), atom_string(arena, child->err)};
-    return atom_expr(arena, parts, 5);
-}
-Atom *cetta_proc_outcome(Arena *arena, CettaProcChild *child) {
-    const char *kind = child->error ? "failed" : child->timed_out ? "timed-out"
-                     : WIFEXITED(child->status) ? "exited" : "signaled";
-    int status = child->error ? child->error : child->timed_out ? 0
-               : WIFEXITED(child->status) ? WEXITSTATUS(child->status) : WTERMSIG(child->status);
-    Atom *parts[] = {atom_symbol(arena, "proc:finished"), atom_int(arena, child->pid),
-        atom_symbol(arena, kind), atom_int(arena, status),
-        atom_string(arena, child->out), atom_string(arena, child->err)};
-    return atom_expr(arena, parts, 6);
-}
-void cetta_proc_free(CettaProcChild *child) {
-    if (!child) return;
-    if (child->pid > 0 && !cetta_proc_poll(child)) {
-        kill(-child->pid, SIGKILL); kill(child->pid, SIGKILL);
-        while (waitpid(child->pid, &child->status, 0) < 0 && errno == EINTR) {}
-    }
-    if (child->pidfd >= 0) close(child->pidfd);
-    if (child->report >= 0) close(child->report);
-    free(child->out); free(child->err); free(child);
+    free_vector(job->argv);
+    free_vector(job->env);
+    free(job->cwd); free(job->program); free(job->input);
+    pthread_cond_destroy(&job->changed);
+    pthread_mutex_destroy(&job->lock);
+    free(job);
 }
 
-static Atom *proc_run(Arena *arena, Atom **args, uint32_t nargs) {
-    if (nargs != 5u && nargs != 6u)
-        return invalid(arena, "expected (proc:run argv cwd env timeout-ms max-bytes [options])");
-    Atom *argv_atom = args[0], *env_atom = args[2];
-    const char *cwd = text(args[1]);
-    bool inherit = env_atom && env_atom->kind == ATOM_SYMBOL &&
-                   strcmp(atom_name_cstr(env_atom), "inherit") == 0;
-    bool merged = false;
-    bool file_output = false;
-    const char *progress = "";
-    if (nargs == 6u) {
-        Atom *options = args[5];
-        const char *mode = text(options);
-        if (options && options->kind == ATOM_EXPR && options->expr.len == 3u &&
-            options->expr.elems[0]->kind == ATOM_SYMBOL &&
-            strcmp(atom_name_cstr(options->expr.elems[0]), "proc:options") == 0) {
-            mode = text(options->expr.elems[1]);
-            progress = text(options->expr.elems[2]);
-        }
-        if (!mode || !progress || (strcmp(mode, "merged") && strcmp(mode, "merged-file") && strcmp(mode, "separate")))
-            return invalid(arena, "options mode must be merged, merged-file or separate");
-        merged = strcmp(mode, "separate") != 0;
-        file_output = strcmp(mode, "merged-file") == 0;
+static bool capture(ProcJob *job, ProcCapture *out, const unsigned char *bytes, size_t size) {
+    if (size > INT64_MAX - out->observed) return false;
+    out->observed += size;
+    size_t keep = size;
+    if (job->limit && keep > job->limit - out->kept) keep = job->limit - out->kept;
+    if (keep > SIZE_MAX - out->kept) return false;
+    size_t needed = out->kept + keep;
+    if (needed > UINT32_MAX) return false; /* Atom strings have a 32-bit length. */
+    if (needed > out->capacity) {
+        size_t capacity = out->capacity ? out->capacity : 4096u;
+        while (capacity < needed && capacity <= SIZE_MAX / 2u) capacity *= 2u;
+        if (capacity < needed) capacity = needed;
+        unsigned char *next = realloc(out->bytes, capacity);
+        if (!next) return false;
+        out->bytes = next; out->capacity = capacity;
     }
-    int64_t timeout, max_bytes;
-    if (!argv_atom || argv_atom->kind != ATOM_EXPR || argv_atom->expr.len < 1u)
-        return invalid(arena, "argv must be a list of one or more strings");
-    if (!inherit && (!env_atom || env_atom->kind != ATOM_EXPR))
-        return invalid(arena, "env must be a list of (\"NAME\" \"value\") pairs");
-    if (!cwd || !cwd[0])
-        return invalid(arena, "cwd must be a directory path");
-    if (!integer(args[3], 0, INT64_MAX, &timeout))
-        return invalid(arena, "timeout-ms must be a nonnegative integer (0 means no deadline)");
-    if (!integer(args[4], 0, INT64_MAX, &max_bytes))
-        return invalid(arena, "max-bytes must be a nonnegative integer (0 means unlimited)");
+    if (keep) memcpy(out->bytes + out->kept, bytes, keep);
+    out->kept = needed;
+    return true;
+}
 
-    size_t argc = (size_t)argv_atom->expr.len, envc = inherit ? 0 : (size_t)env_atom->expr.len;
-    char **argv = calloc(argc + 1, sizeof(*argv));
-    char **envp = calloc(envc + 1, sizeof(*envp));
-    char *program = NULL;
-    Atom *result = NULL;
-    FILE *capture = NULL;
-    Stream streams[2] = {{.fd = -1}, {.fd = -1}};
-    int out[2] = {-1, -1}, err[2] = {-1, -1}, report[2] = {-1, -1}, pidfd = -1;
-    if (!argv || !envp) { result = failed(arena, "out of memory"); goto done; }
-    for (size_t i = 0; i < argc; ++i) {
-        const char *arg = text(argv_atom->expr.elems[i]);
-        if (!arg) { result = invalid(arena, "argv must be a list of one or more strings"); goto done; }
-        argv[i] = (char *)arg;
+static void drain(ProcJob *job, int *fd, ProcCapture *out) {
+    unsigned char bytes[16384];
+    /* Bound each turn so an unending writer cannot starve deadline checks. */
+    for (unsigned turn = 0; turn < 16u && *fd >= 0; turn++) {
+        ssize_t size = read(*fd, bytes, sizeof bytes);
+        if (size > 0) {
+            if (!capture(job, out, bytes, (size_t)size)) { job->host_error = ENOMEM; return; }
+        } else if (!size) {
+            out->eof = true; close(*fd); *fd = -1;
+        } else if (errno == EINTR) continue;
+        else if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+        else { job->host_error = errno; close(*fd); *fd = -1; return; }
     }
-    if (!argv[0][0]) { result = invalid(arena, "the program name is empty"); goto done; }
-    const char *path_env = inherit ? getenv("PATH") : NULL;
-    for (size_t i = 0; i < envc; ++i) {
-        Atom *pair = env_atom->expr.elems[i];
-        const char *name = pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u
-            ? text(pair->expr.elems[0]) : NULL;
-        const char *value = name ? text(pair->expr.elems[1]) : NULL;
-        if (!name || !value || !name[0] || strchr(name, '=')) {
-            result = invalid(arena, "env must be a list of (\"NAME\" \"value\") pairs");
-            goto done;
-        }
-        size_t size = strlen(name) + strlen(value) + 2;
-        if (!(envp[i] = malloc(size))) { result = failed(arena, "out of memory"); goto done; }
-        snprintf(envp[i], size, "%s=%s", name, value);
-        if (strcmp(name, "PATH") == 0) path_env = value;
-    }
-    if (!(program = resolve_program(argv[0], path_env, cwd))) {
-        result = failed(arena, "program not found");
-        goto done;
-    }
-    if (file_output) {
-        capture = tmpfile();
-        if (!capture || (out[1] = dup(fileno(capture))) < 0) {
-            result = failed_errno(arena, "output file", errno);
-            goto done;
-        }
-    }
-    if ((!file_output && pipe2(out, O_CLOEXEC)) || (!merged && pipe2(err, O_CLOEXEC)) || pipe2(report, O_CLOEXEC)) {
-        result = failed_errno(arena, "pipe", errno);
-        goto done;
-    }
-    pid_t pid = fork();
-    if (pid < 0) { result = failed_errno(arena, "fork", errno); goto done; }
-    if (pid == 0) child_start(program, argv, inherit ? environ : envp, cwd,
-                              out[1], merged ? out[1] : err[1], report[1]);
-    setpgid(pid, pid);
-    close(out[1]); out[1] = -1;
-    if (err[1] >= 0) close(err[1]);
-    err[1] = -1;
-    close(report[1]); report[1] = -1;
-    uint64_t deadline = timeout ? now_ms() + (uint64_t)timeout : UINT64_MAX;
-    uint64_t observation = 0, sequence = 0;
-    bool observed = progress[0] || getenv("NOTIFY_SOCKET");
+}
 
-    /* The report pipe closes at exec; a report instead says where the child
-     * stopped. */
-    int stopped[2];
-    ssize_t got = 0;
-    for (;;) {
-        uint64_t now = now_ms();
-        if (observed && now >= observation) {
-            cetta_proc_observe_wait(progress, ++sequence);
-            observation = now + 30000;
-        }
-        struct pollfd p = {report[0], POLLIN, 0};
-        uint64_t left = now < deadline ? deadline - now : 0;
-        if (observed && left > observation - now) left = observation - now;
-        int n = left ? poll(&p, 1, left > INT_MAX ? INT_MAX : (int)left) : 0;
-        if (n < 0 && errno == EINTR) continue;
-        if (n > 0) got = read(report[0], stopped, sizeof(stopped));
-        if (n > 0 && got < 0 && errno == EINTR) continue;
-        if (n == 0 && now_ms() < deadline) continue;
-        break;
-    }
-    if (got == (ssize_t)sizeof(stopped)) {
-        waitpid(pid, NULL, 0);
-        const char *stage = stopped[0] == START_CWD ? "cwd"
-            : stopped[0] == START_EXEC ? "exec" : "stdio";
-        result = failed_errno(arena, stage, stopped[1]);
-        goto done;
-    }
+static void kill_owned(pid_t pid) {
+    /* Process-group membership is the guarantee; descendants may leave it. */
+    (void)kill(-pid, SIGKILL);
+    (void)kill(pid, SIGKILL);
+}
 
-    size_t limit = max_bytes ? (size_t)max_bytes : SIZE_MAX;
-    streams[0] = (Stream){.fd = out[0], .open = !file_output, .limit = limit};
-    streams[1] = (Stream){.fd = err[0], .open = !merged, .limit = limit};
-    out[0] = err[0] = -1;
-    for (int i = 0; i < 2; ++i)
-        if (streams[i].open) fcntl(streams[i].fd, F_SETFL, fcntl(streams[i].fd, F_GETFL) | O_NONBLOCK);
-    pidfd = (int)syscall(SYS_pidfd_open, pid, 0);
-    bool exited = false, timed_out = false;
-    int status = 0, wait_error = 0;
-    while (streams[0].open || streams[1].open || !exited) {
-        uint64_t now = now_ms();
-        if (now >= deadline) { timed_out = true; break; }
-        if (observed && now >= observation) {
-            cetta_proc_observe_wait(progress, ++sequence);
-            observation = now + 30000;
+static void *execute(void *resource) {
+    ProcJob *job = resource;
+    int input[2] = {-1,-1}, output[2][2] = {{-1,-1},{-1,-1}};
+    pid_t pid = -1;
+    if (cancelled(job)) { job->cancelled = true; goto finish; }
+    if (owned_pipe(input, O_CLOEXEC) || owned_pipe(output[0], O_CLOEXEC) || owned_pipe(output[1], O_CLOEXEC)) {
+        job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
+    }
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    int error = posix_spawn_file_actions_init(&actions);
+    if (error) { job->launch_error = error; job->launch_stage = "spawn-actions"; goto finish; }
+    error = posix_spawnattr_init(&attributes);
+    if (error) {
+        posix_spawn_file_actions_destroy(&actions);
+        job->launch_error = error; job->launch_stage = "spawn-attributes"; goto finish;
+    }
+    sigset_t empty, defaults;
+    sigemptyset(&empty); sigfillset(&defaults);
+#define SPAWN_STEP(operation) do { if (!error) error = (operation); } while (0)
+    SPAWN_STEP(posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
+    SPAWN_STEP(posix_spawnattr_setpgroup(&attributes, 0));
+    SPAWN_STEP(posix_spawnattr_setsigmask(&attributes, &empty));
+    SPAWN_STEP(posix_spawnattr_setsigdefault(&attributes, &defaults));
+    SPAWN_STEP(posix_spawn_file_actions_addchdir_np(&actions, job->cwd));
+    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, input[0], STDIN_FILENO));
+    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[0][1], STDOUT_FILENO));
+    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[1][1], STDERR_FILENO));
+    SPAWN_STEP(posix_spawn_file_actions_addclosefrom_np(&actions, 3));
+    SPAWN_STEP(posix_spawn(&pid, job->program, &actions, &attributes, job->argv, job->env));
+#undef SPAWN_STEP
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    if (error) { job->launch_error = error; job->launch_stage = "spawn"; goto finish; }
+    close(input[0]); input[0] = -1;
+    for (int i = 0; i < 2; i++) { close(output[i][1]); output[i][1] = -1; }
+    if (fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+    for (int i = 0; i < 2; i++)
+        if (fcntl(output[i][0], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+    /* SIGPIPE is blocked only in this owner; child defaults were restored. */
+    sigset_t broken;
+    sigemptyset(&broken); sigaddset(&broken, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &broken, NULL);
+    size_t sent = 0;
+    bool child_exited = false;
+    uint64_t started = monotonic_ms();
+    while (!child_exited || output[0][0] >= 0 || output[1][0] >= 0) {
+        if (cancelled(job)) { job->cancelled = true; break; }
+        if (job->timeout_ms && monotonic_ms() - started >= job->timeout_ms) { job->timed_out = true; break; }
+        if (job->host_error) break;
+        if (input[1] >= 0 && sent == job->input_len) { close(input[1]); input[1] = -1; }
+        struct pollfd fds[4] = {{job->wake[0], POLLIN, 0},
+            {input[1], POLLOUT, 0}, {output[0][0], POLLIN, 0}, {output[1][0], POLLIN, 0}};
+        int ready = poll(fds, 4, 20);
+        if (ready < 0 && errno != EINTR) { job->host_error = errno; break; }
+        if (input[1] >= 0 && (fds[1].revents & (POLLOUT | POLLHUP | POLLERR))) {
+            size_t remaining = job->input_len - sent;
+            if (remaining > 16384u) remaining = 16384u;
+            ssize_t count = write(input[1], job->input + sent, remaining);
+            if (count > 0) { sent += (size_t)count; job->input_written = sent; }
+            else if (count < 0 && errno != EINTR && errno != EAGAIN) {
+                if (errno != EPIPE) job->host_error = errno;
+                close(input[1]); input[1] = -1;
+            }
         }
-        struct pollfd fds[3];
-        int n = 0;
-        for (int i = 0; i < 2; ++i)
-            if (streams[i].open) fds[n++] = (struct pollfd){streams[i].fd, POLLIN, 0};
-        if (!exited && pidfd >= 0) fds[n++] = (struct pollfd){pidfd, POLLIN, 0};
-        uint64_t wait = deadline - now;
-        if (observed && wait > observation - now) wait = observation - now;
-        if (!exited && pidfd < 0 && wait > 20) wait = 20;
-        if (poll(fds, (nfds_t)n, wait > INT_MAX ? INT_MAX : (int)wait) < 0 && errno != EINTR) {
-            wait_error = errno;
-            break;
+        for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
+        if (!child_exited) {
+            /* Observe without reaping: the child's PID remains reserved
+             * while its group may still own capture writers. A deadline
+             * must never signal a numerically reused, unrelated PID. */
+            siginfo_t observation = {0};
+            int observed = waitid(P_PID, (id_t)pid, &observation, WEXITED | WNOHANG | WNOWAIT);
+            if (!observed && observation.si_pid == pid) child_exited = true;
+            else if (observed < 0 && errno != EINTR) { job->host_error = errno; break; }
         }
-        for (int i = 0; i < 2; ++i) stream_read(&streams[i]);
-        if (!exited && waitpid(pid, &status, WNOHANG) == pid) exited = true;
     }
-    if (timed_out || wait_error) {
-        /* The whole process group goes, whatever it started. */
-        kill(-pid, SIGKILL);
-        kill(pid, SIGKILL);
-        if (!exited) waitpid(pid, &status, 0);
-        for (int i = 0; i < 2; ++i) stream_read(&streams[i]);
+    if (job->cancelled || job->timed_out || job->host_error) kill_owned(pid);
+    if (!job->waited) {
+        pid_t waited;
+        do waited = waitpid(pid, &job->wait_status, 0); while (waited < 0 && errno == EINTR);
+        job->waited = waited == pid;
+        if (!job->waited && !job->host_error) job->host_error = errno;
     }
-    if (capture) file_capture(&streams[0], capture);
-    if (wait_error) {
-        result = failed_errno(arena, "wait", wait_error);
-        goto done;
+    for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
+finish:
+    for (int i = 0; i < 2; i++) {
+        if (input[i] >= 0) close(input[i]);
+        for (int j = 0; j < 2; j++) if (output[i][j] >= 0) close(output[i][j]);
     }
-    if (streams[0].error || streams[1].error) {
-        result = failed_errno(arena, "capture", streams[0].error ? streams[0].error : streams[1].error);
-        goto done;
-    }
-    Atom *out_text = stream_text(arena, &streams[0]);
-    Atom *err_text = stream_text(arena, &streams[1]);
-    if (timed_out) {
-        Atom *parts[] = {atom_symbol(arena, "proc:timed-out"), out_text, err_text};
-        result = atom_expr(arena, parts, 3u);
-    } else if (WIFEXITED(status)) {
-        Atom *parts[] = {atom_symbol(arena, "proc:exited"),
-                         atom_int(arena, WEXITSTATUS(status)), out_text, err_text};
-        result = atom_expr(arena, parts, 4u);
-    } else if (WIFSIGNALED(status)) {
-        Atom *parts[] = {atom_symbol(arena, "proc:signaled"),
-                         atom_int(arena, WTERMSIG(status)), out_text, err_text};
-        result = atom_expr(arena, parts, 4u);
-    } else {
-        result = failed(arena, "the child ended in an unknown state");
-    }
-done:
-    if (capture) fclose(capture);
-    for (int i = 0; i < 2; ++i) {
-        if (streams[i].open) close(streams[i].fd);
-        free(streams[i].data);
-    }
-    int fds[] = {out[0], out[1], err[0], err[1], report[0], report[1], pidfd};
-    for (size_t i = 0; i < sizeof(fds) / sizeof(*fds); ++i)
-        if (fds[i] >= 0) close(fds[i]);
-    if (envp)
-        for (size_t i = 0; i < envc; ++i) free(envp[i]);
-    free(envp);
-    free(argv);
-    free(program);
+    pthread_mutex_lock(&job->lock);
+    job->done = true;
+    pthread_cond_broadcast(&job->changed);
+    pthread_mutex_unlock(&job->lock);
+    return NULL;
+}
+
+static char *join_path(const char *base, const char *part) {
+    if (*part == '/') return strdup(part);
+    size_t length = strlen(base) + strlen(part) + 2u;
+    char *result = malloc(length);
+    if (result) snprintf(result, length, "%s/%s", base, part);
     return result;
 }
 
-Atom *cetta_proc_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
-    if (!arena || !head || head->kind != ATOM_SYMBOL || atom_symbol_current_id(head) != g_builtin_syms.lib_proc_run)
-        return NULL;
-    return proc_run(arena, args, nargs);
+static char *resolve_program(ProcJob *job) {
+    if (strchr(job->argv[0], '/')) return join_path(job->cwd, job->argv[0]);
+    const char *path = "/bin:/usr/bin";
+    for (size_t i = 0; job->env[i]; i++) if (!strncmp(job->env[i], "PATH=", 5)) path = job->env[i] + 5;
+    char *first = NULL;
+    while (true) {
+        const char *colon = strchr(path, ':');
+        char *directory = strndup(path, colon ? (size_t)(colon-path) : strlen(path));
+        char *absolute = directory ? join_path(job->cwd, directory) : NULL;
+        char *candidate = absolute ? join_path(absolute, job->argv[0]) : NULL;
+        free(directory); free(absolute);
+        if (!candidate) { free(first); return NULL; }
+        if (!first) first = strdup(candidate);
+        if (!access(candidate, X_OK)) { free(first); return candidate; }
+        free(candidate);
+        if (!colon) return first;
+        path = colon + 1;
+    }
+}
+
+static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char **reason) {
+    if (!argv || argv->kind != ATOM_EXPR || !argv->expr.len || !options || options->kind != ATOM_EXPR) {
+        *reason = "expected a nonempty argv expression and an option expression"; return NULL;
+    }
+    ProcJob *job = calloc(1, sizeof(*job));
+    if (!job) { *kind = "proc:capacity"; *reason = "cannot allocate process owner"; return NULL; }
+    job->wake[0] = job->wake[1] = -1;
+    if (pthread_mutex_init(&job->lock, NULL)) {
+        free(job); *kind = "proc:host-failure"; *reason = "cannot initialize process lock"; return NULL;
+    }
+    pthread_condattr_t attr;
+    int condition_error = pthread_condattr_init(&attr);
+    if (!condition_error) {
+        condition_error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        if (!condition_error) condition_error = pthread_cond_init(&job->changed, &attr);
+        pthread_condattr_destroy(&attr);
+    }
+    if (condition_error) {
+        pthread_mutex_destroy(&job->lock); free(job);
+        *kind = "proc:host-failure"; *reason = "cannot initialize process clock"; return NULL;
+    }
+    char *cwd = NULL;
+    job->argv = calloc((size_t)argv->expr.len + 1u, sizeof(char *));
+    if (!job->argv) goto allocation;
+    for (size_t i = 0; i < argv->expr.len; i++) {
+        job->argv[i] = text_copy(argv->expr.elems[i]);
+        if (!job->argv[i]) {
+            if (errno == ENOMEM) goto allocation;
+            *reason = "argv must contain strings without embedded NUL"; goto refuse;
+        }
+    }
+    if (!*job->argv[0]) { *reason = "program name is empty"; goto refuse; }
+    Atom *env = NULL;
+    unsigned seen = 0;
+    for (size_t i = 0; i < options->expr.len; i++) {
+        Atom *entry = options->expr.elems[i];
+        if (!entry || entry->kind != ATOM_EXPR || entry->expr.len != 2u) { *reason = "options are (name value) pairs"; goto refuse; }
+        Atom *key = entry->expr.elems[0], *value = entry->expr.elems[1];
+        unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
+            atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
+            atom_is_symbol(key, "max-bytes") ? 16u : 0u;
+        if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
+        seen |= bit;
+        if (bit == 1u) {
+            cwd = text_copy(value);
+            if (!cwd) {
+                if (errno == ENOMEM) goto allocation;
+                *reason = "cwd must be a string without NUL"; goto refuse;
+            }
+        }
+        else if (bit == 2u) env = value;
+        else if (bit == 4u) {
+            const char *bytes;
+            if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string"; goto refuse; }
+            job->input = malloc(job->input_len ? job->input_len : 1u);
+            if (!job->input) goto allocation;
+            memcpy(job->input, bytes, job->input_len);
+        } else {
+            if (value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT || value->ground.ival < 0) { *reason = "timeout-ms and max-bytes require nonnegative integers"; goto refuse; }
+            if (bit == 8u) job->timeout_ms = (uint64_t)value->ground.ival;
+            else job->limit = (size_t)value->ground.ival;
+        }
+    }
+    char *current = getcwd(NULL, 0);
+    if (!current) goto host_failure;
+    job->cwd = join_path(current, cwd ? cwd : ".");
+    free(current); free(cwd); cwd = NULL;
+    if (!job->cwd) goto allocation;
+    if (!env || atom_is_symbol(env, "inherit")) {
+        size_t count = 0; while (environ[count]) count++;
+        job->env = calloc(count + 1u, sizeof(char *));
+        if (!job->env) goto allocation;
+        for (size_t i = 0; i < count; i++) if (!(job->env[i] = strdup(environ[i]))) goto allocation;
+    } else {
+        if (env->kind != ATOM_EXPR) { *reason = "env must be inherit or a complete environment of string pairs"; goto refuse; }
+        job->env = calloc((size_t)env->expr.len + 1u, sizeof(char *));
+        if (!job->env) goto allocation;
+        for (size_t i = 0; i < env->expr.len; i++) {
+            Atom *pair = env->expr.elems[i];
+            if (pair->kind != ATOM_EXPR || pair->expr.len != 2u) { *reason = "environment entries are string pairs"; goto refuse; }
+            char *name = text_copy(pair->expr.elems[0]);
+            int name_error = name ? 0 : errno;
+            char *value = text_copy(pair->expr.elems[1]);
+            int value_error = value ? 0 : errno;
+            if (!name || !value || !*name || strchr(name, '=')) {
+                free(name); free(value);
+                if (name_error == ENOMEM || value_error == ENOMEM) goto allocation;
+                *reason = "invalid environment string"; goto refuse;
+            }
+            for (size_t j = 0; j < i; j++) if (!strncmp(job->env[j], name, strlen(name)) && job->env[j][strlen(name)] == '=') { free(name); free(value); *reason = "duplicate environment name"; goto refuse; }
+            size_t size = strlen(name) + strlen(value) + 2u;
+            job->env[i] = malloc(size);
+            if (job->env[i]) snprintf(job->env[i], size, "%s=%s", name, value);
+            free(name); free(value);
+            if (!job->env[i]) goto allocation;
+        }
+    }
+    job->program = resolve_program(job);
+    if (!job->program) goto allocation;
+    if (owned_pipe(job->wake, O_CLOEXEC | O_NONBLOCK)) goto host_failure;
+    return job;
+host_failure:
+    *kind = "proc:host-failure";
+    *reason = strerror(errno);
+    goto refuse;
+allocation:
+    *kind = "proc:capacity";
+    *reason = "cannot prepare process resources";
+refuse:
+    free(cwd);
+    stop_job(job);
+    return NULL;
+}
+
+static Atom *result(Arena *arena, ProcJob *job) {
+    Atom *termination = job->launch_error
+        ? atom_expr3(arena, atom_symbol(arena, "proc:launch-failed"), atom_int(arena, job->launch_error), atom_symbol(arena, job->launch_stage))
+        : job->waited && WIFEXITED(job->wait_status)
+        ? atom_expr2(arena, atom_symbol(arena, "proc:exited"), atom_int(arena, WEXITSTATUS(job->wait_status)))
+        : job->waited && WIFSIGNALED(job->wait_status)
+        ? atom_expr2(arena, atom_symbol(arena, "proc:signaled"), atom_int(arena, WTERMSIG(job->wait_status)))
+        : atom_symbol(arena, "proc:not-started");
+    Atom *cause = job->cancelled ? atom_symbol(arena, "proc:cancelled") : job->timed_out ? atom_symbol(arena, "proc:timed-out") : job->host_error
+        ? atom_expr2(arena, atom_symbol(arena, "proc:host-failed"), atom_int(arena, job->host_error)) : atom_symbol(arena, "proc:normal");
+    Atom *captures = atom_expr(arena, (Atom *[]){atom_symbol(arena, "proc:capture"),
+        atom_int(arena, (int64_t)job->output[0].kept), atom_int(arena, (int64_t)job->output[0].observed),
+        atom_int(arena, (int64_t)job->output[1].kept), atom_int(arena, (int64_t)job->output[1].observed),
+        atom_symbol(arena, job->output[0].eof ? "proc:eof" : "proc:open"),
+        atom_symbol(arena, job->output[1].eof ? "proc:eof" : "proc:open"),
+        atom_expr3(arena, atom_symbol(arena, "proc:input"),
+            atom_int(arena, (int64_t)job->input_written),
+            atom_int(arena, (int64_t)job->input_len))}, 8u);
+    return atom_expr(arena, (Atom *[]){atom_symbol(arena, "proc:result"), termination, cause,
+        atom_string_n(arena, (char *)(job->output[0].bytes ? job->output[0].bytes : (unsigned char *)""), job->output[0].kept),
+        atom_string_n(arena, (char *)(job->output[1].bytes ? job->output[1].bytes : (unsigned char *)""), job->output[1].kept), captures}, 6u);
+}
+
+static Atom *proc_dispatch(CettaLibraryContext *ctx, Arena *arena, Atom *head, Atom **args, uint32_t nargs, bool *interrupted) {
+    if (atom_is_symbol(head, "__cetta_lib_proc_abort_signal"))
+        return !nargs || (nargs == 1u && args[0]->kind == ATOM_EXPR && !args[0]->expr.len)
+            ? atom_int(arena, SIGABRT)
+            : failed(arena, "proc:invalid-argument", "abort-signal takes no arguments");
+    if (!atom_is_symbol(head, "__cetta_lib_proc_spawn") && !atom_is_symbol(head, "__cetta_lib_proc_poll") &&
+        !atom_is_symbol(head, "__cetta_lib_proc_wait") && !atom_is_symbol(head, "__cetta_lib_proc_status") &&
+        !atom_is_symbol(head, "__cetta_lib_proc_cancel") && !atom_is_symbol(head, "__cetta_lib_proc_close") &&
+        !atom_is_symbol(head, "__cetta_lib_proc_run") && !atom_is_symbol(head, "__cetta_lib_proc_await")) return NULL;
+    if (atom_is_symbol(head, "__cetta_lib_proc_run")) {
+        Atom *owner = proc_dispatch(ctx, arena, atom_symbol(arena, "__cetta_lib_proc_spawn"), args, nargs, interrupted);
+        uint64_t id;
+        if (!cetta_native_handle_arg(owner, "process", &id)) return owner;
+        Atom *observed = proc_dispatch(ctx, arena, atom_symbol(arena, "__cetta_lib_proc_await"), &owner, 1u, interrupted);
+        cetta_native_handle_close(ctx, "process", id);
+        return observed;
+    }
+    if (atom_is_symbol(head, "__cetta_lib_proc_spawn")) {
+        const char *reason = "spawn expects argv and options";
+        const char *kind = "proc:invalid-argument";
+        ProcJob *job = nargs == 2u ? prepare(args[0], args[1], &kind, &reason) : NULL;
+        if (!job) return failed(arena, kind, reason);
+        uint64_t id;
+        if (!cetta_native_handle_alloc(ctx, "process", job, stop_job, &id)) { stop_job(job); return failed(arena, "proc:capacity", "native handle registry is full"); }
+        int error = pthread_create(&job->thread, NULL, execute, job);
+        if (error) { cetta_native_handle_close(ctx, "process", id); return failed(arena, "proc:host-failure", strerror(error)); }
+        job->started = true;
+        return cetta_native_handle_owned_atom(ctx, arena, "process", id);
+    }
+    uint64_t id;
+    bool wait = atom_is_symbol(head, "__cetta_lib_proc_wait");
+    bool await = atom_is_symbol(head, "__cetta_lib_proc_await");
+    if (nargs != (wait ? 2u : 1u) || !cetta_native_handle_arg(args[0], "process", &id)) return failed(arena, "proc:invalid-handle", "expected an owned process handle");
+    ProcJob *job = cetta_native_handle_get(ctx, "process", id);
+    if (!job) return failed(arena, "proc:invalid-handle", "process owner is closed or belongs to another context");
+    if (atom_is_symbol(head, "__cetta_lib_proc_close")) { cetta_native_handle_close(ctx, "process", id); return atom_unit(arena); }
+    if (atom_is_symbol(head, "__cetta_lib_proc_cancel")) {
+        pthread_mutex_lock(&job->lock); job->cancel = true; pthread_mutex_unlock(&job->lock);
+        wake_job(job);
+        return atom_unit(arena);
+    }
+    if (wait && (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT || args[1]->ground.ival < 0)) return failed(arena, "proc:invalid-argument", "wait timeout must be a nonnegative integer");
+    pthread_mutex_lock(&job->lock);
+    while (await && !job->done) {
+        pthread_mutex_unlock(&job->lock);
+        bool cancelled_execution = eval_native_interrupted();
+        pthread_mutex_lock(&job->lock);
+        if (cancelled_execution) {
+            job->cancel = true;
+            wake_job(job);
+            *interrupted = true;
+            break;
+        }
+        struct timespec turn;
+        clock_gettime(CLOCK_MONOTONIC, &turn);
+        turn.tv_nsec += 100000000L;
+        if (turn.tv_nsec >= 1000000000L) { turn.tv_sec++; turn.tv_nsec -= 1000000000L; }
+        int error = pthread_cond_timedwait(&job->changed, &job->lock, &turn);
+        if (error && error != ETIMEDOUT) {
+            pthread_mutex_unlock(&job->lock);
+            return failed(arena, "proc:host-failure", "process wait failed");
+        }
+    }
+    if (wait && !job->done) {
+        uint64_t wait_started = monotonic_ms();
+        uint64_t duration = (uint64_t)args[1]->ground.ival;
+        while (!job->done) {
+            pthread_mutex_unlock(&job->lock);
+            bool cancelled_execution = eval_native_interrupted();
+            pthread_mutex_lock(&job->lock);
+            if (cancelled_execution) {
+                job->cancel = true; wake_job(job); *interrupted = true; break;
+            }
+            /* Compare elapsed durations instead of adding an arbitrary
+             * timeout to time_t. Large waits need no artificial INT cap. */
+            uint64_t elapsed = monotonic_ms() - wait_started;
+            if (elapsed >= duration) break;
+            uint64_t remaining = duration - elapsed;
+            if (remaining > 100u) remaining = 100u;
+            struct timespec turn;
+            clock_gettime(CLOCK_MONOTONIC, &turn);
+            turn.tv_nsec += (long)remaining * 1000000L;
+            if (turn.tv_nsec >= 1000000000L) { turn.tv_sec++; turn.tv_nsec -= 1000000000L; }
+            int error = pthread_cond_timedwait(&job->changed, &job->lock, &turn);
+            if (error && error != ETIMEDOUT) {
+                pthread_mutex_unlock(&job->lock);
+                return failed(arena, "proc:host-failure", "process wait failed");
+            }
+        }
+    }
+    Atom *value;
+    if (atom_is_symbol(head, "__cetta_lib_proc_status")) value = atom_symbol(arena, job->consumed ? "proc:consumed" : job->done ? "proc:ready" : "proc:pending");
+    else if (job->consumed) value = failed(arena, "proc:already-consumed", "process completion was already taken");
+    else if (!job->done) value = atom_symbol(arena, "proc:pending");
+    else { value = result(arena, job); job->consumed = true; }
+    pthread_mutex_unlock(&job->lock);
+    return value;
+}
+
+bool cetta_proc_call(CettaLibraryContext *ctx, Arena *arena, Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
+    bool interrupted = false;
+    Atom *value = proc_dispatch(ctx, arena, head, args, nargs, &interrupted);
+    if (!value) return false;
+    *out = interrupted ? cetta_call_interrupted() : cetta_call_completed_value(value);
+    return true;
 }

@@ -23,6 +23,8 @@ typedef struct {
 } PrimeReplayResourceWord;
 typedef struct {
     Arena storage;
+    /* Arena names can be reused; freshness is relative to this incarnation. */
+    uint64_t storage_initial_epoch;
     PrimeNativeOwnedTopRequest top;
     OutcomeSet pending;
     ResultSet results;

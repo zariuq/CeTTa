@@ -1,0 +1,29 @@
+Module Recipes {
+  Theory SignatureOnly() {
+    Empty Exports { Opaque; }
+  }
+  Theory Simple() {
+    Empty
+      Exports { T; }
+      Terms {
+        A . T ::= "A";
+        B . T ::= "B";
+        Pair . T ::= "(" T "," T ")";
+      }
+      Equations { (Pair x y) == (Pair x y); }
+      Rewrites { Step: (A) ~> (B); }
+  }
+  Theory Renamed(s: Simple) {
+    s Replacements {
+      [] A . T => C . T ::= "C";
+      [] B . T => D . T ::= "D";
+    }
+  }
+  Theory Example() {
+    let s = Simple() in (Renamed(s))
+  }
+  Theory Ambiguous() {
+    Empty Terms { Same . S ::= "x"; Same . S ::= "x"; }
+  }
+  theory Example()
+}

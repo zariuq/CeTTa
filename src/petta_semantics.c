@@ -849,6 +849,11 @@ static Atom *petta_error_term(Arena *arena, Atom *formal, Atom *context) {
     return formal && context ? atom_error(arena, formal, context) : NULL;
 }
 
+Atom *petta_semantics_empty_head_error(Arena *arena) {
+    return arena ? petta_error_term(arena, atom_symbol(arena, "car_atom_empty"),
+                                   atom_symbol(arena, "car-atom")) : NULL;
+}
+
 static Atom *petta_error_unbound_context(Arena *arena) {
     return atom_var_with_id(arena, "_", fresh_var_id());
 }
@@ -1136,6 +1141,15 @@ Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
     Atom *head = atom_symbol(arena, "literal_type_mismatch");
     Atom *formal = head ? atom_expr3(arena, head, value, type) : NULL;
     return petta_error_term(arena, formal, atom_symbol(arena, "typecheck"));
+}
+
+bool petta_semantics_contract_error(Atom *error) {
+    if (!atom_is_error(error) || error->expr.len != 3u)
+        return false;
+    Atom *formal = error->expr.elems[1];
+    return formal->kind == ATOM_EXPR && formal->expr.len == 3u &&
+        atom_is_symbol(formal->expr.elems[0], "literal_type_mismatch") &&
+        atom_is_symbol(error->expr.elems[2], "typecheck");
 }
 
 Atom *petta_semantics_no_matching_overload_error(Arena *arena,

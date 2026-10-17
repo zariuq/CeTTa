@@ -1,0 +1,7 @@
+(: later (-> Number Number))
+(: caller (-> Number %Undefined%))
+(= (caller $x) (later $x))
+!(caller 41)
+!(add-atom &self (= (later $x) (+ $x 1)))
+!(later 41)
+!(caller 41)

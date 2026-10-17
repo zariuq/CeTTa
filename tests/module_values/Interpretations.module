@@ -1,0 +1,84 @@
+Module Interpretations {
+  Theory Required() {
+    Empty Exports { T; } Terms {
+      A . T ::= "a";
+      B . T ::= "b";
+      Pair . T ::= "(" T "," T ")";
+    }
+    Equations { (Pair left right) == (Pair right left); }
+    Rewrites { Step: (A) ~> (B); }
+  }
+  Theory Use(argument: Required) { argument }
+  Theory Extra() {
+    Required() Terms { C . T ::= "c"; }
+      Rewrites { More: (B) ~> (C); }
+  }
+  Theory DifferentNotation() {
+    Required() Replacements {
+      [] A . T => A . T ::= "zero";
+      [] B . T => B . T ::= "one";
+    }
+  }
+  Theory Renamed() {
+    Required() Replacements {
+      [] A . T => Z . T ::= "zero";
+      [] B . T => S . T ::= "one";
+    }
+  }
+  Theory Adapt(argument: Renamed) {
+    argument Replacements {
+      [] Z . T => A . T ::= "zero";
+      [] S . T => B . T ::= "one";
+    }
+  }
+  Theory MissingEquation() {
+    Empty Exports { T; } Terms {
+      A . T ::= "a";
+      B . T ::= "b";
+      Pair . T ::= "(" T "," T ")";
+    } Rewrites { Step: (A) ~> (B); }
+  }
+  Theory AlternateLawName() {
+    Empty Exports { T; } Terms {
+      A . T ::= "a";
+      B . T ::= "b";
+      Pair . T ::= "(" T "," T ")";
+    }
+    Equations { (Pair left right) == (Pair right left); }
+    Rewrites { AnotherName: (A) ~> (B); }
+  }
+  Theory WrongDirection() {
+    Empty Exports { T; } Terms {
+      A . T ::= "a";
+      B . T ::= "b";
+      Pair . T ::= "(" T "," T ")";
+    }
+    Equations { (Pair left right) == (Pair right left); }
+    Rewrites { Step: (B) ~> (A); }
+  }
+  Theory DifferentStep() {
+    MissingEquation()
+      Equations { (Pair left right) == (Pair right left); }
+      Replacements { [] B . T => C . T ::= "c"; }
+  }
+  Theory Example() { Use(Adapt(Renamed())) }
+  Theory Binding() {
+    Empty Terms { Lam . T ::= "lam" (Bind x T) "." (x)T; }
+  }
+  Theory BindingNotation() {
+    Binding() Replacements {
+      [0,1] Lam . T => Abs . T ::= "fun" (Bind x T) "->" (x)T;
+    }
+  }
+  Theory EraseBinding() {
+    Binding() Replacements {
+      [0,1] Lam . T => Plain . T ::= "plain" T "." T;
+    }
+  }
+  Theory RenameBinder() {
+    Binding() Replacements {
+      [0,1] Lam . T => Abs . T ::= "fun" (Bind y T) "->" (y)T;
+    }
+  }
+  theory Example()
+}

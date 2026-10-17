@@ -287,6 +287,7 @@ static bool prime_replay_frame_begin(PrimeReplayRequestFrame *frame,uint64_t all
     /* The actual auxiliary ledger is allocated after this request frontier. */
     prime_replay_issuance(&frame->begin);
     arena_init_detached(&frame->storage);arena_set_hashcons(&frame->storage,NULL);
+    frame->storage_initial_epoch=frame->storage.reset_epoch;
     prime_replay_checkpoint_init(&frame->entry);prime_replay_checkpoint_init(&frame->post);
     outcome_set_init_with_owner(&frame->pending,&frame->storage);
     result_set_init(&frame->results);cetta_native_cost_init(&frame->physical);
@@ -395,7 +396,8 @@ static bool prime_replay_resource_word_open(PrimeReplayCapsule *capsule,
     const Arena *source=&control->storage;
     const Arena *persistent=capsule->sources.persistent;
     if(!prime_replay_sources_current(&capsule->sources)||!source->identity||
-        !image->identity||image->reset_epoch!=1u||image->head||image->spare||
+        !image->identity||image->reset_epoch!=frame->storage_initial_epoch||
+        image->head||image->spare||
         image->hashcons||image->symbol_cache||image->persistent_bytes||image->live_bytes||
         image->external_bytes||image->reserved_bytes||image->spare_bytes||
         image->block_count||image->spare_block_count||image->older_identity||

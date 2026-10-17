@@ -397,6 +397,13 @@ typedef struct {
     /* Explicit dependent domains belong to the active language profile,
      * not to the shared declaration cache or residual-type analysis. */
     bool dependent_type_domains;
+    /* The 1.1 PeTTa law: car-atom of () raises; earlier versions return (). */
+    bool raises_empty_car;
+    /* petta@1.1.c's call contracts: a typed call checks a position whose
+     * declared type is not a variable, its check commits to its first
+     * answer and raises the language's type error when it has none, and no
+     * run-time dispatch recovers that error. */
+    bool call_contracts;
     /* HE gives `if` equations only for True and False, so a condition that
      * is neither leaves the call itself, branches unevaluated, as its value.
      * PeTTa takes any other condition value as false. */
@@ -407,6 +414,11 @@ typedef struct {
      * reads a collected value so. */
     bool (*collected_value_reducible)(void *context, Space *space,
                                       Atom *value);
+    /* The aggregate of a call of one of HE's library collection functions
+     * whose library equation is in force (`unique` and the like), or
+     * SYMBOL_ID_NONE: the machine runs the call as that definition, with
+     * the arguments in place. */
+    SymbolId (*he_library_stream)(void *context, Space *space, Atom *call);
     /* No computation of this run has an effect, so a completed producer may
      * hand its successes on as they arrive and hold back only its errors:
      * the completed answers, normalized, are the same. */
@@ -566,7 +578,8 @@ typedef struct {
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
     const PettaPlanNode *(*translate_source)(
-        void *context, Space *space, Atom *expression);
+        void *context, Space *space, Atom *expression,
+        const Arena *const *source_arenas, size_t source_arena_count);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
@@ -960,6 +973,11 @@ bool petta_machine_init(
 /* Its driver takes every answer of this machine before anything consumes
  * them, as a collection or a completed evaluation does. */
 void petta_machine_set_answers_collected_whole(PettaMachine *machine);
+/* Change capture admission only at a suspended work boundary. Existing
+ * producers still have to satisfy the provider capture contract. */
+void petta_machine_set_branch_capture(
+    PettaMachine *machine,
+    CettaBranchAdmission (*admit)(void *context, Space *space));
 bool petta_machine_init_with_plan(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
@@ -1044,6 +1062,8 @@ void petta_machine_destroy(PettaMachine *machine);
  * Unsupported foreign/cursor owners remain explicit incomplete observations. */
 void petta_machine_storage_census(
     const PettaMachine *machine, CettaStorageCensus *census);
+/* The bytes the machine holds now: its heap and its tenured store. */
+size_t petta_machine_retained_bytes(const PettaMachine *machine);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the
  * head it names, or every head for `*`. */
 bool petta_machine_query_traced(SymbolId head);

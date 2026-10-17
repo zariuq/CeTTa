@@ -418,12 +418,21 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_getenv_or_default, "__cetta_lib_system_getenv_or_default") \
     X(lib_system_is_flag_arg, "__cetta_lib_system_is_flag_arg") \
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
+    X(lib_system_write, "__cetta_lib_system_write") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
     X(lib_system_host, "__cetta_lib_system_host") \
     X(lib_system_read_line, "__cetta_lib_system_read_line") \
     X(lib_fs_tail_text, "__cetta_lib_fs_tail_text") \
     X(lib_fs_entries, "__cetta_lib_fs_entries") \
+    X(lib_proc_spawn, "__cetta_lib_proc_spawn") \
+    X(lib_proc_poll, "__cetta_lib_proc_poll") \
+    X(lib_proc_wait, "__cetta_lib_proc_wait") \
+    X(lib_proc_status, "__cetta_lib_proc_status") \
+    X(lib_proc_cancel, "__cetta_lib_proc_cancel") \
+    X(lib_proc_close, "__cetta_lib_proc_close") \
+    X(lib_proc_abort_signal, "__cetta_lib_proc_abort_signal") \
+    X(lib_proc_await, "__cetta_lib_proc_await") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
@@ -708,7 +717,15 @@ static inline SymbolSpelling symbol_spelling(
     X(pat_case_forward, "pat:case%") \
     X(pat_is_instance, "pat:is-instance") \
     X(pat_is_variant, "pat:is-variant") \
-    X(subtype, ":<")
+    X(subtype, ":<") \
+    X(work_new, "work-new") \
+    X(work_take, "work-take") \
+    X(work_budget, "work-budget") \
+    X(work_cancel, "work-cancel") \
+    X(work_record, "work-record") \
+    X(work_route, "work-route") \
+    X(work_count, "work-count") \
+    X(work_exists, "work-exists")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

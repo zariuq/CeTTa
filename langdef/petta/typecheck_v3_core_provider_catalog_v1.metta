@@ -7,4 +7,6 @@
   (provider KnownExpressionEffect 2
     "petta.typecheck-v2.expression.effect.v1")
   (provider KnownExpressionResultType 2
-    "petta.typecheck-v2.expression.result-type.v1"))
+    "petta.typecheck-v2.expression.result-type.v1")
+  (provider KnownBuiltinCardinalityRule 3
+    "petta.builtin.cardinality-rule.v1"))

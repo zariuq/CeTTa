@@ -40,6 +40,22 @@ void snode_free(SubstNode *n) {
         for (uint32_t i = 0; i < n->nints; i++) snode_free(n->ints[i].child);
         free(n->ints);
     }
+    if (n->text_hashed) {
+        uint32_t cap = n->text_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++) {
+            if (!n->text_ht.entries[i].child)
+                continue;
+            snode_free(n->text_ht.entries[i].child);
+            free(n->text_ht.entries[i].bytes);
+        }
+        free(n->text_ht.entries);
+    } else {
+        for (uint32_t i = 0; i < n->ntext; i++) {
+            snode_free(n->text[i].child);
+            free(n->text[i].bytes);
+        }
+        free(n->text);
+    }
     for (CettaIndex i = 0u; i < n->nleaves; i++)
         if (n->leaves[i].owns_identity)
             cetta_frame_identity_release(n->leaves[i].epoch);
@@ -69,6 +85,21 @@ static void snode_storage_visit(const void *raw, CettaStorageCensus *c) {
     } else {
         cetta_storage_array(c, n->ints, n->cints, sizeof(*n->ints), 0u);
         for (uint32_t i = 0u; i < n->nints; i++) snode_storage_census(n->ints[i].child, c);
+    }
+    if (n->text_hashed) {
+        cetta_storage_array(c, n->text_ht.entries, (size_t)n->text_ht.mask + 1u, sizeof(*n->text_ht.entries), 0u);
+        for (size_t i = 0u; i <= n->text_ht.mask; i++) {
+            const SubstTextBranch *branch = &n->text_ht.entries[i];
+            if (!branch->child) continue;
+            cetta_storage_array(c, branch->bytes, (size_t)branch->len + 1u, 1u, 0u);
+            snode_storage_census(branch->child, c);
+        }
+    } else {
+        cetta_storage_array(c, n->text, n->ctext, sizeof(*n->text), 0u);
+        for (uint32_t i = 0u; i < n->ntext; i++) {
+            cetta_storage_array(c, n->text[i].bytes, (size_t)n->text[i].len + 1u, 1u, 0u);
+            snode_storage_census(n->text[i].child, c);
+        }
     }
     cetta_storage_array(c, n->leaves, n->cleaves, sizeof(*n->leaves), 0u);
 }
@@ -142,6 +173,21 @@ static CettaCount snode_transport_stable_coordinates(
         for (uint32_t i = 0u; i < node->nints; i++) {
             removed += snode_transport_stable_coordinates(
                 node->ints[i].child, source_to_target, source_len, retained);
+        }
+    }
+    if (node->text_hashed) {
+        uint32_t cap = node->text_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->text_ht.entries[i].child) {
+                removed += snode_transport_stable_coordinates(
+                    node->text_ht.entries[i].child, source_to_target,
+                    source_len, retained);
+            }
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->ntext; i++) {
+            removed += snode_transport_stable_coordinates(
+                node->text[i].child, source_to_target, source_len, retained);
         }
     }
     return removed;
@@ -339,6 +385,121 @@ static void snode_int_promote(SubstNode *n) {
     n->int_hashed = true;
 }
 
+/* ── Text key helpers ──────────────────────────────────────────────────────
+ * The same flat-array/open-addressing split as symbols and integers, keyed
+ * by content hash and confirmed by comparing the bytes. */
+
+typedef struct {
+    const uint8_t *bytes;
+    uint32_t len;
+    uint64_t hash;
+} SubstTextKey;
+
+static bool subst_text_key(const char *bytes, size_t len, SubstTextKey *out) {
+    if (!bytes || len > UINT32_MAX)
+        return false;
+    out->bytes = (const uint8_t *)bytes;
+    out->len = (uint32_t)len;
+    out->hash = symbol_hash_span(out->bytes, out->len);
+    return true;
+}
+
+/* The key of a string, bigint or rational atom, borrowed from the atom. */
+static bool subst_text_key_of_atom(const Atom *a, SubstTextKey *out) {
+    const char *text = NULL;
+    size_t len = 0u;
+    switch (a->ground.gkind) {
+    case GV_STRING:
+        text = a->ground.sval;
+        len = a->ground.slen;
+        break;
+    case GV_BIGINT:
+        text = atom_bigint_cstr(a);
+        len = text ? strlen(text) : 0u;
+        break;
+    case GV_RATIONAL:
+        text = atom_rational_cstr(a);
+        len = text ? strlen(text) : 0u;
+        break;
+    default:
+        return false;
+    }
+    return subst_text_key(text, len, out);
+}
+
+static inline bool subst_text_branch_is(const SubstTextBranch *branch,
+                                        const SubstTextKey *key) {
+    return branch->hash == key->hash && branch->len == key->len &&
+           (key->len == 0u || memcmp(branch->bytes, key->bytes, key->len) == 0);
+}
+
+static void text_ht_init(TextHashTable *ht, uint32_t min_cap) {
+    uint32_t cap = 32;
+    if (min_cap > UINT32_MAX / 2u) {
+        fputs("CeTTa: text substitution index capacity exhausted\n", stderr);
+        abort();
+    }
+    while (cap < min_cap * 2u)
+        cap *= 2u;
+    ht->entries = cetta_malloc(sizeof(SubstTextBranch) * cap);
+    memset(ht->entries, 0, sizeof(SubstTextBranch) * cap);
+    ht->mask = cap - 1;
+    ht->count = 0;
+}
+
+static SubstTextBranch *text_ht_slot(TextHashTable *ht,
+                                     const SubstTextKey *key) {
+    uint32_t idx = (uint32_t)(key->hash ^ (key->hash >> 32)) & ht->mask;
+    while (ht->entries[idx].child && !subst_text_branch_is(&ht->entries[idx], key))
+        idx = (idx + 1) & ht->mask;
+    return &ht->entries[idx];
+}
+
+/* Moves an existing branch (its bytes included) into a table that lacks it. */
+static void text_ht_put(TextHashTable *ht, SubstTextBranch branch) {
+    if ((uint64_t)(ht->count + 1u) * 10u > (uint64_t)(ht->mask + 1u) * 7u) {
+        uint32_t old_cap = ht->mask + 1;
+        SubstTextBranch *old = ht->entries;
+        if (old_cap > UINT32_MAX / 2u) {
+            fputs("CeTTa: text substitution index capacity exhausted\n", stderr);
+            abort();
+        }
+        ht->entries = cetta_malloc(sizeof(SubstTextBranch) * old_cap * 2u);
+        memset(ht->entries, 0, sizeof(SubstTextBranch) * old_cap * 2u);
+        ht->mask = old_cap * 2u - 1u;
+        ht->count = 0;
+        for (uint32_t i = 0; i < old_cap; i++)
+            if (old[i].child)
+                text_ht_put(ht, old[i]);
+        free(old);
+    }
+    SubstTextKey key = {branch.bytes, branch.len, branch.hash};
+    *text_ht_slot(ht, &key) = branch;
+    ht->count++;
+}
+
+static void snode_text_promote(SubstNode *n) {
+    text_ht_init(&n->text_ht, n->ntext + 16u);
+    for (uint32_t i = 0; i < n->ntext; i++)
+        text_ht_put(&n->text_ht, n->text[i]);
+    free(n->text);
+    n->text = NULL;
+    n->ctext = 0;
+    n->text_hashed = true;
+}
+
+/* A lookup reads the key in place and allocates nothing. */
+static SubstNode *snode_find_text(SubstNode *n, const SubstTextKey *key) {
+    if (n->text_hashed) {
+        SubstTextBranch *slot = text_ht_slot(&n->text_ht, key);
+        return slot->child;
+    }
+    for (uint32_t i = 0; i < n->ntext; i++)
+        if (subst_text_branch_is(&n->text[i], key))
+            return n->text[i].child;
+    return NULL;
+}
+
 /* ── Branch helpers ────────────────────────────────────────────────────── */
 
 static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
@@ -421,6 +582,30 @@ static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
     return child;
 }
 
+static SubstNode *snode_get_text(SubstNode *n, const SubstTextKey *key) {
+    SubstNode *existing = snode_find_text(n, key);
+    if (existing)
+        return existing;
+    uint8_t *bytes = cetta_malloc((size_t)key->len + 1u);
+    if (key->len)
+        memcpy(bytes, key->bytes, key->len);
+    bytes[key->len] = 0u;
+    SubstTextBranch branch = {key->hash, bytes, key->len, snode_new()};
+    if (n->text_hashed) {
+        text_ht_put(&n->text_ht, branch);
+        n->ntext++;
+        return branch.child;
+    }
+    if (n->ntext >= n->ctext) {
+        n->ctext = n->ctext ? n->ctext * 2 : 4;
+        n->text = cetta_realloc(n->text, sizeof(n->text[0]) * n->ctext);
+    }
+    n->text[n->ntext++] = branch;
+    if (n->ntext > SNODE_HASH_THRESHOLD)
+        snode_text_promote(n);
+    return branch.child;
+}
+
 static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
     if (n->nleaves >= n->cleaves) {
         n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
@@ -468,15 +653,10 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
             if (a->ground.gkind != GV_STRING)
                 atomic_store_explicit(&g_st_exact_number_keys, true,
                                       memory_order_release);
-            SymbolId string_id = a->ground.gkind == GV_STRING
-                ? symbol_intern_bytes(g_symbols,
-                                      (const uint8_t *)a->ground.sval,
-                                      a->ground.slen)
-                : symbol_intern_cstr(g_symbols,
-                                     a->ground.gkind == GV_BIGINT
-                                         ? atom_bigint_cstr(a)
-                                         : atom_rational_cstr(a));
-            return snode_get_sym(node, string_id);
+            SubstTextKey key;
+            if (subst_text_key_of_atom(a, &key))
+                return snode_get_text(node, &key);
+            return snode_get_grounded_placeholder(node);
         }
         return snode_get_var(node,
                              g_var_intern ? var_intern(g_var_intern,
@@ -540,17 +720,26 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                 atomic_store_explicit(&g_st_exact_number_keys, true,
                                       memory_order_release);
             /* The key a string has in the atom paths: its bytes, NUL included. */
-            SymbolId string_id = tu_ground_kind(universe, atom_id) == GV_STRING
-                ? symbol_intern_bytes(
-                      g_symbols,
-                      (const uint8_t *)tu_string_cstr(universe, atom_id),
-                      tu_string_len(universe, atom_id))
-                : symbol_intern_cstr(
-                      g_symbols,
-                      tu_ground_kind(universe, atom_id) == GV_BIGINT
-                          ? tu_bigint_cstr(universe, atom_id)
-                          : tu_rational_cstr(universe, atom_id));
-            return snode_get_sym(node, string_id);
+            const char *text = NULL;
+            size_t len = 0u;
+            switch (tu_ground_kind(universe, atom_id)) {
+            case GV_STRING:
+                text = tu_string_cstr(universe, atom_id);
+                len = tu_string_len(universe, atom_id);
+                break;
+            case GV_BIGINT:
+                text = tu_bigint_cstr(universe, atom_id);
+                len = text ? strlen(text) : 0u;
+                break;
+            default:
+                text = tu_rational_cstr(universe, atom_id);
+                len = text ? strlen(text) : 0u;
+                break;
+            }
+            SubstTextKey key;
+            if (subst_text_key(text, len, &key))
+                return snode_get_text(node, &key);
+            return snode_get_grounded_placeholder(node);
         }
         return snode_get_var(node,
                              g_var_intern ? var_intern(g_var_intern,
@@ -809,8 +998,8 @@ static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoc
 
 /* Flat token for depth-first query encoding */
 typedef struct {
-    enum { FT_SYM, FT_VAR, FT_EXPR, FT_INT, FT_GROUNDED_OTHER } kind;
-    union { SymbolId sym_id; CettaExprLen arity; int64_t ival; };
+    enum { FT_SYM, FT_VAR, FT_EXPR, FT_INT, FT_TEXT, FT_GROUNDED_OTHER } kind;
+    union { SymbolId sym_id; CettaExprLen arity; int64_t ival; SubstTextKey text; };
     VarId var_id;
     Atom *original;
 } FlatToken;
@@ -904,15 +1093,11 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
         }
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
             a->ground.gkind == GV_RATIONAL) {
-            SymbolId string_id = a->ground.gkind == GV_STRING
-                ? symbol_intern_bytes(g_symbols,
-                                      (const uint8_t *)a->ground.sval,
-                                      a->ground.slen)
-                : symbol_intern_cstr(g_symbols,
-                                     a->ground.gkind == GV_BIGINT
-                                         ? atom_bigint_cstr(a)
-                                         : atom_rational_cstr(a));
-            buf[pos] = (FlatToken){.kind = FT_SYM, .sym_id = string_id, .original = a};
+            /* A key the index lacks matches only indexed variables. */
+            SubstTextKey key;
+            buf[pos] = subst_text_key_of_atom(a, &key)
+                ? (FlatToken){.kind = FT_TEXT, .text = key, .original = a}
+                : (FlatToken){.kind = FT_GROUNDED_OTHER, .original = a};
             return pos + 1;
         }
         buf[pos] = (FlatToken){.kind = FT_GROUNDED_OTHER, .original = a};
@@ -986,33 +1171,26 @@ static void st_follow_he_float_ints(SubstNode *node, double fval,
     }
 }
 
-/* A bigint or rational fact sits on the symbol branch of its text, so an HE
- * float query also follows the branch of its own exact value, if one exists. */
+/* A bigint or rational fact sits on the text branch of its canonical text,
+ * so an HE float query also follows the branch of its own exact value, if
+ * one exists. */
 static void st_follow_he_float_exact_key(SubstNode *node, double fval,
                                          FlatToken *flat, CettaIndex nflat,
                                          CettaIndex idx, BindingsBuilder *bb,
                                          Arena *a, Atom **atoms,
                                          SubstMatchSet *out) {
     if (!atomic_load_explicit(&g_st_exact_number_keys, memory_order_acquire) ||
-        (node->nsym == 0u && !node->sym_hashed))
+        node->ntext == 0u)
         return;
     char *text = cetta_he_float_exact_key_text(fval);
     if (!text)
         return;
-    SymbolId key = symbol_lookup_cstr(g_symbols, text);
+    SubstTextKey key;
+    SubstNode *match = subst_text_key(text, strlen(text), &key)
+        ? snode_find_text(node, &key) : NULL;
     free(text);
-    if (key == SYMBOL_ID_NONE)
-        return;
-    if (node->sym_hashed) {
-        SubstNode *match = sym_ht_get(&node->sym_ht, key);
-        if (match)
-            st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
-        return;
-    }
-    for (uint32_t i = 0; i < node->nsym; i++)
-        if (node->sym[i].key == key)
-            st_flat_walk(node->sym[i].child, flat, nflat, idx + 1,
-                         bb, a, atoms, out);
+    if (match)
+        st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
 }
 
 static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
@@ -1043,7 +1221,16 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
 
     switch (tok->kind) {
     case FT_SYM:
-        if (node->sym_hashed) {
+    case FT_TEXT:
+        if (tok->kind == FT_TEXT) {
+            SubstNode *match = snode_find_text(node, &tok->text);
+            if (match)
+                st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
+        } else if (tok->sym_id == SYMBOL_ID_NONE) {
+            /* An unnumbered symbol keys no symbol branch (SYMBOL_ID_NONE
+             * marks an empty hash slot); insertion files it under the
+             * placeholder, which the variable loop below visits. */
+        } else if (node->sym_hashed) {
             SubstNode *match = sym_ht_get(&node->sym_ht, tok->sym_id);
             if (match)
                 st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
@@ -1053,7 +1240,7 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
                     st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
                                  bb, a, atoms, out);
         }
-        /* Indexed variable matches query symbol */
+        /* Indexed variable matches query symbol or text */
         for (uint32_t i = 0; i < node->nvars; i++) {
             uint32_t mark = bindings_builder_save(bb);
             if (st_bind_indexed_var(
@@ -1093,6 +1280,17 @@ static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
             } else {
                 for (uint32_t i = 0; i < node->nints; i++)
                     st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
+                                 bb, a, atoms, out);
+            }
+            if (node->text_hashed) {
+                uint32_t cap = node->text_ht.mask + 1;
+                for (uint32_t i = 0; i < cap; i++)
+                    if (node->text_ht.entries[i].child)
+                        st_flat_walk(node->text_ht.entries[i].child, flat, nflat,
+                                     idx+1, bb, a, atoms, out);
+            } else {
+                for (uint32_t i = 0; i < node->ntext; i++)
+                    st_flat_walk(node->text[i].child, flat, nflat, idx+1,
                                  bb, a, atoms, out);
             }
             /* Expression branches: skip arity MORE tokens after arity branch */
@@ -1212,6 +1410,17 @@ static void st_flat_skip(SubstNode *node, CettaIndex remaining,
     } else {
         for (uint32_t i = 0; i < node->nints; i++)
             st_flat_skip(node->ints[i].child, remaining - 1,
+                         flat, nflat, resume_idx, bb, a, atoms, out);
+    }
+    if (node->text_hashed) {
+        uint32_t cap = node->text_ht.mask + 1;
+        for (uint32_t i = 0; i < cap; i++)
+            if (node->text_ht.entries[i].child)
+                st_flat_skip(node->text_ht.entries[i].child, remaining - 1,
+                             flat, nflat, resume_idx, bb, a, atoms, out);
+    } else {
+        for (uint32_t i = 0; i < node->ntext; i++)
+            st_flat_skip(node->text[i].child, remaining - 1,
                          flat, nflat, resume_idx, bb, a, atoms, out);
     }
     for (uint32_t i = 0; i < node->nexpr; i++)

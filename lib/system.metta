@@ -52,6 +52,10 @@
      (case (__cetta_lib_system_exit_with_code $code)
        (($result (return $result))))))
 
+(= (system:write $stream $bytes)
+   (function (case (__cetta_lib_system_write $stream $bytes)
+       (($result (return $result))))))
+
 (= (system:cwd)
    (function
      (case (__cetta_lib_system_cwd ())

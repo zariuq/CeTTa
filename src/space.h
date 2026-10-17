@@ -114,7 +114,9 @@ typedef struct {
 } EqHeadSet;
 
 typedef struct {
-    EqBucket buckets[EQ_INDEX_BUCKETS];
+    /* EQ_INDEX_BUCKETS buckets, allocated when the first headed equation is
+     * filed; until then every bucket reads as empty. */
+    EqBucket *buckets;
     EqBucket wildcard; /* equations with variable/structured LHS head */
     /* Each exact head's equations.  Bucket collisions in the pattern index
      * must not turn a head-scoped question into a scan of colliding rows. */
@@ -138,15 +140,42 @@ typedef struct {
     bool has_non_symbol_subjects;
 } TypeAnnIndex;
 
-#define EXACT_INDEX_BUCKETS 4096
+/* One exact row: its AtomId and its position, in 32 bits each while every
+ * id and row fits there (UINT32_MAX marks an empty narrow slot), in 64 bits
+ * otherwise (CETTA_ATOM_ID_NONE marks an empty wide slot).  A row occurring
+ * several times holds one slot per occurrence. */
+typedef struct {
+    uint32_t id;
+    uint32_t row;
+} ExactAtomNarrowSlot;
 
 typedef struct {
-    CettaIndex *indices;
-    CettaIndex len, cap;
-} ExactAtomBucket;
+    AtomId id;
+    CettaIndex row;
+} ExactAtomSlot;
 
+/* How many non-exact rows (rows with variables, among others) one head
+ * symbol leads. */
 typedef struct {
-    ExactAtomBucket buckets[EXACT_INDEX_BUCKETS];
+    SymbolId head;      /* SYMBOL_ID_NONE marks an empty slot */
+    CettaCount rows;
+} ExactIndexInexactHead;
+
+/* Exact rows by AtomId, in a table that grows with the space (linear
+ * probing, a row per slot), built by its first reader.  The rows the index
+ * cannot hold, the non-exact ones, are counted by head symbol instead, and
+ * apart when they have none: a ground pattern whose head counts none, while
+ * no non-exact row lacks a head, can match only an exact row, and only by
+ * being it. */
+typedef struct {
+    void *slots;                    /* NULL until the first exact row */
+    size_t mask;                    /* slot count - 1 */
+    size_t used;
+    bool wide;                      /* ExactAtomSlot, else ExactAtomNarrowSlot */
+    ExactIndexInexactHead *inexact_heads;
+    size_t inexact_head_mask;
+    size_t inexact_head_used;
+    CettaCount inexact_unheaded;
 } ExactAtomIndex;
 
 typedef enum {
@@ -279,6 +308,8 @@ typedef struct Space {
     /* Unique stamp of changes read through the live module handles.
        Dependency appends change this, but preserve the storage prefix. */
     uint64_t module_dependency_epoch;
+    /* Charged to the resource ledger's space gauges at initialization. */
+    bool ledger_counted;
 } Space;
 
 /* NativeFlatWorldV1. Source headers, their TermUniverse generation and the
@@ -313,6 +344,18 @@ bool space_checkpoint_native_copy(const Space *source, Space *destination,
     bool *destination_ready, SpaceCheckpointBudget *);
 bool space_checkpoint_native_compare(const Space *, const Space *,
     CettaCheckpointCompare *, SpaceCheckpointBudget *);
+
+#ifdef CETTA_TEST_HOOKS
+/* The exact-membership index, observed by its sizing tests: its slot count
+ * (0 while no reader has built it), the rows it files, whether it is
+ * current, how many tables were built to resize one, and how many of the
+ * next table allocations fail as an exhausted allocator would. */
+size_t space_exact_index_test_slots(const Space *s);
+size_t space_exact_index_test_used(const Space *s);
+bool space_exact_index_test_current(const Space *s);
+size_t space_exact_index_test_resizes(void);
+void space_exact_index_test_refuse(size_t allocations);
+#endif
 
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
@@ -840,6 +883,15 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
+/* Whether every row that could match the ground expression `pattern` is an
+ * exact row, read from the exact index's count of the other rows by head
+ * symbol.  False when the index cannot answer: an overlay, a backend-primary
+ * space, or a stale index it may not rebuild here (inside a deferral window,
+ * or while rows are marked). */
+bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* The rows holding a ground pattern, ascending, read from a current exact
+ * index without settling marks: physical rows while rows are marked. */
+CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
 void space_begin_secondary_index_deferral(Space *s);
 void space_end_secondary_index_deferral(Space *s);
 
@@ -1182,6 +1234,14 @@ bool space_remove_occurrence_mask_stable(
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
+/* Native candidate selection through borrowed expression coordinates. Reads
+ * finish before return; only candidate coordinates escape. False leaves the
+ * caller on its ordinary query route. Order and duplicate row occurrences
+ * remain those of space_match_candidates64. */
+bool space_match_candidates_expression_coordinates64(
+    Space *s, Atom **coordinates, CettaExprLen length,
+    CettaIndex **out, CettaIndex *count);
+
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
 /* Native flat-match aggregations; false leaves the caller on ordinary search.
@@ -1273,6 +1333,9 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
 bool space_query_is_connective(const Atom *pattern);
+/* Whether a match pattern may be flattened into one leg of a chain: not a
+ * connective, and neither a variable nor headed by one. */
+bool space_query_can_flatten(const Atom *pattern);
 bool space_query_bindings(Space *space, Arena *arena, Atom *pattern,
                           const Bindings *seed, BindingSet *out);
 

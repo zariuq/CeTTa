@@ -267,9 +267,9 @@ int main(void) {
             CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
             &compiled_language, error, sizeof(error));
     CHECK(reference_language_loaded && compiled_language_loaded &&
-              cetta_gslt_language_semantic_rule_count(reference_language) == 176u &&
-              cetta_gslt_language_semantic_rule_count(compiled_language) == 176u,
-          "the isolated profile loads all 176 generated fragment rules");
+              cetta_gslt_language_semantic_rule_count(reference_language) == 175u &&
+              cetta_gslt_language_semantic_rule_count(compiled_language) == 175u,
+          "the isolated profile loads all 175 generated fragment rules");
     if (reference_language_loaded && compiled_language_loaded) {
         check_admitted_entry(
             reference_language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,

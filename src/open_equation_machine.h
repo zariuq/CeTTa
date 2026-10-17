@@ -46,6 +46,14 @@
 #include "space.h"
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
+
+/* A body entry assumes its caller installed the call protocol; a ready
+ * entry installs that protocol over already evaluated arguments. */
+typedef enum {
+    CETTA_OPEN_ENTRY_BODY_VALUE,
+    CETTA_OPEN_ENTRY_BODY_DATA,
+    CETTA_OPEN_ENTRY_READY_CALL
+} CettaOpenEquationEntryKind;
 typedef struct CettaOpenEquationCursor CettaOpenEquationCursor;
 struct PettaProgram;
 struct PettaPlanNode;
@@ -110,6 +118,16 @@ typedef struct {
      * each match leg keeps its own source, which the host evaluates for a
      * row whose values could (`value_reducible`). */
     bool evaluates_instances;
+    /* Collect reusable read certificates when this host expects program or
+     * foreign-authority changes. Without them, whole-revision validation is
+     * still exact; a host can request certificates on the first rebuild. */
+    bool capture_reads;
+    /* Compile this entry's complete call protocol over already evaluated
+     * arguments, rather than a body whose caller installed that protocol. */
+    bool entry_ready_call;
+    /* petta@1.1.c's call contracts: a typed call has no guard at a position
+     * whose declared type is a variable. */
+    bool call_contracts;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
@@ -137,6 +155,30 @@ bool cetta_open_equation_program_owns_host_payload(
 /* The space revision the program was compiled from is still current. */
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program);
+/* A host-owned validation bookmark for this immutable program. The host
+ * serializes refreshes and retains the program and live Space while using it.
+ * Initialize from the program, then update only through refresh. */
+typedef struct {
+    const CettaOpenEquationProgram *program;
+    SpaceProgramToken program_token;
+    SpaceReadToken rows;
+    CettaCount row_count;
+} CettaOpenEquationRead;
+CettaOpenEquationRead cetta_open_equation_program_read(
+    const CettaOpenEquationProgram *program);
+/* Whole-program equality is sufficient. Otherwise admit only ordinary native
+ * appends whose equation/type subjects miss every name read by compilation.
+ * Missing head lookups are dependencies too. Prefix rewrites, wildcard
+ * subjects, subtype changes and opaque storage changes decline. On failure
+ * the bookmark is unchanged; no program, answer or source occurrence changes. */
+bool cetta_open_equation_program_refresh(
+    const CettaOpenEquationProgram *program, Space *space,
+    CettaOpenEquationRead *read);
+/* Revalidate the compiler's complete host-query observation. The caller
+ * separately validates Space reads, host identity/configuration and a stable
+ * authority revision around this read-only check. No code is recompiled. */
+bool cetta_open_equation_program_host_reads_current(
+    const CettaOpenEquationProgram *program, const CettaOpenEquationHost *host);
 /* The relations the program holds, in first-entry order: the entry relation
  * first, then every relation its equations call. */
 uint32_t cetta_open_equation_program_relation_count(
@@ -242,6 +284,11 @@ typedef struct {
     CettaOpenEquationProgram *(*current)(void *context, Space *space,
                                          SymbolId head, uint32_t arity,
                                          bool body_is_data);
+    /* Validate this exact immutable program under the current host authority
+     * and its captured Space dependencies. NULL uses whole-program revision
+     * equality. This neither changes entered calls nor restarts a cursor. */
+    bool (*program_current)(void *context, Space *space,
+                             const CettaOpenEquationProgram *program);
     /* Full calls that can enter an ordinary body without a typed protocol.
      * Dynamic applications consult this before using a checked-body entry. */
     bool (*relation_admitted)(void *context, Space *space, SymbolId head,
@@ -250,9 +297,11 @@ typedef struct {
      * the current profile and classifier admission. Answers refine only
      * `required`, retain order and duplicates, and belong to `arena`; the
      * pointer array is caller-owned. PROVED leaves all bindings unchanged.
-     * DEFER has performed no classifier effects. */
+     * DEFER has performed no classifier effects. `dead` says no later guard
+     * reads the requirement's variables: their refinement is unobservable,
+     * so PROVED may stand for any answer set of exactly one answer. */
     CettaOpenTypeResult (*type_guard)(void *context, Space *space, Arena *arena,
-                                      Atom *value, Atom *required,
+                                      Atom *value, Atom *required, bool dead,
                                       Atom ***answers, uint32_t *count);
     void *type_context;
     /* The space a `match` reads: `reference` is its space operand, `root`
@@ -343,6 +392,12 @@ typedef struct {
      * which have no case and no superpose.  Once the cursor has changed a
      * space, a handoff is a fault: the host cannot run the call again. */
     bool raises_he_errors;
+    /* Empty-head access follows the version captured when the cursor opens. */
+    bool raises_empty_car;
+    /* petta@1.1.c's call contracts: a typed call's guard commits to the
+     * first type its formal meets, and leaves a value with none to the
+     * host's check, which raises the language's type error. */
+    bool call_contracts;
     /* With `raises_he_errors`, a conjunction's rows complete before its
      * template runs: a leg with more than one row and legs after it goes to
      * the host, which completes the conjunction from that leg on. */
@@ -358,6 +413,13 @@ typedef struct {
      * shared too.  It never references the host's `answer_arena`.  NULL:
      * every crossing copies. */
     Arena *stable;
+    /* A complete ready-call entry, with the signature alternatives and
+     * guards kept. It comes retained just like current's body entry. */
+    CettaOpenEquationProgram *(*current_ready)(void *context, Space *space,
+                                               SymbolId head, uint32_t arity);
+    /* The selected dialect treats a still-unbound evaluated head as data.
+     * This says nothing about a later interpretation after binding. */
+    bool open_head_is_data;
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.
@@ -365,7 +427,7 @@ typedef struct {
 void cetta_open_equation_cursor_set_type_guard(
     CettaOpenEquationCursor *cursor, void *context,
     CettaOpenTypeResult (*guard)(void *, Space *, Arena *, Atom *, Atom *,
-        Atom ***, uint32_t *));
+        bool, Atom ***, uint32_t *));
 void cetta_open_equation_cursor_set_collection_raise_policy(
     CettaOpenEquationCursor *cursor, bool abort_collections);
 

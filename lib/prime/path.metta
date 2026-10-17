@@ -6,41 +6,37 @@
 (= (path:reverse-atom-expr $items)
    (path:reverse-atom-expr-acc $items ()))
 
-(= (path:reverse-atom-expr-acc () $acc)
-   $acc)
-
 (= (path:reverse-atom-expr-acc $items $acc)
-   (let ($head $tail) (decons-atom $items)
-     (path:reverse-atom-expr-acc $tail (cons-atom $head $acc))))
+   (if (== $items ())
+       $acc
+       (let ($head $tail) (decons-atom $items)
+         (path:reverse-atom-expr-acc $tail (cons-atom $head $acc))){$head $tail}))
 
 (= (path:is-absolute $path)
    (str:starts-with $path "/"))
 
-(= (path:pop-stack () True)
-   ())
-
-(= (path:pop-stack () False)
-   (".."))
-
 (= (path:pop-stack $stack True)
-   (cdr-atom $stack))
+   (if (== $stack ())
+       ()
+       (cdr-atom $stack)))
 
 (= (path:pop-stack $stack False)
-   (let ($head $tail) (decons-atom $stack)
-     (if (== $head "..")
-         (cons-atom ".." $stack)
-         $tail)))
-
-(= (path:normalize-parts () $stack $absolute)
-   $stack)
+   (if (== $stack ())
+       ("..")
+       (let ($head $tail) (decons-atom $stack)
+         (if (== $head "..")
+             (cons-atom ".." $stack)
+             $tail)){$head $tail}))
 
 (= (path:normalize-parts $parts $stack $absolute)
-   (let ($head $tail) (decons-atom $parts)
-     (if (or (== $head "") (== $head "."))
-         (path:normalize-parts $tail $stack $absolute)
-         (if (== $head "..")
-             (path:normalize-parts $tail (path:pop-stack $stack $absolute) $absolute)
-             (path:normalize-parts $tail (cons-atom $head $stack) $absolute)))))
+   (if (== $parts ())
+       $stack
+       (let ($head $tail) (decons-atom $parts)
+         (if (or (== $head "") (== $head "."))
+             (path:normalize-parts $tail $stack $absolute)
+             (if (== $head "..")
+                 (path:normalize-parts $tail (path:pop-stack $stack $absolute) $absolute)
+                 (path:normalize-parts $tail (cons-atom $head $stack) $absolute)))){$head $tail}))
 
 (= (path:build-from-parts $parts $absolute)
    (let $joined (str:join "/" $parts)
@@ -63,15 +59,14 @@
        (path:parts $path)
        $absolute)))
 
-(= (path:drop-last ())
-   ())
-
 (= (path:drop-last $parts)
-   (let ($head $tail) (decons-atom $parts)
-     (if (== $tail ())
-         ()
-         (let $rest (path:drop-last $tail)
-           (cons-atom $head $rest)){$rest})))
+   (if (== $parts ())
+       ()
+       (let ($head $tail) (decons-atom $parts)
+         (if (== $tail ())
+             ()
+             (let $rest (path:drop-last $tail)
+               (cons-atom $head $rest)){$rest})){$head $tail}))
 
 (= (path:dirname $path)
    (let $norm (path:normalize $path)

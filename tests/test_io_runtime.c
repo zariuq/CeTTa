@@ -17,6 +17,9 @@
 #include <signal.h>
 #include <pthread.h>
 #include <fcntl.h>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
 
 static void *publish_later(void *unused) {
     (void)unused;
@@ -28,6 +31,10 @@ static void *publish_later(void *unused) {
 
 static unsigned checks;
 static unsigned failures;
+
+static bool pending_id(Atom *atom, int64_t *id_out);
+static Atom *submit_and_poll(CettaIoRuntime *runtime, Arena *arena,
+                             Atom *request, int64_t *id_out);
 
 #define CHECK(condition, label)                                                \
     do {                                                                       \
@@ -79,7 +86,21 @@ static void test_native_notifications(CettaIoRuntime *runtime, Arena *arena) {
     Atom *watch = atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:changed"),
         atom_string(arena, directory), atom_expr(arena, (Atom *[]){atom_string(arena, "wake")}, 1)}, 3);
     pending = dispatch(runtime, arena, "__cetta_lib_io_submit", &watch, 1);
-    CHECK(!atom_is_error(pending), "filtered directory notification starts");
+    int64_t watch_id = 0;
+    CHECK(pending_id(pending, &watch_id), "filtered directory notification starts");
+    if (!pending_id(pending, &watch_id)) {
+        /* The refusal says why (an exhausted inotify instance limit reads
+         * "file-watch cannot start"); the checks that need the watch are
+         * failed, not run against an error value. */
+        if (atom_is_error(pending) && pending->expr.len == 3u &&
+            pending->expr.elems[2]->kind == ATOM_GROUNDED &&
+            pending->expr.elems[2]->ground.gkind == GV_STRING)
+            fprintf(stderr, "file watch refused: %s\n",
+                    pending->expr.elems[2]->ground.sval);
+        failures += 3u;
+        checks += 3u;
+        rmdir(directory);
+    } else {
     id = pending->expr.elems[1];
     char file[256], renamed[256];
     snprintf(file, sizeof(file), "%s/progress", directory);
@@ -92,8 +113,12 @@ static void test_native_notifications(CettaIoRuntime *runtime, Arena *arena) {
     ready = dispatch(runtime, arena, "__cetta_lib_io_wait_ready", file_args, 2);
     CHECK(atom_is_symbol(ready->expr.elems[0], "io:ready"), "atomic control rename wakes native wait");
     event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id, 1);
-    CHECK(atom_is_symbol(event->expr.elems[2]->expr.elems[0], "fs:changed"), "file notification has explicit result");
+    CHECK(event && event->kind == ATOM_EXPR && event->expr.len == 3u &&
+          event->expr.elems[2]->kind == ATOM_EXPR && event->expr.elems[2]->expr.len &&
+          atom_is_symbol(event->expr.elems[2]->expr.elems[0], "fs:changed"),
+          "file notification has explicit result");
     unlink(renamed); rmdir(directory);
+    }
 #endif
     int pipefd[2]; CHECK(!pipe(pipefd), "notification lifecycle fixture opens");
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
@@ -103,6 +128,44 @@ static void test_native_notifications(CettaIoRuntime *runtime, Arena *arena) {
     CHECK(read(pipefd[0], &byte, 1) < 0 && errno == EAGAIN, "unregistered descriptor never receives later publication");
     close(pipefd[0]); close(pipefd[1]);
 }
+
+#ifdef __linux__
+/* With every descriptor in use inotify_init1 fails with EMFILE, as it does
+ * when the user's inotify instances are used up: the watch is refused with
+ * an error naming the cause, and the runtime goes on serving requests. */
+static void test_file_watch_exhausted(CettaIoRuntime *runtime, Arena *arena) {
+    char directory[] = "/tmp/cetta-file-limit-XXXXXX";
+    CHECK(mkdtemp(directory) != NULL, "descriptor-limit directory exists");
+    Atom *watch = atom_expr2(arena, atom_symbol(arena, "fs:changed"),
+                             atom_string(arena, directory));
+    struct rlimit saved;
+    int lowest = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    bool readable = lowest >= 0 && getrlimit(RLIMIT_NOFILE, &saved) == 0;
+    if (lowest >= 0)
+        close(lowest);
+    struct rlimit none = readable ? saved : (struct rlimit){0};
+    none.rlim_cur = (rlim_t)(lowest >= 0 ? lowest : 0);
+    bool limited = readable && setrlimit(RLIMIT_NOFILE, &none) == 0;
+    CHECK(limited, "descriptor limit lowers to the descriptors in use");
+    Atom *refused = dispatch(runtime, arena, "__cetta_lib_io_submit", &watch, 1);
+    if (limited)
+        (void)setrlimit(RLIMIT_NOFILE, &saved);
+    CHECK(atom_is_error(refused) && refused->expr.len == 3u &&
+          refused->expr.elems[2]->kind == ATOM_GROUNDED &&
+          refused->expr.elems[2]->ground.gkind == GV_STRING &&
+          strstr(refused->expr.elems[2]->ground.sval,
+                 "file-watch cannot start: no inotify instance or descriptor"),
+          "exhausted descriptors refuse a file watch with their cause");
+    Atom *timer = atom_expr2(arena, atom_symbol(arena, "timer:after"),
+                             atom_int(arena, 0));
+    int64_t timer_id = 0;
+    Atom *fired = submit_and_poll(runtime, arena, timer, &timer_id);
+    CHECK(fired && fired->kind == ATOM_EXPR && fired->expr.len &&
+          atom_is_symbol(fired->expr.elems[0], "timer:fired"),
+          "the runtime serves requests after a refused watch");
+    rmdir(directory);
+}
+#endif
 
 static void test_process_owner(CettaIoRuntime *runtime, Arena *arena) {
     char directory[] = "/tmp/cetta-process-owner-XXXXXX";
@@ -305,11 +368,19 @@ int main(int argc, char **argv) {
 
     Atom *capabilities = dispatch(runtime, &arena,
                                   "__cetta_lib_io_capabilities", NULL, 0u);
+    /* A build with ChatGPT sign-in advertises that provider first. */
+#if defined(CETTA_BUILD_WITH_SIWC) && CETTA_BUILD_WITH_SIWC
+    const uint32_t first = 1u;
+#else
+    const uint32_t first = 0u;
+#endif
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 7u &&
-              atom_is_symbol(capabilities->expr.elems[0], "http") &&
-              atom_is_symbol(capabilities->expr.elems[1], "proc") &&
-              atom_is_symbol(capabilities->expr.elems[2], "timer"),
+              capabilities->expr.len == 7u + first &&
+              (first == 0u ||
+               atom_is_symbol(capabilities->expr.elems[0], "siwc")) &&
+              atom_is_symbol(capabilities->expr.elems[first], "http") &&
+              atom_is_symbol(capabilities->expr.elems[first + 1u], "proc") &&
+              atom_is_symbol(capabilities->expr.elems[first + 2u], "timer"),
           "native providers advertise HTTP, processes and timers");
 
     if (getenv("CETTA_IO_REPLAY_ONLY")) {
@@ -548,6 +619,9 @@ int main(int argc, char **argv) {
           "zero-time wait consumes nothing after completion");
 
     test_native_notifications(runtime, &arena);
+#ifdef __linux__
+    test_file_watch_exhausted(runtime, &arena);
+#endif
     test_process_owner(runtime, &arena);
     printf("(IoRuntimeSummary %u %u %u)\n",
            checks, checks - failures, failures);

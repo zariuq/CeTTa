@@ -137,7 +137,8 @@ typedef struct {
 } ImportedFlatBucket;
 
 typedef struct {
-    ImportedFlatBucket buckets[STREE_BUCKETS];
+    /* STREE_BUCKETS buckets, allocated when the first row is filed. */
+    ImportedFlatBucket *buckets;
     ImportedFlatBucket wildcard;
     /* Ownership of the fallback buckets, independent of bridge validity. */
     bool flat_has_entries;
@@ -361,6 +362,17 @@ Atom *space_match_backend_candidate_at64(const Space *s, CettaIndex idx);
  * premise is unavailable and the ordinary matcher remains authoritative. */
 bool space_match_backend_ground_exact_exists_frontier(
     Space *s, Atom *pattern, bool *out_found);
+/* Whether a ground pattern matches an exact row only by being it.  Not so
+ * under HE for a pattern holding a number: HE numbers compare by value
+ * across representations (1, 1.0, 2/2, a big integer), and NaN differs from
+ * itself. */
+bool space_match_ground_pattern_matches_by_identity(const Atom *pattern);
+/* A ground pattern whose frontier holds only exact rows meets exactly its
+ * own occurrences: the rows the exact index lists for it, ascending, physical
+ * while rows are marked.  False when the pattern or the space cannot say so;
+ * the ordinary candidate sources then answer. */
+bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
+                                          CettaIndex **out, CettaIndex *count);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);

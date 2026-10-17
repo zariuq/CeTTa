@@ -62,6 +62,10 @@ typedef CettaOwnedExecutionStep (*CettaOwnedExecutionNext)(
     void *computation, CettaOwnedReturn *returned,
     CettaEvalCompletion *completion);
 typedef void (*CettaOwnedExecutionRelease)(void *computation);
+/* A read-only check of a final certificate after the consumer accepts.
+ * It cannot step the producer. False preserves ordinary continuation, so a
+ * changed source is reported without replaying the accepted occurrence. */
+typedef bool (*CettaOwnedExecutionFinalIsCurrent)(void *computation);
 /* False retains the pending return and complete computation at this boundary.
  * A consumer publishes the occurrence only on acceptance. Refusal may update
  * private retry state; the same consumer state must survive resumption. */
@@ -72,6 +76,8 @@ typedef struct {
     void *computation;
     CettaOwnedExecutionNext next;
     CettaOwnedExecutionRelease release;
+    /* NULL is for certificates independent of mutable external authority. */
+    CettaOwnedExecutionFinalIsCurrent final_is_current;
     CettaOwnedReturn pending;
     /* Completion is authoritative at a terminal boundary. PAUSED never
      * certifies exhaustion, even if no incomplete reason has been recorded. */

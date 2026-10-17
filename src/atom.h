@@ -669,6 +669,22 @@ typedef enum {
     CETTA_ARENA_RUNTIME_KIND_SURVIVOR = 4,
 } CettaArenaRuntimeKind;
 
+/* The resource-ledger category an arena's blocks are charged to under
+ * runtime statistics.  It follows the runtime kind unless an owner names a
+ * category (cursor working storage, space storage); NONE marks an arena
+ * created while statistics were off, which is never charged.  Diagnostic
+ * only: no category changes allocation or evaluation. */
+typedef enum {
+    CETTA_ARENA_LEDGER_NONE = 0,
+    CETTA_ARENA_LEDGER_OTHER = 1,
+    CETTA_ARENA_LEDGER_PERSISTENT = 2,
+    CETTA_ARENA_LEDGER_EVAL = 3,
+    CETTA_ARENA_LEDGER_SCRATCH = 4,
+    CETTA_ARENA_LEDGER_SURVIVOR = 5,
+    CETTA_ARENA_LEDGER_CURSOR = 6,
+    CETTA_ARENA_LEDGER_SPACE = 7,
+} CettaArenaLedgerTag;
+
 typedef struct ArenaBlock {
     struct ArenaBlock *next;
     size_t capacity;
@@ -676,7 +692,7 @@ typedef struct ArenaBlock {
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
 
-typedef struct ArenaRetainedOwner ArenaRetainedOwner;
+typedef struct ArenaRetainedOwnerSet ArenaRetainedOwnerSet;
 typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
 
 typedef struct Arena {
@@ -714,7 +730,11 @@ typedef struct Arena {
      */
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
-    ArenaRetainedOwner *retained_owners;
+    /* Owners this arena holds a reference to, one per distinct (owner,
+     * release) pair, in acquisition order with a hash index.  Each hold
+     * is also a finalizer, so a reset releases exactly the holds
+     * acquired after its mark. */
+    ArenaRetainedOwnerSet *retained_owners;
     /* Frame-identity ownership for this arena's live allocation region.  The
      * set holds one reference for each distinct full generational identity
      * reachable from syntax allocated here, so allocating many variable
@@ -729,6 +749,10 @@ typedef struct Arena {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
+    /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
+     * owner named it (otherwise it follows the runtime kind). */
+    uint8_t ledger_tag;
+    bool ledger_tag_named;
 } Arena;
 
 typedef struct {
@@ -785,6 +809,9 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Charge this arena's blocks to `tag` in the resource ledger from now on,
+ * moving what it already holds there. */
+void  arena_set_ledger_tag(Arena *a, CettaArenaLedgerTag tag);
 void  arena_set_block_recycling(Arena *a, bool enabled);
 /* Name `older` as the older generation of `young`, whose atoms may then share
  * its storage.  The owner releases `older` only together with `young`.  An
@@ -802,6 +829,10 @@ bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
 /* Ownership observations for the arena frame-identity lifetime tests. */
 uint32_t arena_frame_identity_count_test(const Arena *a);
 uint32_t arena_frame_identity_capacity_test(const Arena *a);
+/* Mint the next fresh arena name at `next` (a test starting near the end of
+ * the name space), and count releases of names nobody owned. */
+void arena_identity_test_start_fresh_at(uint32_t next);
+uint64_t arena_identity_test_stale_releases(void);
 bool arena_frame_identity_owned_test(const Arena *a,
                                      CettaFrameIdentity identity);
 #endif
@@ -1336,6 +1367,13 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* A read-only expression header over borrowed coordinates. The header and
+ * vector are valid only for the consuming call; neither may be retained or
+ * returned as an owned result. Structural summaries grant no ownership. */
+typedef struct { Atom root; } AtomExprBorrowedView;
+bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
+                                  Atom **elems, CettaExprLen len);
+
 /* The part of an expression's summary a fixed head gives it, folded once:
  * atom_expr_headed then builds, from children headed by that head, exactly
  * the expression atom_expr builds. */

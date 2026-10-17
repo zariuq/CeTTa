@@ -1075,10 +1075,16 @@ static void test_native_ground_exact_candidate_frontier(void) {
     assert(space_length64(&space) > MATCH_TRIE_THRESHOLD);
 
     /* A cold scan deliberately retains open rows, even under another head.
-       The exact shortcut may decline; the ordinary view still finds the row. */
-    applicable = true;
-    assert(!space_match_exists_ground_exact(&space, present, &applicable));
-    assert(!applicable);
+       Membership still answers the present pattern, which matches its own
+       row, and the exact index's count of open rows by head proves that the
+       open row under another head cannot match the missing one.  The
+       ordinary view still finds the row. */
+    applicable = false;
+    assert(space_match_exists_ground_exact(&space, present, &applicable));
+    assert(applicable);
+    applicable = false;
+    assert(!space_match_exists_ground_exact(&space, missing, &applicable));
+    assert(applicable);
     view_exists = false;
     view_examined = UINT64_MAX;
     assert(space_match_exists_flat_linear_view64(

@@ -44,6 +44,10 @@ uint64_t petta_libpl_capability_revision(
     return 0u;
 }
 
+uint64_t petta_libpl_eval_states_live(void) {
+    return 0u;
+}
+
 CettaLibPrologQueryStatus cetta_lib_prolog_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *goal, Atom *projection, Atom **answers) {
@@ -57,6 +61,15 @@ CettaLibPrologQueryStatus cetta_lib_prolog_query(
 }
 
 PeTTaNamedArity petta_libpl_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied) {
+    (void)runtime;
+    (void)head;
+    (void)supplied;
+    return (PeTTaNamedArity){0};
+}
+
+PeTTaNamedArity petta_libpl_effect_free_named_arity(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied) {
     (void)runtime;

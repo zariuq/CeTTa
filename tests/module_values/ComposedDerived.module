@@ -1,0 +1,10 @@
+import Naturals from "RewriteBundles"
+import NamedZero from "DerivedSubstitution"
+import TupleSyntax from "DerivedTuples"
+import BindingWeaken from "BindingValues"
+Module ComposedDerived {
+  Theory Complete() {
+    TupleSyntax(NamedZero(Naturals())) \/ BindingWeaken()
+  }
+  theory Complete()
+}

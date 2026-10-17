@@ -120,6 +120,11 @@ typedef struct {
 void ppnative_v1_token_binding_plan_init(PPNativeV1TokenBindingPlan *plan);
 void ppnative_v1_token_binding_plan_free(PPNativeV1TokenBindingPlan *plan);
 
+Atom *ppnative_v1_token_binding_plan_export_storage(
+    Arena *, const PPNativeV1TokenBindingPlan *, char *, size_t);
+bool ppnative_v1_token_binding_plan_import_storage(
+    PPNativeV1TokenBindingPlan *, const PPABIV1Pack *, Atom *, char *, size_t);
+
 /* Failure leaves out unchanged. A state already defined by a base grammar
  * production is not an external token state. Unreferenced declared tokens
  * receive real extension states, so they are retained rather than erased. */
@@ -156,6 +161,18 @@ bool ppnative_v1_prepared_view(
     PPNativeV1PreparedView *view,
     char *error_buf,
     size_t error_buf_size);
+/* The owner keeps the pack and start immutable until the last parse finishes.
+ * Unlike prepared_view, this does not re-render or audit borrowed authorities. */
+bool ppnative_v1_prepared_immutable_view(
+    const PPNativeV1Prepared *prepared, PPNativeV1PreparedView *view);
+/* Restore an immutable preparation by copying its stored terminal decisions
+ * and GLL/GLR programs. The enclosing owner retains pack for its lifetime.
+ * This does not rebuild classes, FIRST/FOLLOW, LR tables or provenance. */
+bool ppnative_v1_prepared_import_programs(
+    PPNativeV1Prepared *out, const PPABIV1Pack *pack, uint32_t start_state_id,
+    const PPNativeV1TerminalPlan *terminals,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size);
 uint32_t ppnative_v1_prepared_table_build_count(
     const PPNativeV1Prepared *prepared);
 
@@ -171,6 +188,10 @@ bool ppnative_v1_prepared_start_family_prepare(
     uint32_t start_state_len,
     char *error_buf,
     size_t error_buf_size);
+bool ppnative_v1_prepared_start_family_import_programs(
+    PPNativeV1PreparedStartFamily *out, const char *binding_digest,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size);
 bool ppnative_v1_prepared_start_family_lookup(
     const PPNativeV1PreparedStartFamily *family,
     const char *binding_digest,
@@ -234,6 +255,15 @@ bool ppnative_v1_finish(PPNativeV1Result *result,
                         uint32_t result_limit,
                         char *error_buf,
                         size_t error_buf_size);
+
+/* Replay a fresh native forest against its immutable compiled owner. No
+ * canonical evidence or digest is constructed. Equal-valued derivations
+ * remain distinct. External forest data must use the checked finish APIs. */
+bool ppnative_v1_finish_values(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth, uint32_t result_limit,
+    char *error_buf, size_t error_buf_size);
 
 bool ppnative_v1_finish_extended(
     PPNativeV1Result *result,

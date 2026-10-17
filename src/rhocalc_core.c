@@ -2133,7 +2133,13 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
     cases[count++] = atom_bool(arena, false);
     cases[count++] = atom_string(arena, "line\n\"quoted\"\\tail");
     cases[count++] = atom_bigint(arena, "123456789012345678901234567890");
+#if CETTA_BUILD_WITH_GMP
     cases[count++] = atom_rational(arena, "-22/7");
+#else
+    /* Rational construction is unavailable without GMP; NULL is not an
+     * atom and must not be passed to the rendering correspondence check. */
+    if (atom_rational(arena, "-22/7") != NULL) return false;
+#endif
     cases[count++] = atom_expr3(
         arena, atom_symbol(arena, "f"),
         atom_string(arena, "nested\nstring"),
@@ -2147,6 +2153,7 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
                           atom_bool(arena, true)));
 
     for (size_t i = 0u; i < count; i++) {
+        if (!cases[i]) return false;
         char *direct = rho_atom_text_key_direct(cases[i]);
         char *slow = rho_atom_text_key_slow(cases[i]);
         bool equal = direct && slow && strcmp(direct, slow) == 0;
@@ -3651,15 +3658,17 @@ static bool rho_runtime_profile_supported(const RhoRuntimeProfile *profile) {
     return true;
 }
 
+/* A process arena opened for its next generation of the current process. */
+static void rho_process_arena_open(Arena *arena) {
+    arena_init(arena);
+    arena_set_runtime_kind(arena, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+}
+
 static void rho_machine_init(RhoMachine *machine, Arena *arena,
                              const RhoRuntimeProfile *profile,
                              const RhocalcEvalContext *eval_context) {
-    arena_init(&machine->process_arenas[0]);
-    arena_init(&machine->process_arenas[1]);
-    arena_set_runtime_kind(
-        &machine->process_arenas[0], CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
-    arena_set_runtime_kind(
-        &machine->process_arenas[1], CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    rho_process_arena_open(&machine->process_arenas[0]);
+    rho_process_arena_open(&machine->process_arenas[1]);
     machine->active_process_arena = 0u;
     machine->arena = &machine->process_arenas[0];
     machine->result_arena = arena;
@@ -3742,7 +3751,10 @@ static bool rho_machine_compact_current(RhoMachine *machine) {
     machine->active_process_arena = next_index;
     machine->arena = next_arena;
     machine->reductions_since_compaction = 0u;
+    /* The old generation ends here; its struct is opened again at once as
+     * the next compaction's destination. */
     arena_free(old_arena);
+    rho_process_arena_open(old_arena);
     return true;
 }
 

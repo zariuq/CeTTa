@@ -1,0 +1,48 @@
+import Naturals from "RewriteBundles"
+import Sequences from "RewriteBundles"
+Module DerivedSubstitution {
+  Theory NamedZero(n: Naturals) {
+    n Rewrites {
+      AddZeroNamed: (Subst (NatAdd slot value) (NatZ) slot) ~> value;
+    }
+  }
+  Theory Repeated(n: Naturals) {
+    n Rewrites {
+      RepeatedSlot: (Subst (NatAdd slot slot) value slot) ~> value;
+    }
+  }
+  Theory Nested(n: Naturals) {
+    n Rewrites {
+      NestedSlots: (Subst (Subst (NatAdd first second) (NatZ) first) value second) ~> value;
+    }
+  }
+  Theory Qualified(n: Naturals) {
+    n Rewrites {
+      QualifiedSlot: (Subst (NatAdd hole.slot value) (NatZ) hole.slot) ~> value;
+    }
+  }
+  Theory Combined(n: Naturals) {
+    NamedZero(n) \/ Qualified(n)
+  }
+  Theory NamedRenamed(n: Naturals) {
+    NamedZero(n) Replacements {
+      [0,1] NatAdd . Nat => Plus . Nat ::= "plus(" Nat "," Nat ")";
+    }
+  }
+  Theory Simultaneous(n: Naturals) {
+    n Rewrites {
+      InsertOnce: (Subst (NatAdd slot value) (NatS slot) slot) ~> value;
+    }
+  }
+  Theory MissingTarget(n: Naturals) {
+    n Rewrites {
+      MissingSlot: (Subst (NatAdd first second) (NatZ) absent) ~> first;
+    }
+  }
+  Theory WrongSort(n: Naturals, s: Sequences) {
+    {n \/ s} Rewrites {
+      WrongSlot: (Subst (NatAdd slot value) (SeqEmpty) slot) ~> value;
+    }
+  }
+  theory Empty
+}

@@ -8,6 +8,7 @@
 #include "symbol.h"
 #include "term_canon.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -987,6 +988,346 @@ static bool petta_type_answers_bound_uncached(
          petta_type_append_matching(arena, &fallback, target, out);
     free(fallback.items);
     return ok;
+}
+
+/* ── Inert subjects ──────────────────────────────────────────────────────
+ *
+ * In a space whose declarations all have symbol subjects, a subject is inert
+ * when none of its symbols has a declaration and each of its expressions is
+ * an ordinary tuple (no list, cons or compound carrier).  The relation above
+ * then never finds a function or declared candidate, so it has at most one
+ * answer and computes it structurally: a variable occurrence has a fresh
+ * type, a number, string or truth value its literal type, every other leaf
+ * %Undefined%, and an expression the tuple of its elements' types.
+ *
+ * Against a requirement, a subject variable and a required %Undefined%
+ * accept anything; a required variable takes the subject's type; a literal
+ * is accepted by its own type; a tuple by a tuple of the same length, element
+ * by element, the elements sharing one refinement of the requirement's
+ * variables; nothing else is accepted.  A non-ordinary requirement, a
+ * requirement sharing a variable with the subject and terms deeper than the
+ * bound below keep the relational query.
+ *
+ * When no later reader sees the requirement's refinement (a dead guard),
+ * acceptance is the whole observation: a requirement variable occurring once
+ * is bound without building the subject's type. */
+
+enum {
+    PETTA_TYPE_INERT_DEPTH = 256u,
+    PETTA_TYPE_INERT_REFINEMENTS = 64u,
+    PETTA_TYPE_INERT_SUBJECT_VARS = 32u,
+};
+
+typedef enum {
+    PETTA_TYPE_INERT_MATCH,
+    PETTA_TYPE_INERT_MISMATCH,
+    PETTA_TYPE_INERT_UNSUPPORTED,
+    PETTA_TYPE_INERT_EXHAUSTED,
+} PettaTypeInertMatch;
+
+typedef struct {
+    Arena *arena;
+    struct {
+        VarId variable;
+        Atom *type;
+    } refinements[PETTA_TYPE_INERT_REFINEMENTS];
+    uint32_t count;
+    /* Dead guards: the requirement's variables seen more than once. */
+    bool dead;
+    VarId repeated[PETTA_TYPE_INERT_REFINEMENTS];
+    uint32_t repeated_count;
+} PettaTypeInertState;
+
+typedef struct {
+    VarId vars[PETTA_TYPE_INERT_SUBJECT_VARS];
+    uint32_t count;
+    bool overflow;
+} PettaTypeInertVars;
+
+static SymbolId petta_type_interned(_Atomic(SymbolId) *slot, const char *name) {
+    SymbolId id = atomic_load_explicit(slot, memory_order_relaxed);
+    if (id == SYMBOL_ID_NONE) {
+        id = symbol_intern_cstr(g_symbols, name);
+        atomic_store_explicit(slot, id, memory_order_relaxed);
+    }
+    return id;
+}
+
+/* The type petta_type_of_literal gives, as a symbol; none for other atoms. */
+static SymbolId petta_type_inert_literal(const Atom *atom) {
+    static _Atomic(SymbolId) number, string, truth_type;
+    if (atom->kind == ATOM_GROUNDED) {
+        switch (atom->ground.gkind) {
+        case GV_INT:
+        case GV_BIGINT:
+        case GV_RATIONAL:
+        case GV_FLOAT:
+            return petta_type_interned(&number, "Number");
+        case GV_STRING:
+            return petta_type_interned(&string, "String");
+        default:
+            break;
+        }
+    }
+    bool truth = false;
+    return petta_semantics_truth_value(atom, &truth)
+        ? petta_type_interned(&truth_type, "Bool") : SYMBOL_ID_NONE;
+}
+
+static bool petta_type_inert_tuple(const Atom *atom) {
+    return atom->kind == ATOM_EXPR &&
+           atom_petta_value_representation(atom) == PETTA_VALUE_ORDINARY &&
+           !atom_is_list_form(atom) &&
+           !petta_semantics_is_open_cons_value(atom);
+}
+
+static bool petta_type_inert_subject(Space *space, Atom *atom,
+                                     PettaTypeInertVars *vars, uint32_t depth) {
+    if (depth > PETTA_TYPE_INERT_DEPTH)
+        return false;
+    switch (atom->kind) {
+    case ATOM_VAR:
+        if (vars->count < PETTA_TYPE_INERT_SUBJECT_VARS)
+            vars->vars[vars->count++] = atom->var_id;
+        else
+            vars->overflow = true;
+        return true;
+    case ATOM_GROUNDED:
+        return true;
+    case ATOM_SYMBOL:
+        return !space_type_annotation_may_match_subject(space, atom);
+    case ATOM_EXPR:
+        if (!petta_type_inert_tuple(atom))
+            return false;
+        for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+            if (!petta_type_inert_subject(space, atom->expr.elems[i], vars,
+                                          depth + 1u))
+                return false;
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool petta_type_inert_subject_has(const PettaTypeInertVars *vars,
+                                         const Atom *subject, VarId variable) {
+    if (vars->overflow)
+        return cetta_observation_atom_contains_var(subject, variable);
+    for (uint32_t i = 0u; i < vars->count; i++) {
+        if (vars->vars[i] == variable)
+            return true;
+    }
+    return false;
+}
+
+/* Whether the requirement shares a variable with the subject; for a dead
+ * guard, also which of its variables occur more than once.  False with
+ * `*supported` cleared when the occurrence table overflows. */
+static bool petta_type_inert_scan_required(
+    PettaTypeInertState *state, const PettaTypeInertVars *vars,
+    const Atom *subject, const Atom *required, VarId *seen,
+    uint32_t *seen_count, bool *supported) {
+    if (required->kind == ATOM_VAR) {
+        if (petta_type_inert_subject_has(vars, subject, required->var_id))
+            return true;
+        if (!state->dead)
+            return false;
+        for (uint32_t i = 0u; i < *seen_count; i++) {
+            if (seen[i] != required->var_id)
+                continue;
+            for (uint32_t j = 0u; j < state->repeated_count; j++) {
+                if (state->repeated[j] == required->var_id)
+                    return false;
+            }
+            if (state->repeated_count == PETTA_TYPE_INERT_REFINEMENTS)
+                *supported = false;
+            else
+                state->repeated[state->repeated_count++] = required->var_id;
+            return false;
+        }
+        if (*seen_count == PETTA_TYPE_INERT_REFINEMENTS)
+            *supported = false;
+        else
+            seen[(*seen_count)++] = required->var_id;
+        return false;
+    }
+    if (required->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < required->expr.len; i++) {
+        if (petta_type_inert_scan_required(state, vars, subject,
+                required->expr.elems[i], seen, seen_count, supported))
+            return true;
+    }
+    return false;
+}
+
+/* The single answer of an inert subject with a fresh output. */
+static Atom *petta_type_inert_scheme(Arena *arena, Atom *atom) {
+    static _Atomic(SymbolId) spelling;
+    if (atom->kind == ATOM_VAR)
+        return atom_var_with_spelling(
+            arena, petta_type_interned(&spelling, "__petta_type"), fresh_var_id());
+    if (atom->kind != ATOM_EXPR) {
+        SymbolId literal = petta_type_inert_literal(atom);
+        return atom_symbol_id(arena, literal != SYMBOL_ID_NONE
+            ? literal : g_builtin_syms.undefined_type);
+    }
+    CettaExprLen length = atom->expr.len;
+    Atom *inline_items[8];
+    Atom **items = length <= 8u ? inline_items
+                                : malloc(sizeof(*items) * (size_t)length);
+    if (!items)
+        return NULL;
+    Atom *scheme = NULL;
+    CettaExprIndex i = 0u;
+    for (; i < length; i++) {
+        items[i] = petta_type_inert_scheme(arena, atom->expr.elems[i]);
+        if (!items[i])
+            break;
+    }
+    if (i == length)
+        scheme = atom_expr(arena, items, length);
+    if (items != inline_items)
+        free(items);
+    return scheme;
+}
+
+static Atom *petta_type_inert_resolve(const PettaTypeInertState *state,
+                                      Atom *atom) {
+    while (atom->kind == ATOM_VAR) {
+        Atom *next = NULL;
+        for (uint32_t i = 0u; i < state->count; i++) {
+            if (state->refinements[i].variable == atom->var_id) {
+                next = state->refinements[i].type;
+                break;
+            }
+        }
+        if (!next)
+            break;
+        atom = next;
+    }
+    return atom;
+}
+
+static bool petta_type_inert_read_again(const PettaTypeInertState *state,
+                                        VarId variable) {
+    if (!state->dead)
+        return true;
+    for (uint32_t i = 0u; i < state->repeated_count; i++) {
+        if (state->repeated[i] == variable)
+            return true;
+    }
+    return false;
+}
+
+static PettaTypeInertMatch petta_type_inert_match(
+    PettaTypeInertState *state, Atom *subject, Atom *required, uint32_t depth) {
+    if (depth > PETTA_TYPE_INERT_DEPTH)
+        return PETTA_TYPE_INERT_UNSUPPORTED;
+    required = petta_type_inert_resolve(state, required);
+    if (subject->kind == ATOM_VAR)
+        return PETTA_TYPE_INERT_MATCH;
+    if (required->kind == ATOM_VAR) {
+        /* Fresh variables of a built type occur in no requirement, and a
+         * dead requirement's single occurrence has no later reader. */
+        if (!petta_type_inert_read_again(state, required->var_id))
+            return PETTA_TYPE_INERT_MATCH;
+        if (state->count == PETTA_TYPE_INERT_REFINEMENTS)
+            return PETTA_TYPE_INERT_UNSUPPORTED;
+        Atom *type = petta_type_inert_scheme(state->arena, subject);
+        if (!type)
+            return PETTA_TYPE_INERT_EXHAUSTED;
+        state->refinements[state->count].variable = required->var_id;
+        state->refinements[state->count].type = type;
+        state->count++;
+        return PETTA_TYPE_INERT_MATCH;
+    }
+    if (atom_is_symbol_id(required, g_builtin_syms.undefined_type))
+        return PETTA_TYPE_INERT_MATCH;
+    SymbolId literal = petta_type_inert_literal(subject);
+    if (literal != SYMBOL_ID_NONE)
+        return required->kind == ATOM_SYMBOL && atom_symbol_current_id(required) == literal
+            ? PETTA_TYPE_INERT_MATCH : PETTA_TYPE_INERT_MISMATCH;
+    if (subject->kind != ATOM_EXPR || required->kind != ATOM_EXPR)
+        return PETTA_TYPE_INERT_MISMATCH;
+    if (!petta_type_inert_tuple(required))
+        return PETTA_TYPE_INERT_UNSUPPORTED;
+    if (required->expr.len != subject->expr.len)
+        return PETTA_TYPE_INERT_MISMATCH;
+    for (CettaExprIndex i = 0u; i < subject->expr.len; i++) {
+        PettaTypeInertMatch element = petta_type_inert_match(
+            state, subject->expr.elems[i], required->expr.elems[i], depth + 1u);
+        if (element != PETTA_TYPE_INERT_MATCH)
+            return element;
+    }
+    return PETTA_TYPE_INERT_MATCH;
+}
+
+/* The requirement with its refinements applied; unrefined parts are kept. */
+static Atom *petta_type_inert_apply(const PettaTypeInertState *state,
+                                    Arena *arena, Atom *atom) {
+    atom = petta_type_inert_resolve(state, atom);
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+    CettaExprLen length = atom->expr.len;
+    Atom **items = NULL;
+    for (CettaExprIndex i = 0u; i < length; i++) {
+        Atom *element = petta_type_inert_apply(state, arena, atom->expr.elems[i]);
+        if (!element) {
+            free(items);
+            return NULL;
+        }
+        if (!items && element != atom->expr.elems[i]) {
+            items = malloc(sizeof(*items) * (size_t)length);
+            if (!items)
+                return NULL;
+            memcpy(items, atom->expr.elems, sizeof(*items) * (size_t)i);
+        }
+        if (items)
+            items[i] = element;
+    }
+    if (!items)
+        return atom;
+    Atom *rebuilt = atom_expr(arena, items, length);
+    free(items);
+    return rebuilt;
+}
+
+PettaTypeInertResult petta_type_inert_guard(Space *space, Arena *arena,
+                                            Atom *subject, Atom *required,
+                                            bool dead, Atom **answer) {
+    if (answer)
+        *answer = NULL;
+    if (!space || !arena || !subject || !required || !answer ||
+        subject->kind == ATOM_VAR)
+        return PETTA_TYPE_INERT_DEFER;
+    PettaTypeInertVars vars = {0};
+    PettaTypeInertState state = {.arena = arena, .dead = dead};
+    VarId seen[PETTA_TYPE_INERT_REFINEMENTS];
+    uint32_t seen_count = 0u;
+    bool supported = true;
+    if (!petta_type_inert_subject(space, subject, &vars, 0u) ||
+        petta_type_inert_scan_required(&state, &vars, subject, required,
+                                       seen, &seen_count, &supported) ||
+        !supported) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_DEFER);
+        return PETTA_TYPE_INERT_DEFER;
+    }
+    PettaTypeInertMatch match = petta_type_inert_match(&state, subject, required, 0u);
+    if (match == PETTA_TYPE_INERT_UNSUPPORTED) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_DEFER);
+        return PETTA_TYPE_INERT_DEFER;
+    }
+    if (match == PETTA_TYPE_INERT_EXHAUSTED)
+        return PETTA_TYPE_INERT_FAULT;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_GUARD);
+    if (match == PETTA_TYPE_INERT_MISMATCH)
+        return PETTA_TYPE_INERT_NONE;
+    if (dead || state.count == 0u)
+        return PETTA_TYPE_INERT_PROVED;
+    *answer = petta_type_inert_apply(&state, arena, required);
+    return *answer ? PETTA_TYPE_INERT_ANSWER : PETTA_TYPE_INERT_FAULT;
 }
 
 bool petta_type_intrinsic_answers(

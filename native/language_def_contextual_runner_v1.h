@@ -17,10 +17,13 @@
  * contextual fuel.  RelationQuery rows come from an explicit provider and
  * retain provider receipts in the resulting derivation trace.
  *
- * Version 1 deliberately accepts only PApp/FVar patterns.  This covers the
- * current first-order transformation artifacts while keeping binders,
- * substitution, and collection matching fail-closed until their full
- * LanguageDef semantics are implemented.  The runner contains no
+ * The executable profile includes PApp/FVar/Var/PLam. Metavariables have one
+ * LHS capture depth and may be reused there or weakened under inner binders,
+ * using the core's applyRuleBindings index shift. Premises use root-context
+ * metavariables. Outward/dependency-aware transport, multiple binders,
+ * explicit substitution and collection matching need further interpretations.
+ * These are capabilities of this consumer, not restrictions on LanguageDef.
+ * The runner contains no
  * language-specific constructor or relation names apart from the generic
  * built-in equality relation defined by the LanguageDef engine.
  */

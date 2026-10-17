@@ -63,7 +63,7 @@ AUTHORITIES = (
         "petta",
         ("PTEstablished", "PTRefuted", "PTUndetermined", "PTIncomplete"),
         "PTUndetermined",
-        60,
+        59,
     ),
     ExpectedAuthority(
         ROOT / "langdef/prime/generated/closed_formation_v1.metta",

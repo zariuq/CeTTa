@@ -96,6 +96,25 @@ Atom *petta_type_declaration_query(Arena *arena, Atom *subject, Atom *required);
  * Atoms belong to arena; the returned array belongs to the caller.
  * False reports a service failure, never ordinary relational rejection.
  * Authored get-type equations are executed separately by ordinary search. */
+/* The intrinsic guard of an inert subject: one that no declaration can
+ * type, in a space whose declarations all have symbol subjects.  Its type
+ * relation then has at most one answer and needs no lookup.  PROVED means
+ * the requirement holds without refinement; ANSWER gives the refined
+ * requirement; NONE means no type answer (the metatype fallback follows);
+ * DEFER keeps the relational query.  With `dead`, no later reader sees the
+ * requirement's refinement, so an accepted subject is PROVED.  The caller
+ * has already excluded authored type classifiers and checked that
+ * declarations have only symbol subjects. */
+typedef enum {
+    PETTA_TYPE_INERT_DEFER = 0,
+    PETTA_TYPE_INERT_PROVED,
+    PETTA_TYPE_INERT_ANSWER,
+    PETTA_TYPE_INERT_NONE,
+    PETTA_TYPE_INERT_FAULT,
+} PettaTypeInertResult;
+PettaTypeInertResult petta_type_inert_guard(Space *space, Arena *arena,
+                                            Atom *subject, Atom *required,
+                                            bool dead, Atom **answer);
 bool petta_type_intrinsic_answers(Space *space, Arena *arena,
                                   Atom *subject, Atom *required,
                                   Atom ***types, uint32_t *count,

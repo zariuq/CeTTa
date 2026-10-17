@@ -1,7 +1,7 @@
 #ifndef CETTA_PROC_OWNER_H
 #define CETTA_PROC_OWNER_H
 
-#include "library_proc.h"
+#include "library_proc_run.h"
 
 /* One native owner supervises asynchronous children independently of the
  * evaluator. It borrows wake_fd until joined; it never evaluates an Atom. */

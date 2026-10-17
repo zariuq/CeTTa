@@ -140,6 +140,7 @@ struct CettaPettaTypecheckV3;
 struct CettaPettaRuntimeState;
 struct CettaIoRuntime;
 struct CettaJsonLibraryRuntimeV1;
+struct CettaAuthoredParserV1;
 
 struct CettaHEModuleFailure;
 typedef struct CettaHEModuleRunScope {
@@ -153,6 +154,9 @@ typedef struct CettaLibraryContext {
     pthread_mutex_t nik_runtime_mutex;
     bool nik_runtime_mutex_ready;
     struct CettaNikRuntimeV1 *nik_runtime;
+    pthread_mutex_t parser_cache_mutex;
+    bool parser_cache_mutex_ready;
+    struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
     uint32_t active_mask;
     char root_dir[4096];

@@ -3703,6 +3703,18 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
                                     bool insert) {
     if (!universe || !src)
         return CETTA_ATOM_ID_NONE;
+    SymbolId symbol = src->kind == ATOM_SYMBOL
+        ? atom_symbol_current_id(src) : SYMBOL_ID_NONE;
+    if (!insert && symbol != SYMBOL_ID_NONE) {
+        /* A numbered symbol's record is its header alone; a spelling the
+         * table does not number takes the stable lookup. */
+        CettaTermHdr hdr = {0};
+        hdr.tag = (uint8_t)ATOM_SYMBOL;
+        hdr.sym_or_head = symbol;
+        hdr.aux32 = term_universe_aux_make(0u, false);
+        hdr.hash32 = term_universe_hash_symbol_id(symbol);
+        return term_universe_lookup_record_id(universe, &hdr, NULL, 0u);
+    }
     if (!insert)
         return term_universe_lookup_stable_id(universe, src);
     switch (src->kind) {
@@ -3843,6 +3855,20 @@ done:
     return result;
 }
 
+/* The id of a subterm the universe decoded itself: an entry whose
+ * decoded_cache is this very atom, so walking the subterm would only find
+ * that entry again.  Decoded atoms live in the persistent arena, or, where
+ * that arena interns, are the shared atoms it returns (arena identity 0); an
+ * atom of any other arena (a term being built) is never probed. */
+static AtomId term_universe_decoded_subterm_id(const TermUniverse *universe,
+                                               Atom *atom) {
+    const Arena *persistent = universe->persistent_arena;
+    if (!persistent || !atom || atom->kind != ATOM_EXPR ||
+        (atom->arena_id != persistent->identity && atom->arena_id != 0u))
+        return CETTA_ATOM_ID_NONE;
+    return term_universe_lookup_ptr_id(universe, atom);
+}
+
 static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
                                                      Atom *src, bool insert,
                                                      bool *out_stable) {
@@ -3900,8 +3926,13 @@ static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
 
         if (frame->next_child < atom->expr.len) {
             uint32_t child_index = frame->next_child++;
-            if (!term_universe_store_stack_push(
-                    &stack, atom->expr.elems[child_index], child_index))
+            Atom *child = atom->expr.elems[child_index];
+            AtomId child_id = term_universe_decoded_subterm_id(universe, child);
+            if (child_id != CETTA_ATOM_ID_NONE) {
+                stack.ids[frame->child_base + child_index] = child_id;
+                continue;
+            }
+            if (!term_universe_store_stack_push(&stack, child, child_index))
                 goto done;
             continue;
         }
@@ -3991,7 +4022,7 @@ static AtomId term_universe_stable_atom_id_iterative_source_memo(
             bool source_hit = false;
             if (child && child->kind == ATOM_EXPR &&
                 source_memo && source_memo->memo) {
-                child_id = term_universe_lookup_ptr_id(universe, child);
+                child_id = term_universe_decoded_subterm_id(universe, child);
                 if (child_id == CETTA_ATOM_ID_NONE) {
                     source_hit = term_universe_source_memo_lookup(
                         source_memo, child, &child_id);

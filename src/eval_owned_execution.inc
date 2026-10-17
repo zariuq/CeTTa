@@ -305,6 +305,12 @@ static CettaOwnedExecutionStep eval_owned_answers_next(void *context,
     return cetta_prepared_pure_answer_cursor_return(answers->cursor, returned, completion);
 }
 
+static bool eval_owned_answers_final_is_current(void *context) {
+    EvalOwnedAnswers *answers = context;
+    return eval_owned_answers_authority_current(answers) &&
+        cetta_prepared_pure_answer_cursor_frontier_is_complete(answers->cursor);
+}
+
 static void eval_owned_answers_release(void *context) {
     EvalOwnedAnswers *answers = context;
     cetta_prepared_pure_answer_cursor_close(answers->cursor);
@@ -411,6 +417,7 @@ static inline __attribute__((always_inline)) bool eval_owned_answers_open_kernel
     }
     cetta_owned_execution_init(&answers->execution, answers,
                               eval_owned_answers_next, eval_owned_answers_release);
+    answers->execution.final_is_current = eval_owned_answers_final_is_current;
     /* Entry values already live in captures until after the cursor closes.
      * Its frontier can borrow them without copying the whole input again. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OWNED_EXECUTION_ADMISSION);

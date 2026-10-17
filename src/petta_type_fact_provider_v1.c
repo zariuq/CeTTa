@@ -1,3 +1,5 @@
+#include "petta_builtin_registry.h"
+#include "petta_program.h"
 #include "petta_type_fact_provider_v1.h"
 
 #include "match.h"
@@ -19,7 +21,9 @@ struct CettaPettaTypeFactProviderV1 {
     size_t overlay_form_count;
     Atom **equations;
     size_t equation_count;
-    CettaGsltProviderV1 physical[5];
+    bool *builtin_extensions;
+    bool builtin_extension_wildcard;
+    CettaGsltProviderV1 physical[6];
     CettaGsltProviderRegistryV1 registry;
 };
 
@@ -156,19 +160,13 @@ static uint32_t type_fact_declared_types_v1(
         combined[count++] = copied;
     }
 
-    /* Alias and newtype declarations are source-ordered alternatives for one
-     * nominal meaning.  The first such declaration is authoritative, exactly
-     * as in the block checker's exclusive-declaration lookup.  Ordinary
-     * overload signatures remain a bag and retain their original order. */
+    /* All exclusive kinds share the program admission rule. Ordinary
+     * overload signatures retain their original order. */
     bool saw_nominal_meaning = false;
     uint32_t write = 0u;
     for (uint32_t read = 0u; read < count; read++) {
         Atom *type = combined[read];
-        bool nominal_meaning = type && type->kind == ATOM_EXPR &&
-            type->expr.len == 2u && type->expr.elems &&
-            type->expr.elems[0]->kind == ATOM_SYMBOL &&
-            (type_fact_symbol_is_v1(type->expr.elems[0], "Alias") ||
-             type_fact_symbol_is_v1(type->expr.elems[0], "Newtype"));
+        bool nominal_meaning = petta_program_type_is_exclusive_kind(type);
         if (nominal_meaning) {
             if (saw_nominal_meaning)
                 continue;
@@ -295,170 +293,34 @@ static Atom *type_fact_expr3_v1(
     return type_fact_expr_v1(arena, name, arguments, 3u);
 }
 
-typedef enum {
-    TYPE_FACT_BUILTIN_ANY_V1 = 0,
-    TYPE_FACT_BUILTIN_NUMBER_V1,
-    TYPE_FACT_BUILTIN_BOOL_V1,
-} TypeFactBuiltinTypeV1;
-
-typedef struct {
-    const char *name;
-    uint8_t arity;
-    TypeFactBuiltinTypeV1 arguments[2];
-    TypeFactBuiltinTypeV1 result;
-} TypeFactBuiltinSignatureV1;
-
-/* PeTTa's stable pure builtin type catalog.  The shapes follow current
- * upstream lib/lib_builtin_types.metta plus the operationally registered
- * `implies`, `and-then`, and `or-else` Boolean forms.  v3 records the
- * execution fact omitted by upstream's plain arrows: these grounded calls
- * are deterministic for well-typed arguments.  Shape-sensitive operations
- * such as min-atom/max-atom stay absent until their nonempty-spine judgment
- * can select a grade; an unconditional signature would be false evidence. */
-static const TypeFactBuiltinSignatureV1 type_fact_builtins_v1[] = {
-    {"+", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"-", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"*", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"/", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"%", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"mod", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"pow-math", 2u,
-     {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"log-math", 2u,
-     {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"min", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"max", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"sqrt-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"abs-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"trunc-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"ceil-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"floor-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"round-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"sin-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"asin-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"cos-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"acos-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"tan-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"atan-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"exp", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_NUMBER_V1},
-    {"<", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"<=", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {">", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {">=", 2u, {TYPE_FACT_BUILTIN_NUMBER_V1, TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"==", 2u, {TYPE_FACT_BUILTIN_ANY_V1, TYPE_FACT_BUILTIN_ANY_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"!=", 2u, {TYPE_FACT_BUILTIN_ANY_V1, TYPE_FACT_BUILTIN_ANY_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"isnan-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"isinf-math", 1u, {TYPE_FACT_BUILTIN_NUMBER_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"and", 2u, {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"or", 2u, {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"xor", 2u, {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"implies", 2u,
-     {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"and-then", 2u,
-     {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"or-else", 2u,
-     {TYPE_FACT_BUILTIN_BOOL_V1, TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-    {"not", 1u, {TYPE_FACT_BUILTIN_BOOL_V1},
-     TYPE_FACT_BUILTIN_BOOL_V1},
-};
-
-static Atom *type_fact_builtin_type_v1(
-    Arena *arena, TypeFactBuiltinTypeV1 type) {
-    switch (type) {
-    case TYPE_FACT_BUILTIN_ANY_V1:
-        return atom_symbol(arena, "%Undefined%");
-    case TYPE_FACT_BUILTIN_NUMBER_V1:
-        return atom_symbol(arena, "Number");
-    case TYPE_FACT_BUILTIN_BOOL_V1:
-        return atom_symbol(arena, "Bool");
+static const char *type_fact_builtin_arrow(PettaAnalysisCardinality grade) {
+    switch (grade) {
+    case PETTA_ANALYSIS_CARDINALITY_DETERMINISTIC: return "-[det]->";
+    case PETTA_ANALYSIS_CARDINALITY_SEMIDETERMINISTIC: return "-[semidet]->";
+    case PETTA_ANALYSIS_CARDINALITY_NONDETERMINISTIC: return "-[nondet]->";
+    case PETTA_ANALYSIS_CARDINALITY_UNDETERMINED: return "->";
     }
-    return NULL;
+    return "->";
 }
 
-static const TypeFactBuiltinSignatureV1 *
-type_fact_builtin_signature_lookup_v1(
-    const char *name, CettaExprLen arity) {
-    if (!name)
-        return NULL;
-    for (size_t index = 0u;
-         index < sizeof(type_fact_builtins_v1) /
-                     sizeof(type_fact_builtins_v1[0]); index++) {
-        if (strcmp(name, type_fact_builtins_v1[index].name) == 0 &&
-            arity == type_fact_builtins_v1[index].arity) {
-            return &type_fact_builtins_v1[index];
-        }
-    }
-    return NULL;
-}
-
-static Atom *type_fact_builtin_signature_v1(
-    Arena *arena, const Atom *subject) {
+static Atom *type_fact_builtin_signature_v1(Arena *arena, const Atom *subject) {
     if (!arena || !subject || subject->kind != ATOM_SYMBOL)
         return NULL;
     const char *name = atom_name_cstr((Atom *)subject);
-    const TypeFactBuiltinSignatureV1 *signature = NULL;
-    for (size_t index = 0u;
-         index < sizeof(type_fact_builtins_v1) /
-                     sizeof(type_fact_builtins_v1[0]); index++) {
-        if (strcmp(name, type_fact_builtins_v1[index].name) == 0) {
-            signature = &type_fact_builtins_v1[index];
-            break;
-        }
-    }
-    if (!signature)
-        return NULL;
-    Atom **parts = arena_alloc(
-        arena, sizeof(*parts) * (signature->arity + 2u));
-    if (!parts)
-        return NULL;
-    parts[0] = atom_symbol(arena, "-[det]->");
-    for (uint8_t index = 0u; index < signature->arity; index++)
-        parts[index + 1u] = type_fact_builtin_type_v1(
-            arena, signature->arguments[index]);
-    parts[signature->arity + 1u] = type_fact_builtin_type_v1(
-        arena, signature->result);
-    for (uint8_t index = 0u; index < signature->arity + 2u; index++) {
-        if (!parts[index])
+    for (size_t index = 0u; index < petta_builtin_spec_count(); index++) {
+        const PettaBuiltinSpec *spec = petta_builtin_spec_at(index);
+        if (!spec->has_signature || strcmp(name, spec->name) != 0)
+            continue;
+        Atom *signature = petta_builtin_signature(arena, spec);
+        if (!signature)
             return NULL;
+        Atom *parts[4];
+        for (CettaExprIndex part = 0u; part < signature->expr.len; part++)
+            parts[part] = signature->expr.elems[part];
+        parts[0] = atom_symbol(arena, type_fact_builtin_arrow(spec->flat_cardinality));
+        return atom_expr(arena, parts, signature->expr.len);
     }
-    return atom_expr(arena, parts, signature->arity + 2u);
+    return NULL;
 }
 
 static Atom *type_fact_wire_type_v1(
@@ -658,6 +520,9 @@ typedef enum {
     TYPE_FACT_MATCH_YES_V1,
     TYPE_FACT_MATCH_MAYBE_V1,
 } TypeFactMatchV1;
+
+static bool type_fact_builtin_rule_is_unextended_v1(
+    CettaPettaTypeFactProviderV1 *provider, Atom *head, uint16_t arity);
 
 static PettaAnalysisCardinality type_fact_effect_v1(
     CettaPettaTypeFactProviderV1 *provider,
@@ -864,11 +729,14 @@ static PettaAnalysisCardinality type_fact_effect_v1(
         if (strcmp(head, semidet[index]) == 0)
             return PETTA_ANALYSIS_CARDINALITY_SEMIDETERMINISTIC;
     }
-    PettaAnalysisCardinality effect =
-        type_fact_builtin_signature_lookup_v1(
-            head, expression->expr.len - 1u)
-        ? PETTA_ANALYSIS_CARDINALITY_DETERMINISTIC
-        : PETTA_ANALYSIS_CARDINALITY_UNDETERMINED;
+    CettaExprLen arity = expression->expr.len - 1u;
+    const PettaBuiltinSpec *builtin = arity <= UINT16_MAX
+        ? petta_builtin_spec_find(head, (uint16_t)arity) : NULL;
+    PettaAnalysisCardinality effect = petta_builtin_literal_cardinality(
+        builtin, expression->expr.elems + 1u, arity);
+    if (builtin && !type_fact_builtin_rule_is_unextended_v1(
+            provider, expression->expr.elems[0], (uint16_t)arity))
+        effect = PETTA_ANALYSIS_CARDINALITY_NONDETERMINISTIC;
     static const char *const deterministic[] = {
         "+", "-", "*", "/", "%", "mod", "min", "max", "=", "==",
         "!=", "<", "<=", ">", ">=", "cons", "cons-atom", "data",
@@ -1278,6 +1146,49 @@ static CettaGsltProviderOutcomeV1 type_fact_result_query_v1(
     return outcome;
 }
 
+/* A builtin rule is valid only while no source equation contributes another
+ * implementation at this arity. The catalog and overlays share the provider's
+ * revision pin. Unknown heads conservatively defeat the rule. */
+static bool type_fact_builtin_rule_is_unextended_v1(
+    CettaPettaTypeFactProviderV1 *provider, Atom *head, uint16_t arity) {
+    const PettaBuiltinSpec *spec = petta_builtin_spec_find(atom_name_cstr(head), arity);
+    if (!spec)
+        return false;
+    if (!provider->builtin_extensions) {
+        Atom *const *equations = NULL;
+        size_t count = 0u;
+        if (!type_fact_equation_catalog_v1(provider, &equations, &count))
+            return false;
+        provider->builtin_extensions = calloc(petta_builtin_spec_count(), sizeof(bool));
+        if (!provider->builtin_extensions)
+            return false;
+        for (size_t index = 0u; index < count; index++) {
+            Atom *row = equations[index];
+            if (!type_fact_head_is_v1(row, "=") || row->expr.len != 3u)
+                continue;
+            Atom *lhs = row->expr.elems[1];
+            if (lhs->kind == ATOM_SYMBOL) {
+                for (size_t item = 0u; item < petta_builtin_spec_count(); item++) {
+                    const PettaBuiltinSpec *candidate = petta_builtin_spec_at(item);
+                    if (strcmp(atom_name_cstr(lhs), candidate->name) == 0)
+                        provider->builtin_extensions[item] = true;
+                }
+            } else if (lhs->kind == ATOM_VAR ||
+                       (lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+                        lhs->expr.elems[0]->kind != ATOM_SYMBOL)) {
+                provider->builtin_extension_wildcard = true;
+            } else if (lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+                       lhs->expr.len - 1u < UINT16_MAX) {
+                const PettaBuiltinSpec *candidate = petta_builtin_spec_find(
+                    atom_name_cstr(lhs->expr.elems[0]), (uint16_t)(lhs->expr.len - 1u));
+                if (candidate)
+                    provider->builtin_extensions[candidate->ordinal] = true;
+            }
+        }
+    }
+    return !provider->builtin_extension_wildcard && !provider->builtin_extensions[spec->ordinal];
+}
+
 static CettaGsltProviderOutcomeV1 type_fact_query_v1(
     void *raw_context, Arena *answer_arena, const Atom *goal,
     uint64_t answer_limit, CettaGsltProviderAnswersV1 *answers,
@@ -1299,7 +1210,28 @@ static CettaGsltProviderOutcomeV1 type_fact_query_v1(
     const char *relation = atom_name_cstr(goal->expr.elems[0]);
     CettaGsltProviderOutcomeV1 outcome = CETTA_GSLT_PROVIDER_COMPLETED;
 
-    if (strcmp(relation, "EnvDeclared") == 0) {
+    if (strcmp(relation, "KnownBuiltinCardinalityRule") == 0) {
+        if (goal->expr.len != 4u || goal->expr.elems[1]->kind != ATOM_SYMBOL ||
+            goal->expr.elems[2]->kind != ATOM_GROUNDED ||
+            goal->expr.elems[2]->ground.gkind != GV_INT ||
+            goal->expr.elems[2]->ground.ival < 0 ||
+            goal->expr.elems[2]->ground.ival > UINT16_MAX)
+            return CETTA_GSLT_PROVIDER_COMPLETED;
+        Atom *head = goal->expr.elems[1];
+        uint16_t arity = (uint16_t)goal->expr.elems[2]->ground.ival;
+        const PettaBuiltinSpec *spec = petta_builtin_spec_find(atom_name_cstr(head), arity);
+        if (!spec || spec->cardinality_rule != PETTA_BUILTIN_CARD_MANIFEST_BOOLEANS ||
+            !type_fact_builtin_rule_is_unextended_v1(provider, head, arity))
+            return CETTA_GSLT_PROVIDER_COMPLETED;
+        Atom *parts[] = {
+            atom_deep_copy(answer_arena, goal->expr.elems[0]),
+            atom_deep_copy(answer_arena, head),
+            atom_int(answer_arena, arity),
+            atom_symbol(answer_arena, "BoundBooleanInputs"),
+        };
+        return type_fact_push_v1(answers, atom_expr(answer_arena, parts, 4u),
+                                answer_limit, error, error_size);
+    } else if (strcmp(relation, "EnvDeclared") == 0) {
         Atom *subject = goal->expr.elems[1];
         if (goal->expr.len != 3u || subject->kind != ATOM_SYMBOL)
             return CETTA_GSLT_PROVIDER_COMPLETED;
@@ -1515,9 +1447,16 @@ cetta_petta_type_fact_provider_create_with_overlay_v1(
         .context = provider,
         .query = type_fact_query_v1,
     };
+    provider->physical[5] = (CettaGsltProviderV1){
+        .relation = "KnownBuiltinCardinalityRule",
+        .arity = 3u,
+        .semantic_id = "petta.builtin.cardinality-rule.v1",
+        .context = provider,
+        .query = type_fact_query_v1,
+    };
     provider->registry = (CettaGsltProviderRegistryV1){
         .providers = provider->physical,
-        .provider_count = 5u,
+        .provider_count = 6u,
     };
     if (!cetta_gslt_provider_registry_validate_v1(
             &provider->registry, error, error_size)) {
@@ -1530,8 +1469,10 @@ cetta_petta_type_fact_provider_create_with_overlay_v1(
 
 void cetta_petta_type_fact_provider_free_v1(
     CettaPettaTypeFactProviderV1 *provider) {
-    if (provider)
+    if (provider) {
         free(provider->equations);
+        free(provider->builtin_extensions);
+    }
     free(provider);
 }
 
