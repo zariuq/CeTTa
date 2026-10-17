@@ -534,6 +534,51 @@ typedef enum {
     CETTA_LP_NATIVE_SLR_LATTICE_RESOURCE_LIMIT = 2
 } CettaLpNativeSlrLatticeOutcome;
 
+/* Execute only the input-local single-action corridor of an existing GLR
+ * program. All terminal occurrences and all stored actions are considered;
+ * ambiguity or a dead end requests the general parser, never branch choice.
+ * NEEDS_GENERAL leaves the previous forest untouched. Owned bindings retain
+ * the same immutable terminal/program lifetime as other owned parse calls. */
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_deterministic_forest(
+    const CettaLpNativeGlrPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t work_limit,
+    CettaLpNativeSlrLatticeOutcome *outcome, CettaLpNativeUtf8Forest *out,
+    char *error, size_t error_size);
+
+/* One step of a deterministic derivation in postfix order: a shifted
+ * terminal occurrence (production UINT32_MAX), or a reduction of the
+ * preceding rhs_len steps' results. Spans are half-open scalar offsets. */
+typedef struct {
+    uint32_t production;
+    uint32_t terminal;
+    uint32_t left;
+    uint32_t right;
+    uint32_t rhs_len;
+    CettaLpNativeUtf8TerminalValueKind value_kind;
+    uint32_t value;
+} CettaLpNativeLrTraceStep;
+
+typedef struct {
+    CettaLpNativeLrTraceStep *steps;
+    uint32_t len;
+    uint32_t cap;
+} CettaLpNativeLrTrace;
+
+void cetta_lp_native_lr_trace_free(CettaLpNativeLrTrace *trace);
+
+/* The same single-action corridor, recording its unique derivation as a
+ * postfix trace instead of a packed forest. Repeats are recognized by the
+ * LR state stack; NEEDS_GENERAL also covers a stack-hash collision. On
+ * ACCEPTED, out carries the input (codepoints and byte offsets) and no
+ * forest nodes. */
+bool cetta_lp_native_glr_prepared_parse_owned_utf8_deterministic_trace(
+    const CettaLpNativeGlrPrepared *prepared,
+    const CettaLpNativeUtf8Terminal *terminals, uint32_t terminal_len,
+    const uint8_t *bytes, size_t length, uint32_t work_limit,
+    CettaLpNativeSlrLatticeOutcome *outcome, CettaLpNativeUtf8Forest *out,
+    CettaLpNativeLrTrace *trace, char *error, size_t error_size);
+
 void cetta_lp_native_grammar_init(CettaLpNativeGrammar *grammar);
 void cetta_lp_native_grammar_free(CettaLpNativeGrammar *grammar);
 

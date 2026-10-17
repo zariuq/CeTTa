@@ -187,4 +187,19 @@ Atom *cetta_langdef_module_dispatch(struct CettaLibraryContext *ctx,
                                     Atom *head, Atom **args,
                                     uint32_t nargs);
 
+/* A native composition that consumes a parse observation. The observation
+ * and its replayed values are borrowed for the duration of the call; the
+ * consumer returns its own result, allocated in arena. */
+typedef Atom *(*CettaLangdefParseConsumerV1)(void *context, Arena *arena, Atom *observation);
+/* Parse with the named baked parser exactly as langdef's selected and
+ * forest-selected text observations do (unbounded work, optional selection,
+ * optional packed forest), handing the observation to consume. The context
+ * retains one restored instance of each baked parser it uses. NULL reports
+ * that the parser itself could not be obtained. */
+Atom *cetta_langdef_baked_parse_consume_v1(
+    struct CettaLibraryContext *ctx, const char *name,
+    const uint8_t *bytes, size_t len, Atom *selection, bool include_forest,
+    Arena *arena, CettaLangdefParseConsumerV1 consume, void *consume_context,
+    char *error, size_t error_size);
+
 #endif /* CETTA_LANGDEF_MODULE_H */

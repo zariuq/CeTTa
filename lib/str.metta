@@ -93,42 +93,42 @@
 ; (alnum or _) and ascii.  A codepoint beyond ASCII is in none of them.
 ; Whether every codepoint of a text is in a class (the empty text is), and
 ; whether its first codepoint is (the empty text has none).
-(= (str:all-in? $class $text)
+(= (str:is-all-in $class $text)
    (function
-     (case (__cetta_lib_str all-in? $class $text)
+     (case (__cetta_lib_str is-all-in $class $text)
        (($result (return $result))))))
 
-(= (str:initial-in? $class $text)
+(= (str:is-initial-in $class $text)
    (function
-     (case (__cetta_lib_str initial-in? $class $text)
+     (case (__cetta_lib_str is-initial-in $class $text)
        (($result (return $result))))))
 
 ; Spelling tests: letters and digits only; a lower-case or an upper-case
 ; initial; and a lower word or an upper word, such an initial followed by word
 ; characters.
-(= (str:alphanumeric? $text)
+(= (str:is-alphanumeric $text)
    (function
-     (case (__cetta_lib_str alphanumeric? $text)
+     (case (__cetta_lib_str is-alphanumeric $text)
        (($result (return $result))))))
 
-(= (str:lower-initial? $text)
+(= (str:is-lower-initial $text)
    (function
-     (case (__cetta_lib_str lower-initial? $text)
+     (case (__cetta_lib_str is-lower-initial $text)
        (($result (return $result))))))
 
-(= (str:upper-initial? $text)
+(= (str:is-upper-initial $text)
    (function
-     (case (__cetta_lib_str upper-initial? $text)
+     (case (__cetta_lib_str is-upper-initial $text)
        (($result (return $result))))))
 
-(= (str:lower-word? $text)
+(= (str:is-lower-word $text)
    (function
-     (case (__cetta_lib_str lower-word? $text)
+     (case (__cetta_lib_str is-lower-word $text)
        (($result (return $result))))))
 
-(= (str:upper-word? $text)
+(= (str:is-upper-word $text)
    (function
-     (case (__cetta_lib_str upper-word? $text)
+     (case (__cetta_lib_str is-upper-word $text)
        (($result (return $result))))))
 
 ; A symbol from a string: nonempty UTF-8 without NUL.
@@ -162,9 +162,9 @@
      (case (__cetta_lib_str set $strings)
        (($result (return $result))))))
 
-(= (str:set-member? $set $text)
+(= (str:is-set-member $set $text)
    (function
-     (case (__cetta_lib_str set-member? $set $text)
+     (case (__cetta_lib_str is-set-member $set $text)
        (($result (return $result))))))
 
 ; The quoting schemes are metta, json, tptp-single and tptp-double: the body

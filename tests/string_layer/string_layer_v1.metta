@@ -43,7 +43,7 @@
 !(assertEqual (str:byte-length "ok\xc3") 3)
 !(assertEqual (case (str:codepoint-count "ok\xc3") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 2))
 !(assertEqual (case (str:codepoints "\xff") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 0))
-!(assertEqual (case (str:all-in? alpha "ab\xe9") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 2))
+!(assertEqual (case (str:is-all-in alpha "ab\xe9") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 2))
 !(assertEqual (case (str:string->symbol "x\xc3") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 1))
 !(assertEqual (case (str:string->symbol "a\x00b") (((Error $call $detail) $detail))) (StrNulInSymbolV1 1))
 
@@ -61,23 +61,23 @@
 !(assertEqual (case (str:unescape json "\\q") (((Error $call $detail) $detail))) (StrInvalidEscapeV1 0))
 
 ; ------------------------------------------------------------- spelling ----
-!(assertEqual (str:lower-word? "abc_1") True)
-!(assertEqual (str:lower-word? "Abc") False)
-!(assertEqual (str:upper-word? "X1") True)
-!(assertEqual (str:alphanumeric? "a1") True)
-!(assertEqual (str:alphanumeric? "a_1") False)
-!(assertEqual (str:all-in? word "a_1") True)
-!(assertEqual (str:all-in? digit "") True)
-!(assertEqual (str:initial-in? digit "") False)
-!(assertEqual (str:lower-initial? "é") False)
-!(assertEqual (str:upper-initial? "Éa") False)
+!(assertEqual (str:is-lower-word "abc_1") True)
+!(assertEqual (str:is-lower-word "Abc") False)
+!(assertEqual (str:is-upper-word "X1") True)
+!(assertEqual (str:is-alphanumeric "a1") True)
+!(assertEqual (str:is-alphanumeric "a_1") False)
+!(assertEqual (str:is-all-in word "a_1") True)
+!(assertEqual (str:is-all-in digit "") True)
+!(assertEqual (str:is-initial-in digit "") False)
+!(assertEqual (str:is-lower-initial "é") False)
+!(assertEqual (str:is-upper-initial "Éa") False)
 !(assertEqual (str:starts-with "§w" "§") True)
 
 ; ----------------------------------------------------------------- sets ----
 !(assertEqual (str:set ["b" "a" "b"]) (StrSetV1 ["a" "b"]))
-!(assertEqual (let $set (str:set ["fof" "cnf" "fof"]) (str:set-member? $set "cnf")) True)
-!(assertEqual (let $set (str:set ["fof" "cnf"]) (str:set-member? $set "tff")) False)
-!(assertEqual (let $set (str:set ["a\x00b"]) (str:set-member? $set "a\x00c")) False)
+!(assertEqual (let $set (str:set ["fof" "cnf" "fof"]) (str:is-set-member $set "cnf")) True)
+!(assertEqual (let $set (str:set ["fof" "cnf"]) (str:is-set-member $set "tff")) False)
+!(assertEqual (let $set (str:set ["a\x00b"]) (str:is-set-member $set "a\x00c")) False)
 
 ; -------------------------------------------------------------- numbers ----
 !(assertEqual (str:string->number "42") 42)

@@ -9292,6 +9292,15 @@ static bool petta_machine_collect_deterministic_heap(
             arena_free(&next_tenured);
         return false;
     }
+    /* The nursery dies with this collection, and with a major one the old
+     * tenured arena too: their atoms record their copies in place, so the
+     * copy keeps sharing without a table.  An older atom never points into
+     * the nursery, and the roots are projected before anything is copied. */
+    (void)atom_deep_copy_session_forward_region(
+        session, &machine->heap, (ArenaMark){0});
+    if (major)
+        (void)atom_deep_copy_session_forward_region(
+            session, &machine->tenured, (ArenaMark){0});
     bool ok = true;
     Atom *next_query = petta_copy_optional_atom(
         session, machine->query, &ok);

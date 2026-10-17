@@ -138,6 +138,32 @@ def main():
                     assert observed.stderr.startswith(b"Cannot complete vocabulary check:"), observed
         finally:
             if protected is not None: protected.chmod(restore_mode)
+    original = (ROOT / "scripts/check_precise_vocabulary.metta").read_text()
+    preparation = '(str:concat "(?i)" (vocabulary:needle))'
+    invocation = '      (vocabulary:main)))'
+    assert original.count(preparation) == original.count(invocation) == 1
+    faults = {
+        "regex_preparation_failure": original.replace(preparation,
+            '(str:concat "(?unknown)" (vocabulary:needle))'),
+        "regex_execution_failure": original.replace(invocation,
+            '      (let $closed (re:close $pattern) (vocabulary:main))))'),
+    }
+    for name, program in faults.items():
+        root = output / name
+        (root / "scripts").mkdir(parents=True, exist_ok=True)
+        (root / "src").mkdir(exist_ok=True)
+        entry = root / "scripts/check_precise_vocabulary.metta"
+        entry.write_text(program)
+        (root / "src/ordinary.metta").write_text("ordinary\n")
+        for language in args.language or ("he", "petta"):
+            command = [str(binary), "--no-results", "--lang", language]
+            if language != "prime": command += ["--profile", "extended"]
+            observed = subprocess.run(command + [str(entry)], cwd=outside,
+                                      capture_output=True, timeout=60)
+            assert observed.returncode == 2, (language, name, observed)
+            assert b"PASS" not in observed.stdout, (language, name, observed)
+            assert observed.stderr.startswith(b"Cannot complete vocabulary check: regex"), observed
+            checked += 1
     print(f"(VocabularyNativeV1Summary {checked} 0)")
 
 

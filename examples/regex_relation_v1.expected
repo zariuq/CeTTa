@@ -1,0 +1,4 @@
+(RegexRelationOverlapV1 ((re:match 0 1 (LCons (re:capture-span 0 0 1) LNil)) (re:match 0 2 (LCons (re:capture-span 0 0 2) LNil)) (re:match 1 2 (LCons (re:capture-span 0 1 2) LNil))))
+(RegexRelationMultiplicityV1 ((re:match 0 1 (LCons (re:capture-span 0 0 1) LNil)) (re:match 0 1 (LCons (re:capture-span 0 0 1) LNil))))
+RegexRelationPendingV1
+(RegexRelationNoAnswersV1 ())

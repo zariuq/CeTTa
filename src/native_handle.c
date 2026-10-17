@@ -165,7 +165,7 @@ bool cetta_native_handle_arg(Atom *arg, const char *expected_kind, uint64_t *id_
 bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind,
                                void *resource, CettaNativeHandleFreeFn free_resource,
                                uint64_t *id_out) {
-    int slot = -1;
+    uint32_t slot = UINT32_MAX;
     if (!ctx || !kind || !resource || !id_out) return false;
     pthread_mutex_lock(&native_handle_mutex);
     if (ctx->native_handle_next_id == 0) {
@@ -174,16 +174,29 @@ bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind
     }
     for (uint32_t i = 0; i < ctx->native_handle_len; i++) {
         if (ctx->native_handles[i].resource == NULL) {
-            slot = (int)i;
+            slot = i;
             break;
         }
     }
-    if (slot < 0) {
-        if (ctx->native_handle_len >= CETTA_MAX_NATIVE_HANDLES) {
-            pthread_mutex_unlock(&native_handle_mutex);
-            return false;
+    if (slot == UINT32_MAX) {
+        if (ctx->native_handle_len == ctx->native_handle_capacity) {
+            uint32_t previous = ctx->native_handle_capacity;
+            uint32_t capacity = previous ? (previous <= UINT32_MAX / 2u ? previous * 2u : UINT32_MAX) : 16u;
+            if (capacity <= previous || (uint64_t)capacity * sizeof(*ctx->native_handles) > SIZE_MAX) {
+                pthread_mutex_unlock(&native_handle_mutex); return false;
+            }
+            CettaNativeHandleSlot *slots = realloc(ctx->native_handles, (size_t)capacity * sizeof(*slots));
+            if (!slots) { pthread_mutex_unlock(&native_handle_mutex); return false; }
+            ctx->native_handles = slots; ctx->native_handle_capacity = capacity;
+            memset(slots + previous, 0, (size_t)(capacity - previous) * sizeof(*slots));
+            /* Control cells outlive their registry allocation. Rebase every
+             * live cell while holder mutation is excluded by this lock. */
+            for (uint32_t i = 0; i < ctx->native_handle_len; ++i) {
+                CettaNativeHandleOwner *owner = native_handle_owner(&slots[i]);
+                if (owner) owner->slot = &slots[i];
+            }
         }
-        slot = (int)ctx->native_handle_len++;
+        slot = ctx->native_handle_len++;
     }
     ctx->native_handles[slot].id = ctx->native_handle_next_id++;
     ctx->native_handles[slot].kind = kind;
@@ -228,6 +241,7 @@ void cetta_native_handle_cleanup_all(struct CettaLibraryContext *ctx) {
         native_handle_retire(retired);
     }
     pthread_mutex_lock(&native_handle_mutex);
-    ctx->native_handle_len = 0;
+    free(ctx->native_handles); ctx->native_handles = NULL;
+    ctx->native_handle_len = ctx->native_handle_capacity = 0u;
     pthread_mutex_unlock(&native_handle_mutex);
 }

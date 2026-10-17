@@ -166,18 +166,22 @@ typedef struct {
     Atom *recent;
 } AtomDeepCopyBufferSlot;
 
-/* The region a session copies out of that dies when the session ends: the
- * atoms of arena `identity` outside the kept ranges, which are the storage
- * the arena keeps below the caller's mark.  A copied atom of the region
+/* The storage a session copies out of that dies when the session ends: for
+ * each dying arena, its atoms outside the kept ranges, which are the storage
+ * that arena keeps below the caller's mark.  A copied atom of a dying arena
  * records its copy in place (ATOM_ARENA_ID_FORWARDED, and its name key the
- * copy) rather than in the session's table.  `identity` zero: none. */
-enum { ATOM_DEEP_COPY_REGION_KEPT_MAX = 16u };
-
+ * copy) rather than in the session's table.  Both lists grow as needed: any
+ * number of dying arenas, and of blocks kept below a mark. */
 typedef struct {
     uint32_t identity;
     uint32_t kept_len;
-    uintptr_t kept_start[ATOM_DEEP_COPY_REGION_KEPT_MAX];
-    uintptr_t kept_end[ATOM_DEEP_COPY_REGION_KEPT_MAX];
+    uintptr_t *kept;          /* kept_len pairs: start, end */
+} AtomDeepCopyDyingArena;
+
+typedef struct {
+    uint32_t len;
+    uint32_t cap;
+    AtomDeepCopyDyingArena *arenas;
 } AtomDeepCopyRegion;
 
 /* The arena id of an atom whose copy it records; never an arena's. */
@@ -6643,15 +6647,19 @@ static bool atom_deep_copy_memo_store(AtomDeepCopyMemo *memo,
 
 static inline bool atom_deep_copy_region_dying(
     const AtomDeepCopyRegion *region, const Atom *atom) {
-    if (atom->arena_id != region->identity)
-        return false;
-    uintptr_t address = (uintptr_t)atom;
-    for (uint32_t i = 0u; i < region->kept_len; i++) {
-        if (address >= region->kept_start[i] &&
-            address < region->kept_end[i])
-            return false;
+    for (uint32_t a = 0u; a < region->len; a++) {
+        const AtomDeepCopyDyingArena *dying = &region->arenas[a];
+        if (atom->arena_id != dying->identity)
+            continue;
+        uintptr_t address = (uintptr_t)atom;
+        for (uint32_t i = 0u; i < dying->kept_len; i++) {
+            if (address >= dying->kept[2u * i] &&
+                address < dying->kept[2u * i + 1u])
+                return false;
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 /* The copy already made of `src` in this episode, or NULL. */
@@ -6675,8 +6683,12 @@ static inline bool atom_deep_copy_record(AtomDeepCopyMemo *memo, Atom *src,
     if (region && src && dst && atom_deep_copy_region_dying(region, src)) {
         src->arena_id = ATOM_ARENA_ID_FORWARDED;
         src->name_key = dst;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_PLACE);
         return true;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_TABLE);
     return atom_deep_copy_memo_store(memo, src, dst);
 }
 
@@ -7052,28 +7064,60 @@ AtomDeepCopySession *atom_deep_copy_session_new_mapped(
     return session;
 }
 
+/* Add `arena`'s storage above `mark` to the storage dying with the session
+ * (a null mark: the whole arena).  An arena already dying keeps its first
+ * mark. */
 bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
                                            const Arena *arena,
                                            ArenaMark mark) {
     if (!session || session->map || !arena || arena->identity == 0u)
         return false;
-    AtomDeepCopyRegion region = {.identity = arena->identity};
+    AtomDeepCopyRegion *region = &session->region;
+    for (uint32_t a = 0u; a < region->len; a++) {
+        if (region->arenas[a].identity == arena->identity)
+            return false;
+    }
+    uint32_t kept_len = 0u;
     if (mark.head) {
-        region.kept_start[0] = (uintptr_t)mark.head->data;
-        region.kept_end[0] = (uintptr_t)mark.head->data + mark.used;
-        region.kept_len = 1u;
+        kept_len = 1u;
         for (const ArenaBlock *block = mark.head->next; block;
              block = block->next) {
-            if (region.kept_len == ATOM_DEEP_COPY_REGION_KEPT_MAX)
+            if (kept_len == UINT32_MAX)
                 return false;
-            region.kept_start[region.kept_len] = (uintptr_t)block->data;
-            region.kept_end[region.kept_len] =
-                (uintptr_t)block->data + block->used;
-            region.kept_len++;
+            kept_len++;
         }
     }
-    session->region = region;
-    session->memo.region = &session->region;
+    uintptr_t *kept = NULL;
+    if (kept_len) {
+        if ((size_t)kept_len > SIZE_MAX / (2u * sizeof(*kept)))
+            return false;
+        kept = malloc((size_t)kept_len * 2u * sizeof(*kept));
+        if (!kept)
+            return false;
+        kept[0] = (uintptr_t)mark.head->data;
+        kept[1] = (uintptr_t)mark.head->data + mark.used;
+        uint32_t i = 1u;
+        for (const ArenaBlock *block = mark.head->next; block;
+             block = block->next, i++) {
+            kept[2u * i] = (uintptr_t)block->data;
+            kept[2u * i + 1u] = (uintptr_t)block->data + block->used;
+        }
+    }
+    if (region->len == region->cap) {
+        uint32_t cap = region->cap ? region->cap * 2u : 2u;
+        AtomDeepCopyDyingArena *grown = cap > region->cap
+            ? realloc(region->arenas, (size_t)cap * sizeof(*grown)) : NULL;
+        if (!grown) {
+            free(kept);
+            return false;
+        }
+        region->arenas = grown;
+        region->cap = cap;
+    }
+    region->arenas[region->len++] = (AtomDeepCopyDyingArena){
+        .identity = arena->identity, .kept_len = kept_len, .kept = kept,
+    };
+    session->memo.region = region;
     return true;
 }
 
@@ -7176,6 +7220,9 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
                                sizeof(*entry));
         free(entry);
     }
+    for (uint32_t a = 0u; a < session->region.len; a++)
+        free(session->region.arenas[a].kept);
+    free(session->region.arenas);
     atom_deep_copy_memo_free(&session->memo);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         sizeof(*session));

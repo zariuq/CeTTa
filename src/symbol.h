@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <pthread.h>
+#include "scalar_trie.h"
 
 typedef uint32_t SymbolId;
 
@@ -47,6 +48,10 @@ typedef struct {
     SymbolEntry **entry_chunks;
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
+    /* Lazily populated spelling index, protected by write_mutex. Entries are
+     * immutable scalar sequences; opaque non-UTF-8 spellings are counted. */
+    CettaScalarTrie *name_trie;
+    uint32_t name_trie_count, name_trie_invalid;
 } SymbolTable;
 
 static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
@@ -57,6 +62,22 @@ typedef struct {
     const char *bytes;
     uint32_t len;
 } SymbolSpelling;
+
+typedef struct {
+    SymbolId *ids;
+    size_t len;
+    /* Exclusive upper bound on the captured table: IDs 1..count-1. */
+    uint32_t snapshot_count, invalid_utf8_count;
+    CettaTrieWalkStats stats;
+} SymbolNameQueryResult;
+/* NULL automaton obtains the valid-text snapshot for an independently
+ * interpreted fallback. Product callbacks must not intern into this table.
+ * IDs are returned once each in interning order. Invalid UTF-8 names remain
+ * in the symbol table and are reported, not interpreted as absent matches.
+ * Replacement is atomic; initialize result to zero before first use. */
+bool symbol_table_query_names(SymbolTable *, const CettaTrieAutomaton *,
+                             const void *initial, SymbolNameQueryResult *);
+void symbol_name_query_free(SymbolNameQueryResult *);
 
 /* One publication check for both parts of a spelling. Interned bytes and
  * lengths never change; the bytes remain borrowed from the table until it

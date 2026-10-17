@@ -1,13 +1,29 @@
 ; Incremental repository vocabulary checking on the core C runtime.
 ; Directory links are not traversed; links to ordinary files are read.
 ; Excluded paths and vanished entries are normal skips. Other I/O failures
-; prevent a clean verdict. No Python host or regex engine is required.
+; prevent a clean verdict. The authored regex compiler and matcher run on
+; the core C runtime; the pattern is prepared once for the whole scan.
 !(import! &self fs)
 !(import! &self str)
 !(import! &self system)
+!(import! &self re)
 
 (= (vocabulary:needle) (str:concat "sur" "face"))
 (= (vocabulary:contains $text)
+  (match &self (vocabulary:pattern $pattern)
+    (case (re:is-match $pattern $text)
+      (((re:failed re:invalid-utf8 $detail) (vocabulary:contains-bytes $text))
+       ((re:failed $kind $detail)
+        (let $shown (system:write stderr "Cannot complete vocabulary check: regex execution failed\n")
+          (system:exit 2)))
+       ((re:incomplete $work)
+        (let $shown (system:write stderr "Cannot complete vocabulary check: regex execution unfinished\n")
+          (system:exit 2)))
+       ($boolean $boolean)))))
+; POSIX filenames can contain non-text bytes. Keep each such byte as a
+; barrier, as Python's surrogateescaped path spelling does, rather than
+; deleting bytes and accidentally joining two halves of a word.
+(= (vocabulary:contains-bytes $text)
   (let $needle (vocabulary:needle)
     (case (str:find-ascii-uncased $text $needle)
       (((TextNotFound $literal) False)
@@ -221,7 +237,8 @@
           "' as a syntax/interface metaphor\n"))
         (let $written (system:write stdout $message) (system:exit 0))))))
 
-!(let $entry (system:entry-directory)
+(= (vocabulary:main)
+ (let $entry (system:entry-directory)
  (let $parent (str:concat $entry "/..")
   (case (fs:try-canonical-path $parent)
   (((FS:CanonicalPath $root)
@@ -230,4 +247,14 @@
        "examples" "experiments" "langdef" "lib" "rust" "scripts" "specs" "src" "tests" "tools") 0)))
    ($fault
     (let $shown (system:write stderr "Cannot resolve repository root from entry file\n")
+      (system:exit 2))))))))
+
+!(let $source (str:concat "(?i)" (vocabulary:needle))
+ (let $pattern (re:compile $source)
+ (case $pattern
+  (((NativeHandle $kind $id)
+    (let $saved (add-atom &self (vocabulary:pattern $pattern))
+      (vocabulary:main)))
+   ($fault
+    (let $shown (system:write stderr "Cannot complete vocabulary check: regex preparation failed\n")
       (system:exit 2)))))))
