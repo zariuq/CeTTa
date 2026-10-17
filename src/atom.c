@@ -810,6 +810,10 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         }
         case GV_INTERNAL_TAG:
             break;
+        case GV_SEAL:
+            /* A seal object is a heap record retained by the arena's hold,
+             * not storage of any arena. */
+            break;
         case GV_PRIME_NEED_CAPABILITY:
             provenance_check_ptr(root, site, allowed_owner,
                                  "Prime Need capability",
@@ -1713,6 +1717,14 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             break; /* mutable/contextual — don't hash-cons */
+        case GV_SEAL: {
+            /* Identity equality: copies of one object hash alike, distinct
+             * objects (even of equal payload) usually differ. */
+            uint64_t key = atom_seal_identity(a);
+            h = ((h << 5) + h) ^ (uint32_t)(key & 0xFFFFFFFFu);
+            h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
+            break;
+        }
         case GV_INTERNAL_TAG:
             h = ((h << 5) + h) ^ (uint32_t)(a->ground.ival & 0xFFFFFFFF);
             break;
@@ -2123,6 +2135,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
+        case GV_SEAL:
             h = hashcons_index_mix(
                 h, (uint64_t)(uintptr_t)atom->ground.ptr);
             break;
@@ -3233,6 +3246,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_SEAL:
         return false;
     }
     return false;
@@ -3246,6 +3260,8 @@ static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
     if (cetta_gslt_identity_bearing_grounded_kind(gkind))
         flags |= ATOM_FLAG_HAS_IDENTITY_GROUNDED |
                  ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE;
+    if (gkind == GV_SEAL)
+        flags |= ATOM_FLAG_HAS_IDENTITY_GROUNDED;
     return flags;
 }
 
@@ -3922,6 +3938,16 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
     return &value->atom;
 }
 
+bool atom_native_handle_identifier_matches(const Atom *atom, const void *owner,
+                                           void (*retain)(void *),
+                                           void (*release)(void *)) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_INT ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
+        return false;
+    const NativeHandleIdentifier *value = (const NativeHandleIdentifier *)atom;
+    return value->owner == owner && value->retain == retain && value->release == release;
+}
+
 Atom *atom_int_copy(Arena *a, const Atom *source) {
     if (!a || !source || source->kind != ATOM_GROUNDED ||
         source->ground.gkind != GV_INT)
@@ -4271,6 +4297,78 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     at->ground.gkind = GV_FOREIGN;
     at->ground.ptr = value;
     return at;
+}
+
+Atom *atom_seal(Arena *a, void *object) {
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    if (!a || !hold || !hold->retain || !hold->release ||
+        !arena_retain_owner(a, object, hold->retain, hold->release))
+        return NULL;
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    *at = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_SEAL),
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts =
+            atom_structural_facts_for_grounded_kind(GV_SEAL),
+        .ground = {.gkind = GV_SEAL, .ptr = object},
+    };
+    return at;
+}
+
+void *atom_seal_object(const Atom *atom) {
+    return atom_is_seal(atom) ? atom->ground.ptr : NULL;
+}
+
+size_t atom_seal_display_text(const Atom *atom, char *buffer,
+                              size_t capacity) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    if (!hold) {
+        if (buffer && capacity)
+            buffer[0] = '\0';
+        return 0u;
+    }
+    if (hold->display)
+        return hold->display(object, buffer, capacity);
+    static const char fallback[] = "(Sealed)";
+    if (buffer && capacity) {
+        size_t n = sizeof(fallback) - 1u < capacity - 1u
+            ? sizeof(fallback) - 1u : capacity - 1u;
+        memcpy(buffer, fallback, n);
+        buffer[n] = '\0';
+    }
+    return sizeof(fallback) - 1u;
+}
+
+uint64_t atom_seal_identity(const Atom *atom) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    return hold && hold->identity ? hold->identity(object) : 0u;
+}
+
+const char *atom_seal_type_name(const Atom *atom) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    return hold && hold->type_name ? hold->type_name(object) : NULL;
+}
+
+static bool atom_tree_is_seal(const Atom *atom, void *context) {
+    (void)context;
+    return atom_is_seal(atom);
+}
+
+bool atom_contains_seal(const Atom *atom) {
+    if (!atom)
+        return false;
+    /* The inherited identity summary proves absence only for atoms whose
+     * constructor computed it; anything else is scanned exactly. */
+    if ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+        (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) == 0u)
+        return false;
+    return atom_tree_any(atom, atom_tree_is_seal, NULL);
 }
 
 Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
@@ -6259,6 +6357,7 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_CAPTURE:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
+            case GV_SEAL:
                 equal = a->ground.ptr == b->ground.ptr;
                 break;
             case GV_BINDINGS: {
@@ -6859,6 +6958,10 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
+        case GV_SEAL:
+            /* A copied reference keeps the object's identity. */
+            out = atom_seal(dst, src->ground.ptr);
             break;
         case GV_TERM_GRAPH: {
             /* The graph is immutable: the copy shares it. */
@@ -7805,6 +7908,20 @@ static void atom_print_mode(
                 hold->print_petta(a->ground.ptr, out);
             else
                 fprintf(out, "<foreign %p>", a->ground.ptr);
+            break;
+        }
+        case GV_SEAL: {
+            /* `(Sealed NICK)` and the like: no address, counter or payload. */
+            char text[256];
+            size_t length = atom_seal_display_text(a, text, sizeof(text));
+            if (length < sizeof(text)) {
+                fputs(text, out);
+            } else {
+                char *long_text = cetta_malloc(length + 1u);
+                atom_seal_display_text(a, long_text, length + 1u);
+                fputs(long_text, out);
+                free(long_text);
+            }
             break;
         }
         case GV_INTERNAL_TAG:

@@ -244,6 +244,14 @@ static Atom *langdef_error(Arena *arena, Atom *source, const char *message) {
     return atom_error(arena, source, atom_string(arena, message));
 }
 
+static Atom *langdef_owned_handle(CettaLibraryContext *ctx, Arena *arena,
+                                  Atom *source, const char *kind, uint64_t id) {
+    Atom *value = cetta_native_handle_owned_atom(ctx, arena, kind, id);
+    if (value) return value;
+    cetta_native_handle_close(ctx, kind, id);
+    return langdef_error(arena, source, "native handle publication allocation failed");
+}
+
 static void language_def_term_resource_free(void *opaque) {
     CettaLanguageDefTermV1 *resource = opaque;
 
@@ -7667,8 +7675,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "tptp reader handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, TPTP_READER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, TPTP_READER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_tptp_reader_info_v1")) {
@@ -8210,8 +8217,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "authored parser handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_authored_parser_load_values") ||
@@ -8265,8 +8271,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "authored parser handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_parser_select_strategy")) {
@@ -8299,7 +8304,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             Atom *args[] = {atom_string(arena, "parser strategy handle allocation failed")};
             return langdef_expr(arena, "ParserFailureV1", args, 1u);
         }
-        return langdef_return(arena, cetta_native_handle_owned_atom(ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id));
+        return langdef_return(arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_authored_parser_close")) {
@@ -8404,7 +8409,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             Atom *args[] = {atom_string(arena, "artifact handle allocation failed")};
             return langdef_expr(arena, "ParserFailureV1", args, 1u);
         }
-        return cetta_native_handle_owned_atom(ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id);
+        return langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id);
     }
 
     if (atom_is_symbol(head, "__cetta_lib_parser_parse_text") ||
@@ -8623,8 +8628,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 "deterministic equation handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, DETERMINISTIC_EQUATION_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, DETERMINISTIC_EQUATION_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run") ||
@@ -8843,8 +8847,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "LanguageDef handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, LANGUAGE_DEF_TERM_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, LANGUAGE_DEF_TERM_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_language_def_term_close")) {

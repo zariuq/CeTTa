@@ -1,0 +1,29 @@
+true
+true
+true
+true
+true
+true
+true
+(Megalodon.declared "p")
+(Megalodon.declared "q")
+true
+(mm0:admitted sort object)
+(mm0:admitted sort wff)
+(mm0:admitted term p)
+(mm0:admitted term q)
+(mm0:admitted term equal)
+Sealed
+Sealed
+Sealed
+Sealed
+Sealed
+Sealed
+Sealed
+(hol-refused "REFUSED")
+(mg-refused (MegalodonRefused "proof does not prove the stated proposition"))
+(mm0-refused "REFUSED")
+(hol-refused-megalodon "MALFORMED")
+(megalodon-refused-hol (MegalodonMalformed "not a theorem: only the kernel's checked rules make theorems"))
+(hol-refused-mm0 "MALFORMED")
+(mm0-refused-hol "MALFORMED")

@@ -469,11 +469,13 @@ static Atom *proc_dispatch(CettaLibraryContext *ctx, Arena *arena, Atom *head, A
         ProcJob *job = nargs == 2u ? prepare(args[0], args[1], &kind, &reason) : NULL;
         if (!job) return failed(arena, kind, reason);
         uint64_t id;
-        if (!cetta_native_handle_alloc(ctx, "process", job, stop_job, &id)) { stop_job(job); return failed(arena, "proc:capacity", "native handle registry is full"); }
+        if (!cetta_native_handle_alloc(ctx, "process", job, stop_job, &id)) { stop_job(job); return failed(arena, "proc:capacity", "native handle allocation failed"); }
+        Atom *owner = cetta_native_handle_owned_atom(ctx, arena, "process", id);
+        if (!owner) { cetta_native_handle_close(ctx, "process", id); return failed(arena, "proc:capacity", "native handle publication allocation failed"); }
         int error = pthread_create(&job->thread, NULL, execute, job);
         if (error) { cetta_native_handle_close(ctx, "process", id); return failed(arena, "proc:host-failure", strerror(error)); }
         job->started = true;
-        return cetta_native_handle_owned_atom(ctx, arena, "process", id);
+        return owner;
     }
     uint64_t id;
     bool wait = atom_is_symbol(head, "__cetta_lib_proc_wait");
