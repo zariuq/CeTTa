@@ -24,7 +24,7 @@ from rhocalc_tiny_semantics import (
 
 def initial_mrho(bin_path: str, syntax: str, fixture: str) -> str:
     if syntax == "metta":
-        proc = run_cmd([bin_path, "--lang", "he", fixture])
+        proc = run_cmd([bin_path, fixture])
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
         return extract_single_mrho_result(proc.stdout)

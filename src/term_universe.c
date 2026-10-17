@@ -3148,22 +3148,7 @@ bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
     return true;
 }
 
-/* A grounded leaf's record is built once, for interning and for lookup
- * alike: a lookup finds a leaf under the header, payload and slot it was
- * interned under. */
-static AtomId term_universe_leaf_record(TermUniverse *universe,
-                                        const CettaTermHdr *hdr,
-                                        const uint8_t *payload,
-                                        size_t payload_len, bool insert) {
-    if (!insert)
-        return term_universe_lookup_record_id(universe, hdr, payload,
-                                              payload_len);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    return term_universe_intern_record(universe, hdr, payload, payload_len);
-}
-
-static AtomId term_universe_float_record(TermUniverse *universe,
-                                         double value, bool insert) {
+AtomId tu_intern_float(TermUniverse *universe, double value) {
     CettaTermHdr hdr = {0};
     uint8_t payload[sizeof(double)] = {0};
     hdr.tag = (uint8_t)ATOM_GROUNDED;
@@ -3171,31 +3156,23 @@ static AtomId term_universe_float_record(TermUniverse *universe,
     hdr.aux32 = term_universe_aux_make(0u, false);
     hdr.hash32 = term_universe_hash_float_value(value);
     term_universe_store_double(payload, value);
-    return term_universe_leaf_record(universe, &hdr, payload,
-                                     sizeof(payload), insert);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, &hdr, payload,
+                                       sizeof(payload));
 }
 
-AtomId tu_intern_float(TermUniverse *universe, double value) {
-    return term_universe_float_record(universe, value, true);
-}
-
-static AtomId term_universe_bool_record(TermUniverse *universe, bool value,
-                                        bool insert) {
+AtomId tu_intern_bool(TermUniverse *universe, bool value) {
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_GROUNDED;
     hdr.subtag = (uint8_t)GV_BOOL;
     hdr.aux32 = term_universe_aux_make(value ? 1u : 0u, false);
     hdr.hash32 = term_universe_hash_bool_value(value);
-    return term_universe_leaf_record(universe, &hdr, NULL, 0u, insert);
-}
-
-AtomId tu_intern_bool(TermUniverse *universe, bool value) {
-    return term_universe_bool_record(universe, value, true);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, &hdr, NULL, 0u);
 }
 
 /* Admit immutable structural tags under atom.h's retention judgment. */
-static AtomId term_universe_stable_tag_record(TermUniverse *universe,
-                                              int64_t tag, bool insert) {
+AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
     if (!cetta_internal_tag_is_term_stable(tag))
         return CETTA_ATOM_ID_NONE;
     CettaTermHdr hdr = {0};
@@ -3203,16 +3180,12 @@ static AtomId term_universe_stable_tag_record(TermUniverse *universe,
     hdr.subtag = (uint8_t)GV_INTERNAL_TAG;
     hdr.aux32 = term_universe_aux_make((uint32_t)tag, false);
     hdr.hash32 = term_universe_hash_list_tag_value(tag);
-    return term_universe_leaf_record(universe, &hdr, NULL, 0u, insert);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, &hdr, NULL, 0u);
 }
 
-AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
-    return term_universe_stable_tag_record(universe, tag, true);
-}
-
-static AtomId term_universe_string_record(TermUniverse *universe,
-                                          const char *bytes, size_t len_sz,
-                                          bool insert) {
+AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
+                          size_t len_sz) {
     if (!bytes || len_sz > CETTA_STRING_BYTES_MAX)
         return CETTA_ATOM_ID_NONE;
     uint32_t len = (uint32_t)len_sz;
@@ -3222,6 +3195,7 @@ static AtomId term_universe_string_record(TermUniverse *universe,
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_string_bytes(bytes, len);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
     /* The payload is the bytes and a NUL kept for C interoperation. */
     uint8_t stack_payload[256];
     uint8_t *payload = len + 1u <= sizeof stack_payload
@@ -3231,16 +3205,11 @@ static AtomId term_universe_string_record(TermUniverse *universe,
         return CETTA_ATOM_ID_NONE;
     memcpy(payload, bytes, len);
     payload[len] = 0u;
-    AtomId id = term_universe_leaf_record(universe, &hdr, payload, len + 1u,
-                                          insert);
+    AtomId id = term_universe_intern_record(universe, &hdr, payload,
+                                            len + 1u);
     if (payload != stack_payload)
         free(payload);
     return id;
-}
-
-AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
-                          size_t len_sz) {
-    return term_universe_string_record(universe, bytes, len_sz, true);
 }
 
 AtomId tu_intern_string(TermUniverse *universe, const char *value) {
@@ -3249,8 +3218,7 @@ AtomId tu_intern_string(TermUniverse *universe, const char *value) {
     return tu_intern_string_n(universe, value, strlen(value));
 }
 
-static AtomId term_universe_bigint_record(TermUniverse *universe,
-                                          const char *value, bool insert) {
+AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
     if (!value)
         return CETTA_ATOM_ID_NONE;
     char *canonical = cetta_bigint_canonicalize_owned(value);
@@ -3259,8 +3227,7 @@ static AtomId term_universe_bigint_record(TermUniverse *universe,
     int64_t small = 0;
     if (cetta_bigint_text_fits_i64(canonical, &small)) {
         free(canonical);
-        return insert ? tu_intern_int(universe, small)
-                      : term_universe_lookup_integer(universe, small, NULL);
+        return tu_intern_int(universe, small);
     }
     size_t len_sz = strlen(canonical);
     if (len_sz > (size_t)UINT32_MAX - 1u) {
@@ -3274,19 +3241,15 @@ static AtomId term_universe_bigint_record(TermUniverse *universe,
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_bigint_value(canonical);
-    AtomId id = term_universe_leaf_record(universe, &hdr,
-                                          (const uint8_t *)canonical,
-                                          len + 1u, insert);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    AtomId id = term_universe_intern_record(universe, &hdr,
+                                            (const uint8_t *)canonical,
+                                            len + 1u);
     free(canonical);
     return id;
 }
 
-AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
-    return term_universe_bigint_record(universe, value, true);
-}
-
-static AtomId term_universe_rational_record(TermUniverse *universe,
-                                            const char *value, bool insert) {
+AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
     if (!value)
         return CETTA_ATOM_ID_NONE;
     char *canonical = cetta_rational_canonicalize_owned(value);
@@ -3295,7 +3258,7 @@ static AtomId term_universe_rational_record(TermUniverse *universe,
     char *slash = strchr(canonical, '/');
     if (slash && strcmp(slash + 1, "1") == 0) {
         *slash = '\0';
-        AtomId id = term_universe_bigint_record(universe, canonical, insert);
+        AtomId id = tu_intern_bigint(universe, canonical);
         free(canonical);
         return id;
     }
@@ -3311,15 +3274,12 @@ static AtomId term_universe_rational_record(TermUniverse *universe,
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_rational_value(canonical);
-    AtomId id = term_universe_leaf_record(universe, &hdr,
-                                          (const uint8_t *)canonical,
-                                          len + 1u, insert);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    AtomId id = term_universe_intern_record(universe, &hdr,
+                                            (const uint8_t *)canonical,
+                                            len + 1u);
     free(canonical);
     return id;
-}
-
-AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
-    return term_universe_rational_record(universe, value, true);
 }
 
 /* The list [elems...], or [elems... | rest] when rest is not
@@ -4843,30 +4803,6 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
         AtomId id = term_universe_stable_atom_id_iterative(
             (TermUniverse *)universe, src, false, &stable);
         return stable ? id : CETTA_ATOM_ID_NONE;
-    }
-    if (src->kind == ATOM_GROUNDED) {
-        /* Lookup only: the record functions intern nothing when told not to. */
-        TermUniverse *records = (TermUniverse *)universe;
-        switch (src->ground.gkind) {
-        case GV_FLOAT:
-            return term_universe_float_record(records, src->ground.fval, false);
-        case GV_BOOL:
-            return term_universe_bool_record(records, src->ground.bval, false);
-        case GV_STRING:
-            return term_universe_string_record(records, src->ground.sval,
-                                               src->ground.slen, false);
-        case GV_BIGINT:
-            return term_universe_bigint_record(records, atom_bigint_cstr(src),
-                                               false);
-        case GV_RATIONAL:
-            return term_universe_rational_record(
-                records, atom_rational_cstr(src), false);
-        case GV_INTERNAL_TAG:
-            return term_universe_stable_tag_record(records, src->ground.ival,
-                                                   false);
-        default:
-            break;
-        }
     }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
     TU_DIAG_INC((TermUniverse *)universe, legacy_hash_recompute_count);

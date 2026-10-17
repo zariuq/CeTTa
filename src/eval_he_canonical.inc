@@ -872,10 +872,6 @@ static void he_canonical_resume_caller(HeCanonicalFrame *frame) {
                 &frame->env, frame->fuel, false, &producer);
         if (producer.kind == CETTA_CALL_INTERRUPTED)
             return;
-        /* A grounded operation that answers NotReducible leaves its call
-         * unreduced. */
-        if (value && he_not_reducible(value))
-            value = applied;
         if (value && producer.result_form != CETTA_CALL_RESULT_EXPRESSION) {
             emit_completed_native_call(frame->space, a, producer, value,
                 frame->type, &frame->env, he_relay_sink(frame, &frame->child));
@@ -977,11 +973,7 @@ static void he_canonical_resume_state(HeCanonicalFrame *frame) {
     }
     if (atom_head_symbol_id(frame->atom) == g_builtin_syms.get_state) {
         StateCell *cell = payload_resolve_state_read(state_ref->ground.ptr);
-        Atom *value = payload_rebind_resources(a, cell->value);
-        /* A state that holds NotReducible leaves the get-state call
-         * unreduced. */
-        outcome_set_add_prefixed(a, frame->target,
-            he_not_reducible(value) ? frame->atom : value,
+        outcome_set_add_prefixed(a, frame->target, payload_rebind_resources(a, cell->value),
             &reference->env, &frame->env, frame->preserve_bindings);
         frame->index++;
         return;
@@ -1989,14 +1981,6 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
         if (registers->len > 1u)
             match_chain_note_progress((uint32_t)registers->len, "canonical");
         Atom *body = bindings_apply_if_vars(&projected, a, frame->live[0]);
-        if (he_not_reducible(body)) {
-            /* A template instance that is NotReducible leaves the match
-             * call unreduced, under the bindings of its row. */
-            outcome_set_add(he_relay_sink(frame, &frame->paths), frame->atom,
-                            &projected);
-            bindings_free(&projected);
-            return;
-        }
         Space *target = match_result_target_space(body, a);
         bool snapshot = !frame->sourced_match && !frame->preserve_bindings &&
             match_result_targets_any_query_space(target, frame->match_spaces,

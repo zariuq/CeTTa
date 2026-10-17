@@ -153,7 +153,7 @@ def cetta_observed_outputs(
     fixture: str,
 ) -> ObservationSet:
     if syntax == "metta":
-        proc = run_cmd([bin_path, "--lang", "he", fixture])
+        proc = run_cmd([bin_path, fixture])
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
         return mrho_residual_observations(bin_path, extract_single_mrho_result(proc.stdout))

@@ -195,11 +195,6 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * This is a representation fact of that leaf alone, never an inherited
  * occurrence bit. String equality, hashing and printing still use bytes. */
 #define ATOM_STRUCTURAL_STRING_STORAGE UINT32_C(0x00000800)
-/* The atom is or contains the symbol NotReducible, HE's call-return marker,
- * or is a rational term's node, whose unfolding may.  Admission to a fast
- * path that must leave such calls to the evaluator reads it in place of a
- * walk over the call. */
-#define ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE UINT32_C(0x00001000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -209,8 +204,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_LIST_CARRIER + ATOM_STRUCTURAL_FRONT_SLACK +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
-                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE ==
+                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -218,8 +212,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_LIST_CARRIER | ATOM_STRUCTURAL_FRONT_SLACK |
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
-                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE),
+                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE),
                "structural fact bits overlap");
 
 /*
@@ -340,13 +333,6 @@ static inline bool atom_structural_may_have_nan(const Atom *atom) {
     return !atom ||
            (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
            (atom->structural_facts & ATOM_STRUCTURAL_HAS_NAN) != 0u;
-}
-
-/* Conservative: true unless the atom is known to hold no NotReducible. */
-static inline bool atom_structural_may_have_not_reducible(const Atom *atom) {
-    return !atom ||
-           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
-           (atom->structural_facts & ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE) != 0u;
 }
 
 /* The atom holds a rational term's node.  Exact where the facts are known;
