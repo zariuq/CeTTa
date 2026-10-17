@@ -12552,6 +12552,8 @@ typedef struct {
     Atom *templ;
     int fuel;
     DirectWalkVisitorCtx *walk;
+    /* direct_walk_match_unreduced_call */
+    Atom *unreduced_call;
 } DirectWalkMorkCtx;
 
 typedef struct {
@@ -12560,12 +12562,55 @@ typedef struct {
     Atom *templ;
     int fuel;
     DirectWalkVisitorCtx *walk;
+    /* direct_walk_match_unreduced_call */
+    Atom *unreduced_call;
 } DirectWalkSpaceMatchCtx;
 
 typedef struct {
     Arena *arena;
     DirectWalkVisitorCtx *walk;
+    /* The get-atoms call, which a space atom that is NotReducible answers
+     * unreduced in HE; NULL in other languages. */
+    Atom *unreduced_call;
 } DirectWalkSpaceAtomsCtx;
+
+/* In HE, a match's call when its template, a variable or NotReducible,
+ * can instantiate to NotReducible: a row that instantiates it so answers the
+ * call unreduced.  NULL otherwise. */
+static Atom *direct_walk_match_unreduced_call(Atom *call, Atom *templ) {
+    return eval_current_language_id() == CETTA_LANGUAGE_HE && templ &&
+                   (templ->kind == ATOM_VAR || he_not_reducible(templ))
+        ? call : NULL;
+}
+
+/* A match row whose template instance is NotReducible answers the match
+ * call unreduced under the row's bindings. */
+static bool direct_walk_visit_unreduced_call(DirectWalkVisitorCtx *walk,
+                                             Arena *a, Atom *call,
+                                             const Bindings *row) {
+    Bindings empty;
+    bindings_init(&empty);
+    (*walk->visited)++;
+    if (!walk->visitor(a, bindings_apply_if_vars(row, a, call), &empty,
+                       walk->ctx)) {
+        walk->stopped = true;
+        return false;
+    }
+    return true;
+}
+
+/* HE: whether a superpose list holds NotReducible, an alternative that
+ * leaves the superpose call unreduced; the walk leaves such a list to the
+ * evaluator. */
+static bool direct_walk_list_holds_not_reducible(const Atom *list) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        !list || list->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < list->expr.len; i++)
+        if (he_not_reducible(list->expr.elems[i]))
+            return true;
+    return false;
+}
 
 typedef struct {
     Space *space;
@@ -12943,6 +12988,9 @@ static bool direct_outcome_walk_mork_row(const Bindings *bindings, void *ctx) {
     Bindings empty;
     bindings_init(&empty);
     Atom *row = bindings_apply_if_vars(bindings, mork->arena, mork->templ);
+    if (mork->unreduced_call && he_not_reducible(row))
+        return direct_walk_visit_unreduced_call(
+            mork->walk, mork->arena, mork->unreduced_call, bindings);
     OutcomeSet inner;
     outcome_set_init(&inner);
     eval_for_caller(mork->space, mork->arena, NULL, row, mork->fuel,
@@ -12960,6 +13008,11 @@ static bool direct_outcome_walk_space_match_row(
     if (match->walk->stopped)
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_PULL_MATCH_ROW);
+    if (match->unreduced_call &&
+        he_not_reducible(bindings_apply_if_vars(bindings, match->arena,
+                                                match->templ)))
+        return direct_walk_visit_unreduced_call(
+            match->walk, match->arena, match->unreduced_call, bindings);
     outcome_set_init(&inner);
     /* This is the ordinary non-preserving match law: apply the row bindings
        while evaluating the template, then expose exactly the resulting atom
@@ -13003,6 +13056,7 @@ static bool direct_outcome_walk_space_match(
         .templ = templ,
         .fuel = fuel,
         .walk = &walk,
+        .unreduced_call = direct_walk_match_unreduced_call(atom, templ),
     };
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_PULL_MATCH_RUN);
     SpaceMatchPullVisitResult indexed_result =
@@ -13059,6 +13113,8 @@ static bool direct_outcome_walk_space_atoms_row(Atom *atom, void *ctx) {
     if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
         atom_is_legacy_empty_sentinel(item))
         return true;
+    if (atoms->unreduced_call && he_not_reducible(item))
+        item = atoms->unreduced_call;
     bindings_init(&empty);
     (*atoms->walk->visited)++;
     if (!atoms->walk->visitor(
@@ -13094,6 +13150,8 @@ static bool direct_outcome_walk_space_atoms(
     atoms = (DirectWalkSpaceAtomsCtx){
         .arena = a,
         .walk = &walk,
+        .unreduced_call =
+            eval_current_language_id() == CETTA_LANGUAGE_HE ? atom : NULL,
     };
     arena_init(&scratch);
     arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
@@ -13171,7 +13229,8 @@ static bool direct_outcome_walk_space_superpose(
     return ok || walk.stopped;
 }
 
-static bool direct_outcome_walk_mork_match(Space *s, Arena *a, int fuel,
+static bool direct_outcome_walk_mork_match(Space *s, Arena *a, Atom *call,
+                                           int fuel,
                                            const DirectWalkPreparedMatch *prepared,
                                            OrderedOutcomeVisitor visitor, void *ctx,
                                            CettaCount *visited) {
@@ -13196,6 +13255,7 @@ static bool direct_outcome_walk_mork_match(Space *s, Arena *a, int fuel,
         .templ = templ,
         .fuel = fuel,
         .walk = &walk,
+        .unreduced_call = direct_walk_match_unreduced_call(call, templ),
     };
 
     if (pattern->kind == ATOM_EXPR && pattern->expr.len >= 1 &&
@@ -13348,6 +13408,7 @@ static bool direct_outcome_walk_prepare(
                 return false;
             }
             if (list->kind != ATOM_EXPR ||
+                direct_walk_list_holds_not_reducible(list) ||
                 !direct_walk_stack_push_superpose(&stack, list)) {
                 direct_walk_stack_free(&stack);
                 return false;
@@ -13417,7 +13478,7 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
                 direct_walk_preflight_take(
                     preflight, DIRECT_WALK_PREPARED_MORK_MATCH);
             if (!direct_outcome_walk_mork_match(
-                    s, a, fuel, prepared, visitor, ctx, visited)) {
+                    s, a, current, fuel, prepared, visitor, ctx, visited)) {
                 direct_walk_stack_free(&stack);
                 return false;
             }
@@ -13467,6 +13528,7 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
                 return false;
             }
             if (list->kind != ATOM_EXPR ||
+                direct_walk_list_holds_not_reducible(list) ||
                 !direct_walk_stack_push_superpose(&stack, list)) {
                 direct_walk_stack_free(&stack);
                 return false;
@@ -46714,12 +46776,15 @@ static bool prepared_pure_reference_enabled(void) {
     return enabled;
 }
 
-/* One conservative admission judgment supplies every closed prepared
- * realization.  The single-result executor and the finite answer producer
- * differ only after this boundary; unsupported effects, tables, traces, and
- * language-owned forms therefore decline in exactly the same way. */
-/* Whether a symbol occurs in an atom, walked without recursion. */
-static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
+/* Whether an atom may hold HE's call-return marker.  Structural facts answer
+ * at once; a node built without them is read by its kind, without
+ * recursion, down to the nodes that have them.  A rational term's node may
+ * hold it. */
+static bool atom_may_hold_not_reducible(Atom *root) {
+    if (!root || !atom_structural_may_have_not_reducible(root))
+        return false;
+    if ((root->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u)
+        return true;
     Atom *inline_stack[32];
     Atom **stack = inline_stack;
     size_t len = 0u, cap = sizeof inline_stack / sizeof inline_stack[0];
@@ -46727,26 +46792,38 @@ static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
     stack[len++] = root;
     while (len && !found) {
         Atom *atom = stack[--len];
-        if (!atom)
-            continue;
-        if (atom->kind == ATOM_SYMBOL) {
-            found = atom_is_symbol_id(atom, symbol);
-            continue;
-        }
-        if (atom->kind != ATOM_EXPR)
-            continue;
-        for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
-            if (len == cap) {
-                size_t next = cap * 2u;
-                Atom **grown = stack == inline_stack
-                    ? cetta_malloc(next * sizeof(*grown))
-                    : cetta_realloc(stack, next * sizeof(*grown));
-                if (stack == inline_stack)
-                    memcpy(grown, inline_stack, len * sizeof(*grown));
-                stack = grown;
-                cap = next;
+        switch (atom->kind) {
+        case ATOM_SYMBOL:
+            found = atom->sym_id == g_builtin_syms.not_reducible;
+            break;
+        case ATOM_GROUNDED:
+            found = atom->ground.gkind == GV_TERM_GRAPH;
+            break;
+        case ATOM_EXPR:
+            for (CettaExprIndex i = 0u; i < atom->expr.len && !found; i++) {
+                Atom *child = atom->expr.elems[i];
+                if (!child || !atom_structural_may_have_not_reducible(child))
+                    continue;
+                if ((child->structural_facts &
+                     ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
+                    found = true;
+                    break;
+                }
+                if (len == cap) {
+                    size_t next = cap * 2u;
+                    Atom **grown = stack == inline_stack
+                        ? cetta_malloc(next * sizeof(*grown))
+                        : cetta_realloc(stack, next * sizeof(*grown));
+                    if (stack == inline_stack)
+                        memcpy(grown, inline_stack, len * sizeof(*grown));
+                    stack = grown;
+                    cap = next;
+                }
+                stack[len++] = child;
             }
-            stack[len++] = atom->expr.elems[i];
+            break;
+        default:
+            break;
         }
     }
     if (stack != inline_stack)
@@ -46754,6 +46831,10 @@ static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
     return found;
 }
 
+/* One conservative admission judgment supplies every closed prepared
+ * realization.  The single-result executor and the finite answer producer
+ * differ only after this boundary; unsupported effects, tables, traces, and
+ * language-owned forms therefore decline in exactly the same way. */
 static bool prepared_pure_closed_call_plan(
     Space *space, Arena *destination, Atom *call, int fuel,
     bool entry_arguments_are_values,
@@ -46785,7 +46866,7 @@ static bool prepared_pure_closed_call_plan(
      * whose value is the marker; bodies themselves are judged where they
      * compile. */
     if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        atom_mentions_symbol_id(call, g_builtin_syms.not_reducible))
+        atom_may_hold_not_reducible(call))
         return prepared_pure_precheck_refuse(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH,
             "call-return marker", call);
@@ -48433,6 +48514,15 @@ static void metta_call_impl(
     __attribute__((cleanup(eval_gc_region_leave)))
     EvalGcRegionGuard eval_gc_region = {0};
     ArenaMark eval_gc_anchor = eval_gc_region_enter(&eval_gc_region, a);
+    /* In HE the answers of each call this frame evaluates leave it by the
+     * call return; left before the frame's roots, while `atom` is live. */
+    __attribute__((cleanup(he_call_return_scope_settle)))
+    HeCallReturnScope call_return = {
+        .arena = a,
+        .os = language_id == CETTA_LANGUAGE_HE ? os : NULL,
+        .call = &atom,
+        .start = os ? os->len : 0u,
+    };
     bool eval_gc_query_closed = he_canonical_query_closed(
         eval_gc_enabled() && !atom_contains_vars(atom));
     /* The PeTTa foldall form lowers to the shared fold worker.  That worker
@@ -48443,6 +48533,11 @@ static void metta_call_impl(
 #define TAIL_REENTER_ENV_WITH_FOLDALL_LOWERING(next_atom, extra_env, lowering) do { \
     if ((extra_env) != NULL && \
         !bindings_builder_merge_commit(&current_env_builder, (extra_env))) return; \
+    he_call_return_scope_settle(&call_return); \
+    if (call_return.os && he_not_reducible(next_atom)) { \
+        outcome_set_add(os, atom, &_empty); \
+        return; \
+    } \
     atom = resolve_registry_refs(a, (next_atom)); \
     petta_internal_foldall_lowering = (lowering); \
     if (fuel == 0) { \

@@ -2087,6 +2087,31 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
     return admitted;
 }
 
+/* HE's call return for a shared run's answers from `start` on.  Admission
+ * keeps NotReducible out of the source and its closure, so an answer that
+ * holds the marker read it from data, and the call inside the run that
+ * answered it, which the run does not name, may have been left unreduced.
+ * A run without effects is withdrawn and the evaluator answers the call.  A
+ * run with effects cannot run again: an answer that is the marker leaves its
+ * source call unreduced, and other answers stay as the run gave them. */
+static bool he_shared_execution_call_return(Arena *arena,
+    OutcomeSet *outcomes, CettaCount start, Atom *source, bool effects) {
+    bool holds = false;
+    for (CettaCount i = start; !holds && i < outcomes->len; i++)
+        holds = atom_structural_may_have_not_reducible(
+            outcome_atom_materialize(arena, &outcomes->items[i]));
+    if (!holds)
+        return true;
+    if (!effects) {
+        for (CettaCount i = start; i < outcomes->len; i++)
+            outcome_free_fields(&outcomes->items[i]);
+        outcomes->len = start;
+        return false;
+    }
+    he_outcomes_call_return(arena, outcomes, start, source);
+    return true;
+}
+
 static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
     OutcomeSet *outcomes) {
@@ -2136,10 +2161,13 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_he_shared_execution_effect_free = !plan.effects;
     g_he_shared_execution_rereads = plan.rereads;
     g_active_petta_search_machine = true;
+    CettaCount start = outcomes->len;
     bool complete = petta_eval_machine_run(space, arena, source, type, fuel,
         environment, preserve_bindings, outcomes, PETTA_RELATION_SAFETY_STATIC,
         CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
     g_active_petta_search_machine = enclosing_active;
     g_he_shared_execution = false;
-    return complete;
+    return complete &&
+        he_shared_execution_call_return(arena, outcomes, start, source,
+                                        plan.effects);
 }
