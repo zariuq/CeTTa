@@ -10516,8 +10516,10 @@ bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
         !cetta_prepared_pure_program_is_current(cursor->program))
         return false;
     const CettaPreparedPureProgram *program = cursor->program;
-    for (size_t index = 0u; index < cursor->frame_len; index++) {
-        const PreparedPureAnswerFrame *frame = &cursor->frames[index];
+    /* An untried occurrence is usually on the innermost call. Test it first;
+     * completion still requires the same predicate on every retained frame. */
+    for (size_t index = cursor->frame_len; index > 0u;) {
+        const PreparedPureAnswerFrame *frame = &cursor->frames[--index];
         if (frame->head_index >= program->head_len ||
             frame->argument_base > cursor->argument_len ||
             frame->arity > cursor->argument_len - frame->argument_base ||

@@ -3877,8 +3877,8 @@ static bool bindings_promote_occurrence_with_session(
         return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     bool receipt_copied = owned_copy
-        ? prime_need_receipt_copy_with_session(dst, copy_session, &promoted.receipt)
-        : prime_need_receipt_promote_with_session(dst, copy_session, &promoted.receipt);
+        ? prime_need_receipt_copy_carrier_with_session(dst, copy_session, &promoted.receipt)
+        : prime_need_receipt_carry_with_session(dst, copy_session, &promoted.receipt);
     if (!receipt_copied)
         return false;
 #endif
@@ -4475,22 +4475,93 @@ bool bindings_add_constraint_owned(Bindings *b, Atom *lhs, Atom *rhs) {
     return false;
 }
 
-static bool bindings_merged_occurrence_token(
-    const Bindings *dst, const Bindings *src, uint64_t *out) {
-    if (!out)
+/* The complete occurrence product is joined once, before logical bindings.
+ * Scope entry selects actual operations; old receipt values remain data when
+ * no recorder is active. The caller retains its existing rollback contract. */
+static bool bindings_prime_join_identity(
+    const PrimeOccurrence *dst, const PrimeOccurrence *src, uint64_t *token) {
+    uint64_t left = dst->occurrence_token;
+    uint64_t right = src->occurrence_token;
+    if (left == 0u || left == right)
+        *token = right;
+    else if (right == 0u)
+        *token = left;
+    else {
+        *token = prime_need_fresh_source_occurrence();
+        if (!*token)
+            return false;
+    }
+    return true;
+}
+
+static inline __attribute__((always_inline)) bool bindings_prime_merge_kernel(
+    PrimeOccurrence *dst, const PrimeOccurrence *src, uint64_t occurrence_token,
+    bool recorded) {
+#if !CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    (void)recorded;
+#endif
+    if (!prime_need_snapshot_merge(&dst->prime_need, &src->prime_need) ||
+        !prime_need_branch_state_merge(&dst->branch_state, &src->branch_state) ||
+        !cetta_weight_ledger_merge(&dst->weights, &src->weights))
         return false;
-    uint64_t left = bindings_occurrence_token(dst);
-    uint64_t right = bindings_occurrence_token(src);
-    if (left == 0u || left == right) {
-        *out = right;
-        return true;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (recorded) {
+        if (!prime_need_recording_merge_scoped(&dst->receipt, &src->receipt))
+            return false;
+    } else if (dst->receipt.recording || src->receipt.recording) {
+        /* Transport validates old recorded data even after recording stops.
+         * Erased weak carriers normalize; unreadable live readers refuse. */
+        if (!prime_need_recording_merge(&dst->receipt, &src->receipt))
+            return false;
+    } else if (src->receipt.session_id &&
+               !prime_need_branch_state_merge(&dst->receipt, &src->receipt)) {
+        return false;
     }
-    if (right == 0u) {
-        *out = left;
+#endif
+    dst->occurrence_token = occurrence_token;
+    return true;
+}
+
+static bool bindings_prime_merge_data(
+    PrimeOccurrence *dst, const PrimeOccurrence *src, uint64_t occurrence_token) {
+    return bindings_prime_merge_kernel(dst, src, occurrence_token, false);
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static bool bindings_prime_merge_recorded(
+    PrimeOccurrence *dst, const PrimeOccurrence *src, uint64_t occurrence_token) {
+    return bindings_prime_merge_kernel(dst, src, occurrence_token, true);
+}
+
+static _Thread_local bool (*g_bindings_prime_merge)(
+    PrimeOccurrence *, const PrimeOccurrence *, uint64_t) =
+    bindings_prime_merge_data;
+
+void bindings_prime_observation_policy_changed(void) {
+    g_bindings_prime_merge = g_prime_need_recording_scope
+        ? bindings_prime_merge_recorded : bindings_prime_merge_data;
+}
+#endif
+
+static inline __attribute__((always_inline)) bool bindings_merge_prime_occurrence(
+    Bindings *dst, const Bindings *src) {
+    /* HE remains allocation-free. One materialization supplies every mutable
+     * component, including any optional history already supplied as data. */
+    if (!bindings_prime_present(dst) && !bindings_prime_present(src))
         return true;
-    }
-    *out = prime_need_fresh_source_occurrence();
-    return *out != 0u;
+    const PrimeOccurrence *previous = dst->prime_ext
+        ? dst->prime_ext : &g_prime_occurrence_empty;
+    const PrimeOccurrence *source = src->prime_ext
+        ? src->prime_ext : &g_prime_occurrence_empty;
+    uint64_t occurrence_token;
+    if (!bindings_prime_join_identity(previous, source, &occurrence_token))
+        return false;
+    PrimeOccurrence *destination = bindings_prime_ext_materialize(dst);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    return g_bindings_prime_merge(destination, source, occurrence_token);
+#else
+    return bindings_prime_merge_data(destination, source, occurrence_token);
+#endif
 }
 
 typedef struct {
@@ -4513,31 +4584,8 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
         bindings_inherit_owners(dst, src);
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
-    /* Only touch Prime state (and materialize dst's occurrence) when either
-     * side carries any: HE merges stay allocation-free. */
-    if (bindings_prime_present(dst) || bindings_prime_present(src)) {
-        uint64_t occurrence_token = 0u;
-        if (!bindings_merged_occurrence_token(
-                dst, src, &occurrence_token))
-            return false;
-        if (!prime_need_snapshot_merge(bindings_need_mut(dst),
-                                       bindings_need_view(src)))
-            return false;
-        if (!prime_need_branch_state_merge(
-                bindings_branch_state_mut(dst),
-                bindings_branch_state_view(src)))
-            return false;
-        if (!cetta_weight_ledger_merge(bindings_weight_mut(dst),
-                                      bindings_weight_view(src)))
-            return false;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (!prime_need_receipt_merge(bindings_receipt_mut(dst),
-                                      bindings_receipt_view(src)))
-            return false;
-#endif
-        bindings_prime_ext_materialize(dst)->occurrence_token =
-            occurrence_token;
-    }
+    if (!bindings_merge_prime_occurrence(dst, src))
+        return false;
     if (!bindings_frame_index_merge_schemas(dst, src))
         return false;
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
@@ -7622,39 +7670,9 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
         bindings_builder_rollback(bb, mark);
         return false;
     }
-    if (bindings_prime_present(&bb->current) || bindings_prime_present(src)) {
-        uint64_t occurrence_token = 0u;
-        if (!bindings_merged_occurrence_token(
-                &bb->current, src, &occurrence_token)) {
-            bindings_builder_rollback(bb, mark);
-            return false;
-        }
-        if (!prime_need_snapshot_merge(bindings_need_mut(&bb->current),
-                                       bindings_need_view(src))) {
-            bindings_builder_rollback(bb, mark);
-            return false;
-        }
-        if (!prime_need_branch_state_merge(
-                bindings_branch_state_mut(&bb->current),
-                bindings_branch_state_view(src))) {
-            bindings_builder_rollback(bb, mark);
-            return false;
-        }
-        if (!cetta_weight_ledger_merge(bindings_weight_mut(&bb->current),
-                                      bindings_weight_view(src))) {
-            bindings_builder_rollback(bb, mark);
-            return false;
-        }
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (!prime_need_receipt_merge(
-                bindings_receipt_mut(&bb->current),
-                bindings_receipt_view(src))) {
-            bindings_builder_rollback(bb, mark);
-            return false;
-        }
-#endif
-        bindings_prime_ext_materialize(&bb->current)->occurrence_token =
-            occurrence_token;
+    if (!bindings_merge_prime_occurrence(&bb->current, src)) {
+        bindings_builder_rollback(bb, mark);
+        return false;
     }
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
@@ -9735,7 +9753,6 @@ static bool bindings_project_reachable_sparse(
             : BINDINGS_CYCLE_UNKNOWN;
     if (src->owners)
         bindings_inherit_owners(dst, src);
-    bindings_prime_assign(dst, src);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_PROJECT_SPARSE);
     cetta_runtime_stats_add(
@@ -9952,7 +9969,6 @@ static bool bindings_project_reachable_selected_history(
         goto fail_dst;
     if (src->owners)
         bindings_inherit_owners(dst, src);
-    bindings_prime_assign(dst, src);
 
     free(index_slots);
     if (return_selection) {
@@ -10005,10 +10021,13 @@ bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
      * them when there are no marks forces the dense projector and defeats the
      * maintained VarId index for every ordinary host/child projection. */
     if (entry_mark_count == 0u) {
-        return bindings_project_reachable_selected(
+        bool projected = bindings_project_reachable_selected(
             src, roots, root_count,
             epoch_roots, epoch_root_count, dst,
             NULL, NULL);
+        if (projected && src)
+            bindings_prime_assign(dst, src);
+        return projected;
     }
 
     Bindings projected;
@@ -10051,6 +10070,8 @@ bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
             entry_marks[index] = prefix[entry_marks[index]];
         free(prefix);
     }
+    if (src)
+        bindings_prime_assign(&projected, src);
     *dst = projected;
     free(keep_entries);
     free(keep_constraints);
@@ -10079,6 +10100,15 @@ bool bindings_project_reachable(
     Bindings *dst) {
     return bindings_project_reachable_with_entry_marks(
         src, roots, root_count, NULL, 0u, dst);
+}
+
+/* The same closure and frame projection without an execution occurrence.
+ * Callers installing a new context do not copy the old one first. */
+bool bindings_project_reachable_logical(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    Bindings *dst) {
+    return bindings_project_reachable_selected(
+        src, roots, root_count, NULL, 0u, dst, NULL, NULL);
 }
 
 static int bindings_checkpoint_mark_compare(
@@ -10149,6 +10179,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
             &keep_entries, &keep_constraints)) {
         return false;
     }
+    bindings_prime_assign(&projected, &bb->current);
 
     size_t entry_prefix_count = (size_t)bb->current.len + 1u;
     size_t constraint_prefix_count =
@@ -11692,11 +11723,16 @@ static void match_note_unification_attempt(
 /* Persistent open head against a goal skeleton whose variables are the
  * current environment (SubstitutionAlgebra closures).  Callers must not
  * force a substituted instance first; observation is bindings_apply. */
-static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue right_value,
-                                         Bindings *bindings,
-                                         BindingsBuilder *builder,
-                                         Arena *a, bool undefined_is_wildcard) {
-    cetta_native_cost_charge(CETTA_COST_MATCH_ATTEMPT, 1u);
+/* Select numerical observation at the synchronous match entry. Both
+ * compiled workers use this walk; the plain body omits direct cost-scope
+ * tests and event calls. Observed walks retain attempted-node counts even
+ * when matching fails. */
+static inline __attribute__((always_inline)) bool match_decoded_atoms_worklist_mode(
+    BindingValue left_value, BindingValue right_value, Bindings *bindings,
+    BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard,
+    bool meter_cost) {
+    if (meter_cost)
+        cetta_native_cost_charge_observed(CETTA_COST_MATCH_ATTEMPT, 1u);
     Atom *left, *right;
     DecodedMatchWorklist work;
     MatchPathSet path;
@@ -11716,7 +11752,8 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
                             (MatchTerm){.value = right_value})) goto fail;
 
     while (work.len > 0) {
-        cetta_native_cost_charge(CETTA_COST_MATCH_NODE, 1u);
+        if (meter_cost)
+            cetta_native_cost_charge_observed(CETTA_COST_MATCH_NODE, 1u);
         DecodedMatchPair pair = work.items[--work.len];
         if (pair.kind == DECODED_MATCH_EXIT) {
             match_path_leave(&path, pair.left, pair.right);
@@ -11945,6 +11982,30 @@ fail:
                        builder ? &builder->current : bindings, 0u)),
         attempt_repeated_var);
     return false;
+}
+
+static __attribute__((noinline)) bool match_decoded_atoms_worklist_plain(
+    BindingValue left_value, BindingValue right_value, Bindings *bindings,
+    BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard) {
+    return match_decoded_atoms_worklist_mode(
+        left_value, right_value, bindings, builder, a, undefined_is_wildcard, false);
+}
+
+static __attribute__((noinline)) bool match_decoded_atoms_worklist_observed(
+    BindingValue left_value, BindingValue right_value, Bindings *bindings,
+    BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard) {
+    return match_decoded_atoms_worklist_mode(
+        left_value, right_value, bindings, builder, a, undefined_is_wildcard, true);
+}
+
+static bool match_decoded_atoms_worklist(
+    BindingValue left_value, BindingValue right_value, Bindings *bindings,
+    BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard) {
+    return cetta_native_cost_active()
+        ? match_decoded_atoms_worklist_observed(
+            left_value, right_value, bindings, builder, a, undefined_is_wildcard)
+        : match_decoded_atoms_worklist_plain(
+            left_value, right_value, bindings, builder, a, undefined_is_wildcard);
 }
 
 /* The public SpaceType name and a concrete (Space discipline) value type

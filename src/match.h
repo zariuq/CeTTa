@@ -446,6 +446,12 @@ bool      bindings_project_reachable(const Bindings *src,
                                      Atom *const *roots,
                                      size_t root_count,
                                      Bindings *dst);
+/* The same logical closure, constraints and frame authority, without copying
+ * Prime occurrence state. The caller supplies its new execution context. */
+bool      bindings_project_reachable_logical(const Bindings *src,
+                                             Atom *const *roots,
+                                             size_t root_count,
+                                             Bindings *dst);
 /* As above, while translating each entry-prefix boundary through the
  * projection.  A mark names the number of logical binding entries preceding
  * a live activation frame; it is updated to the corresponding prefix length

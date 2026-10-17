@@ -3,6 +3,7 @@
 #include "library.h"
 #include "parser.h"
 #include "symbol.h"
+#include "weight_ledger.h"
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -243,6 +244,10 @@ static void collected_bindings(void) {
     Bindings bindings;
     bindings_init(&bindings);
     check(bindings_add_var(&bindings, variable, held), "input logical binding");
+    CettaWeightLedger coefficients = {0};
+    check(cetta_weight_ledger_append(&f.scratch, &coefficients, 41u, 43u,
+        held, &coefficients), "input coefficient shares logical payload");
+    *bindings_weight_mut(&bindings) = coefficients;
     CettaHeExecution *owner = eval_he_owned_begin(&f.space, &f.registry,
         CETTA_HE_ENTRY_BIND, query, NULL, eval_get_default_fuel(),
         &bindings, true, true);
@@ -262,6 +267,15 @@ static void collected_bindings(void) {
     }
     expect(&f, owner, "((Held (kept a b c) (kept a b c)))");
     expect(&f, other, "(2000)");
+    CettaHeExecutionView completed = inspect(owner);
+    const CettaWeightLedger *returned = bindings_weight_view(
+        &completed.outcomes->items[0].env);
+    check(returned->length == 1u && returned->last->occurrence == 41u &&
+        returned->last->dependency == 43u &&
+        atom_eq(returned->last->value, parse(&f.scratch, "(kept a b c)")),
+        "owned coefficients survive source release and collection");
+    check(!bindings_weight_view(&inspect(other).outcomes->items[0].env)->length,
+        "interleaved execution does not inherit another owner's coefficients");
     uint64_t collections = inspect(owner).collections + inspect(other).collections;
     printf("collection probe: %" PRIu64 " advances, %" PRIu64 " collections\n",
         inspect(owner).advances + inspect(other).advances, collections);

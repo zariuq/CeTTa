@@ -59,6 +59,13 @@ typedef struct {
     bool trace_incomplete;
 } CettaNativeCostSnapshot;
 
+/* Equation admissions use source units, independently of the native event
+ * counters. Span follows the declared owned-worker execution schedule. */
+typedef struct {
+    uint64_t work, span;
+    bool enabled, work_overflow, span_overflow, incomplete, parallel;
+} CettaEquationCost;
+
 typedef struct {
     uint64_t identity;
     CettaNativeCostSnapshot total;
@@ -68,14 +75,20 @@ typedef struct {
     bool imported;
     /* A compact account retains numerical work/span, without chronology. */
     bool compact;
+    bool native_enabled;
+    bool used;
+    CettaEquationCost equations;
 } CettaNativeCostLedger;
 
 typedef struct CettaNativeCostScope {
+    /* Native destinations and all observations have independent chains. */
     struct CettaNativeCostScope *previous;
+    struct CettaNativeCostScope *account_previous, *native_head;
     CettaNativeCostLedger *ledger;
     uint64_t occurrence;
     const uint64_t *occurrence_source;
     bool events_requested;
+    bool equations_requested;
 } CettaNativeCostScope;
 
 static inline uint64_t cetta_native_cost_scope_occurrence(const CettaNativeCostScope *scope) {
@@ -131,6 +144,19 @@ void cetta_native_cost_observer_restore(CettaNativeCostObserverSuspension *);
 
 void cetta_native_cost_init(CettaNativeCostLedger *ledger);
 void cetta_native_cost_init_compact(CettaNativeCostLedger *ledger);
+/* Source-only observation does not install native operation counters. */
+void cetta_native_cost_init_equations(CettaNativeCostLedger *ledger);
+extern _Thread_local CettaNativeCostScope *cetta_native_cost_current_account_scope;
+static inline CettaNativeCostScope *cetta_native_cost_account_scope(void) {
+    return cetta_native_cost_current_account_scope;
+}
+/* Enable before the ledger enters any scope. Subsequent omission of the
+ * public observation does not erase already paid source work. */
+bool cetta_native_cost_enable_equations(CettaNativeCostLedger *ledger);
+bool cetta_native_cost_equations_requested(void);
+/* Called only by the selected source-aware equation worker, after the
+ * captured RHS was admitted. No history event or identity is constructed. */
+void cetta_native_cost_equations_admitted(uint64_t units);
 /* Selected at a quiescent boundary. Refuse while this ledger belongs to an
  * active containing scope; other threads and borrowed readers are excluded
  * by the owner's lifetime protocol. Paid numerical work is preserved. */

@@ -8,6 +8,7 @@ static bool prime_native_owned_region_select(PrimeNativeAcquiredOperation *opera
     PrimeNativeControl *parent=driver ? driver->control : NULL;
     if (!control || !control->owned_top_episode || !control->owned_top_episode->owned_region ||
         control->leased || !prime_native_owned_cost_policy(policy) ||
+        !prime_native_cost_policy_accepts(control, policy) ||
         !parent || parent==control || !parent->owned_arena || !driver->running_task ||
         parent->worker_execution || parent->active_scoring ||
         (parent->owned_top_episode && parent->owned_top_episode->owned_region) ||
@@ -22,6 +23,10 @@ static bool prime_native_owned_region_select(PrimeNativeAcquiredOperation *opera
     CettaObservationDemand demand={.completion=CETTA_OBSERVATION_COMPLETE_BAG};
     admitted=admitted && cetta_control_plan_derive(demand,CETTA_CONTROL_BRANCH_GENERAL,
         CETTA_CONTROL_BATCH_SINGLETON_ONLY,&plan);
+    if (admitted && policy->cost_compact && !control->event_cost.compact) {
+        admitted=cetta_native_cost_forget_events(&control->event_cost);
+        if (admitted) control->policy.cost_compact=true;
+    }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     admitted=admitted && prime_native_history_configure(control,&policy->history);
 #endif

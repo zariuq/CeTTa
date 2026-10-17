@@ -108,7 +108,7 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if(!prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&before) ||
-            !prime_need_branch_state_payloads_satisfy(&frame->producer_receipt,
+            !prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&evaluating))return false;
 #endif
         const PrimeNeedEquationContinuation *equation=frame->equation_search;

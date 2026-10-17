@@ -1727,9 +1727,14 @@ static bool he_execution_plain_arguments(Atom *source) {
     return true;
 }
 
-static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
+static bool he_shared_execution_try(
+    Space *space, Arena *arena, Atom *source,
     Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
-    OutcomeSet *outcomes) {
+    OutcomeSet *outcomes);
+static inline __attribute__((always_inline)) bool he_shared_execution_try_kernel(
+    Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes, bool observe_boundaries) {
     if (eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
     /* A completed scalar is interpreted by HE's value/cast boundary. Only
@@ -1743,7 +1748,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
          * and the machine's queries read a space's own rows. */
         space->overlay_base ||
         space_has_dependencies(space) || g_active_search_controller_requested ||
-        g_active_search_controller_auto || gslt_match_chain_trace_active() ||
+        g_active_search_controller_auto || observe_boundaries ||
         petta_eval_machine_diagnostic_transition_limit())
         return false;
     /* Intrinsic controls retain the canonical demand adapter; their ordinary
@@ -1876,3 +1881,9 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_he_shared_execution = false;
     return complete;
 }
+
+CETTA_PREPARED_ENTRY(bool, he_shared_execution_try,
+    (Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes),
+    (space, arena, source, type, fuel, environment, preserve_bindings, outcomes))

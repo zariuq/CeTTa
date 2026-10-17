@@ -46,6 +46,7 @@ struct PrimeNativeRefillItem {
 
 typedef struct {
     PrimeNativeParallelRun run;
+    CettaParallelTaskFn task;
     PrimeNativeRefillItem *items;
     size_t count;
     uint64_t quantum;
@@ -54,7 +55,7 @@ typedef struct {
     _Atomic uint64_t next_order;
     uint32_t workers;
     bool metered;
-    bool compact_cost;
+    bool compact_cost, native_cost, equation_cost;
 } PrimeNativeRefillRun;
 
 static _Atomic uint64_t prime_native_refill_next_identity = 1u;
@@ -93,7 +94,7 @@ static void prime_native_refill_history_storage(const PrimeNativeRefillHistory *
  * Closing that external account leaves an explicit unimported obligation. */
 static bool prime_native_refill_destinations_match(const PrimeNativeRefillHistory *history) {
     size_t i=0u;
-    for (CettaNativeCostScope *scope=cetta_native_cost_current_scope;scope;scope=scope->previous) {
+    for (CettaNativeCostScope *scope=cetta_native_cost_account_scope();scope;scope=scope->account_previous) {
         if (i>=history->destination_count) return false;
         const PrimeNativeRefillDestination *expected=&history->destinations[i++];
         if ((uintptr_t)scope->ledger!=expected->address ||
@@ -154,8 +155,8 @@ static void prime_native_refill_receipt(PrimeNativeControl *owner,
             prime_native_occurrence_atom(arena,segment->grant),
             prime_native_occurrence_atom(arena,segment->spent),
             history->metered?prime_native_occurrence_atom(arena,segment->cost.identity):atom_symbol(arena,"Untracked"),
-            history->metered?prime_native_occurrence_atom(arena,segment->cost.total.work):atom_symbol(arena,"Untracked"),
-            history->metered?prime_native_occurrence_atom(arena,segment->cost.total.span):atom_symbol(arena,"Untracked"),
+            history->metered&&segment->cost.native_enabled?prime_native_occurrence_atom(arena,segment->cost.total.work):atom_symbol(arena,"Untracked"),
+            history->metered&&segment->cost.native_enabled?prime_native_occurrence_atom(arena,segment->cost.total.span):atom_symbol(arena,"Untracked"),
             prime_native_occurrence_atom(arena,segment->started_ns),
             prime_native_occurrence_atom(arena,segment->finished_ns)},14u);
     }
@@ -184,7 +185,8 @@ static bool prime_native_refill_can_continue(const PrimeNativeParallel *parallel
         !prime_native_control_closed(child);
 }
 
-static bool prime_native_refill_task(CettaParallelWorker *worker, void *raw, void *context) {
+static inline __attribute__((always_inline)) bool prime_native_refill_task_kernel(
+    CettaParallelWorker *worker, void *raw, void *context, bool recording) {
     PrimeNativeRefillRun *refill = context;
     PrimeNativeParallel *parallel = raw;
     PrimeNativeRefillItem *item = parallel->refill_item;
@@ -203,17 +205,23 @@ static bool prime_native_refill_task(CettaParallelWorker *worker, void *raw, voi
     parallel->spent = 0u;
     parallel->phase = 0u;
     PrimeNativeRefillSegment *segment = NULL;
-    if (refill->history) {
+    if (recording) {
         if (item->length >= item->capacity) {
             item->invalid = true;
             atomic_store_explicit(&item->state, PRIME_REFILL_RETAINED, memory_order_release);
             return false;
         }
         if (refill->metered && !parallel->slice_cost.identity) {
-            if (refill->compact_cost)
+            if (!refill->native_cost)
+                cetta_native_cost_init_equations(&parallel->slice_cost);
+            else if (refill->compact_cost)
                 cetta_native_cost_init_compact(&parallel->slice_cost);
             else
                 cetta_native_cost_init(&parallel->slice_cost);
+            if (refill->equation_cost) {
+                bool enabled = cetta_native_cost_enable_equations(&parallel->slice_cost);
+                assert(enabled); (void)enabled;
+            }
         }
         segment = &refill->history->segments[item->offset + item->length];
         segment->identity = refill->metered ? parallel->slice_cost.identity :
@@ -230,7 +238,7 @@ static bool prime_native_refill_task(CettaParallelWorker *worker, void *raw, voi
     }
     /* This call returns only after all actual per-task TLS/service/cost and
      * recording scopes have left. The executor's worker scope stays active. */
-    bool ok = prime_native_parallel_task(worker, parallel, &refill->run);
+    bool ok = refill->task(worker, parallel, &refill->run);
     uint64_t spent = parallel->spent;
     bool bounded = spent <= grant && spent <= item->remaining &&
         spent <= UINT64_MAX - item->spent;
@@ -274,6 +282,13 @@ static bool prime_native_refill_task(CettaParallelWorker *worker, void *raw, voi
     return true;
 }
 
+CETTA_OPERATION_VARIANT(bool, return, prime_native_refill_task, plain,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_refill_task, observed,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), true)
+
 /* False means preparation never entered the executor: the original complete
  * capsules remain available to the ordinary existing execute path. */
 static bool prime_native_refill_execute(PrimeNativeControl *owner,
@@ -283,7 +298,7 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
         !owner->driver.ordinary_ready_queue || !count || workers < 2u ||
         count > SIZE_MAX / sizeof(PrimeNativeRefillItem)) return false;
     uint64_t quantum=owner->policy.worker_quantum ? owner->policy.worker_quantum : 1u;
-    bool metered=cetta_native_cost_active(), recording=metered || owner->policy.receipts;
+    bool metered=cetta_native_cost_account_scope()!=NULL, recording=metered || owner->policy.receipts;
     size_t capacity=0u;
     uint64_t reserved=0u;
     for (size_t i=0u;i<count;i++) {
@@ -331,7 +346,7 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
     }
     if (metered) {
         size_t n=0u;
-        for (CettaNativeCostScope *s=cetta_native_cost_current_scope;s;s=s->previous) {
+        for (CettaNativeCostScope *s=cetta_native_cost_account_scope();s;s=s->account_previous) {
             if (n==SIZE_MAX/sizeof(*history->destinations)) {
                 prime_native_refill_history_free(history);free(items);free(previous);return false;
             }
@@ -342,15 +357,18 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
             prime_native_refill_history_free(history);free(items);free(previous);return false;
         }
         history->destination_count=n;n=0u;
-        for (CettaNativeCostScope *s=cetta_native_cost_current_scope;s;s=s->previous)
+        for (CettaNativeCostScope *s=cetta_native_cost_account_scope();s;s=s->account_previous)
             history->destinations[n++]=(PrimeNativeRefillDestination){
                 .address=(uintptr_t)s->ledger,.identity=s->ledger?s->ledger->identity:0u,
                 .occurrence=s->occurrence};
     }
     PrimeNativeRefillRun refill={.run={.library=g_library_context,
-        .receipts=owner->policy.receipts},.items=items,.count=count,.quantum=quantum,
+        .receipts=owner->policy.receipts},.task=prime_native_parallel_task_select(owner),
+        .items=items,.count=count,.quantum=quantum,
         .history=history,.worker_previous=previous,.workers=workers,.metered=metered,
-        .compact_cost=!cetta_native_cost_events_requested()};
+        .compact_cost=!cetta_native_cost_events_requested(),
+        .native_cost=cetta_native_cost_active(),
+        .equation_cost=cetta_native_cost_equations_requested()};
     atomic_init(&refill.next_order,0u);
     size_t offset=0u;
     for (size_t i=0u;i<count;i++) {
@@ -367,7 +385,8 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
     }
     CettaParallelExecutor executor;
     CettaParallelExecutorConfig config={.thread_count=workers,.prefer_persistent_workers=true,
-        .user=&refill,.task_fn=prime_native_refill_task,
+        .user=&refill,.task_fn=recording ? prime_native_refill_task_observed
+                                        : prime_native_refill_task_plain,
         .worker_enter=prime_native_parallel_enter,.worker_leave=prime_native_parallel_leave,
         .worker_failure_message="native retained refill episode"};
     if (!cetta_parallel_executor_init(&executor,&config)) {
@@ -399,9 +418,6 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
         parallel->refill_item=NULL;
         parallel->grant=item->reserved;
         parallel->spent=item->spent;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        prime_native_parallel_history_publish(parallel);
-#endif
         refused=refused || item->push_refused || item->invalid;
         if (history) {
             for (size_t j=0u;j<item->length;j++)
@@ -409,6 +425,11 @@ static bool prime_native_refill_execute(PrimeNativeControl *owner,
             history->push_refused=history->push_refused || item->push_refused;
         }
     }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (prime_native_parallel_history_requested(owner))
+        for (size_t i=0u;i<count;i++)
+            prime_native_parallel_history_publish(items[i].parallel);
+#endif
     /* Executor join is paid once even when account validation refuses. */
     for (size_t i=0u;i<count;i++) cetta_native_cost_charge(CETTA_COST_WORKER_JOIN,1u);
     if (history) {

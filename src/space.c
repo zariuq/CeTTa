@@ -4980,6 +4980,7 @@ static bool space_sync_exact_membership_from_backend(Space *s) {
 }
 
 static void space_native_storage_init_empty(Space *s, TermUniverse *universe) {
+    s->declares_subtypes = false;
     TermUniverse *resolved = NULL;
     if (!s)
         return;

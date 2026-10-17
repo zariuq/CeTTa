@@ -17,6 +17,7 @@ typedef enum {
     HE_CANONICAL_CAPTURE,
     HE_CANONICAL_SPACE,
     HE_CANONICAL_STATE,
+    HE_CANONICAL_MATCH_DIAGNOSTIC,
 } HeCanonicalKind;
 
 typedef struct {
@@ -229,6 +230,7 @@ static OutcomeSet *he_canonical_stream_set(HeCanonicalFrame *frame,
         *rule = HE_STREAM_INVOKE;
         return frame->phase >= 5u ? &frame->paths : NULL;
     case HE_CANONICAL_MATCH:
+    case HE_CANONICAL_MATCH_DIAGNOSTIC:
     case HE_CANONICAL_INSTRUCTION:
     case HE_CANONICAL_PATTERN:
         *rule = HE_STREAM_PASS;
@@ -610,6 +612,7 @@ static bool he_relay_may_redirect(const HeCanonicalFrame *frame) {
     case HE_CANONICAL_CALLER:
     case HE_CANONICAL_RESULT:
     case HE_CANONICAL_MATCH:
+    case HE_CANONICAL_MATCH_DIAGNOSTIC:
         return true;
     case HE_CANONICAL_DISPATCH:
         /* With the call and its type ground, the invocation publishes a plain
@@ -2151,7 +2154,11 @@ static bool he_canonical_match_schedule(Space *s, Arena *a, Atom *atom,
         return false;
     bool closed = he_canonical_query_closed(eval_gc_enabled() &&
         !atom_contains_vars(atom));
-    HeCanonicalFrame *frame = he_canonical_push(HE_CANONICAL_MATCH,
+    match_chain_configure_observer();
+    HeCanonicalKind kind = cetta_gslt_observation_visible(
+        CETTA_GSLT_OBSERVATION_MATCH_CHAIN_PROGRESS, g_match_chain_observer_diagnostic)
+        ? HE_CANONICAL_MATCH_DIAGNOSTIC : HE_CANONICAL_MATCH;
+    HeCanonicalFrame *frame = he_canonical_push(kind,
         s, a, atom, type, fuel, env, preserve, os);
     if (frame) {
         frame->sourced_match = nargs == 2u;
@@ -2349,7 +2356,8 @@ static void he_canonical_resume_space(HeCanonicalFrame *frame) {
     he_canonical_pop();
 }
 
-static void he_canonical_resume_match(HeCanonicalFrame *frame) {
+static inline __attribute__((always_inline)) void he_canonical_resume_match_kernel(
+    HeCanonicalFrame *frame, bool diagnostic) {
     Arena *a = frame->arena;
     if (!frame->phase) {
         he_canonical_match_initialize(frame);
@@ -2438,7 +2446,7 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
             bindings_free(&projected);
             return;
         }
-        if (registers->len > 1u)
+        if (diagnostic && registers->len > 1u)
             match_chain_note_progress((uint32_t)registers->len, "canonical");
         Atom *body = bindings_apply_if_vars(&projected, a, frame->live[0]);
         Space *target = match_result_target_space(body, a);
@@ -2640,6 +2648,14 @@ static void he_canonical_call(HeCanonicalFrame *frame) {
         he_canonical_call_run(frame, he_relay_sink(frame, &frame->child));
 }
 
+static void he_canonical_resume_match_plain(HeCanonicalFrame *frame) {
+    he_canonical_resume_match_kernel(frame, false);
+}
+
+static void he_canonical_resume_match_diagnostic(HeCanonicalFrame *frame) {
+    he_canonical_resume_match_kernel(frame, true);
+}
+
 static inline __attribute__((always_inline)) void he_canonical_resume(
     HeCanonicalFrame *frame) {
     switch (frame->kind) {
@@ -2665,7 +2681,8 @@ static inline __attribute__((always_inline)) void he_canonical_resume(
     case HE_CANONICAL_CONTROL: he_canonical_resume_control(frame); break;
     case HE_CANONICAL_PATTERN: he_canonical_resume_pattern(frame); break;
     case HE_CANONICAL_INSTRUCTION: he_canonical_resume_instruction(frame); break;
-    case HE_CANONICAL_MATCH: he_canonical_resume_match(frame); break;
+    case HE_CANONICAL_MATCH: he_canonical_resume_match_plain(frame); break;
+    case HE_CANONICAL_MATCH_DIAGNOSTIC: he_canonical_resume_match_diagnostic(frame); break;
     case HE_CANONICAL_SPACE: he_canonical_resume_space(frame); break;
     case HE_CANONICAL_STATE: he_canonical_resume_state(frame); break;
     case HE_CANONICAL_CAPTURE:
@@ -2778,12 +2795,9 @@ typedef struct {
     _Atomic bool *cancel_requested;
     bool cancel_observed;
     _Atomic bool *thread_unsafe_requested;
-    PrimeNeedSnapshot need;
-    PrimeNeedBranchState branch_state;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    PrimeNeedReceipt receipt;
-#endif
-    const Bindings *logical_environment;
+    /* Executions remain confined to their creating thread. Saved semantic
+     * contexts use stable selectors independently of that restriction. */
+    PrimeNeedSavedContext context;
     uint64_t evaluator_id;
     Arena *need_owner;
     Arena *episode_owner;
@@ -2806,49 +2820,42 @@ typedef struct {
 } HeCanonicalAmbient;
 
 static void he_canonical_ambient_capture(HeCanonicalAmbient *state) {
-    *state = (HeCanonicalAmbient){
-        .execution = g_eval_execution,
-        .registry = g_registry,
-        .root_space = g_eval_root_space,
-        .library = g_library_context,
-        .options = *active_eval_options_const(),
-        .persistent = g_eval_fallback_universe.persistent_arena,
-        .universe = g_eval_term_universe_override,
-        .temporary_spaces = g_temp_spaces,
-        .new_spaces = g_new_space_track,
-        .evaluation_depth = g_metta_eval_depth,
-        .observation_present = g_eval_observation_demand_present,
-        .observation = g_eval_observation_demand,
-        .observation_root = g_eval_observation_root,
-        .prefix_demand = g_prime_prefix_demand,
-        .pending_raise = g_petta_pending_raise,
-        .cancel_requested = g_eval_cancel_requested,
-        .cancel_observed = g_eval_cancel_observed,
-        .thread_unsafe_requested = g_hyperpose_thread_unsafe_requested,
-        .need = g_prime_need_active,
-        .branch_state = g_prime_need_branch_state_active,
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        .receipt = g_prime_need_receipt_active,
-#endif
-        .logical_environment = g_prime_need_logical_env,
-        .evaluator_id = g_prime_need_evaluator_id,
-        .need_owner = g_prime_need_owner,
-        .episode_owner = g_prime_need_episode_owner,
-        .branch_owner = g_prime_need_region_branch_owner,
-        .region_pool = g_prime_need_region_pool,
-        .need_observer = g_prime_need_answer_observer,
-        .need_observer_context = g_prime_need_answer_observer_context,
-        .controller_requested = g_active_search_controller_requested,
-        .controller = g_active_search_controller,
-        .controller_auto = g_active_search_controller_auto,
-        .selection = g_active_selection_automaton,
-        .selection_ready = g_active_selection_automaton_ready,
-        .petta_search = g_active_petta_search_machine,
-        .petta_stats = g_active_petta_machine_stats,
-        .table_trace = g_active_petta_table_safety_trace,
-        .home_depth = g_context_home_depth,
-        .here_depth = g_context_here_depth,
-    };
+    state->execution = g_eval_execution;
+    state->registry = g_registry;
+    state->root_space = g_eval_root_space;
+    state->library = g_library_context;
+    state->options = *active_eval_options_const();
+    state->persistent = g_eval_fallback_universe.persistent_arena;
+    state->universe = g_eval_term_universe_override;
+    state->temporary_spaces = g_temp_spaces;
+    state->new_spaces = g_new_space_track;
+    state->evaluation_depth = g_metta_eval_depth;
+    state->observation_present = g_eval_observation_demand_present;
+    state->observation = g_eval_observation_demand;
+    state->observation_root = g_eval_observation_root;
+    state->prefix_demand = g_prime_prefix_demand;
+    state->pending_raise = g_petta_pending_raise;
+    state->cancel_requested = g_eval_cancel_requested;
+    state->cancel_observed = g_eval_cancel_observed;
+    state->thread_unsafe_requested = g_hyperpose_thread_unsafe_requested;
+    state->evaluator_id = g_prime_need_evaluator_id;
+    state->need_owner = g_prime_need_owner;
+    state->episode_owner = g_prime_need_episode_owner;
+    state->branch_owner = g_prime_need_region_branch_owner;
+    state->region_pool = g_prime_need_region_pool;
+    state->need_observer = g_prime_need_answer_observer;
+    state->need_observer_context = g_prime_need_answer_observer_context;
+    state->controller_requested = g_active_search_controller_requested;
+    state->controller = g_active_search_controller;
+    state->controller_auto = g_active_search_controller_auto;
+    state->selection = g_active_selection_automaton;
+    state->selection_ready = g_active_selection_automaton_ready;
+    state->petta_search = g_active_petta_search_machine;
+    state->petta_stats = g_active_petta_machine_stats;
+    state->table_trace = g_active_petta_table_safety_trace;
+    state->home_depth = g_context_home_depth;
+    state->here_depth = g_context_here_depth;
+    prime_need_saved_context_capture(&state->context);
     memcpy(state->home, g_context_home_stack, sizeof(state->home));
     memcpy(state->here, g_context_here_stack, sizeof(state->here));
 }
@@ -2875,12 +2882,7 @@ static void he_canonical_ambient_install(const HeCanonicalAmbient *state) {
     g_eval_cancel_requested = state->cancel_requested;
     g_eval_cancel_observed = state->cancel_observed;
     g_hyperpose_thread_unsafe_requested = state->thread_unsafe_requested;
-    g_prime_need_active = state->need;
-    g_prime_need_branch_state_active = state->branch_state;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    g_prime_need_receipt_active = state->receipt;
-#endif
-    g_prime_need_logical_env = state->logical_environment;
+    prime_need_saved_context_install(&state->context);
     g_prime_need_evaluator_id = state->evaluator_id;
     g_prime_need_owner = state->need_owner;
     g_prime_need_episode_owner = state->episode_owner;
@@ -3023,7 +3025,7 @@ CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
     owner->ambient.branch_owner = NULL;
     owner->ambient.need_owner = &owner->storage;
     owner->ambient.episode_owner = &owner->storage;
-    owner->ambient.logical_environment = &owner->input_environment;
+    owner->ambient.context.value.previous_logical_env = &owner->input_environment;
     owner->driver.root_target = &owner->output;
     owner->driver.arena = &owner->storage;
     AtomDeepCopySession *copy = atom_deep_copy_session_new(&owner->storage);
@@ -3032,27 +3034,25 @@ CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
         ? atom_deep_copy_session_copy(copy, type) : NULL;
     bool copied = saved_atom && (!type || saved_type) &&
         (!bindings || bindings_copy(&owner->input_environment, bindings)) &&
-        bindings_promote_logical_atoms_with_session(&owner->input_environment, copy);
+        bindings_promote_atoms_with_session(&owner->input_environment, &owner->storage, copy);
+    if (copied && owner->input_environment.prime_ext) {
+        /* Interpret incoming operational metadata at entry, using the same
+         * overlay as other callers. Copying it into lexical frames alone
+         * does not install the context used by result publication. */
+        PrimeNeedActiveGuard surrounding;
+        prime_need_active_enter(&surrounding, &owner->input_environment);
+        prime_need_saved_context_capture(&owner->ambient.context);
+        prime_need_active_leave(&surrounding);
+    }
     Atom **dynamic_atoms[] = {&owner->ambient.observation_root,
         &owner->ambient.prefix_demand.root, &owner->ambient.pending_raise};
     for (size_t i = 0u; copied && i < 3u; i++)
         if (*dynamic_atoms[i])
             copied = (*dynamic_atoms[i] =
                 atom_deep_copy_session_copy(copy, *dynamic_atoms[i])) != NULL;
+    copied = copied && prime_need_saved_context_promote(
+        &owner->storage, copy, &owner->ambient.context);
     atom_deep_copy_session_free(copy);
-    /* The logical graph has already moved through the shared copy session.
-     * Promote the orthogonal occurrence state without recopying that graph. */
-    PrimeOccurrence *occurrence = owner->input_environment.prime_ext;
-    copied = copied && (!occurrence ||
-        (prime_need_snapshot_promote(&owner->storage, &occurrence->prime_need) &&
-         prime_need_branch_state_promote(&owner->storage, &occurrence->branch_state))) &&
-        prime_need_snapshot_promote(&owner->storage, &owner->ambient.need) &&
-        prime_need_branch_state_promote(&owner->storage, &owner->ambient.branch_state);
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    copied = copied && (!occurrence ||
-        prime_need_receipt_promote(&owner->storage, &occurrence->receipt)) &&
-        prime_need_receipt_promote(&owner->storage, &owner->ambient.receipt);
-#endif
     HeCanonicalActivation *activation = he_canonical_owner_enter(owner);
     owner->driver.gc_anchor = eval_gc_region_enter(&owner->region, &owner->storage);
     /* These slots are installed before the private root chain becomes active.

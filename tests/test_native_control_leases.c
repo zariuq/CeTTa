@@ -21,8 +21,9 @@ static bool br_native_call(Arena *arena, Atom *head, Atom **args,
 }
 #include "parser.h"
 #include <assert.h>
+#include "parallel_executor.h"
 
-static size_t checks, failures;
+static _Atomic size_t checks, failures;
 #define CHECK(X) do { checks++; if (!(X)) { failures++; fprintf(stderr,"FAIL: %s:%d: %s\n",__FILE__,__LINE__,#X); } } while (0)
 
 static Atom *parse_one(Arena *arena, const char *text) {
@@ -30,6 +31,110 @@ static Atom *parse_one(Arena *arena, const char *text) {
     int count=parse_metta_text(text,arena,&items);
     assert(count==1);
     Atom *value=items[0];free(items);return value;
+}
+
+static void match_progress_entry_case(const char *request, bool diagnostic) {
+    Arena arena;arena_init(&arena);arena_set_hashcons(&arena,NULL);
+    Space space;space_init(&space);
+    Registry registry;registry_init(&registry);g_registry=&registry;
+    CettaLibraryContext *context=malloc(sizeof(*context));assert(context);
+    cetta_library_context_init_for_language_profile(context,CETTA_LANGUAGE_HE,
+        cetta_profile_he_extended());
+    eval_set_library_context(context);
+    registry_bind(&registry,"&self",atom_space(&arena,&space));
+    space_add(&space,parse_one(&arena,"(Edge A B)"));
+    space_add(&space,parse_one(&arena,"(Edge A B)"));
+    space_add(&space,parse_one(&arena,"(Edge B C)"));
+    Atom *call=parse_one(&arena,
+        "(match &self (Edge A $middle) (match &self (Edge $middle $end) (Path $middle $end)))");
+    MatchEvaluator saved_entry=g_match_evaluator;
+    bool saved_configured=g_match_chain_observer_configured;
+    bool saved_diagnostic=g_match_chain_observer_diagnostic;
+    uint64_t saved_interval=g_match_chain_observer_interval;
+    uint64_t saved_progress=g_match_chain_progress;
+    const char *prior=getenv(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV);
+    char *saved_env=prior?strdup(prior):NULL;
+    prior=getenv(CETTA_GSLT_MATCH_CHAIN_TRACE_INTERVAL_ENV);
+    char *saved_interval_env=prior?strdup(prior):NULL;
+    assert(setenv(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV,request,1)==0);
+    assert(setenv(CETTA_GSLT_MATCH_CHAIN_TRACE_INTERVAL_ENV,"18446744073709551615",1)==0);
+    g_match_evaluator=handle_match_initial;
+    g_match_chain_observer_configured=false;
+    g_match_chain_progress=0u;
+    prime_need_observation_policy_changed();
+    CHECK(g_prime_need_rule_use_observed == diagnostic);
+    space_add(&space,parse_one(&arena,"(= (observer:add $x) (+ $x 1))"));
+    PreparedPureClosedCallPlan prepared;
+    CHECK(prepared_pure_closed_call_plan(&space,&arena,
+        parse_one(&arena,"(observer:add 7)"),-1,true,NULL,&prepared) == !diagnostic);
+    for(unsigned pass=0u;pass<2u;pass++) {
+        OutcomeSet out;outcome_set_init(&out);
+        CHECK(handle_match(&space,&arena,call,NULL,-1,false,&out));
+        CHECK(g_match_evaluator==(diagnostic?handle_match_diagnostic:handle_match_plain));
+        CHECK(out.len==2u);
+        Atom *expected=parse_one(&arena,"(Path B C)");
+        for(CettaCount i=0u;i<out.len;i++)
+            CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[i]),expected));
+        CHECK(g_match_chain_progress==(diagnostic?2u*(pass+1u):0u));
+        outcome_set_free(&out);
+    }
+    Bindings empty;bindings_init(&empty);
+    OutcomeSet out;outcome_set_init(&out);
+    eval_for_caller(&space,&arena,NULL,call,-1,&empty,false,&out);
+    CHECK(out.len==2u);
+    Atom *expected=parse_one(&arena,"(Path B C)");
+    for(CettaCount i=0u;i<out.len;i++)
+        CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[i]),expected));
+    CHECK(g_match_chain_progress==(diagnostic?6u:0u));
+    outcome_set_free(&out);bindings_free(&empty);
+
+    Space *spaces[]={&space,&space};
+    Atom *inner=expr_arg(call,2u);
+    Atom *patterns[]={expr_arg(call,1u),expr_arg(inner,1u)};
+    Atom *body=expr_arg(inner,2u);
+    MatchVisibleVarSet visible;match_visible_var_set_init(&visible);
+    assert(collect_match_visible_vars_many(patterns,2u,&visible));
+    MatchResultSnapshot snapshot={0};DeferredSpaceSet deferred={0};
+    MatchResultDirectEvalScratch scratch={0};
+    outcome_set_init(&out);bindings_init(&empty);
+    MatchChainDfsCtx dfs={.s=&space,.a=&arena,.fuel=-1,.os=&out,
+        .step_spaces=spaces,.step_patterns=patterns,.nsteps=2u,.visible=&visible,
+        .snapshot=&snapshot,.deferred_spaces=&deferred,.direct_scratch=&scratch,
+        .body=body,.query_spaces=spaces,.nquery_spaces=2u};
+    (diagnostic?match_chain_dfs_diagnostic:match_chain_dfs_plain)(&dfs,0u,&empty);
+    match_result_snapshot_eval(&space,&arena,&snapshot,-1,&out);
+    CHECK(out.len==2u);
+    for(CettaCount i=0u;i<out.len;i++)
+        CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[i]),expected));
+    CHECK(g_match_chain_progress==(diagnostic?8u:0u));
+    outcome_set_free(&out);match_result_snapshot_free(&snapshot);bindings_free(&empty);
+
+    Bindings row;bindings_init(&row);
+    assert(match_atoms(patterns[1],parse_one(&arena,"(Edge B C)"),&row,&arena));
+    outcome_set_init(&out);
+    PathmapConjunctionStreamCtx indexed={.space=&space,.arena=&arena,.fuel=-1,
+        .outcomes=&out,.visible=&visible,.body=body,.query_space=&space,
+        .preserve_bindings=true,.snapshot=&snapshot,.deferred_spaces=&deferred,
+        .direct_scratch=&scratch,.factor_count=2u};
+    CHECK((diagnostic?pathmap_conjunction_stream_row_diagnostic:
+        pathmap_conjunction_stream_row_plain)(&row,&indexed));
+    CHECK(out.len==1u);
+    if(out.len==1u)CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[0]),expected));
+    CHECK(g_match_chain_progress==(diagnostic?9u:0u));
+    outcome_set_free(&out);bindings_free(&row);match_visible_var_set_free(&visible);
+    match_result_direct_eval_scratch_free(&scratch);deferred_space_set_free(&deferred);
+    g_match_evaluator=saved_entry;
+    g_match_chain_observer_configured=saved_configured;
+    g_match_chain_observer_diagnostic=saved_diagnostic;
+    g_match_chain_observer_interval=saved_interval;
+    g_match_chain_progress=saved_progress;
+    if(saved_env) {assert(setenv(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV,saved_env,1)==0);free(saved_env);}
+    else assert(unsetenv(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV)==0);
+    if(saved_interval_env) {assert(setenv(CETTA_GSLT_MATCH_CHAIN_TRACE_INTERVAL_ENV,saved_interval_env,1)==0);free(saved_interval_env);}
+    else assert(unsetenv(CETTA_GSLT_MATCH_CHAIN_TRACE_INTERVAL_ENV)==0);
+    prime_need_observation_policy_changed();
+    cetta_library_context_free(context);free(context);eval_set_library_context(NULL);
+    registry_free(&registry);g_registry=NULL;space_free(&space);arena_free(&arena);
 }
 
 static void release_stack_control(PrimeNativeControl *control) {
@@ -487,6 +592,36 @@ static void native_call_boundary_case(CettaLanguageId language,const CettaProfil
     if(language==CETTA_LANGUAGE_PRIME) {
         CHECK(prime_native_worker_call_local(&space,&arena,parse_one(&arena,"(Box 7)")));
         CHECK(!prime_native_worker_call_local(&space,&arena,parse_one(&arena,"((Box 7))")));
+        /* The inspection enters the pending task's authority, including a
+         * branch task. A denied operation never reaches the pattern matcher. */
+        PrimeEvalStackDriver *previous = g_prime_eval_stack_driver;
+        for (unsigned branch = 0u; branch < 2u; branch++) {
+            for (unsigned mode = 0u; mode < 4u; mode++) {
+                PrimeNativeControl control = {0};
+                control.driver.control = &control;
+                control.driver.arena = &arena;
+                control.policy.breakpoint_pattern = parse_one(&arena,
+                    mode & 1u ? "(never:entered)" : "(println! $message)");
+                control.policy.breakpoint_budget = UINT64_MAX;
+                PrimeNativeWork pending = {.owner=&control, .task_initialized=true};
+                pending.task.kind = branch ? PRIME_EVAL_STACK_TASK_BRANCH
+                                           : PRIME_EVAL_STACK_TASK_CALL;
+                pending.task.space = &space;
+                pending.task.arena = &arena;
+                pending.task.atom = parse_one(&arena, "(println! BreakpointMustNotExecute)");
+                pending.task.pure_authority = mode < 2u;
+                g_prime_eval_stack_driver = &control.driver;
+                bool stopped = prime_native_breakpoint_stop(&control, &pending);
+                CHECK(stopped == (mode != 3u));
+                CHECK(control.failed == (mode < 2u));
+                CHECK(control.breakpoint_checks == (mode < 2u ? 0u : 1u));
+                CHECK(control.breakpoint_hit == (mode == 2u));
+                CHECK(!control.breakpoint_incomplete && !control.driver.pure_authority);
+                CHECK(control.steps == 0u && pending.task_initialized &&
+                      pending.task.atom && !pending.prepared_publication);
+            }
+        }
+        g_prime_eval_stack_driver = previous;
     }
     CHECK(native_dialect_owns_call(NULL,parse_one(&arena,"(select 2 (search-policy (control FIFO)) (rows))")));
     CHECK(native_dialect_owns_call(NULL,parse_one(&arena,"(select 2 (search-policy (control UnknownStrategy)) (rows))")));
@@ -648,8 +783,10 @@ static void sealed_licence_environment_case(void) {
     CHECK(cetta_weight_ledger_append(&source,&zero,101u,103u,atom_int(&source,7),&weighted));
     *bindings_weight_mut(&ambient)=weighted;
     *bindings_branch_state_mut(&ambient)=(PrimeNeedBranchState){.session_id=107u,.owner=&source};
-    PrimeNeedActiveGuard outside=prime_need_active_enter(&ambient);
-    PrimeNeedActiveGuard sealed=prime_need_active_enter_captured(&empty);
+    PrimeNeedActiveGuard outside;
+    prime_need_active_enter(&outside, &ambient);
+    PrimeNeedActiveGuard sealed;
+    prime_need_active_enter_captured(&sealed, &empty);
     CHECK(g_prime_need_logical_env==&empty && !g_prime_need_active.session_id);
     CHECK(!g_prime_weight_active.length && !g_prime_weight_active.owner);
     CHECK(!g_prime_need_branch_state_active.owner && !g_prime_need_branch_state_active.session_id);
@@ -657,7 +794,7 @@ static void sealed_licence_environment_case(void) {
     CHECK(g_prime_need_logical_env==&ambient && g_prime_weight_active.last==weighted.last);
     CHECK(g_prime_need_active.session_id==bindings_need_view(&ambient)->session_id);
     CHECK(g_prime_need_branch_state_active.owner==&source);
-    sealed=prime_need_active_enter_captured(&captured);
+    prime_need_active_enter_captured(&sealed, &captured);
     CHECK(g_prime_need_active.session_id==captured_session && !g_prime_need_active.top);
     CHECK(!g_prime_weight_active.length && !g_prime_need_branch_state_active.owner);
     prime_need_active_leave(&sealed);
@@ -1323,7 +1460,8 @@ static void native_owning_consumer_case(unsigned consumer, unsigned carrier,
                 contexts[i], &arena, "prime-search", ids[i]);
         } else {
             Atom *result = prime_cost_analyze(&space, &arena,
-                parse_one(&arena, i ? "(quote (right-job))" : "(quote (left-job))"), 0u);
+                parse_one(&arena, i ? "(quote (right-job))" : "(quote (left-job))"), 0u,
+                CETTA_COST_GRAPH_UNFOLDING_WORK, false, false, false);
             assert(result);
             handles[i] = owning_consumer_field(result, "residual"); assert(handles[i]);
             assert(cetta_native_handle_arg(handles[i], "prime-cost-analysis", &ids[i]));
@@ -2480,7 +2618,8 @@ static void dependency_view_case(unsigned which) {
     assert(!atom_eq(raw, decoded));
     assert(!prime_scoped_judgment_admitted(&arena, &space, raw));
     uint64_t epoch = prime_scoped_judgment_admission_epoch();
-    PrimeNeedActiveGuard active = prime_need_active_enter(&local);
+    PrimeNeedActiveGuard active;
+    prime_need_active_enter(&active, &local);
     Atom *report = dependency_view_judge(&arena, &space, "(try (hol:recheck probe))", "Established");
     assert(report->kind == ATOM_EXPR && report->expr.len == 2u &&
            atom_is_symbol(report->expr.elems[0], "PrimeScopedValue"));
@@ -2824,7 +2963,8 @@ static void binding_role_case(unsigned which) {
                 assert(prime_need_snapshot_lookup(&forwarded,consumer,&got));
             } else {
                 *bindings_need_mut(&env)=forwarded;
-                PrimeNeedActiveGuard active=prime_need_active_enter(&env);
+                PrimeNeedActiveGuard active;
+                prime_need_active_enter(&active, &env);
                 Atom *ref=prime_need_ref(&arena,&forwarded,consumer);
                 CettaCount first=rows.len;
                 prime_need_force_active(&space,&arena,ref,consumer,-1,&rows);
@@ -4052,7 +4192,8 @@ static void cache_return_caller_case(unsigned which) {
                 projected->ground.gkind==GV_INT &&
                 projected->ground.ival==(round?47:31));
         }
-        PrimeNeedActiveGuard active=prime_need_active_enter(&caller);
+        PrimeNeedActiveGuard active;
+        prime_need_active_enter(&active, &caller);
         CettaCount first=rows.len;
         CettaNativeCostLedger cost;cetta_native_cost_init(&cost);
         CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&cost,1u);
@@ -4381,8 +4522,19 @@ static void guest_read_service_case(unsigned which) {
         owned_arena, call, &child->output));
     Atom *typed_call=parse_one(owned_arena,which==4u?"($unknown 7)":"(guest:poly 7)");
     bool requires_guest=which==1u || which==2u;
-    assert(prime_native_parallel_read_service_admitted(child,owned_space,
-        owned_arena,typed_call,&child->output)==requires_guest);
+    if (requires_guest) {
+        PettaCandidateSnapshotLease erased = {0};
+        assert(petta_program_candidate_snapshot_lease_profiled(context.petta_program,
+            owned_space, atom_head_symbol_id(typed_call), &erased, NULL));
+        assert(erased.len == 1u && !erased.items[0].rhs_plan);
+        petta_program_candidate_snapshot_lease_release(&erased);
+    }
+    bool guest_admitted = prime_native_parallel_read_service_admitted(child,owned_space,
+        owned_arena,typed_call,&child->output);
+    if (guest_admitted != requires_guest)
+        fprintf(stderr,"Guest service case %u admitted=%u expected=%u\n",
+            which, guest_admitted, requires_guest);
+    assert(guest_admitted == requires_guest);
     assert(context.prime_hol_guest==NULL);
     PrimeHolGuest guest = {0};
     if (which == 6u) {
@@ -4585,7 +4737,8 @@ static void native_data_branch_case(unsigned which) {
     *bindings_need_mut(&returned) = selected;
     PrimeNeedCellView before, after;
     assert(prime_need_snapshot_lookup(&selected, id, &before));
-    PrimeNeedActiveGuard active = prime_need_active_enter(&caller);
+    PrimeNeedActiveGuard active;
+    prime_need_active_enter(&active, &caller);
     const PrimeNeedFrame *caller_top = g_prime_need_active.top;
     const Bindings *caller_logical = g_prime_need_logical_env;
     Atom *value = prime_need_observation_data_argument(
@@ -4619,6 +4772,608 @@ static void native_data_branch_case(unsigned which) {
     eval_set_library_context(NULL);
     cetta_library_context_free(&context);
 }
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+typedef struct {
+    const PrimeNeedSavedContext *saved;
+    PrimeNeedReceipt receiving;
+} SavedContextTransfer;
+
+static void *saved_context_transfer_worker(void *raw) {
+    const SavedContextTransfer *transfer = raw;
+    PrimeNeedActiveGuard caller;
+    prime_need_active_enter(&caller, NULL);
+    prime_need_active_receipt_set(transfer->receiving);
+    prime_need_saved_context_install(transfer->saved);
+    const PrimeNeedActiveGuard *saved = &transfer->saved->value;
+    CHECK(g_prime_need_active.session_id == saved->previous.session_id &&
+        g_prime_need_active.top == saved->previous.top);
+    CHECK(g_prime_need_branch_state_active.session_id == saved->previous_branch_state.session_id &&
+        g_prime_weight_active.last == saved->previous_weights.last &&
+        g_prime_need_logical_env == saved->previous_logical_env);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active,
+        prime_need_saved_context_receipt(transfer->saved)));
+    prime_need_active_leave(&caller);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    return NULL;
+}
+
+static void active_context_transition_case(bool replace) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Bindings ambient, empty, recorded;
+    bindings_init(&ambient); bindings_init(&empty); bindings_init(&recorded);
+    CHECK(prime_need_snapshot_begin(bindings_need_mut(&ambient)));
+    PrimeNeedSnapshot need = *bindings_need_view(&ambient);
+    PrimeNeedActiveGuard outside;
+    prime_need_active_enter(&outside, &ambient);
+    PrimeNeedReceipt before = g_prime_need_receipt_active;
+    prime_need_active_receipt_set((PrimeNeedReceipt){0});
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){2u, 65536u, 1u, 8u});
+    bool demoted = false;
+    PrimeNeedReceipt root = {0};
+    bool ready = group && prime_need_recording_reserve(
+        group, NULL, 2u, 65536u, &root) &&
+        prime_need_receipt_observe_cell(&arena, &root, 31u, 1u,
+            atom_int(&arena, 7), &root);
+    CHECK(ready);
+    if (!ready) goto done;
+
+    /* Recording can begin inside a previously plain guard. Leaving it must
+     * restore its empty origin, including after a nested context clears it. */
+    PrimeNeedActiveGuard late;
+    prime_need_active_enter(&late, NULL);
+    prime_need_active_receipt_set(root);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    /* Restoring an HE episode must restore the context operations as well
+     * as its receipt. A later guard must capture the restored diary. */
+    CettaWeightLedger previous_weights = g_prime_weight_active;
+    CettaWeightLedger captured_weights = {0};
+    CHECK(cetta_weight_ledger_append(&arena, &captured_weights,
+        prime_need_fresh_source_occurrence(), prime_need_fresh_source_occurrence(),
+        atom_expr2(&arena, atom_symbol(&arena, "Coefficient"), atom_int(&arena, 17)),
+        &captured_weights));
+    g_prime_weight_active = captured_weights;
+    HeCanonicalAmbient ambient_state;
+    he_canonical_ambient_capture(&ambient_state);
+    g_prime_weight_active = (CettaWeightLedger){0};
+    prime_need_active_receipt_set((PrimeNeedReceipt){0});
+    he_canonical_ambient_install(&ambient_state);
+    CHECK(cetta_weight_ledger_equal(&g_prime_weight_active, &captured_weights));
+    g_prime_weight_active = previous_weights;
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    PrimeNeedActiveGuard imported;
+    prime_need_active_save(&imported, NULL);
+    prime_need_active_receipt_set((PrimeNeedReceipt){0});
+    prime_need_active_leave(&imported);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    PrimeNeedActiveGuard captured;
+    prime_need_active_enter_captured(&captured, &empty);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    CHECK(!g_prime_need_active.session_id && g_prime_need_logical_env == &empty);
+    prime_need_active_leave(&captured);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    CHECK(g_prime_need_active.session_id == need.session_id);
+    /* A closed top entry starts empty and restores its complete caller.
+     * Exercise both public entries from ordinary and diary-carrying origins. */
+    PrimeNeedActiveGuard roundtrip;
+    prime_need_active_save(&roundtrip, NULL);
+    PrimeNeedBranchState branch = {0};
+    CHECK(prime_need_branch_state_begin(&arena, &branch));
+    g_prime_need_branch_state_active = branch;
+    g_prime_weight_active = captured_weights;
+    const Bindings *logical = g_prime_need_logical_env;
+    Space top_space; space_init(&top_space);
+    Registry top_registry; registry_init(&top_registry);
+    for (unsigned diary = 0u; diary < 2u; diary++) {
+        PrimeNeedReceipt origin = diary ? root : (PrimeNeedReceipt){0};
+        prime_need_active_receipt_set(origin);
+        /* Borrowed values stay quiescent through the join. Transporting this
+         * context grants no authority to execute the source computation. */
+        PrimeNeedSavedContext transferred;
+        prime_need_saved_context_capture(&transferred);
+        SavedContextTransfer transfer = {
+            &transferred, diary ? (PrimeNeedReceipt){0} : root};
+        pthread_t receiving_thread;
+        int started = pthread_create(&receiving_thread, NULL,
+            saved_context_transfer_worker, &transfer);
+        CHECK(started == 0);
+        if (!started) CHECK(pthread_join(receiving_thread, NULL) == 0);
+        CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &origin));
+        /* A force starts in the active world, while its lexical environment
+         * can retain a different diary. These are independent origins. */
+        Bindings lexical;
+        bindings_init(&lexical);
+        PrimeNeedReceipt lexical_receipt = diary ? (PrimeNeedReceipt){0} : root;
+        *bindings_receipt_mut(&lexical) = lexical_receipt;
+        *bindings_branch_state_mut(&lexical) = branch;
+        *bindings_weight_mut(&lexical) = captured_weights;
+        lexical.prime_ext->occurrence_token = 17u;
+        Atom *lexical_root = atom_var(&arena, "force-lexical");
+        CHECK(bindings_add_var(&lexical, lexical_root, atom_int(&arena, 23)));
+        const Bindings *saved_logical = g_prime_need_logical_env;
+        g_prime_need_logical_env = &lexical;
+        PrimeEvalStackFrame *force =
+            prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_FORCE);
+        PrimeNeedForceEnvironmentPrepare prepare_force =
+            g_prime_need_execution_ops.capture_force(force);
+        force->evaluating = need;
+        bool captured_force =
+            prime_eval_stack_capture_dynamic_env(&force->env, &lexical);
+        force->env_initialized = captured_force;
+        CHECK(captured_force);
+        CHECK(force->before.session_id == need.session_id &&
+            prime_need_receipt_equal(&force->before_receipt, &origin));
+        /* Dynamic completion fills absent metadata, but never overwrites
+         * the already captured lexical diary. */
+        CHECK(prime_need_receipt_equal(bindings_receipt_view(&force->env),
+            diary ? &origin : &lexical_receipt));
+        if (!diary)
+            CHECK(!prime_need_receipt_equal(&force->before_receipt,
+                bindings_receipt_view(&force->env)));
+        /* Both capture routes retain bindings, while installing exactly
+         * the force's origin and the caller's operational occurrence. */
+        for (unsigned shape = 0u; shape < 4u; shape++) {
+            if (shape == 2u) {
+                for (unsigned i = 0u; i < 80u; i++) {
+                    char name[48];
+                    snprintf(name, sizeof(name), "force-unreachable-%u", i);
+                    CHECK(bindings_add_var(&lexical, atom_var(&arena, name),
+                        atom_int(&arena, (int64_t)i)));
+                }
+            }
+            PrimeNeedCellView cell = {.origin=lexical_root};
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+            VarId capture = lexical_root->var_id;
+            cell.capture_known = (shape & 1u) != 0u;
+            cell.capture_var_ids = &capture;
+            cell.capture_var_count = 1u;
+#endif
+            Bindings projected;
+            bool projected_ok = prime_need_project_cell_bindings(
+                &arena, &cell, &lexical, &projected);
+            CHECK(projected_ok);
+            if (projected_ok) {
+                CHECK(!projected.prime_ext && projected.len == 1u);
+                Bindings unchanged;
+                bool unchanged_ok = prime_need_project_cell_logical_env(
+                    &arena, &cell, &lexical, &unchanged);
+                CHECK(unchanged_ok);
+                if (unchanged_ok) {
+                    CHECK(prime_need_receipt_equal(bindings_receipt_view(&unchanged),
+                        &lexical_receipt) && unchanged.len == projected.len);
+                    bindings_free(&unchanged);
+                }
+                prime_need_observation_policy_changed();
+                prepare_force(force, &lexical, &projected);
+                CHECK(bindings_need_view(&projected)->session_id == need.session_id &&
+                    prime_need_branch_state_equal(bindings_branch_state_view(&projected), &branch) &&
+                    cetta_weight_ledger_equal(bindings_weight_view(&projected), &captured_weights) &&
+                    projected.prime_ext->occurrence_token == 17u &&
+                    prime_need_receipt_equal(bindings_receipt_view(&projected), &origin));
+                bool applied = false;
+                Atom *value = bindings_apply_body_exact_env(
+                    &arena, lexical_root, &projected, &applied);
+                CHECK(applied && atom_eq(value, atom_int(&arena, 23)));
+                bindings_free(&projected);
+            }
+        }
+        prime_eval_stack_frame_free(force);
+        g_prime_need_logical_env = saved_logical;
+        bindings_free(&lexical);
+        PrimeNeedActiveGuard closed;
+        prime_need_active_enter_captured(&closed, NULL);
+        CHECK(!g_prime_need_active.session_id &&
+            !g_prime_need_branch_state_active.session_id &&
+            !g_prime_weight_active.length && !g_prime_need_logical_env &&
+            !prime_need_receipt_present(&g_prime_need_receipt_active));
+        /* New history inside the empty context cannot leak into its caller. */
+        prime_need_active_receipt_set(root);
+        prime_need_active_leave(&closed);
+        CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &origin));
+        for (unsigned registered = 0u; registered < 2u; registered++) {
+            ResultSet values; result_set_init(&values);
+            Atom *request = atom_int(&arena, 7);
+            if (registered)
+                eval_top_with_registry(&top_space, &arena, NULL, &top_registry,
+                    request, &values);
+            else
+                eval_top(&top_space, &arena, request, &values);
+            CHECK(values.len == 1u && atom_eq(values.items[0], request));
+            CHECK(g_prime_need_active.session_id == need.session_id &&
+                g_prime_need_branch_state_active.session_id == branch.session_id &&
+                cetta_weight_ledger_equal(&g_prime_weight_active, &captured_weights) &&
+                g_prime_need_logical_env == logical &&
+                prime_need_receipt_equal(&g_prime_need_receipt_active, &origin));
+            result_set_free(&values);
+        }
+    }
+    registry_free(&top_registry); space_free(&top_space);
+    prime_need_active_leave(&roundtrip);
+    prime_need_active_leave(&late);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    CHECK(g_prime_need_active.session_id == need.session_id);
+
+    /* A tail's fallback is its entry context. New recorded data arrives only
+     * at a successful environment mutation, on both merge and replacement. */
+    *bindings_receipt_mut(&recorded) = root;
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, &empty));
+    PrimeNeedActiveGuard tail;
+    prime_need_active_save(&tail, &empty);
+    prime_need_active_tail(&builder.current, &tail);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    bool changed = replace
+        ? prime_need_active_replace_environment(&tail, &builder, &recorded)
+        : prime_need_active_merge_environment(&tail, &builder, &recorded);
+    CHECK(changed);
+    if (changed) {
+        prime_need_active_tail(&builder.current, &tail);
+        CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+        CHECK(g_prime_need_active.session_id == need.session_id);
+        CHECK(g_prime_need_logical_env == &builder.current);
+    }
+    prime_need_active_leave(&tail);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    CHECK(g_prime_need_active.session_id == need.session_id);
+    bindings_builder_free(&builder);
+
+    /* A caller with a diary keeps that fallback when its plain tail has no
+     * diary of its own. An explicitly captured empty world still clears it. */
+    prime_need_active_receipt_set(root);
+    PrimeNeedActiveGuard carried;
+    prime_need_active_save(&carried, &empty);
+    prime_need_active_tail(&empty, &carried);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    CHECK(g_prime_need_active.session_id == need.session_id);
+    prime_need_active_leave(&carried);
+
+    /* Refreshing a formerly plain tail after late history creation restores
+     * its empty fallback. Its cleanup then uses the ordinary operation. */
+    prime_need_active_receipt_set((PrimeNeedReceipt){0});
+    prime_need_active_save(&late, &empty);
+    prime_need_active_receipt_set(root);
+    prime_need_active_tail(&empty, &late);
+    CHECK(!prime_need_receipt_present(&g_prime_need_receipt_active));
+    CHECK(g_prime_need_active.session_id == need.session_id);
+    prime_need_active_leave(&late);
+
+    /* Reusable regions restore the same context before retiring scratch.
+     * A new diary prevents eliding a Need suffix even if its value is closed. */
+    PrimeNeedRegionPool pool = {.stable_owner=&arena};
+    PrimeNeedRegionPool *previous_pool = g_prime_need_region_pool;
+    Arena *previous_owner = g_prime_need_owner;
+    Arena *previous_branch_owner = g_prime_need_region_branch_owner;
+    g_prime_need_region_pool = &pool;
+    for (unsigned history = 0u; history < 2u; history++) {
+        PrimeNeedReceipt origin = history ? root : (PrimeNeedReceipt){0};
+        prime_need_active_receipt_set(origin);
+        PrimeNeedRegionScope region;
+        bool entered = prime_need_region_scope_enter(&region);
+        CHECK(entered);
+        if (!entered) continue;
+        CHECK(pool.depth == 1u && g_prime_need_owner == &region.level->arena);
+        CHECK(prime_need_receipt_equal(
+            prime_need_active_original_receipt(&region.context), &origin));
+        Outcome candidate;
+        outcome_init(&candidate);
+        candidate.atom = atom_int(&region.level->arena, 7);
+        PrimeNeedSnapshot extended;
+        uint64_t cell = 0u;
+        bool allocated = prime_need_snapshot_allocate(&region.level->arena,
+            &region.context.previous, candidate.atom, &extended, &cell);
+        CHECK(allocated);
+        if (allocated) {
+            *bindings_need_mut(&candidate.env) = extended;
+            *bindings_receipt_mut(&candidate.env) = origin;
+            PrimeNeedSnapshot retained = {0};
+            bool suffix = false;
+            CHECK(outcome_region_prefix_only_need(
+                &region, &candidate, NULL, &retained, &suffix) && suffix);
+            CHECK(retained.session_id == need.session_id &&
+                retained.max_storage_key == extended.max_storage_key);
+            *bindings_receipt_mut(&candidate.env) = history
+                ? (PrimeNeedReceipt){0} : root;
+            CHECK(!outcome_region_prefix_only_need(
+                &region, &candidate, NULL, &retained, &suffix));
+        }
+        outcome_free_fields(&candidate);
+        prime_need_active_receipt_set(history ? (PrimeNeedReceipt){0} : root);
+        prime_need_region_scope_leave(&region);
+        CHECK(!pool.depth && g_prime_need_owner == previous_owner &&
+            g_prime_need_region_branch_owner == previous_branch_owner);
+        CHECK(g_prime_need_active.session_id == need.session_id);
+        CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &origin));
+    }
+    prime_need_region_pool_free(&pool);
+    g_prime_need_region_pool = NULL;
+    PrimeNeedRegionScope refused;
+    CHECK(!prime_need_region_scope_enter(&refused));
+    prime_need_region_scope_leave(&refused);
+    CHECK(g_prime_need_owner == previous_owner &&
+        g_prime_need_active.session_id == need.session_id);
+    g_prime_need_region_pool = previous_pool;
+
+    /* An observed datum publishes without the private operational world,
+     * while its caller keeps both its logical interpretation and diary. */
+    prime_need_active_receipt_set(root);
+    const Bindings *lexical = g_prime_need_logical_env;
+    CettaLibraryContext prime_library;
+    cetta_library_context_init_for_language_profile(&prime_library,
+        CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    CettaLibraryContext *previous_library = g_library_context;
+    eval_set_library_context(&prime_library);
+    OutcomeSet data;
+    outcome_set_init(&data);
+    outcome_set_add_observed_data(&data, atom_int(&arena, 19));
+    CHECK(data.len == 1u && !bindings_prime_present(&data.items[0].env));
+    CHECK(g_prime_need_active.session_id == need.session_id &&
+        g_prime_need_logical_env == lexical);
+    CHECK(prime_need_receipt_equal(&g_prime_need_receipt_active, &root));
+    outcome_set_free(&data);
+    eval_set_library_context(previous_library);
+    cetta_library_context_free(&prime_library);
+
+    /* Held HE work owns coefficient payloads through the same relocation
+     * session as its input, and does not become a diary reader merely by
+     * retaining the execution. */
+    CettaLibraryContext he_library;
+    cetta_library_context_init_for_language_profile(&he_library,
+        CETTA_LANGUAGE_HE, cetta_profile_he_extended());
+    eval_set_library_context(&he_library);
+    Space he_space; space_init(&he_space);
+    Registry he_registry; registry_init(&he_registry);
+    registry_bind_id(&he_registry, g_builtin_syms.self, atom_space(&arena, &he_space));
+    Bindings he_input; bindings_init(&he_input);
+    *bindings_weight_mut(&he_input) = captured_weights;
+    g_prime_weight_active = captured_weights;
+    CettaHeExecution *held = eval_he_owned_begin(&he_space, &he_registry,
+        CETTA_HE_ENTRY_EVALUATE, atom_int(&arena, 7), NULL, 100,
+        &he_input, true, false);
+    CHECK(held != NULL);
+    g_prime_weight_active = previous_weights;
+    if (held) {
+        const CettaWeightLedger *copied = bindings_weight_view(&held->input_environment);
+        CHECK(copied->length == 1u && copied->owner == &held->storage &&
+            atom_graph_is_closed_for_arena(&held->storage, copied->last->value));
+        CHECK(copied->length == 1u &&
+            held->ambient.context.value.previous_weights.length == 1u &&
+            copied->last->value == held->ambient.context.value.previous_weights.last->value);
+        CHECK(prime_need_recording_status(group).payload_charge > 0u);
+        prime_need_recording_demote(group);
+        demoted = true;
+        CHECK(prime_need_recording_status(group).payload_charge == 0u);
+        CettaHeExecutionView view = {0};
+        for (unsigned step = 0u; step < 100u; step++) {
+            CHECK(eval_he_owned_inspect(held, &view));
+            if (view.closed) break;
+            CettaHeAdvance next = eval_he_owned_advance(held);
+            CHECK(next == CETTA_HE_ADVANCED || next == CETTA_HE_CLOSED);
+            CHECK(cetta_weight_ledger_equal(&g_prime_weight_active, &previous_weights));
+            if (next != CETTA_HE_ADVANCED && next != CETTA_HE_CLOSED) break;
+        }
+        CHECK(eval_he_owned_inspect(held, &view) && view.closed &&
+            view.outcomes->len == 1u);
+        if (view.closed && view.outcomes->len == 1u) {
+            const CettaWeightLedger *result = bindings_weight_view(&view.outcomes->items[0].env);
+            CHECK(cetta_weight_ledger_equal(result, &captured_weights));
+            CHECK(!prime_need_receipt_present(bindings_receipt_view(&view.outcomes->items[0].env)));
+        }
+        CHECK(eval_he_owned_destroy(held));
+    }
+    bindings_free(&he_input);
+    registry_free(&he_registry); space_free(&he_space);
+    eval_set_library_context(previous_library);
+    cetta_library_context_free(&he_library);
+done:
+    prime_need_active_receipt_set(before);
+    prime_need_active_leave(&outside);
+    bindings_free(&ambient); bindings_free(&empty); bindings_free(&recorded);
+    if (group) {
+        if (demoted) prime_need_recording_carrier_release(group);
+        else prime_need_recording_release(group);
+    }
+    arena_free(&arena);
+}
+
+static void recording_reader_release_case(void) {
+    Arena input, carrier_owner, reader_owner;
+    arena_init_detached(&input);
+    arena_init_detached(&carrier_owner);
+    arena_init_detached(&reader_owner);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){2u, 65536u, 1u, 8u});
+    PrimeNeedReceipt root = {0}, carrier = {0}, reader = {0};
+    Bindings captured, completed, empty;
+    bindings_init(&captured);
+    bindings_init(&completed);
+    bindings_init(&empty);
+    PrimeNeedActiveGuard outside;
+    prime_need_active_enter(&outside, NULL);
+    bool demoted = false;
+    bool ready = group && prime_need_recording_reserve(
+        group, NULL, 2u, 65536u, &root) &&
+        prime_need_receipt_observe_cell(&input, &root, 31u, 1u,
+            atom_int(&input, 7), &root);
+    CHECK(ready);
+    if (!ready) goto done;
+    /* A captured diary remains data with no active recorder. Replacing the
+     * observation policy must not replace the captured context's transport. */
+    CHECK(!g_prime_need_recording_scope);
+    prime_need_active_receipt_set(root);
+    prime_need_observation_policy_changed();
+    CHECK(bindings_capture_active_need(&captured));
+    prime_complete_dynamic_occurrence(&completed);
+    CHECK(prime_need_receipt_equal(bindings_receipt_view(&captured), &root));
+    CHECK(prime_need_receipt_equal(bindings_receipt_view(&completed), &root));
+    PrimeNeedActiveGuard sealed;
+    prime_need_active_enter_captured(&sealed, &empty);
+    CHECK(bindings_capture_active_need(&captured));
+    prime_complete_dynamic_occurrence(&completed);
+    CHECK(prime_need_receipt_equal(bindings_receipt_view(&captured), &root));
+    CHECK(prime_need_receipt_equal(bindings_receipt_view(&completed), &root));
+    CHECK(bindings_capture_active_need(&empty) && !empty.prime_ext);
+    prime_need_active_leave(&sealed);
+    bindings_free(&completed);
+    bindings_init(&completed);
+    prime_complete_dynamic_occurrence(&completed);
+    CHECK(prime_need_receipt_equal(bindings_receipt_view(&completed), &root));
+    carrier = reader = root;
+    ready = prime_need_recording_promote_carrier(&carrier_owner, &carrier) &&
+        prime_need_recording_promote(&reader_owner, &reader);
+    CHECK(ready && carrier.owner == root.owner && reader.owner == &reader_owner);
+    if (!ready) goto done;
+    PrimeNeedReceiptGraph graph = {0};
+    CHECK(prime_need_receipt_graph_collect(&reader, &graph) ==
+        PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 1u);
+    uint64_t identity = graph.root_id;
+    prime_need_receipt_graph_free(&graph);
+    size_t payload = prime_need_recording_status(group).payload_charge;
+    CHECK(payload > 0u);
+    prime_need_recording_demote(group);
+    demoted = true;
+    CHECK(!prime_need_receipt_present(&root) && !prime_need_receipt_present(&carrier));
+    /* Erasure can happen after context selection. Its weak carrier must not
+     * become readable again merely by returning or completing a value. */
+    CHECK(bindings_capture_active_need(&empty) && !empty.prime_ext);
+    prime_complete_dynamic_occurrence(&empty);
+    CHECK(!empty.prime_ext);
+    CHECK(prime_need_receipt_graph_collect(&carrier, &graph) ==
+        PRIME_NEED_RECEIPT_GRAPH_ABSENT && !graph.length);
+    prime_need_receipt_graph_free(&graph);
+    CHECK(prime_need_receipt_graph_collect(&reader, &graph) ==
+        PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 1u &&
+        graph.root_id == identity && prime_need_recording_status(group).payload_charge == payload);
+    prime_need_receipt_graph_free(&graph);
+    CettaStorageCensus storage = {0};
+    prime_need_recording_carrier_storage(group, &storage);
+    size_t metadata = storage.retained;
+    prime_need_recording_storage(group, &storage);
+    cetta_storage_finish(&storage);
+    CHECK(!storage.incomplete && storage.retained > metadata);
+    arena_free(&reader_owner);
+    arena_init_detached(&reader_owner);
+    CHECK(!prime_need_recording_readable(&reader));
+    CHECK(prime_need_recording_status(group).payload_charge == 0u);
+    storage = (CettaStorageCensus){0};
+    prime_need_recording_storage(group, &storage);
+    cetta_storage_finish(&storage);
+    CHECK(!storage.incomplete && storage.retained == metadata);
+    PrimeNeedReceipt erased = carrier;
+    CHECK(prime_need_recording_promote(&reader_owner, &erased) &&
+        !erased.recording && !erased.top);
+    CHECK(!prime_need_recording_promote(&reader_owner, &reader));
+done:
+    prime_need_active_leave(&outside);
+    bindings_free(&empty);
+    bindings_free(&completed);
+    bindings_free(&captured);
+    arena_free(&reader_owner);
+    arena_free(&carrier_owner);
+    if (demoted) prime_need_recording_carrier_release(group);
+    else prime_need_recording_release(group);
+    arena_free(&input);
+}
+
+static void suspended_history_owner_case(unsigned workers, uint64_t budget,
+                                         bool restart) {
+    Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
+    Space space; space_init(&space);
+    Registry registry; registry_init(&registry); g_registry = &registry;
+    registry_bind(&registry, "&self", atom_space(&arena, &space));
+    CettaLibraryContext context;
+    cetta_library_context_init_for_language_profile(&context,
+        CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    eval_set_library_context(&context);
+    term_universe_set_persistent_arena(&context.term_universe, &arena);
+    const char *rows[] = {
+        "(= (coin) (let $_ (println! \"SHARED-NEED\") (superpose (2 3))))",
+        "(= (step $x) (+ $x 1))", "(= (consume 3) Three)",
+        "(= (consume 4) Four)",
+        "(= (relay $x) (Pair (consume (step $x)) (step $x)))",
+        "(= (jobs $x) (relay $x))", "(= (jobs $x) Ready)"};
+    for (size_t i = 0u; i < sizeof(rows) / sizeof(*rows); i++)
+        space_add(&space, parse_one(&arena, rows[i]));
+    CettaSearchPolicySpec policy = {.native_control=true, .all=true,
+        .retain=true, .workers=workers, .work_budget=budget, .costs=true,
+        .history={.enabled=true, .selections=512u, .nodes=32u,
+                  .bytes=65536u, .owners=10000u}};
+    PrimeNativeControl control;
+    assert(prime_native_control_init(&control, &space, &arena,
+        parse_one(&arena, "(jobs (coin))"), -1, true,
+        (CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+        &policy, NULL, NULL, NULL));
+    Observed observed = {0};
+    prime_native_control_run(&control, budget, observe, &observed);
+    CHECK(!control.failed && !control.invalidated);
+    CHECK(!control.parallel_inflight_count && !control.parallel_wave_pending);
+    size_t parallel = 0u;
+    for (size_t i = 0u; i < cetta_continuation_hub_length(&control.hub); i++) {
+        PrimeNativeWork *work = cetta_continuation_hub_at(&control.hub, i)->payload;
+        CHECK(work->owner == &control && !work->dialect && !work->resource_provider);
+        if (!work->parallel) continue;
+        parallel++;
+        PrimeNativeParallel *held = work->parallel;
+        printf("SuspendedHistoryOwner workers=%u budget=%"PRIu64
+            " phase=%u child=%u prepared=%u completed=%u attempted=%u"
+            " spent=%"PRIu64" child-steps=%"PRIu64" effect=%u need=%u\n",
+            workers, budget, (unsigned)held->execution.profile,
+            held->child != NULL, held->world.prepared,
+            held->completed, held->attempted, held->spent,
+            held->child ? held->child->steps : 0u,
+            held->child && held->child->effect_pending,
+            held->child && held->child->need_pending);
+    }
+    printf("SuspendedHistoryOwner workers=%u budget=%"PRIu64
+        " capsules=%zu dispatch=%"PRIu64" join=%"PRIu64"\n", workers,
+        budget, parallel, control.event_cost.total.counts[CETTA_COST_WORKER_DISPATCH],
+        control.event_cost.total.counts[CETTA_COST_WORKER_JOIN]);
+    PrimeNativeHistorySpec stop = {.stop=true};
+    PrimeNeedRecording *recording = control.history.group;
+    PrimeNeedRecordingStatus frozen = prime_need_recording_status(recording);
+    size_t selections = control.history.count;
+    CHECK(prime_native_history_configure(&control, &stop));
+    CHECK(!control.history.spec.enabled && control.history.stopped);
+    CHECK(control.history.group == recording && control.history.count == selections);
+    CHECK(prime_native_history_configure(&control, &stop));
+    CHECK(control.history.stop == budget);
+    prime_native_control_run(&control, 3u, observe, &observed);
+    CHECK(control.history.count == selections);
+    PrimeNeedRecordingStatus after_gap = prime_need_recording_status(recording);
+    CHECK(after_gap.nodes == frozen.nodes && after_gap.omitted == frozen.omitted);
+    if (restart) {
+        uint64_t start = control.steps;
+        PrimeNativeHistory before = control.history;
+        PrimeNativeHistorySpec rejected = policy.history;
+        rejected.owners = SIZE_MAX;
+        CHECK(!prime_native_history_configure(&control, &rejected));
+        CHECK(!memcmp(&before, &control.history, sizeof(before)));
+        CHECK(control.steps == start && control.policy.history.stop);
+        CHECK(prime_native_history_configure(&control, &policy.history));
+        CHECK(control.history.spec.enabled && !control.history.stopped);
+        CHECK(control.history.start == start && !control.history.count);
+        CHECK(control.history.group && control.history.group != recording);
+        CHECK(!arena_retains_owner(control.driver.arena, recording,
+            prime_need_recording_release));
+        CHECK(prime_need_recording_status(recording).nodes == 0u);
+    }
+    prime_native_control_run(&control, 5000u, observe, &observed);
+    CHECK(restart ? control.history.count > 0u : control.history.count == selections);
+    if (!restart) {
+        PrimeNeedRecordingStatus after = prime_need_recording_status(recording);
+        CHECK(after.nodes == frozen.nodes && after.omitted == frozen.omitted);
+    }
+    printf("SuspendedHistoryResult closed=%u count=%zu failed=%u invalidated=%u need=%u\n",
+        prime_native_control_closed(&control), observed.count, control.failed,
+        control.invalidated, control.need_pending);
+    CHECK(prime_native_control_closed(&control) && observed.count == 3u);
+    release_stack_control(&control);
+    eval_set_library_context(NULL); cetta_library_context_free(&context);
+    registry_free(&registry); g_registry = NULL;
+    space_free(&space); arena_free(&arena);
+}
+#endif
 
 static void compact_cost_storage_case(unsigned workers, bool recorded_schedule) {
     Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
@@ -4684,11 +5439,536 @@ static void compact_cost_storage_case(unsigned workers, bool recorded_schedule) 
     space_free(&space); arena_free(&arena);
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+typedef struct { size_t checks, failures; } RecordingScopeControl;
+
+static bool recording_scope_query(Arena *arena, Atom *equation, Atom *query,
+    const Bindings *environment, bool recorded) {
+    OutcomeSet results;
+    outcome_set_init(&results);
+    PrimeNeedRawEquationResult raw = {.arena=arena, .base_env=environment,
+        .raw_results=&results, .equation=equation,
+        .source_occurrence_id=prime_need_fresh_source_occurrence(),
+        .rule_occurrence_id=1u};
+    CettaCount count = query_equation_visit(equation, query, arena,
+        prime_need_raw_equation_collector(), &raw);
+    bool ok = count == 1u && raw.matched && results.len == 1u;
+    if (ok) {
+        Atom *answer = outcome_atom_materialize(arena, &results.items[0]);
+        ok = atom_eq(answer, equation->expr.elems[2]) &&
+            prime_need_receipt_present(bindings_receipt_view(&results.items[0].env)) == recorded;
+    }
+    outcome_set_free(&results);
+    return ok;
+}
+
+static bool recording_scope_cached_force(Arena *arena, bool recorded, bool published) {
+    PrimeNeedSnapshot root = {0}, allocated, running, ready;
+    uint64_t thunk = 0u;
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    Atom *value = atom_int(arena, 7);
+    if (!evaluator || !prime_need_snapshot_begin(&root) ||
+        !prime_need_snapshot_allocate(arena, &root, value, &allocated, &thunk) ||
+        !prime_need_snapshot_start_evaluation(arena, &allocated, thunk, evaluator, &running) ||
+        !prime_need_snapshot_resolve_ready_value(arena, &running, thunk, evaluator, value, &ready))
+        return false;
+    Bindings environment;
+    bindings_init(&environment);
+    *bindings_need_mut(&environment) = ready;
+    PrimeNeedActiveGuard active;
+    prime_need_active_enter(&active, &environment);
+    OutcomeSet answers;
+    outcome_set_init(&answers);
+#if CETTA_PRIME_EVAL_STACK
+    if (published)
+        (void)prime_need_observe_published_value(arena, thunk, &ready, &answers);
+    else
+#else
+    (void)published;
+#endif
+    {
+        Space space;
+        space_init(&space);
+        prime_need_force_active(&space, arena, prime_need_ref(arena, &ready, thunk),
+                                thunk, -1, &answers);
+        space_free(&space);
+    }
+    bool ok = answers.len == 1u;
+    if (ok)
+        ok = atom_eq(outcome_atom_materialize(arena, &answers.items[0]), value) &&
+            answers.items[0].result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+            prime_need_receipt_present(bindings_receipt_view(&answers.items[0].env)) == recorded;
+    outcome_set_free(&answers);
+    prime_need_active_leave(&active);
+    bindings_free(&environment);
+    return ok;
+}
+
+static bool recording_scope_state(Arena *arena, StateCell *cell, bool recorded) {
+    Bindings environment;
+    bindings_init(&environment);
+    Atom *updated = atom_int(arena, 2);
+    PrimeNeedBranchState state;
+    Atom *value = NULL;
+    bool ok = prime_need_read_state(arena, &environment, cell, cell->value) &&
+        prime_need_write_state(arena, &environment, cell, updated) &&
+        prime_need_effective_state(&environment, cell, &state, &value) &&
+        atom_eq(value, updated) &&
+        prime_need_receipt_present(bindings_receipt_view(&environment)) == recorded;
+    bindings_free(&environment);
+    return ok;
+}
+
+/* The same bridge callback follows the receiving scope, rather than retaining
+ * its first observer. Even a plain delivery must establish occurrence identity. */
+static bool recording_scope_relation(Arena *arena, Atom *equation, Atom *query,
+    const Bindings *environment, bool observed, bool recorded) {
+    PettaEquationCandidate candidate = {.equation=equation,
+        .occurrence={.logical_index=0u}};
+    Bindings delta;bindings_init(&delta);
+    uint64_t call=petta_eval_machine_prime_begin_relation_call(
+        NULL,(SpaceReadToken){0},query);
+    bool ok=call!=0u &&
+        petta_eval_machine_prime_equation_result_payload_observed(NULL)==observed &&
+        petta_eval_machine_prime_record_equation_use(NULL,arena,call,&candidate,
+            equation->expr.elems[2],environment,&delta);
+    if(ok) {
+        uint64_t occurrence=bindings_occurrence_token(&delta);
+        ok=occurrence!=0u && occurrence!=bindings_occurrence_token(environment) &&
+            prime_need_receipt_present(bindings_receipt_view(&delta))==recorded;
+        if(recorded) {
+            const PrimeNeedReceipt *receipt=bindings_receipt_view(&delta);
+            PrimeNeedReceiptGraph graph={0};
+            ok=ok && prime_need_receipt_graph_collect(receipt,&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+                graph.length==1u && graph.nodes[0].has_event &&
+                graph.nodes[0].event.kind==PRIME_NEED_RECEIPT_USE_EQUATION &&
+                atom_eq(graph.nodes[0].event.before,equation) &&
+                atom_eq(graph.nodes[0].event.after,equation->expr.elems[2]);
+            prime_need_receipt_graph_free(&graph);
+        }
+    }
+    bindings_free(&delta);
+    return ok;
+}
+
+/* Enter through the low-level scope API on a fresh thread, before any
+ * evaluator entry. A refused nested slice must not escape its allowance,
+ * and leaving the outer scope must stop receipt construction. */
+static bool recording_scope_task(CettaParallelWorker *worker, void *task, void *context) {
+    (void)context;
+    RecordingScopeControl *result = task;
+#define SCOPE_CHECK(condition) do { result->checks++; if (!(condition)) { \
+    result->failures++; fprintf(stderr,"FAIL: recording scope: %s\n",#condition); } } while (0)
+    Arena *arena = cetta_parallel_worker_arena(worker);
+    arena_set_hashcons(arena, NULL);
+    Bindings environment; bindings_init(&environment);
+    Atom *equation = parse_one(arena, "(= (scope-entry) 7)");
+    Atom *query = parse_one(arena, "(scope-entry)");
+    StateCell *cell = arena_alloc(arena, sizeof(*cell));
+    *cell = (StateCell){.value=atom_int(arena, 1)};
+    PrimeNeedRecording *group = prime_need_recording_new((PrimeNeedRecordingLimits){
+        .nodes=32u, .payload_bytes=32768u, .slices=4u, .owner_links=16u});
+    PrimeNeedReceipt receipt = {0}, refused = {0};
+    PrimeNeedRecordingScope outer = {0}, inner = {0};
+    SCOPE_CHECK(group != NULL);
+    if (!group) goto done;
+    bool reserved = prime_need_recording_reserve(group, NULL, 16u, 16384u, &receipt);
+    SCOPE_CHECK(reserved);
+    if (!reserved) goto done;
+    prime_need_recording_enter(&outer, &receipt);
+    SCOPE_CHECK(recording_scope_query(arena,equation,query,&environment,true));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 1u);
+    SCOPE_CHECK(recording_scope_relation(arena,equation,query,&environment,true,true));
+    SCOPE_CHECK(recording_scope_cached_force(arena,true,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,true,true));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 4u);
+    prime_need_recording_enter(&inner, &refused);
+    SCOPE_CHECK(recording_scope_query(arena,equation,query,&environment,false));
+    SCOPE_CHECK(recording_scope_relation(arena,equation,query,&environment,true,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,false,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,false,true));
+    SCOPE_CHECK(recording_scope_state(arena,cell,false));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 4u);
+    prime_need_recording_leave(&inner);
+    SCOPE_CHECK(recording_scope_query(arena,equation,query,&environment,true));
+    SCOPE_CHECK(recording_scope_relation(arena,equation,query,&environment,true,true));
+    SCOPE_CHECK(recording_scope_cached_force(arena,true,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,true,true));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 8u);
+    /* Bounded recording refuses raw StateCell pointers explicitly. The
+     * operational read/write still succeeds and marks the history incomplete. */
+    SCOPE_CHECK(recording_scope_state(arena,cell,true));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 8u);
+    SCOPE_CHECK(prime_need_recording_status(group).incomplete);
+    SCOPE_CHECK(prime_need_recording_status(group).omitted == 2u);
+    prime_need_recording_leave(&outer);
+    SCOPE_CHECK(recording_scope_query(arena,equation,query,&environment,false));
+    SCOPE_CHECK(recording_scope_relation(arena,equation,query,&environment,false,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,false,false));
+    SCOPE_CHECK(recording_scope_cached_force(arena,false,true));
+    SCOPE_CHECK(recording_scope_state(arena,cell,false));
+    SCOPE_CHECK(prime_need_recording_status(group).nodes == 8u);
+    SCOPE_CHECK(prime_need_recording_status(group).omitted == 2u);
+done:
+    prime_need_recording_leave(&inner);
+    prime_need_recording_leave(&outer);
+    if (group) prime_need_recording_release(group);
+    bindings_free(&environment);
+#undef SCOPE_CHECK
+    return result->failures == 0u;
+}
+
+static void recording_scope_entry_control(void) {
+    RecordingScopeControl result = {0};
+    PrimeNeedExecutionOps previous = g_prime_need_execution_ops;
+    const PrimeNeedReceipt *scope = g_prime_need_recording_scope;
+    CettaParallelExecutor executor;
+    CettaParallelExecutorConfig config = {.thread_count=1u, .task_fn=recording_scope_task};
+    bool initialized = cetta_parallel_executor_init(&executor, &config);
+    CHECK(initialized);
+    if (!initialized) return;
+    bool pushed = cetta_parallel_executor_push(&executor, &result);
+    CHECK(pushed);
+    if (pushed) {
+        bool ran = cetta_parallel_executor_run(&executor);
+        CHECK(ran);
+        checks += result.checks; failures += result.failures;
+    }
+    cetta_parallel_executor_free(&executor);
+    CHECK(g_prime_need_execution_ops.equation_result == previous.equation_result);
+    CHECK(g_prime_need_execution_ops.relation_use == previous.relation_use);
+    CHECK(g_prime_need_execution_ops.relation_payload_observed == previous.relation_payload_observed);
+    CHECK(g_prime_need_execution_ops.read_state == previous.read_state);
+    CHECK(g_prime_need_execution_ops.write_state == previous.write_state);
+    CHECK(g_prime_need_execution_ops.force_active == previous.force_active);
+#if CETTA_PRIME_EVAL_STACK
+    CHECK(g_prime_need_execution_ops.observe_published_value == previous.observe_published_value);
+    CHECK(g_prime_need_execution_ops.publish_force == previous.publish_force);
+#endif
+    CHECK(g_prime_need_recording_scope == scope);
+}
+#endif
+
+static void space_subtype_lifetime_case(void) {
+    Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
+    Space source, target;
+    memset(&source, 0xa5, sizeof(source));
+    memset(&target, 0xa5, sizeof(target));
+    space_init(&source); space_init(&target);
+    CHECK(!source.declares_subtypes && !target.declares_subtypes);
+    Atom *edge = parse_one(&arena, "(:< Child Parent)");
+    space_add(&source, edge);
+    CHECK(source.declares_subtypes);
+    space_remove(&source, edge);
+    CHECK(source.declares_subtypes); /* conservative within this lifetime */
+    space_add(&source, edge);
+    space_replace_contents(&target, &source);
+    CHECK(target.declares_subtypes && space_length64(&target) == 1u);
+    CHECK(!source.declares_subtypes && space_length64(&source) == 0u);
+    space_free(&target); space_free(&source); arena_free(&arena);
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static Atom *replay_history_call(Space *space, Arena *arena, Atom *call) {
+    Bindings environment; bindings_init(&environment);
+    OutcomeSet answers; outcome_set_init(&answers);
+    assert(prime_native_replay_dispatch(space, arena, call, &environment, false, &answers));
+    assert(answers.len == 1u);
+    Atom *result = outcome_atom_materialize(arena, &answers.items[0]);
+    outcome_set_free(&answers); bindings_free(&environment);
+    return result;
+}
+
+/* Require a genuine cached-producer use and join before removing its
+ * selection-to-forest association. Physical event storage remains intact. */
+static bool replay_history_sharing_root(const PrimeNeedReceipt *root, void *raw) {
+    PrimeNeedReceiptGraph graph = {0};
+    assert(prime_need_receipt_graph_collect(root, &graph) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE);
+    bool joined = false, sharing = false;
+    for (size_t i = 0u; i < graph.length; i++) {
+        const PrimeNeedReceiptGraphNode *use = &graph.nodes[i];
+        joined |= !use->has_event;
+        if (!use->has_event || use->event.producer_completed || !use->event.producer_update_id) continue;
+        for (size_t j = 0u; j < graph.length; j++) {
+            const PrimeNeedReceiptGraphNode *producer = &graph.nodes[j];
+            sharing |= producer->has_event && producer->event.producer_completed &&
+                producer->event.producer_update_id == use->event.producer_update_id &&
+                producer->event.need_session_id == use->event.need_session_id &&
+                producer->event.thunk_id == use->event.thunk_id;
+        }
+    }
+    *(bool *)raw |= joined && sharing;
+    prime_need_receipt_graph_free(&graph);
+    return true;
+}
+
+/* Damage only an unpublished recorded checkpoint. The replay operation must
+ * authenticate that checkpoint against execution, not accept its printed data.
+ * The live reserved computation is never the target of these mutations. */
+static void replay_history_evidence_case(unsigned damage) {
+    HashConsTable globals; hashcons_init(&globals);
+    HashConsTable *saved_globals = g_hashcons; g_hashcons = &globals;
+    Arena arena; arena_init(&arena); arena_set_hashcons(&arena, &globals);
+    Arena *saved_persistent = g_eval_fallback_universe.persistent_arena;
+    CettaLibraryContext *saved_context = g_library_context;
+    CettaLibraryContext *context = malloc(sizeof(*context)); assert(context);
+    cetta_library_context_init_for_language_profile(context,
+        CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
+    eval_set_library_context(context);
+    term_universe_set_persistent_arena(&context->term_universe, &arena);
+    term_universe_set_persistent_arena(&g_eval_fallback_universe, &arena);
+    Space space;
+    if (damage == 5u) space_init(&space);
+    else space_init_with_universe(&space, &context->term_universe);
+    Registry registry; registry_init(&registry); Registry *saved_registry = g_registry;
+    g_registry = &registry; registry_bind(&registry, "&self", atom_space(&arena, &space));
+    Atom *report = replay_history_call(&space, &arena, parse_one(&arena,
+        "(history:capture (quote (cost:run (search-policy (control FIFO "
+        "(budget 0) (demand all) (retain True) (costs native-events-v1) (receipts True) "
+        "(history (selections 512) (nodes 64) (bytes 32768) (owners 512)))) "
+        "(let $p (delay (superpose (2 3))) (Pair (force $p) (force $p))))) "
+        "(ReplayLimits 8 8192 134217728))"));
+    Atom *holder = prime_replay_capsule_handle(report);
+    PrimeReplayCapsule *capsule = cetta_native_handle_get_owned(context, "prime-replay", holder);
+    assert(capsule);
+    if (damage == 5u) {
+        CHECK(!capsule->capture_complete);
+        CHECK(capsule->refusal && strcmp(capsule->refusal, "SourceView") == 0);
+        CHECK(!capsule->source_reserved && capsule->frame_count == 0u);
+    } else {
+        assert(capsule->capture_complete && !capsule->refusal);
+        (void)replay_history_call(&space, &arena, atom_expr3(&arena,
+            atom_symbol(&arena, "history:record"), holder, atom_int(&arena, 1000)));
+        assert(capsule->frame_count == 1u && !capsule->refusal);
+        PrimeNativeControl *post = prime_replay_checkpoint_control(context, &capsule->frames[0].post);
+        PrimeNativeControl *original = prime_replay_original(capsule);
+        assert(post && original && post->history.count > 1u);
+        size_t saved_count = post->history.count;
+        uint64_t saved_omitted = post->history.omitted;
+        size_t changed = saved_count - 1u;
+        PrimeNativeHistorySelection saved_entry = post->history.entries[changed];
+        uint64_t original_steps = original->steps;
+        PrimeEvalStackFrame *original_frames = original->frames;
+        PrimeNeedRecording *original_group = original->history.group;
+        size_t original_history = original->history.count;
+        if (damage == 1u) post->history.count--; /* missing selection */
+        if (damage == 2u) { /* duplicate a physical occurrence, preserving the count */
+            for (changed = 1u; changed < saved_count; changed++)
+                if (post->history.entries[changed].occurrence != post->history.entries[0].occurrence) break;
+            assert(changed < saved_count);
+            saved_entry = post->history.entries[changed];
+            post->history.entries[changed].occurrence = post->history.entries[0].occurrence;
+        }
+        if (damage == 3u) post->history.omitted++; /* incomplete evidence */
+        if (damage == 4u) { /* erase a sharing association while keeping all events */
+            bool sharing = false;
+            for (;;) {
+                assert(prime_need_recording_roots(&post->history.entries[changed].operation,
+                    replay_history_sharing_root, &sharing));
+                if (sharing || changed == 0u) break;
+                changed--;
+            }
+            assert(sharing);
+            saved_entry = post->history.entries[changed];
+            PrimeNeedRecordingStatus before = prime_need_recording_status(post->history.group);
+            post->history.entries[changed].operation = (PrimeNeedReceipt){0};
+            PrimeNeedRecordingStatus after = prime_need_recording_status(post->history.group);
+            CHECK(after.nodes == before.nodes && after.omitted == before.omitted &&
+                  post->history.count == saved_count);
+        }
+        (void)replay_history_call(&space, &arena, atom_expr3(&arena,
+            atom_symbol(&arena, "history:replay"), holder, atom_int(&arena, 2000000000)));
+        CHECK(capsule->replayed_count == (damage ? 0u : 1u));
+        CHECK((capsule->accepted_attempt != NULL) == (damage == 0u));
+        CHECK((capsule->failed_attempt != NULL) == (damage != 0u));
+        CHECK(damage ? capsule->refusal && strcmp(capsule->refusal, "ReplayPostMismatch") == 0
+                     : capsule->refusal == NULL);
+        CHECK(prime_replay_original(capsule) == original && capsule->source_reserved);
+        CHECK(original->steps == original_steps && original->frames == original_frames);
+        CHECK(original->history.group == original_group && original->history.count == original_history);
+        post->history.count = saved_count; post->history.omitted = saved_omitted;
+        post->history.entries[changed] = saved_entry;
+    }
+    eval_set_library_context(NULL); cetta_library_context_free(context);
+    registry_free(&registry); g_registry = saved_registry; space_free(&space); free(context);
+    term_universe_set_persistent_arena(&g_eval_fallback_universe, saved_persistent);
+    arena_free(&arena); hashcons_free(&globals); g_hashcons = saved_globals;
+    eval_set_library_context(saved_context);
+}
+#endif
+
+/* The source owner retains its own world. A controller allowance is separate
+ * from language fuel and cannot turn a pending root into successful emptiness. */
+static void ordinary_source_cost_observe(void *raw, const CettaNativeCostChargeView *view) {
+    (void)view;
+    (*(size_t *)raw)++;
+}
+
+static void ordinary_owned_root_case(const char *program, const char *query,
+    const char *const *expected, size_t count, uint64_t quantum, bool completes, bool borrowed_cost, uint32_t workers) {
+    Arena source, receiver;
+    arena_init_detached(&source);arena_init_detached(&receiver);
+    Space space;space_init(&space);
+    Registry registry;registry_init(&registry);g_registry=&registry;
+    CettaLibraryContext context;
+    cetta_library_context_init_for_language_profile(&context,CETTA_LANGUAGE_PRIME,
+        cetta_profile_prime_default());
+    char worker_repr[32];snprintf(worker_repr,sizeof(worker_repr),"%u",workers);
+    assert(cetta_eval_session_record_generic_setting(&context.session,"num-threads",
+        CETTA_EVAL_OPTION_VALUE_INT,worker_repr,workers));
+    eval_set_library_context(&context);eval_set_default_fuel(-1);
+    registry_bind(&registry,"&self",atom_space(&source,&space));
+    Atom **forms=NULL;int form_count=parse_metta_text(program,&source,&forms);
+    assert(form_count>=0);
+    for(int i=0;i<form_count;i++)space_add(&space,forms[i]);
+    free(forms);
+    CettaPrimeSourceOwner *owner=NULL;
+    CettaContinuationStatus captured=eval_prime_source_owner_capture(&space,&registry,
+        parse_one(&source,query),100000u,8u*1024u*1024u,&owner);
+    if(captured!=CETTA_CONTINUATION_READY)
+        fprintf(stderr,"owned root capture %s: %u\n",query,(unsigned)captured);
+    assert(captured==CETTA_CONTINUATION_READY && owner);
+    CettaPrimeSourceScope *scope=NULL;
+    assert(eval_prime_source_scope_open(owner,0u,&scope)==CETTA_CONTINUATION_READY);
+    Space *held_space=NULL;Registry *held_registry=NULL;Arena *held_source=NULL;Atom *held_query=NULL;
+    assert(eval_prime_source_scope_inputs(scope,&held_space,&held_registry,&held_source,&held_query));
+    CHECK(eval_current_num_threads()==workers);
+    EvalOutcome outcome;eval_outcome_init(&outcome);
+    CettaNativeCostLedger ledger;CettaNativeCostScope cost_scope;
+    CettaNativeCostObserver cost_observer={0};size_t notifications=0u;
+    if(borrowed_cost) {
+        cetta_native_cost_init(&ledger);
+        cetta_native_cost_scope_enter(&cost_scope,&ledger,0u);
+        assert(cetta_native_cost_observer_enter(&cost_observer,
+            ordinary_source_cost_observe,&notifications));
+    }
+    eval_top_with_registry_outcome(held_space,&receiver,held_source,held_registry,
+        held_query,&outcome,NULL,NULL);
+    CettaPrimeObservationState state;
+    if(borrowed_cost) {
+        cetta_native_cost_observer_leave(&cost_observer);
+        cetta_native_cost_scope_leave(&cost_scope);
+        CHECK(ledger.total.work>0u && notifications>0u);
+        cetta_native_cost_free(&ledger);
+        CHECK(!outcome.prime_observation && outcome.completion==CETTA_EVAL_COMPLETE);
+    } else {
+        if(!outcome.prime_observation)
+            fprintf(stderr,"owned root %s: completion %u, rows %u\n",query,
+                (unsigned)outcome.completion,(unsigned)outcome.results.len);
+        assert(outcome.prime_observation);
+        CHECK(eval_outcome_observation_state(&outcome,&state));
+        CHECK(state.initialized && !state.committed && !state.producer_complete);
+        CHECK(outcome.results.len==0u && outcome.completion!=CETTA_EVAL_COMPLETE);
+        CHECK(eval_outcome_zero_status(&outcome)==CETTA_EVAL_ZERO_PENDING);
+        CHECK(outcome.prime_observation && outcome.prime_observation->ordinary_control->steps==0u);
+        CHECK(outcome.prime_observation->ordinary_control->policy.workers==workers);
+        CHECK(eval_outcome_resume_observation(&outcome,0u)==CETTA_CONTINUATION_DEFERRED);
+        CHECK(outcome.results.len==0u && outcome.prime_observation->ordinary_control->steps==0u);
+    }
+    eval_prime_source_scope_close(scope);eval_prime_source_owner_release(owner);
+    eval_set_library_context(NULL);g_registry=NULL;
+    cetta_library_context_free(&context);
+    registry_free(&registry);space_free(&space);arena_free(&source);
+    /* No original world, registry, caller arena or library remains. */
+    if(!borrowed_cost) {
+        size_t slices=0u;
+        size_t slice_limit=completes?100000u:32u;
+        while(outcome.prime_observation && slices++<slice_limit) {
+            uint64_t before=outcome.prime_observation->ordinary_control->steps;
+            CettaContinuationStatus status=eval_outcome_resume_observation(&outcome,quantum);
+            CHECK(status==CETTA_CONTINUATION_READY || status==CETTA_CONTINUATION_DEFERRED);
+            if(status!=CETTA_CONTINUATION_READY && status!=CETTA_CONTINUATION_DEFERRED)break;
+            if(outcome.prime_observation)
+                CHECK(outcome.prime_observation->ordinary_control->steps-before<=quantum);
+        }
+        if(completes)
+            CHECK(!outcome.prime_observation && outcome.completion==CETTA_EVAL_COMPLETE);
+        else {
+            CHECK(outcome.prime_observation && outcome.completion!=CETTA_EVAL_COMPLETE);
+            CHECK(eval_outcome_observation_state(&outcome,&state) && !state.producer_complete);
+            CHECK(outcome.prime_observation->ordinary_control->steps==32u*quantum);
+        }
+    }
+    CHECK(outcome.results.len==count);
+    CHECK(eval_outcome_zero_status(&outcome)==(completes && count==0u
+        ? CETTA_EVAL_ZERO_COMPLETE : count ? CETTA_EVAL_NONZERO : CETTA_EVAL_ZERO_PENDING));
+    for(size_t i=0;i<count && i<outcome.results.len;i++)
+        CHECK(atom_eq(outcome.results.items[i],parse_one(&receiver,expected[i])));
+    eval_outcome_free(&outcome);arena_free(&receiver);
+}
+
+static void ordinary_owned_root_cases(void) {
+    const char *compound[]={"(Pair 7 (Tag 9))"};
+    const char *duplicate[]={"(Pair 1 1)","(Pair 1 1)","(Pair 2 2)"};
+    const char *empty_value[]={"()"};
+    const char *empty_datum[]={"Empty"};
+    const char *number[]={"42"};
+    const char *program="(= (pick) 1) (= (pick) 1) (= (pick) 2) "
+        "(= (same $x) (Pair $x $x))";
+    for(uint32_t workers=1u;workers<=2u;workers++) {
+        for(uint64_t quantum=1u;quantum<=7u;quantum+=6u) {
+            ordinary_owned_root_case("","(Pair 7 (Tag 9))",compound,1u,quantum,true,false,workers);
+            ordinary_owned_root_case(program,"(same (pick))",duplicate,3u,quantum,true,false,workers);
+            ordinary_owned_root_case("","(empty)",NULL,0u,quantum,true,false,workers);
+            ordinary_owned_root_case("","()",empty_value,1u,quantum,true,false,workers);
+            ordinary_owned_root_case("","Empty",empty_datum,1u,quantum,true,false,workers);
+        }
+        ordinary_owned_root_case("(= (owned-root-add) (+ 41 1))",
+            "(owned-root-add)",number,1u,1u,true,false,workers);
+        ordinary_owned_root_case("(= (owned-root-add) (+ 41 1))",
+            "(owned-root-add)",number,1u,1u,true,true,workers);
+        ordinary_owned_root_case(
+            "(= (owned-growing-loop $n) (owned-growing-loop (+ $n 1)))",
+            "(owned-growing-loop 0)",NULL,0u,1u,false,false,workers);
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats before,after;
+    bool was_enabled=cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    cetta_runtime_stats_snapshot(&before);
+    const char *independent[]={"7","7"};
+    ordinary_owned_root_case(
+        "(= (owned-independent) (owned-count 15)) "
+        "(= (owned-independent) (owned-count 16)) "
+        "(= (owned-count $n) (if (== $n 0) 7 (owned-count (- $n 1))))",
+        "(owned-independent)",independent,2u,64u,true,false,2u);
+    cetta_runtime_stats_snapshot(&after);
+    printf("Owned root worker tasks: %"PRIu64"\n",
+        after.counters[CETTA_RUNTIME_COUNTER_PARALLEL_WORKER_TASK]-
+        before.counters[CETTA_RUNTIME_COUNTER_PARALLEL_WORKER_TASK]);
+    CHECK(after.counters[CETTA_RUNTIME_COUNTER_PARALLEL_WORKER_TASK] >
+        before.counters[CETTA_RUNTIME_COUNTER_PARALLEL_WORKER_TASK]);
+    if(!was_enabled)cetta_runtime_stats_disable();
+#endif
+}
+
 int main(void) {
     outcome_seen_identity_control();
     SymbolTable symbols;symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     VarInternTable variables;var_intern_init(&variables);g_var_intern=&variables;g_hashcons=NULL;
+    ordinary_owned_root_cases();
+    space_subtype_lifetime_case();
+    match_progress_entry_case("0", false);
+    match_progress_entry_case("false", false);
+    match_progress_entry_case("off", false);
+    match_progress_entry_case("no", false);
+    match_progress_entry_case("1", true);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    active_context_transition_case(false);
+    active_context_transition_case(true);
+    recording_reader_release_case();
+    recording_scope_entry_control();
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    for (unsigned damage = 0u; damage < 6u; damage++) replay_history_evidence_case(damage);
+#endif
+    for (unsigned restart = 0u; restart < 2u; restart++) {
+        suspended_history_owner_case(2u, 6u, restart != 0u);
+        suspended_history_owner_case(2u, 8u, restart != 0u);
+        suspended_history_owner_case(2u, 20u, restart != 0u);
+        suspended_history_owner_case(1u, 8u, restart != 0u);
+    }
+#endif
     for (unsigned workers = 1u; workers <= 4u; workers *= 2u) {
         compact_cost_storage_case(workers, false);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS

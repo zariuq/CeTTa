@@ -97,6 +97,7 @@ static void one(unsigned client,unsigned cut){
  assert(prime_need_receipt_begin(&syntax,bindings_receipt_mut(&inherited)));
  CettaPrimeNeedAnswerObserver prior_observer=g_prime_need_answer_observer;
  g_prime_need_answer_observer=request_causal_receipt;
+ prime_need_answer_observer_changed();
 #endif
  assert(prime_native_control_init(source,&space,&syntax,parse(&syntax,programs[client]),-1,true,(CettaObservationDemand){.completion=client>=7u?CETTA_OBSERVATION_FINITE_PREFIX:CETTA_OBSERVATION_COMPLETE_BAG,.prefix_limit=client==10u?3u:client>=7u?2u:0u},&policy,&inherited,NULL,NULL));
  bindings_free(&inherited);
@@ -105,7 +106,6 @@ static void one(unsigned client,unsigned cut){
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
   if(f->before_receipt.top)causal_frame_views++;
-  if(f->producer_receipt.top)causal_frame_views++;
  }
 #endif
  uint64_t source_handle=0u,image_handle=0u;
@@ -216,6 +216,7 @@ static void one(unsigned client,unsigned cut){
  printf("{\"client\":%u,\"cut\":%u,\"copied\":%s,\"reason\":\"%s\",\"prefix\":%zu,\"source_answers\":%zu,\"image_answers\":%zu,\"source_steps\":%"PRIu64",\"image_steps\":%"PRIu64",\"failures\":%zu}\n",client,cut,copied?"true":"false",reason?reason:"",prefix.count,a.count,b.count,steps,image_steps,failures);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  g_prime_need_answer_observer=prior_observer;
+ prime_need_answer_observer_changed();
 #endif
  assert(cetta_native_handle_close(lib,"prime-search",image_handle));arena_free(&a.storage);arena_free(&b.storage);arena_free(&prefix.storage);
  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);

@@ -126,13 +126,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 704
+PRIME_NEED_ALGEBRA_CHECKS := 714
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 713
+PRIME_NEED_ALGEBRA_CHECKS := 723
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -45703,7 +45703,7 @@ test-prime: test-resource-wave test-native-leases test-native-control-leases tes
 
 NATIVE_SPACE_AGENDA_TEST_BIN = runtime/test-native-space-agenda-$(BUILD_OBJ_TAG)
 .PHONY: test-native-space-agenda test-prime-native-parallel test-prime-native-resources
-$(NATIVE_SPACE_AGENDA_TEST_BIN): tests/test_native_space_agenda.c src/native_space_agenda.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+$(NATIVE_SPACE_AGENDA_TEST_BIN): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ tests/test_native_space_agenda.c \
 		$(filter-out src/native_space_agenda.$(BUILD_OBJ_TAG).o src/native_space_agenda.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)

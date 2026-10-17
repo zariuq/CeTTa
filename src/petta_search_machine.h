@@ -247,6 +247,30 @@ typedef struct {
 CettaGsltTermViewStatusV1 petta_machine_operation_view_root(
     const PettaMachineOperationView *view, Atom **root_out);
 
+typedef bool (*PettaMachineOperationPermit)(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view);
+
+/* An optional host debugger composes current authorization with a pure
+ * stop-before test. Neither callback may advance the machine or force the
+ * borrowed operand. Permission refusal does not run the stop test; a missing
+ * authorization callback refuses. A guard hit retains the pending operation
+ * before transition budgeting. Disabling the stop test does not grant rights.
+ *
+ * This object and both callback contexts must outlive the machine and its
+ * retained images, just like the host context. They are not captured stack
+ * scopes or execution capabilities. `breakpoint` describes the most recent
+ * permission callback; interpret it with the returned machine status. */
+typedef struct {
+    PettaMachineOperationPermit authorize;
+    void *authority_context;
+    PettaMachineOperationPermit stop_before;
+    void *stop_context;
+    bool breakpoint;
+} PettaMachineOperationControl;
+
+bool petta_machine_operation_control_permit(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view);
+
 /* An external identity is either pinned by an actual retained owner, or
  * borrowed from a host scope which outlives every machine/image using it.
  * Scope shutdown must destroy those images before releasing its resources.
@@ -396,8 +420,13 @@ typedef struct {
     /* Checked before transition budgeting and before consuming the goal or
      * alternative. False retains that exact operation for a later executor.
      * The borrowed operand view is descriptive, not a forced value. */
-    bool (*permit_operation)(void *context, Space *space,
-        PettaMachineOperation operation, const PettaMachineOperationView *view);
+    PettaMachineOperationPermit permit_operation;
+    /* NULL uses the host context. A separate borrowed context lets a debugger
+     * compose the permission callback without replacing every host service.
+     * It shares the host's lifetime contract and is fixed across an image;
+     * distinct external contexts do not acquire transfer equivalence merely
+     * by using equal callback pointers. */
+    void *permit_operation_context;
     /* True only when compiled, bounded pure instructions do not consume a
      * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */

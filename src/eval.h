@@ -72,7 +72,8 @@ void outcome_set_set_owner(OutcomeSet *os, Arena *owner);
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 /* The newest answer holds only while `delayed` holds (CETTA_CALL_SUSPENDED). */
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
-void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
+/* True only after both the value and its active context are retained. */
+bool outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
 /* Owned arrays, bindings, variants and payload arenas of a quiescent bag.
  * The enclosing OutcomeSet header belongs to its caller. */
@@ -160,8 +161,9 @@ void cetta_prime_checkpoint_copy_free(CettaPrimeCheckpointCopy *copy);
 bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
                                Arena *owner, AtomDeepCopySession *session);
 
-/* A retained execution of the existing HE canonical frames. Structural
- * input and logical bindings are copied; source spaces, registry, library
+/* A retained execution of the existing HE canonical frames. Input syntax,
+ * complete bindings and captured Need/branch/weight/history carriers are
+ * promoted into its storage; source spaces, registry, library
  * context, namespace overrides, cancellation flags, observer hooks and their
  * contexts, and identity-bearing foreign resources are borrowed and must
  * remain live until destruction. This requirement is a

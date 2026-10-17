@@ -399,6 +399,302 @@ def world_observations(result):
                   for atoms,trace in worlds(result))
 
 
+def overlapping_workers(result):
+    """Physical intervals witness distinct workers, not source independence."""
+    return any(left[5] != right[5] and
+               max(left[6], right[6]) < min(left[7], right[7])
+               for wave in result.get('parallel-waves', [])
+               for index, left in enumerate(wave[2])
+               for right in wave[2][index + 1:])
+
+
+def causal_world_readout(gate, resource_checker=None):
+    """Use the cold reader on real native histories, including residual IDs."""
+    import copy
+    import sys
+    sys.path.insert(0, str(ROOT / 'tools'))
+    try:
+        from native_resource_history import (read_history, HistoryRefused,
+                                             check_resource_projection, resource_request, resource_cost)
+        from mm2_to_metta import parse as read_tokens
+    finally:
+        sys.path.pop(0)
+
+    def tokens(value):
+        if isinstance(value, list):
+            return [tokens(item) for item in value]
+        return str(value)
+
+    def capture(name, rows, control=None, require_workers=False, check_views=None):
+        control = control or policy('(Transaction worlds)')
+        initial = [read_tokens(row)[0] for row in rows]
+        # A short slice may legally finish before another pool thread wakes.
+        # Check every attempt's source observations while collecting a real
+        # overlap witness; an unsuccessful attempt is retained in the receipt.
+        for attempt in range(8 if require_workers else 1):
+            label = name if not attempt else f'{name} scheduling attempt {attempt + 1}'
+            _, results = gate.run(label, source(rows) +
+                f'!(select 100 {control} &jobs)')
+            assert results[-1]['closed'] == 'True', results
+            if require_workers:
+                from test_prime_native_parallel import check_cost
+                check_cost(results[-1])
+            views = [read_history(initial, tokens(world)) for world in results[-1]['values']]
+            for view in views:
+                view['resource-cost'] = resource_cost(view)
+            if resource_checker is not None:
+                source_checks = []
+                for view in views:
+                    checked = check_resource_projection(resource_checker, initial, view)
+                    assert (checked['resourceWord'] and checked['freshOccurrences'] and
+                            checked['dependencyGraph'] and checked['sourcePayload']), checked
+                    source_checks.append({'request': resource_request(initial, view), 'reply': checked})
+                gate.receipts[-1]['resource_checks'] = source_checks
+            if check_views is not None:
+                check_views(views)
+            if not require_workers or overlapping_workers(results[-1]):
+                return initial, results[-1]['values'], views
+        raise AssertionError('No overlapping physical matcher work observed')
+
+    _, _, views = capture('causal empty resource interval', ['Token'])
+    assert len(views) == 1 and views[0]['ordered'] == [], views
+    assert views[0]['resource-cost'] == {'profile': 'resource-firings-v1', 'work': 0,
+                                        'dependencyDepth': 0}, views
+    gate.passed_case('retained initial resources do not invent source work in an empty interval')
+
+    rows = ['Token', '(exec Left (I (read Token)) (O (+ LeftRead)))',
+            '(exec Right (I (read Token)) (O (+ RightRead)))']
+    initial, worlds, views = capture('causal persistent read orders', rows)
+    assert len(views) == 2 and views[0]['ordered'] != views[1]['ordered'], views
+    assert views[0]['final'] != views[1]['final'], views
+    assert views[0]['causal'] == views[1]['causal'], views
+    assert all(view['authority'] == 'None' for view in views)
+    gate.passed_case('different ordered read firings have equal causal readout without granting authority')
+    assert all(view['resource-cost'] == {'profile': 'resource-firings-v1', 'work': 2,
+                                        'dependencyDepth': 1} for view in views), views
+    gate.passed_case('two independent source firings have work two and dependency depth one')
+
+    damaged = copy.deepcopy(tokens(worlds[0]))
+    trace = dict(damaged[2:])['trace'][1]
+    trace[1] = []  # erase the first firing, retaining the claimed final state
+    try:
+        read_history(initial, damaged)
+    except HistoryRefused:
+        pass
+    else:
+        raise AssertionError('missing native firing accepted')
+    gate.passed_case('causal reader refuses a missing firing instead of trusting final atoms')
+
+    # Prepared matching really runs on the pool; source publication remains
+    # with the coordinator. The causal view forgets independent source order,
+    # not worker timing or a competing consumer's chosen result.
+    payload = '(Fact (' + ' '.join(str(i) for i in range(4096)) + '))'
+    controlled = ('(search-policy (control FIFO (resources (Transaction worlds)) '
+                  '(workers 2) (quantum 8192) (budget 100000) '
+                  '(receipts True) (costs native-events-v1)))')
+    for kind in ('read', 'take'):
+        rows = [payload,
+                f'(exec Left (I ({kind} {payload})) (O (+ Left)))',
+                f'(exec Right (I ({kind} {payload})) (O (+ Right)))']
+        def check_physical(physical):
+            assert len(physical) == 2 and physical[0]['ordered'] != physical[1]['ordered']
+            if kind == 'read':
+                assert physical[0]['final'] != physical[1]['final']
+                assert physical[0]['causal'] == physical[1]['causal']
+                assert all(view['resource-cost'] == {
+                    'profile': 'resource-firings-v1', 'work': 2, 'dependencyDepth': 1}
+                    for view in physical)
+            else:
+                assert all(len(view['ordered']) == 1 for view in physical)
+                assert physical[0]['causal'] != physical[1]['causal']
+        capture(f'causal physical worker {kind}', rows, controlled,
+                require_workers=True, check_views=check_physical)
+        if kind == 'read':
+            gate.passed_case('overlapping workers feed different independent source orders with one checked causal view')
+        else:
+            gate.passed_case('overlapping competing matchers retain distinct consuming outcomes')
+
+    rows = ['Token', '(exec Twice (I (read Token) (read Token)) (O (+ Done)))']
+    _, _, views = capture('causal repeated persistent read', rows)
+    assert len(views) == 1 and len(views[0]['ordered']) == 1, views
+    firing = views[0]['ordered'][0]
+    assert firing['inputs'] == [('read', (0,)), ('read', (0,))], firing
+    assert firing['read'] == [(0,)] and firing['consumed'] == [(1,)], firing
+    gate.passed_case('two persistent read requests retain both inputs and require one physical resource')
+    assert views[0]['resource-cost']['work'] == views[0]['resource-cost']['dependencyDepth'] == 1, views
+    gate.passed_case('repeated input reads do not charge a second source firing')
+
+    rows = ['Token', '(exec Left (I (take Token)) (O (+ LeftWon)))',
+            '(exec Right (I (take Token)) (O (+ RightWon)))']
+    _, _, views = capture('causal competing consumes', rows)
+    assert len(views) == 2 and views[0]['causal'] != views[1]['causal'], views
+    assert all(len(view['ordered']) == 1 for view in views)
+    gate.passed_case('competing consumes remain different causal observations')
+
+    rows = ['Token', '(exec Read (I (read Token)) (O (+ ReadDone)))',
+            '(exec Take (I (take Token)) (O (+ TakeDone)))']
+    _, _, views = capture('causal read before consuming conflict', rows)
+    completed = [view for view in views if len(view['ordered']) == 2]
+    assert len(completed) == 1, views
+    read, take = completed[0]['causal']['events']
+    assert tuple(read['occurrence']) == (1,) and take['parents'] == [(1,)], views
+    gate.passed_case('read-before-take dependency survives causal readout')
+    assert completed[0]['resource-cost']['work'] == completed[0]['resource-cost']['dependencyDepth'] == 2, views
+    gate.passed_case('read-before-take keeps two dependent source firings')
+
+    rows = ['Token', '(exec Job (I (read Token)) (O (+ Done)))',
+            '(exec Job (I (read Token)) (O (+ Done)))']
+    _, _, views = capture('causal equal syntax physical occurrences', rows)
+    assert len(views) == 2 and views[0]['ordered'] != views[1]['ordered'], views
+    assert views[0]['causal'] == views[1]['causal'], views
+    for view in views:
+        assert {tuple(event['occurrence']) for event in view['ordered']} == {(1,), (2,)}
+        assert len(view['causal']['final']) == 3
+    gate.passed_case('equal exec syntax and duplicate answers retain separate physical occurrence keys')
+
+    rows = ['(exec Start (I) (O (+ Token) (+ (exec Next (I (take Token)) (O (+ Done))))))']
+    _, _, views = capture('causal created execution and producer edges', rows)
+    assert len(views) == 1 and len(views[0]['ordered']) == 2, views
+    first, second = views[0]['causal']['events']
+    assert tuple(first['occurrence']) == (0,) and tuple(second['occurrence']) == (0, 1)
+    assert second['parents'] == [(0,)], views
+    gate.passed_case('created execution retains its producer and output-slot identities')
+
+    rows = ['(exec Start (I) (O (+ Token) '
+            '(+ (exec Left (I (read Token)) (O (+ LeftRead)))) '
+            '(+ (exec Right (I (read Token)) (O (+ RightRead))))))']
+    _, _, views = capture('causal independent work below created producer', rows)
+    assert len(views) == 2 and views[0]['ordered'] != views[1]['ordered'], views
+    assert views[0]['causal'] == views[1]['causal'], views
+    for view in views:
+        events = view['causal']['events']
+        assert [tuple(event['occurrence']) for event in events] == [(0,), (0, 1), (0, 2)]
+        assert events[1]['parents'] == events[2]['parents'] == [(0,)]
+    gate.passed_case('independent created work commutes while retaining the shared producer prefix')
+    assert all(view['resource-cost']['work'] == 3 and view['resource-cost']['dependencyDepth'] == 2
+               for view in views), views
+    gate.passed_case('shared producer contributes once to source work and dependency depth')
+
+    if resource_checker is not None:
+        import subprocess
+        initial, _, views = capture('source graph mutation controls', [
+            '(exec Start (I) (O (+ Token) '
+            '(+ (exec Left (I (read Token)) (O (+ LeftRead)))) '
+            '(+ (exec Right (I (read Token)) (O (+ RightRead))))))'])
+        request = resource_request(initial, views[0])
+        for label, enable_cost in [('omitted cost request', None), ('disabled cost request', False)]:
+            plain = copy.deepcopy(request)
+            if enable_cost is None:
+                plain.pop('costs')
+            else:
+                plain['costs'] = enable_cost
+            result = subprocess.run([str(resource_checker.resolve())],
+                                    input=json.dumps(plain) + '\n',
+                                    capture_output=True, text=True, check=True)
+            reply = json.loads(result.stdout)
+            assert reply['accepted'] is True and reply['resourceCost'] is None, reply
+            gate.receipts[-1]['resource_checks'].append({'policy': label, 'request': plain, 'reply': reply})
+            gate.passed_case('source graph checker keeps costs absent for ' + label)
+        damaged = copy.deepcopy(request)
+        damaged['graph'][1]['parents'] = []
+        duplicate = copy.deepcopy(request)
+        duplicate['graph'].append(copy.deepcopy(duplicate['graph'][1]))
+        unavailable = copy.deepcopy(request)
+        unavailable['word'][1]['reads'].append([999])
+        for label, invalid in [('missing producer edge', damaged),
+                               ('duplicate physical vertex', duplicate),
+                               ('unavailable source resource', unavailable)]:
+            result = subprocess.run([str(resource_checker.resolve())],
+                                    input=json.dumps(invalid) + '\n',
+                                    capture_output=True, text=True, check=True)
+            reply = json.loads(result.stdout)
+            assert reply['accepted'] is False and reply['authority'] == 'None', reply
+            gate.receipts[-1]['resource_checks'].append({'mutation': label, 'request': invalid, 'reply': reply})
+            gate.passed_case('source resource checker refuses ' + label)
+
+        changed_cost = copy.deepcopy(views[0])
+        changed_cost['resource-cost']['work'] += 1
+        try:
+            check_resource_projection(resource_checker, initial, changed_cost)
+        except HistoryRefused as error:
+            assert str(error) == 'ResourceCostMismatch', error
+            gate.receipts[-1]['client_refusals'] = [{'mutation': 'changed claimed source work',
+                'request': resource_request(initial, changed_cost),
+                'claimed_cost': changed_cost['resource-cost'], 'refusal': str(error)}]
+        else:
+            raise AssertionError('changed source work accepted')
+        gate.passed_case('a supplied work number cannot replace the source graph valuation')
+
+        legacy = copy.deepcopy(request)
+        legacy.pop('payloads')
+        result = subprocess.run([str(resource_checker.resolve())],
+                                input=json.dumps(legacy) + '\n',
+                                capture_output=True, text=True, check=True)
+        reply = json.loads(result.stdout)
+        assert reply['accepted'] is True and reply['sourcePayload'] is None, reply
+        gate.receipts[-1]['resource_checks'].append({'policy': 'resource view only',
+            'request': legacy, 'reply': reply})
+        gate.passed_case('a footprint-only request does not acquire a payload checking claim')
+
+        def changed_at(original, path, value):
+            altered = copy.deepcopy(original)
+            current = altered
+            for key in path[:-1]:
+                current = current[key]
+            current[path[-1]] = value
+            return altered
+
+        mutations = [
+            ('changed selected action', ['payloads', 'word', 0, 'action', 1], 'Forged'),
+            ('changed initial action', ['payloads', 'initial', 0, 1], 'Forged'),
+            ('changed premise payload', ['payloads', 'word', 1, 'inputs', 0, 'value'], 'Forged'),
+            ('omitted source premise', ['payloads', 'word', 1, 'inputs'], []),
+            ('changed created payload', ['payloads', 'word', 0, 'produced', 0, 'value'], 'Forged'),
+            ('changed created identity', ['payloads', 'word', 0, 'produced', 0, 'key'], [999]),
+            ('changed final payload', ['payloads', 'final', 0, 'value'], 'Forged'),
+            ('reordered final physical rows', ['payloads', 'final'],
+             list(reversed(request['payloads']['final']))),
+            ('changed output footprint', ['word', 0, 'outputs'], 99),
+            ('unsupported payload profile', ['payloads', 'profile'], 'unknown'),
+        ]
+        for label, path, value in mutations:
+            invalid = changed_at(request, path, value)
+            result = subprocess.run([str(resource_checker.resolve())],
+                                    input=json.dumps(invalid) + '\n',
+                                    capture_output=True, text=True, check=True)
+            reply = json.loads(result.stdout)
+            assert reply['accepted'] is False and reply['sourcePayload'] is False, reply
+            assert reply['authority'] == 'None'
+            gate.receipts[-1]['resource_checks'].append({'mutation': label,
+                'request': invalid, 'reply': reply})
+            gate.passed_case('source payload checking refuses ' + label)
+
+        initial, _, repeated = capture('source ordered repeated premise', [
+            'Token', '(exec Twice (I (read Token) (read Token)) (O (+ Done)))'])
+        invalid = resource_request(initial, repeated[0])
+        invalid['payloads']['word'][0]['inputs'].pop()
+        result = subprocess.run([str(resource_checker.resolve())],
+                                input=json.dumps(invalid) + '\n',
+                                capture_output=True, text=True, check=True)
+        reply = json.loads(result.stdout)
+        assert reply['resourceWord'] is True and reply['dependencyGraph'] is True, reply
+        assert reply['accepted'] is False and reply['sourcePayload'] is False, reply
+        gate.receipts[-1]['resource_checks'].append({'mutation': 'omitted repeated read',
+            'request': invalid, 'reply': reply})
+        gate.passed_case('a valid physical footprint cannot hide an omitted repeated source premise')
+
+    rows = ['(exec Ready (I (absent Stop)) (O (+ Done)))']
+    _, results = gate.run('causal unsupported absence profile', source(rows) +
+        f'!(select 100 {policy("(Transaction worlds)")} &jobs)')
+    try:
+        read_history([read_tokens(row)[0] for row in rows], tokens(results[-1]['values'][0]))
+    except HistoryRefused as error:
+        assert str(error) == 'UnsupportedInput', error
+    else:
+        raise AssertionError('absence silently given a ground read footprint')
+    gate.passed_case('unsupported absence remains outside the selected causal profile')
+
+
 def snapshot_worlds(gate,count):
     kind='(Transaction worlds)'
     cases=[
@@ -600,9 +896,7 @@ def physical_matches(gate):
     result=results[-1];check_cost(result)
     waves=result.get('parallel-waves',[])
     assert result['closed']=='True' and len(worlds(result))==2,result
-    overlap=any(left[5]!=right[5] and max(left[6],right[6])<min(left[7],right[7])
-        for wave in waves for i,left in enumerate(wave[2]) for right in wave[2][i+1:])
-    assert overlap,('No overlapping physical matching intervals',waves)
+    assert overlapping_workers(result),('No overlapping physical matching intervals',waves)
     gate.passed_case('actual private resource matcher work overlaps on distinct pool workers')
 
     pattern=' '.join(f'$v{i}' for i in range(96))
@@ -631,24 +925,167 @@ def physical_matches(gate):
             gate.passed_case(f'deep matcher width {width} cut {cut} retains ordered worlds and exact work')
 
 
+def semantic_choices(gate):
+    page_pattern = ('(InteractionChoices (choices $choices) (status $status) '
+                    '(pending $pending) (quanta $quanta) (residual $residual))')
+    def records(value, head):
+        if isinstance(value, list):
+            if value and value[0] == head:
+                yield value
+            else:
+                for child in value:
+                    yield from records(child, head)
+    def discovery(budget=1000):
+        return (f'!(bind! &menu (interaction:choices &jobs {budget}))\n'
+                f'!(bind! &discovery (let {page_pattern} &menu $residual))\n')
+    held = f'!(bind! &held (let {PATTERN} &selected $r))\n'
+    rows = ['(exec A (I) (O (+ A)))', '(exec B (I) (O (+ B)))']
+    trees, _ = gate.run('authored discovery reference', source(rows) + discovery() +
+        '!(let $menu &menu $menu)\n!(collapse (get-atoms &jobs))')
+    reference = next(records(trees, 'InteractionChoices'))
+    fields = dict(reference[1:])
+    assert fields['status'] == 'Exhausted' and len(fields['choices']) == 2, trees
+    assert [choice[1] for choice in fields['choices']] == [1, 2], fields
+    assert trees[-1][0] == [['exec', 'A', ['I'], ['O', ['+', 'A']]],
+                           ['exec', 'B', ['I'], ['O', ['+', 'B']]]], trees
+    gate.passed_case('authored discovery returns two owned alternatives without publication')
+    for cut in (0, 1, 3, 7, 13, 19, 100):
+        trees, _ = gate.run(f'authored discovery cut {cut}', source(rows) + discovery(cut) +
+            '!(let $menu &menu $menu)\n!(interaction:choices &discovery 1000)\n'
+            '!(interaction:choices &discovery 0)\n!(collapse (get-atoms &jobs))')
+        pages = [dict(record[1:]) for record in records(trees, 'InteractionChoices')]
+        assert len(pages) == 3, trees
+        assert pages[0]['choices'] + pages[1]['choices'] == fields['choices'], pages
+        assert pages[-1]['choices'] == [] and pages[-1]['status'] == 'Exhausted', pages
+        assert pages[1]['quanta'] == pages[2]['quanta'] == fields['quanta'], pages
+        if cut == 0:
+            assert pages[0]['quanta'] == 0 and pages[0]['status'] == 'Pending', pages
+        gate.passed_case(f'authored discovery cut {cut} retains suffix, physical choices and paid quanta')
+    for cut in (0, 1, 3, 7, 11, 100):
+        trees, results = gate.run(f'authored selected execution cut {cut}', source(rows) + discovery() +
+            f'!(bind! &selected (interaction:perform &discovery 2 {cut}))\n'
+            '!(let $selected &selected $selected)\n' + held +
+            '!(interaction:perform &held 1000)\n!(interaction:perform &held 1000)\n'
+            f'!(select 2 {policy()} &held)\n!(collapse (get-atoms &jobs))')
+        assert len(results) == 4, trees
+        first, resumed, again, remaining = results
+        selected_values = first['values'] + resumed['values']
+        assert len(selected_values) == 1 and selected_values[0][1][1][1] == 'B', results
+        assert again['values'] == [] and again['work'] == resumed['work'], results
+        assert len(remaining['values']) == 1 and remaining['values'][0][1][1][1] == 'A', results
+        assert trees[-1][0] == ['B', 'A'], trees
+        assert all('history' not in result for result in results), results
+        if cut == 0:
+            assert first['values'] == [] and first['work'] == 0, first
+        gate.passed_case(f'selected B at cut {cut} commits once, then the normal residual preserves A')
+    for name, inputs, before, change in (
+        ('consumed permit', '(take Token)', ['Token'], '!(remove-atom &jobs Token)'),
+        ('changed absence', '(absent Stop)', [], '!(add-atom &jobs Stop)'),
+        ('changed aggregate', '(all (Fact $x) $rows)', ['(Fact A)'], '!(add-atom &jobs (Fact B))'),
+    ):
+        trees, results = gate.run('authored stale ' + name, source(before +
+            [f'(exec Chosen (I {inputs}) (O (+ Wrong)))']) + discovery() + change + '\n'
+            '!(interaction:perform &discovery 1 1000)\n!(collapse (get-atoms &jobs))')
+        assert results and results[-1]['values'] == [] and results[-1]['closed'] == 'False', results
+        assert 'Wrong' not in trees[-1][0], trees
+        gate.passed_case('authored selected publication refuses ' + name)
+    trees, results = gate.run('authored unrelated extension', source(rows) + discovery() +
+        '!(add-atom &jobs Unrelated)\n!(interaction:choices &discovery 1)\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    page = dict(next(records(trees, 'InteractionChoices'))[1:])
+    assert page['status'] == 'Invalidated' and page['choices'] == [], trees
+    assert len(results[-1]['values']) == 1 and trees[-1][0][-2:] == ['Unrelated', 'B'], trees
+    gate.passed_case('enumeration invalidates on change while a selected unchanged proposal revalidates')
+    trees, results = gate.run('authored counterfeit discovery', source(rows) + discovery() +
+        '!(interaction:perform (NativeHandle "prime-space-discovery" 1) 2 1000)\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    assert len(results) == 1 and len(results[0]['values']) == 1 and trees[-1][0][-1] == 'B', trees
+    gate.passed_case('a printed discovery identifier cannot transfer or execute a choice')
+    trees, results = gate.run('authored scoring cannot take a choice', source(rows) + discovery() +
+        '!(select 1 (search-policy (control WO (budget 10000) '
+        '(key $candidate (interaction:perform &discovery 2 1000)))) (superpose (1 2)))\n'
+        '!(collapse (get-atoms &jobs))\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    assert trees[-3][0] == [['exec', 'A', ['I'], ['O', ['+', 'A']]],
+                             ['exec', 'B', ['I'], ['O', ['+', 'B']]]], trees
+    assert len(results[-1]['values']) == 1 and trees[-1][0][-1] == 'B', trees
+    gate.passed_case('a scoring caller cannot consume the retained choice or its permit')
+    trees, results = gate.run('authored selection is linear', source(rows) + discovery() +
+        '!(interaction:perform &discovery 2 1000)\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    assert len(results) == 1 and trees[-1][0] == [['exec', 'A', ['I'], ['O', ['+', 'A']]], 'B'], trees
+    gate.passed_case('a transferred local choice cannot be taken twice')
+    trees, results = gate.run('disposing discovery preserves selected continuation',
+        source(rows) + discovery() +
+        '!(bind! &selected (interaction:perform &discovery 2 0))\n' + held +
+        '!(interaction:dispose &discovery)\n'
+        '!(interaction:perform &held 1000)\n' +
+        f'!(select 2 {policy()} &held)\n!(collapse (get-atoms &jobs))')
+    assert list(records(trees, 'InteractionDisposed')) == [['InteractionDisposed', 'Discovery', 'True']], trees
+    assert len(results) == 2 and all(len(report['values']) == 1 for report in results), trees
+    assert trees[-1][0] == ['B', 'A'], trees
+    gate.passed_case('disposing the cursor releases its catalogue while the selected owner resumes and retains other source work')
+    trees, results = gate.run('disposing selected continuation preserves sibling',
+        source(rows) + discovery() +
+        '!(bind! &selected (interaction:perform &discovery 1 0))\n' + held +
+        '!(interaction:dispose &held)\n!(interaction:perform &held 1000)\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    assert list(records(trees, 'InteractionDisposed')) == [['InteractionDisposed', 'Selected', 'True']], trees
+    assert len(results) == 1 and len(results[0]['values']) == 1, trees
+    assert trees[-1][0] == [['exec', 'A', ['I'], ['O', ['+', 'A']]], 'B'], trees
+    gate.passed_case('cancelling one selected owner neither publishes its action nor destroys a sibling choice')
+    trees, results = gate.run('counterfeit discovery cannot dispose the cursor',
+        source(rows) + discovery() +
+        '!(interaction:dispose (NativeHandle "prime-space-discovery" 1))\n'
+        '!(interaction:perform &discovery 2 1000)\n!(collapse (get-atoms &jobs))')
+    assert not list(records(trees, 'InteractionDisposed')) and len(results) == 1, trees
+    assert trees[-1][0][-1] == 'B', trees
+    gate.passed_case('textual handle data cannot dispose an owned cursor')
+    for holder in ('discovery', 'held'):
+        selected = ('!(bind! &selected (interaction:perform &discovery 2 0))\n' + held
+                    if holder == 'held' else '')
+        trees, results = gate.run('pure admission cannot dispose ' + holder,
+            source(rows) + discovery() + selected +
+            f'(= (dispose-verdict $weight) (chain (interaction:dispose &{holder}) $ignored True))\n'
+            '(=w (dispose-guarded) GuardedBody 2 (admit dispose-verdict))\n'
+            '!(weight:read (algebra 0 1 + *) (dispose-guarded))\n' +
+            ('!(interaction:perform &held 1000)\n' if holder == 'held'
+             else '!(interaction:perform &discovery 2 1000)\n') +
+            '!(collapse (get-atoms &jobs))')
+        assert not list(records(trees, 'InteractionDisposed')), trees
+        assert results[-2]['status'] == 'fault' and results[-2]['values'] == [], results
+        assert len(results[-1]['values']) == 1 and trees[-1][0][-1] == 'B', trees
+        assert 'GuardedBody' not in str(trees), trees
+        gate.passed_case('forced pure admission cannot dispose the ' + holder + ' owner or poison later use')
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--binary',type=Path,default=ROOT/'cetta')
     parser.add_argument('--timeout',type=int,default=30)
     parser.add_argument('--cases',type=int,default=5)
     parser.add_argument('--receipt',type=Path)
+    parser.add_argument('--population', choices=('all', 'choices'), default='all')
+    parser.add_argument('--resource-checker',type=Path,
+                        help='Optional executable for the resource-word source model')
     args=parser.parse_args();args.binary=args.binary.resolve();gate=Gate(args)
     try:
-        fixed(gate);split(gate,args.cases);priorities(gate);current_scope(gate);generated(gate,args.cases)
-        mm2_correspondence(gate, args.cases)
-        pending_resumption(gate)
-        snapshot_worlds(gate,args.cases)
-        physical_matches(gate)
+        semantic_choices(gate)
+        if args.population == 'all':
+            fixed(gate);split(gate,args.cases);priorities(gate);current_scope(gate);generated(gate,args.cases)
+            mm2_correspondence(gate, args.cases)
+            pending_resumption(gate)
+            causal_world_readout(gate, args.resource_checker)
+            snapshot_worlds(gate,args.cases)
+            physical_matches(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True,exist_ok=True)
-            args.receipt.write_text(json.dumps({'binary_sha256':sha256(args.binary.read_bytes()).hexdigest(),
-                'passed':gate.passed,'receipts':gate.receipts},indent=2)+'\n')
+            receipt = {'binary_sha256':sha256(args.binary.read_bytes()).hexdigest(),
+                       'passed':gate.passed,'receipts':gate.receipts}
+            if args.resource_checker is not None:
+                receipt['resource_checker_sha256'] = sha256(args.resource_checker.read_bytes()).hexdigest()
+            args.receipt.write_text(json.dumps(receipt,indent=2)+'\n')
     print(f'Prime native resources: {gate.passed} passed, 0 failed')
 
 

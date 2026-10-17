@@ -11923,6 +11923,123 @@ static void test_owned_operation_permit(Space *space, Arena *persistent, Arena *
     puts("PASS: denied operation retains goal and choice before fuel, with source authority on resume");
 }
 
+typedef struct {
+    SymbolId head;
+    size_t inspected;
+    bool every_operation;
+} OperationPauseProbe;
+
+static bool pause_before_operation(void *raw, Space *space,
+        PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    (void)space;
+    OperationPauseProbe *probe=raw;
+    probe->inspected++;
+    if (probe->every_operation) return true;
+    Atom *root=NULL;
+    return operation==PETTA_MACHINE_OPERATION_CALL &&
+        petta_machine_operation_view_root(view,&root)==CETTA_GSLT_TERM_VIEW_OK_V1 &&
+        atom_head_symbol_id(root)==probe->head;
+}
+
+static void test_operation_pause_control(Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space,persistent,"(= (pause-operation-row) (Same 7))");
+    add_equation(space,persistent,"(= (pause-operation-row) (Same 7))");
+    OwnedContinuationAuthority authority={.revision=31u,.remaining=1000u,.domain=6u};
+    OperationPauseProbe pause={.every_operation=true};
+    PettaMachineOperationControl control={.authorize=permit_owned_operation,
+        .authority_context=&authority,.stop_before=pause_before_operation,.stop_context=&pause};
+    PettaMachineHost host={.context=&authority,
+        .admit_branch_capture=admit_effect_free_continuation,
+        .admit_branch_transfer=admit_owned_continuation_transfer,
+        .permit_transition=permit_owned_continuation_transition,
+        .permit_operation=petta_machine_operation_control_permit,
+        .permit_operation_context=&control};
+    Atom *query=parse_one(answers,"(pause-operation-row)");
+    PettaMachine machine={0};
+    assert(petta_machine_init(&machine,space,answers,query,NULL,&host));
+    Atom *answer=NULL;Bindings environment;
+    for(size_t i=0u;i<3u;i++) {
+        assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+        assert(control.breakpoint && !answer && authority.remaining==1000u);
+        bindings_free(&environment);
+    }
+    CettaOwnedContinuation image={0};
+    assert(capture_relational_continuation(&machine,&image)==CETTA_CONTINUATION_READY);
+    void *payload=image.payload;
+    /* Equal callback code cannot substitute a different external gate owner. */
+    OwnedContinuationAuthority destination=authority;
+    PettaMachineOperationControl different=control;
+    different.authority_context=&destination;
+    PettaMachineHost other=host;
+    other.context=&destination;other.permit_operation_context=&different;
+    PettaMachine target={0};
+    assert(petta_machine_init(&target,space,answers,query,NULL,&other));
+    assert(petta_machine_transfer_continuation(&target,&machine,&image)!=CETTA_CONTINUATION_READY);
+    assert(image.payload==payload);
+    petta_machine_destroy(&target);
+    authority.revision++;
+    assert(restore_relational_continuation(&machine,&image)==CETTA_CONTINUATION_INVALIDATED);
+    assert(image.payload==payload);
+    authority.revision--;
+    assert(restore_relational_continuation(&machine,&image)==CETTA_CONTINUATION_READY);
+    size_t inspected=pause.inspected;
+    authority.operation_suspended=true;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(!control.breakpoint && pause.inspected==inspected && authority.remaining==1000u);
+    bindings_free(&environment);
+    authority.operation_suspended=false;
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,parse_one(answers,"(Same 7)")));
+    bindings_free(&environment);
+    size_t remaining=authority.remaining;
+    control.stop_before=pause_before_operation;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && authority.remaining==remaining);
+    bindings_free(&environment);
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,parse_one(answers,"(Same 7)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    /* The separate operation context leaves effect and budget callbacks using
+     * their actual host. This linear client grants no multi-shot capture. */
+    ResumeContractProbe execution={.head=symbol_intern_cstr(g_symbols,"pause-operation-effect"),
+        .remaining=1000u};
+    pause=(OperationPauseProbe){.head=execution.head};
+    control.stop_before=pause_before_operation;
+    host=(PettaMachineHost){.context=&execution,
+        .permit_transition=resume_contract_permit,.classify=resume_contract_classify,
+        .evaluate=resume_contract_effect,.permit_operation=petta_machine_operation_control_permit,
+        .permit_operation_context=&control};
+    query=parse_one(answers,
+        "(chain (pause-operation-effect 7) $ignored (pause-operation-effect 11))");
+    assert(petta_machine_init(&machine,space,answers,query,NULL,&host));
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && execution.effect_count==0u);
+    bindings_free(&environment);
+    remaining=execution.remaining;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && execution.remaining==remaining && execution.effect_count==0u);
+    bindings_free(&environment);
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,atom_int(answers,11)) && execution.effect_count==2u &&
+        execution.effects[0]==7 && execution.effects[1]==11);
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_EXHAUSTED);
+    assert(execution.effect_count==2u);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    control.authorize=NULL;
+    assert(!petta_machine_operation_control_permit(&control,space,
+        PETTA_MACHINE_OPERATION_LOCAL,NULL) && !control.breakpoint);
+    puts("PASS: native breakpoint retains operation before budget; current authorization, duplicate answers, restored images and one-shot host effects remain distinct");
+}
+
 static void test_owned_continuation_transfer(
         Space *space, Arena *persistent, Arena *answers) {
     add_equation(space, persistent, "(= (owned-transfer-choice) 1)");
@@ -13730,6 +13847,7 @@ int main(int argc, char **argv) {
     test_owned_operation_view(&answers);
     test_owned_operation_source_role(&space, &answers);
     test_owned_operation_permit(&space, &persistent, &answers);
+    test_operation_pause_control(&space, &persistent, &answers);
     test_owned_superpose_partition(&space, &answers);
     test_relational_frontier_expansion(
         &space, &persistent, &answers);

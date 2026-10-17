@@ -427,8 +427,226 @@ static void test_compact_accounts(void) {
     puts("PASS: compact accounts preserve paid work without event storage or identities; independent observers retain their own events");
 }
 
+static void test_observation_policy_transitions(void) {
+    CettaNativeCostLedger counts, events;
+    cetta_native_cost_init_compact(&counts);
+    cetta_native_cost_init(&events);
+    CettaNativeCostReceipts receipts = {0};
+    assert(cetta_native_cost_receipts_init(&receipts, 2u, 2u));
+    CettaNativeCostScope scope, private_scope;
+    CettaNativeCostObserver observer;
+    CettaNativeCostObserverSuspension suspension;
+    cetta_native_cost_scope_enter(&scope, &counts, 1u);
+    uint64_t next = atomic_load(&next_event_identity);
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 1u));
+    assert(atomic_load(&next_event_identity) == next);
+
+    assert(cetta_native_cost_observer_enter(&observer,
+        cetta_native_cost_receipts_observe, &receipts));
+    assert(cetta_native_cost_charge(CETTA_COST_CAPTURE, 2u) == next++);
+    assert(cetta_native_cost_observer_suspend(&suspension));
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 3u));
+    assert(atomic_load(&next_event_identity) == next);
+
+    CettaNativeCostScope *detached = cetta_native_cost_detach_begin();
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 99u));
+    cetta_native_cost_scope_enter(&private_scope, &events, 2u);
+    assert(cetta_native_cost_charge(CETTA_COST_CAPTURE, 4u) == next++);
+    cetta_native_cost_scope_leave(&private_scope);
+    cetta_native_cost_detach_end(detached);
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 5u));
+    assert(atomic_load(&next_event_identity) == next);
+
+    cetta_native_cost_observer_restore(&suspension);
+    assert(cetta_native_cost_charge(CETTA_COST_CAPTURE, 6u) == next++);
+    cetta_native_cost_observer_leave(&observer);
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 7u));
+    cetta_native_cost_scope_leave(&scope);
+    assert(atomic_load(&next_event_identity) == next);
+    assert(counts.total.work == 24u && counts.total.span == 24u &&
+        !counts.events && !counts.length && !counts.capacity);
+    assert(events.total.work == 4u && events.length == 1u);
+    assert(cetta_native_cost_receipts_complete(&receipts) &&
+        receipts.command_count == 2u && receipts.destination_count == 2u &&
+        receipts.commands[0].event.units == 2u &&
+        receipts.commands[1].event.units == 6u);
+
+    assert(cetta_native_cost_forget_events(&events));
+    cetta_native_cost_scope_enter(&private_scope, &events, 3u);
+    assert(!cetta_native_cost_charge(CETTA_COST_CAPTURE, 8u));
+    assert(events.total.work == 12u && !events.events &&
+        atomic_load(&next_event_identity) == next);
+    cetta_native_cost_scope_leave(&private_scope);
+    cetta_native_cost_receipts_free(&receipts);
+    cetta_native_cost_free(&events);
+    cetta_native_cost_free(&counts);
+    puts("PASS: counts, events and receipt workers survive observer suspension, private scopes, restoration and forgetting");
+}
+
+static void test_equation_accounts(void) {
+    /* Source-only scopes never activate native counters, even while a
+     * private slice is detached and later joined. Nested native observation
+     * remains independently scoped. */
+    CettaNativeCostLedger source_only, source_child, native;
+    CettaNativeCostScope source_scope, source_alias, native_scope, slice_scope;
+    cetta_native_cost_init_equations(&source_only);
+    cetta_native_cost_init_equations(&source_child);
+    cetta_native_cost_init_compact(&native);
+    uint64_t source_identity = atomic_load(&next_event_identity);
+    cetta_native_cost_scope_enter(&source_scope, &source_only, 1u);
+    cetta_native_cost_scope_enter(&source_alias, &source_only, 2u);
+    assert(cetta_native_cost_account_scope() == &source_alias);
+    assert(!cetta_native_cost_active() && !cetta_native_cost_events_requested());
+    assert(cetta_native_cost_equations_requested());
+    assert(!cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 100u));
+    cetta_native_cost_equations_admitted(1u);
+    cetta_native_cost_scope_enter(&native_scope, &native, 3u);
+    assert(cetta_native_cost_active() && cetta_native_cost_equations_requested());
+    cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 9u);
+    cetta_native_cost_equations_admitted(2u);
+    cetta_native_cost_scope_leave(&native_scope);
+    assert(!cetta_native_cost_active());
+    CettaNativeCostScope *source_detached = cetta_native_cost_detach_begin();
+    assert(!cetta_native_cost_account_scope() && !cetta_native_cost_equations_requested());
+    cetta_native_cost_scope_enter(&slice_scope, &source_child, 4u);
+    cetta_native_cost_equations_admitted(5u);
+    cetta_native_cost_append(&source_child, CETTA_COST_INDEX_VISIT, 100u, 4u);
+    cetta_native_cost_scope_leave(&slice_scope);
+    cetta_native_cost_detach_end(source_detached);
+    CettaNativeCostLedger *source_parts[] = {&source_child};
+    assert(cetta_native_cost_join(source_parts, 1u));
+    assert(source_only.equations.work == 8u && source_only.equations.span == 8u);
+    assert(!source_only.total.work && !source_child.total.work && native.total.work == 9u);
+    assert(!source_only.events && !source_child.events && !cetta_native_cost_active());
+    cetta_native_cost_scope_leave(&source_alias);
+    cetta_native_cost_scope_leave(&source_scope);
+    assert(!cetta_native_cost_account_scope());
+    assert(atomic_load(&next_event_identity) == source_identity);
+    assert(cetta_native_cost_forget_events(&source_only) && source_only.equations.work == 8u);
+    cetta_native_cost_free(&source_child);
+    cetta_native_cost_init_compact(&source_child);
+    cetta_native_cost_scope_enter(&source_scope, &source_only, 5u);
+    assert(cetta_native_cost_join(source_parts, 1u));
+    assert(source_only.equations.incomplete && source_only.equations.work == 8u);
+    cetta_native_cost_scope_leave(&source_scope);
+    cetta_native_cost_free(&native);
+    cetta_native_cost_free(&source_child);
+    cetta_native_cost_free(&source_only);
+    CettaNativeCostLedger parent, left, right;
+    cetta_native_cost_init_compact(&parent);
+    cetta_native_cost_init_compact(&left);
+    cetta_native_cost_init_compact(&right);
+    assert(cetta_native_cost_enable_equations(&parent));
+    assert(cetta_native_cost_enable_equations(&left));
+    assert(cetta_native_cost_enable_equations(&right));
+    uint64_t identity = atomic_load(&next_event_identity);
+    CettaNativeCostScope outer, alias, child;
+    cetta_native_cost_scope_enter(&outer, &parent, 1u);
+    cetta_native_cost_scope_enter(&alias, &parent, 2u);
+    assert(cetta_native_cost_equations_requested());
+    assert(!cetta_native_cost_enable_equations(&parent));
+    cetta_native_cost_equations_admitted(3u);
+    cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 9u);
+    assert(parent.equations.work == 3u && parent.equations.span == 3u && parent.total.work == 9u);
+    CettaNativeCostScope *detached = cetta_native_cost_detach_begin();
+    assert(!cetta_native_cost_equations_requested());
+    cetta_native_cost_scope_enter(&child, &left, 3u);
+    cetta_native_cost_equations_admitted(3u);
+    cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 100u);
+    cetta_native_cost_scope_leave(&child);
+    cetta_native_cost_scope_enter(&child, &right, 4u);
+    cetta_native_cost_equations_admitted(5u);
+    cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 1u);
+    cetta_native_cost_scope_leave(&child);
+    cetta_native_cost_detach_end(detached);
+    CettaNativeCostLedger *children[] = {&left, &right};
+    CettaNativeCostPlacement placement[] = {{0u, 0u}, {0u, 1u}};
+    assert(cetta_native_cost_join_scheduled(children, placement, 2u));
+    assert(parent.equations.work == 11u && parent.equations.span == 8u &&
+        parent.equations.parallel && !parent.equations.incomplete &&
+        !parent.equations.work_overflow && !parent.equations.span_overflow);
+    assert(parent.total.work == 110u && parent.total.span == 109u);
+    assert(!cetta_native_cost_join_scheduled(children, placement, 2u));
+    assert(parent.equations.work == 11u && parent.equations.span == 8u);
+    cetta_native_cost_scope_leave(&alias);
+    cetta_native_cost_scope_leave(&outer);
+    assert(cetta_native_cost_forget_events(&parent));
+    assert(parent.equations.work == 11u && parent.equations.span == 8u);
+    assert(atomic_load(&next_event_identity) == identity);
+    cetta_native_cost_free(&right);
+    cetta_native_cost_free(&left);
+    cetta_native_cost_free(&parent);
+
+    /* Both predecessor kinds constrain span; source units remain different
+     * from the implementation work on the same physical schedule. */
+    CettaNativeCostLedger parts[3];
+    const uint64_t source_units[] = {2u, 5u, 3u}, native_units[] = {8u, 1u, 4u};
+    for (unsigned native_profile = 0u; native_profile < 2u; native_profile++) {
+        if (native_profile) cetta_native_cost_init_compact(&parent);
+        else cetta_native_cost_init_equations(&parent);
+        assert(cetta_native_cost_enable_equations(&parent));
+        for (size_t i = 0u; i < 3u; i++) {
+            if (native_profile) cetta_native_cost_init_compact(&parts[i]);
+            else cetta_native_cost_init_equations(&parts[i]);
+            assert(cetta_native_cost_enable_equations(&parts[i]));
+            cetta_native_cost_scope_enter(&child, &parts[i], i + 1u);
+            cetta_native_cost_equations_admitted(source_units[i]);
+            cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, native_units[i]);
+            cetta_native_cost_scope_leave(&child);
+        }
+        CettaNativeCostSegment segments[] = {
+            {&parts[0], 1u, 1u, 0u, 0u, 0u},
+            {&parts[1], 2u, 2u, 1u, 0u, 0u},
+            {&parts[2], 2u, 3u, 0u, parts[1].identity, parts[0].identity}};
+        cetta_native_cost_scope_enter(&outer, &parent, 7u);
+        assert(cetta_native_cost_join_segments(segments, 3u, 2u));
+        assert(parent.equations.work == 10u && parent.equations.span == 8u);
+        assert(parent.total.work == (native_profile ? 13u : 0u) &&
+            parent.total.span == (native_profile ? 12u : 0u));
+        cetta_native_cost_scope_leave(&outer);
+        for (size_t i = 0u; i < 3u; i++) cetta_native_cost_free(&parts[i]);
+        cetta_native_cost_free(&parent);
+    }
+
+    cetta_native_cost_init_compact(&parent);
+    assert(cetta_native_cost_enable_equations(&parent));
+    cetta_native_cost_scope_enter(&outer, &parent, 8u);
+    cetta_native_cost_equations_admitted(UINT64_MAX);
+    cetta_native_cost_equations_admitted(1u);
+    assert(parent.equations.work_overflow && parent.equations.span_overflow && parent.equations.work == UINT64_MAX &&
+        !parent.total.overflow && !parent.total.work);
+    cetta_native_cost_scope_leave(&outer);
+    cetta_native_cost_free(&parent);
+    cetta_native_cost_init_compact(&parent);
+    assert(cetta_native_cost_enable_equations(&parent));
+    for (size_t i = 0u; i < 2u; i++) {
+        cetta_native_cost_init_compact(&parts[i]);
+        assert(cetta_native_cost_enable_equations(&parts[i]));
+        cetta_native_cost_scope_enter(&child, &parts[i], i + 1u);
+        cetta_native_cost_equations_admitted(i ? 1u : UINT64_MAX);
+        cetta_native_cost_scope_leave(&child);
+    }
+    children[0] = &parts[0]; children[1] = &parts[1];
+    cetta_native_cost_scope_enter(&outer, &parent, 9u);
+    assert(cetta_native_cost_join_scheduled(children, placement, 2u));
+    assert(parent.equations.work_overflow && !parent.equations.span_overflow &&
+        parent.equations.span == UINT64_MAX);
+    cetta_native_cost_scope_leave(&outer);
+    for (size_t i = 0u; i < 2u; i++) cetta_native_cost_free(&parts[i]);
+    cetta_native_cost_free(&parent);
+
+    cetta_native_cost_init_compact(&parent);
+    cetta_native_cost_scope_enter(&outer, &parent, 10u);
+    cetta_native_cost_scope_leave(&outer);
+    assert(!cetta_native_cost_enable_equations(&parent));
+    cetta_native_cost_free(&parent);
+    puts("PASS: equation accounts preserve units, aliases, source/worker dependencies, forgetting and independent overflow");
+}
+
 int main(void) {
+    test_equation_accounts();
     test_compact_accounts();
+    test_observation_policy_transitions();
     test_borrowed_occurrence_scopes();
     test_scoped_reads();
     test_owned_command_receipts();

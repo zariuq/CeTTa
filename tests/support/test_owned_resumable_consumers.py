@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Owned consumer observations: demand, duplicate order, effects and faults."""
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -38,20 +39,140 @@ CASES = [
     ('numeric-fold', 'petta', '(= (samples $n) (* $n $n))\n(= (samples $n) (if (< $n 1024) (samples (+ $n 1)) (empty)))\n!(foldl-atom (collapse (samples 0)) 0 $acc $item (+ $acc $item))\n', '358438400\n', 0),
 ]
 
+# Each case reaches the ordinary count consumer as well as the dialect's
+# materialized collection. Expected values retain physical duplicate order.
+CAPTURE_CASES = [
+    ('captured-compound',
+     '(= (pick $x $y) $x)\n(= (pick $x $y) $y)\n(= (pick $x $y) $x)\n',
+     '(pick $capture (Pair 9 Right))', '(let $capture (Pair 7 Left) {query})',
+     3, '((Pair 7 Left) (Pair 9 Right) (Pair 7 Left))',
+     '((Pair 7 Left) (Pair 9 Right) (Pair 7 Left))'),
+    ('nested-pattern',
+     '(= (peel (Pair $x $tail)) (Answer $x $tail))\n'
+     '(= (peel (Pair $x $tail)) (Answer $x $tail))\n',
+     '(peel (Pair Box (Cons 7 Nil)))', '{query}',
+     2, '((Answer Box (Cons 7 Nil)) (Answer Box (Cons 7 Nil)))',
+     '((Answer Box (Cons 7 Nil)) (Answer Box (Cons 7 Nil)))'),
+    ('recursive-data',
+     '(= (members (Cons $x $tail)) $x)\n'
+     '(= (members (Cons $x $tail)) (members $tail))\n'
+     '(= (members Nil) (empty))\n',
+     '(members (Cons (Pair 7 Left) (Cons (Pair 7 Left) (Cons (Pair 9 Right) Nil))))',
+     '{query}', 3, '((Pair 7 Left) (Pair 7 Left) (Pair 9 Right))',
+     '((Pair 7 Left) (Pair 7 Left) (Pair 9 Right))'),
+    ('boolean-capture',
+     '(= (flag $ok $value) (if $ok (Pair $value True) (empty)))\n'
+     '(= (flagged) (flag (< 1 2) (Tag 7)))\n',
+     '(flagged)', '{query}',
+     1, '((Pair (Tag 7) True))', '((Pair (Tag 7) true))'),
+    ('boolean-empty',
+     '(= (flag $ok $value) (if $ok (Pair $value True) (empty)))\n'
+     '(= (flagged) (flag (> 1 2) (Tag 7)))\n',
+     '(flagged)', '{query}', 0, '()', '()'),
+    ('mixed-call-shapes',
+     '(= (pass $value) $value)\n'
+     '(= (pack) (Pair (pass (Pair 7 True)) (pass 9)))\n',
+     '(pack)', '{query}', 1, '((Pair (Pair 7 True) 9))', '((Pair (Pair 7 true) 9))'),
+    ('empty-value-capture', '(= (echo $value) $value)\n',
+     '(echo ())', '{query}', 1, '(())', '(())'),
+]
+
+OWNED_CAPTURE_ADMISSION = {}
+for name, equations, producer, outer, count, he_values, petta_values in CAPTURE_CASES:
+    for language, size, values in [('he', 'size', he_values),
+                                    ('petta', 'length', petta_values)]:
+        source = equations + '!' + outer.format(query=f'({size} (collapse {producer}))')
+        source += '\n!' + outer.format(query=f'(collapse {producer})') + '\n'
+        expected = f'[{count}]\n[{values}]\n' if language == 'he' else f'{count}\n{values}\n'
+        CASES.append((name, language, source, expected, 0))
+        OWNED_CAPTURE_ADMISSION[name, language] = True
+
+for language, size, expected, status in [('he', 'size', '[1]\n', 0),
+                                         ('petta', 'length', '', 2)]:
+    # Reusing numeric admission for the same head with a data argument is
+    # unsound. The ordinary boundary retains its inert result or fault.
+    CASES.append(('data-in-number', language,
+        '(= (pass $value) $value)\n'
+        '(= (pack) (+ (pass 1) (pass (Pair 7 True))))\n'
+        f'!({size} (collapse (pack)))\n', expected, status))
+    OWNED_CAPTURE_ADMISSION['data-in-number', language] = False
+
+for language, size, count, values in [
+        ('he', 'size', 2, '((Pair 7 True) (same (Pair 7 True) (Pair 9 False)))'),
+        ('petta', 'length', 1, '((Pair 7 true))')]:
+    # A failed repeated-variable match has different no-rule readings.
+    source = ('(= (same $x $x) $x)\n'
+              '(= (pick) (same (Pair 7 True) (Pair 7 True)))\n'
+              '(= (pick) (same (Pair 7 True) (Pair 9 False)))\n'
+              f'!({size} (collapse (pick)))\n!(collapse (pick))\n')
+    expected = f'[{count}]\n[{values}]\n' if language == 'he' else f'{count}\n{values}\n'
+    CASES.append(('repeated-pattern', language, source, expected, 0))
+    OWNED_CAPTURE_ADMISSION['repeated-pattern', language] = True
+
+for name, argument, value in [
+        ('literal-boolean-input', 'True', 'true'),
+        ('literal-boolean-field', '(Pair 7 True)', '(Pair 7 true)')]:
+    # Symbolic PeTTa truth values still require its ordinary normalization.
+    # The owned producer only accepts already-completed entry arguments.
+    CASES.append((name, 'petta', '(= (pass $value) $value)\n'
+        f'!(length (collapse (pass {argument})))\n!(collapse (pass {argument}))\n',
+        f'1\n({value})\n', 0))
+    OWNED_CAPTURE_ADMISSION[name, 'petta'] = False
+
+for name, body, value in [
+        ('cache-rebind',
+         '(let $a ({size} (collapse (echo 7))) '
+         '(Pair $a ({size} (collapse (echo (Pair 9 Left))))))', '(Pair 1 1)'),
+        ('cache-source-change',
+         '(let $a ({size} (collapse (echo (Pair 7 Left)))) '
+         '(let $i (add-atom &self (= (echo $x) $x)) '
+         '(Pair $a ({size} (collapse (echo (Pair 7 Left)))))))', '(Pair 1 2)'),
+        ('cache-loop',
+         '(count-loop 8 (Pair 7 Left))', '8')]:
+    for language, size in [('he', 'size'), ('petta', 'length')]:
+        source = '(= (echo $x) $x)\n'
+        if name == 'cache-loop':
+            source += ('(= (count-loop $n $x) (if (< $n 1) 0 '
+                '(+ ({size} (collapse (echo $x))) (count-loop (- $n 1) $x))))\n'
+                .replace('{size}', size))
+        source += '!' + body.replace('{size}', size) + '\n'
+        expected = f'[{value}]\n' if language == 'he' else f'{value}\n'
+        CASES.append((name, language, source, expected, 0))
+        OWNED_CAPTURE_ADMISSION[name, language] = True
+
 
 def main():
-    binary = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('binary', type=Path)
+    parser.add_argument('--stats', action='store_true')
+    args = parser.parse_args()
+    binary = args.binary.resolve()
     failures = []
     with tempfile.TemporaryDirectory(prefix="owned-consumers-", dir="runtime") as directory:
         for name, language, text, expected, expected_exit in CASES:
             source = Path(directory) / (name + "-" + language + ".metta")
             source.write_text(text)
-            result = subprocess.run([str(binary), "--lang", language, "--profile", "extended",
-                str(source)], capture_output=True, text=True, timeout=30)
+            command = [str(binary), "--lang", language, "--profile", "extended"]
+            if args.stats:
+                command.append('--emit-runtime-stats')
+            result = subprocess.run(command + [str(source)],
+                capture_output=True, text=True, timeout=30)
             if result.returncode != expected_exit or result.stdout != expected:
                 failures.append((name, language, result.returncode, result.stdout, result.stderr))
             elif expected_exit and "uncaught PeTTa error:" not in result.stderr:
                 failures.append((name, language, "missing fault", result.stderr))
+            if args.stats and (name, language) in OWNED_CAPTURE_ADMISSION:
+                counters = {fields[1]: int(fields[2]) for line in result.stderr.splitlines()
+                            if len(fields := line.split()) == 3 and fields[0] == 'runtime-counter'}
+                admitted = counters.get('owned-execution-admission', 0) > 0
+                if admitted != OWNED_CAPTURE_ADMISSION[name, language]:
+                    failures.append((name, language, 'owned admission', admitted))
+                if name == 'cache-loop':
+                    for counter, expected_count in [
+                            ('prepared-pure-call-program-cache-store', 1),
+                            ('prepared-pure-call-program-cache-hit', 7)]:
+                        if counters.get(counter) != expected_count:
+                            failures.append((name, language, counter, counters.get(counter)))
     for failure in failures:
         print(failure, file=sys.stderr)
     if failures:

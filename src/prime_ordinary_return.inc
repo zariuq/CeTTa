@@ -143,18 +143,13 @@ static bool prime_ordinary_return_enter(CettaPrimeObservationReturn *owned,
         prime_native_region_scope_leave(&scope->region);return false;
     }
     owned->ordinary_running=true;scope->active=true;
-    scope->need=prime_need_active_enter(NULL);
+    prime_need_active_enter(&scope->need,NULL);
     scope->execution=g_eval_execution;g_eval_execution=episode->execution;
     scope->owner=g_prime_need_owner;scope->episode_owner=g_prime_need_episode_owner;
     scope->branch_owner=g_prime_need_region_branch_owner;scope->pool=g_prime_need_region_pool;
     scope->observer=g_prime_need_answer_observer;scope->observer_context=g_prime_need_answer_observer_context;
     scope->previous=g_prime_ordinary_return;g_prime_ordinary_return=owned;
-    g_prime_need_active=episode->need;g_prime_need_branch_state_active=episode->branch;
-    g_prime_weight_active=episode->weights;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    g_prime_need_receipt_active=episode->receipt;
-#endif
-    g_prime_need_logical_env=NULL;
+    prime_need_saved_context_install(&episode->context);
     g_prime_need_owner=g_prime_need_episode_owner=&episode->arena;
     g_prime_need_region_pool=episode->regions.stable_owner?&episode->regions:NULL;
     g_prime_need_region_branch_owner=NULL;
@@ -217,7 +212,6 @@ static bool prime_ordinary_return_project(CettaPrimeObservationReturn *owned) {
     }
     if (owned->ordinary_refusal || !prime_ordinary_result_slot(results)) return false;
     result_set_add(results,owned->ordinary_projected);
-    prime_need_observe_top_answer(owned->ordinary_projected,&row->env);
     owned->ordinary_result_length=results->len;
     owned->ordinary_cursor++;
     owned->ordinary_reified=owned->ordinary_projected=NULL;
@@ -323,6 +317,58 @@ static CettaContinuationStatus prime_ordinary_return_resume(EvalOutcome *outcome
     return status;
 }
 
+/* An explicitly owned root starts on the same controller before
+ * source evaluation. A zero allowance retains its first task; it is not an
+ * empty answer and cannot run an effect through the synchronous fallback. */
+static bool prime_ordinary_retained_root(Space *space, Arena *arena,
+    Atom *type, Atom *expression, int fuel, EvalOutcome *outcome) {
+    CettaPrimeObservationReturn *owned = g_prime_ordinary_return;
+    if (!owned || !owned->ordinary || owned->ordinary_control ||
+        fuel >= 0 ||
+        owned->top.destination != &outcome->results ||
+        space != owned->top.episode->space ||
+        arena != &owned->top.episode->arena ||
+        expression != owned->top.episode->request_expression)
+        return false;
+    PrimeNativeControl *control = calloc(1u, sizeof(*control));
+    if (!control) {
+        owned->top.owned.status = CETTA_CONTINUATION_CAPACITY;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return true;
+    }
+    int64_t prepared = eval_option_int_or_default("prepared-node-quantum", 1);
+    CettaSearchPolicySpec policy = {
+        .native_control = true, .all = true, .workers = eval_current_num_threads(),
+        .work_budget = UINT64_MAX, .worker_quantum = 64u,
+        .prepared_node_quantum = prepared > 0 ? (uint64_t)prepared : 1u,
+    };
+    CettaSelectionAutomaton schedule;
+    bool initialized = prime_native_control_init(control, space, arena,
+        expression, fuel, false,
+        (CettaObservationDemand){.completion = CETTA_OBSERVATION_COMPLETE_BAG},
+        &policy, NULL, NULL, type);
+    if (initialized)
+        control->hub.selection_duty = CETTA_SELECTION_DUTY_NONE;
+    if (!initialized || control->registry_read.incomplete ||
+        !cetta_selection_automaton_lifo(&schedule) ||
+        !cetta_continuation_hub_switch_schedule(&control->hub, &schedule)) {
+        prime_native_control_destroy(control);
+        owned->top.owned.status = CETTA_CONTINUATION_CAPACITY;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return true;
+    }
+    control->driver.ordinary_ordered = true;
+    control->driver.ordinary_shared_source = prime_ordinary_shared_source_admitted(space);
+    control->driver.ordinary_ready_queue = true;
+    control->driver.ordinary_refill = true;
+    control->driver.ordinary_descendants = true;
+    control->owned_top_episode = owned->top.episode;
+    owned->ordinary_control = control;
+    owned->top.owned.initialized = true;
+    prime_ordinary_return_pump(owned, 0u);
+    return true;
+}
+
 static bool prime_ordinary_owned_entry(Space *space,Arena *output,Arena *persistent,
     Registry *registry,Atom *expression,EvalOutcome *outcome,
     CettaPrimeNeedAnswerObserver observer,void *observer_context) {
@@ -336,8 +382,11 @@ static bool prime_ordinary_owned_entry(Space *space,Arena *output,Arena *persist
         outcome->completion=CETTA_EVAL_INCOMPLETE_INVALIDATED;
         return true;
     }
-    if (eval_current_num_threads()<2u || current_eval_fuel_limit()>=0 ||
+    if (current_eval_fuel_limit()>=0 ||
         outcome->depth_fuel || observer || observer_context ||
+        cetta_native_cost_observer_active() ||
+        cetta_shared_transition_guard_held_by_current_thread() ||
+        active_search_table_mode()!=CETTA_TABLE_MODE_NONE ||
         output->hashcons || output->older_identity ||
         !prime_native_owned_top_context_admitted()) return false;
     /* The admitted source already owns this entry root. Other caller roots
@@ -346,7 +395,11 @@ static bool prime_ordinary_owned_entry(Space *space,Arena *output,Arena *persist
     if (expression!=source->request_expression || !expression) return false;
     CettaPrimeObservationReturn *owned=calloc(1u,sizeof(*owned));
     PrimeNativeTopEpisode *episode=calloc(1u,sizeof(*episode));
-    if (!owned || !episode) {free(owned);free(episode);return false;}
+    if (!owned || !episode) {
+        free(owned);free(episode);
+        outcome->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+        return true;
+    }
     atomic_init(&episode->references,1u);
     prime_native_top_episode_retain(source);episode->source_episode=source;
     episode->space=space;episode->registry=registry;episode->persistent=persistent;

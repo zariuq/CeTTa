@@ -71,6 +71,198 @@ def compact_receipt(value, trace=False):
     return fields
 
 
+def equation_receipt(value):
+    assert value[0] == 'ExecutionCost', value
+    fields = dict(value[1:])
+    assert fields['source-profile'] == 'equation-admissions-v1', value
+    assert fields['source-domain'] == 'PrimeApplicationEquations', value
+    assert fields['charged-operation'] == 'RetainedMatchedRHS', value
+    assert fields['strategy'] == 'OwnedEquationFrontier', value
+    assert fields['work'][0] == 'Exact', value
+    assert fields['span'][:1] == ['OwnedWorkerSchedule'] and fields['span'][1][0] == 'Exact', value
+    assert 0 <= fields['span'][1][1] <= fields['work'][1], value
+    fields['telemetry'] = (None if fields['native'] == ['NativeCost', 'Untracked'] else
+        compact_receipt(fields['native']) if fields['native'][1] == 'native-counts-v1' else
+        cost_fields(fields['native'], 'native-events-v1'))
+    return fields
+
+
+def equation_accounts(gate, history=False):
+    def source_policy(budget=10000, width=1, extra='', native=None):
+        profile = f'(equation-admissions-v1 {native})' if native else 'equation-admissions-v1'
+        return policy(budget, f'(demand all) (workers {width}) {extra}', profile)
+
+    graph = ('(= (account-root) (account-leaf)) (= (account-root) (account-leaf)) '
+             '(= (account-root) Ready) (= (account-leaf) A) (= (account-leaf) B) ')
+    cases = [
+        ('one admission', '(= (account-one) A) ', '(account-one)', ['A'], 1),
+        ('empty admitted body', '(= (account-none) (empty)) ', '(account-none)', [], 1),
+        ('duplicate equations', '(= (account-dup) A) (= (account-dup) A) ', '(account-dup)', ['A', 'A'], 2),
+        ('empty body before an answer', '(= (account-choice) (empty)) (= (account-choice) A) ',
+         '(account-choice)', ['A'], 2),
+        ('repeated successor', graph, '(account-root)', ['Ready', 'A', 'B', 'A', 'B'], 7),
+        ('shared demand', '(= (account-coin) 3) (= (account-coin) 7) '
+         '(= (account-pair $x) (Pair $x $x)) ', '(account-pair (account-coin))',
+         [['Pair', 3, 3], ['Pair', 7, 7]], 3),
+    ]
+    for width in (1, 2):
+        for name, definitions, expression, expected, work in cases:
+            _, parts = gate.run(f'equation account {name} w{width}', definitions +
+                f'!(select 0 {source_policy(width=width)} {expression})')
+            result = parts[-1]
+            account = equation_receipt(result['cost'])
+            assert result['closed'] == 'True' and bag(result['values']) == bag(expected), (name, result)
+            assert account['work'] == ['Exact', work], (name, account)
+            assert 'history' not in result and account['telemetry'] is None
+            gate.passed_case(f'source admissions preserve {name} with {width} workers')
+
+    trees, parts = gate.run('retained source admissions precede body dispatch', graph +
+        f'!(select 0 {source_policy(4, native='native-counts-v1')} (account-root))')
+    account = equation_receipt(parts[-1]['cost'])
+    assert parts[-1]['closed'] == 'False' and account['work'] == ['Exact', 3]
+    assert account['telemetry']['counts']['equation-activation'] == 0
+    gate.passed_case('source admissions charge retained pending branches, independently of body dispatch')
+
+    for width in (1, 2):
+        for cut in (0, 4, 9, 17):
+            trees, parts = gate.run(f'resumed source account w{width} c{cut}', graph +
+                f'!(let {PATTERN} (select 0 {source_policy(cut, width)} (account-root)) '
+                f'(SourceSplit $values $receipt (select 0 {source_policy(width=width)} $residual)))')
+            row = trees[-1][0]
+            before = equation_receipt(row[2])
+            after = equation_receipt(parts[-1]['cost'])
+            assert row[0] == 'SourceSplit' and parts[-1]['closed'] == 'True'
+            assert bag(row[1] + parts[-1]['values']) == bag(['Ready', 'A', 'B', 'A', 'B'])
+            assert after['work'] == ['Exact', 7] and before['work'][1] <= 7
+            assert before['telemetry'] is after['telemetry'] is None
+            gate.passed_case(f'resumption retains source admissions w{width} c{cut}')
+
+    trees, parts = gate.run('source reads and refused unit replacement', graph +
+        f'!(let {PATTERN} (select 0 {source_policy(4, native="native-counts-v1")} (account-root)) '
+        '(SourceReads $receipt (cost:inspect $residual) (cost:trace $residual) '
+        f'(select 0 {policy(0, "(demand all)", "native-counts-v1")} $residual) '
+        '(select 0 (search-policy (control FIFO (budget 10000) (demand all))) $residual)))')
+    row = trees[-1][0]
+    before, inspected, traced = map(equation_receipt, row[1:4])
+    assert row[4][0] == 'select', row
+    assert before['work'] == inspected['work'] == traced['work'] == ['Exact', 3]
+    assert [x['telemetry']['counts']['cost-read'] for x in (before, inspected, traced)] == [0, 1, 2]
+    assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', 7]
+    gate.passed_case('reads preserve source units; refused replacement leaves the source account resumable')
+
+    trees, parts = gate.run('storage inspection does not enable native telemetry', graph +
+        f'!(let {PATTERN} (select 0 {source_policy(4)} (account-root)) '
+        '(SourceStorage $receipt (cost:storage $residual) (cost:inspect $residual) '
+        f'(select 0 {source_policy()} $residual)))')
+    row = trees[-1][0]
+    assert equation_receipt(row[1])['work'] == equation_receipt(row[3])['work'] == ['Exact', 3]
+    stored = dict(row[2][2:])
+    assert row[2][:2] == ['NativeStorage', 'native-owned-storage-v1']
+    assert stored['inspection-probes'] > 0 and stored['read'] == ['UntrackedCostRead', 'cost-read']
+    assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', 7]
+    gate.passed_case('requested storage inspection leaves the source account intact and native telemetry untracked')
+
+    for count in (0, 20):
+        definitions = '(= (account-match $x) Good) ' + ''.join(
+            '(= (account-match (Pair $v $v)) Refuted) ' for _ in range(count))
+        _, parts = gate.run(f'index work separated from source units {count}', definitions +
+            f'!(select 0 {source_policy(native="native-counts-v1")} (account-match (Pair A B)))')
+        account = equation_receipt(parts[-1]['cost'])
+        assert parts[-1]['values'] == ['Good'] and account['work'] == ['Exact', 1]
+        if count == 0:
+            first_native = account['telemetry']['work'][1]
+        else:
+            assert account['telemetry']['work'][1] > first_native
+    gate.passed_case('refuted equation candidates increase native work without charging source admissions')
+
+    for width in (1, 2):
+        _, parts = gate.run(f'explicit joint source and native event account w{width}', graph +
+            f'!(select 0 {source_policy(width=width, native="native-events-v1")} (account-root))')
+        account = equation_receipt(parts[-1]['cost'])
+        assert account['work'] == ['Exact', 7] and account['telemetry']['trace-status'] == 'Complete'
+        assert account['telemetry']['work'][1] > 7 and parts[-1]['closed'] == 'True'
+        gate.passed_case('explicit joint observation preserves both source units and native events w' + str(width))
+
+    trees, parts = gate.run('source-only account refuses retrospective native telemetry', graph +
+        f'!(let {PATTERN} (select 0 {source_policy(4)} (account-root)) '
+        f'(SourceOnly $receipt (select 0 {source_policy(native="native-counts-v1")} $residual) '
+        f'(select 0 {source_policy()} $residual)))')
+    row = trees[-1][0]
+    assert row[0] == 'SourceOnly' and row[2][0] == 'select'
+    assert equation_receipt(row[1])['telemetry'] is None
+    assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', 7]
+    gate.passed_case('source-only execution refuses retroactive native observation without losing its remainder')
+
+    rng = random.Random(127)
+    for sample in range(6):
+        rows = [[rng.randrange(i + 1, 6) if i < 5 and rng.randrange(2) else f'V{i}-{j}'
+                 for j in range(1 + rng.randrange(2))] for i in range(6)]
+        def evaluate(node):
+            values, work = [], 0
+            for successor in rows[node]:
+                work += 1
+                if isinstance(successor, int):
+                    next_values, next_work = evaluate(successor)
+                    values.extend(next_values)
+                    work += next_work
+                else:
+                    values.append(successor)
+            return values, work
+        expected, work = evaluate(0)
+        definitions = ' '.join(f'(= (account-node {i}) ' +
+            (f'(account-node {child}))' if isinstance(child, int) else f'{child})')
+            for i, children in enumerate(rows) for child in children)
+        trees, parts = gate.run(f'acyclic source account {sample}', definitions +
+            ' !(cost:analyze (quote (account-node 0)) 10000) ' +
+            f'!(select 0 {source_policy(width=1 + sample % 2)} (account-node 0))')
+        assert analysis_fields(trees[0][0])['result'] == ['Bound', work]
+        assert bag(parts[-1]['values']) == bag(expected) and parts[-1]['closed'] == 'True'
+        assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', work]
+        gate.passed_case('independent source execution, quoted bound and native account agree on acyclic graph ' + str(sample))
+
+    if history:
+        record = '(history (selections 512) (nodes 32) (bytes 65536) (owners 10000))'
+        for width in (1, 2):
+            _, parts = gate.run(f'equation account with history w{width}', graph +
+                f'!(select 0 {source_policy(width=width, extra=record)} (account-root))')
+            assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', 7]
+            assert parts[-1]['closed'] == 'True' and 'history' in parts[-1]
+            gate.passed_case('source units remain independent of requested history w' + str(width))
+
+        recorded_pattern = PATTERN.replace('(cost $receipt)', '(history $history) (cost $receipt)')
+        for width in (1, 2):
+            definitions = graph + '(= (account-effect) (chain (println! source-once) $ignored (account-root))) '
+            trees, parts = gate.run(f'source account survives physical forgetting w{width}', definitions +
+                f'!(bind! &source-saved (select 0 {source_policy(18, width, record)} (account-effect))) '
+                f'!(let {recorded_pattern} &source-saved (SourceSaved $values $receipt)) '
+                f'!(bind! &source-tail (let {recorded_pattern} &source-saved $residual)) '
+                '!(history:forget &source-saved 131072) '
+                f'!(select 0 {source_policy(width=width)} &source-tail)')
+            saved = trees[1][0]
+            before = equation_receipt(saved[2])
+            after = equation_receipt(parts[-1]['cost'])
+            assert before['work'][1] <= 8 and after['work'] == ['Exact', 8]
+            assert bag(saved[1] + parts[-1]['values']) == bag(['Ready', 'A', 'B', 'A', 'B'])
+            assert parts[-1]['closed'] == 'True' and 'history' not in parts[-1]
+            assert trees[-2][0][0] == 'HistoryPolicy' and ['status', 'Unrecorded'] in trees[-2][0]
+            assert gate.receipts[-1]['stdout'].splitlines().count('source-once') == 1
+            gate.passed_case('physical history release preserves the source account and completed effect w' + str(width))
+
+    _, parts = gate.run('source work includes a faulting body', '(= (account-fault) (/ 1 0)) ' +
+        f'!(select 0 {source_policy()} (account-fault))')
+    assert equation_receipt(parts[-1]['cost'])['work'] == ['Exact', 1]
+    assert len(parts[-1]['values']) == 1 and parts[-1]['values'][0][0] == 'Error'
+    gate.passed_case('an admitted equation remains paid when its body returns a fault')
+
+    marker = 'SOURCE-REPORT-MUST-NOT-RUN'
+    trees, _ = gate.run('source account remains completed returned data',
+        f'(= (ExecutionCost $a $b $c $d $e $f $g) (println! "{marker}")) ' + graph +
+        f'!(let {PATTERN} (select 0 {source_policy()} (account-root)) $receipt)')
+    assert equation_receipt(trees[-1][0])['work'] == ['Exact', 7]
+    assert marker not in gate.receipts[-1]['stdout'].splitlines()
+    gate.passed_case('source account inspection does not execute the returned report as code')
+
+
 def compact_accounts(gate):
     def compact(budget=10000, extra=''):
         return policy(budget, extra, 'native-counts-v1')
@@ -173,19 +365,91 @@ def compact_history(gate):
     def compact(budget=10000, extra=''):
         return policy(budget, extra, 'native-counts-v1')
 
+    history = '(history (selections 512) (nodes 32) (bytes 65536) (owners 10000))'
+    source = ('(= (coin) 3) (= (coin) 3) (= (coin) 6) '
+              '(= (twice $x) (Pair $x $x)) ')
+    expression = '(chain (println! joint-once) $ignored (twice (coin)))'
+    baseline = None
+    for recording in (False, True):
+        for counting in (False, True):
+            choices = (history if recording else '') + (
+                ' (costs native-counts-v1)' if counting else '')
+            _, observed = gate.run(f'joint observers history={recording} counts={counting}',
+                source + '!(select 0 (search-policy (control FIFO (budget 10000) '
+                f'(demand all) {choices})) {expression})')
+            result = observed[-1]
+            actual = {key: result[key] for key in ('values', 'satisfied', 'closed', 'status')}
+            assert bag(result['values']) == bag([['Pair', 3, 3], ['Pair', 3, 3], ['Pair', 6, 6]])
+            assert result['closed'] == 'True'
+            if baseline is None:
+                baseline = actual
+            assert actual == baseline, (recording, counting, baseline, actual)
+            assert gate.receipts[-1]['stdout'].splitlines().count('joint-once') == 1
+            assert ('cost' in result) == counting and ('history' in result) == recording
+            if counting:
+                compact_receipt(result['cost'])
+            if recording:
+                assert next(row[1] for row in result['history'][1:] if row[0] == 'nodes') > 0
+            gate.passed_case(f'history={recording} counts={counting}: shared occurrences and one effect')
+
+    recorded_pattern = PATTERN.replace('(cost $receipt)', '(history $history) (cost $receipt)')
     source = '(= (rows) A) (= (rows) B) (= (rows) B) '
     trees, observed = gate.run('compact account through recording erasure', source +
-        f'!(bind! &saved (select 0 {compact(5, "(demand all)")} (rows))) '
-        f'!(let {PATTERN} &saved (SavedPrefix $values $receipt)) '
-        f'!(bind! &tail (let {PATTERN} &saved $residual)) '
+        f'!(bind! &saved (select 0 {compact(12, "(demand all) " + history)} '
+        '(chain (println! joint-once) $ignored (rows)))) '
+        f'!(let {recorded_pattern} &saved (SavedPrefix $values $receipt $history)) '
+        f'!(bind! &tail (let {recorded_pattern} &saved $residual)) '
+        '!(println! joint-prefix) '
         '!(history:forget &saved 131072) '
         '!(select 0 (search-policy (control FIFO (budget 10000) (demand all))) &tail)')
+    saved = trees[1][0]
+    assert saved[0] == 'SavedPrefix' and saved[3][0] == 'History', saved
+    assert next(row[1] for row in saved[3][1:] if row[0] == 'nodes') > 0
+    before = compact_receipt(saved[2])
     change = dict(trees[-2][0][1:])
     assert trees[-2][0][0] == 'HistoryPolicy' and change['status'] == 'Unrecorded'
     assert observed[-1]['closed'] == 'True'
     assert bag(trees[1][0][1] + observed[-1]['values']) == bag(['A', 'B', 'B'])
-    compact_receipt(observed[-1]['cost'])
-    gate.passed_case('owned checkpoint replacement preserves the compact account and its residual')
+    after = compact_receipt(observed[-1]['cost'])
+    assert all(after['counts'][key] >= value for key, value in before['counts'].items())
+    assert after['counts']['receipt-append'] == before['counts']['receipt-append']
+    lines = gate.receipts[-1]['stdout'].splitlines()
+    assert lines.count('joint-once') == 1 and lines.index('joint-once') < lines.index('joint-prefix')
+    assert 'history' not in observed[-1]
+    gate.passed_case('forgetting a real diary preserves paid counts, residual and the completed effect')
+
+    _, observed = gate.run('full recording prefix keeps numerical observation',
+        '(= (coin) 3) (= (coin) 3) (= (coin) 6) (= (twice $x) (Pair $x $x)) ' +
+        '!(select 0 ' + compact(extra='(demand all) ' +
+            history.replace('(selections 512)', '(selections 0)')) +
+        ' (chain (println! joint-once) $ignored (twice (coin))))')
+    result = observed[-1]
+    assert result['closed'] == 'True'
+    assert bag(result['values']) == bag([['Pair', 3, 3], ['Pair', 3, 3], ['Pair', 6, 6]])
+    assert compact_receipt(result['cost'])['work'][1] > 0
+    assert next(row[1] for row in result['history'][1:] if row[0] == 'status') == 'Incomplete'
+    assert next(row[1] for row in result['history'][1:] if row[0] == 'nodes') == 0
+    assert next(row[1] for row in result['history'][1:] if row[0] == 'omitted-selections') > 0
+    assert gate.receipts[-1]['stdout'].splitlines().count('joint-once') == 1
+    gate.passed_case('zero history capacity retains answers, the single effect and paid counts')
+
+    trees, observed = gate.run('start recording after counted work', source +
+        f'!(bind! &saved (select 0 {compact(12, "(demand all)")} '
+        '(chain (println! joint-once) $ignored (rows)))) '
+        f'!(let {PATTERN} &saved (SavedPrefix $values $receipt $quanta)) '
+        f'!(bind! &tail (let {PATTERN} &saved $residual)) '
+        '!(println! joint-prefix) '
+        f'!(select 0 {compact(extra="(demand all) " + history)} &tail)')
+    saved, resumed = trees[1][0], observed[-1]
+    assert saved[0] == 'SavedPrefix' and saved[3] > 0
+    before, after = compact_receipt(saved[2]), compact_receipt(resumed['cost'])
+    assert all(after['counts'][key] >= value for key, value in before['counts'].items())
+    assert resumed['closed'] == 'True' and bag(saved[1] + resumed['values']) == bag(['A', 'B', 'B'])
+    assert next(row[1] for row in resumed['history'][1:] if row[0] == 'start-work') == saved[3]
+    assert next(row[1] for row in resumed['history'][1:] if row[0] == 'earlier') == 'Unrecorded'
+    lines = gate.receipts[-1]['stdout'].splitlines()
+    assert lines.count('joint-once') == 1 and lines.index('joint-once') < lines.index('joint-prefix')
+    gate.passed_case('late recording begins at the retained cut and preserves the earlier account')
 
     trees, _ = gate.run('compact capture cannot promise exact replay',
         f'!(history:capture (quote (cost:run {compact(0)} '
@@ -342,18 +606,18 @@ def split_runs(gate, cases):
         gate.passed_case(f'whole residual cost ledger survives weighted budget split {case}')
 
 
-def analysis_fields(value):
+def analysis_fields(value, metric='equation-activation', recorded=True):
     assert value[0] == 'CostAnalysis', value
     fields = {item[0]: item[1] if len(item) == 2 else item[1:] for item in value[1:]}
-    assert fields['metric'] == 'equation-activation'
+    assert fields['metric'] == metric
     assert fields['demand'] == 'CompleteUnfolding'
     assert fields['source-profile'] == 'FiniteGroundCallsUngradedRows'
     assert fields['residual'][:2] == ['NativeHandle', 'prime-cost-analysis']
-    fields['cost'] = receipt(fields['analysis-cost'])
+    fields['cost'] = (receipt if recorded else compact_receipt)(fields['analysis-cost'])
     return fields
 
 
-def storage(value, recorded=True):
+def storage(value, recorded=True, tracked=True):
     assert value[:2] == ['NativeStorage', 'native-owned-storage-v1'], value
     fields = dict(value[2:])
     assert fields['ownership'] == 'Complete', value
@@ -362,7 +626,9 @@ def storage(value, recorded=True):
     assert fields['identities'] > 0 and fields['inspection-probes'] > 0
     assert fields['snapshot'] == 'BeforeInspectionCharge'
     assert fields['environment'] == 'BorrowedSourceAndGlobalPools'
-    if recorded:
+    if not tracked:
+        assert fields['read'] == ['UntrackedCostRead', 'cost-read']
+    elif recorded:
         assert fields['read'][4:] == ['cost-read', 1, 1]
     else:
         assert fields['read'] == ['UnrecordedCostRead', 'cost-read', 1]
@@ -434,10 +700,59 @@ def storage_controls(gate):
     gate.passed_case('storage inspection requires an authentic retained capability')
 
 
+def cost_port_boundaries(gate):
+    for language in ('he', 'petta'):
+        gate.run('default inspection namespace ' + language,
+                 '(= (cost:storage $x) Local) !(cost:storage A)', language=language)
+        assert parse(gate.receipts[-1]['stdout'])[-1] in ('Local', ['Local'])
+        gate.passed_case(language + ' default preserves authored inspection names')
+
+    marker = 'REENTERED-STORAGE-REPORT'
+    definitions = ('(= (rows) A) '
+        '(= (NativeStorage $profile $a $b $c $d $e $f $g $h $i) '
+        f'(println! "{marker}")) ')
+    prefix = (f'!(let {PATTERN} (select 1 '
+              f'{policy(0, "(retain True)", "native-counts-v1")} (rows)) ')
+    for language in ('prime', 'he', 'petta'):
+        profile = None if language == 'prime' else 'extended'
+        gate.run('forged inspection ' + language, ' '.join(
+            f'!({head} (NativeHandle "prime-search" 1))'
+            for head in ('cost:storage', 'cost:inspect', 'cost:trace')),
+            language=language, profile=profile)
+        stdout = gate.receipts[-1]['stdout']
+        assert all(head in stdout for head in ('cost:storage', 'cost:inspect', 'cost:trace'))
+        assert 'NativeStorage' not in stdout and 'NativeCost' not in stdout
+        gate.passed_case(language + ' inspection refuses written capability identifiers')
+
+        trees, _ = gate.run('direct inspection completion ' + language,
+            definitions + prefix + '(cost:storage $residual))',
+            language=language, profile=profile)
+        stdout = gate.receipts[-1]['stdout']
+        returned = parse(stdout)[-1] if language == 'petta' else trees[-1][0]
+        storage(returned, recorded=False)
+        assert stdout.splitlines().count(marker) == 0
+        gate.passed_case(language + ' direct inspection publishes its completed report without invoking its head')
+
+        trees, _ = gate.run('inspection through dialect binder ' + language,
+            definitions + prefix + '(let $x (cost:storage $residual) (Result $x)))',
+            language=language, profile=profile)
+        stdout = gate.receipts[-1]['stdout']
+        returned = parse(stdout)[-1] if language == 'petta' else trees[-1][0]
+        # HE substitutes a bound result into executable syntax. This is a
+        # separate demand from the native read, and retains HE's semantics.
+        assert stdout.splitlines().count(marker) == (1 if language == 'he' else 0)
+        if language == 'he':
+            assert returned == ['Result', []]
+        else:
+            assert returned[0] == 'Result'
+            storage(returned[1], recorded=False)
+        gate.passed_case(language + ' binder retains its own interpretation of returned data')
+
+
 def cost_clients(gate):
     source = (ROOT / 'tests/prime/native_cost/self_budgeted_search.metta').read_text()
     trees, _ = gate.run('self-budgeted native seven routes', source)
-    result = trees[-1][0]
+    result = trees[0][0]
     assert result[:4] == ['BudgetedRoutes', [['Route', i] for i in range(7)], 'True', 'False']
     before, retained, after = (compact_receipt(result[4]), storage(result[5], recorded=False),
                                compact_receipt(result[6]))
@@ -447,13 +762,65 @@ def cost_clients(gate):
     assert retained['inspection-probes'] >= retained['identities'] + retained['repeated-visits']
     gate.passed_case('program budgets native resumptions from cumulative work, then retains and completes seven routes')
 
+    source_result = trees[1][0]
+    assert len(trees) == 2
+    assert source_result[:4] == ['SourceBudgetedRoutes', [['Route', i] for i in range(7)], 'True', 'False']
+    source_before = equation_receipt(source_result[4])
+    source_storage = storage(source_result[5], recorded=False, tracked=False)
+    source_after = equation_receipt(source_result[6])
+    assert source_before['work'][1] >= 4
+    assert source_before['work'][1] < source_after['work'][1]
+    assert source_before['telemetry'] is source_after['telemetry'] is None
+    assert source_storage['read'] == ['UntrackedCostRead', 'cost-read']
+    assert gate.receipts[-1]['stdout'].splitlines().count('SOURCE-BUDGET-ONCE') == 1
+    gate.passed_case('the same authored budget policy pauses source admissions and resumes with no native telemetry or event history')
+
     # Certified work is a function of what the program does.  Fresh processes
     # place the same owned objects at different addresses; the census and
     # every receipt must not see that.
     for attempt in range(3):
         again, _ = gate.run(f'self-budgeted seven routes, fresh process {attempt + 1}', source)
-        assert again[-1][0] == result, (again[-1][0], result)
+        assert again[0][0] == result, (again[0][0], result)
+        assert again[1][0] == source_result, (again[1][0], source_result)
     gate.passed_case('certified work and the storage census do not depend on allocation addresses')
+
+    source_policy = policy(0, '(retain True)', 'equation-admissions-v1')
+    source_resume = policy(10000, '(retain True)', 'equation-admissions-v1')
+    guarded, guarded_observations = gate.run('budget metric mismatch preserves the actual residual', source +
+        f'!(let {PATTERN} (select 7 {source_policy} (budget:routes 0)) '
+        '(MetricGuard (budget:work native-counts-v1 $receipt) '
+        '(budget:work equation-admissions-v1 $receipt) '
+        f'(select 7 {source_resume} $residual)))')
+    guarded = guarded[-1][0]
+    assert guarded[0] == 'MetricGuard' and guarded[1][:2] == ['budget:work', 'native-counts-v1']
+    assert guarded[2] == 0
+    assert guarded_observations[-1]['values'] == [['Route', i] for i in range(7)]
+    assert equation_receipt(guarded_observations[-1]['cost'])['telemetry'] is None
+    gate.passed_case('a source cost cannot silently become native units; the real retained producer remains usable')
+
+    crossing_source = source.replace('budget:search equation-admissions-v1 4 100',
+                                    'budget:search equation-admissions-v1 1 100')
+    crossing, _ = gate.run('source admission batch crosses the requested threshold', crossing_source)
+    crossing = crossing[1][0]
+    assert crossing[:4] == source_result[:4]
+    assert equation_receipt(crossing[4])['work'][1] > 1
+    assert equation_receipt(crossing[6])['telemetry'] is None
+    gate.passed_case('a source-work threshold is checked between quanta and retains a batch that crosses it')
+
+    # This profile is tied to Prime's application-equation frontier. The
+    # telemetry entry is shared with each extended dialect without importing
+    # Prime's source metric or evaluating that profile's demonstration.
+    port = source.replace('!(budget:source-demo)', '')
+    for language in ('he', 'petta'):
+        port_trees, _ = gate.run('self-budgeted telemetry ' + language, port,
+                                 language=language, profile='extended')
+        returned = parse(gate.receipts[-1]['stdout'])[-1] if language == 'petta' else port_trees[-1][0]
+        assert returned[:2] == ['BudgetedRoutes', [['Route', i] for i in range(7)]]
+        assert str(returned[2]).lower() == 'true' and str(returned[3]).lower() == 'false'
+        port_before, port_after = compact_receipt(returned[4]), compact_receipt(returned[6])
+        assert port_before['work'][1] >= 100 and port_before['scope'] == port_after['scope']
+        storage(returned[5], recorded=False)
+        gate.passed_case(language + ' extended runs the same retained telemetry-budget client without event history')
 
     source = (ROOT / 'tests/prime/native_cost/analyzed_seven_routes.metta').read_text()
     trees, obs = gate.run('analyzed seven-route admission', source)
@@ -462,6 +829,11 @@ def cost_clients(gate):
     assert obs[0]['values'] == [['Route', i] for i in range(7)] and obs[0]['satisfied'] == 'True'
     assert receipt(obs[0]['cost'])['counts']['equation-activation'] <= 8
     gate.passed_case('program admits or defers seven-route search using the finite source bound and its explicit metric')
+    assert trees[2][0][:4] == ['Planned', 2, 8, 1]
+    assert len(obs) == 2 and obs[1]['values'] == [['Route', i] for i in range(7)]
+    assert obs[1]['satisfied'] == 'True'
+    assert equation_receipt(obs[1]['cost'])['work'] == ['Exact', 8]
+    gate.passed_case('an authored work/depth planner selects workers and reads source admissions separately from telemetry')
 
 
 def analysis_controls(gate, cases):
@@ -563,29 +935,150 @@ def analysis_controls(gate, cases):
         gate.passed_case(f'generated DAG {case}: complete physical coverage, measured activations and retained split cursor agree')
 
 
+
+def dependency_analysis_controls(gate):
+    metric = 'equation-dependency-depth'
+    source = '(= (depth-root) (depth-leaf)) (= (depth-root) (depth-leaf)) '
+    source += '(= (depth-root) Ready) (= (depth-leaf) A) (= (depth-leaf) B) '
+    query = '(cost:analyze (quote (depth-root)) 2000'
+    trees, _ = gate.run('source work and dependency depth', source +
+        f'!{query}) !{query} {metric})')
+    work, depth = [analysis_fields(trees[i][0], name) for i, name in
+                   enumerate(('equation-activation', metric))]
+    assert work['result'] == ['Bound', 7] and depth['result'] == ['Bound', 2]
+    gate.passed_case('source dependency depth preserves occurrence work without summing independent alternatives')
+
+    trees, _ = gate.run('computed depth analysis parameters', source +
+        ' !(cost:analyze (quote (depth-root)) (+ 1999 1) '
+        '(if True equation-dependency-depth equation-activation))')
+    assert analysis_fields(trees[0][0], metric)['result'] == ['Bound', 2]
+    gate.passed_case('source analysis evaluates the allowance and metric while preserving quoted input')
+
+    pair_metric = 'equation-work-depth'
+    trees, _ = gate.run('joint source work and dependency depth', source +
+        f' !(cost:analyze (quote (depth-root)) 2000 {pair_metric})')
+    pair = analysis_fields(trees[0][0], pair_metric)
+    assert pair['result'] == ['Bound', ['WorkDepth', 7, 2]]
+    assert pair['steps'] == depth['steps'] == work['steps']
+    assert pair['cost']['counts']['match-attempt'] == work['cost']['counts']['match-attempt']
+    gate.passed_case('joint work/depth interpretation reuses one source graph and matching pass')
+
+    trees, _ = gate.run('joint source analysis without native chronology', source +
+        ' !(cost:analyze (quote (depth-root)) 2000 equation-work-depth native-counts-v1)')
+    counted = analysis_fields(trees[0][0], pair_metric, recorded=False)
+    assert counted['result'] == pair['result'] and counted['steps'] == pair['steps']
+    assert counted['cost']['counts'] == pair['cost']['counts']
+    gate.passed_case('source work/depth analysis can retain numerical telemetry without event history')
+
+    trees, _ = gate.run('computed source analysis observation profile', source +
+        ' !(cost:analyze (quote (depth-root)) (+ 1999 1) '
+        '(if True equation-work-depth equation-activation) '
+        '(if True native-counts-v1 native-events-v1))')
+    assert analysis_fields(trees[0][0], pair_metric, recorded=False)['result'] == pair['result']
+    gate.passed_case('computed allowance, metric and observation profile retain the quoted computation as data')
+
+    trace_capture = (f'!(bind! &trace-analysis (let {ANALYSIS_PATTERN} '
+        '(cost:analyze (quote (depth-root)) 2 equation-work-depth) $residual)) ')
+    trees, _ = gate.run('source analysis drops chronology without losing its account',
+        source + trace_capture + '!(cost:analyze &trace-analysis 0) '
+        '!(cost:analyze &trace-analysis 0 equation-work-depth native-counts-v1) '
+        '!(cost:analyze &trace-analysis 10 equation-work-depth native-events-v1) '
+        '!(cost:trace &trace-analysis) !(cost:analyze &trace-analysis 2000)')
+    before = analysis_fields(trees[1][0], pair_metric)
+    lowered = analysis_fields(trees[2][0], pair_metric, recorded=False)
+    assert before['steps'] == lowered['steps'] == 2
+    assert before['residual'] == lowered['residual']
+    assert lowered['cost']['work'][1] == before['cost']['work'][1] + 1
+    assert lowered['cost']['counts']['cost-read'] == before['cost']['counts']['cost-read'] + 1
+    assert all(lowered['cost']['counts'][key] == value for key, value in
+               before['cost']['counts'].items() if key != 'cost-read')
+    assert trees[3][0][0] == 'cost:analyze'
+    compact_receipt(trees[4][0], trace=True)
+    completed = analysis_fields(trees[5][0], pair_metric, recorded=False)
+    assert completed['result'] == pair['result'] and completed['steps'] == pair['steps']
+    gate.passed_case('analysis forgets chronology, preserves paid counters and refuses history resurrection')
+
+    capture = (f'!(bind! &depth-analysis (let {ANALYSIS_PATTERN} '
+               f'(cost:analyze (quote (depth-root)) 2 {metric}) $residual)) ')
+    trees, _ = gate.run('depth resumes and refuses metric replacement', source + capture +
+        '!(cost:analyze &depth-analysis 0) '
+        '!(cost:analyze &depth-analysis 10 equation-activation) '
+        '!(cost:analyze &depth-analysis 0) !(cost:analyze &depth-analysis 2000)')
+    first = analysis_fields(trees[1][0], metric)
+    unchanged = analysis_fields(trees[3][0], metric)
+    final = analysis_fields(trees[4][0], metric)
+    assert trees[2][0][0] == 'cost:analyze'
+    assert first['steps'] == unchanged['steps'] == 2
+    assert first['result'] == unchanged['result'] == ['Unknown', 'Pending']
+    assert first['residual'] == unchanged['residual'] == final['residual']
+    assert final['result'] == ['Bound', 2] and final['steps'] == depth['steps']
+    gate.passed_case('depth analysis retains its metric, cursor and paid prefix across suspension and refused replacement')
+
+    for name, definitions, expression, result in (
+        ('inert value', '', '(Tree A (Leaf B))', ['Bound', 0]),
+        ('refuted input', '(= (depth-f A A) Y)', '(depth-f A B)', ['Bound', 0]),
+        ('cycle', '(= (depth-loop) (depth-loop))', '(depth-loop)', ['Unknown', 'Cycle']),
+        ('unsupported operation', '', '(+ 1 2)', ['Unknown', 'UnsupportedSource']),
+        ('graded row', '(=w (depth-graded) A 1)', '(depth-graded)', ['Unknown', 'UnsupportedSource']),
+    ):
+        trees, _ = gate.run('depth ' + name, definitions +
+            f' !(cost:analyze (quote {expression}) 1000 {metric})')
+        assert analysis_fields(trees[0][0], metric)['result'] == result
+        gate.passed_case('source dependency depth handles ' + name)
+
+    doubling = ' '.join(f'(= (depth-node {i}) ' +
+        (f'(depth-node {i + 1})) ' if i < 64 else 'End) ') for i in range(65) for _ in range(2))
+    trees, _ = gate.run('finite depth with overflowing occurrence work', doubling +
+        f' !(cost:analyze (quote (depth-node 0)) 10000 {metric}) '
+        '!(cost:analyze (quote (depth-node 0)) 10000)')
+    assert analysis_fields(trees[0][0], metric)['result'] == ['Bound', 65]
+    assert analysis_fields(trees[1][0])['result'] == ['Unknown', 'Overflow']
+    gate.passed_case('finite source depth remains available when total unfolding work overflows')
+
+    trees, _ = gate.run('depth validates mutable source', source + capture +
+        '!(add-atom &self (= (depth-root) NewAnswer)) !(cost:analyze &depth-analysis 1000)')
+    assert analysis_fields(trees[-1][0], metric)['result'] == ['Unknown', 'StaleSource']
+    gate.passed_case('source changes invalidate retained depth analysis before further graph traversal')
+
+    marker = 'DEPTH-ANALYSIS-MUST-NOT-EXECUTE'
+    trees, _ = gate.run('unsupported analysis options preserve quoted code',
+        f'!(cost:analyze (quote (println! "{marker}")) 1000 unknown-cost-metric) '
+        f'!(cost:analyze (quote (println! "{marker}")) 1000 equation-work-depth unknown-cost-profile)')
+    assert len(trees) == 2 and all(tree[0][0] == 'cost:analyze' for tree in trees)
+    assert gate.receipts[-1]['stdout'].count(marker) == 2  # Written quoted code only.
+    assert not any(line.strip('"') == marker for line in gate.receipts[-1]['stdout'].splitlines())
+    gate.passed_case('unknown analysis metrics and profiles preserve quoted source without executing it')
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, default=ROOT / 'cetta')
     parser.add_argument('--timeout', type=int, default=30)
     parser.add_argument('--cases', type=int, default=8)
     parser.add_argument('--receipt', type=Path)
-    parser.add_argument('--population', choices=('all', 'compact'), default='all')
+    parser.add_argument('--population', choices=('all', 'compact', 'equations'), default='all')
     parser.add_argument('--history-controls', action='store_true',
                         help='Check receipt-enabled forgetting and replay boundaries.')
     args = parser.parse_args()
     args.binary = args.binary.resolve()
     gate = Gate(args)
     try:
-        compact_accounts(gate)
-        if args.history_controls:
-            compact_history(gate)
+        if args.population in ('all', 'equations'):
+            equation_accounts(gate, args.history_controls)
+        if args.population != 'equations':
+            compact_accounts(gate)
+            if args.history_controls:
+                compact_history(gate)
         if args.population == 'all':
             fixed(gate)
             handled_contributions(gate)
             split_runs(gate, args.cases)
             analysis_controls(gate, args.cases)
+            dependency_analysis_controls(gate)
             storage_controls(gate)
             cost_clients(gate)
+            cost_port_boundaries(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True, exist_ok=True)

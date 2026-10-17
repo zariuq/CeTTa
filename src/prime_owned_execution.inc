@@ -145,8 +145,9 @@ static bool prime_native_execution_prepare(PrimeNativeControl *parent,
     return true;
 }
 
-static bool prime_native_execution_task(CettaParallelWorker *worker,
-    PrimeNativeParallel *parallel, PrimeNativeParallelRun *run) {
+static inline __attribute__((always_inline)) bool prime_native_execution_task_kernel(
+    CettaParallelWorker *worker, PrimeNativeParallel *parallel,
+    PrimeNativeParallelRun *run, bool receipts) {
     PrimeNativeExecutionSlice *slice = &parallel->execution;
     assert(slice->self == slice && slice->phase == PRIME_NATIVE_EXECUTION_RESERVED &&
         slice->profile == PRIME_NATIVE_EXECUTION_OWNED_NESTED &&
@@ -174,7 +175,7 @@ static bool prime_native_execution_task(CettaParallelWorker *worker,
     slice->output_before = child->published;
     slice->ledger_identity = child->event_cost.identity;
     slice->cost_before = child->event_cost.total.work;
-    if (run->receipts) {
+    if (receipts) {
         parallel->started_ns = prime_native_monotonic_ns();
         uint32_t active = atomic_fetch_add_explicit(&run->active, 1u, memory_order_acq_rel) + 1u;
         uint32_t previous = atomic_load_explicit(&run->overlap, memory_order_relaxed);
@@ -231,7 +232,7 @@ static bool prime_native_execution_task(CettaParallelWorker *worker,
     g_prime_service_reservation = previous_reservation;
     g_prime_native_parallel_current = previous_parallel;
     eval_set_cancel_token(previous_cancel);
-    if (run->receipts) {
+    if (receipts) {
         parallel->finished_ns = prime_native_monotonic_ns();
         atomic_fetch_sub_explicit(&run->active, 1u, memory_order_acq_rel);
     }

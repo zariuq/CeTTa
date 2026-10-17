@@ -9776,6 +9776,11 @@ static bool petta_transfer_hosts_equal(
     if (left->dependent_type_domains != right->dependent_type_domains) return false;
     if (left->permit_transition != right->permit_transition) return false;
     if (left->permit_operation != right->permit_operation) return false;
+    if (left->permit_operation &&
+        (left->permit_operation_context == left->context
+            ? NULL : left->permit_operation_context) !=
+        (right->permit_operation_context == right->context
+            ? NULL : right->permit_operation_context)) return false;
     if (left->unlimited_transition_budget != right->unlimited_transition_budget) return false;
     if (left->classify != right->classify) return false;
     if (left->builtin_allowed != right->builtin_allowed) return false;
@@ -19965,7 +19970,7 @@ static bool petta_machine_permit_choice(PettaMachineImpl *machine) {
         choice->kind == PETTA_CHOICE_TYPED_CALL ||
         choice->kind == PETTA_CHOICE_ONCE
             ? PETTA_MACHINE_OPERATION_LOCAL : PETTA_MACHINE_OPERATION_HOST;
-    return machine->host.permit_operation(machine->host.context,
+    return machine->host.permit_operation(machine->host.permit_operation_context,
         machine->space, operation, NULL);
 }
 
@@ -37221,6 +37226,10 @@ static bool petta_machine_init_internal(
     impl->table_generator = table_generator;
     if (host)
         impl->host = *host;
+    /* Resolve the default once. Operation checks retain their ordinary call
+     * shape and do not test whether an optional debugger was installed. */
+    if (!impl->host.permit_operation_context)
+        impl->host.permit_operation_context = impl->host.context;
     impl->observation_algebra =
         host && host->observation_contract
             ? host->observation_contract->algebra
@@ -37500,6 +37509,22 @@ CettaGsltTermViewStatusV1 petta_machine_operation_view_root(
         (void *)view->environment, view->expression, root_out);
 }
 
+bool petta_machine_operation_control_permit(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    PettaMachineOperationControl *control = context;
+    if (!control) return false;
+    control->breakpoint = false;
+    if (!control->authorize ||
+        !control->authorize(control->authority_context, space, operation, view))
+        return false;
+    if (control->stop_before &&
+        control->stop_before(control->stop_context, space, operation, view)) {
+        control->breakpoint = true;
+        return false;
+    }
+    return true;
+}
+
 static bool petta_machine_permit_goal(PettaMachineImpl *machine) {
     if (!machine->host.permit_operation || machine->goal_len == 0u)
         return true;
@@ -37554,7 +37579,7 @@ static bool petta_machine_permit_goal(PettaMachineImpl *machine) {
             PETTA_ACTIVATION_SOURCE_FIRST) ? goal->activation_epoch : 0u,
         .activation_first_entry = goal->activation_first_entry,
     };
-    return machine->host.permit_operation(machine->host.context,
+    return machine->host.permit_operation(machine->host.permit_operation_context,
         machine->space, operation, &view);
 }
 

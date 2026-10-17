@@ -11,29 +11,75 @@ static inline __attribute__((always_inline)) void prime_native_history_scope_lea
     if (scope->entered) prime_need_recording_leave(scope);
 }
 
+/* Stage observer storage without changing the current diary or computation. */
+static bool prime_native_history_prepare(const PrimeNativeHistorySpec *spec,
+    uint64_t start, PrimeNativeHistory *out) {
+    *out = (PrimeNativeHistory){.spec=*spec, .start=start};
+    if (spec->selections == SIZE_MAX ||
+        spec->selections > SIZE_MAX / sizeof(*out->entries) ||
+        (spec->selections && (spec->nodes > SIZE_MAX / spec->selections ||
+                             spec->bytes > SIZE_MAX / spec->selections))) return false;
+    out->entries = spec->selections
+        ? calloc(spec->selections, sizeof(*out->entries)) : NULL;
+    if (spec->selections && !out->entries) return false;
+    out->group = prime_need_recording_new((PrimeNeedRecordingLimits){
+        .nodes=spec->selections * spec->nodes,
+        .payload_bytes=spec->selections * spec->bytes,
+        .slices=spec->selections + 1u, .owner_links=spec->owners});
+    return out->group != NULL;
+}
+
+/* Recorder allocation and replacement are absent from the plain entry's
+ * stack frame. They run only for an explicitly enabled observation. */
+static __attribute__((noinline, cold)) bool prime_native_history_start(
+    PrimeNativeControl *control, const PrimeNativeHistorySpec *spec) {
+    PrimeNativeHistory *history = &control->history;
+    PrimeNativeHistory prepared;
+    bool ready = prime_native_history_prepare(spec, control->steps, &prepared);
+    if (history->stopped || history->forgotten) {
+        /* Completed values and prepared slices may still carry handles to
+         * the old group. Keep its metadata through replacement; only actual
+         * readers retain the old payload after the recorder is released. */
+        if (!ready) {
+            prime_need_recording_release(prepared.group);
+            free(prepared.entries);
+            return false;
+        }
+        if (!history->forgotten) prime_need_recording_demote(history->group);
+        if (history->group) prime_need_recording_adopt_previous(prepared.group, history->group);
+        free(history->entries);
+    }
+    /* Initial allocation refusal remains an explicitly incomplete observer;
+     * it does not obstruct ordinary execution. Replacing a stopped diary,
+     * in contrast, commits only after the new owner is ready. */
+    *history = prepared;
+    control->policy.history = *spec;
+    return true;
+}
+
 static bool prime_native_history_configure(PrimeNativeControl *control,
     const PrimeNativeHistorySpec *spec) {
     PrimeNativeHistory *history = &control->history;
-    /* An allowance-only resume inherits the retained recording. Changing
-     * its owner or limits requires a new observation, not a hidden restart. */
+    /* An allowance-only resume inherits recording. Explicit False stops
+     * future recording without moving executable state or releasing roots
+     * still borrowed by retained children. Re-enabling starts a new suffix. */
+    if (spec->stop) {
+        if (spec->enabled || history->active) return false;
+        if (history->spec.enabled) {
+            prime_need_recording_seal(history->group);
+            history->spec.enabled = false;
+            history->stopped = true;
+            history->stop = control->steps;
+        }
+        control->policy.history = *spec;
+        return true;
+    }
     if (!spec->enabled) return true;
     if (history->spec.enabled)
         return history->spec.selections == spec->selections &&
             history->spec.nodes == spec->nodes && history->spec.bytes == spec->bytes &&
             history->spec.owners == spec->owners;
-    history->spec = *spec;
-    history->start = control->steps;
-    if (spec->selections > SIZE_MAX / sizeof(*history->entries)) return true;
-    history->entries = spec->selections
-        ? calloc(spec->selections, sizeof(*history->entries)) : NULL;
-    if (spec->selections && !history->entries) return true;
-    history->group = prime_need_recording_new((PrimeNeedRecordingLimits){
-        .nodes = spec->selections * spec->nodes,
-        .payload_bytes = spec->selections * spec->bytes,
-        .slices = spec->selections + 1u,
-        .owner_links = spec->owners,
-    });
-    return true;
+    return prime_native_history_start(control, spec);
 }
 
 static PrimeNeedReceipt prime_native_history_reserve(PrimeNativeControl *control) {
@@ -217,6 +263,10 @@ static Atom *prime_native_history_atom(PrimeNativeControl *control, Arena *arena
         prime_native_history_field(arena, "start-work", prime_native_occurrence_atom(arena, history->start)),
         prime_native_history_field(arena, "earlier", atom_symbol(arena, "Unrecorded")),
         prime_native_history_field(arena, "source-correspondence", atom_symbol(arena, "Unchecked")),
+        prime_native_history_field(arena, "recording", atom_symbol(arena,
+            history->stopped ? "False" : "True")),
+        prime_native_history_field(arena, "end-work", prime_native_occurrence_atom(arena,
+            history->stopped ? history->stop : control->steps)),
         prime_native_history_field(arena, "omitted-selections", prime_native_occurrence_atom(arena, history->omitted)),
         prime_native_history_field(arena, "omitted-nodes", prime_native_occurrence_atom(arena, status.omitted)),
         prime_native_history_field(arena, "overflow", atom_symbol(arena,
@@ -226,7 +276,10 @@ static Atom *prime_native_history_atom(PrimeNativeControl *control, Arena *arena
         prime_native_history_field(arena, "nodes", prime_native_occurrence_atom(arena, status.nodes)),
         prime_native_history_field(arena, "reservations", prime_native_occurrence_atom(arena, history->reservations)),
         prime_native_history_field(arena, "selections", atom_expr(arena, entries, (CettaExprLen)history->count))};
-    Atom *result = prime_native_history_field(arena, "history", atom_expr(arena, fields, 13u));
+    _Static_assert(sizeof(fields) / sizeof(*fields) == PRIME_NATIVE_HISTORY_ARITY,
+        "history producer and replay schema must agree");
+    Atom *result = prime_native_history_field(arena, "history", atom_expr(arena, fields,
+        sizeof(fields) / sizeof(*fields)));
     free(entries);
     return result;
 }

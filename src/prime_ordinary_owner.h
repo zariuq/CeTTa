@@ -24,8 +24,10 @@ void eval_prime_source_owner_release(CettaPrimeSourceOwner *);
  * this scope or while an outcome retains them. Tokens test currency; the
  * counted owner supplies lifetime. Scope close does not cancel outcomes.
  * allowance bounds controller work, independently of language fuel. The
- * initial retained profile admits unlimited language fuel and >=2 workers;
- * other admitted source calls keep their ordinary synchronous behavior.
+ * retained profile admits an unobserved top-level call with unlimited
+ * language fuel and an independent receiving arena. The root retains its
+ * first task before evaluation, including at allowance zero, for the
+ * selected worker capacity.
  * A wrong source/service tuple is INVALIDATED before evaluation. Foreign
  * roots without captured ownership retain synchronous caller ownership;
  * this API does not grant them a retained or parallel execution licence. */

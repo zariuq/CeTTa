@@ -27,7 +27,7 @@ static void gc_guard_case(unsigned mode) {
     prime_need_snapshot_init(&g_prime_need_active);
     prime_need_branch_state_init(&g_prime_need_branch_state_active);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    prime_need_receipt_init(&g_prime_need_receipt_active);
+    prime_need_active_receipt_set((PrimeNeedReceipt){0});
 #endif
     assert(arena_alloc(&arena, 4096u));
     Atom *leaf = atom_int(&arena, 7);

@@ -8,14 +8,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from test_prime_native_control import parse, observations
+from test_prime_native_control import parse, observations, bag
 from test_prime_native_cost import receipt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--runtime', required=True)
 parser.add_argument('--receipt-dir', required=True)
 parser.add_argument('--timeout', type=float, default=60)
-parser.add_argument('--population', choices=('all', 'replay', 'forget'), default='all')
+parser.add_argument('--population', choices=('all', 'replay', 'forget', 'diagnostics', 'origins', 'resampling', 'debug', 'breakpoint', 'resource-breakpoint'), default='all')
 args = parser.parse_args()
 w = Path(__file__).resolve().parent.parent
 b = Path(args.runtime).resolve()
@@ -29,8 +29,9 @@ base = '(= (history-coin) 3)\n(= (history-coin) 3)\n(= (history-coin) 6)\n(= (hi
 body = '(history-pair (history-coin))'
 history = '(history (selections 512) (nodes 32) (bytes 65536) (owners 10000))'
 
-def policy(width, budget, h=True):
-    return f"(search-policy (control FIFO (demand all) (retain True) (workers {width}) (budget {budget}) {(history if h else '')}))"
+def policy(width, budget, h=True, stop=False):
+    observer = '(history False)' if stop else history if h else ''
+    return f"(search-policy (control FIFO (demand all) (retain True) (workers {width}) (budget {budget}) {observer}))"
 pattern = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) (history $h))'
 plain = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))'
 runs = []
@@ -88,13 +89,18 @@ def normalize(history):
         return [walk(z) for z in y]
     return walk(history)
 
-def run(name, query, definitions=base, language='prime', source_path=None):
+def same_observation(left, right):
+    return all(left[key] == right[key] for key in
+               ('values', 'work', 'closed', 'satisfied', 'status'))
+
+def run(name, query, definitions=base, language='prime', source_path=None, environment=None):
     p = Path(source_path) if source_path else d / (name + '.metta')
     if not source_path:
         p.write_text(definitions + query + '\n')
     cmd = [str(b), '--lang', language] + (['--profile', 'extended'] if language != 'prime' else []) + [str(p)]
     try:
-        r = subprocess.run(cmd, cwd=w, capture_output=True, text=True, timeout=args.timeout)
+        r = subprocess.run(cmd, cwd=w, capture_output=True, text=True, timeout=args.timeout,
+                           env=environment)
     except subprocess.TimeoutExpired as e:
         def decoded(value):
             return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
@@ -111,7 +117,9 @@ def run(name, query, definitions=base, language='prime', source_path=None):
     except (IndexError, ValueError, TypeError) as e:
         o = []
         (d / (name + '.parse-error')).write_text(repr(e) + '\n')
-    runs.append(dict(name=name, command=cmd, source_sha256=hashlib.sha256(p.read_bytes()).hexdigest(), native_exit=r.returncode, observations=o))
+    runs.append(dict(name=name, command=cmd, source_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
+                     need_diagnostics=environment.get('CETTA_PRIME_NEED_TRACE') if environment is not None else None,
+                     native_exit=r.returncode, observations=o))
     return o
 
 
@@ -499,6 +507,1034 @@ def forget_controls():
     checks.append(dict(case=name, passed=ok, effects=effects))
 
 
+def fields(history):
+    return {x[0]: x[1] for x in history[1:] if isinstance(x, list) and len(x) == 2}
+
+
+def recording_policy_controls():
+    """Stop a real retained observer, then optionally record a fresh suffix."""
+    imported = f'!(import! &self {w / "lib/native_history.metta"})\n'
+    marker = 'HISTORY-POLICY-ONCE'
+    definitions = (
+        f'(= (policy-coin) (let $_ (println! "{marker}") (superpose (2 2 3))))\n'
+        '(= (policy-step $x) (+ $x 1))\n'
+        '(= (policy-name 3) Three)\n(= (policy-name 4) Four)\n'
+        '(= (policy-pair $x) (Pair (policy-name (policy-step $x)) (policy-step $x)))\n'
+        '(= (policy-jobs $x) (policy-pair $x))\n(= (policy-jobs $x) Ready)\n')
+    expected = sorted(map(repr, ['Ready', ['Pair', 'Three', 3],
+                                ['Pair', 'Three', 3], ['Pair', 'Four', 4]]))
+    for width in (1, 2):
+        for cut in (7, 20):
+            for restart in (False, True):
+                name = f'history-policy-w{width}-c{cut}-restart-{int(restart)}'
+                stopped = policy(width, 3, False, stop=True)
+                final = policy(width, 5000, restart)
+                if restart:
+                    final = final.replace('(selections 512)', '(selections 4)')
+                query = (imported +
+                    f'!(bind! &before (cost:run {policy(width, cut)} (policy-jobs (policy-coin))))\n'
+                    '!(let $report &before $report)\n'
+                    '!(bind! &old (let $report &before '
+                    '(let (HistoryField Found residual $token) (history:field $report residual) '
+                    '(let $tail (cdr-atom $token) (car-atom $tail)))))\n'
+                    f'!(select 0 {stopped} &old)\n'
+                    f'!(select 0 {final} &old)\n'
+                    '!(let $report &before $report)\n')
+                parts = run(name, query, definitions)
+                stdout = (d / (name + '.stdout')).read_text()
+                effects = sum(line.strip('"') == marker for line in stdout.splitlines())
+                ok = len(parts) == 4 and effects == 1
+                if ok:
+                    before, gap, result, retained = parts
+                    h0, h1, h2 = [fields(part['history']) for part in (before, gap, result)]
+                    ok = (before == retained and
+                          result['closed'] == 'True' and
+                          result['residual'] == before['residual'] and
+                          sorted(map(repr, before['values'] + gap['values'] + result['values'])) == expected and
+                          h0['recording'] == 'True' and h1['recording'] == 'False' and
+                          h1['end-work'] == before['work'] and
+                          all(h1[key] == h0[key] for key in
+                              ('selections', 'nodes', 'omitted-nodes', 'reservations')))
+                    if restart:
+                        ok = ok and (h2['recording'] == 'True' and
+                            h2['start-work'] == gap['work'] and
+                            h2['end-work'] == result['work'] and
+                            len(h2['selections']) == 4 and
+                            h2['omitted-selections'] > 0 and h2['status'] == 'Incomplete')
+                    else:
+                        ok = ok and (h2['recording'] == 'False' and
+                            h2['end-work'] == before['work'] and
+                            all(h2[key] == h0[key] for key in
+                                ('selections', 'nodes', 'omitted-nodes', 'reservations')))
+                checks.append(dict(case=name, passed=ok, effects=effects))
+
+
+def diagnostic_controls(recording=True):
+    ordinary_env = {key: value for key, value in os.environ.items()
+                    if key != 'CETTA_PRIME_NEED_TRACE'}
+    traced_env = {**ordinary_env, 'CETTA_PRIME_NEED_TRACE': '1'}
+    for width in (1, 2):
+        for empty in (False, True):
+            definitions = (
+                '(= diagnostic-source (empty))\n(= diagnostic-source (empty))\n'
+                if empty else
+                '(= diagnostic-source 1)\n'
+                '(= diagnostic-source (let $_ (println! "DIAGNOSTIC-ONCE") (+ 1 2)))\n')
+            definitions += '(= (diagnostic-pair $x) (Pair $x $x))\n'
+            for recorded in ((False, True) if recording else (False,)):
+                name = f'diagnostics-w{width}-empty{int(empty)}-history{int(recorded)}'
+                query = f'!(select 0 {policy(width, 2000, recorded)} (diagnostic-pair diagnostic-source))'
+                off = run(name + '-off', query, definitions, environment=ordinary_env)
+                on = run(name + '-on', query, definitions, environment=traced_env)
+                off_err = (d / (name + '-off.stderr')).read_text()
+                on_err = (d / (name + '-on.stderr')).read_text()
+                expected = [] if empty else [['Pair', 1, 1], ['Pair', 3, 3]]
+                ok = len(off) == len(on) == 1 and not off_err and '[factive ' in on_err
+                for label, observation in (('off', off), ('on', on)):
+                    ok = ok and bool(observation)
+                    if observation:
+                        result = observation[0]
+                        ok = ok and (sorted(map(repr, result['values'])) == sorted(map(repr, expected)) and
+                            result['closed'] == 'True' and result['status'] == 'closed' and
+                            ('history' in result) == recorded)
+                    effects = sum(line.strip('"') == 'DIAGNOSTIC-ONCE'
+                                  for line in (d / (name + '-' + label + '.stdout')).read_text().splitlines())
+                    ok = ok and effects == (0 if empty else 1)
+                if ok and width == 1:
+                    ok = off[0]['work'] == on[0]['work']
+                    if recorded:
+                        ok = ok and normalize(off[0]['history']) == normalize(on[0]['history'])
+                checks.append(dict(case=name, passed=ok))
+
+
+    marker = 'DIAGNOSTIC-SCHEDULE-ONCE'
+    definitions = f'(= (diagnostic-work) (let $_ (println! "{marker}") (+ 4 5)))\n'
+    body = '(let $p (delay (diagnostic-work)) (Pair (force $p) (force $p)))'
+    for width in (1, 2):
+        for recorded in ((False, True) if recording else (False,)):
+            name = f'diagnostics-owned-force-w{width}-history{int(recorded)}'
+            query = f'!(select 0 {policy(width, 2000, recorded)} {body})'
+            off = run(name + '-off', query, definitions, environment=ordinary_env)
+            on = run(name + '-on', query, definitions, environment=traced_env)
+            ok = len(off) == len(on) == 1
+            if ok:
+                ok = same_observation(off[0], on[0]) and off[0]['values'] == [['Pair', 9, 9]]
+                ok = ok and off[0]['closed'] == 'True' and off[0]['status'] == 'closed'
+                if recorded and width == 1:
+                    ok = ok and normalize(off[0]['history']) == normalize(on[0]['history'])
+            for label in ('off', 'on'):
+                output = (d / (name + '-' + label + '.stdout')).read_text()
+                ok = ok and sum(line.strip('"') == marker for line in output.splitlines()) == 1
+            ok = ok and not (d / (name + '-off.stderr')).read_text()
+            ok = ok and '[sforce ' in (d / (name + '-on.stderr')).read_text()
+            checks.append(dict(case=name, passed=ok))
+
+    ordinary_cases = (
+        ('strict', '(= (diagnostic-inc $x) (+ $x 1))\n',
+         '!(diagnostic-inc (superpose (2 2)))', [[3, 3]], '[strict]'),
+        ('fold', '', '!(foldl-atom (1 2 3) 0 $acc $x (+ $acc $x))', [[6]], None),
+    )
+    for label, definitions, query, expected, trace in ordinary_cases:
+        name = 'diagnostics-ordinary-' + label
+        for suffix, environment in (('off', ordinary_env), ('on', traced_env)):
+            run(name + '-' + suffix, query, definitions, environment=environment)
+        plain = (d / (name + '-off.stdout')).read_text()
+        traced = (d / (name + '-on.stdout')).read_text()
+        off_err = (d / (name + '-off.stderr')).read_text()
+        on_err = (d / (name + '-on.stderr')).read_text()
+        checks.append(dict(case=name, passed=parse(plain) == parse(traced) == expected and
+                           not off_err and (trace is None or trace in on_err)))
+
+    # Native sharing diagnostics select the force operation at entry. They
+    # must neither disappear when requested nor duplicate the shared effect.
+    name = 'diagnostics-native-force-policy'
+    marker = 'FORCE-POLICY-ONCE'
+    definitions = f'(= (force-policy-work) (chain (println! "{marker}") $ignored (+ 4 5)))\n'
+    body = '(let $p (delay (force-policy-work)) (Pair (force $p) (force $p)))'
+    quiet = {key: value for key, value in ordinary_env.items()
+             if key != 'CETTA_PRIME_NATIVE_CONTROL_TRACE'}
+    loud = {**quiet, 'CETTA_PRIME_NATIVE_CONTROL_TRACE': '1'}
+    samples = []
+    for suffix, environment in (('off', quiet), ('on', loud)):
+        samples.append(run(name + '-' + suffix,
+                           f'!(select 0 {policy(1, 2000, False)} {body})',
+                           definitions, environment=environment))
+    checks.append(dict(case=name, passed=
+        len(samples[0]) == len(samples[1]) == 1 and
+        same_observation(samples[0][0], samples[1][0]) and
+        samples[0][0]['values'] == [['Pair', 9, 9]] and
+        all((d / (name + '-' + suffix + '.stdout')).read_text().count(marker) == 1
+            for suffix in ('off', 'on')) and
+        not (d / (name + '-off.stderr')).read_text() and
+        '[need-share]' in (d / (name + '-on.stderr')).read_text()))
+
+    name = 'diagnostics-native-publication-and-rational'
+    body = ('(chain (add-atom &self (DiagnosticPublication 7)) $ignored '
+            '(Pair (weight:exact-rational? 7) (weight:exact-rational? 1.5)))')
+    samples = []
+    for suffix, environment in (('off', quiet), ('on', loud)):
+        samples.append(run(name + '-' + suffix,
+                           f'!(select 0 {policy(1, 2000, False)} {body})',
+                           definitions='', environment=environment))
+    notes = (d / (name + '-on.stderr')).read_text()
+    checks.append(dict(case=name, passed=
+        len(samples[0]) == len(samples[1]) == 1 and
+        same_observation(samples[0][0], samples[1][0]) and
+        samples[0][0]['values'] == [['Pair', 'True', 'False']] and
+        samples[0][0]['closed'] == 'True' and
+        not (d / (name + '-off.stderr')).read_text() and
+        'own-write phase=before' in notes and 'own-write phase=after' in notes and
+        'exact rational value=7 result=1' in notes and
+        'exact rational value=1.5 result=0' in notes))
+
+
+def origin_controls(recording=True):
+    marker = 'ORIGIN-MUST-NOT-FORCE'
+    definitions = f'(= (origin-effect) (println! {marker}))\n'
+    cases = [
+        ('unforced', '(observe-origin (delay (origin-effect)))',
+         [['suspension:view', ['origin-effect']]], True),
+        ('denied', '(observe-origin (suspension:restrict (delay 7) (suspension:rights force)))',
+         [['Error', ['observe-origin', 'suspension:opaque'], 'suspension:inspect-denied']], False),
+        ('ordinary-data', '(observe-origin 17)', [['observe-origin', 17]], False),
+        ('captured', '(let $x 7 (let $p (delay (Pair $x (+ 1 2))) (observe-origin $p)))',
+         [['suspension:view', ['Pair', 7, ['+', 1, 2]]]], True),
+    ]
+    def inspections(observation):
+        return [node for node in walk(observation.get('history', []))
+                if node[0] == 'NeedEvent' and node[1] == 1]
+    for width in (1, 2):
+        for label, expression, expected, inspected in cases:
+            stem = f'origin-w{width}-{label}'
+            off = run(stem + '-off', f'!(select 0 {policy(width, 2000, False)} {expression})', definitions)
+            ok = len(off) == 1 and off[0]['values'] == expected and off[0]['closed'] == 'True'
+            ok = ok and not inspections(off[0]) and 'history' not in off[0]
+            if recording:
+                on = run(stem + '-on', f'!(select 0 {policy(width, 2000)} {expression})', definitions)
+                ok = ok and len(on) == 1 and all(off[0][key] == on[0][key]
+                    for key in ('values', 'work', 'closed', 'satisfied', 'status'))
+                ok = ok and bool(inspections(on[0])) == inspected
+            effects = sum(line.strip('"') == marker for row in runs[-(2 if recording else 1):]
+                          for line in (d / (row['name'] + '.stdout')).read_text().splitlines())
+            checks.append(dict(case=stem, passed=ok and effects == 0, effects=effects))
+        if recording:
+            expression = '(observe-origin (delay (origin-effect)))'
+            for restart in (False, True):
+                stem = f'origin-policy-w{width}-restart{int(restart)}'
+                if restart:
+                    query = (f'!(bind! &origin-saved (select 0 {policy(width, 0)} {expression})) '
+                        f'!(bind! &origin-tail (let {pattern} &origin-saved $r)) '
+                        f'!(select 0 {policy(width, 0, stop=True)} &origin-tail) '
+                        f'!(select 0 {policy(width, 2000)} &origin-tail)')
+                else:
+                    query = (f'!(let {pattern} (select 0 {policy(width, 0)} {expression}) '
+                        f'(select 0 {policy(width, 2000, stop=True)} $r))')
+                parts = run(stem, query, definitions)
+                ok = bool(parts) and parts[-1]['values'] == [['suspension:view', ['origin-effect']]]
+                ok = ok and parts[-1]['closed'] == 'True' and bool(inspections(parts[-1])) == restart
+                ok = ok and not any(line.strip('"') == marker for line in (d / (stem + '.stdout')).read_text().splitlines())
+                checks.append(dict(case=stem, passed=ok))
+
+
+def resampling_controls(recording=True):
+    marker = 'RESAMPLING-EFFECT'
+    definitions = (f'(= resampling-coin 1) (= resampling-coin 2) '
+                   f'(= resampling-effect (chain (println! {marker}) $ignored 7)) ')
+    cases = [
+        ('shared-choice', '(let $p (delay resampling-coin) (Pair (force $p) (force $p)))',
+         [['Pair', 1, 1], ['Pair', 2, 2]], 0, False),
+        ('fresh-choice', '(let $p (resample resampling-coin) (Pair (force $p) (force $p)))',
+         [['Pair', 1, 1], ['Pair', 1, 2], ['Pair', 2, 1], ['Pair', 2, 2]], 0, True),
+        ('shared-effect', '(let $p (delay resampling-effect) (Pair (force $p) (force $p)))',
+         [['Pair', 7, 7]], 1, False),
+        ('fresh-effect', '(let $p (resample resampling-effect) (Pair (force $p) (force $p)))',
+         [['Pair', 7, 7]], 2, True),
+        ('empty', '(let $p (resample (empty)) (force $p))', [], 0, True),
+    ]
+    for width in (1, 2):
+        for label, expression, expected, expected_effects, resampled in cases:
+            stem = f'resampling-w{width}-{label}'
+            off = run(stem + '-off', f'!(select 0 {policy(width, 4000, False)} {expression})', definitions)
+            ok = len(off) == 1 and off[0]['closed'] == 'True' and 'history' not in off[0]
+            ok = ok and sorted(map(repr, off[0]['values'])) == sorted(map(repr, expected))
+            if recording:
+                on = run(stem + '-on', f'!(select 0 {policy(width, 4000)} {expression})', definitions)
+                ok = ok and len(on) == 1 and on[0]['closed'] == 'True'
+                ok = ok and sorted(map(repr, on[0]['values'])) == sorted(map(repr, expected))
+                events = [node for node in walk(on[0]['history']) if node[0] == 'NeedEvent' and node[1] == 5]
+                ok = ok and bool(events) == resampled
+            effects = []
+            for row in runs[-(2 if recording else 1):]:
+                effects.append(sum(line.strip('"') == marker
+                    for line in (d / (row['name'] + '.stdout')).read_text().splitlines()))
+            checks.append(dict(case=stem, passed=ok and all(n == expected_effects for n in effects), effects=effects))
+
+
+def breakpoint_controls(recording=True):
+    """Inspect owned entries without executing them or replaying the prefix."""
+    imported = f'!(import! &self {w / "lib/native_history.metta"})\n'
+    capture = ('!(let $report &before $report)\n'
+               '!(bind! &resume (let $report &before '
+               '(let (HistoryField Found residual $token) (history:field $report residual) '
+               '(let $tail (cdr-atom $token) (car-atom $tail)))))\n')
+
+    def stop_policy(option, recording=''):
+        return ('(search-policy (control FIFO (demand all) (retain True) '
+                f'(budget 10000) {option} {recording}))')
+
+    for binder in ('let', 'chain'):
+        for recorded in ((False, True) if recording else (False,)):
+            name = f'breakpoint-{binder}-recorded-{int(recorded)}'
+            before = ('(let $_ (println! "BREAK-BEFORE") (break:stop 7))'
+                      if binder == 'let' else
+                      '(chain (println! "BREAK-BEFORE") $_ (break:stop 7))')
+            definitions = ('(= (break:stop $x) '
+                           f'({binder} ' +
+                           ('$_ (println! "BREAK-AFTER")' if binder == 'let' else
+                            '(println! "BREAK-AFTER") $_') +
+                           ' (superpose ($x $x 11))))\n')
+            active = stop_policy('(breakpoint (break:stop $any))', history if recorded else '')
+            query = (imported + f'!(bind! &before (select 0 {active} {before}))\n' + capture +
+                     f'!(select 0 {stop_policy("")} &resume)\n' +
+                     f'!(select 0 {stop_policy("(breakpoint False)", "(history False)")} &resume)\n')
+            parts = run(name, query, definitions)
+            effects = [line.strip('"') for line in (d / (name + '.stdout')).read_text().splitlines()
+                       if line.strip('"') in ('BREAK-BEFORE', 'BREAK-AFTER')]
+            ok = len(parts) == 3 and effects == ['BREAK-BEFORE', 'BREAK-AFTER']
+            if ok:
+                held, repeated, done = parts
+                notice = replay_fields(held['breakpoint'])
+                again = replay_fields(repeated['breakpoint'])
+                ok = (held['values'] == repeated['values'] == [] and
+                      held['status'] == repeated['status'] == 'breakpoint' and
+                      held['work'] == repeated['work'] and
+                      held['residual'] == repeated['residual'] == done['residual'] and
+                      notice['state'] == again['state'] == 'Hit' and
+                      notice['occurrence'] == again['occurrence'] != 0 and
+                      again['inspections'] == notice['inspections'] + 1 and
+                      notice['operation'] == 'Call' and
+                      done['closed'] == 'True' and done['values'] == [7, 7, 11])
+                if recorded:
+                    recorded_fields = fields(held['history'])
+                    stopped_fields = fields(done['history'])
+                    ok = ok and stopped_fields['recording'] == 'False' and all(
+                        stopped_fields[key] == recorded_fields[key] for key in
+                        ('selections', 'nodes', 'omitted-nodes', 'reservations', 'end-work'))
+            checks.append(dict(case=name, passed=ok, effects=effects))
+
+    for variant, option, budget in (
+            ('incomplete', '(breakpoint (break:stop $any) 0)', 10000),
+            ('fuel-before-inspection', '(breakpoint (break:stop $any) 0)', 0),
+            ('miss', '(breakpoint (never:entered))', 10000)):
+        name = 'breakpoint-' + variant
+        policy_text = stop_policy(option).replace('(budget 10000)', f'(budget {budget})')
+        parts = run(name, f'!(select 0 {policy_text} (break:stop 7))',
+                    '(= (break:stop $x) $x)\n')
+        ok = len(parts) == 1
+        if ok:
+            part = parts[0]
+            notice = replay_fields(part['breakpoint'])
+            if variant == 'incomplete':
+                ok = (part['status'] == 'inspection-incomplete' and part['work'] == 0 and
+                      part['values'] == [] and notice['state'] == 'InspectionIncomplete' and
+                      notice['operation'] == 'Normalize')
+            elif variant == 'fuel-before-inspection':
+                ok = (part['status'] == 'suspended' and part['work'] == 0 and
+                      part['values'] == [] and notice['inspections'] == 0)
+            else:
+                ok = (part['closed'] == 'True' and part['values'] == [7] and
+                      notice['state'] == 'Armed' and notice['inspections'] > 0)
+        checks.append(dict(case=name, passed=ok))
+
+
+    name = 'breakpoint-choice-entry'
+    active = stop_policy('(breakpoint (break:stop $any))')
+    query = (imported + f'!(bind! &before (select 0 {active} '
+             '(superpose ((break:stop 7) (break:stop 8)))))\n' + capture +
+             f'!(select 0 {stop_policy("(breakpoint False)")} &resume)')
+    parts = run(name, query, '(= (break:stop $x) $x)\n')
+    checks.append(dict(case=name, passed=len(parts) == 2 and
+                       parts[0]['status'] == 'breakpoint' and not parts[0]['values'] and
+                       replay_fields(parts[0]['breakpoint'])['operation'] == 'Call' and
+                       parts[1]['closed'] == 'True' and parts[1]['values'] == [7, 8]))
+
+    name = 'breakpoint-chain-order'
+    definitions = ('(= (break:source) (chain (println! "BREAK-SOURCE-1") $_ 1))\n'
+                   '(= (break:source) (chain (println! "BREAK-SOURCE-2") $_ 2))\n')
+    query = (f'!(select 0 {stop_policy("(breakpoint (never:entered))")} '
+             '(chain (break:source) $x (chain (println! "BREAK-BODY") $_ $x)))')
+    parts = run(name, query, definitions)
+    effects = [line.strip('"') for line in (d / (name + '.stdout')).read_text().splitlines()
+               if line.strip('"').startswith('BREAK-')]
+    checks.append(dict(case=name, passed=len(parts) == 1 and parts[0]['values'] == [1, 2] and
+                       effects == ['BREAK-SOURCE-1', 'BREAK-SOURCE-2', 'BREAK-BODY', 'BREAK-BODY'],
+                       effects=effects))
+
+    name = 'breakpoint-invalidated'
+    active = stop_policy('(breakpoint (break:stop $any))')
+    query = (imported + f'!(bind! &before (select 0 {active} (break:stop 7)))\n' + capture +
+             '!(add-atom &self (= (break:stop $x) Extra))\n' +
+             f'!(select 0 {stop_policy("(breakpoint False)")} &resume)')
+    parts = run(name, query, '(= (break:stop $x) $x)\n')
+    checks.append(dict(case=name, passed=len(parts) == 2 and
+                       parts[0]['status'] == 'breakpoint' and
+                       parts[1]['status'] == 'invalidated' and
+                       parts[0]['work'] == parts[1]['work'] and not parts[1]['values']))
+
+    if recording:
+        name = 'breakpoint-checkpoint-replay'
+        replay = replay_policy().replace('(demand all)',
+                                         '(demand all) (breakpoint (break:stop $any))')
+        query = (f'!(bind! &capsule (history:capture (quote (cost:run {replay} (break:stop 7))) '
+                 '(ReplayLimits 8 8192 536870912)))\n'
+                 '!(history:record &capsule 1000)\n!(history:record &capsule 1000)\n'
+                 '!(history:replay &capsule 2000000000)\n'
+                 '!(history:replay &capsule 2000000000)\n!(history:dispose &capsule)')
+        run(name, query, '(= (break:stop $x) $x)\n')
+        reports = replay_reports(name)
+        ok = len(reports) == 4
+        if ok:
+            held = [replay_observation(report) for report in reports[:2]]
+            ok = (all(part['status'] == 'breakpoint' and part['work'] == 0 for part in held) and
+                  reports[-1]['accepted-requests'] == 2 and
+                  reports[-1]['unconsumed-requests'] == 0 and
+                  reports[-1]['replay-authenticated'] == 'True' and
+                  all(report['refusal'] == 'None' for report in reports))
+        checks.append(dict(case=name, passed=ok))
+
+
+def resource_breakpoint_controls(recording=True):
+    """Pause live publication without consuming inputs or lending authority."""
+    imported = f'!(import! &self {w / "lib/native_history.metta"})\n'
+    rows = ('!(bind! &jobs (new-space))\n!(add-atom &jobs Permit)\n'
+            '!(add-atom &jobs (exec 10 (I (take Permit) (absent Blocked)) '
+            '(O (+ (Winner Alpha)))))\n')
+    capture = ('!(let $report &before $report)\n'
+               '!(bind! &resume (let $report &before '
+               '(let (HistoryField Found residual $token) (history:field $report residual) '
+               '(let $tail (cdr-atom $token) (car-atom $tail)))))\n')
+    world = ('!(let $winners (collapse (match &jobs (Winner $who) $who)) '
+             '(Winners $winners))\n'
+             '!(let $permits (collapse (match &jobs Permit Present)) '
+             '(Permits $permits))\n')
+
+    def control(option, budget=10000, observer='', profile='Transaction', width=1):
+        return (f'(search-policy (control FIFO (resources {profile}) '
+                f'(workers {width}) (retain True) (budget {budget}) {option} {observer}))')
+
+    active = control('(breakpoint (exec 10 $inputs $outputs))')
+    resumed = control('(breakpoint False)')
+    prefix = imported + rows + f'!(bind! &before (select 1 {active} &jobs))\n' + capture
+
+    for variant, change, winner in (
+            ('unchanged', '', 'Alpha'),
+            ('unrelated', '!(add-atom &jobs Unrelated)\n', 'Alpha'),
+            ('stale-absence', '!(add-atom &jobs Blocked)\n', None),
+            ('stale-take',
+             '!(add-atom &jobs (exec 0 (I (take Permit)) (O (+ (Winner Beta)))))\n'
+             '!(select 1 (search-policy (control WO (resources Transaction) '
+             '(key (exec $p $i $o) $p) (budget 10000))) &jobs)\n', 'Beta')):
+        name = 'resource-breakpoint-' + variant
+        query = prefix + change + f'!(select 1 {resumed} &resume)\n' + world
+        parts = run(name, query, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        ok = (len(parts) == (3 if variant == 'stale-take' else 2) and
+              parts[0]['status'] == 'breakpoint' and not parts[0]['values'] and
+              replay_fields(parts[0]['breakpoint'])['operation'] == 'ResourceCommit' and
+              replay_fields(parts[0]['breakpoint'])['coverage'] == 'OwnedPrimeResourceCommits' and
+              ['Winners', [winner] if winner else []] in trees and
+              ['Permits', ['Present'] if variant == 'stale-absence' else []] in trees)
+        if ok:
+            ok = (parts[-1]['residual'] == parts[0]['residual'] and
+                  len(parts[-1]['values']) == (1 if winner == 'Alpha' else 0))
+        checks.append(dict(case=name, passed=ok))
+
+    for recorded in ((False, True) if recording else (False,)):
+        name = f'resource-breakpoint-repeat-recorded-{int(recorded)}'
+        selected = control('(breakpoint (exec 10 $inputs $outputs))',
+                           observer=history if recorded else '')
+        query = (imported + rows + f'!(bind! &before (select 1 {selected} &jobs))\n' + capture +
+                 f'!(select 1 {control("")} &resume)\n' + world +
+                 ('!(history:forget &before 131072)\n' if recorded else '') +
+                 f'!(select 1 {resumed} &resume)\n' + world)
+        parts = run(name, query, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        ok = len(parts) == 3
+        if ok:
+            held, again, done = parts
+            first = replay_fields(held['breakpoint'])
+            second = replay_fields(again['breakpoint'])
+            ok = (held['status'] == again['status'] == 'breakpoint' and
+                  held['work'] == again['work'] and first['occurrence'] != 0 and
+                  first['occurrence'] == second['occurrence'] and
+                  second['inspections'] == first['inspections'] + 1 and
+                  len(done['values']) == 1 and held['residual'] == done['residual'] and
+                  ['Permits', ['Present']] in trees and ['Winners', ['Alpha']] in trees)
+            if recorded:
+                reports = history_reports(name, 'HistoryPolicy')
+                ok = ok and len(reports) == 1 and reports[0]['status'] == 'Unrecorded'
+        checks.append(dict(case=name, passed=ok))
+
+    for variant, option, budget in (
+            ('incomplete', '(breakpoint (exec 10 $inputs $outputs) 0)', 10000),
+            ('zero-budget', '(breakpoint (exec 10 $inputs $outputs))', 0),
+            ('miss', '(breakpoint (exec 99 $inputs $outputs))', 10000)):
+        name = 'resource-breakpoint-' + variant
+        parts = run(name, imported + rows +
+                    f'!(select 1 {control(option, budget)} &jobs)\n' + world,
+                    definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        ok = len(parts) == 1
+        if ok:
+            part = parts[0]
+            notice = replay_fields(part['breakpoint'])
+            ok = (['Winners', ['Alpha'] if variant == 'miss' else []] in trees and
+                  ['Permits', [] if variant == 'miss' else ['Present']] in trees)
+            if variant == 'incomplete':
+                ok = ok and part['status'] == 'inspection-incomplete' and not part['values']
+            elif variant == 'zero-budget':
+                ok = ok and part['work'] == notice['inspections'] == 0 and not part['values']
+            else:
+                ok = ok and len(part['values']) == 1 and notice['state'] == 'Armed'
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'resource-breakpoint-pure-caller'
+    query = (prefix + '!(select 1 (search-policy (control WO (budget 10000) '
+             f'(key $candidate (select 1 {resumed} &resume)))) (superpose (1 2)))\n' +
+             world + f'!(select 1 {resumed} &resume)\n' + world)
+    parts = run(name, query, definitions='')
+    trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+    checks.append(dict(case=name, passed=len(parts) >= 2 and
+                       parts[0]['status'] == 'breakpoint' and
+                       ['Permits', ['Present']] in trees and
+                       len(parts[-1]['values']) == 1 and ['Winners', ['Alpha']] in trees))
+
+    if recording:
+        name = 'resource-breakpoint-truncated-history'
+        selected = control('(breakpoint (exec 10 $inputs $outputs))', observer=
+                           '(history (selections 0) (nodes 0) (bytes 0) (owners 0))')
+        parts = run(name, imported + rows +
+                    f'!(bind! &before (select 1 {selected} &jobs))\n' + capture +
+                    f'!(select 1 {resumed} &resume)\n' + world, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        checks.append(dict(case=name, passed=len(parts) == 2 and
+                           parts[0]['status'] == 'breakpoint' and
+                           fields(parts[0]['history'])['status'] == 'Incomplete' and
+                           len(parts[-1]['values']) == 1 and
+                           ['Winners', ['Alpha']] in trees and ['Permits', []] in trees))
+
+
+    raw_exec = '(exec 0 (, Permit) (O (+ (Winner Alpha)) (- Permit)))'
+    raw_rows = ('!(bind! &jobs (new-space))\n!(add-atom &jobs Permit)\n'
+                f'!(add-atom &jobs {raw_exec})\n')
+    raw_world = world + ('!(let $keys (collapse (match &jobs (exec $k $i $o) $k)) '
+                         '(Directives $keys))\n')
+    def raw_control(option='', budget=10000, observer=''):
+        return (f'(search-policy (control FIFO (resources MM2) (workers 1) '
+                f'(budget {budget}) {option} {observer}))')
+    armed = '(breakpoint (exec 0 $inputs $outputs))'
+    raw_resumed = raw_control('(breakpoint False)')
+    for recorded in ((False, True) if recording else (False,)):
+        name = f'mm2-activation-repeat-recorded-{int(recorded)}'
+        query = (imported + raw_rows +
+                 f'!(bind! &before (select 1 {raw_control(armed, observer=history if recorded else "")} &jobs))\n' +
+                 capture + raw_world + f'!(select 1 {raw_control()} &resume)\n' + raw_world +
+                 ('!(history:forget &before 131072)\n' if recorded else '') +
+                 f'!(select 1 {raw_resumed} &resume)\n' + raw_world +
+                 f'!(select 2 {raw_resumed} &resume)\n' + raw_world)
+        parts = run(name, query, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        states = [node[1] for node in trees if node[0] == 'Directives']
+        ok = len(parts) == 4 and states == [[0], [0], [], []]
+        if ok:
+            held, again, done, exhausted = parts
+            first, second = (replay_fields(part['breakpoint']) for part in (held, again))
+            ok = (held['status'] == again['status'] == 'breakpoint' and
+                  held['work'] == again['work'] and
+                  first['operation'] == second['operation'] == 'ResourceActivation' and
+                  first['coverage'] == 'OwnedPrimeResourceActivations' and
+                  first['occurrence'] == second['occurrence'] != 0 and
+                  second['inspections'] == first['inspections'] + 1 and
+                  len(done['values']) == 1 and not exhausted['values'] and
+                  held['residual'] == done['residual'] and
+                  ['Winners', ['Alpha']] in trees and ['Permits', ['Present']] in trees)
+            if recorded:
+                policies = history_reports(name, 'HistoryPolicy')
+                ok = ok and len(policies) == 1 and policies[0]['status'] == 'Unrecorded'
+        checks.append(dict(case=name, passed=ok))
+
+    for variant, change in (
+            ('append', '!(add-atom &jobs Unrelated)\n'),
+            ('replace-equal', f'!(remove-atom &jobs {raw_exec})\n!(add-atom &jobs {raw_exec})\n')):
+        name = 'mm2-activation-stale-' + variant
+        query = (imported + raw_rows + f'!(bind! &before (select 1 {raw_control(armed)} &jobs))\n' +
+                 capture + change + f'!(select 1 {raw_resumed} &resume)\n' + raw_world)
+        parts = run(name, query, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        checks.append(dict(case=name, passed=len(parts) == 2 and
+            parts[0]['status'] == 'breakpoint' and not parts[-1]['values'] and
+            'StaleActivationSource' in str(parts[-1]) and
+            ['Directives', [0]] in trees and ['Permits', ['Present']] in trees and
+            ['Winners', []] in trees))
+
+    for variant, option, budget in (
+            ('incomplete', '(breakpoint (exec 0 $inputs $outputs) 0)', 10000),
+            ('zero-budget', armed, 0),
+            ('miss', '(breakpoint (exec 99 $inputs $outputs))', 10000)):
+        name = 'mm2-activation-' + variant
+        parts = run(name, imported + raw_rows +
+                    f'!(select 1 {raw_control(option, budget)} &jobs)\n' + raw_world, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        ok = len(parts) == 1
+        if ok:
+            part = parts[0]
+            if variant == 'miss':
+                ok = len(part['values']) == 1 and ['Directives', []] in trees
+            else:
+                ok = (not part['values'] and ['Directives', [0]] in trees and
+                      ['Permits', ['Present']] in trees and ['Winners', []] in trees)
+                if variant == 'incomplete':
+                    ok = ok and part['status'] == 'inspection-incomplete'
+                else:
+                    ok = ok and part['work'] == replay_fields(part['breakpoint'])['inspections'] == 0
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'mm2-activation-pure-admission-cannot-resume'
+    query = (imported + raw_rows + f'!(bind! &before (select 1 {raw_control(armed)} &jobs))\n' +
+             capture + f'(= (resume-verdict $weight) (chain (select 1 {raw_resumed} &resume) $ignored True))\n'
+             '(=w (resume-guarded) GuardedBody 2 (admit resume-verdict))\n'
+             '!(weight:read (algebra 0 1 + *) (resume-guarded))\n' + raw_world +
+             f'!(select 1 {raw_resumed} &resume)\n' + raw_world)
+    parts = run(name, query, definitions='')
+    trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+    checks.append(dict(case=name, passed=len(parts) == 3 and
+        parts[0]['status'] == 'breakpoint' and parts[1]['status'] == 'fault' and
+        not parts[1]['values'] and len(parts[-1]['values']) == 1 and
+        [node[1] for node in trees if node[0] == 'Directives'] == [[0], []]))
+
+
+    from test_prime_native_resources import world_observations
+    snapshot_exec = '(exec Take (I (take (Token $x))) (O (+ (Taken $x))))'
+    snapshot_rows = ('!(bind! &jobs (new-space))\n!(add-atom &jobs (Token A))\n'
+                     '!(add-atom &jobs (Token B))\n' + f'!(add-atom &jobs {snapshot_exec})\n')
+    snapshot_live = '!(let $rows (collapse (get-atoms &jobs)) (LiveStore $rows))\n'
+    def snapshot_control(option='', budget=10000, observer=''):
+        return control(option, budget, observer, '(Transaction worlds)')
+    snapshot_armed = '(breakpoint (exec Take $inputs $outputs))'
+    snapshot_resumed = snapshot_control('(breakpoint False)')
+    reference = run('snapshot-breakpoint-reference', imported + snapshot_rows +
+                    f'!(select 100 {snapshot_control()} &jobs)', definitions='')
+    expected = world_observations(reference[-1])
+    for recorded in ((False, True) if recording else (False,)):
+        name = f'snapshot-breakpoint-repeat-recorded-{int(recorded)}'
+        query = (imported + snapshot_rows +
+                 f'!(bind! &before (select 100 {snapshot_control(snapshot_armed, observer=history if recorded else "")} &jobs))\n' +
+                 capture + snapshot_live + f'!(select 100 {snapshot_control()} &resume)\n' + snapshot_live +
+                 ('!(history:forget &before 131072)\n' if recorded else '') +
+                 f'!(select 1 {snapshot_resumed} &resume)\n' +
+                 f'!(select 100 {snapshot_resumed} &resume)\n' + snapshot_live)
+        parts = run(name, query, definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        live = [node[1] for node in trees if node[0] == 'LiveStore']
+        ok = len(parts) == 4 and len(live) == 3 and live == [live[0]] * 3
+        if ok:
+            before, again, first, last = parts
+            initial, repeated = (replay_fields(p['breakpoint']) for p in (before, again))
+            joined = {**last, 'values': first['values'] + last['values']}
+            ok = (before['status'] == again['status'] == 'breakpoint' and
+                  not before['values'] and not again['values'] and before['work'] == again['work'] and
+                  initial['operation'] == 'ResourceCommit' and
+                  initial['coverage'] == 'OwnedPrimeSnapshotCommits' and
+                  initial['occurrence'] == repeated['occurrence'] != 0 and
+                  repeated['inspections'] == initial['inspections'] + 1 and
+                  len(first['values']) == len(last['values']) == 1 and
+                  last['closed'] == 'True' and last['work'] == reference[-1]['work'] and
+                  world_observations(joined) == expected)
+            if recorded:
+                policies = history_reports(name, 'HistoryPolicy')
+                ok = ok and len(policies) == 1 and policies[0]['status'] == 'Unrecorded'
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'snapshot-breakpoint-equal-occurrences-remain-distinct'
+    duplicates = snapshot_rows.replace('(Token B)', '(Token A)')
+    parts = run(name, imported + duplicates +
+                f'!(bind! &before (select 100 {snapshot_control(snapshot_armed)} &jobs))\n' +
+                capture + f'!(select 100 {snapshot_resumed} &resume)', definitions='')
+    observations = world_observations(parts[-1]) if parts else []
+    checks.append(dict(case=name, passed=len(parts) == 2 and
+        parts[0]['status'] == 'breakpoint' and len(observations) == 2 and
+        observations[0][0] == observations[1][0] and observations[0][1] != observations[1][1]))
+
+    for variant, change in (
+            ('append', '!(add-atom &jobs Phantom)\n'),
+            ('replace-equal', f'!(remove-atom &jobs {snapshot_exec})\n!(add-atom &jobs {snapshot_exec})\n')):
+        name = 'snapshot-breakpoint-stale-' + variant
+        parts = run(name, imported + snapshot_rows +
+                    f'!(bind! &before (select 100 {snapshot_control(snapshot_armed)} &jobs))\n' +
+                    capture + change + f'!(select 100 {snapshot_resumed} &resume)\n' + snapshot_live,
+                    definitions='')
+        trees = list(walk(parse((d / (name + '.stdout')).read_text())))
+        live = [node[1] for node in trees if node[0] == 'LiveStore']
+        checks.append(dict(case=name, passed=len(parts) == 2 and
+            parts[0]['status'] == 'breakpoint' and parts[-1]['status'] == 'invalidated' and
+            not parts[-1]['values'] and len(live) == 1 and
+            ['Token', 'A'] in live[0] and ['Token', 'B'] in live[0] and
+            not any(isinstance(row, list) and row[:1] == ['Taken'] for row in live[0])))
+
+    for variant, option, budget in (
+            ('incomplete', '(breakpoint (exec Take $inputs $outputs) 0)', 10000),
+            ('zero-budget', snapshot_armed, 0),
+            ('miss', '(breakpoint (exec Never $inputs $outputs))', 10000)):
+        name = 'snapshot-breakpoint-' + variant
+        parts = run(name, imported + snapshot_rows +
+                    f'!(select 100 {snapshot_control(option, budget)} &jobs)\n' + snapshot_live,
+                    definitions='')
+        ok = len(parts) == 1
+        if ok and variant == 'miss':
+            ok = world_observations(parts[0]) == expected and parts[0]['work'] == reference[-1]['work']
+        elif ok:
+            ok = not parts[0]['values']
+            if variant == 'incomplete':
+                ok = ok and parts[0]['status'] == 'inspection-incomplete'
+            else:
+                ok = ok and parts[0]['work'] == replay_fields(parts[0]['breakpoint'])['inspections'] == 0
+        checks.append(dict(case=name, passed=ok))
+
+    name = 'snapshot-breakpoint-pure-admission-cannot-resume'
+    query = (imported + snapshot_rows +
+             f'!(bind! &before (select 100 {snapshot_control(snapshot_armed)} &jobs))\n' + capture +
+             f'(= (snapshot-verdict $weight) (chain (select 100 {snapshot_resumed} &resume) $ignored True))\n'
+             '(=w (snapshot-guarded) GuardedBody 2 (admit snapshot-verdict))\n'
+             '!(weight:read (algebra 0 1 + *) (snapshot-guarded))\n' +
+             f'!(select 100 {snapshot_resumed} &resume)\n')
+    parts = run(name, query, definitions='')
+    checks.append(dict(case=name, passed=len(parts) == 3 and
+        parts[0]['status'] == 'breakpoint' and parts[1]['status'] == 'fault' and
+        not parts[1]['values'] and world_observations(parts[-1]) == expected))
+    if recording:
+        name = 'snapshot-breakpoint-truncated-history'
+        observer = '(history (selections 0) (nodes 0) (bytes 0) (owners 0))'
+        parts = run(name, imported + snapshot_rows +
+                    f'!(bind! &before (select 100 {snapshot_control(snapshot_armed, observer=observer)} &jobs))\n' +
+                    capture + f'!(select 100 {snapshot_resumed} &resume)', definitions='')
+        checks.append(dict(case=name, passed=len(parts) == 2 and
+            parts[0]['status'] == 'breakpoint' and fields(parts[0]['history'])['status'] == 'Incomplete' and
+            world_observations(parts[-1]) == expected))
+
+
+    concurrent_worlds = ('!(bind! &jobs (new-space))\n!(add-atom &jobs Token)\n'
+        '!(add-atom &jobs (exec Left (I (read Token)) (O (+ Left))))\n'
+        '!(add-atom &jobs (exec Right (I (read Token)) (O (+ Right))))\n')
+    evidence = '(receipts True) (costs native-events-v1)'
+    for width in (2, 3):
+        for profile, initial in (('Transaction', rows), ('MM2', raw_rows),
+                                  ('(Transaction worlds)', concurrent_worlds)):
+            name = f'resource-parallel-breakpoint-w{width}-{profile}'
+            plain = control('', observer=evidence, profile=profile, width=width)
+            baseline = run(name + '-reference', imported + initial +
+                           f'!(select 100 {plain} &jobs)\n' + snapshot_live, definitions='')
+            for recorded in ((False, True) if recording else (False,)):
+                label = name + f'-recorded-{int(recorded)}'
+                observed = evidence + (' ' + history if recorded else '')
+                armed = control('(breakpoint (exec $key $inputs $outputs))',
+                                observer=observed, profile=profile, width=width)
+                resumed = control('(breakpoint False)', observer=evidence, profile=profile, width=width)
+                query = (imported + initial + f'!(bind! &before (select 100 {armed} &jobs))\n' +
+                         capture + snapshot_live + f'!(select 100 {plain} &resume)\n' +
+                         ('!(history:forget &before 131072)\n' if recorded else '') +
+                         f'!(select 100 {resumed} &resume)\n' + snapshot_live)
+                parts = run(label, query, definitions='')
+                trees = list(walk(parse((d / (label + '.stdout')).read_text())))
+                live = [node[1] for node in trees if node[0] == 'LiveStore']
+                ok = len(parts) == 3 and len(live) == 2
+                if ok:
+                    before, again, completed = parts
+                    first, second = (replay_fields(p['breakpoint']) for p in (before, again))
+                    expected_operation = 'ResourceActivation' if profile == 'MM2' else 'ResourceCommit'
+                    ok = (before['status'] == again['status'] == 'breakpoint' and
+                          not before['values'] and not again['values'] and before['work'] == again['work'] and
+                          first['operation'] == expected_operation and
+                          first['occurrence'] == second['occurrence'] != 0 and
+                          second['inspections'] == first['inspections'] + 1 and
+                          completed['closed'] == 'True')
+                    if profile == '(Transaction worlds)':
+                        # Several private worlds supply independent matcher
+                        # packets. A lone live provider stays on the coordinator.
+                        ok = (ok and bool(completed.get('parallel-waves')) and
+                              live[0] == live[1] and
+                              world_observations(completed) == world_observations(baseline[-1]))
+                    else:
+                        ok = (ok and completed['values'] == baseline[-1]['values'] and
+                              bool(completed.get('parallel-waves')) == bool(baseline[-1].get('parallel-waves')))
+                    ok = ok and completed['work'] == baseline[-1]['work'] + (1 if profile == 'MM2' else 0)
+                    if recorded:
+                        policies = history_reports(label, 'HistoryPolicy')
+                        ok = ok and len(policies) == 1 and policies[0]['status'] == 'Unrecorded'
+                checks.append(dict(case=label, passed=ok))
+
+
+def interaction_history_controls():
+    page = ('(InteractionChoices (choices $choices) (status $status) '
+            '(pending $pending) (quanta $quanta) (residual $residual))')
+    held = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) (agenda $a))'
+    prefix = ('!(bind! &jobs (new-space))\n'
+              '!(add-atom &jobs (exec A (I) (O (+ A))))\n'
+              '!(add-atom &jobs (exec B (I) (O (+ B))))\n'
+              '!(bind! &menu (interaction:choices &jobs 1000))\n'
+              f'!(bind! &discovery (let {page} &menu $residual))\n'
+              '!(bind! &selected (interaction:perform &discovery 2 0))\n'
+              f'!(bind! &held (let {held} &selected $r))\n'
+              '!(interaction:dispose &discovery)\n')
+    def resource(limit, observer=''):
+        return (f'!(select {limit} (search-policy (control FIFO (resources Transaction) '
+                f'(workers 1) (budget 1000) {observer})) &held)\n')
+    ordinary = run('interaction-history-ordinary', prefix + resource(1) + resource(2), definitions='')
+    recorded = run('interaction-history-optional', prefix + resource(1, history) +
+                   resource(2, '(history False)'), definitions='')
+    checks.append(dict(case='interaction-history-erases-to-normal-owned-execution', passed=
+        len(ordinary) == len(recorded) == 2 and
+        all(same_observation(left, right) for left, right in zip(ordinary, recorded)) and
+        all('history' not in report for report in ordinary)))
+    before = fields(recorded[0]['history']) if recorded else {}
+    stopped = fields(recorded[1]['history']) if len(recorded) == 2 else {}
+    checks.append(dict(case='interaction-history-stop-preserves-the-selected-prefix', passed=
+        bool(before.get('selections')) and before.get('recording') == 'True' and
+        stopped.get('recording') == 'False' and stopped.get('selections') == before.get('selections')))
+    name = 'interaction-history-forget-and-continue'
+    forgotten = run(name, prefix + resource(1, history) + '!(history:forget &held 100000)\n' +
+                    resource(2) + '!(collapse (get-atoms &jobs))', definitions='')
+    policies = [node for node in walk(parse((d / (name + '.stdout')).read_text()))
+                if node[0] == 'HistoryPolicy']
+    checks.append(dict(case=name, passed=len(forgotten) == 2 and bool(policies) and
+        fields(policies[0]).get('status') == 'Unrecorded' and
+        same_observation(forgotten[-1], ordinary[-1]) and
+        'history' not in forgotten[-1]))
+
+
+def debug_controls():
+    client = w / 'examples/prime/native_control/controlled_publication.metta'
+    name = 'debug-controlled-publication-unrecorded'
+    run(name, '', source_path=client)
+    checks.append(dict(case=name, passed=(d / (name + '.stdout')).read_text() ==
+                       client.with_suffix('.expected').read_text() and
+                       not (d / (name + '.stderr')).read_text()))
+    # The debugger is an ordinary imported MeTTa program, using the same retained
+    # observations. It must not execute a code-shaped verdict while inspecting it.
+    debug_client = w / 'tests/prime/need_admission_history.metta'
+    debug_library = w / 'lib/native_history.metta'
+    for variant in ('ordinary', 'inert', 'omitted'):
+        source = debug_client.read_text()
+        if variant == 'inert':
+            source = source.replace('(= (debug:unknown $coefficient) Maybe)',
+                '(= (debug:unknown $coefficient) '
+                '(quote (println! "VERDICT-MUST-STAY-DATA")))')
+        if variant == 'omitted':
+            source = source.replace('(nodes 32) (bytes 65536)', '(nodes 0) (bytes 0)')
+        source = source.replace('../../lib/native_history.metta', str(debug_library))
+        for language in ('prime', 'he', 'petta'):
+            name = f'debug-{variant}-{language}'
+            run(name, source, definitions='', language=language,
+                source_path=debug_client if variant == 'ordinary' else None)
+            stdout = (d / (name + '.stdout')).read_text()
+            nodes = list(walk(parse(stdout)))
+            reports = [node for node in nodes if node[0] == 'Explained']
+            roles = [[node[3] for node in walk(report) if node[0] == 'Verdict']
+                     for report in reports]
+            effects = [line.strip('"') for line in stdout.splitlines()
+                       if line.strip('"') in ('ACCEPTED-BODY', 'REJECTED-BODY',
+                                               'PENDING-BODY', 'VERDICT-MUST-STAY-DATA')]
+            ok = len(reports) == 6 and effects == ['ACCEPTED-BODY']
+            if ok:
+                views = [{item[0]: item[1:] for item in report[1:]
+                          if isinstance(item, list) and item} for report in reports]
+                ok = all(views[i]['closed'] == ['True'] and
+                         views[i]['status'] == ['closed'] for i in (0, 1, 4, 5)) and \
+                     all(views[i]['closed'] == ['False'] and
+                         views[i]['status'] == ['suspended'] for i in (2, 3)) and \
+                     views[3]['work'] == [0] and views[3]['activity'] == ['Unexamined'] and \
+                     views[4]['values'] == [['quote', []]] and \
+                     views[5]['values'] == [['quote', []]] and \
+                     all(views[i]['residual'] != [[]] for i in (2, 3))
+                ok = ok and not any(node[0].startswith('history:') for node in nodes)
+                if variant == 'omitted':
+                    ok = ok and roles == [[], [], [], [], [], []] and all(
+                        views[i]['recording'][0] == 'Incomplete' for i in (0, 1, 2))
+                else:
+                    ok = ok and roles == [['Accepted'],
+                        ['Rejected'], ['Pending'], [], [], ['Accepted']]
+            checks.append(dict(case=name, passed=ok, roles=roles, effects=effects,
+                               reports=len(reports),
+                               library_sha256=hashlib.sha256(debug_library.read_bytes()).hexdigest()))
+
+    # Project a real nonempty retained result, preserving order and multiplicity.
+    for language in ('prime', 'he', 'petta'):
+        name = 'debug-values-' + language
+        run(name, f'!(import! &self {debug_library}) '
+            f'!(let $observation (select 0 {policy(1, 2000)} {body}) '
+            '(history:explain $observation))', language=language)
+        stdout = (d / (name + '.stdout')).read_text()
+        report = tagged(parse(stdout), 'Explained')
+        expected = ['values', ['quote', [['Pair', 3, 3], ['Pair', 3, 3], ['Pair', 6, 6]]]]
+        checks.append(dict(case=name, passed=bool(report) and report[1] == expected,
+                           projection=report[1] if report else None))
+
+        # A supplied report is data, not replay authority or executable syntax.
+        name = 'debug-code-data-' + language
+        supplied = ('(Observation ((println! "EXPLAIN-MUST-STAY-DATA")) '
+            '(satisfied True) (closed True) (residual None) (work 0) (status closed) '
+            '(history (History (status Incomplete) (start-work 0) (earlier Unrecorded) '
+            '(source-correspondence Unchecked) (recording False) (end-work 0) '
+            '(omitted-selections 1) (omitted-nodes 0) '
+            '(overflow False) (RetainedCharges (payload 0)) (limits (nodes 0)) '
+            '(nodes 0) (reservations 0) (selections ()))))')
+        run(name, f'!(import! &self {debug_library}) !(history:explain {supplied})',
+            definitions='', language=language)
+        stdout = (d / (name + '.stdout')).read_text()
+        report = tagged(parse(stdout), 'Explained')
+        effects = [line for line in stdout.splitlines()
+                   if line.strip('"') == 'EXPLAIN-MUST-STAY-DATA']
+        expected = ['values', ['quote', [['println!', 'EXPLAIN-MUST-STAY-DATA']]]]
+        checks.append(dict(case=name, passed=bool(report) and report[1] == expected and not effects,
+                           projection=report[1] if report else None, effects=effects))
+
+
+    # Graph lookup uses the same unique-field reader, retaining the original node
+    # as quoted data. A missing node in a partial graph remains partial evidence.
+    for language in ('prime', 'he', 'petta'):
+        name = 'debug-node-fields-' + language
+        graph = '(NeedGraph 9 2 Complete ((NeedNode 1 0 0 Join) (NeedNode 2 1 1 (quote (println! "NODE-MUST-STAY-DATA")))))'
+        duplicate = '(NeedGraph 9 2 Complete ((NeedNode 2 1 1 Join) (NeedNode 2 1 1 Join)))'
+        run(name, f'!(import! &self {debug_library}) '
+            f'!(history:node {graph} 2) !(history:node {graph} 3) '
+            '!(history:node (NeedGraph 9 2 Incomplete ((NeedNode 1 0 0 Join))) 2) '
+            f'!(history:node {duplicate} 2)', definitions='', language=language)
+        stdout = (d / (name + '.stdout')).read_text()
+        nodes = [node for node in walk(parse(stdout)) if node[0] == 'GraphNode']
+        effects = [line for line in stdout.splitlines()
+                   if line.strip('"') == 'NODE-MUST-STAY-DATA']
+        ok = len(nodes) == 4 and not effects
+        if ok:
+            found = nodes[0][4]
+            ok = found[:3] == ['HistoryField', 'Found', 2] and \
+                found[3][:1] == ['quote'] and found[3][1][:4] == ['NeedNode', 2, 1, 1] and \
+                nodes[1][3:] == ['Complete', ['HistoryField', 'Missing', 3, []]] and \
+                nodes[2][3:] == ['Incomplete', ['HistoryField', 'Missing', 2, []]] and \
+                nodes[3][4] == ['HistoryField', 'Duplicate', 2, []]
+        checks.append(dict(case=name, passed=ok, reports=len(nodes), effects=effects))
+
+    # This authored client queries actual retained graphs, then resumes the same
+    # computation with recording stopped. Inspection must not replay production.
+    dependency_client = r'''
+    (: DependencyClient (-> Atom Atom Atom Atom))
+    (= (debug:dependency-body)
+       (let $_ (println! "DEPENDENCY-PRODUCER-ONCE") (history-pair (history-coin))))
+    '''
+    for variant, expression in (('pure', body), ('effect', '(debug:dependency-body)')):
+        for language in ('prime', 'he', 'petta'):
+            name = f'debug-retained-dependencies-{variant}-{language}'
+            prefix_policy = policy(1, 1000).replace('(demand all)', '(demand absolute)')
+            query = f'!(import! &self {debug_library}) ' + dependency_client + \
+                f'!(let $observation (select 1 {prefix_policy} {expression}) ' \
+                f'(let {pattern} $observation ' \
+                '(let $view (history:dependencies $observation) ' \
+                '(let (HistoryDependencies $explained $rows) $view ' \
+                f'(let $continued (select 0 {policy(1, 1000, stop=True)} $r) ' \
+                '(DependencyClient $view $h $continued))))))'
+            run(name, query, language=language)
+            stdout = (d / (name + '.stdout')).read_text()
+            packet = tagged(parse(stdout), 'DependencyClient')
+            effects = [line for line in stdout.splitlines()
+                       if line.strip('"') == 'DEPENDENCY-PRODUCER-ONCE']
+            ok = packet is not None and len(effects) == (1 if variant == 'effect' else 0)
+            graphs = []
+            if ok:
+                view, original_history, continued = packet[1:]
+                explanation = tagged(view, 'Explained')
+                explanation_fields = {row[0]: row[1:] for row in explanation[1:]
+                          if isinstance(row, list) and row}
+                before = explanation_fields['values'][0][1]
+                after = list(observations(continued))
+                graph_rows = view[2]
+                originals = fields(original_history)['selections']
+                graphs = [row for row in walk(graph_rows) if row[0] == 'NeedGraph']
+                ok = len(before) == 1 and explanation_fields['closed'] == ['False'] and len(after) == 1 and \
+                    bag(before + after[0]['values']) == bag([['Pair', 3, 3], ['Pair', 3, 3], ['Pair', 6, 6]]) and \
+                    after[0]['closed'] == 'True' and \
+                    len(graph_rows) == len(originals) and all(
+                        row[:6] == ['SelectionGraphs', *original[1:6]] and
+                        row[6] == ['HistoryField', 'Found', 'preparation', ['quote', original[6][1]]] and
+                        row[7] == ['HistoryField', 'Found', 'operation', ['quote', original[7][1]]]
+                        for row, original in zip(graph_rows, originals))
+                if language == 'prime' and variant == 'pure':
+                    ok = ok and len(graphs) > 0 and all(
+                        any(node[1] == graph[2] for node in graph[4]) for graph in graphs) and explanation_fields['recording'][0] == 'Complete'
+                else:
+                    # Guest interiors and the effectful producer explicitly lack
+                    # complete native graph capture in this recording profile.
+                    ok = ok and explanation_fields['recording'][0] == 'Incomplete'
+            checks.append(dict(case=name, passed=ok, dependency_graphs=len(graphs), effects=effects))
+
+    # Asking about an unrecorded computation reports the absent history field.
+    for language in ('prime', 'he', 'petta'):
+        name = 'debug-unrecorded-dependencies-' + language
+        run(name, f'!(import! &self {debug_library}) '
+            f'!(let $observed (select 0 {policy(1, 1000, h=False)} (history-pair (history-coin))) '
+            '(history:dependencies $observed))', language=language)
+        packet = tagged(parse((d / (name + '.stdout')).read_text()), 'HistoryDependencies')
+        checks.append(dict(case=name, passed=packet ==
+            ['HistoryDependencies', ['HistoryField', 'Missing', 'history', []], []]))
+
+    # Bounded advancement returns from a continuing effectful agent and resumes
+    # the same owner. Neither a diary nor a completed answer is required.
+    client = w / 'examples/prime/native_control/responsive_monitor.metta'
+    expected = client.with_suffix('.expected').read_text()
+    name = 'debug-responsive-monitor-unrecorded'
+    run(name, '', source_path=client)
+    actual = (d / (name + '.stdout')).read_text()
+    checks.append(dict(case=name, passed=actual == expected and
+                       not (d / (name + '.stderr')).read_text()))
+    name = 'debug-responsive-monitor-zero-budget'
+    run(name, client.read_text().replace('(budget 20)', '(budget 0)'), definitions='')
+    actual = (d / (name + '.stdout')).read_text()
+    checks.append(dict(case=name, passed=actual ==
+        '(ControlReturned 0 False suspended)\n'
+        '[(MonitorPaused () () 0 0 False False suspended suspended)]\n' and
+        not (d / (name + '.stderr')).read_text()))
+
+
+if args.population == 'resource-breakpoint':
+    resource_breakpoint_controls()
+    finish()
+
+if args.population == 'breakpoint':
+    breakpoint_controls(recording=False)
+    resource_breakpoint_controls(recording=False)
+    finish()
+
+if args.population == 'debug':
+    breakpoint_controls()
+    resource_breakpoint_controls()
+    debug_controls()
+    finish()
+
+if args.population in ('all', 'resampling'):
+    resampling_controls(recording=args.population == 'all')
+if args.population == 'resampling':
+    finish()
+
+
+if args.population in ('all', 'origins'):
+    origin_controls(recording=args.population == 'all')
+if args.population == 'origins':
+    finish()
+
+
+if args.population in ('all', 'diagnostics'):
+    diagnostic_controls(recording=args.population == 'all')
+if args.population == 'diagnostics':
+    finish()
+if args.population == 'all':
+    recording_policy_controls()
 if args.population != 'forget':
     replay_controls()
 if args.population != 'replay':
@@ -538,8 +1574,6 @@ for width in (1, 2):
         pair = tagged(parse((d / f'late-w{width}-c{cut}.stdout').read_text()), 'Late')
         checks.append(dict(case=f'late-w{width}-c{cut}', passed=bool(obs and pair) and pair[2] + obs[-1]['values'] == expected['values'] and (obs[-1]['work'] == expected['work']) and (['start-work', pair[1]] in obs[-1]['history']), requested=cut, prefix_work=pair[1] if pair else None))
 
-def fields(history):
-    return {x[0]: x[1] for x in history[1:] if isinstance(x, list) and len(x) == 2}
 def history_nodes(record, seen=None):
     """Yield each immutable receipt node once under its session identity."""
     if seen is None:
@@ -605,9 +1639,7 @@ def production_phase_prefix(prefix, productions, deliveries, cut):
         normalize([productions, deliveries[:len(delivered)]])
 
 
-def same_observation(left, right):
-    return all(left[key] == right[key] for key in
-               ('values', 'work', 'closed', 'satisfied', 'status'))
+
 
 
 def admission_events(record):
@@ -946,79 +1978,9 @@ for language in ('prime', 'he', 'petta'):
         checks.append(dict(case=case, passed=not obs and
             canonical_bools(actual) == canonical_bools(expected)))
 
-# The debugger is an ordinary imported MeTTa program, using the same retained
-# observations. It must not execute a code-shaped verdict while inspecting it.
-debug_client = w / 'tests/prime/need_admission_history.metta'
-debug_library = w / 'lib/native_history.metta'
-for variant in ('ordinary', 'inert', 'omitted'):
-    source = debug_client.read_text()
-    if variant == 'inert':
-        source = source.replace('(= (debug:unknown $coefficient) Maybe)',
-            '(= (debug:unknown $coefficient) '
-            '(quote (println! "VERDICT-MUST-STAY-DATA")))')
-    if variant == 'omitted':
-        source = source.replace('(nodes 32) (bytes 65536)', '(nodes 0) (bytes 0)')
-    source = source.replace('../../lib/native_history.metta', str(debug_library))
-    for language in ('prime', 'he', 'petta'):
-        name = f'debug-{variant}-{language}'
-        run(name, source, definitions='', language=language,
-            source_path=debug_client if variant == 'ordinary' else None)
-        stdout = (d / (name + '.stdout')).read_text()
-        nodes = list(walk(parse(stdout)))
-        reports = [node for node in nodes if node[0] == 'Explained']
-        roles = [[node[3] for node in walk(report) if node[0] == 'Verdict']
-                 for report in reports]
-        effects = [line.strip('"') for line in stdout.splitlines()
-                   if line.strip('"') in ('ACCEPTED-BODY', 'REJECTED-BODY',
-                                           'PENDING-BODY', 'VERDICT-MUST-STAY-DATA')]
-        ok = len(reports) == 4 and effects == ['ACCEPTED-BODY']
-        if ok:
-            views = [{item[0]: item[1:] for item in report[1:]
-                      if isinstance(item, list) and item} for report in reports]
-            ok = all(views[i]['closed'] == ['True'] and
-                     views[i]['status'] == ['closed'] for i in (0, 1)) and \
-                 all(views[i]['closed'] == ['False'] and
-                     views[i]['status'] == ['suspended'] for i in (2, 3)) and \
-                 views[3]['work'] == [0] and views[3]['activity'] == ['Unexamined']
-            ok = ok and not any(node[0].startswith('history:') for node in nodes)
-            if variant == 'omitted':
-                ok = ok and roles == [[], [], [], []] and all(
-                    views[i]['recording'][0] == 'Incomplete' for i in (0, 1, 2))
-            else:
-                ok = ok and roles == [['Accepted'],
-                    ['Rejected'], ['Pending'], []]
-        checks.append(dict(case=name, passed=ok, roles=roles, effects=effects,
-                           reports=len(reports),
-                           library_sha256=hashlib.sha256(debug_library.read_bytes()).hexdigest()))
-
-# Project a real nonempty retained result, preserving order and multiplicity.
-for language in ('prime', 'he', 'petta'):
-    name = 'debug-values-' + language
-    run(name, f'!(import! &self {debug_library}) '
-        f'!(let $observation (select 0 {policy(1, 2000)} {body}) '
-        '(history:explain $observation))', language=language)
-    stdout = (d / (name + '.stdout')).read_text()
-    report = tagged(parse(stdout), 'Explained')
-    expected = ['values', ['quote', [['Pair', 3, 3], ['Pair', 3, 3], ['Pair', 6, 6]]]]
-    checks.append(dict(case=name, passed=bool(report) and report[1] == expected,
-                       projection=report[1] if report else None))
-
-    # A supplied report is data, not replay authority or executable syntax.
-    name = 'debug-code-data-' + language
-    supplied = ('(Observation ((println! "EXPLAIN-MUST-STAY-DATA")) '
-        '(satisfied True) (closed True) (residual None) (work 0) (status closed) '
-        '(history (History (status Incomplete) (start-work 0) (earlier Unrecorded) '
-        '(source-correspondence Unchecked) (omitted-selections 1) (omitted-nodes 0) '
-        '(overflow False) (RetainedCharges (payload 0)) (limits (nodes 0)) '
-        '(nodes 0) (reservations 0) (selections ()))))')
-    run(name, f'!(import! &self {debug_library}) !(history:explain {supplied})',
-        definitions='', language=language)
-    stdout = (d / (name + '.stdout')).read_text()
-    report = tagged(parse(stdout), 'Explained')
-    effects = [line for line in stdout.splitlines()
-               if line.strip('"') == 'EXPLAIN-MUST-STAY-DATA']
-    expected = ['values', ['quote', [['println!', 'EXPLAIN-MUST-STAY-DATA']]]]
-    checks.append(dict(case=name, passed=bool(report) and report[1] == expected and not effects,
-                       projection=report[1] if report else None, effects=effects))
+breakpoint_controls()
+resource_breakpoint_controls()
+interaction_history_controls()
+debug_controls()
 
 finish()
