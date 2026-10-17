@@ -12138,11 +12138,20 @@ static inline BindingValue rule_frame_region_lookup_value(
     if (variable_mask != 0u)
         return rule_frame_region_lookup(
             view, variable_mask, bindings, id);
-    if (view && view->exclusive && view->exclusive->active &&
-        binding_value_is_contextual(variable) &&
-        variable.epoch == view->exclusive->epoch) {
-        return bindings_exclusive_frame_lookup(
-            view->exclusive, bindings, id, NULL);
+    if (view && view->exclusive && view->exclusive->active) {
+        if (binding_value_is_contextual(variable) &&
+            variable.epoch == view->exclusive->epoch) {
+            return bindings_exclusive_frame_lookup(
+                view->exclusive, bindings, id, NULL);
+        }
+        /* A variable of a stored value that this match already bound is
+         * bound by the frame's writes, which are not yet published: as for
+         * a variable on the left, they are read first. */
+        bool written = false;
+        BindingValue pending = bindings_exclusive_frame_lookup(
+            view->exclusive, NULL, id, &written);
+        if (written)
+            return pending;
     }
     return bindings_lookup_value(bindings, variable);
 }

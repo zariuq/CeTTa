@@ -30861,6 +30861,39 @@ test-he-untyped-parameter-interprets-data: $(BIN) \
 
 test: test-he-untyped-parameter-interprets-data
 
+# A head that repeats a variable unifies the arguments it meets there, aliases
+# included: (G $a $b) against (G $b c) binds $b to $a, then both to c, which
+# reading the match's own unpublished writes decides.  The HE expectation is
+# upstream hyperon-experimental's output, the PeTTa ones real PeTTa's; the
+# PeTTa fixture runs on both routes, with and without forced collections.
+.PHONY: test-repeated-head-aliases
+test-repeated-head-aliases: $(BIN) \
+		tests/he/repeated_head_aliases.metta \
+		tests/he/repeated_head_aliases.expected \
+		tests/he/repeated_head_aliases.petta.expected \
+		tests/petta/repeated_head_aliases.metta \
+		tests/petta/repeated_head_aliases.expected
+	@set -eu -o pipefail; \
+	for profile in "" "--profile extended"; do \
+		$(CETTA_BIN_INVOKE) --lang he $$profile \
+			tests/he/repeated_head_aliases.metta \
+			| diff -u tests/he/repeated_head_aliases.expected -; \
+		$(CETTA_BIN_INVOKE) --lang petta $$profile \
+			tests/he/repeated_head_aliases.metta \
+			| diff -u tests/he/repeated_head_aliases.petta.expected -; \
+	done; \
+	for stress in 0 1; do \
+	for reference in 0 1; do \
+		CETTA_OEM_COLLECT_STRESS=$$stress CETTA_PETTA_COLLECT_STRESS=$$stress \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/repeated_head_aliases.metta \
+			| diff -u tests/petta/repeated_head_aliases.expected -; \
+	done; \
+	done; \
+	echo 'PASS: a repeated head variable unifies the arguments it meets, aliases included, as upstream HE and PeTTa do'
+
+test: test-repeated-head-aliases
+
 .PHONY: test-binding-standing-panel
 test-binding-standing-panel: $(BIN)
 	python3 scripts/check_binding_panel.py --binary "$(abspath $(BIN))" \
@@ -31546,6 +31579,31 @@ test-open-equations: $(BIN)
 ifneq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
+
+.PHONY: test-petta-selection-region
+# Calls, case arms, typed calls and superpose select their candidates by
+# structure alike: a candidate its argument refutes is skipped, and the last
+# possible one keeps no alternative, with every answer unchanged (first-match
+# commitment, repeated variables, arms that differ below their roots).  The
+# answers are SWI-PeTTa's; both routes, with and without forced collections.
+test: test-petta-selection-region
+test-petta-semantics: test-petta-selection-region
+test-petta-selection-region: $(BIN)
+	@set -eu; \
+	for stress in 0 1; do \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OEM_COLLECT_STRESS=$$stress \
+			CETTA_PETTA_COLLECT_STRESS=$$stress \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/selection_region.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/selection_region.expected)" ]; then \
+			echo "FAIL: selection by structure (stress $$stress, reference $$reference)"; \
+			diff -u tests/petta/selection_region.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	done; \
+	echo "PASS: calls, case arms, typed calls and superpose select by structure with their answers unchanged"
 
 .PHONY: test-petta-oem-single-sequence
 test: test-petta-oem-single-sequence

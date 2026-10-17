@@ -1104,7 +1104,22 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_VERSIONS_LIVE_PEAK = 1051,
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE = 1052,
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE_PEAK = 1053,
-    CETTA_RUNTIME_COUNTER_COUNT = 1054
+    /* The open-equation cursors' collections: minor and major ones that
+     * copied, those declined for finding most of their generation reached,
+     * the bytes minor collections promoted, the old generation's largest
+     * size after a collection, and the region's largest size when one was
+     * tried. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS = 1054,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS = 1055,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS_DECLINED = 1056,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS_DECLINED = 1057,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROMOTED_BYTES = 1058,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_OLD_BYTES_PEAK = 1059,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_REGION_AT_COLLECTION_BYTES_PEAK = 1060,
+    /* What a major collection keeps, at most: the cursors' live data at the
+     * moments majors run. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_SURVIVOR_BYTES_PEAK = 1061,
+    CETTA_RUNTIME_COUNTER_COUNT = 1062
 } CettaRuntimeCounter;
 
 typedef struct {
