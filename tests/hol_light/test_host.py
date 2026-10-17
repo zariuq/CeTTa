@@ -2,6 +2,7 @@
 """HOL through CeTTa's public languages, including authority and replay controls."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -58,6 +59,20 @@ def fixtures(directory):
     return paths
 
 
+# HE and Prime print the truth values True and False, PeTTa true and false.
+# Results are compared in PeTTa's spelling at every position outside string
+# literals, so one expectation serves every dialect.
+STRING_LITERAL = re.compile(r'("(?:[^"\\]|\\.)*")')
+TRUTH_TOKEN = re.compile(r'(?<![^\s()])(True|False)(?![^\s()])')
+
+
+def truth_spelled(text):
+    parts = STRING_LITERAL.split(text)
+    for index in range(0, len(parts), 2):
+        parts[index] = TRUTH_TOKEN.sub(lambda match: match.group(1).lower(), parts[index])
+    return ''.join(parts)
+
+
 class Checks:
     def __init__(self, binary):
         self.binary = str(binary)
@@ -84,7 +99,7 @@ class Checks:
         value = lines[-1]
         if language != "petta" and value.startswith("[") and value.endswith("]"):
             value = value[1:-1]
-        return {"True": "true", "False": "false"}.get(value, value)
+        return truth_spelled(value)
 
     def equals(self, language, expression, expected, prefix=""):
         value = self.query(language, expression, prefix)

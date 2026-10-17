@@ -3,6 +3,7 @@
 #include "native_sha256.h"
 
 #include "string_ops.h"
+#include "str_stream.h"
 #include "utf8.h"
 
 #include <ctype.h>
@@ -557,6 +558,14 @@ static Atom *str_sha256(Arena *a, Atom *const *args, CettaStrRefusal *r) {
 }
 
 static const CettaStrNative str_natives[] = {
+    {"utf8-new", 1u, 0u, cetta_str_utf8_new, CETTA_STR_RESULT_STRUCTURE},
+    {"utf8-feed", 3u, 1u << 0, cetta_str_utf8_feed, CETTA_STR_RESULT_STRUCTURE},
+    {"line-segments", 2u, 0u, cetta_str_line_segments, CETTA_STR_RESULT_STRUCTURE},
+    {"line-new", 0u, 0u, cetta_str_line_new, CETTA_STR_RESULT_STRUCTURE},
+    {"collect-lines", 3u, (1u << 0) | (1u << 1), cetta_str_collect_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"feed-lines", 3u, 1u << 0, cetta_str_feed_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"advance-lines", 3u, 1u << 0, cetta_str_advance_lines, CETTA_STR_RESULT_STRUCTURE},
+    {"find-ascii-uncased", 2u, 0u, cetta_str_find_ascii_uncased, CETTA_STR_RESULT_STRUCTURE},
     {"byte-length", 1u, 0u, str_byte_length, CETTA_STR_RESULT_ATOM},
     {"byte-slice", 3u, 0u, str_byte_slice, CETTA_STR_RESULT_ATOM},
     {"concat", 2u, 0u, str_concat, CETTA_STR_RESULT_ATOM},
@@ -571,19 +580,19 @@ static const CettaStrNative str_natives[] = {
     {"codepoint-count", 1u, 0u, str_codepoint_count, CETTA_STR_RESULT_ATOM},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
-    {"all-in?", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},
-    {"initial-in?", 2u, 0u, str_initial_in, CETTA_STR_RESULT_ATOM},
-    {"alphanumeric?", 1u, 0u, str_alphanumeric, CETTA_STR_RESULT_ATOM},
-    {"lower-initial?", 1u, 0u, str_lower_initial, CETTA_STR_RESULT_ATOM},
-    {"upper-initial?", 1u, 0u, str_upper_initial, CETTA_STR_RESULT_ATOM},
-    {"lower-word?", 1u, 0u, str_lower_word, CETTA_STR_RESULT_ATOM},
-    {"upper-word?", 1u, 0u, str_upper_word, CETTA_STR_RESULT_ATOM},
+    {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},
+    {"is-initial-in", 2u, 0u, str_initial_in, CETTA_STR_RESULT_ATOM},
+    {"is-alphanumeric", 1u, 0u, str_alphanumeric, CETTA_STR_RESULT_ATOM},
+    {"is-lower-initial", 1u, 0u, str_lower_initial, CETTA_STR_RESULT_ATOM},
+    {"is-upper-initial", 1u, 0u, str_upper_initial, CETTA_STR_RESULT_ATOM},
+    {"is-lower-word", 1u, 0u, str_lower_word, CETTA_STR_RESULT_ATOM},
+    {"is-upper-word", 1u, 0u, str_upper_word, CETTA_STR_RESULT_ATOM},
     {"string->symbol", 1u, 0u, str_to_symbol, CETTA_STR_RESULT_ATOM},
     {"symbol->string", 1u, 0u, str_from_symbol, CETTA_STR_RESULT_ATOM},
     {"string->number", 1u, 0u, str_to_number, CETTA_STR_RESULT_ATOM},
     {"number->string", 1u, 0u, str_from_number, CETTA_STR_RESULT_ATOM},
     {"set", 1u, 1u << 0, str_set, CETTA_STR_RESULT_STRUCTURE},
-    {"set-member?", 2u, 0u, str_set_member, CETTA_STR_RESULT_ATOM},
+    {"is-set-member", 2u, 0u, str_set_member, CETTA_STR_RESULT_ATOM},
     {"escape", 2u, 0u, str_escape, CETTA_STR_RESULT_ATOM},
     {"unescape", 2u, 0u, str_unescape, CETTA_STR_RESULT_ATOM},
     {"sha256", 1u, 0u, str_sha256, CETTA_STR_RESULT_ATOM},

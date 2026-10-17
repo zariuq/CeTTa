@@ -1,0 +1,7 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:open-read (system:arg 0))
+  (add-atom &self (saved-reader $owner)))
+!(match &self (saved-reader $owner) (fs:read-chunk $owner 1))
+!(match &self (saved-reader $owner) (fs:read-chunk $owner 1))
+!(match &self (saved-reader $owner) (fs:close $owner))

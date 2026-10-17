@@ -1,0 +1,5 @@
+(: control-example:same (-> Atom Atom Atom))
+(= (control-example:same $value $value) Accepted)
+!(let $answer (control-example:same $caller 9)
+  (case (if True $answer Missing)
+    ((Accepted (Kept $caller)))))

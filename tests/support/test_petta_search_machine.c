@@ -7755,6 +7755,18 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(probe.len == 1u);
     assert(probe.ids[0] == captured->var_id);
     assert(!free_variable_probe_contains(&probe, argument->var_id));
+
+    Atom *deep = atom_expr2(arena, free, captured);
+    Atom *wrapper = atom_symbol(arena, "inert-wrapper");
+    for (unsigned i = 0u; i < 100000u; ++i)
+        deep = atom_expr2(arena, wrapper, deep);
+    Atom *quoted = atom_expr2(arena, atom_symbol(arena, "quote"), deep);
+    probe.len = 0u;
+    assert(eval_visit_lexical_free_variables(
+        quoted, free_variable_probe_visit, &probe));
+    assert(probe.len == 2u && probe.ids[0] == free->var_id &&
+        probe.ids[1] == captured->var_id);
+    assert(!free_variable_probe_contains(&probe, local->var_id));
 }
 
 static void test_machine_query_visible_projection(

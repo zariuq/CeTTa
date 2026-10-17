@@ -6,12 +6,12 @@
 #include <stdint.h>
 
 /*
- * Stage-zero source ingress for the five-field GSLT LanguageDef wire.
+ * Neutral source ingress for the five-field GSLT LanguageDef carrier.
  *
  * This layer is deliberately operationally neutral.  It parses ordinary
  * MeTTa data, retains ordered source structure, and identifies the five core
- * fields.  The physical constructor vocabulary remains a bootstrap candidate
- * until its independent encoder/decoder laws are established.  This layer
+ * fields. The portable carrier has independent Lean codec laws; native
+ * fixture agreement does not prove this C implementation adequate. This layer
  * does not interpret a rewrite system as Horn clauses and it does not decide
  * which native calculus or implementation may host the language.
  */

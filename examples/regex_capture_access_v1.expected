@@ -1,0 +1,4 @@
+(RegexCaptureTextV1 "λ" (re:span 1 3))
+(RegexCaptureEmptyV1 "" (re:span 0 0))
+(RegexCaptureUnmatchedV1 (re:unmatched 1))
+RegexCaptureUnknownV1

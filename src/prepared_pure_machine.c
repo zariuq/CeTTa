@@ -2728,6 +2728,17 @@ static bool prepared_pure_compile_eval_with_role(
             },
             NULL, 0u, node_out);
     }
+    /* A dialect may reserve a symbol for its own evaluator, as HE reserves
+     * NotReducible for its call-return protocol: the view marks such a
+     * symbol canonical-only wherever it occurs. */
+    if (source->kind == ATOM_SYMBOL && program->expression_view) {
+        CettaPreparedPureExpressionView symbol_view = {0};
+        if (program->expression_view(source, &symbol_view) ==
+            CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY)
+            return prepared_pure_reject(
+                program, "dialect-owned symbol requires canonical evaluation",
+                source);
+    }
     if (source_role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
         source_role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
         return prepared_pure_reject(

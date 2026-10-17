@@ -939,7 +939,8 @@ static bool token_runtime_parse_into(
     const CettaParserTokenRuntimeV1 *runtime_value,
     const CettaParserTokenScanV1 *scan, bool use_glr,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
-    bool values, PPNativeV1Result *out, char *error, size_t error_size) {
+    bool values, const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
     const TokenRuntime *runtime = runtime_value ? runtime_value->implementation : NULL;
     const CettaLpNativeGllPrepared *gll;
     const CettaLpNativeGlrPrepared *glr;
@@ -987,8 +988,8 @@ static bool token_runtime_parse_into(
     PPNativeV1ForestExtension extension = runtime->compiled->token_bindings.extension;
     extension.witness_values = scan->witness_values;
     extension.witness_len = scan->witness_len;
-    if (!(values ? ppnative_v1_finish_values(out, &runtime->compiled->pack,
-            &extension, replay_depth, result_limit, error, error_size)
+    if (!(values ? ppnative_v1_finish_values_selected(out, &runtime->compiled->pack,
+            &extension, replay_depth, result_limit, selection, error, error_size)
         : ppnative_v1_finish_extended(out, &runtime->compiled->pack,
             runtime->compiled->start_state, &extension, replay_depth, result_limit, error, error_size))) return false;
     out->accepted = out->forest.root_len != 0u;
@@ -999,12 +1000,13 @@ static bool token_runtime_parse(
     const CettaParserTokenRuntimeV1 *runtime,
     const CettaParserTokenScanV1 *scan, bool use_glr,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
-    bool values, PPNativeV1Result *out, char *error, size_t error_size) {
+    bool values, const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
     PPNativeV1Result result;
     if (!out) return token_error(error, error_size, "missing parser result destination");
     ppnative_v1_result_init(&result);
     bool ok = token_runtime_parse_into(runtime, scan, use_glr, work_limit,
-        replay_depth, result_limit, values, &result, error, error_size);
+        replay_depth, result_limit, values, selection, &result, error, error_size);
     if (ok) {
         ppnative_v1_result_free(out);
         *out = result;
@@ -1020,7 +1022,7 @@ bool cetta_parser_token_runtime_v1_parse(
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
     PPNativeV1Result *out, char *error, size_t error_size) {
     return token_runtime_parse(runtime_value, scan, use_glr, work_limit,
-        replay_depth, result_limit, false, out, error, error_size);
+        replay_depth, result_limit, false, NULL, out, error, error_size);
 }
 
 bool cetta_parser_token_runtime_v1_parse_values(
@@ -1028,8 +1030,19 @@ bool cetta_parser_token_runtime_v1_parse_values(
     const CettaParserTokenScanV1 *scan, bool use_glr,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
     PPNativeV1Result *out, char *error, size_t error_size) {
+    return cetta_parser_token_runtime_v1_parse_values_selected(runtime_value,
+        scan, use_glr, work_limit, replay_depth, result_limit, NULL,
+        out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_values_selected(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
     return token_runtime_parse(runtime_value, scan, use_glr, work_limit,
-        replay_depth, result_limit, true, out, error, error_size);
+        replay_depth, result_limit, true, selection, out, error, error_size);
 }
 
 bool cetta_parser_token_runtime_v1_build_predictive(
@@ -1053,6 +1066,16 @@ bool cetta_parser_token_runtime_v1_parse_predictive_values(
     const CettaParserTokenRuntimeV1 *value, const CettaLpNativePredictiveProgram *program,
     const CettaParserTokenScanV1 *scan, uint32_t work_limit, uint32_t replay_depth,
     uint32_t result_limit, PPNativeV1Result *out, char *error, size_t error_size) {
+    return cetta_parser_token_runtime_v1_parse_predictive_values_selected(value,
+        program, scan, work_limit, replay_depth, result_limit, NULL,
+        out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_predictive_values_selected(
+    const CettaParserTokenRuntimeV1 *value, const CettaLpNativePredictiveProgram *program,
+    const CettaParserTokenScanV1 *scan, uint32_t work_limit, uint32_t replay_depth,
+    uint32_t result_limit, const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
     const TokenRuntime *runtime = value ? value->implementation : NULL;
     PPNativeV1Result result;
     ppnative_v1_result_init(&result);
@@ -1067,8 +1090,8 @@ bool cetta_parser_token_runtime_v1_parse_predictive_values(
         result.accepted = result.forest.root_len != 0u;
         PPNativeV1ForestExtension extension = runtime->compiled->token_bindings.extension;
         extension.witness_values = scan->witness_values; extension.witness_len = scan->witness_len;
-        ok = ppnative_v1_finish_values(&result, &runtime->compiled->pack, &extension,
-            replay_depth, result_limit, error, error_size);
+        ok = ppnative_v1_finish_values_selected(&result, &runtime->compiled->pack, &extension,
+            replay_depth, result_limit, selection, error, error_size);
     }
     if (ok) {
         ppnative_v1_result_free(out); *out = result; memset(&result, 0, sizeof(result));

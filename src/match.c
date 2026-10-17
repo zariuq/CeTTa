@@ -3401,11 +3401,107 @@ bool bindings_copy(Bindings *dst, const Bindings *src) {
     return true;
 }
 
+typedef struct {
+    BindingsFrameIndexEntry source;
+    BindingsFrameIndexEntry image;
+} BindingsFrameRelocation;
+
+typedef struct {
+    BindingsFrameRelocation *entries;
+    size_t capacity;
+    size_t count;
+} BindingsFrameRelocations;
+
+static const char bindings_frame_relocation_inventory_kind;
+
+static size_t bindings_frame_relocation_hash(const BindingsFrameIndexEntry *frame) {
+    uintptr_t key = (uintptr_t)frame->storage_references;
+    key ^= (uintptr_t)frame->schema + (key << 6u) + (key >> 2u);
+    key ^= (uintptr_t)frame->slot_len * UINT64_C(0x9e3779b97f4a7c15);
+    key ^= key >> 17u;
+    return (size_t)key;
+}
+
+static BindingsFrameRelocation *bindings_frame_relocation_slot(
+    BindingsFrameRelocations *memo, const BindingsFrameIndexEntry *frame) {
+    size_t index = bindings_frame_relocation_hash(frame) & (memo->capacity - 1u);
+    while (memo->entries[index].source.storage_references) {
+        BindingsFrameIndexEntry *source = &memo->entries[index].source;
+        if (source->storage_references == frame->storage_references &&
+            source->schema == frame->schema && source->slot_len == frame->slot_len)
+            break;
+        index = (index + 1u) & (memo->capacity - 1u);
+    }
+    return &memo->entries[index];
+}
+
+static void bindings_frame_relocations_release(void *inventory) {
+    BindingsFrameRelocations *memo = inventory;
+    for (size_t i = 0u; i < memo->capacity; i++) {
+        if (!memo->entries[i].source.storage_references) continue;
+        bindings_frame_index_entry_drop(&memo->entries[i].source);
+        bindings_frame_index_entry_drop(&memo->entries[i].image);
+    }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
+        sizeof(*memo) + memo->capacity * sizeof(*memo->entries));
+    free(memo->entries);
+    free(memo);
+}
+
+static BindingsFrameRelocations *bindings_frame_relocations(
+    AtomDeepCopySession *session) {
+    BindingsFrameRelocations *memo = atom_deep_copy_session_inventory(
+        session, &bindings_frame_relocation_inventory_kind);
+    if (memo) return memo;
+    memo = cetta_malloc(sizeof(*memo));
+    memset(memo, 0, sizeof(*memo));
+    memo->capacity = 64u;
+    memo->entries = cetta_malloc(memo->capacity * sizeof(*memo->entries));
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+        sizeof(*memo) + memo->capacity * sizeof(*memo->entries));
+    memset(memo->entries, 0, memo->capacity * sizeof(*memo->entries));
+    if (!atom_deep_copy_session_install_inventory(session,
+            &bindings_frame_relocation_inventory_kind, memo, bindings_frame_relocations_release)) {
+        bindings_frame_relocations_release(memo);
+        return NULL;
+    }
+    return memo;
+}
+
+static bool bindings_frame_relocation_store(BindingsFrameRelocations *memo,
+    const BindingsFrameIndexEntry *source, const BindingsFrameIndexEntry *image) {
+    if (memo->count >= memo->capacity / 2u) {
+        if (memo->capacity > SIZE_MAX / 2u / sizeof(*memo->entries)) return false;
+        BindingsFrameRelocations grown = {.capacity = memo->capacity * 2u, .count = memo->count};
+        grown.entries = cetta_malloc(grown.capacity * sizeof(*grown.entries));
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+            grown.capacity * sizeof(*grown.entries));
+        memset(grown.entries, 0, grown.capacity * sizeof(*grown.entries));
+        for (size_t i = 0u; i < memo->capacity; i++) {
+            BindingsFrameRelocation *entry = &memo->entries[i];
+            if (entry->source.storage_references)
+                *bindings_frame_relocation_slot(&grown, &entry->source) = *entry;
+        }
+        free(memo->entries);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
+            memo->capacity * sizeof(*memo->entries));
+        *memo = grown;
+    }
+    BindingsFrameRelocation *entry = bindings_frame_relocation_slot(memo, source);
+    assert(!entry->source.storage_references);
+    /* Both snapshots are retained: source addresses cannot be recycled during
+     * lookup, and a published image cannot disappear before a later alias. */
+    bindings_frame_index_entry_hold(&entry->source, source);
+    bindings_frame_index_entry_hold(&entry->image, image);
+    memo->count++;
+    return true;
+}
+
 bool bindings_promote_logical_atoms_with_session(
     Bindings *bindings, AtomDeepCopySession *session) {
     if (!bindings)
         return true;
-    if (!session)
+    if (atom_deep_copy_session_failed(session))
         return false;
     if (!bindings_prepare_logical_write(bindings))
         return false;
@@ -3472,11 +3568,29 @@ bool bindings_promote_logical_atoms_with_session(
                 directory_private = true;
                 frame = &bindings->frame_index->frames[frame_index];
             }
+            bool shared_payload = frame->storage_references &&
+                atomic_load_explicit(frame->storage_references, memory_order_acquire) > 1u;
+            BindingsFrameRelocations *memo = shared_payload
+                ? bindings_frame_relocations(session) : NULL;
+            if (shared_payload && !memo) return false;
+            BindingsFrameIndexEntry source;
+            bool retained_source = false;
+            if (memo) {
+                BindingsFrameRelocation *entry = bindings_frame_relocation_slot(memo, frame);
+                if (entry->source.storage_references) {
+                    bindings_frame_index_entry_share_payload(frame, &entry->image);
+                    continue;
+                }
+                bindings_frame_index_entry_hold(&source, frame);
+                retained_source = true;
+            }
             if (foreign_name_keys) {
                 BindingsFrameSchema *promoted_schema =
                     bindings_frame_schema_clone(frame->schema);
-                if (!promoted_schema)
+                if (!promoted_schema) {
+                    if (retained_source) bindings_frame_index_entry_drop(&source);
                     return false;
+                }
                 for (uint32_t slot = 0u;
                      slot < promoted_schema->len; slot++) {
                     if (!promoted_schema->name_keys[slot])
@@ -3488,26 +3602,33 @@ bool bindings_promote_logical_atoms_with_session(
                     if (!promoted_schema->name_keys[slot]) {
                         bindings_frame_schema_release(
                             promoted_schema);
+                        if (retained_source) bindings_frame_index_entry_drop(&source);
                         return false;
                     }
                 }
                 bindings_frame_schema_release(frame->schema);
                 frame->schema = promoted_schema;
             }
-            if (!foreign_values)
-                continue;
-            if (!bindings_frame_index_entry_detach(frame))
+            if (foreign_values && !bindings_frame_index_entry_detach(frame)) {
+                if (retained_source) bindings_frame_index_entry_drop(&source);
                 return false;
-            for (uint32_t slot = 0u;
-                 slot < frame->slot_len; slot++) {
+            }
+            for (uint32_t slot = 0u; foreign_values && slot < frame->slot_len; slot++) {
                 if (!frame->values[slot].skeleton) {
                     continue;
                 }
                 Atom *copy = atom_deep_copy_session_copy(
                     session, frame->values[slot].skeleton);
-                if (!copy)
+                if (!copy) {
+                    if (retained_source) bindings_frame_index_entry_drop(&source);
                     return false;
+                }
                 frame->values[slot].skeleton = copy;
+            }
+            if (retained_source) {
+                bool stored = bindings_frame_relocation_store(memo, &source, frame);
+                bindings_frame_index_entry_drop(&source);
+                if (!stored) return false;
             }
         }
     }
@@ -4307,6 +4428,17 @@ bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
         return true;
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
+    /* A shared immutable directory is the same complete framed snapshot,
+     * not merely equal-valued data. With no flat rows, constraints or Prime
+     * state, and the identical owner chain, live merge has nothing to add.
+     * Preserve every frame, context tag and version without enumerating it. */
+    if (dst && dst->len == 0u && src->len == 0u &&
+        dst->eq_len == 0u && src->eq_len == 0u &&
+        dst->frame_index == src->frame_index && dst->owners == src->owners &&
+        !bindings_prime_present(dst) && !bindings_prime_present(src)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
+        return true;
+    }
     if (dst && !bindings_has_bound_values(dst) && dst->eq_len == 0 &&
         !bindings_prime_present(dst)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);

@@ -39,7 +39,7 @@
     (operator tptp-ci-v1:expanded-inputs-cons 2)
     (operator TPTP:ResolutionInputUnsupportedV1 1)
     (operator langdef:value-view 1) (operator langdef:ground-equal 2)
-    (operator str:concat 2) (operator str:lower-word? 1)
+    (operator str:concat 2) (operator str:is-lower-word 1)
     (operator LangDef:ListValue 1) (operator LangDef:ExpressionValue 1)
     (operator LangDef:SymbolValue 1) (operator LangDef:IntegerValue 1)
     (operator LangDef:SameValue 0) (operator LangDef:DifferentValue 0)
@@ -910,7 +910,7 @@
       (fo-resolution:symbol-name (fo-resolution:symbol-system) ?text))) (body))
     (rule word-kind (head (metta-equation
       (tptp-res-v1:word-kind ?text)
-      (tptp-res-v1:word-kind-of (str:lower-word? ?text)))) (body))
+      (tptp-res-v1:word-kind-of (str:is-lower-word ?text)))) (body))
     (rule word-kind-lower (head (metta-equation
       (tptp-res-v1:word-kind-of True) (fo-resolution:symbol-lower))) (body))
     (rule word-kind-quoted (head (metta-equation

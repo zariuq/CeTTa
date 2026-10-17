@@ -2598,15 +2598,22 @@ static Atom *grounded_petta_sread(Arena *a, Atom *argument) {
     }
     if (!text)
         return NULL;
-    bool old_rational_literals = parser_set_rational_literals_enabled(true);
-    Atom *parsed = NULL;
-    size_t pos = 0;
-    if (parser_text_well_formed_n(text, text_len)) {
-        parsed = parse_sexpr_n(a, text, text_len, &pos);
-        if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
-            parsed = NULL;
+    /* The session's PeTTa reader reads the term as it reads source forms:
+     * $_ is fresh at each occurrence, True and False are the booleans and
+     * 2/3 is a word. */
+    bool session_reader = false;
+    Atom *parsed = parser_read_document_term_n(a, text, text_len,
+                                               &session_reader);
+    if (!session_reader) {
+        bool old_rational_literals = parser_set_rational_literals_enabled(true);
+        size_t pos = 0;
+        if (parser_text_well_formed_n(text, text_len)) {
+            parsed = parse_sexpr_n(a, text, text_len, &pos);
+            if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
+                parsed = NULL;
+        }
+        parser_set_rational_literals_enabled(old_rational_literals);
     }
-    parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed) {
         g_grounded_raised = true;
         parsed = petta_semantics_syntax_error(a, text);

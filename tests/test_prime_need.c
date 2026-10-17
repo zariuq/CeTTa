@@ -225,6 +225,69 @@ int main(void) {
                   source_occurrence &&
               source_argument_cell.source_argument_index == 2u,
           "a source argument cell retains application and position identity");
+    CHECK(source_argument_cell.value_role ==
+                  PRIME_NEED_VALUE_DEMAND_RESULT &&
+              source_argument_cell.cache_state == PRIME_NEED_CACHE_EMPTY,
+          "a source argument cell is a delayed computation");
+
+    Atom *ready_value = atom_expr2(
+        &arena, atom_symbol(&arena, "Box"), atom_int(&arena, 7));
+    PrimeNeedSnapshot ready;
+    uint64_t ready_id = 0u;
+    PrimeNeedCellView ready_cell;
+    CHECK(prime_need_snapshot_allocate_ready_value(
+              &arena, &source_argument, ready_value,
+              &ready, &ready_id) &&
+              prime_need_snapshot_lookup(
+                  &ready, ready_id, &ready_cell) &&
+              ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+              ready_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+              ready_cell.origin == ready_value &&
+              ready_cell.cached == ready_value &&
+              prime_need_snapshot_is_ancestor(&source_argument, &ready),
+          "a ready value is a cell born resolved to itself");
+    PrimeNeedSnapshot ready_restarted;
+    CHECK(!prime_need_snapshot_start_evaluation(
+              &arena, &ready, ready_id, 17u, &ready_restarted),
+          "a ready value cannot be demanded into evaluation again");
+    PrimeNeedSnapshot ready_promoted = ready;
+    PrimeNeedCellView ready_promoted_cell;
+    CHECK(prime_need_snapshot_promote(&promoted_arena, &ready_promoted) &&
+              prime_need_snapshot_lookup(
+                  &ready_promoted, ready_id,
+                  &ready_promoted_cell) &&
+              ready_promoted_cell.value_role ==
+                  PRIME_NEED_VALUE_READY &&
+              ready_promoted_cell.cache_state ==
+                  PRIME_NEED_CACHE_VALUE &&
+              atom_eq(ready_promoted_cell.cached, ready_value),
+          "promotion keeps a ready value ready");
+    PrimeNeedSnapshot answering;
+    PrimeNeedSnapshot answered;
+    PrimeNeedCellView answered_cell;
+    CHECK(prime_need_snapshot_start_evaluation(
+              &arena, &source_argument, source_argument_id, 19u,
+              &answering) &&
+              prime_need_snapshot_resolve_ready_value(
+                  &arena, &answering, source_argument_id, 19u,
+                  ready_value, &answered) &&
+              prime_need_snapshot_lookup(
+                  &answered, source_argument_id, &answered_cell) &&
+              answered_cell.value_role == PRIME_NEED_VALUE_READY &&
+              answered_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+              answered_cell.cached == ready_value &&
+              answered_cell.origin == term,
+          "a computation answered by a ready value becomes ready");
+    PrimeNeedSnapshot answered_ordinary;
+    PrimeNeedCellView ordinary_cell;
+    CHECK(prime_need_snapshot_resolve_value(
+              &arena, &answering, source_argument_id, 19u,
+              ready_value, &answered_ordinary) &&
+              prime_need_snapshot_lookup(
+                  &answered_ordinary, source_argument_id, &ordinary_cell) &&
+              ordinary_cell.value_role ==
+                  PRIME_NEED_VALUE_DEMAND_RESULT,
+          "an ordinary answer leaves its cell a computation");
 
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     VarId capture_ids[] = {202u, 101u, 202u};

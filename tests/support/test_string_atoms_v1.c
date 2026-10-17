@@ -240,8 +240,8 @@ static void natives(Arena *a) {
            "a set keeps each member once");
     Atom *probe[2] = {set, atom_string(a, "a")};
     Atom *miss[2] = {set, atom_string(a, "c")};
-    Atom *hit = set ? call_str(a, "set-member?", probe, &refusal) : NULL;
-    Atom *none = set ? call_str(a, "set-member?", miss, &refusal) : NULL;
+    Atom *hit = set ? call_str(a, "is-set-member", probe, &refusal) : NULL;
+    Atom *none = set ? call_str(a, "is-set-member", miss, &refusal) : NULL;
     expect(hit && hit->ground.gkind == GV_BOOL && hit->ground.bval, "a member is found");
     expect(none && none->ground.gkind == GV_BOOL && !none->ground.bval, "a stranger is not");
     expect(!cetta_str_native("no-such-operation"), "an unknown operation has no native");
@@ -268,6 +268,8 @@ int main(void) {
     natives(&arena);
 
     arena_free(&arena);
+    symbol_table_free(&symbols);
+    g_symbols = NULL;
     printf("string atoms: %d passed, %d failed\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

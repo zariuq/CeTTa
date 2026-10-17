@@ -2709,6 +2709,7 @@ static bool petta_libpl_to_term(
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_SEAL:
         return false;
     }
     return false;

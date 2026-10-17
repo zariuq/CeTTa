@@ -23,7 +23,7 @@ test-hol-light-host: $(BIN) tests/hol_light/test_host.py
 
 HOL_LIGHT_BRIDGE_TEST_BIN = runtime/test_hol_bridge-$(BUILD_OBJ_TAG)
 HOL_LIGHT_BRIDGE_SRC = native/hol_light/hol_cetta_module.c native/hol_light/hol_cli.c \
-	src/seal.c src/native_handle.c src/atom.c src/symbol.c src/binding/frame_identity.c
+	src/seal.c src/native_handle.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c
 $(HOL_LIGHT_BRIDGE_TEST_BIN): tests/hol_light/test_bridge.c tests/hol_light/test_util.h $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_BRIDGE_SRC) $(HOL_LIGHT_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_HOOKS -Inative/hol_light -ffunction-sections -fdata-sections -Wl,--gc-sections \

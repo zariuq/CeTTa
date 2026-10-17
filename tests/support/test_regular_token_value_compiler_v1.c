@@ -1,8 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
 #include "native/deterministic_equation_plan_v1.h"
+#include "native/prepared_artifact_v1.h"
+#include "native/prepared_bytes_v1.h"
 #include "native/language_def_parser_pack_v1.h"
 #include "native/parser_token_profile_v1.h"
 #include "native/parser_token_runtime_v1.h"
 #include "native/regular_token_compiler_v1.h"
+#include "native/regular_pattern_v1.h"
 #include "native/parser_token_ast_v1.h"
 #include "native/lbnf_document_v1.h"
 #include "parser.h"
@@ -73,7 +77,9 @@ static int compare_answer(const void *left, const void *right) {
 static Atom *data(Arena *arena, const char *source) {
     Atom **values = NULL;
     int count = parse_metta_text(source, arena, &values);
-    return count == 1 ? values[0] : NULL;
+    Atom *value = count == 1 ? values[0] : NULL;
+    free(values);
+    return value;
 }
 
 static bool compile_lowered(Arena *arena, const CettaLbnfLoweredV1 *lowered,
@@ -778,7 +784,168 @@ done:
     return ok;
 }
 
-int main(void) {
+/* CEQ1 permits tuple heads that the authored source frontend does not emit.
+ * Exercise that public restoration boundary, including its checked mode. */
+static void template_fixture_atom(CettaPreparedWriterV1 *writer, Atom *term) {
+    if (!term) { writer->failed = true; return; }
+    if (term->kind == ATOM_SYMBOL || term->kind == ATOM_VAR) {
+        cpw_u64(writer, term->kind == ATOM_SYMBOL ? 1u : 2u);
+        if (term->kind == ATOM_VAR) cpw_u64(writer, 0u); /* One variable per fixture. */
+        const char *name = atom_name_cstr(term);
+        cpw_text(writer, name, strlen(name));
+    } else if (term->kind == ATOM_EXPR) {
+        cpw_u64(writer, 8u); cpw_u64(writer, term->expr.len);
+        cpw_u64(writer, CETTA_DETERMINISTIC_PRIMITIVE_CLASS_V1_NONE);
+        for (CettaExprIndex i = 0; i < term->expr.len; ++i)
+            template_fixture_atom(writer, term->expr.elems[i]);
+    } else writer->failed = true;
+}
+
+static bool check_compiled_tuple_heads(Arena *arena, char *error, size_t size) {
+    static const struct {
+        const char *left, *right, *call, *expected;
+        CettaDeterministicEquationStatusV1 status;
+    } cases[] = {
+        {"(a)", "((f) (f))", "(a)", "((f) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f))", "(a)", "((f))", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((C (f)) (f))", "(a)", "((C (f)) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f A) (f))", "(a)", "((f A) B)", CETTA_DETERMINISTIC_EQUATION_V1_OK},
+        {"(a)", "((f) (f A))", "(a)", NULL, CETTA_DETERMINISTIC_EQUATION_V1_NO_RULE},
+        {"(a $x)", "($x (f))", "(a Head)", NULL, CETTA_DETERMINISTIC_EQUATION_V1_NON_GROUND_TERM},
+    };
+    unsigned checks = 0u;
+    for (size_t i = 0; i < sizeof(cases) / sizeof(*cases); ++i) {
+        CettaPreparedWriterV1 writer = {0};
+        cpw_bytes(&writer, "CEQ1", 4u); cpw_text(&writer, "tuple-test-v1", 13u);
+        cpw_u64(&writer, 2u); cpw_u64(&writer, 0u);
+        cpw_text(&writer, "a-rule", 6u);
+        template_fixture_atom(&writer, data(arena, cases[i].left));
+        template_fixture_atom(&writer, data(arena, cases[i].right));
+        cpw_text(&writer, "f-rule", 6u);
+        template_fixture_atom(&writer, data(arena, "(f)"));
+        template_fixture_atom(&writer, data(arena, "B"));
+        bool valid = !writer.failed;
+        for (unsigned audit = 0; valid && audit < 2u; ++audit) {
+            CettaDeterministicEquationPlanV1 *plan = NULL;
+            valid = cetta_deterministic_equation_plan_v1_restore(writer.data, writer.len,
+                "tuple-test-v1", NULL, audit != 0u, &plan, error, size);
+            if (valid) {
+                Atom *call = data(arena, cases[i].call), *fast = NULL, *reference = NULL;
+                Atom *expected = cases[i].expected ? data(arena, cases[i].expected) : NULL;
+                CettaDeterministicEquationStatusV1 fast_status, reference_status;
+                uint64_t used = 0u;
+                bool reference_ok = cetta_deterministic_equation_plan_v1_apply_counted(plan, call,
+                    NULL, NULL, arena, 0u, 0u, &used, &reference, &reference_status, error, size);
+                bool fast_ok = cetta_deterministic_equation_plan_v1_apply(plan, call,
+                    NULL, NULL, arena, 0u, 0u, &fast, &fast_status, error, size);
+                valid = fast_ok == reference_ok && fast_ok == (expected != NULL) &&
+                    fast_status == cases[i].status && reference_status == cases[i].status &&
+                    (expected ? atom_eq(expected, reference) && atom_eq(expected, fast) : !fast && !reference);
+                ++checks;
+            }
+            cetta_deterministic_equation_plan_v1_free(plan);
+        }
+        free(writer.data);
+        if (!valid) {
+            snprintf(error, size, "compiled tuple-head observation differs in restored case %zu", i);
+            return false;
+        }
+    }
+    printf("(EquationTemplateTupleHeadsV1Summary %u 0)\n", checks);
+    return true;
+}
+
+static bool check_prepared(Arena *arena, const PPABIV1Pack *classes, char *error, size_t size) {
+    const char *path = "langdef/bnf/regular_token_value_compiler_v1.metta";
+    CettaDeterministicEquationPlanV1 *source = NULL, *restored = NULL, *bad = NULL;
+    CettaDeterministicEquationStatusV1 status;
+    CettaRegularTokenCompilerV1 *compiler = NULL;
+    CettaRegularPatternV1 *pattern = NULL, *loaded = NULL, *retained = NULL;
+    uint8_t *bytes = NULL, *again = NULL; size_t len = 0, again_len = 0;
+    bool ok = false; unsigned checks = 0;
+    if (!cetta_deterministic_equation_plan_v1_load(&path, 1u, NULL, &source, &status, error, size) ||
+        !cetta_deterministic_equation_plan_v1_store(source, "test-no-primitives-v1", &bytes, &len, error, size)) goto done;
+    CettaDeterministicEquationPreparationV1 before = cetta_deterministic_equation_plan_v1_preparation();
+    /* Fresh source variables and the build-host's different symbol allocation
+     * order must not become persistent program identities. */
+    if (!cetta_deterministic_equation_plan_v1_restore(bytes, len, "test-no-primitives-v1", NULL, true,
+        &restored, error, size)) goto done;
+    Atom *call = data(arena, "(rtv1:compile sample (rx-seq (rx-char (cp 97)) (rx-star (rx-char (cp 98)))))");
+    Atom *left = NULL, *right = NULL;
+    if (!call || !cetta_deterministic_equation_plan_v1_run(source, call, NULL, NULL, arena, 2048u, 1000000u,
+        &left, &status, error, size) || !cetta_deterministic_equation_plan_v1_run(restored, call, NULL, NULL,
+        arena, 2048u, 1000000u, &right, &status, error, size) || !atom_eq(left, right) ||
+        !cetta_deterministic_equation_plan_v1_store(restored, "test-no-primitives-v1", &again, &again_len, error, size) ||
+        len != again_len || memcmp(bytes, again, len)) goto done;
+    checks += 3u;
+    cetta_deterministic_equation_plan_v1_free(source); source = NULL;
+    cetta_deterministic_equation_plan_v1_free(restored); restored = NULL;
+    if (cetta_deterministic_equation_plan_v1_restore(bytes, len, "different-vocabulary", NULL, false, &bad, error, size)) goto done;
+    ++checks;
+    for (size_t cut = 0; cut < 8u; ++cut) {
+        size_t short_len = cut < 4u ? cut : len - (cut - 3u);
+        if (cetta_deterministic_equation_plan_v1_restore(bytes, short_len, "test-no-primitives-v1", NULL,
+            false, &bad, error, size)) goto done;
+        ++checks;
+    }
+    bytes[0] ^= 1u;
+    if (cetta_deterministic_equation_plan_v1_restore(bytes, len, "test-no-primitives-v1", NULL, false, &bad, error, size)) goto done;
+    ++checks; free(bytes); bytes = NULL; free(again); again = NULL;
+    Arena input;
+    arena_init(&input);
+    Atom *regex = data(&input, "(rx-seq (rx-char (cp 97)) (rx-star (rx-char (cp 98))))");
+    bool compiled = regex && cetta_regular_token_compiler_v1_load(classes, 1000000u, &compiler, error, size) &&
+        cetta_regular_token_compiler_v1_store(compiler, &bytes, &len, error, size);
+    cetta_regular_token_compiler_v1_free(compiler); compiler = NULL;
+    if (compiled && cetta_deterministic_equation_plan_v1_restore(bytes, len, "regular-token-v1", NULL, false, &bad, error, size))
+        compiled = false; /* The ABI name alone cannot supply missing primitives. */
+    if (compiled) compiled = cetta_regular_token_compiler_v1_restore(classes, 1000000u, bytes, len, true,
+        &compiler, error, size) && cetta_regular_pattern_v1_compile(compiler, &input, regex, &pattern, error, size);
+    free(bytes); bytes = NULL;
+    checks += compiled ? 2u : 0u;
+    arena_free(&input);
+    cetta_regular_token_compiler_v1_free(compiler); compiler = NULL;
+    if (!compiled || !cetta_regular_pattern_v1_store(pattern, &bytes, &len, error, size) ||
+        !cetta_regular_pattern_v1_restore(bytes, len, &loaded, error, size)) goto done;
+    retained = cetta_regular_pattern_v1_retain(pattern);
+    cetta_regular_pattern_v1_release(pattern); pattern = NULL;
+    if (!retained) goto done;
+    free(bytes); bytes = NULL;
+    for (unsigned i = 0; i < 2u; ++i) {
+        const RSDFAV1Program *program = cetta_regular_pattern_v1_program(i ? retained : loaded);
+        RSDFAV1ByteToken token; RSDFAV1ByteCursorScanResult scan;
+        if (!rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(program, (const uint8_t *)"abbbx", 5u, 0u,
+            1000u, &token, 1u, &scan, error, size) || scan.accept_len != 1u || token.end_byte != 4u) goto done;
+        ++checks;
+        if (!rsdfa_v1_program_scan_byte_cursor_longest_prevalidated(program, (const uint8_t *)"x", 1u, 0u,
+            1000u, &token, 1u, &scan, error, size) || scan.accept_len != 0u) goto done;
+        ++checks;
+    }
+    if (!cetta_regular_pattern_v1_store(loaded, &bytes, &len, error, size)) goto done;
+    for (size_t cut = 0; cut < 8u; ++cut) {
+        size_t short_len = cut < 4u ? cut : len - (cut - 3u);
+        if (cetta_regular_pattern_v1_restore(bytes, short_len, &pattern, error, size)) goto done;
+        ++checks;
+    }
+    bytes[0] ^= 1u;
+    if (cetta_regular_pattern_v1_restore(bytes, len, &pattern, error, size)) goto done;
+    ++checks;
+    CettaDeterministicEquationPreparationV1 after = cetta_deterministic_equation_plan_v1_preparation();
+    if (after.source_loads != before.source_loads || after.source_admissions != before.source_admissions || after.restores <= before.restores) goto done;
+    ++checks;
+    printf("(PreparedEquationAndPatternV1Summary %u 0)\n", checks);
+    ok = true;
+done:
+    cetta_deterministic_equation_plan_v1_free(source);
+    cetta_deterministic_equation_plan_v1_free(restored);
+    cetta_deterministic_equation_plan_v1_free(bad);
+    cetta_regular_token_compiler_v1_free(compiler);
+    cetta_regular_pattern_v1_release(pattern); cetta_regular_pattern_v1_release(loaded); cetta_regular_pattern_v1_release(retained);
+    free(bytes); free(again);
+    return ok;
+}
+
+int main(int argc, char **argv) {
     static const char *regexes[] = {
         "rx-eps", "rx-empty", "rx-eof", "rx-any", "(rx-char (cp 97))",
         "(rx-class letter)", "(rx-class not-newline)",
@@ -823,7 +990,16 @@ int main(void) {
     if (!check_token_profile(&arena, error, sizeof(error))) goto done;
     if (!check_token_parser_compiler(&arena, error, sizeof(error))) goto done;
     if (!check_counted_scalar_text(error, sizeof(error))) goto done;
+    CettaDeterministicEquationPreparationV1 preparation_before = cetta_deterministic_equation_plan_v1_preparation();
     if (!check_lbnf_document(&arena, error, sizeof(error))) goto done;
+    CettaDeterministicEquationPreparationV1 preparation_after = cetta_deterministic_equation_plan_v1_preparation();
+    if (preparation_after.source_loads != preparation_before.source_loads ||
+        preparation_after.source_admissions != preparation_before.source_admissions ||
+        preparation_after.audits != preparation_before.audits) {
+        snprintf(error, sizeof(error), "built-in parser compilers admitted embedded source"); goto done;
+    }
+    if (!check_compiled_tuple_heads(&arena, error, sizeof(error))) goto done;
+    if (!check_prepared(&arena, &classes, error, sizeof(error))) goto done;
     if (!cetta_deterministic_equation_plan_v1_load(paths, 1u, NULL, &compiler,
             &status, error, sizeof(error))) goto done;
     if (!cetta_regular_token_compiler_v1_load(&classes, 1000000u, &regular, error, sizeof(error))) goto done;
@@ -912,6 +1088,17 @@ int main(void) {
         ++checks;
     }
     printf("(RegularTokenValueCompilerV1NativeSummary %u 0)\n", checks);
+    if (argc == 2) {
+        CettaRegularPatternV1 *known = NULL; uint8_t *image = NULL; size_t image_len = 0;
+        Atom *regex = data(&arena, "(rx-seq (rx-char (cp 97)) (rx-star (rx-char (cp 98))))");
+        bool emitted = regex && cetta_regular_pattern_v1_compile(regular, &arena, regex, &known, error, sizeof(error)) &&
+            cetta_regular_pattern_v1_store(known, &image, &image_len, error, sizeof(error)) &&
+            cetta_prepared_artifact_v1_publish(argv[1], image, image_len, error, sizeof(error));
+        cetta_regular_pattern_v1_release(known); free(image);
+        if (!emitted) goto done;
+    } else if (argc != 1) {
+        snprintf(error, sizeof(error), "expected at most one pattern artifact output path"); goto done;
+    }
     exit_status = 0;
 done:
     if (exit_status) fprintf(stderr, "regular-token compiler gate: %s\n", error);

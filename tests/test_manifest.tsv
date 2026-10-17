@@ -97,6 +97,7 @@ tests/prime/practical/typed_pln_chainer.metta	prime	metta		any	native	test-prime
 tests/prime/prepared_match_decision.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/prepared_pure_control_cache.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/prepared_pure_shared_decision.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/ready_values.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/relational_first_demand.metta	prime	metta		any	native	test-prime	golden	Prime root first-answer demand, fallback, and nested-search regression
 tests/prime/rule_machine_compile.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_duplicate_id.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

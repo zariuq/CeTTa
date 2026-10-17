@@ -54,6 +54,18 @@ static bool entries(ModuleAssemblyV1 *a, Atom *value, ModuleValuesV1 *rows) {
 }
 
 static Atom *entry_key(ModuleAssemblyV1 *a, Atom *body, Atom *site) {
+    static const char *typed[] = {"ModuleCoreTypeV1", "ModuleCoreTermV1", "ModuleCoreEquationV1", "ModuleCoreRewriteV1"};
+    static const char *groups[] = {"ModuleTypeKeyV1", "ModuleTermKeyV1", "ModuleEquationKeyV1", "ModuleRewriteKeyV1"};
+    for (size_t i = 0; i < 4u; ++i) if (module_form_v1(body, typed[i], 1u)) {
+        Atom *row = body->expr.elems[1];
+        if (!row || row->kind != ATOM_EXPR || row->expr.len < 2u) return NULL;
+        if (i == 1u) {
+            if (!module_form_v1(row, "GrammarRuleV2", 6u)) return NULL;
+            Atom *fields[] = {row->expr.elems[1], row->expr.elems[2], site};
+            return module_make_v1(a->work.arena, groups[i], fields, 3u);
+        }
+        return module_make_v1(a->work.arena, groups[i], &row->expr.elems[1], 1u);
+    }
     Atom *fields[3];
     if (module_form_v1(body, "ModuleTermV1", 4u)) {
         /* A production occurrence is independent of its constructor label. */
@@ -467,7 +479,7 @@ static Atom *assemble_builder(ModuleAssemblyV1 *a, Atom *module, Atom *builder,
     } else if (module_form_v1(builder, "ModuleAddExportsV1", 2u)) {
         Atom *base = assemble_builder(a, module, builder->expr.elems[1], env, invocation, stack);
         if (base) out = add_exports(a, base, builder->expr.elems[2], invocation);
-    } else if (module_form_v1(builder, "ModuleAddTermsV1", 2u) || module_form_v1(builder, "ModuleAddEquationsV1", 2u) || module_form_v1(builder, "ModuleAddRewritesV1", 2u)) {
+    } else if (module_form_v1(builder, "ModuleAddTermsV1", 2u) || module_form_v1(builder, "ModuleAddEquationsV1", 2u) || module_form_v1(builder, "ModuleAddRewritesV1", 2u) || module_form_v1(builder, "ModuleAddTypesV1", 2u)) {
         Atom *base = assemble_builder(a, module, builder->expr.elems[1], env, invocation, stack);
         ModuleValuesV1 declarations = {0}, additions = {0};
         if (base && module_unlist_v1(&a->work, builder->expr.elems[2], &declarations)) {

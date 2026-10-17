@@ -16,6 +16,36 @@ static bool he_not_reducible(Atom *atom) {
     return atom_is_symbol_id(atom, g_builtin_syms.not_reducible);
 }
 
+/* (chain <nested> $v <template>) binds $v in <template>, and function and
+ * collapse-bind carry code.  An environment reaches a chain's nested
+ * computation at once and its template only after the selected result has
+ * replaced $v, so an outer binding of the destination's variable never
+ * reaches the destination's occurrences.  Every other atom takes the
+ * environment as it stands. */
+static Atom *he_instruction_apply_env(Arena *a, const Bindings *env,
+                                      Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return bindings_apply_if_vars(env, a, atom);
+    SymbolId head = atom_head_symbol_id(atom);
+    CettaExprLen nargs = expr_nargs(atom);
+    if (head == g_builtin_syms.chain && nargs == 3u &&
+        expr_arg(atom, 1)->kind == ATOM_VAR) {
+        Atom *nested = he_instruction_apply_env(a, env, expr_arg(atom, 0));
+        if (nested == expr_arg(atom, 0))
+            return atom;
+        Atom *elems[] = {atom->expr.elems[0], nested,
+                         expr_arg(atom, 1), expr_arg(atom, 2)};
+        return atom_expr(a, elems, 4u);
+    }
+    if ((head == g_builtin_syms.function ||
+         head == g_builtin_syms.collapse_bind) && nargs == 1u) {
+        Atom *body = he_instruction_apply_env(a, env, expr_arg(atom, 0));
+        return body == expr_arg(atom, 0)
+            ? atom : atom_expr2(a, atom->expr.elems[0], body);
+    }
+    return bindings_apply_if_vars(env, a, atom);
+}
+
 static void he_minimal_run(Space *s, Arena *a, Atom *atom, int fuel,
                            const Bindings *prefix, OutcomeSet *os);
 
@@ -266,9 +296,10 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 }
                 outcome_set_add(os, result, &item->env);
             } else if (frame->phase == HE_INSTRUCTION_CHAIN) {
-                Atom *body = bindings_apply_if_vars(
-                    &item->env, a, expr_arg(frame->atom, 2));
-                body = instantiate_template_variable_once(a, body,
+                /* The result replaces the destination first; the template
+                 * takes the result's environment when it runs. */
+                Atom *body = instantiate_template_variable_once(a,
+                    expr_arg(frame->atom, 2),
                     expr_arg(frame->atom, 1)->var_id, result);
                 he_instruction_push(stack, HE_INSTRUCTION_RUN, s, a,
                     body, child_fuel, &item->env, os);
@@ -319,8 +350,9 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
             return;
         }
     }
-    frame->atom = resolve_registry_refs(a,
-        bindings_apply_if_vars(&frame->env, a, frame->atom));
+    frame->atom = resolve_registry_refs(a, frame->kind == HE_INSTRUCTION_RUN
+        ? he_instruction_apply_env(a, &frame->env, frame->atom)
+        : bindings_apply_if_vars(&frame->env, a, frame->atom));
     Atom *atom = frame->atom;
     SymbolId head = atom_head_symbol_id(atom);
     CettaExprLen nargs = atom->kind == ATOM_EXPR && atom->expr.len
@@ -519,10 +551,8 @@ static bool he_eval_typed_instruction(Space *s, Arena *a, Atom *atom, Atom *codo
         for (CettaCount i = 0u; i < sources.len && !eval_unwinding(); i++) {
             Atom *result = outcome_atom_materialize(a, &sources.items[i]);
             if (!result) continue;
-            Atom *body = bindings_apply_if_vars(
-                &sources.items[i].env, a, expr_arg(live[0], 2));
-            body = instantiate_template_variable_once(
-                a, body, expr_arg(live[0], 1)->var_id, result);
+            Atom *body = instantiate_template_variable_once(
+                a, expr_arg(live[0], 2), expr_arg(live[0], 1)->var_id, result);
             he_minimal_run(s, a, body, fuel, &sources.items[i].env, &minimal);
         }
         outcome_set_free(&sources);
