@@ -2058,6 +2058,7 @@ static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind);
 static uint32_t atom_flags_for_internal_tag(int64_t tag);
 static uint32_t atom_structural_facts_for_internal_tag(int64_t tag);
 static uint32_t atom_flags_for_symbol_id(SymbolId sym_id);
+static uint32_t atom_structural_facts_for_symbol_id(SymbolId sym_id);
 static inline __attribute__((always_inline)) uint32_t
 atom_flags_from_children(uint32_t arena_id, uint32_t older_id, Atom **elems,
                          CettaExprLen len, uint32_t *structural_facts_out);
@@ -2079,6 +2080,8 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         expected = atom_flags_for_symbol_id(atom->sym_id);
+        expected_structural_facts =
+            atom_structural_facts_for_symbol_id(atom->sym_id);
         break;
     case ATOM_VAR:
         if (atom->var_id == VAR_ID_NONE ||
@@ -3367,7 +3370,10 @@ static uint32_t atom_structural_facts_for_grounded_kind(
                 ? ATOM_STRUCTURAL_HAS_INTERNAL_TAG : 0u) |
            (gkind == GV_STATE || gkind == GV_TERM_GRAPH
                 ? ATOM_STRUCTURAL_HAS_NAN : 0u) |
-           (gkind == GV_TERM_GRAPH ? ATOM_STRUCTURAL_HAS_RATIONAL : 0u);
+           (gkind == GV_TERM_GRAPH
+                ? ATOM_STRUCTURAL_HAS_RATIONAL |
+                      ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE
+                : 0u);
 }
 
 /* Lists and nominal callable constructors are immutable structural data.
@@ -3407,6 +3413,13 @@ static uint32_t atom_flags_for_symbol_id(SymbolId sym_id) {
     if (cetta_gslt_thread_local_resource_symbol(sym_id, &g_builtin_syms))
         flags |= ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE;
     return flags;
+}
+
+static uint32_t atom_structural_facts_for_symbol_id(SymbolId sym_id) {
+    return ATOM_STRUCTURAL_FACTS_VALID |
+           (sym_id != SYMBOL_ID_NONE &&
+                    sym_id == g_builtin_syms.not_reducible
+                ? ATOM_STRUCTURAL_HAS_NOT_REDUCIBLE : 0u);
 }
 
 /* Whether an atom's graph is closed across its own arena's generations:
@@ -3796,7 +3809,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.sym_id = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
+    temp.structural_facts = atom_structural_facts_for_symbol_id(sym_id);
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -3837,7 +3850,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
         .sym_id = sym_id,
         .arena_id = 0u,
         .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .structural_facts = atom_structural_facts_for_symbol_id(sym_id),
     };
     made->hash_cache = atom_hash_compute(made);
     if (atom_is_hash_stable(made))
@@ -4065,6 +4078,22 @@ Atom *atom_int_copy(Arena *a, const Atom *source) {
     return atom_int(a, source->ground.ival);
 }
 
+/* A grounded leaf of this kind in this arena with every field written: the
+ * fields it does not name are zero, and name_key in particular is NULL, as on
+ * every atom but a variable.  A collection reads that field as its mark and
+ * as its forwarding copy. */
+static inline Atom atom_grounded_leaf(const Arena *a, GroundedKind gkind) {
+    return (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(gkind),
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(gkind),
+        .ground = {.gkind = gkind},
+    };
+}
+
 Atom *atom_bigint(Arena *a, const char *val) {
     char *canonical = cetta_bigint_canonicalize_owned(val);
     if (!canonical)
@@ -4092,14 +4121,8 @@ Atom *atom_bigint(Arena *a, const char *val) {
         return shared;
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = temp.kind;
-    at->flags = temp.flags;
-    at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    *at = temp;
     at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts = temp.structural_facts;
-    at->ground.gkind = temp.ground.gkind;
     at->ground.bigint = cetta_bigint_new_arena(a, canonical);
     free(canonical);
     return at;
@@ -4177,15 +4200,7 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
             return atom_int(a, (int64_t)small);
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_BIGINT);
-    at->ground.gkind = GV_BIGINT;
+    *at = atom_grounded_leaf(a, GV_BIGINT);
     /* Arithmetic values are deliberately not hash-consed.  A growing numeric
      * loop produces unique leaves; interning them forces decimal hashing and
      * retains the entire history. */
@@ -4203,15 +4218,7 @@ Atom *atom_bigint_take_mpz(Arena *a, mpz_t value) {
             return atom_int(a, narrowed);
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_BIGINT);
-    at->ground.gkind = GV_BIGINT;
+    *at = atom_grounded_leaf(a, GV_BIGINT);
     at->ground.bigint = cetta_bigint_new_arena_take_mpz(a, value);
     return at;
 }
@@ -4304,14 +4311,8 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
     }
 
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = temp.kind;
-    at->flags = temp.flags;
-    at->var_id = temp.var_id;
-    at->sym_id = SYMBOL_ID_NONE;
+    *at = temp;
     at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts = temp.structural_facts;
-    at->ground.gkind = temp.ground.gkind;
     at->ground.rational = cetta_rational_new_arena(a, text);
     mpq_set(at->ground.rational->value, q);
 
@@ -4326,45 +4327,21 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_SPACE);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_SPACE);
-    at->ground.gkind = GV_SPACE;
+    *at = atom_grounded_leaf(a, GV_SPACE);
     at->ground.ptr = space_ptr;
     return at;
 }
 
 Atom *atom_state(Arena *a, StateCell *cell) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_STATE);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_STATE);
-    at->ground.gkind = GV_STATE;
+    *at = atom_grounded_leaf(a, GV_STATE);
     at->ground.ptr = cell;
     return at;
 }
 
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_CAPTURE);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_CAPTURE);
-    at->ground.gkind = GV_CAPTURE;
+    *at = atom_grounded_leaf(a, GV_CAPTURE);
     at->ground.ptr = closure;
     return at;
 }
@@ -4382,15 +4359,7 @@ static void arena_hold_foreign(Arena *a, CettaForeignValue *value) {
 Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     arena_hold_foreign(a, value);
     Atom *at = arena_alloc(a, sizeof(Atom));
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_FOREIGN);
-    at->var_id = VAR_ID_NONE;
-    at->sym_id = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_FOREIGN);
-    at->ground.gkind = GV_FOREIGN;
+    *at = atom_grounded_leaf(a, GV_FOREIGN);
     at->ground.ptr = value;
     return at;
 }
@@ -4401,16 +4370,8 @@ Atom *atom_seal(Arena *a, void *object) {
         !arena_retain_owner(a, object, hold->retain, hold->release))
         return NULL;
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){
-        .kind = ATOM_GROUNDED,
-        .flags = atom_flags_for_grounded_kind(GV_SEAL),
-        .var_id = VAR_ID_NONE,
-        .sym_id = SYMBOL_ID_NONE,
-        .arena_id = a->identity,
-        .structural_facts =
-            atom_structural_facts_for_grounded_kind(GV_SEAL),
-        .ground = {.gkind = GV_SEAL, .ptr = object},
-    };
+    *at = atom_grounded_leaf(a, GV_SEAL);
+    at->ground.ptr = object;
     return at;
 }
 
