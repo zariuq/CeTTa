@@ -12,12 +12,8 @@
 (= (thaw $x) thawed)
 (= (sel A) NotReducible)
 (= (sel B) bee)
+(= (id $x) $x)
 (= (fst (pair $a $b)) $a)
-(= (pass $x) $x)
-(= (getcar $e) (car-atom $e))
-(fact NotReducible)
-(fact 2)
-(= (facts) (match &self (fact $x) $x))
 
 !(freeze 7)
 !(freeze (+ 1 6))
@@ -43,14 +39,3 @@
 !(let $v (sel $w) (wrap $v))
 ; The marker reaches a body through an argument too.
 !(fst (pair NotReducible 1))
-!(pass NotReducible)
-!(wrap (pass NotReducible))
-; Whatever operation answers the marker, its call stays: a builtin, a match
-; row, a superpose alternative or a state's value.
-!(car-atom (NotReducible 1))
-!(getcar (NotReducible 1))
-!(match &self (fact $x) $x)
-!(collapse (match &self (fact $x) $x))
-!(collapse (facts))
-!(collapse (superpose (NotReducible 1)))
-!(let $s (new-state NotReducible) (get-state $s))

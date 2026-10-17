@@ -16,44 +16,6 @@ static bool he_not_reducible(Atom *atom) {
     return atom_is_symbol_id(atom, g_builtin_syms.not_reducible);
 }
 
-/* HE's call return: a call that answers NotReducible is not reducible, and
- * its answer is the call itself under that answer's bindings.  Rewrites the
- * answers from `start` on, which `call` gave. */
-static void he_outcomes_call_return(Arena *a, OutcomeSet *os,
-                                    CettaCount start, Atom *call) {
-    for (CettaCount i = start; os && call && i < os->len; i++) {
-        Outcome *out = &os->items[i];
-        if (!he_not_reducible(outcome_preview_atom(out)))
-            continue;
-        if (out->kind == CETTA_OUTCOME_ANSWER_REF &&
-            !outcome_inflate_answer_ref(a, out))
-            continue;
-        variant_instance_free(&out->variant);
-        variant_instance_init(&out->variant);
-        out->atom = call;
-        out->materialized_atom = NULL;
-        outcome_refresh_materialized_fast_path(out);
-    }
-}
-
-/* The answers a legacy call frame has given since the call it evaluates
- * became current: settled when a tail re-entry makes another call current
- * and when the frame is left. */
-typedef struct {
-    Arena *arena;
-    OutcomeSet *os;
-    Atom *const *call;
-    CettaCount start;
-} HeCallReturnScope;
-
-static void he_call_return_scope_settle(HeCallReturnScope *scope) {
-    if (!scope->os)
-        return;
-    he_outcomes_call_return(scope->arena, scope->os, scope->start,
-                            *scope->call);
-    scope->start = scope->os->len;
-}
-
 /* (chain <nested> $v <template>) binds $v in <template>, and function and
  * collapse-bind carry code.  An environment reaches a chain's nested
  * computation at once and its template only after the selected result has
