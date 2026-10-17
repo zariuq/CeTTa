@@ -301,6 +301,11 @@ typedef struct {
     bool dependent_type_domains;
     /* The 1.1 PeTTa law: car-atom of () raises; earlier versions return (). */
     bool raises_empty_car;
+    /* petta@1.1.c's call contracts: a typed call checks a position whose
+     * declared type is not a variable, its check commits to its first
+     * answer and raises the language's type error when it has none, and no
+     * run-time dispatch recovers that error. */
+    bool call_contracts;
     /* HE gives `if` equations only for True and False, so a condition that
      * is neither leaves the call itself, branches unevaluated, as its value.
      * PeTTa takes any other condition value as false. */

@@ -345,6 +345,9 @@ Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
                                           Atom *type);
 Atom *petta_semantics_no_matching_overload_error(Arena *arena,
                                                  Atom *function);
+/* Whether `error` is a call contract's: literal_type_mismatch(Value, Type)
+ * in context typecheck. */
+bool petta_semantics_contract_error(Atom *error);
 /* PeTTa 1.1's error for an import no file answers:
  * existence_error(source_sink, File) in context(import!, File). */
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);

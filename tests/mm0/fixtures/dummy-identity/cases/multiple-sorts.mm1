@@ -1,0 +1,5 @@
+strict provable sort wff;
+sort left;
+sort right;
+term p {x: left} {y: right}: wff;
+def d {.x: left} {.y: right}: wff = $ p x y $;

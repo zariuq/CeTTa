@@ -544,7 +544,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     const CettaLanguageVersion *program_version =
         cetta_language_version_of(language_id, profile);
     if (ctx->petta_program && language_id == CETTA_LANGUAGE_PETTA &&
-        program_version && program_version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1)
+        cetta_language_version_petta_typed_line(program_version))
         (void)petta_program_enable_callability_refresh(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);

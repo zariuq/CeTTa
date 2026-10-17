@@ -1,8 +1,9 @@
 #include "hol_cetta_module.h"
 #include "library.h"
-#include "native_handle.h"
+#include "seal.h"
 #include "test_util.h"
 #include <time.h>
+#include <pthread.h>
 
 static bool stop;
 bool eval_native_interrupted(void) { return stop; }
@@ -25,10 +26,31 @@ static bool tag(Atom *a, const char *s) {
     return a && a->kind == ATOM_EXPR && a->expr.len && atom_is_symbol(a->expr.elems[0], s);
 }
 static bool handle(Atom *a, const char *kind) {
-    return cetta_native_handle_get_owned(host, a, kind) != NULL;
+    return cetta_hol_test_is_value(a, kind);
 }
-static unsigned live_handles(void) {
-    return (unsigned)cetta_native_handle_count(host);
+static unsigned live_values(void) {
+    return (unsigned)cetta_hol_test_live_values();
+}
+
+typedef struct {
+    Atom *kernel, *term, *refl_head, *sequent_head;
+    unsigned failures;
+} ConcurrentCheck;
+
+static void *concurrent_checks(void *data) {
+    ConcurrentCheck *work = data;
+    for (unsigned round = 0; round < 128; ++round) {
+        Arena local;
+        arena_init_detached(&local);
+        Atom *args[] = {work->kernel, work->term};
+        Atom *theorem = cetta_hol_dispatch(host, NULL, &local, work->refl_head, args, 2);
+        if (!cetta_hol_test_is_value(theorem, "hol-thm")) ++work->failures;
+        Atom *proof_args[] = {theorem};
+        Atom *view = cetta_hol_dispatch(host, NULL, &local, work->sequent_head, proof_args, 1);
+        if (!tag(view, "thm")) ++work->failures;
+        arena_free(&local);
+    }
+    return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -50,9 +72,16 @@ int main(int argc, char **argv) {
     arena_init_detached(&arena);
     host = calloc(1, sizeof *host);
     if (!host) return 2;
-    host->native_handle_next_id = 1;
+    cetta_seal_test_fail_allocation(1);
+    CHECK(tag(call("kernel", NULL, 0), "hol:error"));
+    CHECK(live_values() == 0);
     Atom *k = call("kernel", NULL, 0);
     CHECK(handle(k, "hol-kernel"));
+    if (!handle(k, "hol-kernel")) {
+        arena_free(&arena); free(host);
+        symbol_table_free(&symbols); g_symbols = NULL;
+        return test_summary("test-hol-bridge");
+    }
 
     SECTION("borrowed shared input and shared output");
     Atom *b = one("T", str("bool"));
@@ -150,7 +179,7 @@ int main(int argc, char **argv) {
     }
     Atom *rows = atom_expr(&source, nodes, (CettaExprLen)node_count);
     Atom *root_id = atom_int(&arena, (int64_t)((node_count - 1) * 17 + 3));
-    unsigned handles_before = live_handles();
+    unsigned handles_before = live_values();
     size_t source_bytes = arena_accounted_live_bytes(&source);
     before = arena_accounted_live_bytes(&arena);
     struct timespec started, finished;
@@ -161,7 +190,7 @@ int main(int argc, char **argv) {
                         (double)(finished.tv_nsec - started.tv_nsec) / 1000000.0;
     size_t publication_bytes = arena_accounted_live_bytes(&arena) - before;
     CHECK(handle(root, "hol-thm"));
-    CHECK(live_handles() == handles_before + 1);
+    CHECK(live_values() == handles_before + 1);
     CHECK(publication_bytes < 4096); /* no copied source rows in the output arena */
     CHECK(arena_accounted_live_bytes(&source) == source_bytes);
     bool unchanged = true;
@@ -173,7 +202,7 @@ int main(int argc, char **argv) {
     /* A late invalid claim publishes nothing and leaves the earlier root live. */
     nodes[node_count - 1]->expr.elems[4] = two("thm", empty, x);
     CHECK(tag(call("check-dag", (Atom *[]){k, rows, root_id}, 3), "hol:refused"));
-    CHECK(live_handles() == handles_before + 1);
+    CHECK(live_values() == handles_before + 1);
     nodes[node_count - 1]->expr.elems[4] = claim;
     free(nodes);
     arena_free(&source);
@@ -182,16 +211,35 @@ int main(int argc, char **argv) {
     printf("HolBridgeProofDag nodes=%zu source-bytes=%zu output-arena-bytes=%zu query-ms=%.3f\n",
            node_count, source_bytes, publication_bytes, elapsed_ms);
 
+    SECTION("shared sealed session across independent calling arenas");
+    pthread_t threads[4];
+    ConcurrentCheck work[4];
+    unsigned created = 0;
+    Atom *refl_head = sym("__cetta_lib_hol_refl");
+    Atom *sequent_head = sym("__cetta_lib_hol_sequent");
+    unsigned concurrent_before = live_values();
+    for (unsigned i = 0; i < 4; ++i) {
+        work[i] = (ConcurrentCheck){k, x, refl_head, sequent_head, 0};
+        if (pthread_create(&threads[i], NULL, concurrent_checks, &work[i])) break;
+        ++created;
+    }
+    CHECK(created == 4);
+    for (unsigned i = 0; i < created; ++i) {
+        CHECK(pthread_join(threads[i], NULL) == 0);
+        CHECK(work[i].failures == 0);
+    }
+    CHECK(live_values() == concurrent_before);
+
     SECTION("atomic publication of both type-definition theorems");
     Atom *identity = two("L", x, x);
     Atom *witness = call("refl", (Atom *[]){k, identity}, 2);
     CHECK(handle(witness, "hol-thm"));
-    unsigned live = live_handles();
+    unsigned live = live_values();
     Atom *args[] = {k, str("unit_type"), str("unit_abs"), str("unit_rep"), witness};
-    cetta_native_handle_test_fail_owner_after(1);
+    cetta_seal_test_fail_allocation(2);
     Atom *failed = call("new-type-definition", args, 5);
     CHECK(tag(failed, "hol:error"));
-    CHECK(live_handles() == live); /* no leaked first theorem handle */
+    CHECK(live_values() == live); /* no leaked first theorem handle */
     Atom *result = call("new-type-definition", args, 5);
     CHECK(result && result->kind == ATOM_EXPR && result->expr.len == 2);
     if (result && result->kind == ATOM_EXPR && result->expr.len == 2) {
@@ -202,8 +250,7 @@ int main(int argc, char **argv) {
     }
 
     arena_free(&arena);
-    CHECK(live_handles() == 0);
-    cetta_native_handle_cleanup_all(host);
+    CHECK(live_values() == 0);
     free(host);
     symbol_table_free(&symbols);
     g_symbols = NULL;

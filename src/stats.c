@@ -1008,6 +1008,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-program-space-reuse",
     "prepared-map-safety-check",
     "prepared-map-safety-reuse",
+    "petta-type-inert-guard",
+    "petta-type-inert-defer",
+    "petta-contract-version-compiled",
+    "petta-contract-version-entry",
+    "petta-contract-version-refused",
+    "prepared-pure-list-carrier-cell-read",
+    "petta-equation-activation-plan-declined-no-template",
 };
 
 static int64_t clamp_counter(uint64_t value) {

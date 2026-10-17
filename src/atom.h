@@ -64,7 +64,11 @@ typedef enum {
     GV_INTERNAL_TAG,
     GV_BINDINGS,
     /* A node of a rational term's graph (term_graph.h). */
-    GV_TERM_GRAPH
+    GV_TERM_GRAPH,
+    /* An opaque authority object of the shared seal substrate (seal.h): a
+     * brand facet, a capsule or a key.  Its only identity is the object
+     * itself; no printed form, number or payload reconstructs one. */
+    GV_SEAL
 } GroundedKind;
 
 typedef enum {
@@ -995,6 +999,51 @@ typedef struct CettaForeignHold {
 } CettaForeignHold;
 
 Atom *atom_foreign(Arena *a, CettaForeignValue *value);
+
+/* A seal object (seal.h) begins with a pointer to its hold: a static
+ * table of the object's class, so the hold is shared by all objects.
+ * An arena holding an atom of the object retains it once (per lifetime
+ * segment) and releases it on the reset or free that drops the atom.
+ * `display` writes the public observer only, `(Sealed NICK)` and the like:
+ * never an address, counter or payload.  `identity` is a private stable
+ * mixing key for hashing, consistent with identity equality; it is never
+ * printed, compared across processes or accepted from a program. */
+typedef struct CettaSealHold {
+    void (*retain)(void *object);
+    void (*release)(void *object);
+    /* snprintf semantics: writes at most `capacity` bytes, NUL included,
+     * and returns the length of the whole observer text. */
+    size_t (*display)(const void *object, char *buffer, size_t capacity);
+    uint64_t (*identity)(const void *object);
+    /* The object's type symbol for get-type: Sealed, SealFacet or Key. */
+    const char *(*type_name)(const void *object);
+} CettaSealHold;
+
+/* The atom of seal object `object`, retained by `a`.  NULL when the object
+ * is not a seal object or the arena cannot record its hold. */
+Atom *atom_seal(Arena *a, void *object);
+/* The seal object of a GV_SEAL atom, borrowed for as long as an arena holds
+ * the atom, or NULL. */
+void *atom_seal_object(const Atom *atom);
+static inline const CettaSealHold *cetta_seal_hold_of(const void *object) {
+    return object ? *(const CettaSealHold *const *)object : NULL;
+}
+static inline bool atom_is_seal(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_SEAL;
+}
+/* Whether `atom` is or contains an authority object (a seal facet, capsule
+ * or key) anywhere in its expression structure.  Portable encoders refuse
+ * such values instead of dropping or printing their authority. */
+bool atom_contains_seal(const Atom *atom);
+/* The observer text of a GV_SEAL atom into `buffer` (snprintf semantics);
+ * 0 for any other atom. */
+size_t atom_seal_display_text(const Atom *atom, char *buffer, size_t capacity);
+/* The private identity key of a GV_SEAL atom (0 for any other atom), for
+ * hashing and ordering consistent with identity equality.  Never printed. */
+uint64_t atom_seal_identity(const Atom *atom);
+/* The type symbol name of a GV_SEAL atom, or NULL. */
+const char *atom_seal_type_name(const Atom *atom);
 
 /* A node of a rational term's graph (term_graph.h), the payload of a
  * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms

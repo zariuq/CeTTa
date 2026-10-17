@@ -1,7 +1,8 @@
 ; Native HOL Light kernel. Import with (import! &self holkernel).
 ; Sessions default to standard axioms; (hol:kernel open) explicitly allows user axioms.
 ; Checking does not record derivations; (hol:kernel standard record) retains them for export.
-; Canonical type/term data is held as written. Use let to supply a prepared handle.
+; Canonical type/term data is held as written. Use let to supply a prepared value.
+; Sessions, terms and theorems are opaque seals; printed names carry no authority.
 ; See docs/hol_light.txt for the kernel, ownership and observation contracts.
 
 (: hol:kernel (-> Atom))

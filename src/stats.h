@@ -1010,7 +1010,14 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_SPACE_REUSE = 984,
     CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_CHECK = 985,
     CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_REUSE = 986,
-    CETTA_RUNTIME_COUNTER_COUNT = 987
+    CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_GUARD = 987,
+    CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_DEFER = 988,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_COMPILED = 989,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_ENTRY = 990,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_REFUSED = 991,
+    CETTA_RUNTIME_COUNTER_PREPARED_PURE_LIST_CARRIER_CELL_READ = 992,
+    CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_DECLINED_NO_TEMPLATE = 993,
+    CETTA_RUNTIME_COUNTER_COUNT = 994
 } CettaRuntimeCounter;
 
 typedef struct {
@@ -1090,18 +1097,17 @@ static inline void cetta_runtime_stats_note_survivor_allocation(
 #if (!CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_NOOP)) && \
     !defined(CETTA_RUNTIME_STATS_IMPL)
 #define cetta_runtime_stats_is_enabled() false
+/* Without runtime statistics a probe is an unevaluated call: the compiler
+ * still checks its arguments against the declarations above, and it emits
+ * no code. */
 #define cetta_runtime_stats_add(counter, delta)                                  \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_add)((counter), (delta)), 0))
 #define cetta_runtime_stats_set(counter, value)                                  \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_set)((counter), (value)), 0))
 #define cetta_runtime_stats_update_max(counter, value)                           \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_update_max)((counter), (value)), 0))
 #define cetta_runtime_stats_inc(counter)                                         \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_add)((counter), 1u), 0))
 #else
 static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {
     cetta_runtime_stats_add(counter, 1);

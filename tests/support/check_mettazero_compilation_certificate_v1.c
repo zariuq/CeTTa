@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+
 #include "generated/zero_exp_language_v1.generated.h"
 #include "generated/zero_emit_language_v1.generated.h"
 #include "generated/zero_interact_language_v1.generated.h"

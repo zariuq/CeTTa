@@ -1140,6 +1140,15 @@ Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
     return petta_error_term(arena, formal, atom_symbol(arena, "typecheck"));
 }
 
+bool petta_semantics_contract_error(Atom *error) {
+    if (!atom_is_error(error) || error->expr.len != 3u)
+        return false;
+    Atom *formal = error->expr.elems[1];
+    return formal->kind == ATOM_EXPR && formal->expr.len == 3u &&
+        atom_is_symbol(formal->expr.elems[0], "literal_type_mismatch") &&
+        atom_is_symbol(error->expr.elems[2], "typecheck");
+}
+
 Atom *petta_semantics_no_matching_overload_error(Arena *arena,
                                                  Atom *function) {
     if (!arena || !function)
@@ -3368,6 +3377,11 @@ static int petta_compare_grounded_atoms(
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.ptr,
             (uint64_t)(uintptr_t)right->ground.ptr);
+    case GV_SEAL:
+        /* Seal objects order by their private identity key: the order is
+         * consistent with identity equality and exposes no address. */
+        return petta_compare_u64(atom_seal_identity(left),
+                                 atom_seal_identity(right));
     case GV_PRIME_NEED_CAPABILITY:
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.prime_need_capability,
