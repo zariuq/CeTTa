@@ -47,7 +47,6 @@ def main():
         os.chmod(data,0o700)
         unit='''[Unit]
 Description=CeTTa native memory spaces
-After=default.target
 
 [Service]
 Type=simple
