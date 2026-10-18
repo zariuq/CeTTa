@@ -100,12 +100,20 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         worker == PREPARED_MINIMAL_WORKER_REENTER) {
         outcome_set_add(&raw, prepared, &env);
         invoked = true;
-    } else if (head == g_builtin_syms.get_type && nargs == 1u) {
+    } else if (head == g_builtin_syms.get_type &&
+               (nargs == 1u || nargs == 2u)) {
+        Space *typed_space = s;
+        Atom *error = NULL;
+        if (nargs == 2u)
+            typed_space = eval_get_type_space_argument(
+                a, atom, expr_arg(atom, 1), &error);
         Atom **types = NULL;
         uint32_t count = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
-        if (!eval_get_type_intrinsic_answers(
-                s, a, expr_arg(atom, 0), NULL, fuel, &types, &count,
+        if (!typed_space) {
+            outcome_set_add(&raw, error, &env);
+        } else if (!eval_get_type_intrinsic_answers(
+                typed_space, a, expr_arg(atom, 0), NULL, fuel, &types, &count,
                 &completion)) {
             free(types);
             outcome_set_free(&raw);

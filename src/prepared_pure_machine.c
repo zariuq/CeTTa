@@ -1,4 +1,5 @@
 #include "prepared_pure_machine.h"
+#include "he_macro_expansion.h"
 
 #include "eval.h"
 #include "grounded.h"
@@ -27,7 +28,17 @@ typedef enum {
     /* Choice zero: no answer.  Only answer producers compile it; their step
      * lowering turns it into a failing step, so no executor ever meets it. */
     PREPARED_PURE_ZERO,
+    /* No answer in a single-answer program: the program declines, and the
+     * canonical evaluator answers the call, as it answers HE's Empty. */
+    PREPARED_PURE_DECLINE,
 } PreparedPureNodeKind;
+
+/* An observation that tests a value against a bind pattern carries the
+ * pattern's index under this flag. */
+#define PREPARED_PURE_OBSERVE_PATTERN_TEST UINT32_C(0x80000000)
+/* An observation of whether a value is an expression atom, HE's
+ * Expression meta-type. */
+#define PREPARED_PURE_OBSERVE_ATOM_EXPRESSION UINT32_C(0x40000000)
 
 typedef struct {
     PreparedPureNodeKind kind;
@@ -300,6 +311,15 @@ typedef struct {
     bool declares_type;
     /* Its equations form one keyed group: decisions[first_decision]. */
     bool keyed;
+    /* An HE head with one value-class signature: a call takes typed_arity
+     * arguments, value_classes[first_value_class, +typed_arity) are its
+     * parameters' classes and range_class its range's.  checks_arguments
+     * when some parameter's class is not %Undefined%. */
+    bool typed;
+    bool checks_arguments;
+    uint8_t range_class;
+    uint32_t typed_arity;
+    uint32_t first_value_class;
 } PreparedPureHead;
 
 typedef struct {
@@ -371,6 +391,8 @@ typedef enum {
     PREPARED_PURE_CODE_TAIL_CALL,
     /* The operand answers for this body. */
     PREPARED_PURE_CODE_RETURN,
+    /* No answer here: the program declines. */
+    PREPARED_PURE_CODE_DECLINE,
 } PreparedPureCodeKind;
 
 #define PREPARED_PURE_CODE_LITERAL UINT32_C(0x80000000)
@@ -538,6 +560,19 @@ struct CettaPreparedPureProgram {
     PreparedPureScalarGuardArgument *scalar_guard_arguments;
     size_t scalar_guard_argument_len;
     size_t scalar_guard_argument_cap;
+    /* Parameter classes of typed heads (PreparedPureValueClass). */
+    uint8_t *value_classes;
+    size_t value_class_len;
+    size_t value_class_cap;
+    /* The syntax of expanded macro definitions, which the program's nodes
+     * read; it lives as long as the program and interns nothing. */
+    Arena *syntax_arena;
+    uint32_t expansion_depth;
+    /* The variables of the definitions being expanded: compile-time
+     * metavariables a fold may bind.  Every other variable is opaque. */
+    VarId *expansion_vars;
+    size_t expansion_var_len;
+    size_t expansion_var_cap;
     PreparedPureDecisionProgram *decisions;
     size_t decision_len;
     size_t decision_cap;
@@ -715,6 +750,23 @@ static bool prepared_pure_code_enabled(void) {
                     reference[0] != '0');
     }
     return enabled != 0;
+}
+
+static bool prepared_pure_is_space_node(const Atom *atom, void *context) {
+    (void)context;
+    return atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_SPACE;
+}
+
+/* HE matches a space against a pattern other than a variable by querying the
+ * space, wherever a match happens: unify, let, case, an equation's head.  The
+ * machine's matchers compare structure, so in HE a value holding a space is
+ * matched by the canonical evaluator.  The identity-grounded summary bit
+ * proves the absence of a space in O(1). */
+static bool prepared_pure_he_value_holds_space(const Atom *value) {
+    return value && atom_has_identity_grounded(value) &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE &&
+        atom_tree_any(value, prepared_pure_is_space_node, NULL);
 }
 
 static bool prepared_pure_reject(
@@ -2043,6 +2095,11 @@ static bool prepared_pure_add_node(
         program->node_len >= UINT32_MAX ||
         program->child_len > UINT32_MAX - child_count)
         return false;
+    if (node.kind == PREPARED_PURE_LITERAL &&
+        prepared_pure_he_value_holds_space(node.atom))
+        return prepared_pure_reject(
+            program, "a literal holds a space, which HE matches by query",
+            node.atom);
     if (!prepared_pure_reserve(
             (void **)&program->children, sizeof(*program->children),
             &program->child_cap, program->child_len + child_count) ||
@@ -2114,6 +2171,211 @@ static bool prepared_pure_add_node(
     *node_out = (uint32_t)program->node_len;
     program->nodes[program->node_len++] = node;
     return true;
+}
+
+/* The classes of values HE's type cast decides by kind alone.  A parameter
+ * or range of class UNDEFINED (%Undefined%) accepts every value; UNKNOWN is
+ * only ever a static answer: nothing is known of the value. */
+typedef enum {
+    PREPARED_PURE_VALUE_UNDEFINED = 0,
+    PREPARED_PURE_VALUE_NUMBER,
+    PREPARED_PURE_VALUE_STRING,
+    PREPARED_PURE_VALUE_BOOL,
+    PREPARED_PURE_VALUE_UNKNOWN,
+} PreparedPureValueClass;
+
+/* The class a declared type names, or false when it names none. */
+static bool prepared_pure_type_value_class(const Atom *type, uint8_t *out) {
+    if (!type || type->kind != ATOM_SYMBOL)
+        return false;
+    if (type->sym_id == g_builtin_syms.undefined_type) {
+        *out = PREPARED_PURE_VALUE_UNDEFINED;
+        return true;
+    }
+    if (type->sym_id == symbol_lookup_cstr(g_symbols, "Number"))
+        *out = PREPARED_PURE_VALUE_NUMBER;
+    else if (type->sym_id == symbol_lookup_cstr(g_symbols, "String"))
+        *out = PREPARED_PURE_VALUE_STRING;
+    else if (type->sym_id == symbol_lookup_cstr(g_symbols, "Bool"))
+        *out = PREPARED_PURE_VALUE_BOOL;
+    else
+        return false;
+    return true;
+}
+
+/* The class of a value, as get_grounded_type names it. */
+static PREPARED_PURE_ALWAYS_INLINE uint8_t prepared_pure_value_class(
+    const Atom *value) {
+    if (!value || value->kind != ATOM_GROUNDED)
+        return PREPARED_PURE_VALUE_UNKNOWN;
+    switch (value->ground.gkind) {
+    case GV_INT:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+    case GV_FLOAT:
+        return PREPARED_PURE_VALUE_NUMBER;
+    case GV_STRING:
+        return PREPARED_PURE_VALUE_STRING;
+    case GV_BOOL:
+        return PREPARED_PURE_VALUE_BOOL;
+    default:
+        return PREPARED_PURE_VALUE_UNKNOWN;
+    }
+}
+
+/* A head's one signature, when it is an arrow of `arity` parameters whose
+ * parameters and range all name value classes: classes[0, arity) the
+ * parameters', classes[arity] the range's.  HE selects among several
+ * function types, and evaluates a head with another type as a tuple too;
+ * the machine leaves such a head to the canonical evaluator.  PeTTa 1.0.6
+ * checks the same classes where it calls, and answers nothing for a call
+ * that fails them; its typed line checks calls by its own contracts. */
+static bool prepared_pure_value_signature(
+    Space *space, SymbolId head, CettaExprLen arity, uint8_t *classes) {
+    if (!space || head == SYMBOL_ID_NONE || arity > 64u ||
+        !eval_current_language_id)
+        return false;
+    CettaLanguageId language = eval_current_language_id();
+    if (language != CETTA_LANGUAGE_HE &&
+        (language != CETTA_LANGUAGE_PETTA ||
+         !eval_current_petta_typed_line || eval_current_petta_typed_line()))
+        return false;
+    Atom *head_atom = atom_symbol_canonical(head);
+    if (!head_atom)
+        return false;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    Atom **types = NULL;
+    uint32_t count = eval_get_atom_types_profiled(
+        space, &scratch, head_atom, &types);
+    bool ok = count == 1u && types && types[0] &&
+        types[0]->kind == ATOM_EXPR &&
+        types[0]->expr.len == (CettaExprLen)(arity + 2u) &&
+        atom_is_symbol_id(types[0]->expr.elems[0], g_builtin_syms.arrow);
+    for (CettaExprLen i = 0u; ok && i <= arity; i++)
+        ok = prepared_pure_type_value_class(
+            types[0]->expr.elems[i + 1u], &classes[i]);
+    free(types);
+    arena_free(&scratch);
+    return ok;
+}
+
+bool cetta_prepared_pure_call_policy_supported(
+    Space *space, SymbolId head, CettaExprLen arity) {
+    uint8_t classes[66];
+    return space_head_call_untyped(space, head, arity) ||
+        prepared_pure_value_signature(space, head, arity, classes);
+}
+
+/* The policy of calls of head `head_index` with `arity` arguments: untyped,
+ * or the head's value-class signature, which the head then records.  The
+ * machine evaluates a typed head's arguments as it evaluates an untyped
+ * head's; HE then casts each value to its parameter's type, which the call
+ * checks (prepared_pure_typed_arguments_accepted). */
+static bool prepared_pure_head_call_policy(
+    CettaPreparedPureProgram *program, uint32_t head_index,
+    CettaExprLen arity) {
+    PreparedPureHead *head = &program->heads[head_index];
+    if (head->typed)
+        return head->typed_arity == arity;
+    if (space_head_call_untyped(program->space, head->head, arity))
+        return true;
+    uint8_t classes[66];
+    if (program->answer_producer ||
+        program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+        !prepared_pure_value_signature(
+            program->space, head->head, arity, classes) ||
+        !prepared_pure_reserve(
+            (void **)&program->value_classes,
+            sizeof(*program->value_classes), &program->value_class_cap,
+            program->value_class_len + arity))
+        return false;
+    head = &program->heads[head_index];
+    head->typed = true;
+    head->typed_arity = arity;
+    head->first_value_class = (uint32_t)program->value_class_len;
+    head->range_class = classes[arity];
+    head->checks_arguments = false;
+    for (CettaExprLen i = 0u; i < arity; i++) {
+        program->value_classes[program->value_class_len++] = classes[i];
+        head->checks_arguments = head->checks_arguments ||
+            classes[i] != PREPARED_PURE_VALUE_UNDEFINED;
+    }
+    return true;
+}
+
+/* HE casts each argument of a typed call to its parameter's type before it
+ * chooses an equation.  A value of the parameter's class passes; any other
+ * argument leaves the call to the canonical evaluator, which answers it
+ * with HE's own value or type error. */
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_typed_arguments_accepted(
+    const CettaPreparedPureProgram *program, uint32_t head_index,
+    Atom *const *arguments, uint32_t arity) {
+    const PreparedPureHead *head = &program->heads[head_index];
+    if (!head->checks_arguments)
+        return true;
+    if (arity != head->typed_arity)
+        return false;
+    const uint8_t *classes = &program->value_classes[head->first_value_class];
+    for (uint32_t i = 0u; i < arity; i++) {
+        if (classes[i] != PREPARED_PURE_VALUE_UNDEFINED &&
+            prepared_pure_value_class(arguments[i]) != classes[i])
+            return false;
+    }
+    return true;
+}
+
+/* What compilation knows of a node's value class: a literal's, an integer
+ * or boolean register's, a typed call's range, a branch both of whose arms
+ * agree, a let body's, a typed parameter's slot (slot_classes, slot_count
+ * entries); UNKNOWN otherwise. */
+static uint8_t prepared_pure_node_value_class(
+    const CettaPreparedPureProgram *program, uint32_t node_index,
+    const uint8_t *slot_classes, uint32_t slot_count, uint32_t depth) {
+    if (node_index >= program->node_len ||
+        depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return PREPARED_PURE_VALUE_UNKNOWN;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    const uint32_t *children = node->first_child <= program->child_len &&
+            node->child_count <= program->child_len - node->first_child
+        ? &program->children[node->first_child] : NULL;
+    switch (node->kind) {
+    case PREPARED_PURE_LITERAL:
+        return prepared_pure_value_class(node->atom);
+    case PREPARED_PURE_REGISTER:
+        return node->result_kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER
+            ? PREPARED_PURE_VALUE_NUMBER
+            : node->result_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN
+                ? PREPARED_PURE_VALUE_BOOL : PREPARED_PURE_VALUE_UNKNOWN;
+    case PREPARED_PURE_CALL:
+        if (node->auxiliary < program->head_len &&
+            program->heads[node->auxiliary].typed &&
+            program->heads[node->auxiliary].range_class !=
+                PREPARED_PURE_VALUE_UNDEFINED)
+            return program->heads[node->auxiliary].range_class;
+        return PREPARED_PURE_VALUE_UNKNOWN;
+    case PREPARED_PURE_IF: {
+        if (!children || node->child_count != 3u)
+            return PREPARED_PURE_VALUE_UNKNOWN;
+        uint8_t then_class = prepared_pure_node_value_class(
+            program, children[1], slot_classes, slot_count, depth + 1u);
+        return then_class == prepared_pure_node_value_class(
+                   program, children[2], slot_classes, slot_count,
+                   depth + 1u)
+            ? then_class : PREPARED_PURE_VALUE_UNKNOWN;
+    }
+    case PREPARED_PURE_BIND:
+        return children && node->child_count == 2u
+            ? prepared_pure_node_value_class(
+                  program, children[1], slot_classes, slot_count, depth + 1u)
+            : PREPARED_PURE_VALUE_UNKNOWN;
+    case PREPARED_PURE_SLOT:
+    case PREPARED_PURE_EVAL_SLOT:
+        return slot_classes && node->auxiliary < slot_count
+            ? slot_classes[node->auxiliary] : PREPARED_PURE_VALUE_UNKNOWN;
+    default:
+        return PREPARED_PURE_VALUE_UNKNOWN;
+    }
 }
 
 static bool prepared_pure_head_index_admitted(
@@ -2701,6 +2963,589 @@ static bool prepared_pure_compile_bind_sequence(
         children, 2u, node_out);
 }
 
+static bool prepared_pure_expansion_var(
+    const CettaPreparedPureProgram *program, VarId id) {
+    for (size_t i = program->expansion_var_len; i > 0u; i--) {
+        if (program->expansion_vars[i - 1u] == id)
+            return true;
+    }
+    return false;
+}
+
+static bool prepared_pure_collect_expansion_vars(
+    CettaPreparedPureProgram *program, Atom *atom, uint32_t depth) {
+    if (!atom || depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    if (atom->kind == ATOM_VAR) {
+        if (prepared_pure_expansion_var(program, atom->var_id))
+            return true;
+        if (!prepared_pure_reserve(
+                (void **)&program->expansion_vars,
+                sizeof(*program->expansion_vars),
+                &program->expansion_var_cap,
+                program->expansion_var_len + 1u))
+            return false;
+        program->expansion_vars[program->expansion_var_len++] =
+            atom->var_id;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!prepared_pure_collect_expansion_vars(
+                program, atom->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* The machine's fold scope: an expansion's definition variables are
+ * metavariables while it compiles, unless the compile context binds them to
+ * a value. */
+typedef struct {
+    const CettaPreparedPureProgram *program;
+    const PreparedPureCompileContext *context;
+} PreparedPureFoldScope;
+
+static bool prepared_pure_fold_metavariable(const void *scope, VarId id) {
+    const PreparedPureFoldScope *fold = scope;
+    return prepared_pure_expansion_var(fold->program, id) &&
+        !prepared_pure_context_lookup(fold->context, id, NULL);
+}
+
+enum { PREPARED_PURE_MAX_EXPANSION_DEPTH = 64u };
+
+static Arena *prepared_pure_syntax_arena(CettaPreparedPureProgram *program) {
+    if (!program->syntax_arena) {
+        program->syntax_arena = calloc(1u, sizeof(*program->syntax_arena));
+        if (program->syntax_arena)
+            arena_init_detached(program->syntax_arena);
+    }
+    return program->syntax_arena;
+}
+
+/* HE's unify matches its first two operands with each other; the machine
+ * matches a value against a pattern.  The value is the first operand whose
+ * variables all hold values here (index 1 or 2 of the instruction), the
+ * pattern the other; 0 when neither does. */
+static bool prepared_pure_atom_vars_bound(
+    const PreparedPureCompileContext *context, const Atom *atom,
+    uint32_t depth) {
+    if (atom->kind == ATOM_VAR)
+        return prepared_pure_context_lookup(context, atom->var_id, NULL);
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!prepared_pure_atom_vars_bound(
+                context, atom->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+static uint32_t prepared_pure_unify_value_side(
+    const PreparedPureCompileContext *context, const Atom *instruction) {
+    for (uint32_t index = 1u; index <= 2u; index++) {
+        if (prepared_pure_atom_vars_bound(
+                context, instruction->expr.elems[index], 0u))
+            return index;
+    }
+    return 0u;
+}
+
+/* Whether two atoms of an expansion's syntax are equal, as if-equal compares
+ * them, where the syntax decides it: a variable holds a value only a run
+ * decides; atoms of different kinds or lengths differ whatever they hold. */
+typedef enum {
+    PREPARED_PURE_EQUAL_UNKNOWN = 0,
+    PREPARED_PURE_EQUAL_SAME,
+    PREPARED_PURE_EQUAL_DIFFERENT,
+} PreparedPureStaticEqual;
+
+static PreparedPureStaticEqual prepared_pure_static_equal(
+    Atom *left, Atom *right, uint32_t depth) {
+    if (!left || !right || depth > PREPARED_PURE_MAX_COMPILE_DEPTH ||
+        left->kind == ATOM_VAR || right->kind == ATOM_VAR)
+        return PREPARED_PURE_EQUAL_UNKNOWN;
+    if (left->kind != right->kind)
+        return PREPARED_PURE_EQUAL_DIFFERENT;
+    if (left->kind != ATOM_EXPR)
+        return atom_eq(left, right) ? PREPARED_PURE_EQUAL_SAME
+                                    : PREPARED_PURE_EQUAL_DIFFERENT;
+    if (left->expr.len != right->expr.len)
+        return PREPARED_PURE_EQUAL_DIFFERENT;
+    bool unknown = false;
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+        PreparedPureStaticEqual equal = prepared_pure_static_equal(
+            left->expr.elems[i], right->expr.elems[i], depth + 1u);
+        if (equal == PREPARED_PURE_EQUAL_DIFFERENT)
+            return PREPARED_PURE_EQUAL_DIFFERENT;
+        unknown = unknown || equal == PREPARED_PURE_EQUAL_UNKNOWN;
+    }
+    return unknown ? PREPARED_PURE_EQUAL_UNKNOWN : PREPARED_PURE_EQUAL_SAME;
+}
+
+/* Where a function body's returned syntax goes: EVAL, the syntax evaluated;
+ * CHAIN, the template of the chain whose computation the function was, with
+ * the syntax in place of the chain's variable, run in the continuation
+ * `outer`. */
+typedef enum {
+    PREPARED_PURE_DELIVER_EVAL = 0,
+    PREPARED_PURE_DELIVER_CHAIN,
+} PreparedPureDeliverKind;
+
+typedef struct PreparedPureDelivery {
+    PreparedPureDeliverKind kind;
+    Atom *var;
+    Atom *template_atom;
+    const struct PreparedPureDelivery *outer;
+} PreparedPureDelivery;
+
+static bool prepared_pure_compile_function(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *body, const PreparedPureDelivery *delivery, uint32_t depth,
+    uint32_t *node_out);
+
+static Atom *prepared_pure_substitute_var(
+    Arena *arena, Atom *var, Atom *value, Atom *atom) {
+    Bindings bindings;
+    bindings_init(&bindings);
+    Atom *result = bindings_add_var(&bindings, var, value)
+        ? bindings_apply_if_vars(&bindings, arena, atom) : NULL;
+    bindings_free(&bindings);
+    return result;
+}
+
+/* A function answering Empty answers nothing, and one answering
+ * NotReducible leaves its call to HE: both are the canonical evaluator's to
+ * answer. */
+static bool prepared_pure_no_answer_here(const Atom *value) {
+    return atom_is_symbol_id((Atom *)value, g_builtin_syms.empty) ||
+        atom_is_symbol_id((Atom *)value, g_builtin_syms.not_reducible);
+}
+
+static bool prepared_pure_compile_delivery(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *value, const PreparedPureDelivery *delivery, uint32_t depth,
+    uint32_t *node_out) {
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return prepared_pure_reject(program, "function is too deep", value);
+    if (delivery->kind == PREPARED_PURE_DELIVER_CHAIN) {
+        Arena *arena = prepared_pure_syntax_arena(program);
+        Atom *next = arena ? prepared_pure_substitute_var(
+            arena, delivery->var, value, delivery->template_atom) : NULL;
+        return next && prepared_pure_compile_function(
+            program, context, next, delivery->outer, depth + 1u, node_out);
+    }
+    if (prepared_pure_no_answer_here(value))
+        return prepared_pure_add_node(
+            program, (PreparedPureNode){.kind = PREPARED_PURE_DECLINE},
+            NULL, 0u, node_out);
+    return prepared_pure_compile_eval(
+        program, context, value, NULL, depth + 1u, node_out);
+}
+
+/* One evaluation step of `call`, decided at compile time: the one equation
+ * of its head whose left side the call's syntax matches, its right side
+ * instantiated afresh under the match; NotReducible when the syntax matches
+ * none; DYNAMIC when the syntax cannot decide or two equations match.  The
+ * equation's variables become the expansion's for the rest of the
+ * expansion. */
+static HeMinimalFold prepared_pure_fold_step(
+    CettaPreparedPureProgram *program,
+    const PreparedPureCompileContext *context, Atom *call, Arena *arena,
+    Atom **result_out) {
+    SymbolId head = atom_head_symbol_id(call);
+    bool defined = false;
+    if (head == SYMBOL_ID_NONE || call->kind != ATOM_EXPR ||
+        space_query_effect_for_head(program->space, head, &defined) !=
+            CETTA_GSLT_QUERY_EFFECT_PURE || !defined)
+        return HE_MINIMAL_FOLD_DYNAMIC;
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(program->space, head, &cursor))
+        return HE_MINIMAL_FOLD_DYNAMIC;
+    PreparedPureFoldScope scope = {.program = program, .context = context};
+    Atom *selected = NULL;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step =
+            space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        SpaceEquationOccurrence occurrence = {0};
+        if (step != SPACE_EQUATION_CURSOR_ITEM ||
+            !space_equation_occurrence_resolve(id, &occurrence) ||
+            !occurrence.equation)
+            return HE_MINIMAL_FOLD_DYNAMIC;
+        Atom *fresh = cetta_instantiate_frame_syntax(
+            arena, occurrence.equation);
+        if (!fresh || fresh->kind != ATOM_EXPR || fresh->expr.len != 3u ||
+            !atom_is_symbol_id(fresh->expr.elems[0], g_builtin_syms.equals) ||
+            fresh->expr.elems[1]->kind != ATOM_EXPR ||
+            fresh->expr.elems[1]->expr.len == 0u ||
+            !atom_is_symbol_id(fresh->expr.elems[1]->expr.elems[0], head) ||
+            !prepared_pure_collect_expansion_vars(program, fresh, 0u))
+            return HE_MINIMAL_FOLD_DYNAMIC;
+        Bindings matched;
+        bindings_init(&matched);
+        HeMinimalFold fold = he_minimal_fold_unify(
+            fresh->expr.elems[1], call, &matched, arena,
+            prepared_pure_fold_metavariable, &scope);
+        Atom *rewritten = fold == HE_MINIMAL_FOLD_STATIC
+            ? bindings_apply_if_vars(&matched, arena, fresh->expr.elems[2])
+            : NULL;
+        bindings_free(&matched);
+        if (fold == HE_MINIMAL_FOLD_DYNAMIC ||
+            (fold == HE_MINIMAL_FOLD_STATIC && (!rewritten || selected)))
+            return HE_MINIMAL_FOLD_DYNAMIC;
+        if (fold == HE_MINIMAL_FOLD_STATIC)
+            selected = rewritten;
+    }
+    *result_out = selected
+        ? selected : atom_symbol_id(arena, g_builtin_syms.not_reducible);
+    return *result_out ? HE_MINIMAL_FOLD_STATIC : HE_MINIMAL_FOLD_DYNAMIC;
+}
+
+/* A unify only a run decides, in a function body: a pattern test of the
+ * operand holding a value chooses between the then branch, under the
+ * pattern's bind, and the else branch, both in the body's continuation. */
+static bool prepared_pure_compile_function_unify(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *body, const PreparedPureDelivery *delivery, uint32_t depth,
+    uint32_t *node_out) {
+    uint32_t value_index = prepared_pure_unify_value_side(context, body);
+    if (value_index == 0u)
+        return prepared_pure_reject(
+            program, "neither unify operand holds a value", body);
+    Atom *pattern = body->expr.elems[value_index == 1u ? 2u : 1u];
+    uint32_t else_node = 0u;
+    if (!prepared_pure_compile_function(
+            program, context, body->expr.elems[4], delivery, depth + 1u,
+            &else_node))
+        return false;
+    uint32_t target = 0u;
+    if (!prepared_pure_compile_template(
+            program, context, body->expr.elems[value_index], NULL,
+            depth + 1u, true, &target))
+        return prepared_pure_reject(
+            program, "unify value is outside the fragment",
+            body->expr.elems[value_index]);
+    size_t saved_bindings = context->len;
+    uint32_t saved_next_slot = context->next_slot;
+    uint32_t test_pattern = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pattern, &test_pattern))
+        return false;
+    context->len = saved_bindings;
+    context->next_slot = saved_next_slot;
+    const PreparedPureBindPattern *tested =
+        &program->bind_patterns[test_pattern];
+    for (uint32_t i = 0u; i < tested->var_count; i++) {
+        if (program->bind_vars[tested->first_var + i].prebound)
+            return prepared_pure_reject(
+                program, "unify pattern compares a bound variable", pattern);
+    }
+    uint32_t test = 0u;
+    if (!prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_OBSERVE,
+                .auxiliary = PREPARED_PURE_OBSERVE_PATTERN_TEST |
+                             test_pattern,
+            },
+            &target, 1u, &test))
+        return false;
+    uint32_t bind_pattern = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pattern, &bind_pattern))
+        return false;
+    uint32_t then_body = 0u;
+    bool then_ok = prepared_pure_compile_function(
+        program, context, body->expr.elems[3], delivery, depth + 1u,
+        &then_body);
+    context->len = saved_bindings;
+    if (!then_ok)
+        return false;
+    uint32_t bound[2] = {target, then_body};
+    uint32_t then_node = 0u;
+    if (!prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BIND,
+                .auxiliary = bind_pattern,
+            },
+            bound, 2u, &then_node))
+        return false;
+    uint32_t branch[3] = {test, then_node, else_node};
+    return prepared_pure_add_node(
+        program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
+        branch, 3u, node_out);
+}
+
+/* A function's body, in its continuation: a return delivers its syntax; a
+ * chain runs its computation (folded, one evaluation step of a function
+ * whose returns continue in the chain's template, or a value operation)
+ * and continues in its template; a unify the syntax decides continues in
+ * its branch, and one it does not is a pattern test whose two branches
+ * share the continuation. */
+static bool prepared_pure_compile_function(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *body, const PreparedPureDelivery *delivery, uint32_t depth,
+    uint32_t *node_out) {
+    if (!body || depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return prepared_pure_reject(program, "function is too deep", body);
+    Arena *arena = prepared_pure_syntax_arena(program);
+    if (!arena)
+        return false;
+    PreparedPureFoldScope scope = {.program = program, .context = context};
+    SymbolId head = atom_head_symbol_id(body);
+    CettaExprLen len = body->kind == ATOM_EXPR ? body->expr.len : 0u;
+    if (head == g_builtin_syms.return_text && len == 2u)
+        return prepared_pure_compile_delivery(
+            program, context, body->expr.elems[1], delivery, depth + 1u,
+            node_out);
+    if (head == g_builtin_syms.function && len == 2u)
+        return prepared_pure_compile_function(
+            program, context, body->expr.elems[1], delivery, depth + 1u,
+            node_out);
+    if (head == g_builtin_syms.chain && len == 4u &&
+        body->expr.elems[2]->kind == ATOM_VAR) {
+        Atom *nested = body->expr.elems[1];
+        Atom *var = body->expr.elems[2];
+        Atom *rest = body->expr.elems[3];
+        Atom *step = NULL;
+        bool grounded_step = false;
+        if (atom_head_symbol_id(nested) == g_builtin_syms.eval &&
+            nested->expr.len == 2u) {
+            Atom *call = nested->expr.elems[1];
+            SymbolId call_head = atom_head_symbol_id(call);
+            CettaExprLen call_arity = call->kind == ATOM_EXPR &&
+                    call->expr.len > 0u
+                ? call->expr.len - 1u : 0u;
+            /* One evaluation step of a grounded operation is its value. */
+            grounded_step = call_head != SYMBOL_ID_NONE &&
+                (prepared_pure_intrinsic_program(
+                     call_head, call_arity, NULL) ||
+                 prepared_pure_register_program(
+                     program, call_head, call_arity, NULL, NULL));
+            if (grounded_step) {
+                /* compiled as a value bind below */
+            } else if (call_head == g_builtin_syms.if_equal &&
+                call->expr.len == 5u) {
+                PreparedPureStaticEqual equal = prepared_pure_static_equal(
+                    call->expr.elems[1], call->expr.elems[2], 0u);
+                if (equal == PREPARED_PURE_EQUAL_UNKNOWN)
+                    return prepared_pure_reject(
+                        program, "if-equal over values is outside the fragment",
+                        call);
+                step = call->expr.elems[equal == PREPARED_PURE_EQUAL_SAME
+                                            ? 3u : 4u];
+            } else if (prepared_pure_fold_step(
+                           program, context, call, arena, &step) !=
+                       HE_MINIMAL_FOLD_STATIC) {
+                return prepared_pure_reject(
+                    program, "evaluation step is outside the fragment", call);
+            }
+            if (step && atom_head_symbol_id(step) == g_builtin_syms.function &&
+                step->kind == ATOM_EXPR && step->expr.len == 2u) {
+                PreparedPureDelivery chained = {
+                    .kind = PREPARED_PURE_DELIVER_CHAIN,
+                    .var = var,
+                    .template_atom = rest,
+                    .outer = delivery,
+                };
+                return prepared_pure_compile_function(
+                    program, context, step->expr.elems[1], &chained,
+                    depth + 1u, node_out);
+            }
+        } else if (he_minimal_fold_instruction(
+                       nested, arena, prepared_pure_fold_metavariable,
+                       &scope, &step) != HE_MINIMAL_FOLD_STATIC) {
+            step = NULL;
+        }
+        if (step) {
+            Atom *next = prepared_pure_substitute_var(arena, var, step, rest);
+            return next && prepared_pure_compile_function(
+                program, context, next, delivery, depth + 1u, node_out);
+        }
+        SymbolId nested_head = atom_head_symbol_id(nested);
+        bool value_operation = grounded_step ||
+            (nested_head == g_builtin_syms.decons_atom &&
+             nested->expr.len == 2u &&
+             nested->expr.elems[1]->kind == ATOM_VAR) ||
+            (nested_head == g_builtin_syms.cons_atom &&
+             nested->expr.len == 3u &&
+             nested->expr.elems[2]->kind == ATOM_VAR);
+        if (!value_operation)
+            return prepared_pure_reject(
+                program, "chain's computation is outside the fragment",
+                nested);
+        uint32_t bound = 0u;
+        if (!prepared_pure_compile_eval(
+                program, context, nested, NULL, depth + 1u, &bound))
+            return false;
+        size_t saved_bindings = context->len;
+        uint32_t pattern_index = 0u;
+        if (!prepared_pure_compile_bind_pattern(
+                program, context, var, &pattern_index))
+            return false;
+        uint32_t continued = 0u;
+        bool ok = prepared_pure_compile_function(
+            program, context, rest, delivery, depth + 1u, &continued);
+        context->len = saved_bindings;
+        if (!ok)
+            return false;
+        uint32_t children[2] = {bound, continued};
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BIND,
+                .auxiliary = pattern_index,
+            },
+            children, 2u, node_out);
+    }
+    if (head == g_builtin_syms.unify && len == 5u) {
+        Bindings matched;
+        bindings_init(&matched);
+        HeMinimalFold fold = he_minimal_fold_unify(
+            body->expr.elems[1], body->expr.elems[2], &matched, arena,
+            prepared_pure_fold_metavariable, &scope);
+        Atom *chosen = fold == HE_MINIMAL_FOLD_STATIC
+            ? bindings_apply_if_vars(&matched, arena, body->expr.elems[3])
+            : fold == HE_MINIMAL_FOLD_MISMATCH ? body->expr.elems[4] : NULL;
+        bindings_free(&matched);
+        if (chosen)
+            return prepared_pure_compile_function(
+                program, context, chosen, delivery, depth + 1u, node_out);
+        return prepared_pure_compile_function_unify(
+            program, context, body, delivery, depth, node_out);
+    }
+    return prepared_pure_reject(
+        program, "function body is outside the fragment", body);
+}
+
+/* The expansion's body under its arguments from `next` on: an evaluated one
+ * binds its fresh parameter to its value, as HE evaluates such an argument
+ * before the call; a variable given to an Expression parameter holds a
+ * value HE requires to be an expression, and any other value leaves the
+ * call to the canonical evaluator, which answers HE's argument type error. */
+static bool prepared_pure_compile_expansion(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    const HeMacroExpansion *expansion, Atom *call, const void *call_view,
+    CettaExprLen next, uint32_t depth, uint32_t *node_out) {
+    CettaExprLen arity = call->expr.len - 1u;
+    while (next < arity &&
+           expansion->arguments[next] == HE_MACRO_ARGUMENT_WRITTEN)
+        next++;
+    if (next == arity)
+        return prepared_pure_compile_eval(
+            program, context, expansion->body, NULL, depth + 1u, node_out);
+    if (expansion->arguments[next] == HE_MACRO_ARGUMENT_EXPRESSION_VALUE) {
+        uint32_t value = 0u;
+        if (!prepared_pure_compile_template(
+                program, context, call->expr.elems[next + 1u],
+                prepared_pure_source_child(program, call_view, next + 1u),
+                depth + 1u, true, &value))
+            return false;
+        uint32_t test = 0u;
+        if (!prepared_pure_add_node(
+                program,
+                (PreparedPureNode){
+                    .kind = PREPARED_PURE_OBSERVE,
+                    .auxiliary = PREPARED_PURE_OBSERVE_ATOM_EXPRESSION,
+                },
+                &value, 1u, &test))
+            return false;
+        uint32_t rest = 0u;
+        if (!prepared_pure_compile_expansion(
+                program, context, expansion, call, call_view, next + 1u,
+                depth + 1u, &rest))
+            return false;
+        uint32_t declined = 0u;
+        if (!prepared_pure_add_node(
+                program, (PreparedPureNode){.kind = PREPARED_PURE_DECLINE},
+                NULL, 0u, &declined))
+            return false;
+        uint32_t branch[3] = {test, rest, declined};
+        return prepared_pure_add_node(
+            program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
+            branch, 3u, node_out);
+    }
+    uint32_t bound = 0u;
+    if (!prepared_pure_compile_eval(
+            program, context, call->expr.elems[next + 1u],
+            prepared_pure_source_child(program, call_view, next + 1u),
+            depth + 1u, &bound))
+        return false;
+    size_t saved_bindings = context->len;
+    uint32_t pattern_index = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, expansion->lhs->expr.elems[next + 1u],
+            &pattern_index))
+        return false;
+    uint32_t rest = 0u;
+    bool ok = prepared_pure_compile_expansion(
+        program, context, expansion, call, call_view, next + 1u,
+        depth + 1u, &rest);
+    context->len = saved_bindings;
+    if (!ok)
+        return false;
+    uint32_t children[2] = {bound, rest};
+    return prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = PREPARED_PURE_BIND,
+            .auxiliary = pattern_index,
+        },
+        children, 2u, node_out);
+}
+
+/* A call of a macro definition with one equation over distinct variables
+ * is expanded where it is: the equation with fresh variables, each argument
+ * taken as written substituted for its parameter, the others bound to their
+ * values.  The definition read is the one the program is pinned to.
+ * *expanded tells whether the call was a macro call. */
+static bool prepared_pure_try_expand_macro(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *source, const void *source_view, uint32_t depth,
+    uint32_t *node_out, bool *expanded) {
+    *expanded = false;
+    if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+        program->answer_producer)
+        return true;
+    Arena *arena = prepared_pure_syntax_arena(program);
+    HeMacroExpansion expansion;
+    HeMacroExpandResult expand = arena
+        ? he_macro_expand(program->space, arena, source, &expansion)
+        : HE_MACRO_NOT_A_MACRO;
+    if (expand == HE_MACRO_NOT_A_MACRO)
+        return true;
+    *expanded = true;
+    if (expand != HE_MACRO_EXPANDED)
+        return prepared_pure_reject(
+            program, "macro definition cannot be instantiated", source);
+    if (program->expansion_depth >= PREPARED_PURE_MAX_EXPANSION_DEPTH)
+        return prepared_pure_reject(
+            program, "macro expansion is too deep", source);
+    size_t expansion_vars = program->expansion_var_len;
+    if (!prepared_pure_collect_expansion_vars(
+            program, expansion.fresh, 0u)) {
+        program->expansion_var_len = expansion_vars;
+        return prepared_pure_reject(
+            program, "macro definition's variables cannot be recorded",
+            source);
+    }
+    program->expansion_depth++;
+    bool ok = prepared_pure_compile_expansion(
+        program, context, &expansion, source, source_view, 0u, depth,
+        node_out);
+    program->expansion_depth--;
+    program->expansion_var_len = expansion_vars;
+    return ok;
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -2944,6 +3789,213 @@ static bool prepared_pure_compile_eval_with_role(
         return prepared_pure_reject(program, "rule policy requires canonical evaluation", source);
 
     CettaExprLen arity = source->expr.len - 1u;
+    bool he_instructions = program->call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
+        eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE;
+    /* An HE function evaluated runs its body, and what it returns is
+     * evaluated. */
+    if (he_instructions && !program->answer_producer &&
+        head == g_builtin_syms.function && arity == 1u) {
+        PreparedPureDelivery evaluated = {.kind = PREPARED_PURE_DELIVER_EVAL};
+        return prepared_pure_compile_function(
+            program, context, source->expr.elems[1], &evaluated, depth + 1u,
+            node_out);
+    }
+    /* An instruction an equation answers with runs, and the atom it answers
+     * is evaluated.  Where the syntax decides what it answers, it runs here,
+     * at compile time. */
+    if (he_instructions &&
+        ((head == g_builtin_syms.chain && arity == 3u &&
+          source->expr.elems[2]->kind == ATOM_VAR) ||
+         (head == g_builtin_syms.unify && arity == 4u))) {
+        Arena *arena = prepared_pure_syntax_arena(program);
+        Atom *answered = NULL;
+        PreparedPureFoldScope scope = {
+            .program = program,
+            .context = context,
+        };
+        if (arena &&
+            he_minimal_fold_instruction(
+                source, arena, prepared_pure_fold_metavariable, &scope,
+                &answered) == HE_MINIMAL_FOLD_STATIC &&
+            answered != source)
+            return prepared_pure_compile_eval(
+                program, context, answered, NULL, depth + 1u, node_out);
+    }
+    /* A chain whose computation takes a value apart or builds one binds
+     * that value; its template then runs, and what it answers is
+     * evaluated. */
+    if (he_instructions && head == g_builtin_syms.chain && arity == 3u &&
+        source->expr.elems[2]->kind == ATOM_VAR) {
+        Atom *nested = source->expr.elems[1];
+        SymbolId nested_head = atom_head_symbol_id(nested);
+        bool value_operation =
+            (nested_head == g_builtin_syms.decons_atom &&
+             nested->expr.len == 2u &&
+             nested->expr.elems[1]->kind == ATOM_VAR) ||
+            (nested_head == g_builtin_syms.cons_atom &&
+             nested->expr.len == 3u &&
+             nested->expr.elems[2]->kind == ATOM_VAR);
+        if (!value_operation)
+            return prepared_pure_reject(
+                program, "chain's computation is outside the fragment",
+                nested);
+        uint32_t bound = 0u;
+        if (!prepared_pure_compile_eval(
+                program, context, nested,
+                prepared_pure_source_child(program, source_view, 1u),
+                depth + 1u, &bound))
+            return false;
+        size_t saved_bindings = context->len;
+        uint32_t pattern_index = 0u;
+        if (!prepared_pure_compile_bind_pattern(
+                program, context, source->expr.elems[2], &pattern_index))
+            return false;
+        uint32_t body = 0u;
+        bool body_ok = prepared_pure_compile_eval(
+            program, context, source->expr.elems[3],
+            prepared_pure_source_child(program, source_view, 3u),
+            depth + 1u, &body);
+        context->len = saved_bindings;
+        if (!body_ok)
+            return false;
+        uint32_t children[2] = {bound, body};
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BIND,
+                .auxiliary = pattern_index,
+            },
+            children, 2u, node_out);
+    }
+    /* HE's unify with any other else: a pattern test of the operand that
+     * holds a value chooses between the then branch, evaluated under the
+     * pattern's bind, and the else branch. */
+    uint32_t unify_value = he_instructions &&
+            head == g_builtin_syms.unify && arity == 4u
+        ? prepared_pure_unify_value_side(context, source) : 0u;
+    Atom *unify_pattern = unify_value == 0u ? NULL
+        : source->expr.elems[unify_value == 1u ? 2u : 1u];
+    if (unify_value != 0u && !program->answer_producer &&
+        !atom_is_symbol_id(source->expr.elems[4], g_builtin_syms.empty) &&
+        !atom_is_error(source->expr.elems[4])) {
+        uint32_t else_node = 0u;
+        if (!prepared_pure_compile_eval(
+                program, context, source->expr.elems[4],
+                prepared_pure_source_child(program, source_view, 4u),
+                depth + 1u, &else_node))
+            return prepared_pure_reject(
+                program, "unify else branch is outside the fragment",
+                source->expr.elems[4]);
+        uint32_t target = 0u;
+        if (!prepared_pure_compile_template(
+                program, context, source->expr.elems[unify_value],
+                prepared_pure_source_child(program, source_view, unify_value),
+                depth + 1u, true, &target))
+            return prepared_pure_reject(
+                program, "unify value is outside the fragment",
+                source->expr.elems[unify_value]);
+        size_t saved_bindings = context->len;
+        uint32_t saved_next_slot = context->next_slot;
+        uint32_t test_pattern = 0u;
+        if (!prepared_pure_compile_bind_pattern(
+                program, context, unify_pattern, &test_pattern))
+            return prepared_pure_reject(
+                program, "unify pattern is outside the fragment",
+                unify_pattern);
+        context->len = saved_bindings;
+        context->next_slot = saved_next_slot;
+        /* The test reads only its value: a pattern that compares against a
+         * variable bound before it is left to the canonical evaluator. */
+        const PreparedPureBindPattern *tested =
+            &program->bind_patterns[test_pattern];
+        for (uint32_t i = 0u; i < tested->var_count; i++) {
+            if (program->bind_vars[tested->first_var + i].prebound)
+                return prepared_pure_reject(
+                    program, "unify pattern compares a bound variable",
+                    unify_pattern);
+        }
+        uint32_t test = 0u;
+        if (!prepared_pure_add_node(
+                program,
+                (PreparedPureNode){
+                    .kind = PREPARED_PURE_OBSERVE,
+                    .auxiliary = PREPARED_PURE_OBSERVE_PATTERN_TEST |
+                                 test_pattern,
+                },
+                &target, 1u, &test))
+            return false;
+        uint32_t bind_pattern = 0u;
+        if (!prepared_pure_compile_bind_pattern(
+                program, context, unify_pattern, &bind_pattern))
+            return false;
+        uint32_t then_body = 0u;
+        bool then_ok = prepared_pure_compile_eval(
+            program, context, source->expr.elems[3],
+            prepared_pure_source_child(program, source_view, 3u),
+            depth + 1u, &then_body);
+        context->len = saved_bindings;
+        if (!then_ok)
+            return prepared_pure_reject(
+                program, "unify branch is outside the fragment",
+                source->expr.elems[3]);
+        uint32_t bound[2] = {target, then_body};
+        uint32_t then_node = 0u;
+        if (!prepared_pure_add_node(
+                program,
+                (PreparedPureNode){
+                    .kind = PREPARED_PURE_BIND,
+                    .auxiliary = bind_pattern,
+                },
+                bound, 2u, &then_node))
+            return false;
+        uint32_t branch[3] = {test, then_node, else_node};
+        return prepared_pure_add_node(
+            program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
+            branch, 3u, node_out);
+    }
+    /* HE's unify whose else is Empty or an error: a pattern bind of its
+     * target as it is written, under which its then branch is evaluated; a
+     * target the pattern does not match, which answers that else, is left
+     * to the canonical evaluator.  It is the instruction a let reduces to,
+     * whatever spells the let. */
+    if (unify_value != 0u &&
+        (atom_is_symbol_id(source->expr.elems[4], g_builtin_syms.empty) ||
+         atom_is_error(source->expr.elems[4]))) {
+        uint32_t bound = 0u;
+        if (!prepared_pure_compile_template(
+                program, context, source->expr.elems[unify_value],
+                prepared_pure_source_child(program, source_view, unify_value),
+                depth + 1u, true, &bound))
+            return prepared_pure_reject(
+                program, "unify value is outside the fragment",
+                source->expr.elems[unify_value]);
+        size_t saved_bindings = context->len;
+        uint32_t pattern_index = 0u;
+        if (!prepared_pure_compile_bind_pattern(
+                program, context, unify_pattern, &pattern_index))
+            return prepared_pure_reject(
+                program, "unify pattern is outside the fragment",
+                unify_pattern);
+        uint32_t body = 0u;
+        bool body_ok = prepared_pure_compile_eval(
+            program, context, source->expr.elems[3],
+            prepared_pure_source_child(program, source_view, 3u),
+            depth + 1u, &body);
+        context->len = saved_bindings;
+        if (!body_ok)
+            return prepared_pure_reject(
+                program, "unify branch is outside the fragment",
+                source->expr.elems[3]);
+        uint32_t children[2] = {bound, body};
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BIND,
+                .auxiliary = pattern_index,
+            },
+            children, 2u, node_out);
+    }
     CettaGsltFoldControl control;
     if (prepared_pure_control_program(head, arity, &control)) {
         if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE) {
@@ -3072,17 +4124,34 @@ static bool prepared_pure_compile_eval_with_role(
     CettaGsltQueryEffect effect =
         space_query_effect_for_head(program->space, head, &defined);
     if (defined) {
+        /* A macro call compiles as its expansion, each call of which is
+         * asked its own effect; the macro's own effect reads its operands
+         * as values, which they are not. */
+        bool expanded = false;
+        bool expansion_ok = prepared_pure_try_expand_macro(
+            program, context, source, source_view, depth, node_out,
+            &expanded);
+        if (expanded || !expansion_ok)
+            return expansion_ok;
         if (effect != CETTA_GSLT_QUERY_EFFECT_PURE)
             return prepared_pure_reject(
                 program, "user call may have a relational effect", source);
-        if (!CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(
-                program->space, head, arity))
+        /* An unsupported typed head never joins the program. */
+        uint8_t signature[66];
+        if (!space_head_call_untyped(program->space, head, arity) &&
+            (program->answer_producer ||
+             program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+             !prepared_pure_value_signature(
+                 program->space, head, arity, signature)))
             return prepared_pure_reject(
                 program, "call policy is unsupported", source);
         uint32_t head_index = 0u;
         if (!prepared_pure_head_index_admitted(
                 program, head, &head_index))
             return false;
+        if (!prepared_pure_head_call_policy(program, head_index, arity))
+            return prepared_pure_reject(
+                program, "call policy is unsupported", source);
         uint32_t *children = NULL;
         bool eager_arguments =
             program->call_mode == CETTA_GSLT_PURE_CALL_EAGER;
@@ -3092,6 +4161,25 @@ static bool prepared_pure_compile_eval_with_role(
                 !program->allow_callable_templates,
                 &children))
             return false;
+        /* HE rejects a typed call whose argument's type is not the
+         * parameter's before it evaluates anything; such a call is left to
+         * it.  Arguments of unknown class are cast when the call runs. */
+        if (program->heads[head_index].typed) {
+            const uint8_t *classes = &program->value_classes[
+                program->heads[head_index].first_value_class];
+            for (CettaExprLen i = 0u; i < arity; i++) {
+                uint8_t known = prepared_pure_node_value_class(
+                    program, children[i], NULL, 0u, 0u);
+                if (classes[i] != PREPARED_PURE_VALUE_UNDEFINED &&
+                    known != PREPARED_PURE_VALUE_UNKNOWN &&
+                    known != classes[i]) {
+                    free(children);
+                    return prepared_pure_reject(
+                        program, "typed argument is outside its parameter's class",
+                        source);
+                }
+            }
+        }
         bool ok = prepared_pure_add_node(
             program,
             (PreparedPureNode){
@@ -3125,7 +4213,7 @@ static bool prepared_pure_compile_eval_with_role(
     if (program->call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
         !(eval_current_language_id &&
           eval_current_language_id() == CETTA_LANGUAGE_PETTA) &&
-        space_head_has_arrow_signature(program->space, head, arity))
+        !space_head_call_untyped(program->space, head, arity))
         return prepared_pure_reject(
             program, "declared constructor signature decides argument demand",
             source);
@@ -4132,6 +5220,38 @@ static bool prepared_pure_compile_head(
         if (rhs_ok)
             rhs_ok = prepared_pure_mark_tail_spine(
                 program, root, 0u);
+        /* HE evaluates a typed head's result with its range as the expected
+         * type.  The machine admits a typed head whose every body is shown
+         * to be of its range's class; the parameters of value classes were
+         * cast when the call entered. */
+        head = &program->heads[head_index];
+        if (rhs_ok && head->typed &&
+            head->range_class != PREPARED_PURE_VALUE_UNDEFINED) {
+            uint8_t slot_classes[PREPARED_PURE_MAX_SLOTS];
+            uint32_t slot_count = context.next_slot < PREPARED_PURE_MAX_SLOTS
+                ? context.next_slot : PREPARED_PURE_MAX_SLOTS;
+            memset(slot_classes, PREPARED_PURE_VALUE_UNKNOWN, slot_count);
+            for (CettaExprIndex i = 1u; i < occurrence.lhs->expr.len &&
+                 i - 1u < head->typed_arity; i++) {
+                Atom *parameter = occurrence.lhs->expr.elems[i];
+                uint32_t slot = 0u;
+                if (parameter->kind == ATOM_VAR &&
+                    prepared_pure_context_lookup(
+                        &context, parameter->var_id, &slot) &&
+                    slot < slot_count)
+                    slot_classes[slot] = program->value_classes[
+                        head->first_value_class + i - 1u];
+            }
+            rhs_ok = prepared_pure_node_value_class(
+                program, root, slot_classes, slot_count, 0u) ==
+                head->range_class;
+            if (!rhs_ok) {
+                free(context.bindings);
+                return prepared_pure_reject(
+                    program, "typed result is not shown to be of its range",
+                    occurrence.rhs);
+            }
+        }
         if (!rhs_ok || context.next_slot > PREPARED_PURE_MAX_SLOTS ||
             !prepared_pure_reserve(
                 (void **)&program->equations,
@@ -4952,11 +6072,14 @@ static PreparedPureMatchState prepared_pure_match_flat_fields(
     return PREPARED_PURE_MATCH_MATCHED;
 }
 
-static PreparedPureMatchState prepared_pure_match_bind_pattern(
+/* Match `value` against a bind pattern; with `commit`, write the pattern's
+ * fresh variables into their slots, otherwise only test. */
+static PreparedPureMatchState prepared_pure_match_bind_pattern_into(
     CettaPreparedPureProgram *program,
     const PreparedPureBindPattern *descriptor,
-    uint32_t local_base, Atom *value) {
-    if (program && descriptor && value && descriptor->flat_fresh_fields) {
+    uint32_t local_base, Atom *value, bool commit) {
+    if (commit && program && descriptor && value &&
+        descriptor->flat_fresh_fields) {
         bool handled = false;
         PreparedPureMatchState flat = prepared_pure_match_flat_fields(
             program, descriptor, local_base, value, &handled);
@@ -5052,6 +6175,8 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
         }
     }
 
+    if (!commit)
+        return PREPARED_PURE_MATCH_MATCHED;
     for (uint32_t i = 0u; i < descriptor->var_count; i++) {
         const PreparedPureBindVar *binding =
             &program->bind_vars[descriptor->first_var + i];
@@ -5063,6 +6188,14 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
         program->slots[slot] = program->match_values[i];
     }
     return PREPARED_PURE_MATCH_MATCHED;
+}
+
+static PreparedPureMatchState prepared_pure_match_bind_pattern(
+    CettaPreparedPureProgram *program,
+    const PreparedPureBindPattern *descriptor,
+    uint32_t local_base, Atom *value) {
+    return prepared_pure_match_bind_pattern_into(
+        program, descriptor, local_base, value, true);
 }
 
 typedef enum {
@@ -5377,6 +6510,23 @@ static PreparedPureSelection prepared_pure_select_equation(
             .state = PREPARED_PURE_SELECT_ERROR,
         };
     const PreparedPureHead *head = &program->heads[head_index];
+    if (head->checks_arguments) {
+        uint64_t all_arguments = arity >= 64u
+            ? UINT64_MAX : (UINT64_C(1) << arity) - UINT64_C(1);
+        for (uint32_t i = 0u; i < arity; i++) {
+            if ((ready_arguments & (UINT64_C(1) << i)) == 0u)
+                return (PreparedPureSelection){
+                    .state = PREPARED_PURE_SELECT_NEEDS_ARGUMENT,
+                    .demanded_argument = i,
+                };
+        }
+        if ((ready_arguments & all_arguments) != all_arguments ||
+            !prepared_pure_typed_arguments_accepted(
+                program, head_index, arguments, arity))
+            return (PreparedPureSelection){
+                .state = PREPARED_PURE_SELECT_ERROR,
+            };
+    }
     const PreparedPureEquation *selected = NULL;
     bool needs_argument = false;
     uint32_t first_demanded_argument = 0u;
@@ -6588,6 +7738,9 @@ prepared_pure_direct_entry_arguments(
         ? UINT64_MAX : (UINT64_C(1) << arity) - UINT64_C(1);
     if ((ready_arguments & all_arguments) != all_arguments)
         return PREPARED_PURE_DIRECT_NOT_APPLICABLE;
+    if (!prepared_pure_typed_arguments_accepted(
+            program, head_index, arguments, arity))
+        return PREPARED_PURE_DIRECT_FAILED;
     const PreparedPureHead *head = &program->heads[head_index];
     uint32_t equation_index = head->first_equation;
     /* The first argument's key the admitted equation tests: its length,
@@ -7064,11 +8217,17 @@ static bool prepared_pure_compile_closed_entry_call(
         !defined)
         return true;
 
+    if (!cetta_prepared_pure_call_policy_supported(
+            program->space, head, arity))
+        return true;
     *admitted = true;
     uint32_t head_index = 0u;
     if (!prepared_pure_head_index_admitted(
             program, head, &head_index))
         return false;
+    if (!prepared_pure_head_call_policy(program, head_index, arity))
+        return prepared_pure_reject(
+            program, "call policy is unsupported", expression);
 
     uint32_t *children = NULL;
     if (!prepared_pure_compile_entry_arguments(
@@ -7889,6 +9048,10 @@ static bool prepared_pure_code_node(
                 lowering, program->children[node.first_child + 1u], tail,
                 destination, depth + 1u);
     }
+    case PREPARED_PURE_DECLINE:
+        return prepared_pure_code_emit(
+            program, (PreparedPureCode){.kind = PREPARED_PURE_CODE_DECLINE},
+            NULL, 0u, NULL);
     case PREPARED_PURE_CALL: {
         /* In an answer producer, code runs only regions that cannot
          * choose, whose calls are all to determinate heads. */
@@ -7952,6 +9115,7 @@ static bool prepared_pure_code_liveness(
         PreparedPureCode *code = &program->code[index];
         memset(out, 0, words * sizeof(*out));
         bool falls_through = code->kind != PREPARED_PURE_CODE_RETURN &&
+            code->kind != PREPARED_PURE_CODE_DECLINE &&
             code->kind != PREPARED_PURE_CODE_TAIL_CALL &&
             code->kind != PREPARED_PURE_CODE_JUMP && !code->returns;
         bool jumps = code->kind == PREPARED_PURE_CODE_JUMP ||
@@ -8511,11 +9675,13 @@ prepared_pure_program_compile_closed_mode(
                  NULL, root_head->sym_id, root_arity, NULL, NULL) ||
              prepared_pure_intrinsic_program(
                  root_head->sym_id, root_arity, NULL));
+        HeMacroArgument macro_arguments[HE_MACRO_MAX_ARITY];
         if (!generated_expression && root_head &&
             root_head->kind == ATOM_SYMBOL &&
-            !CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(
+            !cetta_prepared_pure_call_policy_supported(
                 space, root_head->sym_id,
-                root_arity))
+                root_arity) &&
+            !he_macro_signature(space, expression, macro_arguments))
             return NULL;
     }
     CettaPreparedPureProgram *program = calloc(1u, sizeof(*program));
@@ -9126,10 +10292,21 @@ static void prepared_pure_answer_cursor_restore_step(
         arena_reset(cursor->arena, step_mark);
 }
 
+static bool prepared_pure_he_entry_arguments_without_space(
+    const CettaPreparedPureProgram *program) {
+    for (size_t i = 0u; program->entry_arguments &&
+             i < program->entry_argument_count; i++) {
+        if (prepared_pure_he_value_holds_space(program->entry_arguments[i]))
+            return false;
+    }
+    return true;
+}
+
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
     CettaPreparedPureProgram *program,
     const CettaPreparedPureAnswerCursorOptions *options) {
     if (!program || !options || !program->answer_producer ||
+        !prepared_pure_he_entry_arguments_without_space(program) ||
         (program->continuation_steps && !options->allow_continuations) ||
         !cetta_prepared_pure_program_is_current(program) ||
         program->root >= program->node_len ||
@@ -10643,6 +11820,29 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                     values, count);
                 if (value && atom_is_error(value))
                     value = NULL;
+            } else if ((node->auxiliary &
+                        PREPARED_PURE_OBSERVE_PATTERN_TEST) != 0u) {
+                uint32_t pattern =
+                    node->auxiliary & ~PREPARED_PURE_OBSERVE_PATTERN_TEST;
+                PreparedPureMatchState tested =
+                    count == 1u && pattern < program->bind_pattern_len
+                    ? prepared_pure_match_bind_pattern_into(
+                          program, &program->bind_patterns[pattern],
+                          frame->base, values[0], false)
+                    : PREPARED_PURE_MATCH_ERROR;
+                if (tested != PREPARED_PURE_MATCH_MATCHED &&
+                    tested != PREPARED_PURE_MATCH_MISMATCH) {
+                    decline = "pattern test failed";
+                    goto declined;
+                }
+                value = program->boolean_value(
+                    arena, tested == PREPARED_PURE_MATCH_MATCHED);
+            } else if (node->auxiliary ==
+                       PREPARED_PURE_OBSERVE_ATOM_EXPRESSION) {
+                value = count == 1u && values[0]
+                    ? program->boolean_value(
+                          arena, values[0]->kind == ATOM_EXPR)
+                    : NULL;
             } else {
                 if (node->auxiliary !=
                         CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
@@ -10755,6 +11955,11 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
             for (uint32_t i = 0u; i < arity; i++)
                 arguments[i] = prepared_pure_code_value(
                     program, registers, operands[i]);
+            if (!prepared_pure_typed_arguments_accepted(
+                    program, code->auxiliary, arguments, arity)) {
+                decline = "a typed argument is outside its parameter's class";
+                goto declined;
+            }
             bool tail = code->kind == PREPARED_PURE_CODE_TAIL_CALL;
             uint32_t base = tail ? frame->base : (uint32_t)program->slot_len;
             program->slot_len = base;
@@ -10913,6 +12118,9 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
             returned =
                 prepared_pure_code_value(program, registers, operands[0]);
             goto return_value;
+        case PREPARED_PURE_CODE_DECLINE:
+            decline = "the program answers nothing here";
+            goto declined;
         default:
             decline = "unknown code instruction";
             goto declined;
@@ -11013,6 +12221,13 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             &program->slot_cap, program->root_local_count))
         return prepared_pure_runtime_decline(
             program, "invalid or stale execution request", NULL);
+    if (prepared_pure_he_value_holds_space(accumulator) ||
+        prepared_pure_he_value_holds_space(item) ||
+        prepared_pure_he_value_holds_space(runtime_expression) ||
+        (closed && !prepared_pure_he_entry_arguments_without_space(program)))
+        return prepared_pure_runtime_decline(
+            program, "a value holds a space, which HE matches by query",
+            NULL);
     prepared_pure_gc_discard_survivor(program);
     prepared_pure_memo_clear(program);
     program->frame_len = 0u;
@@ -11212,6 +12427,17 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                     continue;
                 }
                 uint32_t head_index = 0u;
+                /* HE's and PeTTa's typed calls are judged where they
+                 * compile, so one computed at run time is left to the
+                 * canonical evaluator; another language judges its typed
+                 * calls in its own layer (Prime's telescopes among them). */
+                CettaLanguageId runtime_language = eval_current_language_id
+                    ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+                if ((runtime_language == CETTA_LANGUAGE_HE ||
+                     runtime_language == CETTA_LANGUAGE_PETTA) &&
+                    !space_head_call_untyped(program->space, head, arity))
+                    return prepared_pure_runtime_decline(
+                        program, "runtime call of a typed head", NULL);
                 if (!prepared_pure_runtime_head_index(
                         program, head, &head_index))
                     return prepared_pure_runtime_decline(
@@ -11613,6 +12839,53 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             program->frame_len--;
             continue;
         }
+        if (node->kind == PREPARED_PURE_DECLINE)
+            return prepared_pure_runtime_decline(
+                program, "the program answers nothing here", node);
+        if (node->kind == PREPARED_PURE_OBSERVE &&
+            node->auxiliary == PREPARED_PURE_OBSERVE_ATOM_EXPRESSION) {
+            if (node->child_count != 1u ||
+                program->value_len != (size_t)frame->value_base + 1u)
+                return prepared_pure_runtime_decline(
+                    program, "invalid expression observation", node);
+            Atom *operand = program->values[frame->value_base];
+            Atom *result = operand
+                ? program->boolean_value(arena, operand->kind == ATOM_EXPR)
+                : NULL;
+            program->value_len = frame->value_base;
+            if (!result || !prepared_pure_push_value(program, result))
+                return prepared_pure_runtime_decline(
+                    program, "cannot push expression observation", node);
+            program->frame_len--;
+            continue;
+        }
+        if (node->kind == PREPARED_PURE_OBSERVE &&
+            (node->auxiliary & PREPARED_PURE_OBSERVE_PATTERN_TEST) != 0u) {
+            uint32_t pattern =
+                node->auxiliary & ~PREPARED_PURE_OBSERVE_PATTERN_TEST;
+            if (node->child_count != 1u ||
+                pattern >= program->bind_pattern_len ||
+                program->value_len != (size_t)frame->value_base + 1u)
+                return prepared_pure_runtime_decline(
+                    program, "invalid pattern test", node);
+            PreparedPureMatchState tested =
+                prepared_pure_match_bind_pattern_into(
+                    program, &program->bind_patterns[pattern],
+                    frame->local_base, program->values[frame->value_base],
+                    false);
+            if (tested != PREPARED_PURE_MATCH_MATCHED &&
+                tested != PREPARED_PURE_MATCH_MISMATCH)
+                return prepared_pure_runtime_decline(
+                    program, "pattern test failed", node);
+            Atom *result = program->boolean_value(
+                arena, tested == PREPARED_PURE_MATCH_MATCHED);
+            program->value_len = frame->value_base;
+            if (!result || !prepared_pure_push_value(program, result))
+                return prepared_pure_runtime_decline(
+                    program, "cannot push pattern test", node);
+            program->frame_len--;
+            continue;
+        }
         if (node->kind == PREPARED_PURE_OBSERVE) {
             if (node->auxiliary !=
                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
@@ -11846,6 +13119,12 @@ void cetta_prepared_pure_program_free(
     free(program->equations);
     free(program->scalar_guards);
     free(program->scalar_guard_arguments);
+    free(program->value_classes);
+    if (program->syntax_arena) {
+        arena_free(program->syntax_arena);
+        free(program->syntax_arena);
+    }
+    free(program->expansion_vars);
     for (size_t index = 0u; index < program->decision_len; index++)
         cetta_match_decision_free(program->decisions[index].selector);
     free(program->decisions);

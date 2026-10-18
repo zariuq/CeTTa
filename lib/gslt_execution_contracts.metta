@@ -28,6 +28,26 @@
        (join-effect
          (head-effect $head)
          (fold join-effect pure (map effect $children)))))
+  ; A matched operand is compared with a pattern, and its instruction
+  ; never evaluates it.  A binding may carry part of it to an evaluated
+  ; position, where that part is evaluated: the calls in it count, and its
+  ; structure is not a call.  A space that meets a pattern other than a
+  ; variable is queried; the value the operand holds when it is matched
+  ; decides that, so an accelerator leaves such a match to the canonical
+  ; evaluator.
+  (rule matched-operand-effect
+    (= (effect (MatchedOperand $syntax))
+       (effect (calls-in $syntax))))
+  ; A call of a macro definition evaluates its expansion: the arguments the
+  ; definition evaluates before the call, and its body with the arguments it
+  ; takes as written substituted, run where its syntax decides it.
+  (rule macro-call-effect
+    (= (effect (MacroCall $call))
+       (join-effect (effect (evaluated-arguments $call))
+                    (effect (expansion $call)))))
+  (law matched-space-is-queried-canonically
+    (implies (holds-space $value)
+             (= (match-execution $value $pattern) canonical-evaluator)))
   (rule defined-head-effect
     (= (head-effect $space $head $revision)
        (least-fixed-point
@@ -616,6 +636,10 @@
   (opaque-expression-head quote)
   (opaque-expression-head :)
   (opaque-expression-head ->)
+  (matched-operands he unify 4 0 1)
+  (matched-operands he decons-atom 1 0)
+  (matched-operands he cons-atom 2 0 1)
+  (matched-operands he Error 2 0 1)
   (pull-admission pure)
   (row malformed transport-fault)
   (row cyclic additive-zero)

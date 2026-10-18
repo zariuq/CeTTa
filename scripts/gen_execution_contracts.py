@@ -905,6 +905,41 @@ class Spec:
             raise SpecError(
                 "an opaque expression head cannot also be relational: "
                 f"{sorted(overlap)}")
+        self.matched_operands: list[tuple[str, int, list[int], str]] = []
+        for entry in entries(native, "matched-operands"):
+            if len(entry) < 5:
+                raise SpecError(
+                    f"malformed matched-operands: {sexpr(entry)}")
+            language = atom_text(entry[1], "matched operand language")
+            if language not in ("he", "all"):
+                raise SpecError(
+                    f"matched operands name an unknown language {language}")
+            name = atom_text(entry[2], "matched operand head")
+            arity_text = atom_text(entry[3], "matched operand arity")
+            indices = [atom_text(item, "matched operand index")
+                       for item in entry[4:]]
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"matched operand head {name} has no symbol-table entry")
+            if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
+                raise SpecError("matched operand arity must be in [1, 16]")
+            if (any(not index.isdigit() or int(index) >= int(arity_text)
+                    for index in indices) or
+                    len(set(indices)) != len(indices)):
+                raise SpecError(
+                    f"matched operands of {name} must be distinct operand "
+                    "indices below its arity")
+            if symbol_fields[name] in relational_fields:
+                raise SpecError(
+                    f"a relational head cannot match operands: {name}")
+            self.matched_operands.append(
+                (symbol_fields[name], int(arity_text),
+                 [int(index) for index in indices], language))
+        if self.matched_operands and not any(
+                len(item) >= 2 and item[1] == "matched-operand-effect"
+                for item in entries(effect, "rule")):
+            raise SpecError(
+                "matched operands need the matched-operand-effect rule")
 
         self.row_map: dict[str, str] = {}
         for entry in entries(native, "row"):
@@ -1204,6 +1239,19 @@ def render_header(spec: Spec) -> str:
         f"head == builtins->{field}"
         for _, field in spec.opaque_expression_heads
     )
+    matched_operand_rows = " \\\n".join(
+        f"    X({field}, {arity}u, {index}u, {language})"
+        for field, arity, indices, language in spec.matched_operands
+        for index in indices
+    )
+    matched_operand_disjuncts = " ||\n           ".join(
+        ("" if language == "all" else "(he_language && ") +
+        f"head == builtins->{field} && arity == {arity}u && "
+        f"operand_index == {index}u" +
+        ("" if language == "all" else ")")
+        for field, arity, indices, language in spec.matched_operands
+        for index in indices
+    ) or "false"
     total_integer_rows = " \\\n".join(
         f"    X({field}, {arity}u)"
         for _, field, arity in spec.total_integer_heads
@@ -1525,6 +1573,18 @@ static inline bool cetta_gslt_query_effect_children_opaque(
            ({opaque_expression_head_disjuncts});
 }}
 
+/* Operands a head compares with a pattern and never evaluates, in the
+ * language each row names. */
+#define CETTA_GSLT_MATCHED_OPERAND_ROWS(X) \
+{matched_operand_rows}
+
+static inline bool cetta_gslt_query_effect_operand_matched(
+    SymbolId head, uint32_t arity, uint32_t operand_index,
+    bool he_language, const BuiltinSyms *builtins) {{
+    return builtins &&
+           ({matched_operand_disjuncts});
+}}
+
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X) \
 {total_integer_rows}
 
@@ -1805,11 +1865,12 @@ static inline bool cetta_gslt_prepared_equation_plan_admitted(
     return (evidence & required) == required;
 }}
 
-/* Shared accelerator admission for call-policy preservation.  The current
- * implementation is conservative: declared arrow signatures fall back to
- * canonical dispatch until an accelerator implements their policy. */
+/* Shared accelerator admission for call-policy preservation: a call of a
+ * head the dialect types falls back to canonical dispatch unless the
+ * accelerator implements the head's policy itself, as the prepared machine
+ * does for HE's value-class signatures. */
 #define CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(space, head, arity) \
-    (!space_head_has_arrow_signature((space), (head), (arity)))
+    (space_head_call_untyped((space), (head), (arity)))
 
 static inline bool cetta_gslt_prepared_equation_call_admitted(
     uint32_t evidence) {{
