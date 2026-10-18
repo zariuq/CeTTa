@@ -12,6 +12,7 @@
 !(@< "z" a)
 !(@< () a)
 !(@< (q a) (q b))
+!(@< (edge a b) (edge a c))
 !(@<= (pair a b) (pair a b))
 !(@< () Zebra)
 !(@> Zebra ())
@@ -25,3 +26,6 @@
 !(@<= (score a) 5)
 !(@>= (score b) 3)
 !(@< (score b) a)
+; Quoted operands are ordered as they are written, unevaluated.
+!(@< (quote (score a)) (quote (score b)))
+!(@> (quote (score a)) (quote (score b)))

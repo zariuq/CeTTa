@@ -3401,6 +3401,7 @@ RUNTIME_STATS_METTA_TESTS = \
 PATHMAP_RUNTIME_STATS_METTA_TESTS = \
 	tests/test_imported_conjunction_bridge_init_regression.metta \
 	tests/test_imported_match_chain_conjunction_lowering.metta \
+	tests/test_pathmap_chain_prefix_join.metta \
 	tests/test_pathmap_direct_transfer_runtime_stats.metta
 
 GC_ADVERSARIAL_TESTS = \
@@ -21203,9 +21204,7 @@ test-runtime-stats-lane-body:
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
 	fi
-ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-runtime-stats-lane-body
-endif
+	@$(MAKE) -s test-pathmap-runtime-stats-lane
 
 .PHONY: test-petta-hyperpose-occurrence-runtime-stats
 .PHONY: test-petta-activation-effect-runtime-stats
@@ -30964,17 +30963,22 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 # declares, is left to the canonical evaluator.  The typed loop's call
 # compiles into the machine's register code, and turning the machine off
 # changes no answer.  An answer producer, as under collapse, leaves a typed
-# head to the evaluator.
+# head to the evaluator.  An equation extending get-type does not take part
+# in HE's typing of a call (unlike PeTTa's guard).
 .PHONY: test-he-typed-calls-prepared
 test: test-he-typed-calls-prepared
 test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
-		tests/he/typed_calls_prepared.expected
+		tests/he/typed_calls_prepared.expected \
+		tests/he/typed_calls_authored_classifier.metta \
+		tests/he/typed_calls_authored_classifier.expected
 	@set -eu -o pipefail; \
+	for program in typed_calls_prepared typed_calls_authored_classifier; do \
 	for lane in he he@0.2.10 "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
-			tests/he/typed_calls_prepared.metta \
-			| diff -u tests/he/typed_calls_prepared.expected -; \
+			tests/he/$$program.metta \
+			| diff -u tests/he/$$program.expected -; \
+	done; \
 	done; \
 	done; \
 	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
@@ -31063,22 +31067,55 @@ test-he-function-definitions-prepared: $(BIN) \
 # PeTTa 1.0.6 typed calls run in the prepared machine: a value-class
 # signature's parameters are checked where the call enters, and a call that
 # fails them is left to PeTTa's own evaluator, which answers nothing for it,
-# as SWI-PeTTa does.  Turning the machine off changes no answer.
+# as SWI-PeTTa does.  A program that extends get-type keeps PeTTa's guard:
+# each type answer continues the call, and the classifier's effects happen,
+# also where the extension is added or removed after the call was prepared.
+# Turning the machine off changes no answer.
 .PHONY: test-petta-typed-calls-prepared
 test: test-petta-typed-calls-prepared
 test-petta-typed-calls-prepared: $(BIN) \
 		tests/petta/typed_calls_prepared.metta \
-		tests/petta/typed_calls_prepared.expected
+		tests/petta/typed_calls_prepared.expected \
+		tests/petta/typed_calls_authored_classifier.metta \
+		tests/petta/typed_calls_authored_classifier.expected \
+		tests/petta/typed_calls_classifier_revision.metta \
+		tests/petta/typed_calls_classifier_revision.expected
 	@set -eu -o pipefail; \
+	for program in typed_calls_prepared typed_calls_authored_classifier \
+			typed_calls_classifier_revision; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang petta \
-			tests/petta/typed_calls_prepared.metta \
-			| diff -u tests/petta/typed_calls_prepared.expected -; \
+			tests/petta/$$program.metta \
+			| diff -u tests/petta/$$program.expected -; \
+	done; \
 	done; \
 	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/typed_calls_prepared.metta 2>&1 >/dev/null); \
 	! grep -E -q 'precheck decline: .* call=\((loop|fact|flips) ' <<<"$$trace"; \
 	echo 'PASS: PeTTa typed calls run in the prepared machine with their class checks, as SWI-PeTTa answers them'
+
+# PeTTa's eval runs the term written in it, so a variable holding an
+# expression is run as code.  The prepared machine runs a fold step or a body
+# that evals over its variables, checking where it runs that none holds an
+# expression and declining to PeTTa's own evaluator where one does; a
+# variable operator names the code to run and stays with the evaluator.
+# Turning the machine off changes no answer.
+.PHONY: test-petta-eval-over-values-prepared
+test: test-petta-eval-over-values-prepared
+test-petta-eval-over-values-prepared: $(BIN) \
+		tests/petta/eval_over_values_prepared.metta \
+		tests/petta/eval_over_values_prepared.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/eval_over_values_prepared.metta \
+			| diff -u tests/petta/eval_over_values_prepared.expected -; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/eval_over_values_prepared.metta 2>&1 >/dev/null); \
+	! grep -E -q 'compile decline: .*atom=\(eval ' <<<"$$trace"; \
+	grep -F -q 'runtime decline: the program answers nothing here' <<<"$$trace"; \
+	echo 'PASS: PeTTa eval over values runs in the prepared machine, and an expression value runs as code where PeTTa runs it'
 
 # HE built-ins answer as Rust HE's definitions of them: get-type types its
 # subject in a space it is given (as type-cast asks it to), switch-minimal

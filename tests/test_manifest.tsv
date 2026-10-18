@@ -516,6 +516,7 @@ tests/test_outcome_variant_observation_seam_regression.metta	he	metta	extended	r
 tests/test_path_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pathmap_backend_primary_destructive_regression.metta	he	metta	extended	pathmap	pathmap	probe-pathmap-lane	probe	pathmap destructive syntax diagnostic
 tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_chain_prefix_join.metta	he	metta	extended	runtime-stats	pathmap	test-pathmap-runtime-stats-lane	golden	PathMap conjunction bridge initialization and indexed-hit regression
 tests/test_pathmap_contextual_var_projection_remove.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_counted_space_syntax.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
