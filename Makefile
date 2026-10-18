@@ -31064,13 +31064,42 @@ test-he-function-definitions-prepared: $(BIN) \
 	! grep -E -q 'precheck decline: .* call=\((count|sum-firsts) ' <<<"$$trace"; \
 	echo 'PASS: definitions written as HE functions run in the prepared machine as HE runs them, in every HE profile'
 
+# HE definitions whose range is Atom answer syntax: a function body runs and
+# its return is the answer, any other body is answered as written.  A callee
+# whose range is not Atom, given that syntax, evaluates it, so switch written
+# as Rust HE writes it (id of switch-minimal) compiles each case's template
+# evaluated in its branch, and quote's NotReducible answers the call itself.
+# Syntax the program would hold as a value is compiled only where evaluating
+# it again changes nothing.  A type variable written once asks nothing; one
+# that is a parameter's and the range asks the answer to have the argument's
+# type, so it compiles only for a definition that answers that argument.
+# Turning the machine off changes no answer.
+.PHONY: test-he-syntax-returns-prepared
+test: test-he-syntax-returns-prepared
+test-he-syntax-returns-prepared: $(BIN) tests/he/syntax_returns_prepared.metta \
+		tests/he/syntax_returns_prepared.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/syntax_returns_prepared.metta \
+			| diff -u tests/he/syntax_returns_prepared.expected -; \
+	done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/syntax_returns_prepared.metta 2>&1 >/dev/null); \
+	grep -F -q 'bodies lowered to register code' <<<"$$trace"; \
+	! grep -E -q 'precheck decline: .* call=\((classify|sum-classes|evaluated|quoted|count-quotes|twice-same|pick-sum|tagged) ' <<<"$$trace"; \
+	echo 'PASS: definitions that answer syntax run in the prepared machine as Rust HE answers them, in every HE profile'
+
 # PeTTa 1.0.6 typed calls run in the prepared machine: a value-class
 # signature's parameters are checked where the call enters, and a call that
 # fails them is left to PeTTa's own evaluator, which answers nothing for it,
 # as SWI-PeTTa does.  A program that extends get-type keeps PeTTa's guard:
 # each type answer continues the call, and the classifier's effects happen,
 # also where the extension is added or removed after the call was prepared.
-# Turning the machine off changes no answer.
+# A type variable matches each type answer, so its call stays with PeTTa's
+# guard too.  Turning the machine off changes no answer.
 .PHONY: test-petta-typed-calls-prepared
 test: test-petta-typed-calls-prepared
 test-petta-typed-calls-prepared: $(BIN) \
@@ -31079,10 +31108,13 @@ test-petta-typed-calls-prepared: $(BIN) \
 		tests/petta/typed_calls_authored_classifier.metta \
 		tests/petta/typed_calls_authored_classifier.expected \
 		tests/petta/typed_calls_classifier_revision.metta \
-		tests/petta/typed_calls_classifier_revision.expected
+		tests/petta/typed_calls_classifier_revision.expected \
+		tests/petta/typed_calls_type_variables.metta \
+		tests/petta/typed_calls_type_variables.expected
 	@set -eu -o pipefail; \
 	for program in typed_calls_prepared typed_calls_authored_classifier \
-			typed_calls_classifier_revision; do \
+			typed_calls_classifier_revision \
+			typed_calls_type_variables; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/$$program.metta \
