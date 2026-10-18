@@ -5981,6 +5981,9 @@ typedef struct {
 
 typedef struct {
     SpaceProgramToken program;
+    /* The language the analysis read the program in: HE reads its macro
+     * calls as their expansions. */
+    CettaLanguageId language;
     SpaceEffectCacheEntry *entries;
     size_t len;
     size_t cap;
@@ -6090,9 +6093,15 @@ static bool space_effect_cache_rehash(
     return true;
 }
 
+static CettaLanguageId space_effect_language(void) {
+    return eval_current_language_id ? eval_current_language_id()
+                                    : (CettaLanguageId)0;
+}
+
 static SpaceEffectCacheShard *space_effect_cache_shard(
     Space *space, bool create) {
     SpaceProgramToken program = space_program_token(space);
+    CettaLanguageId language = space_effect_language();
     SpaceEffectCacheShard *reusable = NULL;
     for (size_t index = 0u;
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
@@ -6100,6 +6109,7 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
             &g_space_effect_cache.shards[index];
         if (shard->occupied &&
             space_program_token_eq(shard->program, program) &&
+            shard->language == language &&
             space_program_token_matches_live_space(
                 shard->program, space)) {
             return shard;
@@ -6139,6 +6149,7 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
                reusable->cap * sizeof(*reusable->entries));
     }
     reusable->program = program;
+    reusable->language = language;
     reusable->len = 0u;
     reusable->occupied = true;
     return reusable;
@@ -6290,15 +6301,25 @@ static bool space_effect_node_add_dependency(
     return true;
 }
 
+/* One term the walk analyzes.  A matched term is (part of) an operand an
+ * instruction compares with a pattern: its structure is not a call, while
+ * the calls in it count, as a binding may carry them where they are
+ * evaluated. */
+typedef struct {
+    Atom *term;
+    bool matched;
+} SpaceEffectScanItem;
+
 /* Push one term to analyze onto the walk's stack, growing it off the
  * inline array when full. */
-static bool space_effect_stack_push(Atom ***stack, size_t *len, size_t *cap,
-                                    Atom **inline_stack, Atom *term) {
+static bool space_effect_stack_push(
+    SpaceEffectScanItem **stack, size_t *len, size_t *cap,
+    SpaceEffectScanItem *inline_stack, Atom *term, bool matched) {
     if (*len == *cap) {
         if (*cap > SIZE_MAX / 2u || *cap * 2u > SIZE_MAX / sizeof(**stack))
             return false;
         size_t next_cap = *cap * 2u;
-        Atom **next = *stack == inline_stack
+        SpaceEffectScanItem *next = *stack == inline_stack
             ? malloc(sizeof(*next) * next_cap)
             : realloc(*stack, sizeof(*next) * next_cap);
         if (!next)
@@ -6308,22 +6329,45 @@ static bool space_effect_stack_push(Atom ***stack, size_t *len, size_t *cap,
         *stack = next;
         *cap = next_cap;
     }
-    (*stack)[(*len)++] = term;
+    (*stack)[(*len)++] = (SpaceEffectScanItem){
+        .term = term,
+        .matched = matched,
+    };
     return true;
 }
 
+/* HE reads a call of a macro definition as what it evaluates: the
+ * arguments evaluated before the call, and the body its expansion runs
+ * (he_macro_expansion.h).  The evaluator provides the expansion; a space
+ * linked without it reads every call as written. */
+bool he_macro_effect_expansion(Space *space, Arena *arena, Atom *call,
+                               Atom **evaluated, uint32_t capacity,
+                               uint32_t *evaluated_count, Atom **body_out)
+    __attribute__((weak));
+
+enum {
+    SPACE_EFFECT_MAX_EXPANSIONS = 64u,
+    SPACE_EFFECT_MAX_EXPANSION_ARITY = 64u,
+};
+
 static bool space_effect_scan_rhs(
     SpaceEffectGraph *graph, size_t node_index, Atom *root) {
-    Atom *inline_stack[32];
-    Atom **stack = inline_stack;
+    SpaceEffectScanItem inline_stack[32];
+    SpaceEffectScanItem *stack = inline_stack;
     size_t len = 0u;
     size_t cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    Arena expansions;
+    bool expansions_live = false;
+    uint32_t expansion_count = 0u;
+    bool ok = true;
+    bool he_language = space_effect_language() == CETTA_LANGUAGE_HE;
 
     if (!root)
         return false;
-    stack[len++] = root;
+    stack[len++] = (SpaceEffectScanItem){.term = root, .matched = false};
     while (len > 0u) {
-        Atom *current = stack[--len];
+        SpaceEffectScanItem item = stack[--len];
+        Atom *current = item.term;
         if (!current || current->kind != ATOM_EXPR ||
             current->expr.len == 0u) {
             continue;
@@ -6331,6 +6375,59 @@ static bool space_effect_scan_rhs(
         CettaGsltFoldControl control = {0};
         bool has_control = false;
         Atom *head = current->expr.elems[0];
+        if (item.matched && (!head || head->kind != ATOM_SYMBOL)) {
+            for (CettaExprIndex i = 0u; ok && i < current->expr.len; i++) {
+                Atom *child = current->expr.elems[i];
+                if (child && child->kind == ATOM_EXPR)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, child, true);
+            }
+            if (!ok)
+                break;
+            continue;
+        }
+        if (head && head->kind == ATOM_SYMBOL && he_macro_effect_expansion &&
+            expansion_count < SPACE_EFFECT_MAX_EXPANSIONS) {
+            if (!expansions_live) {
+                arena_init_detached(&expansions);
+                expansions_live = true;
+            }
+            Atom *evaluated[SPACE_EFFECT_MAX_EXPANSION_ARITY];
+            uint32_t evaluated_count = 0u;
+            Atom *body = NULL;
+            if (he_macro_effect_expansion(
+                    graph->space, &expansions, current, evaluated,
+                    SPACE_EFFECT_MAX_EXPANSION_ARITY, &evaluated_count,
+                    &body)) {
+                expansion_count++;
+                for (uint32_t i = 0u; ok && i < evaluated_count; i++)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, evaluated[i],
+                        false);
+                if (ok)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, body, false);
+                if (!ok)
+                    break;
+                continue;
+            }
+        }
+        /* A tuple headed by a value or an expression reduces only through
+         * an equation without a head symbol; where there is none, its
+         * evaluation is its elements' (its head among them).  A variable
+         * head may name any head once it holds a value. */
+        if (head && head->kind != ATOM_SYMBOL && head->kind != ATOM_VAR &&
+            !space_equations_may_match_unnamed_head(graph->space)) {
+            for (CettaExprIndex i = 0u; ok && i < current->expr.len; i++) {
+                Atom *child = current->expr.elems[i];
+                if (child && child->kind == ATOM_EXPR)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, child, false);
+            }
+            if (!ok)
+                break;
+            continue;
+        }
         if (!head || head->kind != ATOM_SYMBOL) {
             graph->nodes[node_index].base_effect =
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
@@ -6354,9 +6451,8 @@ static bool space_effect_scan_rhs(
                 !grounded && defined && !sequence &&
                 !space_effect_node_add_dependency(
                     graph, node_index, head->sym_id)) {
-                if (stack != inline_stack)
-                    free(stack);
-                return false;
+                ok = false;
+                break;
             }
             if (cetta_gslt_query_effect_children_opaque(
                     head->sym_id, &g_builtin_syms)) {
@@ -6375,6 +6471,18 @@ static bool space_effect_scan_rhs(
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN)
                 continue;
             Atom *child = current->expr.elems[i];
+            if (head && head->kind == ATOM_SYMBOL && child &&
+                child->kind == ATOM_EXPR &&
+                cetta_gslt_query_effect_operand_matched(
+                    head->sym_id, current->expr.len - 1u, i - 1u,
+                    he_language, &g_builtin_syms)) {
+                if (!space_effect_stack_push(&stack, &len, &cap,
+                                             inline_stack, child, true)) {
+                    ok = false;
+                    break;
+                }
+                continue;
+            }
             /* Pattern pairs evaluate only their values; a malformed pair
              * leaves the form to the evaluator, so its effect is unknown. */
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS) {
@@ -6394,27 +6502,32 @@ static bool space_effect_scan_rhs(
                     Atom *value = pair->expr.elems[1];
                     if (value && value->kind == ATOM_EXPR &&
                         !space_effect_stack_push(&stack, &len, &cap,
-                                                 inline_stack, value)) {
-                        if (stack != inline_stack)
-                            free(stack);
-                        return false;
+                                                 inline_stack, value,
+                                                 false)) {
+                        ok = false;
+                        break;
                     }
                 }
+                if (!ok)
+                    break;
                 continue;
             }
             if (!child || child->kind != ATOM_EXPR)
                 continue;
             if (!space_effect_stack_push(&stack, &len, &cap,
-                                         inline_stack, child)) {
-                if (stack != inline_stack)
-                    free(stack);
-                return false;
+                                         inline_stack, child, false)) {
+                ok = false;
+                break;
             }
         }
+        if (!ok)
+            break;
     }
     if (stack != inline_stack)
         free(stack);
-    return true;
+    if (expansions_live)
+        arena_free(&expansions);
+    return ok;
 }
 
 static bool space_effect_scan_node(
@@ -11778,6 +11891,13 @@ bool space_head_declares_type(Space *s, SymbolId head) {
             return true;
     }
     return false;
+}
+
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity) {
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE)
+        return !space_head_declares_type(s, head);
+    return !space_head_has_arrow_signature(s, head, arity);
 }
 
 static bool space_prepare_single_equation_uncached(

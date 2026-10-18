@@ -1160,7 +1160,7 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         bindings_init(&empty);
         outcome_set_add(&frame->paths, is_true_atom(value) ? atom_unit(a)
             : atom_error(a, frame->atom, atom_expr3(a, frame->live[0],
-                atom_symbol(a, "not"), atom_symbol(a, "True"))), &empty);
+                atom_symbol(a, "not"), atom_bool(a, true))), &empty);
         return;
     }
     if (head == g_builtin_syms.if_text) {

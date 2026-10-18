@@ -725,7 +725,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -6292,7 +6292,7 @@ $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	trap 'rm -f "$$tmp_stage0" "$$tmp_blob"' EXIT INT TERM; \
 	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
 	chmod +x "$$tmp_stage0"; \
-	if ! $(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; then \
+	if ! $(call cetta_exec,"$$tmp_stage0") --lang he --compile-stdlib $(STDLIB_SRC) > "$$tmp_blob"; then \
 		exit 1; \
 	fi; \
 	if [ -f "$(STDLIB_BLOB)" ] && cmp -s "$$tmp_blob" "$(STDLIB_BLOB)"; then \
@@ -6323,7 +6323,7 @@ $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(STAGE0_BIN) $(ABT_DEFAULT_SIGNATURES_SRC
 	trap 'rm -f "$$tmp_stage0" "$$tmp_raw" "$$tmp_blob"' EXIT INT TERM; \
 	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
 	chmod +x "$$tmp_stage0"; \
-	if ! $(call cetta_exec,"$$tmp_stage0") --compile-stdlib $(ABT_DEFAULT_SIGNATURES_SRC) > "$$tmp_raw"; then \
+	if ! $(call cetta_exec,"$$tmp_stage0") --lang he --compile-stdlib $(ABT_DEFAULT_SIGNATURES_SRC) > "$$tmp_raw"; then \
 		exit 1; \
 	fi; \
 	sed 's/STDLIB_BLOB/ABT_DEFAULT_SIGNATURES_BLOB/g' "$$tmp_raw" > "$$tmp_blob"; \
@@ -12125,7 +12125,7 @@ test-gslt-rhometta-constructor-recursion-v1: \
 		--source $(GSLT_DIRECT_RHOMETTA_CONSTRUCTOR_RECURSION_V1) \
 		--epilogue $(GSLT_DIRECT_RHOMETTA_CONSTRUCTOR_RECURSION_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 30 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 30 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 3; \
 	printf '%s\n' "$$output" | rg -F -q \
@@ -12197,7 +12197,7 @@ test-gslt-rhometta-direct-v1: \
 		--composition $(GSLT_DIRECT_PETTA_COMPOSITION_V1) \
 		--epilogue $(GSLT_DIRECT_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 30 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 30 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 3; \
 	printf '%s\n' "$$output" | rg -F -q \
@@ -12218,7 +12218,7 @@ test-gslt-rhometta-direct-v1: \
 		--source "$$work/severed-source.metta" \
 		--epilogue $(GSLT_DIRECT_RHOMETTA_QUERY_V1) \
 		--out "$$work/severed-run.metta" >/dev/null; \
-	severed=$$(timeout 30 ./$(BIN) "$$work/severed-run.metta" 2>&1); \
+	severed=$$(timeout 30 ./$(BIN) --lang he "$$work/severed-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$severed" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 1; \
 	printf '%s\n' "$$severed" | rg -F -q \
@@ -12229,7 +12229,7 @@ test-gslt-rhometta-direct-v1: \
 		echo 'direct Rhometta artifact contains an interpreter representation' >&2; \
 		exit 1; \
 	fi; \
-	./$(BIN) $(GSLT_DIRECT_RHOMETTA_TRAMPOLINE_V1) >/dev/null; \
+	./$(BIN) --lang he $(GSLT_DIRECT_RHOMETTA_TRAMPOLINE_V1) >/dev/null; \
 	printf '%s\n' '(GSLTDirectRhoMettaV1Summary 5 2 3 1 1)'
 
 $(METAMATH_PROOF_TRACE_COMPILE_NORMAL_RHOMETTA_PROGRAM_V1): \
@@ -12260,9 +12260,9 @@ test-metamath-proof-trace-compile-normal-rhometta-v1: \
 		--entry-rule proof-trace-compile-normal-v1 \
 		--epilogue $(METAMATH_PROOF_TRACE_COMPILE_NORMAL_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 30 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 30 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	oracle_output=$$(CETTA_RHO_CANONICAL_EXHAUSTIVE_ORACLE=1 \
-		timeout 30 ./$(BIN) "$$work/run.metta" 2>&1); \
+		timeout 30 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$output" = "$$oracle_output"; \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 6; \
@@ -12404,7 +12404,7 @@ test-metamath-require-depth-rhometta-v1: \
 		--entry-rule state-step-require-depth-v1 \
 		--epilogue $(METAMATH_REQUIRE_DEPTH_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 30 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 30 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 2; \
 	printf '%s\n' "$$output" | rg -F -q 'AcceptedV1'; \
@@ -12425,7 +12425,7 @@ test-metamath-require-depth-rhometta-v1: \
 		--entry-rule state-step-require-depth-v1 \
 		--epilogue $(METAMATH_REQUIRE_DEPTH_RHOMETTA_QUERY_V1) \
 		--out "$$work/severed-run.metta" >/dev/null; \
-	severed=$$(timeout 30 ./$(BIN) "$$work/severed-run.metta" 2>&1); \
+	severed=$$(timeout 30 ./$(BIN) --lang he "$$work/severed-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$severed" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 1; \
 	printf '%s\n' "$$severed" | rg -F -q 'AcceptedV1'; \
@@ -12508,10 +12508,10 @@ test-metamath-scope-control-rhometta-v1: \
 		--epilogue $(METAMATH_SCOPE_CONTROL_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
 	cmp -s "$$work/run.metta" $(METAMATH_SCOPE_CONTROL_RHOMETTA_RUN_V1); \
-	output=$$(timeout 30 ./$(BIN) \
+	output=$$(timeout 30 ./$(BIN) --lang he \
 		$(METAMATH_SCOPE_CONTROL_RHOMETTA_RUN_V1) 2>&1); \
 	oracle_output=$$(CETTA_RHO_CANONICAL_EXHAUSTIVE_ORACLE=1 \
-		timeout 30 ./$(BIN) \
+		timeout 30 ./$(BIN) --lang he \
 		$(METAMATH_SCOPE_CONTROL_RHOMETTA_RUN_V1) 2>&1); \
 	test "$$output" = "$$oracle_output"; \
 	test "$$(printf '%s\n' "$$output" | \
@@ -12664,7 +12664,7 @@ test-metamath-occurrence-interface-rhometta-v1: \
 		$(METAMATH_OCCURRENCE_INTERFACE_RHOMETTA_RUN_V1) \
 		$(BIN)
 	@set -euo pipefail; \
-	output=$$(timeout 30 ./$(BIN) \
+	output=$$(timeout 30 ./$(BIN) --lang he \
 		$(METAMATH_OCCURRENCE_INTERFACE_RHOMETTA_RUN_V1) 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 1; \
@@ -12718,7 +12718,7 @@ test-metamath-require-pairwise-distinct-accepted-rhometta-v1: \
 		--entry-rule state-step-require-pairwise-distinct-ok-v1 \
 		--epilogue $(METAMATH_REQUIRE_PAIRWISE_DISTINCT_ACCEPTED_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 90 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 90 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 1; \
 	printf '%s\n' "$$output" | rg -F -q \
@@ -12742,7 +12742,7 @@ test-metamath-require-pairwise-distinct-duplicate-rhometta-v1: \
 		--entry-rule state-step-require-pairwise-distinct-duplicate-v1 \
 		--epilogue $(METAMATH_REQUIRE_PAIRWISE_DISTINCT_DUPLICATE_RHOMETTA_QUERY_V1) \
 		--out "$$work/run.metta" >/dev/null; \
-	output=$$(timeout 120 ./$(BIN) "$$work/run.metta" 2>&1); \
+	output=$$(timeout 120 ./$(BIN) --lang he "$$work/run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 1; \
 	printf '%s\n' "$$output" | rg -F -q \
@@ -19492,7 +19492,7 @@ test-rhocalc-lib-parse-reference: $(BIN)
 	fi
 
 test-lib-parse-shared-cert: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_shared_cert_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_shared_cert_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_shared_cert_regression.expected)" ]; then \
 		echo "PASS: lib_parse shared cert regression"; \
 	else \
@@ -20535,7 +20535,7 @@ test-gslt2parse-c-production-v1-body: \
 	@echo '(GSLT2ParseCProductionV1Summary 34 0)'
 
 test-lib-parse-native-gparse: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_grammar_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_grammar_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_grammar_summary.expected)" ]; then \
 		echo "PASS: gparse native grammar summary"; \
 	else \
@@ -20543,7 +20543,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_grammar_summary.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_grammar_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_grammar_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_grammar_data.expected)" ]; then \
 		echo "PASS: gparse native grammar data"; \
 	else \
@@ -20551,7 +20551,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_grammar_data.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_slr_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_slr_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_slr_summary.expected)" ]; then \
 		echo "PASS: gparse native SLR summary"; \
 	else \
@@ -20559,7 +20559,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_slr_summary.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_slr_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_slr_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_slr_parse_shared.expected)" ]; then \
 		echo "PASS: gparse native SLR shared parse"; \
 	else \
@@ -20567,7 +20567,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_slr_parse_shared.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_glr_class.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_glr_class.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_glr_class.expected)" ]; then \
 		echo "PASS: gparse native GLR class"; \
 	else \
@@ -20575,7 +20575,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_glr_class.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_glr_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_glr_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_glr_parse_shared.expected)" ]; then \
 		echo "PASS: gparse native GLR shared parse"; \
 	else \
@@ -20583,7 +20583,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_glr_parse_shared.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_gll_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_gll_parse_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_gll_parse_shared.expected)" ]; then \
 		echo "PASS: gparse native GLL shared parse"; \
 	else \
@@ -20591,7 +20591,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_gll_parse_shared.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_runtime_grammar_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_runtime_grammar_shared.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_runtime_grammar_shared.expected)" ]; then \
 		echo "PASS: gparse native runtime-grammar shared parse"; \
 	else \
@@ -20599,7 +20599,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_runtime_grammar_shared.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_glr_forest_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_glr_forest_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_glr_forest_summary.expected)" ]; then \
 		echo "PASS: gparse native GLR forest summary"; \
 	else \
@@ -20607,7 +20607,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_glr_forest_summary.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_gll_forest_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_gll_forest_summary.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_gll_forest_summary.expected)" ]; then \
 		echo "PASS: gparse native GLL forest summary"; \
 	else \
@@ -20615,7 +20615,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_gll_forest_summary.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_glr_forest_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_glr_forest_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_glr_forest_data.expected)" ]; then \
 		echo "PASS: gparse native GLR forest data"; \
 	else \
@@ -20623,7 +20623,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_glr_forest_data.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_gll_forest_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_gll_forest_data.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_gll_forest_data.expected)" ]; then \
 		echo "PASS: gparse native GLL forest data"; \
 	else \
@@ -20631,7 +20631,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_gll_forest_data.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_dual_forest_signature.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_dual_forest_signature.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_dual_forest_signature.expected)" ]; then \
 		echo "PASS: gparse native dual forest signature"; \
 	else \
@@ -20639,7 +20639,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_dual_forest_signature.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_forest_digest.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_forest_digest.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_forest_digest.expected)" ]; then \
 		echo "PASS: gparse native forest digest"; \
 	else \
@@ -20647,7 +20647,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_forest_digest.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_dispatch.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_dispatch.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_dispatch.expected)" ]; then \
 		echo "PASS: gparse native dispatch"; \
 	else \
@@ -20655,7 +20655,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_dispatch.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_corpus.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_corpus.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_corpus.expected)" ]; then \
 		echo "PASS: gparse native Metamath corpus"; \
 	else \
@@ -20663,7 +20663,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_metamath_corpus.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_frontier.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_frontier.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_frontier.expected)" ]; then \
 		echo "PASS: gparse native Metamath frontier"; \
 	else \
@@ -20671,7 +20671,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_metamath_frontier.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_defs_theorem_length_ladder.expected)" ]; then \
 		echo "PASS: gparse native Metamath defs theorem-length ladder"; \
 	else \
@@ -20679,7 +20679,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_metamath_defs_theorem_length_ladder.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_defs_component_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_defs_component_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_defs_component_ladder.expected)" ]; then \
 		echo "PASS: gparse native Metamath defs component ladder"; \
 	else \
@@ -20687,7 +20687,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_metamath_defs_component_ladder.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_plus_weq_variant_matrix.expected)" ]; then \
 		echo "PASS: gparse native Metamath plus/weq variant matrix"; \
 	else \
@@ -20695,7 +20695,7 @@ test-lib-parse-native-gparse: $(BIN)
 		diff <(cat tests/test_gparse_native_metamath_plus_weq_variant_matrix.expected) <(echo "$$result") | head -20; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_backend_report.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_backend_report.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_backend_report.expected)" ]; then \
 		echo "PASS: gparse native backend report"; \
 	else \
@@ -20705,7 +20705,7 @@ test-lib-parse-native-gparse: $(BIN)
 	fi
 
 test-lib-parse-generalized-native-integration: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_generalized_integration.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_generalized_integration.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_generalized_integration.expected)" ]; then \
 		echo "PASS: lib_parse generalized native integration"; \
 	else \
@@ -20797,7 +20797,7 @@ test-lib-parse-python-shadow-audit:
 	echo "PASS: lib_parse python role markers"
 
 test-lib-parse-generalized-toys: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_generalized_toys.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_generalized_toys.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_generalized_toys.expected)" ]; then \
 		echo "PASS: lib_parse generalized native toys"; \
 	else \
@@ -20807,7 +20807,7 @@ test-lib-parse-generalized-toys: $(BIN)
 	fi
 
 test-lib-parse-native-rho-mrho-text: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_rho_mrho_text.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_rho_mrho_text.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_rho_mrho_text.expected)" ]; then \
 		echo "PASS: lib_parse native rho mrho text"; \
 	else \
@@ -20842,7 +20842,7 @@ test-lib-parse-generalized: $(BIN)
 	else \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_shadowing.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_shadowing.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^Unique$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho glr unique shadowing)"; \
 	else \
@@ -20850,7 +20850,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_shadowing.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_shadowing.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^(Unique '; then \
 		echo "PASS: lib_parse generalized native corpus (rho gll unique shadowing)"; \
 	else \
@@ -20858,7 +20858,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_name_output.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_name_output.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^Unique$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho glr unique name-output)"; \
 	else \
@@ -20866,7 +20866,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_name_output.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rho_name_output.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^(Unique '; then \
 		echo "PASS: lib_parse generalized native corpus (rho gll unique name-output)"; \
 	else \
@@ -20874,7 +20874,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/reject_quoted_payload.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/reject_quoted_payload.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^NoParse$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho glr reject)"; \
 	else \
@@ -20882,7 +20882,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/reject_quoted_payload.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/reject_quoted_payload.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^NoParse$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho gll reject)"; \
 	else \
@@ -20890,7 +20890,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rotating_scheduler_persistent_branch.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:glr-class \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rotating_scheduler_persistent_branch.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^Ambiguous$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho glr ambiguous)"; \
 	else \
@@ -20898,7 +20898,7 @@ test-lib-parse-generalized: $(BIN)
 		echo "$$result"; \
 		exit 1; \
 	fi
-	@result=$$("$(CETTA_SCRIPT_BIN)" -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rotating_scheduler_persistent_branch.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he -e "!(import! &self ./tests/support/rhocalc_lib_parse_translator_v3.metta)" -e "!(import! &self gparse)" -e "!(println! (gparse:gll-parse-shared \"tests/support/rhocalc_lib_parse_translator_v3.metta\" rho-g proc (rho-lex-file->toks \"tests/rhocalc/rotating_scheduler_persistent_branch.rho\")))" 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if echo "$$result" | grep -q '^Ambiguous$$'; then \
 		echo "PASS: lib_parse generalized native corpus (rho gll ambiguous)"; \
 	else \
@@ -20916,7 +20916,7 @@ test-lib-parse-bounded: $(BIN)
 		echo "FAIL: lib_parse metamath mm-lean4 oracle"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_regression.expected)" ]; then \
 		echo "PASS: lib_parse core regression"; \
 		pass=$$((pass + 1)); \
@@ -20925,7 +20925,7 @@ test-lib-parse-bounded: $(BIN)
 		diff <(cat tests/test_lib_parse_regression.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_binding_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_binding_regression.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_binding_regression.expected)" ]; then \
 		echo "PASS: lib_parse binding regression"; \
 		pass=$$((pass + 1)); \
@@ -20964,7 +20964,7 @@ test-lib-parse-bounded: $(BIN)
 	[ $$fail -eq 0 ]
 
 test-lib-parse-abt-bridge: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_abt_bridge.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_abt_bridge.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	summary='(LibParseABTBridgeSummary 25 25 0 admitted 18 rejected 5 preserved 2)'; \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_abt_bridge.expected)" ] && \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc "$$summary")" -eq 1 ]; then \
@@ -20976,7 +20976,7 @@ test-lib-parse-abt-bridge: $(BIN)
 	fi
 
 probe-lib-parse-metamath-frontier: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_frontier.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_frontier.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_frontier.expected)" ]; then \
 		echo "PASS: gparse native Metamath frontier"; \
 	else \
@@ -20986,7 +20986,7 @@ probe-lib-parse-metamath-frontier: $(BIN)
 	fi
 
 probe-lib-parse-metamath-prefix-frontier: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_metamath_prefix_frontier_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_metamath_prefix_frontier_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_metamath_prefix_frontier_native.expected)" ]; then \
 		echo "PASS: lib_parse Metamath prefix frontier native"; \
 	else \
@@ -20996,7 +20996,7 @@ probe-lib-parse-metamath-prefix-frontier: $(BIN)
 	fi
 
 probe-lib-parse-metamath-stmt-prefix-frontier: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_metamath_stmt_prefix_frontier_native.expected)" ]; then \
 		echo "PASS: lib_parse Metamath stmt prefix frontier native"; \
 	else \
@@ -21006,7 +21006,7 @@ probe-lib-parse-metamath-stmt-prefix-frontier: $(BIN)
 	fi
 
 probe-lib-parse-metamath-theorem-length-ladder: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_lib_parse_metamath_theorem_length_ladder_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_lib_parse_metamath_theorem_length_ladder_native.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_lib_parse_metamath_theorem_length_ladder_native.expected)" ]; then \
 		echo "PASS: lib_parse Metamath theorem length ladder native"; \
 	else \
@@ -21016,7 +21016,7 @@ probe-lib-parse-metamath-theorem-length-ladder: $(BIN)
 	fi
 
 probe-lib-parse-metamath-context-ladder: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_context_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_context_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_context_ladder.expected)" ]; then \
 		echo "PASS: gparse native Metamath context ladder"; \
 	else \
@@ -21026,7 +21026,7 @@ probe-lib-parse-metamath-context-ladder: $(BIN)
 	fi
 
 probe-lib-parse-metamath-context-theorem-matrix: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_context_theorem_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_context_theorem_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_context_theorem_matrix.expected)" ]; then \
 		echo "PASS: gparse native Metamath context theorem matrix"; \
 	else \
@@ -21036,7 +21036,7 @@ probe-lib-parse-metamath-context-theorem-matrix: $(BIN)
 	fi
 
 probe-lib-parse-metamath-defs-theorem-length-ladder: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_defs_theorem_length_ladder.expected)" ]; then \
 		echo "PASS: gparse native Metamath defs theorem-length ladder"; \
 	else \
@@ -21046,7 +21046,7 @@ probe-lib-parse-metamath-defs-theorem-length-ladder: $(BIN)
 	fi
 
 probe-lib-parse-metamath-defs-component-ladder: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_defs_component_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_defs_component_ladder.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_defs_component_ladder.expected)" ]; then \
 		echo "PASS: gparse native Metamath defs component ladder"; \
 	else \
@@ -21056,7 +21056,7 @@ probe-lib-parse-metamath-defs-component-ladder: $(BIN)
 	fi
 
 probe-lib-parse-metamath-plus-weq-variant-matrix: $(BIN)
-	@result=$$("$(CETTA_SCRIPT_BIN)" tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
+	@result=$$("$(CETTA_SCRIPT_BIN)" --lang he tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta 2>&1 | grep -v '^Failed to create stream fd:'); \
 	if [ "$$result" = "$$(cat tests/test_gparse_native_metamath_plus_weq_variant_matrix.expected)" ]; then \
 		echo "PASS: gparse native Metamath plus/weq variant matrix"; \
 	else \
@@ -30958,6 +30958,150 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 	done; \
 	echo 'PASS: an equation or if branch whose body is NotReducible leaves its call unreduced, in every HE profile'
 
+# A typed head runs in the prepared machine as HE runs it: a parameter of a
+# value class is cast where HE casts it, the range is shown by the bodies,
+# and a call HE answers with a type error, or one at an arity no arrow
+# declares, is left to the canonical evaluator.  The typed loop's call
+# compiles into the machine's register code, and turning the machine off
+# changes no answer.  An answer producer, as under collapse, leaves a typed
+# head to the evaluator.
+.PHONY: test-he-typed-calls-prepared
+test: test-he-typed-calls-prepared
+test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
+		tests/he/typed_calls_prepared.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/typed_calls_prepared.metta \
+			| diff -u tests/he/typed_calls_prepared.expected -; \
+	done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/typed_calls_prepared.metta 2>&1 >/dev/null); \
+	grep -q 'bodies lowered to register code' <<<"$$trace"; \
+	! grep -F -q 'atom=(inc $$acc)' <<<"$$trace"; \
+	echo 'PASS: typed heads run in the prepared machine with HE casts, type errors and arity, in every HE profile'
+
+# A definition that takes arguments as they are written (an Atom parameter)
+# is expanded where it is called in the prepared machine, as HE runs it, so a
+# let written as HE's library writes it compiles as the native one does.  An
+# expansion that does not end, as a macro calling itself, is left to the
+# canonical evaluator; turning the machine off changes no answer.
+.PHONY: test-he-macro-definitions-prepared
+test: test-he-macro-definitions-prepared
+test-he-macro-definitions-prepared: $(BIN) \
+		tests/he/macro_definitions_prepared.metta \
+		tests/he/macro_definitions_prepared.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/macro_definitions_prepared.metta \
+			| diff -u tests/he/macro_definitions_prepared.expected -; \
+	done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/macro_definitions_prepared.metta 2>&1 >/dev/null); \
+	grep -q 'macro expansion is too deep' <<<"$$trace"; \
+	grep -F -q 'bodies lowered to register code' <<<"$$trace"; \
+	! grep -E -q 'precheck decline: .* call=\(loop ' <<<"$$trace"; \
+	echo 'PASS: macro definitions expand in the prepared machine as HE runs them, in every HE profile'
+
+# Definitions written in HE's minimal instructions (chain, unify,
+# decons-atom), as HE's library writes let*, car-atom and cdr-atom, run in
+# the prepared machine as HE's instruction machine runs them: where an
+# expansion's syntax decides an instruction it runs at compile time, a
+# deconstructed value binds when the program runs, and an else branch or a
+# malformed argument is left to the canonical evaluator.  Turning the
+# machine off changes no answer.
+.PHONY: test-he-instruction-definitions-prepared
+test: test-he-instruction-definitions-prepared
+test-he-instruction-definitions-prepared: $(BIN) \
+		tests/he/instruction_definitions_prepared.metta \
+		tests/he/instruction_definitions_prepared.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/instruction_definitions_prepared.metta \
+			| diff -u tests/he/instruction_definitions_prepared.expected -; \
+	done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/instruction_definitions_prepared.metta 2>&1 >/dev/null); \
+	grep -F -q 'bodies lowered to register code' <<<"$$trace"; \
+	! grep -E -q 'precheck decline: .* call=\((loop|sum-list) ' <<<"$$trace"; \
+	echo 'PASS: definitions in HE minimal instructions run in the prepared machine as HE runs them, in every HE profile'
+
+# Definitions written as HE functions (function, chain, eval, unify,
+# return), as HE's library writes switch, run in the prepared machine as
+# HE's instruction machine runs them: a chain over one evaluation step of a
+# function continues in that function's returns, a case no arm matches
+# answers nothing, a macro's Atom range answers its body as written, and a
+# variable given to an Expression parameter must hold an expression.
+# Turning the machine off changes no answer.
+.PHONY: test-he-function-definitions-prepared
+test: test-he-function-definitions-prepared
+test-he-function-definitions-prepared: $(BIN) \
+		tests/he/function_definitions_prepared.metta \
+		tests/he/function_definitions_prepared.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/function_definitions_prepared.metta \
+			| diff -u tests/he/function_definitions_prepared.expected -; \
+	done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/function_definitions_prepared.metta 2>&1 >/dev/null); \
+	grep -F -q 'bodies lowered to register code' <<<"$$trace"; \
+	! grep -E -q 'precheck decline: .* call=\((count|sum-firsts) ' <<<"$$trace"; \
+	echo 'PASS: definitions written as HE functions run in the prepared machine as HE runs them, in every HE profile'
+
+# PeTTa 1.0.6 typed calls run in the prepared machine: a value-class
+# signature's parameters are checked where the call enters, and a call that
+# fails them is left to PeTTa's own evaluator, which answers nothing for it,
+# as SWI-PeTTa does.  Turning the machine off changes no answer.
+.PHONY: test-petta-typed-calls-prepared
+test: test-petta-typed-calls-prepared
+test-petta-typed-calls-prepared: $(BIN) \
+		tests/petta/typed_calls_prepared.metta \
+		tests/petta/typed_calls_prepared.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/typed_calls_prepared.metta \
+			| diff -u tests/petta/typed_calls_prepared.expected -; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/typed_calls_prepared.metta 2>&1 >/dev/null); \
+	! grep -E -q 'precheck decline: .* call=\((loop|fact|flips) ' <<<"$$trace"; \
+	echo 'PASS: PeTTa typed calls run in the prepared machine with their class checks, as SWI-PeTTa answers them'
+
+# HE built-ins answer as Rust HE's definitions of them: get-type types its
+# subject in a space it is given (as type-cast asks it to), switch-minimal
+# returns its template as written, and assert's message holds the boolean
+# True.  he-compat keeps Rust HE's message for a space argument that is not
+# a space.
+.PHONY: test-he-stdlib-builtin-definitions
+test: test-he-stdlib-builtin-definitions
+test-he-stdlib-builtin-definitions: $(BIN) \
+		tests/he/stdlib_builtin_definitions.metta \
+		tests/he/stdlib_builtin_definitions.expected \
+		tests/he/stdlib_builtin_definitions.compat.expected
+	@set -eu -o pipefail; \
+	$(CETTA_BIN_INVOKE) --lang he@0.2.10 \
+		tests/he/stdlib_builtin_definitions.metta \
+		| diff -u tests/he/stdlib_builtin_definitions.compat.expected -; \
+	for lane in he "he --profile extended"; do \
+		$(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/stdlib_builtin_definitions.metta \
+			| diff -u tests/he/stdlib_builtin_definitions.expected -; \
+	done; \
+	echo 'PASS: get-type with a space, switch-minimal and assert answer as Rust HE defines them'
+
 # PeTTa's parse and sread read with the session's PeTTa reader, as SWI PeTTa
 # reads both with one term reader.
 .PHONY: test-petta-parse-term-reader
@@ -30968,6 +31112,33 @@ test-petta-parse-term-reader: $(BIN) tests/petta/parse_term_reader.metta \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/parse_term_reader.metta \
 		| diff -u tests/petta/parse_term_reader.expected -; \
 	echo 'PASS: PeTTa parse and sread read a term as source forms are read'
+
+# A ground pattern over a space past the trie threshold is answered from the
+# exact index, which looks each leaf up under the record it was stored as:
+# float, string and number rows are found and removed as SWI-PeTTa finds and
+# removes them.
+.PHONY: test-petta-exact-index-leaf-records
+test: test-petta-exact-index-leaf-records
+test-petta-exact-index-leaf-records: $(BIN) tests/petta/exact_index_leaf_records.metta \
+		tests/petta/exact_index_leaf_records.expected
+	@set -eu -o pipefail; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/exact_index_leaf_records.metta \
+		| diff -u tests/petta/exact_index_leaf_records.expected -; \
+	echo 'PASS: ground patterns over an indexed space find and remove float, string and number rows'
+
+# Every atom constructor writes every field: on arena memory an earlier
+# allocation left dirty, a grounded leaf's name_key is NULL (a collection
+# reads it as its mark and its forwarding copy) and its hash cache is clear.
+ATOM_CONSTRUCTOR_FIELDS_TEST_BIN = runtime/test_atom_constructor_fields-$(BUILD_OBJ_TAG)
+
+$(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN): tests/test_atom_constructor_fields.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/atom.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_atom_constructor_fields.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-atom-constructor-fields
+test: test-atom-constructor-fields
+test-atom-constructor-fields: $(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN))
 
 .PHONY: test-binding-standing-panel
 test-binding-standing-panel: $(BIN)
