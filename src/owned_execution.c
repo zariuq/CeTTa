@@ -13,46 +13,24 @@ void cetta_owned_execution_init(CettaOwnedExecution *execution,
     };
 }
 
+bool cetta_owned_execution_move(CettaOwnedExecution *destination,
+    CettaOwnedExecution *source) {
+    if (!destination || !source || destination == source ||
+        destination->computation || destination->has_pending ||
+        !source->computation || !source->next || !source->relocatable)
+        return false;
+    *destination = *source;
+    *source = (CettaOwnedExecution){
+        .terminal = true, .stop = CETTA_OWNED_EXECUTION_HANDOFF,
+    };
+    return true;
+}
+
 CettaOwnedExecutionStep cetta_owned_execution_sequence(
     CettaOwnedExecution *execution, uint64_t allowance,
     CettaOwnedReturnConsumer consume, void *consumer) {
-    if (!execution || !execution->computation || !execution->next || !consume)
-        return CETTA_OWNED_EXECUTION_HANDOFF;
-    if (execution->terminal)
-        return execution->stop;
-    while (allowance > 0u) {
-        if (!execution->has_pending) {
-            CettaOwnedReturn returned = {0};
-            CettaOwnedExecutionStep step = execution->next(
-                execution->computation, &returned, &execution->completion);
-            if (step != CETTA_OWNED_EXECUTION_RETURN) {
-                execution->stop = step;
-                execution->terminal = step != CETTA_OWNED_EXECUTION_PAUSED;
-                return step;
-            }
-            execution->pending = returned;
-            execution->has_pending = true;
-        }
-        if (!consume(consumer, &execution->pending)) {
-            execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
-            return execution->stop;
-        }
-        bool final = execution->pending.final &&
-            execution->completion == CETTA_EVAL_COMPLETE &&
-            (!execution->final_is_current ||
-             execution->final_is_current(execution->computation));
-        execution->has_pending = false;
-        memset(&execution->pending, 0, sizeof(execution->pending));
-        execution->accepted++;
-        allowance--;
-        if (final) {
-            execution->stop = CETTA_OWNED_EXECUTION_COMPLETE;
-            execution->terminal = true;
-            return execution->stop;
-        }
-    }
-    execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
-    return execution->stop;
+    return cetta_owned_execution_sequence_with(execution,allowance,
+        execution ? execution->next : NULL,consume,consumer);
 }
 
 void cetta_owned_execution_cancel(CettaOwnedExecution *execution) {
@@ -66,4 +44,56 @@ void cetta_owned_execution_cancel(CettaOwnedExecution *execution) {
     execution->terminal = true;
     execution->stop = CETTA_OWNED_EXECUTION_INTERRUPTED;
     execution->completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
+}
+
+bool cetta_owned_task_init(CettaOwnedTask *task, CettaOwnedExecution *execution,
+    CettaOwnedTaskCompatible compatible, CettaOwnedReturnConsumer consume,
+    void *context) {
+    if (!task || task->ready.owner || !compatible || !consume ||
+        !cetta_owned_execution_move(&task->execution, execution))
+        return false;
+    task->compatible = compatible;
+    task->consume = consume;
+    task->context = context;
+    return true;
+}
+
+static bool owned_task_deliver(void *raw, const CettaOwnedReturn *returned) {
+    CettaOwnedVisit *visit = raw;
+    CettaOwnedTask *task = visit->task;
+    if (!task->compatible(task->context)) {
+        visit->context_refused = true;
+        return false;
+    }
+    return task->consume(task->context, returned);
+}
+
+CettaOwnedVisit cetta_owned_task_visit(CettaReadyQueue *queue, bool poll) {
+    CettaReadyLink *link = cetta_ready_rotate(queue);
+    return cetta_owned_task_poll((CettaOwnedTask *)link,poll);
+}
+
+CettaOwnedVisit cetta_owned_task_poll(CettaOwnedTask *task, bool poll) {
+    CettaOwnedVisit visit = {.task = task, .step = CETTA_OWNED_EXECUTION_PAUSED};
+    if (!task) return visit;
+    if (!task->execution.terminal && poll) {
+        if (!task->execution.has_pending && !task->compatible(task->context))
+            visit.context_refused = true;
+        else
+            visit.step = cetta_owned_execution_sequence(
+                &task->execution, 1u, owned_task_deliver, &visit);
+    }
+    if (task->execution.terminal) {
+        visit.step = task->execution.stop;
+        if (task->ready.owner)
+            cetta_ready_remove(task->ready.owner, &task->ready);
+    }
+    return visit;
+}
+
+void cetta_owned_task_cancel(CettaOwnedTask *task) {
+    if (!task) return;
+    if (task->ready.owner)
+        cetta_ready_remove(task->ready.owner, &task->ready);
+    cetta_owned_execution_cancel(&task->execution);
 }

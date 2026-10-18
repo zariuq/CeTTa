@@ -4237,20 +4237,7 @@ static int cetta_main(int argc, char **argv) {
      * holds exactly the library at this point, so the symbols it declares a
      * type for are read from its annotations. */
     if (lang->id == CETTA_LANGUAGE_PRIME) {
-        CettaCount stdlib_len = space_length64(&space);
-        SymbolId *he_heads = cetta_malloc(
-            sizeof(*he_heads) * (stdlib_len ? stdlib_len : 1u));
-        size_t he_head_count = 0u;
-        for (CettaIndex i = 0u; i < stdlib_len; i++) {
-            Atom *item = space_get_at64(&space, i);
-            if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
-                atom_is_symbol_id(item->expr.elems[0],
-                                  g_builtin_syms.colon) &&
-                item->expr.elems[1]->kind == ATOM_SYMBOL)
-                he_heads[he_head_count++] = atom_symbol_current_id(item->expr.elems[1]);
-        }
-        eval_prime_set_he_signature_heads(he_heads, he_head_count);
-        free(he_heads);
+        eval_prime_set_he_signature_space(&space);
     }
 
     /* Add grounded op type declarations (HE stdlib implicit types) */

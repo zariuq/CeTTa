@@ -40,7 +40,7 @@ static CettaMatchCursorStep AGENDA_OP(match_step)(CettaSpaceAgenda *a, Atom *pat
 static bool AGENDA_OP(row_add)(CettaSpaceAgenda *a);
 static bool AGENDA_OP(rows_agree)(CettaSpaceAgenda *a);
 static CettaSpaceAgendaStep AGENDA_OP(join_finished)(CettaSpaceAgenda *a);
-static bool AGENDA_OP(world_child_new)(CettaSpaceAgenda *a, const JoinedRow *row);
+static bool AGENDA_OP(row_child_new)(CettaSpaceAgenda *a, const JoinedRow *row, bool proposal);
 static CettaSpaceAgendaStep AGENDA_OP(join_step)(CettaSpaceAgenda *a);
 static CettaSpaceAgendaStep AGENDA_OP(build_step)(CettaSpaceAgenda *a);
 static CettaSpaceAgendaStep AGENDA_OP(commit_step)(CettaSpaceAgenda *a);
@@ -63,7 +63,8 @@ static void AGENDA_OP(transaction_clear)(CettaSpaceAgenda *a) {
     if (a->current_ready) space_free(&a->current);
     if (a->replacement_ready) space_free(&a->replacement);
     a->snapshot_ready = a->current_ready = a->replacement_ready = false;
-    a->borrowed_preparation = false;
+    a->borrowed_capture = false;
+    a->enumerate_matches = a->selected_match = false;
     a->validating = false;
 }
 
@@ -95,7 +96,7 @@ static bool AGENDA_OP(capture_begin)(CettaSpaceAgenda *a, bool validating) {
     bool *ready = validating ? &a->current_ready : &a->snapshot_ready;
     if (*ready) space_free(destination);
     *ready = false;
-    if (!a->borrowed_preparation) {
+    if (!a->borrowed_capture) {
         memset(destination,0,sizeof(*destination));
         space_init_with_universe(destination,a->space->universe);
         *ready = true;
@@ -115,6 +116,9 @@ static bool AGENDA_OP(capture_begin)(CettaSpaceAgenda *a, bool validating) {
 static CettaSpaceAgendaStep AGENDA_OP(select_step)(CettaSpaceAgenda *a) {
     if (!a->selection_ready) {
         a->selected = NULL;
+        a->borrowed_capture=false;
+        a->selected_order=a->advise?"program-advice":
+            a->contract.raw_mm2_order?"compact-byte":"source-order";
         a->candidate_count=0u;
         size_t retained=0u;
         for(size_t i=0u;i<a->waiting_count;i++)
@@ -168,6 +172,7 @@ static CettaSpaceAgendaStep AGENDA_OP(select_step)(CettaSpaceAgenda *a) {
         (uint64_t)step,0u,selection_read,NULL,NULL,NULL);
     space_occurrence_cursor_release(&a->selection); a->selection_ready = false;
     if (!current) { a->selected = NULL; return CETTA_SPACE_AGENDA_RETRY; }
+    if(a->selected || a->candidate_count)a->borrowed_capture=borrowed_capture_admitted(a);
     if(a->candidate_count) {
         size_t index=0u;
         a->oldest=a->schedule.lane[a->schedule.state]==CETTA_SELECTION_LANE_OLDEST;
@@ -260,8 +265,9 @@ static CettaSpaceAgendaStep AGENDA_OP(select_publish)(CettaSpaceAgenda *a,SpaceR
 
 static CettaSpaceAgendaStep AGENDA_OP(cetta_space_agenda_prepare_source)(
         CettaSpaceAgenda *a, SpaceReadToken source, CettaIndex index) {
-    if (!a || !a->contract.explicit_inputs || a->contract.snapshot_worlds ||
-        a->contract.set_support || a->contract.raw_mm2_order) return CETTA_SPACE_AGENDA_PENDING;
+    if (!a || a->contract.snapshot_worlds ||
+        (a->contract.explicit_inputs ? a->contract.set_support || a->contract.raw_mm2_order :
+         !a->contract.set_support || !a->contract.raw_mm2_order)) return CETTA_SPACE_AGENDA_PENDING;
     if (a->phase!=AGENDA_SELECT || a->selection_ready || a->selected ||
         a->advise || a->owned_next || a->pending_child)
         return pending(a,"PreparationAlreadyStarted");
@@ -274,6 +280,11 @@ static CettaSpaceAgendaStep AGENDA_OP(cetta_space_agenda_prepare_source)(
     a->selected=atom_deep_copy(a->owner,row);
     if (!a->selected) return pending(a,"PreparationCapacity");
     a->selected_index=index;
+    a->selected_order="program-choice";
+    if (!a->contract.explicit_inputs) {
+        a->selected_read=source;a->selection_read=source;a->phase=AGENDA_ACTIVATE;
+        return CETTA_SPACE_AGENDA_PROGRESS;
+    }
     return AGENDA_OP(select_publish)(a,source);
 }
 
@@ -293,9 +304,9 @@ static CettaSpaceAgendaStep AGENDA_OP(capture_step)(CettaSpaceAgenda *a) {
         AGENDA_OP(capture_begin)(a,a->validating); a->retries++;
         return CETTA_SPACE_AGENDA_RETRY;
     }
-    Space *snapshot = a->borrowed_preparation ? a->space :
+    Space *snapshot = a->borrowed_capture ? a->space :
         a->validating ? &a->current : &a->snapshot;
-    if (!a->borrowed_preparation && a->capture_index < a->capture_length) {
+    if (!a->borrowed_capture && a->capture_index < a->capture_length) {
         Atom *row = space_get_at64(a->space,a->capture_index);
         if (!row) return pending(a,"SnapshotProjection");
         AGENDA_CHARGE(a,CETTA_AGENDA_CHARGE_CAPTURE,CETTA_COST_CANDIDATE_ROW,1u);
@@ -363,6 +374,7 @@ static CettaSpaceAgendaMatch *AGENDA_OP(match_begin)(CettaSpaceAgenda *a, Atom *
 static CettaSpaceAgendaMatch *AGENDA_OP(cetta_space_agenda_match_capture)(CettaSpaceAgenda *a) {
     if(!a || (a->phase!=AGENDA_MATCH && a->phase!=AGENDA_VALIDATE_MATCH) ||
        a->depth>=a->input_count || a->pending_child || a->pending)return NULL;
+    if(a->borrowed_capture && !space_read_token_is_current(a->capture_read))return NULL;
     if(a->matching)
         return a->matching->isolated && !a->matching->prepared ? a->matching : NULL;
     JoinLevel *level=&a->levels[a->depth];
@@ -489,10 +501,10 @@ static bool AGENDA_OP(rows_agree)(CettaSpaceAgenda *a) {
 static CettaSpaceAgendaStep AGENDA_OP(join_finished)(CettaSpaceAgenda *a) {
     (void)AGENDA_OBSERVE(a,CETTA_AGENDA_EVENT_JOIN_END);
     join_free(a);
-    if (a->contract.snapshot_worlds) {
+    if (a->contract.snapshot_worlds || a->enumerate_matches) {
         /* Every binding of this exec was issued separately. The immutable
          * world remains available while the remaining execs are scanned. */
-        if (!waiting_add(a)) return pending(a,"WaitingCapacity");
+        if (a->contract.snapshot_worlds && !waiting_add(a)) return pending(a,"WaitingCapacity");
         AGENDA_OP(transaction_clear)(a);a->selected=NULL;a->phase=AGENDA_SELECT;
         return CETTA_SPACE_AGENDA_PROGRESS;
     }
@@ -510,6 +522,12 @@ static CettaSpaceAgendaStep AGENDA_OP(join_finished)(CettaSpaceAgenda *a) {
         return CETTA_SPACE_AGENDA_RETRY;
     }
     if(!AGENDA_OP(rows_agree)(a)) {
+        if (a->selected_match) {
+            /* Keep the captured choice readable after failed revalidation.
+             * An exhausted search for its tuple cannot pick another row. */
+            a->phase=AGENDA_WAIT;
+            return pending(a,"ChangedPreparedChoice");
+        }
         /* New matching facts, missing witnesses and competing consumes do
          * not authorize the old proposed writes. Keep the selected exec and
          * rebuild only its transaction against the new source. */
@@ -523,41 +541,84 @@ static CettaSpaceAgendaStep AGENDA_OP(join_finished)(CettaSpaceAgenda *a) {
     return CETTA_SPACE_AGENDA_PROGRESS;
 }
 
-static bool AGENDA_OP(world_child_new)(CettaSpaceAgenda *a, const JoinedRow *row) {
+static bool AGENDA_OP(row_child_new)(CettaSpaceAgenda *a, const JoinedRow *row, bool proposal) {
     CettaSpaceAgenda *root=a->root;
-    if (a->pending_child || !root->next_world_id || root->next_world_id==UINT64_MAX)
+    if (a->pending_child || (!proposal &&
+        (!root->next_world_id || root->next_world_id==UINT64_MAX)))
         return false;
-    CettaSpaceAgenda *child=cetta_space_agenda_new(a->space,a->owner,&a->captured,a->contract);
+    CettaSpaceAgenda *child=agenda_new(a->space,a->owner,&a->captured,a->contract,proposal);
     if (!child) return false;
     child->rows=malloc(sizeof(*child->rows));
     child->validation=malloc(sizeof(*child->validation));
     if (!child->rows || !child->validation) {AGENDA_OP(agenda_free_one)(child);return false;}
-    child->rows[0]=*row;child->validation[0]=*row;
+    if (proposal) {
+        AtomDeepCopySession *copy=atom_deep_copy_session_new(child->owner);
+        child->selected=copy?atom_deep_copy_session_copy(copy,a->selected):NULL;
+        JoinedRow captured={
+            .outputs=copy?atom_deep_copy_session_copy(copy,row->outputs):NULL,
+            .witnesses=copy?atom_deep_copy_session_copy(copy,row->witnesses):NULL,
+            .dependencies=copy?atom_deep_copy_session_copy(copy,row->dependencies):NULL,
+        };
+        atom_deep_copy_session_free(copy);
+        size_t epochs=a->match_epoch_count[0];
+        if (epochs) {
+            child->match_epochs[0]=malloc(epochs*sizeof(*child->match_epochs[0]));
+            if (child->match_epochs[0]) {
+                memcpy(child->match_epochs[0],a->match_epochs[0],epochs*sizeof(*child->match_epochs[0]));
+                child->match_epoch_count[0]=child->match_epoch_capacity[0]=epochs;
+            }
+        }
+        if (!child->selected || !captured.outputs || !captured.witnesses ||
+            !captured.dependencies || (epochs && !child->match_epochs[0]) || !parse_selected(child)) {
+            AGENDA_OP(agenda_free_one)(child);return false;
+        }
+        child->rows[0]=child->validation[0]=captured;
+        child->validating=child->selected_match=true;
+    } else {
+        child->rows[0]=*row;child->validation[0]=*row;
+        child->selected=a->selected;
+    }
     child->row_count=child->row_capacity=child->validation_count=child->validation_capacity=1u;
-    child->selected=a->selected;child->last_selected=a->selected;
+    child->last_selected=child->selected;
+    child->selected_order=a->selected_order;
     child->selected_index=a->selected_index;child->selected_read=a->selected_read;
     child->capture_read=space_read_token(a->space);
     child->schedule=a->schedule;child->advise=a->advise;child->before=a->before;
     child->advice_context=a->advice_context;child->chosen_advice=a->chosen_advice;
     child->root=root;child->origin_read=root->origin_read;
-    child->world_id=root->next_world_id++;
-    child->parent_world_id=a->world_id;
+    if (!proposal) {
+        child->world_id=root->next_world_id++;
+        child->parent_world_id=a->world_id;
+    }
     child->trace=a->trace;child->commits=a->commits;
-    space_init_with_universe(&child->replacement,a->space->universe);
-    child->replacement_ready=true;child->build_index=0u;child->phase=AGENDA_BUILD;
+    if (!proposal) {
+        space_init_with_universe(&child->replacement,a->space->universe);
+        child->replacement_ready=true;
+    }
+    child->build_index=0u;child->phase=AGENDA_BUILD;
     child->owned_next=root->owned_next;root->owned_next=child;
-    a->pending_child=child;a->yielded_child=true;
+    a->pending_child=child;
+    if (!proposal) a->yielded_child=true;
     cetta_native_cost_charge(CETTA_COST_CAPTURE,1u);
     return true;
 }
 
 static CettaSpaceAgendaStep AGENDA_OP(join_step)(CettaSpaceAgenda *a) {
+    if(a->borrowed_capture && !space_read_token_is_current(a->capture_read)) {
+        if(!selected_occurrence_current(a))return pending(a,"StaleSelectedOccurrence");
+        match_free(a->matching);a->matching=NULL;
+        join_free(a);
+        a->validation_count=0u;
+        if(!a->validating)a->row_count=0u;
+        AGENDA_OP(capture_begin)(a,a->validating);a->retries++;
+        return CETTA_SPACE_AGENDA_RETRY;
+    }
     if(a->depth==a->input_count) {
         if(!AGENDA_OP(row_add)(a))return pending(a,"JoinedRowCapacity");
-        if (a->contract.snapshot_worlds) {
-            if (!AGENDA_OP(world_child_new)(a,&a->rows[a->row_count-1u])) {
+        if (a->contract.snapshot_worlds || a->enumerate_matches) {
+            if (!AGENDA_OP(row_child_new)(a,&a->rows[a->row_count-1u],a->enumerate_matches)) {
                 a->row_count--;
-                return pending(a,"WorldContinuationCapacity");
+                return pending(a,a->enumerate_matches?"MatchChoiceCapacity":"WorldContinuationCapacity");
             }
             /* The row has moved into its own store/commit continuation. The
              * matcher keeps the next physical binding, without deduplication. */
@@ -566,6 +627,15 @@ static CettaSpaceAgendaStep AGENDA_OP(join_step)(CettaSpaceAgenda *a) {
             else {AGENDA_OP(join_finished)(a);}
             return CETTA_SPACE_AGENDA_FORK;
         }
+        if (a->selected_match && a->validating && !AGENDA_OP(rows_agree)(a)) {
+            /* A selected binding is a retained occurrence tuple. Search the
+             * current join for that same tuple; another valid binding cannot
+             * authorize these saved writes or retarget the choice. */
+            a->validation_count=0u;
+            if (!a->depth) return AGENDA_OP(join_finished)(a);
+            level_free(&a->levels[a->depth]);a->depth--;
+            return CETTA_SPACE_AGENDA_PROGRESS;
+        }
         /* Annotated transactions choose one complete environment. MM2
          * applies its sinks to every environment in the frozen read copy. */
         if(a->contract.explicit_inputs || !a->depth)return AGENDA_OP(join_finished)(a);
@@ -573,7 +643,7 @@ static CettaSpaceAgendaStep AGENDA_OP(join_step)(CettaSpaceAgenda *a) {
     }
     JoinLevel *level=&a->levels[a->depth];
     AgendaInput *input=&a->inputs[a->depth];
-    Space *snapshot=a->borrowed_preparation?a->space:
+    Space *snapshot=a->borrowed_capture?a->space:
         a->validating?&a->current:&a->snapshot;
     if(level->aggregate_done) {
         if(!a->depth)return AGENDA_OP(join_finished)(a);
@@ -677,7 +747,7 @@ static CettaSpaceAgendaStep AGENDA_OP(build_step)(CettaSpaceAgenda *a) {
     }
     /* Reinsertion is a set union under MM2. A concurrently introduced equal
      * exec is already live and must not be removed as a private read copy. */
-    Space *current=a->contract.snapshot_worlds?a->space:&a->current;
+    Space *current=a->contract.snapshot_worlds || a->borrowed_capture?a->space:&a->current;
     size_t n=(size_t)space_length64(current)-(a->current_exec_appended?1u:0u);
     if(a->build_index<n) {
         size_t index=a->build_index;
@@ -742,8 +812,7 @@ static CettaSpaceAgendaStep AGENDA_OP(commit_step)(CettaSpaceAgenda *a) {
         atom_expr2(a->owner,atom_symbol(a->owner,"dependencies"),code_value(a,atom_expr(a->owner,deps,deps?(CettaExprLen)a->row_count:0u))),
         atom_expr2(a->owner,atom_symbol(a->owner,"retries"),natural(a->owner,a->retries)),
         atom_expr2(a->owner,atom_symbol(a->owner,"store"),atom_symbol(a->owner,a->contract.set_support?"set":"bag")),
-        atom_expr2(a->owner,atom_symbol(a->owner,"order"),atom_symbol(a->owner,
-            a->advise?"program-advice":a->contract.raw_mm2_order?"compact-byte":"source-order"))};
+        atom_expr2(a->owner,atom_symbol(a->owner,"order"),atom_symbol(a->owner,a->selected_order))};
     if (a->contract.snapshot_worlds) {
         fields[7]=atom_expr2(a->owner,atom_symbol(a->owner,"from"),natural(a->owner,a->parent_world_id));
         fields[8]=atom_expr2(a->owner,atom_symbol(a->owner,"to"),natural(a->owner,a->world_id));

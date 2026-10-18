@@ -531,6 +531,10 @@ void prime_semantics_theorem_record(
 
 /* A space that comes to hold another's contents holds its theorem records. */
 void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to);
+void prime_semantics_theorem_ledger_retire(uint64_t instance);
+/* Quiescent census; this requested read neither creates a collection nor
+ * installs a lifetime subscriber. */
+void prime_semantics_theorem_storage_census(CettaStorageCensus *census);
 /* A bounded noninitializing read; completion and emptiness are separate. */
 bool prime_semantics_theorem_instance_empty(uint64_t instance, size_t limit,
     size_t *visited, bool *empty);

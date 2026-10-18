@@ -1515,6 +1515,12 @@ bool atom_data_equal(Atom *left, Atom *right);
  * scalar-data DAGs. Identical subgraphs can then be skipped without repeating
  * validation. This is not a validator for untrusted or mutable graph inputs. */
 bool atom_data_equal_validated(Atom *left, Atom *right);
+
+/* Exact scalar-data key comparison on the same finite DAG domain, also
+ * admitting inert internal tags. Numeric kinds and float bits are distinct;
+ * variables retain their identity, spelling and structural name. No runtime
+ * handle, value comparison callback or persistent cache participates. */
+bool atom_data_identical(Atom *left, Atom *right);
 /* MeTTa's ==: a comparison that never binds.  Expressions compare element
  * by element, and a NaN equals nothing, even itself.
  * PeTTa: numbers are equal when their values are, whatever their

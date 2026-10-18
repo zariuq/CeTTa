@@ -33,7 +33,7 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
     CettaLibraryContext *authority=g_library_context;
     CettaContinuationStatus status=CETTA_CONTINUATION_UNSUPPORTED;
     PrimeNativeOwnedRegion *region=prime_native_owned_region_capture(source,registry,
-        expression,inspection_limit,byte_limit,&status);
+        expression,expr_arg(expression,expr_nargs(expression)-1u),inspection_limit,byte_limit,false,&status);
     if (!region) return status;
     CettaPrimeObservationReturn *owned=calloc(1u,sizeof(*owned));
     PrimeNativeTopEpisode *episode=calloc(1u,sizeof(*episode));

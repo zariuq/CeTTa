@@ -94,6 +94,16 @@ CettaDurableStatus cetta_durable_usage(CettaDurableStore *store, CettaDurableUsa
  * declare every read that influenced the decision, including negative reads. */
 CettaDurableStatus cetta_durable_observe(CettaDurableStore *store,
     const CettaDurableScope *scopes, size_t count, CettaDurableObservation **out);
+/* Extend an earlier observation with fresh scopes in one read transaction.
+ * The earlier scopes must still match their exact epoch, keys and revisions.
+ * New views come first, followed by the earlier scopes; the returned owner
+ * copies all dependencies for subsequent commit/watch validation. Earlier
+ * data and the fresh scopes therefore describe the same current snapshot.
+ * required must be non-NULL; count may be zero. Failure leaves *out NULL.
+ * This transports dependencies, not permission to write or dispatch. */
+CettaDurableStatus cetta_durable_observe_joined(CettaDurableStore *store,
+    const CettaDurableObservation *required,
+    const CettaDurableScope *scopes, size_t count, CettaDurableObservation **out);
 const CettaDurableSnapshot *cetta_durable_observation_view(
     const CettaDurableObservation *observation, size_t index);
 void cetta_durable_observation_free(CettaDurableObservation *observation);

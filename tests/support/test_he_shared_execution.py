@@ -142,6 +142,12 @@ CASES = [
     ("bind-completed-producer", "(= (producer) (let $u (println! first) 1))\n"
      "(= (producer) (let $u (println! second) 2))\n"
      "!(bind! &kept (producer))\n! &kept\n", "first\nsecond\n[()]\n[1]\n", False),
+    ("captured-registry-operand-types", "!(bind! &typed-number 5)\n"
+     "(= (compared $x) (== $x &typed-number))\n"
+     "(: observed (-> Atom %Undefined%))\n"
+     "(= (observed $v) (case $v (((Error $a $b) (error $b)) ($x $x))))\n"
+     "!(observed (compared 5))\n!(observed (compared \"s\"))\n",
+     '[()]\n[True]\n[(error (BadArgType 2 String Number))]\n', False),
     ("collapse-bind-aliases", "(= (row 1) a)\n(= (row 1) a)\n(= (row 2) b)\n"
      "!(let $pairs (collapse-bind (row $k)) "
      "(let $v (superpose-bind $pairs) ($k $v)))\n",

@@ -24,6 +24,9 @@ spec.loader.exec_module(csp)
 Client, S, E, Var = csp.Client, csp.S, csp.E, csp.Var
 SERVICE = str(Path(sys.argv[1]).resolve())
 CETTA = str(Path(sys.argv[2]).resolve()) if len(sys.argv) > 2 else None
+WORKER = str(Path(sys.argv[3]).resolve()) if len(sys.argv) > 3 else None
+sys.path.insert(0, str(ROOT / "tools"))
+from value_worker_client import Worker, WorkerUnavailable
 TRACE = []
 BACKENDS = tuple(os.environ.get("CETTA_SPACE_TEST_BACKENDS", "native,pathmap,mork").split(","))
 if not BACKENDS or any(x not in ("native", "pathmap", "mork") for x in BACKENDS):
@@ -503,9 +506,9 @@ class ServiceTests(unittest.TestCase):
         self.client.hello()
 
     @unittest.skipUnless(CETTA, "provide CeTTa binary for native client qualification")
-    def test_two_cetta_processes_and_both_dialects(self):
+    def test_cetta_processes_in_he_petta_and_prime(self):
         space = self.space()
-        for mode in ("he", "petta"):
+        for mode in ("he", "petta", "prime"):
             path = self.fixture.root / (mode + ".metta")
             path.write_text(f'''!(import! &self space_service)
 !(space:call "{self.fixture.socket}" (request "native-{mode}" batch "{space.uuid}" {space.id} {space.revision} (ops (add (from-{mode} 7)))) 5000)
@@ -519,7 +522,7 @@ class ServiceTests(unittest.TestCase):
 
     @unittest.skipUnless(CETTA, "provide CeTTa binary for native client qualification")
     def test_metta_helpers_and_stale_descriptor(self):
-        for mode in ("he","petta"):
+        for mode in ("he","petta","prime"):
             space = self.client.open("helper-"+mode)
             descriptor = f'(space "{space.uuid}" {space.id} "{space.name}" native bag 0 0)'
             path = self.fixture.root / ("helper-"+mode+".metta")
@@ -538,6 +541,78 @@ class ServiceTests(unittest.TestCase):
             self.assertIn("stale-revision",process.stdout)
             self.assertIn(f'"{space.name}" native bag',process.stdout)
             self.assertEqual(space.match(E("helper",Var(0)),Var(0)),[17])
+
+    @unittest.skipUnless(WORKER, "provide value worker for snapshot publication qualification")
+    def test_prime_worker_publishes_only_against_its_captured_snapshot(self):
+        old = self.space()
+        current = self.client.open(old.name)
+        current.batch(*(E("add", E("Work", n)) for n in (7, 7, 9)))
+        snapshot = old.query(E("Work", Var(0)), Var(0))
+        self.assertNotEqual(old.revision, snapshot[4])
+        rows, offset = [], 0
+        try:
+            while True:
+                page = old.fetch(snapshot, offset, 2)
+                self.assertEqual(page[1], snapshot[4])
+                rows.extend(page[3][1:])
+                if page[5]:
+                    break
+                offset = page[4]
+        finally:
+            old.close_query(snapshot)
+        self.assertEqual(rows, [7, 7, 9])
+        worker = Worker(WORKER, ROOT / "examples/space-service/prime_worker.metta",
+                        "work:transform", language="prime", num_threads=2)
+        self.addCleanup(worker.close)
+        completed = worker.call(tuple(rows))
+        self.assertEqual(completed, (E("Computed", 7, 28), E("Computed", 7, 28), E("Computed", 9, 45)))
+        operations = E("ops", *(E("add", row) for row in completed))
+        answer = self.client.call("batch", old.uuid, old.id, snapshot[4], operations)
+        self.assertEqual(answer[0], S("committed"))
+        self.assertEqual(old.match(E("Computed", Var(0), Var(1)), E("Computed", Var(0), Var(1))),
+                         list(completed))
+        before = old.describe()
+        self.denied("stale-revision", self.client.call, "batch", old.uuid, old.id,
+                    snapshot[4], operations)
+        self.assertEqual(old.describe(), before)
+        # A coherent old result remains inspectable; it grants no new write.
+        self.assertEqual(worker.call(tuple(rows)), completed)
+        fresh = old.query(E("Work", Var(0)), Var(0))
+        old.add(E("Work", 11))
+        self.denied("stale-revision", self.client.call, "batch", old.uuid, old.id,
+                    fresh[4], operations)
+        old.close_query(fresh)
+        self.assertEqual(old.match_count(E("Computed", Var(0), Var(1))), 3)
+
+    @unittest.skipUnless(WORKER, "provide value worker for dialect value qualification")
+    def test_value_worker_preserves_data_and_tensors_in_each_dialect(self):
+        module = self.fixture.root / "identity.metta"
+        module.write_text("(= (identity $value) $value)\n")
+        values = [E("+", 1, 2), E("Data", "literal text", E("same", 7, 7)),
+                  csp.Tensor.vector([1., -0., .5])]
+        for mode in (None, "petta", "prime"):
+            with self.subTest(language=mode):
+                worker = Worker(WORKER, module, "identity", language=mode, num_threads=2)
+                try:
+                    for value in values:
+                        self.assertEqual(worker.call(value), value)
+                finally:
+                    self.assertEqual(worker.close(), 0)
+
+    @unittest.skipUnless(WORKER, "provide value worker for cancellation qualification")
+    def test_lost_prime_worker_publishes_nothing_and_can_restart(self):
+        module = self.fixture.root / "waiting.metta"
+        module.write_text("(= (wait $n) (if (== $n 0) Ready (wait $n)))\n")
+        worker = Worker(WORKER, module, "wait", language="prime", timeout=.1)
+        self.addCleanup(worker.close)
+        space = self.space()
+        before = space.describe()
+        with self.assertRaises(WorkerUnavailable):
+            worker.call(1)
+        self.assertIsNone(worker.process)
+        self.assertEqual(space.describe(), before)
+        self.assertEqual(worker.call(0), S("Ready"))
+        self.assertEqual(space.describe(), before)
 
     @unittest.skipUnless(CETTA, "provide CeTTa binary for native client qualification")
     def test_native_client_correlation_deadline_and_inert_reply(self):
@@ -606,7 +681,7 @@ class ServiceTests(unittest.TestCase):
         env=os.environ.copy()
         env["CETTA_SPACE_SOCKET"]=self.fixture.socket
         env.pop("CETTA_LIBRARY_ROOT",None)
-        for mode in ("he","petta"):
+        for mode in ("he","petta","prime"):
             result=subprocess.run([str(prefix / "bin/cetta-space-client"),"--lang",mode,"--quiet",
                                    str(ROOT / "examples/space-service/client.metta")],cwd=self.fixture.root,
                                   env=env,text=True,capture_output=True,timeout=30)

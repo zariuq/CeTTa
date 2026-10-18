@@ -5,7 +5,7 @@
 
 typedef struct CettaOwnedReturnImage CettaOwnedReturnImage;
 
-/* The host identifies a shareable owner of this exact opaque resource leaf,
+/* The host identifies a shareable owner of this exact resource leaf,
  * including external objects and service code the leaf can still reach.
  * Describing a hold does not acquire it. Refusal acquires nothing, and a
  * uniquely owned resource must refuse shared retention. The descriptor and
@@ -18,20 +18,34 @@ typedef struct {
 typedef bool (*CettaReturnDescribeLeafOwner)(
     void *context, const Atom *leaf, CettaReturnLeafOwner *out);
 
+typedef enum {
+    CETTA_RETURN_HISTORY_REFUSE = 0,
+    CETTA_RETURN_HISTORY_RETAIN,
+    CETTA_RETURN_HISTORY_FORGET,
+} CettaReturnHistoryPolicy;
+
 typedef struct CettaOwnedReturnImagePolicy {
     CettaReturnDescribeLeafOwner describe_leaf_owner;
     void *context;
+    CettaReturnHistoryPolicy bounded_history;
 } CettaOwnedReturnImagePolicy;
 
 /* Independently own the term, delayed goals and full logical environment,
  * preserving source pointer sharing across all roots, structured variable
  * name keys, and return provenance. Source Atom graphs are finite and acyclic.
- * Plain scalar leaves are copied. Opaque resource leaves require a qualified
- * owner descriptor; no resource permission is inferred from its syntax or
+ * Plain scalar leaves are copied. Opaque resource leaves and owning native
+ * identifiers represented as integers require a qualified owner descriptor;
+ * no resource permission is inferred from its syntax or
  * ordinary Atom-copy support. Immutable Prime occurrence state is copied
  * through the same graph, preserving each return's own world. Bare mutable
- * state-cell identities and active recording owners are refused; opaque
- * saved contents remain the descriptor's obligation.
+ * state-cell identities are refused; opaque saved contents remain the
+ * descriptor's obligation. Bounded recording refuses by default. RETAIN
+ * acquires an explicit reader of the existing owned immutable history;
+ * it does not copy every recorded payload into each answer. Reader-quota
+ * refusal keeps the loan, allowing an explicit FORGET retry. FORGET erases
+ * only the copied bounded receipt, retaining the complete operational
+ * Need/branch/weight state and every original recording owner. Nonrecording
+ * diagnostic receipts retain their ordinary graph-copy contract.
  * Symbol identities keep their original intern context, which the host keeps
  * alive. Storage independence grants no transport to a different context.
  * NULL leaves the source return unchanged.

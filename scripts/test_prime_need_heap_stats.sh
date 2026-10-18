@@ -30,7 +30,7 @@ run_probe() {
     local stdout_file=$2
     local stderr_file=$3
     if [[ "$mode" == "indexed" ]]; then
-        CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+        env -u CETTA_PRIME_NEED_HEAP_INDEX CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
             "$BIN" --emit-runtime-stats --lang prime -e "$query" \
                 >"$stdout_file" 2>"$stderr_file"
     else

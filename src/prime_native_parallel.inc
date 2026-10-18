@@ -492,6 +492,10 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     Arena *arena = owner->driver.arena;
     Atom *expression = bindings_apply_if_vars(&task->dynamic_env, arena, task->atom);
     const PrimeNeedSnapshot *need = bindings_need_view(&task->dynamic_env);
+    PrimeNativeOwnedRegion *region=prime_native_episode_region(owner->owned_top_episode);
+    if (region && region->private_data &&
+        !prime_native_expression_safe(task->space,arena,expression,need))
+        return false;
     PrimeEvalStackFrame *force_owner = prime_native_force_owner(work);
     uint64_t activation = prime_native_equation_attachment(work);
     PrimeNativeAttachment attachment = force_owner ? PRIME_NATIVE_ATTACHMENT_FORCE

@@ -3,6 +3,7 @@
 #include "mm2_lower.h"
 #include "native_cost.h"
 #include "shared_transition.h"
+#include "space_match_backend.h"
 #include "symbol.h"
 
 #include <assert.h>
@@ -85,6 +86,7 @@ struct CettaSpaceAgenda {
     bool selection_ready;
     Atom *selected;
     Atom *last_selected;
+    const char *selected_order;
     CettaIndex selected_index;
     SpaceReadToken selected_read;
     uint8_t *selected_key;
@@ -92,10 +94,11 @@ struct CettaSpaceAgenda {
     Space snapshot;
     Space current;
     Space replacement;
-    /* Discovery rejects every source revision change between grants. The
-     * flat atom-space profile can borrow that exact read source until take;
-     * selected execution always returns to ordinary copied validation. */
-    bool borrowed_preparation;
+    /* Qualified native reads use the held source until its token changes.
+     * Discovery refuses a changed source; ordinary matching restarts it.
+     * Publication still builds one private replacement before committing. */
+    bool borrowed_capture;
+    bool enumerate_matches, selected_match;
     bool snapshot_ready, current_ready, replacement_ready;
     bool snapshot_exec_appended,current_exec_appended;
     SpaceReadToken capture_read;
@@ -131,6 +134,7 @@ struct CettaSpaceAgenda {
 
 struct CettaSpaceAgendaSelection {
     CettaSpaceAgenda *agenda;
+    CettaSpaceAgendaChoiceKind kind;
     bool started, completed, stale, leased;
     Atom *receipt;
     const char *pending;
@@ -409,6 +413,15 @@ static Arena *agenda_arena_new(void) {
     return owner;
 }
 
+static bool agenda_world_init(CettaSpaceAgenda *a) {
+    if (!a->world_ready) {
+        space_init_with_universe(&a->world,a->space->universe);
+        a->world_ready=true;
+    }
+    if (!a->trace) a->trace=atom_expr(a->owner,NULL,0u);
+    return a->trace!=NULL;
+}
+
 static CettaSpaceAgenda *agenda_new(Space *space, Arena *owner,
         const Bindings *environment, CettaSpaceAgendaContract contract, bool owned) {
     if (!space || (!owner && !owned) || !g_symbols || space->overlay_base ||
@@ -447,10 +460,12 @@ static CettaSpaceAgenda *agenda_new(Space *space, Arena *owner,
     a->wildcard = atom_var(owner,"$__native_agenda_row");
     a->phase = AGENDA_SELECT;
     if (contract.snapshot_worlds) {
-        space_init_with_universe(&a->world, space->universe);
-        a->world_ready = true;
+        if (!agenda_world_init(a)) {
+            space_free(&a->world);bindings_free(&a->captured);
+            if (a->owned_arena) {arena_free(a->owned_arena);free(a->owned_arena);}
+            free(a);return NULL;
+        }
         a->capture_length = space_length64(space);
-        a->trace = atom_expr(owner,NULL,0u);
         a->phase = AGENDA_WORLD_CAPTURE;
     }
     return a;
@@ -527,6 +542,14 @@ static bool selected_occurrence_current(const CettaSpaceAgenda *a) {
         current.prefix_epoch==a->selected_read.prefix_epoch &&
         a->selected_index<space_length64(a->space) &&
         atom_eq(space_get_at64(a->space,a->selected_index),a->selected);
+}
+
+static bool borrowed_capture_admitted(const CettaSpaceAgenda *a) {
+    const Space *space=a->space;
+    return a->contract.explicit_inputs && !a->contract.set_support && !a->contract.snapshot_worlds &&
+        space->kind==SPACE_KIND_ATOM && !space->overlay_base &&
+        !space->module_own_view && !space->dep_count &&
+        space_match_backend_has_native_occurrences(space);
 }
 
 static bool waiting_contains(const CettaSpaceAgenda *a,CettaIndex index) {
@@ -770,7 +793,7 @@ static inline __attribute__((always_inline)) CettaSpaceAgendaStep selection_disp
     for (CettaSpaceAgendaSelectionScope *scope=agenda_selection;scope;scope=scope->previous) {
         if (scope->selection->agenda!=a || scope->selection->completed) continue;
         CettaSpaceAgendaStep result=selection_step_kernel(scope->selection,base);
-        if (result==CETTA_SPACE_AGENDA_COMMITTED) {
+        if (scope->selection->completed) {
             bool pending=false;
             for (CettaSpaceAgendaSelectionScope *held=agenda_selection;held;held=held->previous)
                 if (!held->selection->completed) {pending=true;break;}
@@ -939,6 +962,7 @@ void cetta_space_agenda_storage(const CettaSpaceAgenda *a,CettaStorageCensus *c)
 struct CettaSpaceAgendaDiscovery {
     Space *space;
     Arena *owner;
+    CettaSpaceAgendaChoiceKind kind;
     bool owned_capture;
     Bindings captured;
     SpaceReadToken source;
@@ -953,8 +977,11 @@ struct CettaSpaceAgendaDiscovery {
 };
 
 static CettaSpaceAgendaDiscovery *discovery_new(Space *space,
-        Arena *owner, const Bindings *environment, bool owned) {
+        Arena *owner, const Bindings *environment, bool owned, CettaSpaceAgendaChoiceKind kind) {
     if (!space || (!owner && !owned) || !environment || !g_symbols || space->overlay_base ||
+        (kind!=CETTA_SPACE_CHOICE_TRANSACTION_COMMIT && kind!=CETTA_SPACE_CHOICE_MM2_ACTIVATION &&
+         kind!=CETTA_SPACE_CHOICE_TRANSACTION_MATCH &&
+         kind!=CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH) ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) return NULL;
     CettaSpaceAgendaDiscovery *d=calloc(1u,sizeof(*d));
@@ -963,7 +990,7 @@ static CettaSpaceAgendaDiscovery *discovery_new(Space *space,
         owner=agenda_arena_new();
         if (!owner) {free(d);return NULL;}
     }
-    d->owned_capture=owned;
+    d->owned_capture=owned;d->kind=kind;
     d->space=space;d->owner=owner;d->source=space_read_token(space);
     d->exec=symbol_intern_cstr(g_symbols,"exec");
     if (!bindings_clone(&d->captured,environment) ||
@@ -977,12 +1004,18 @@ static CettaSpaceAgendaDiscovery *discovery_new(Space *space,
 
 CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new(Space *space,
         Arena *owner, const Bindings *environment) {
-    return discovery_new(space,owner,environment,false);
+    return discovery_new(space,owner,environment,false,CETTA_SPACE_CHOICE_TRANSACTION_COMMIT);
 }
 
 CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new_owned(Space *space,
         const Bindings *environment) {
-    return discovery_new(space,NULL,environment,true);
+    return cetta_space_agenda_discovery_new_owned_kind(space,environment,
+        CETTA_SPACE_CHOICE_TRANSACTION_COMMIT);
+}
+
+CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new_owned_kind(Space *space,
+        const Bindings *environment, CettaSpaceAgendaChoiceKind kind) {
+    return discovery_new(space,NULL,environment,true,kind);
 }
 
 const Bindings *cetta_space_agenda_discovery_captured(const CettaSpaceAgendaDiscovery *d) {
@@ -1011,11 +1044,19 @@ bool cetta_space_agenda_discovery_choice(const CettaSpaceAgendaDiscovery *d,
         uint64_t ticket, CettaSpaceAgendaChoice *view) {
     if (!d || !view || !ticket || ticket>d->count) return false;
     const CettaSpaceAgenda *a=d->ready[(size_t)ticket-1u];
-    if (!a || a->phase!=AGENDA_BUILD || a->row_count!=1u || !a->validating) return false;
-    *view=(CettaSpaceAgendaChoice){.ticket=ticket,.source_index=a->selected_index,
-        .source=a->selected,.outputs=a->rows[0].outputs,
-        .dependencies=a->rows[0].dependencies,
-        .current=selected_occurrence_current(a) && space_read_token_is_current(a->capture_read)};
+    if (!a) return false;
+    if (d->kind==CETTA_SPACE_CHOICE_MM2_ACTIVATION) {
+        if (a->phase!=AGENDA_ACTIVATE || !a->selected) return false;
+        *view=(CettaSpaceAgendaChoice){.kind=d->kind,.ticket=ticket,
+            .source_index=a->selected_index,.source=a->selected,
+            .current=space_read_token_is_current(a->selection_read)};
+    } else {
+        if (a->phase!=AGENDA_BUILD || a->row_count!=1u || !a->validating) return false;
+        *view=(CettaSpaceAgendaChoice){.kind=d->kind,.ticket=ticket,.source_index=a->selected_index,
+            .source=a->selected,.outputs=a->rows[0].outputs,
+            .dependencies=a->rows[0].dependencies,
+            .current=selected_occurrence_current(a) && space_read_token_is_current(a->capture_read)};
+    }
     return true;
 }
 
@@ -1027,12 +1068,13 @@ CettaSpaceAgendaSelection *cetta_space_agenda_discovery_take(CettaSpaceAgendaDis
     CettaSpaceAgendaSelection *selected=calloc(1u,sizeof(*selected));
     if (!selected) return NULL;
     selected->agenda=a;
-    a->borrowed_preparation=false;
+    selected->kind=d->kind;
+    a->borrowed_capture=false;
     d->ready[(size_t)ticket-1u]=NULL;
     return selected;
 }
 
-static bool discovery_retain(CettaSpaceAgendaDiscovery *d) {
+static bool discovery_retain(CettaSpaceAgendaDiscovery *d, CettaSpaceAgenda **proposal) {
     if (d->count==UINT64_MAX) return false;
     if (d->count==d->capacity) {
         size_t capacity=d->capacity ? d->capacity*2u : 8u;
@@ -1041,7 +1083,7 @@ static bool discovery_retain(CettaSpaceAgendaDiscovery *d) {
         if (!ready) return false;
         d->ready=ready;d->capacity=capacity;
     }
-    d->ready[d->count++]=d->preparing;d->preparing=NULL;
+    d->ready[d->count++]=*proposal;*proposal=NULL;
     return true;
 }
 
@@ -1054,11 +1096,16 @@ static CettaSpaceAgendaDiscoveryStep discovery_prepare(CettaSpaceAgendaDiscovery
         d->source_ready=false;return CETTA_SPACE_DISCOVERY_PROGRESS;
     }
     if (!d->preparing) {
+        bool raw=d->kind==CETTA_SPACE_CHOICE_MM2_ACTIVATION;
         d->preparing=agenda_new(d->space,d->owner,&d->captured,
-            (CettaSpaceAgendaContract){.explicit_inputs=true},d->owned_capture);
+            (CettaSpaceAgendaContract){.set_support=raw,.raw_mm2_order=raw,
+                .explicit_inputs=!raw},d->owned_capture);
         if (d->preparing)
-            d->preparing->borrowed_preparation=d->space->kind==SPACE_KIND_ATOM &&
+            d->preparing->borrowed_capture=!raw && d->space->kind==SPACE_KIND_ATOM &&
                 !d->space->module_own_view && !d->space->dep_count;
+        if (d->preparing)
+            d->preparing->enumerate_matches=d->kind==CETTA_SPACE_CHOICE_TRANSACTION_MATCH ||
+                d->kind==CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH;
     }
     if (!d->preparing) {
         d->pending="PreparationCapacity";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
@@ -1090,11 +1137,32 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
     if (d->source_ready) return discovery_prepare(d);
     if (d->preparing) {
         CettaSpaceAgenda *a=d->preparing;
-        if (a->phase==AGENDA_BUILD) {
-            if (!a->validating || a->row_count!=1u || a->build_index) {
+        bool raw=d->kind==CETTA_SPACE_CHOICE_MM2_ACTIVATION;
+        if (a->pending_child &&
+            (d->kind==CETTA_SPACE_CHOICE_TRANSACTION_MATCH ||
+             d->kind==CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH)) {
+            CettaSpaceAgenda *child=a->pending_child;
+            assert(a->root==a && a->owned_next==child && child->root==a &&
+                child->phase==AGENDA_BUILD && child->selected_match);
+            if (!discovery_retain(d,&a->pending_child)) {
+                d->pending="ChoiceCapacity";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
+            }
+            /* The retained matcher keeps its next binding. Its independently
+             * captured row now leaves the temporary ownership graph. */
+            a->owned_next=child->owned_next;child->owned_next=NULL;child->root=child;
+            if (a->phase==AGENDA_SELECT && !a->selected) {
+                cetta_space_agenda_free(a);d->preparing=NULL;
+            }
+            bool found=cetta_space_agenda_discovery_choice(d,d->count,view);
+            assert(found);(void)found;
+            return CETTA_SPACE_DISCOVERY_CHOICE;
+        }
+        if (raw ? a->phase==AGENDA_ACTIVATE : a->phase==AGENDA_BUILD) {
+            if (!raw && (!a->validating || a->row_count!=1u || a->build_index)) {
                 d->pending="UnpreparedChoice";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
             }
-            if (!selected_occurrence_current(a) || !space_read_token_is_current(a->capture_read)) {
+            if (raw ? !space_read_token_is_current(a->selection_read) :
+                !selected_occurrence_current(a) || !space_read_token_is_current(a->capture_read)) {
                 d->pending="StalePreparedChoice";return CETTA_SPACE_DISCOVERY_INVALIDATED;
             }
             /* The proposal and epochs are operational state. Captured row
@@ -1102,12 +1170,15 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
             if (a->snapshot_ready) {space_free(&a->snapshot);a->snapshot_ready=false;}
             if (a->current_ready) {space_free(&a->current);a->current_ready=false;}
             if (a->replacement_ready) {space_free(&a->replacement);a->replacement_ready=false;}
-            if (!discovery_retain(d)) {
+            if (!discovery_retain(d,&d->preparing)) {
                 d->pending="ChoiceCapacity";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
             }
             bool found=cetta_space_agenda_discovery_choice(d,d->count,view);
             assert(found);(void)found;
             return CETTA_SPACE_DISCOVERY_CHOICE;
+        }
+        if (raw) {
+            d->pending="UnpreparedActivation";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
         }
         if (a->phase==AGENDA_SINK || a->phase==AGENDA_COMMIT) {
             d->pending="PublicationDuringDiscovery";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
@@ -1121,7 +1192,7 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
         }
         /* A complete unmatched Transaction returns to Select. Do not let
          * this provider choose another source occurrence on the next grant. */
-        if (a->phase==AGENDA_SELECT && !a->selected) {
+        if (a->phase==AGENDA_SELECT && !a->selected && !a->pending_child) {
             cetta_space_agenda_free(a);d->preparing=NULL;
         }
         return CETTA_SPACE_DISCOVERY_PROGRESS;
@@ -1152,19 +1223,48 @@ static CettaSpaceAgendaStep selection_step_kernel(CettaSpaceAgendaSelection *s,
         const AgendaOperations *operations) {
     if (!s || !s->agenda) return CETTA_SPACE_AGENDA_PENDING;
     if (s->completed) return CETTA_SPACE_AGENDA_CLOSED;
-    if (s->stale) return CETTA_SPACE_AGENDA_PENDING;
+    if (s->stale) return pending(s->agenda,s->pending);
     CETTA_SCOPED_SHARED_TRANSITION(selection);
     CettaSpaceAgenda *a=s->agenda;
+    bool private_world=s->kind==CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH;
+    if (private_world && !space_read_token_is_current(a->root->origin_read)) {
+        s->stale=true;s->pending="StaleSnapshotSource";a->pending=s->pending;
+        return CETTA_SPACE_AGENDA_PENDING;
+    }
+    /* Matching still uses the existing live validation contract. Only a
+     * fully revalidated tuple may switch its publication destination. */
+    if (private_world && s->started && a->phase==AGENDA_BUILD &&
+        !a->contract.snapshot_worlds) {
+        if (!agenda_world_init(a)) return pending(a,"WorldContinuationCapacity");
+        a->parent_world_id=a->world_id;
+        a->world_id=a->next_world_id++;
+        a->contract.snapshot_worlds=true;
+    }
     s->pending=NULL;
+    uint64_t commits_before=a->commits;
     CettaSpaceAgendaStep result;
+    if (!a->contract.explicit_inputs) {
+        if (a->phase!=AGENDA_ACTIVATE || !a->selected ||
+            !space_read_token_is_current(a->selection_read)) {
+            s->stale=true;s->pending="StaleActivationSource";a->pending=s->pending;
+            return CETTA_SPACE_AGENDA_PENDING;
+        }
+        s->started=true;
+        result=operations->step(a);
+        s->completed=a->phase!=AGENDA_ACTIVATE;
+        if (result==CETTA_SPACE_AGENDA_PENDING) s->pending=a->pending;
+        return result;
+    }
     if (!s->started) {
         result=operations->revalidate_choice(a);
         s->started=a->phase!=AGENDA_BUILD;
     } else result=operations->step(a);
-    if (result==CETTA_SPACE_AGENDA_COMMITTED) {
+    if (result==CETTA_SPACE_AGENDA_COMMITTED ||
+        (private_world && a->contract.snapshot_worlds && a->commits>commits_before)) {
         s->completed=true;s->receipt=cetta_space_agenda_receipt(a);
     }
-    else if (!a->validating || a->row_count!=1u || !a->selected) {
+    else if (!a->validating || a->row_count!=1u || !a->selected ||
+        (a->selected_match && a->phase==AGENDA_WAIT)) {
         s->stale=true;s->pending="ChangedPreparedChoice";a->pending=s->pending;
         return CETTA_SPACE_AGENDA_PENDING;
     } else if (result==CETTA_SPACE_AGENDA_PENDING) s->pending=a->pending;
@@ -1296,6 +1396,7 @@ bool cetta_space_agenda_checkpoint_admitted(const CettaSpaceAgenda *a,
     if (!agenda_checkpoint_work(budget,1u)) return false;
     if (!a || !a->space || !a->owner || a->root != a || a->owned_next ||
         a->pending_child || a->yielded_child || a->uninterpreted_choice ||
+        a->enumerate_matches || a->selected_match ||
         a->space_identity != a->space->instance_id ||
         (a->world_ready && a->space != &a->world) ||
         (!a->world_ready && a->space == &a->world))
@@ -1307,7 +1408,7 @@ bool cetta_space_agenda_checkpoint_admitted(const CettaSpaceAgenda *a,
         return agenda_checkpoint_refuse(budget,"AgendaBoundaryProfile");
     if (a->phase != AGENDA_SELECT || a->selection_ready || a->selected ||
         a->owned_arena ||
-        a->borrowed_preparation ||
+        a->borrowed_capture ||
         a->matching || a->snapshot_ready || a->current_ready || a->replacement_ready ||
         a->inputs || a->input_count || a->levels || a->join_ready ||
         a->rows || a->row_count || a->row_capacity || a->validation ||
@@ -1538,6 +1639,8 @@ bool cetta_space_agenda_checkpoint_compare(const CettaSpaceAgenda *a,
     AC_F("agenda.world_ready",a->world_ready,b->world_ready);
     AC_S("agenda.yielded_child",a->yielded_child,b->yielded_child);
     AC_S("agenda.uninterpreted_choice",a->uninterpreted_choice,b->uninterpreted_choice);
+    AC_S("agenda.enumerate_matches",a->enumerate_matches,b->enumerate_matches);
+    AC_S("agenda.selected_match",a->selected_match,b->selected_match);
     AC_S("agenda.world_id",a->world_id,b->world_id);
     AC_S("agenda.parent_world_id",a->parent_world_id,b->parent_world_id);
     AC_S("agenda.next_world_id",a->next_world_id,b->next_world_id);
@@ -1884,7 +1987,7 @@ static bool agenda_word_state(CettaSpaceAgendaTranscript *t,
         const CettaSpaceAgendaEvent *event, SpaceCheckpointBudget *budget) {
     const CettaSpaceAgenda *a=event->agenda;
     if (!a || !a->space || !a->owner || a->root!=a || a->owned_next ||
-        a->pending_child || a->borrowed_preparation || a->owned_arena ||
+        a->pending_child || a->owned_arena || a->enumerate_matches || a->selected_match ||
         !a->contract.explicit_inputs || a->contract.set_support ||
         a->contract.raw_mm2_order || a->contract.snapshot_worlds ||
         a->advise || a->before || a->advice_context || a->chosen_advice ||
@@ -1900,7 +2003,8 @@ static bool agenda_word_state(CettaSpaceAgendaTranscript *t,
     AW_S("event.detail",event->detail); AW_S("event.allowance",event->allowance);
     AW_T("event.read",event->read); AW_A("event.pattern",event->pattern);
     AW_A("event.value",event->value); AW_B("event.environment",event->environment);
-    AW_S("agenda.phase",a->phase); AW_S("agenda.world_id",a->world_id);
+    AW_S("agenda.phase",a->phase); AW_S("agenda.borrowed_capture",a->borrowed_capture);
+    AW_S("agenda.world_id",a->world_id);
     AW_S("agenda.parent_world_id",a->parent_world_id); AW_S("agenda.next_world_id",a->next_world_id);
     AW_F("agenda.borrowed_target",!a->world_ready);
     AW_S("agenda.explicit_inputs",a->contract.explicit_inputs);
@@ -2258,7 +2362,7 @@ static bool agenda_live_cursor(AgendaLiveWord *r,const char *field,
 static bool agenda_live_state(AgendaLiveWord *r,const CettaSpaceAgendaEvent *event) {
     const CettaSpaceAgenda *a=event->agenda;
     if(!a||!a->space||!a->owner||a->root!=a||a->owned_next||a->pending_child||
-        a->borrowed_preparation||a->owned_arena||
+        a->owned_arena||a->enumerate_matches||a->selected_match||
         !a->contract.explicit_inputs||a->contract.set_support||a->contract.raw_mm2_order||
         a->contract.snapshot_worlds||a->advise||a->before||a->advice_context||a->chosen_advice||
         a->trace||a->reported_count||a->reported_capacity||a->reported_atoms||
@@ -2272,7 +2376,8 @@ static bool agenda_live_state(AgendaLiveWord *r,const CettaSpaceAgendaEvent *eve
     AL_S("event.detail",event->detail);AL_S("event.allowance",event->allowance);
     AL_T("event.read",event->read);AL_A("event.pattern",event->pattern);
     AL_A("event.value",event->value);AL_B("event.environment",event->environment);
-    AL_S("agenda.phase",a->phase);AL_S("agenda.world_id",a->world_id);
+    AL_S("agenda.phase",a->phase);AL_S("agenda.borrowed_capture",a->borrowed_capture);
+    AL_S("agenda.world_id",a->world_id);
     AL_S("agenda.parent_world_id",a->parent_world_id);AL_S("agenda.next_world_id",a->next_world_id);
     AL_P("agenda.borrowed_target",!a->world_ready);
     AL_S("agenda.explicit_inputs",a->contract.explicit_inputs);

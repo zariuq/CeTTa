@@ -452,7 +452,7 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         if (refusal) *refusal = "QuiescentOwnerProfile";
         return false;
     }
-    if (source->interaction_selection) {
+    if (source->interaction_selection || source->resume_choice) {
         if (refusal) *refusal = "SelectedInteractionOwner";
         return false;
     }
@@ -926,6 +926,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->owned_arena=true;image->handle_id=0u;image->leased=false;
     image->owned_top_episode=NULL;image->space_agenda=NULL;
     image->interaction_selection=NULL;
+    image->resume_choice=NULL;
     memset(&image->hub,0,sizeof(image->hub));image->frames=NULL;image->retired_frames=NULL;
     image->changed_frames=NULL;image->frame_index=NULL;image->advice_cells=NULL;image->weight_analyses=NULL;image->weight_analysis=NULL;
     image->parked=NULL;image->parked_count=0;image->parallel_inflight=NULL;

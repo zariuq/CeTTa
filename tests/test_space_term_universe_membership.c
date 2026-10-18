@@ -1407,6 +1407,27 @@ int main(int argc, char **argv) {
         Atom *grade_parts[] = {atom_symbol(&equation_scratch, "=w"),
             source_lhs, atom_true(&equation_scratch), atom_int(&equation_scratch, 2)};
         Atom *grade_row = atom_expr(&equation_scratch, grade_parts, 4u);
+        Space rule_filter;
+        space_init_with_universe(&rule_filter, &equation_universe);
+        Atom *guard_parts[] = {atom_symbol(&equation_scratch, "admit"),
+            atom_true(&equation_scratch)};
+        Atom *guard = atom_expr(&equation_scratch, guard_parts, 2u);
+        Atom *guarded_parts[] = {grade_parts[0], source_lhs, grade_parts[2],
+            grade_parts[3], guard};
+        Atom *where_parts[] = {atom_symbol(&equation_scratch, "where"), grade_parts[3]};
+        Atom *where_row[] = {atom_symbol(&equation_scratch, "="), source_lhs,
+            grade_parts[2], atom_expr(&equation_scratch, where_parts, 2u)};
+        space_add(&rule_filter, source_equation);
+        space_add(&rule_filter, grade_row);
+        space_add(&rule_filter, atom_expr(&equation_scratch, guarded_parts, 5u));
+        space_add(&rule_filter, atom_expr(&equation_scratch, where_row, 4u));
+        Atom *data_parts[] = {atom_symbol(&equation_scratch, "NotARule"),
+            source_lhs, grade_parts[2], grade_parts[3]};
+        space_add(&rule_filter, atom_expr(&equation_scratch, data_parts, 4u));
+        for (CettaIndex i = 0u; i < 4u; i++)
+            assert(space_row_may_be_rule(&rule_filter, i));
+        assert(!space_row_may_be_rule(&rule_filter, 4u));
+        space_free(&rule_filter);
         space_add(&grade_overlay, grade_row);
         space_add(&grade_overlay, grade_row);
         assert(space_has_graded_equations(&grade_overlay));

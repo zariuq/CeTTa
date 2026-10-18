@@ -5,12 +5,16 @@ struct CettaPrimeSourceScope {
     uint64_t allowance;
 };
 
-static bool prime_ordinary_source_current(PrimeNativeTopEpisode *owner) {
+static bool prime_ordinary_source_current(const PrimeNativeTopEpisode *owner) {
     if (!owner || !owner->ordinary_source || !owner->owned_region) return false;
     PrimeNativeOwnedRegion *region=owner->owned_region;
-    if (!region->ready || owner->space!=&region->world ||
+    if (!region->ready || owner->space!=prime_native_region_program(region) ||
         owner->registry!=&region->registry || owner->persistent!=&region->persistent ||
-        owner->library!=region->library || !space_read_view_is_current(&owner->source_view) ||
+        owner->library!=region->library ||
+        !space_read_view_is_current(&owner->source_view) ||
+        (region->private_data &&
+            (!space_read_token_is_current(region->data_read) ||
+             !space_program_token_is_current(region->program_read))) ||
         memcmp(&owner->source_session,&region->library->session,sizeof(owner->source_session)))
         return false;
     const Registry *before=&owner->source_registry.initial,*now=owner->registry;
@@ -43,16 +47,48 @@ static bool prime_ordinary_source_selected(PrimeNativeTopEpisode *owner) {
 
 CettaContinuationStatus eval_prime_source_owner_capture(Space *space,Registry *registry,
     Atom *expression,size_t inspections,size_t bytes,CettaPrimeSourceOwner **result) {
+    return eval_prime_source_owner_capture_profile(space,registry,expression,
+        CETTA_PRIME_SOURCE_IMMUTABLE,inspections,bytes,result);
+}
+CettaContinuationStatus eval_prime_source_owner_capture_profile(Space *space,Registry *registry,
+    Atom *expression,CettaPrimeSourceProfile profile,size_t inspections,size_t bytes,
+    CettaPrimeSourceOwner **result) {
     if (!result || *result) return CETTA_CONTINUATION_UNSUPPORTED;
+    if (profile!=CETTA_PRIME_SOURCE_IMMUTABLE &&
+        profile!=CETTA_PRIME_SOURCE_PRIVATE_DATA_WORLD) return CETTA_CONTINUATION_UNSUPPORTED;
     CettaContinuationStatus status=CETTA_CONTINUATION_UNSUPPORTED;
     PrimeNativeOwnedRegion *region=prime_native_owned_region_capture(
-        space,registry,expression,inspections,bytes,&status);
+        space,registry,expression,expression,inspections,bytes,
+        profile==CETTA_PRIME_SOURCE_PRIVATE_DATA_WORLD,&status);
     if (!region) return status;
     PrimeNativeTopEpisode *owner=calloc(1u,sizeof(*owner));
     if (!owner) {prime_native_owned_region_free(region);return CETTA_CONTINUATION_CAPACITY;}
+    if (region->private_data) {
+        PrimeNativeRegionScope selected={0};
+        bool entered=prime_native_region_scope_select(region,&selected);
+        CettaNativeCostScope cost;
+        cetta_native_cost_scope_enter(&cost,&region->preparation,0u);
+        CettaCount rows=space_length64(&region->world);
+        bool room=region->inspection_spent<region->inspection_limit &&
+            rows<region->inspection_limit-region->inspection_spent;
+        if (entered && room) {
+            region->inspection_spent+=(size_t)rows;
+            cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP,(uint64_t)rows);
+            region->program=space_heap_clone_shallow(&region->world);
+        }
+        PrimeNativeRegionCapture capture={.region=region,.status=CETTA_CONTINUATION_CAPACITY};
+        bool okay=region->program && space_length64(region->program)==rows &&
+            prime_native_region_measure(&capture,NULL);
+        cetta_native_cost_scope_leave(&cost);
+        prime_native_region_scope_leave(&selected);
+        if (!okay) {
+            free(owner);prime_native_owned_region_free(region);
+            return CETTA_CONTINUATION_CAPACITY;
+        }
+    }
     atomic_init(&owner->references,1u);
     owner->owned_region=region;owner->ordinary_source=true;
-    owner->space=&region->world;owner->registry=&region->registry;
+    owner->space=prime_native_region_program(region);owner->registry=&region->registry;
     owner->persistent=&region->persistent;owner->library=region->library;
     owner->request_expression=region->expression;
     owner->source_session=region->library->session;
@@ -62,19 +98,46 @@ CettaContinuationStatus eval_prime_source_owner_capture(Space *space,Registry *r
     bool entered=prime_native_region_scope_enter(owner,&selected);
     bool admitted=entered &&
         prime_native_owned_region_call_admitted(owner->space,&owner->request_storage,
-            owner->request_expression) &&
+            owner->request_expression,region->private_data) &&
         space_read_view_capture(owner->space,&owner->source_view) &&
         registry_read_view_init(&owner->source_registry,owner->registry,&owner->request_storage);
     prime_native_region_scope_leave(&selected);
     if (!admitted) {prime_native_top_episode_release(owner);return CETTA_CONTINUATION_UNSUPPORTED;}
+    region->data_read=space_read_token(&region->world);
+    region->program_read=space_program_token(owner->space);
     *result=owner;return CETTA_CONTINUATION_READY;
 }
 
 void eval_prime_source_owner_retain(CettaPrimeSourceOwner *owner) {
     prime_native_top_episode_retain(owner);
 }
+CettaContinuationStatus eval_prime_source_owner_capture_context(CettaLibraryContext *context,
+    Space *space,Registry *registry,Atom *expression,CettaPrimeSourceProfile profile,
+    size_t inspections,size_t bytes,CettaPrimeSourceOwner **result) {
+    if (!context || context->session.language_id!=CETTA_LANGUAGE_PRIME ||
+        !context->session.profile || context->session.profile->id!=CETTA_PROFILE_PRIME_DEFAULT ||
+        cetta_parallel_worker_active() || g_prime_ordinary_return)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    int fuel=context->session.options.fuel_limit;
+    Registry *old_registry=g_registry;
+    CettaLibraryContext *previous=eval_swap_library_context(context);
+    context->session.options.fuel_limit=-1;g_registry=registry;
+    CettaContinuationStatus status=eval_prime_source_owner_capture_profile(space,registry,
+        expression,profile,inspections,bytes,result);
+    context->session.options.fuel_limit=fuel;g_registry=old_registry;
+    eval_swap_library_context(previous);
+    return status;
+}
 void eval_prime_source_owner_release(CettaPrimeSourceOwner *owner) {
     if (owner) prime_native_top_episode_release(owner);
+}
+bool eval_prime_source_owner_is_current(const CettaPrimeSourceOwner *owner) {
+    return owner && owner->owned_region && owner->owned_region->services &&
+        !cetta_parallel_worker_active() &&
+        g_symbols==owner->source_symbols && g_var_intern==owner->source_variables &&
+        (!atomic_load_explicit(&owner->owned_region->services->active,memory_order_acquire) ||
+         g_prime_owned_region==owner->owned_region) &&
+        prime_ordinary_source_current(owner);
 }
 
 CettaContinuationStatus eval_prime_source_scope_open(CettaPrimeSourceOwner *owner,
@@ -177,24 +240,16 @@ static bool prime_ordinary_result_slot(ResultSet *results) {
 #endif
     return result_set_ensure_one(results);
 }
-static bool prime_ordinary_return_project(CettaPrimeObservationReturn *owned) {
+static bool prime_ordinary_return_project(void *raw,const CettaOwnedReturn *returned) {
+    CettaPrimeObservationReturn *owned=raw;
     PrimeNativeControl *control=owned->ordinary_control;
     ResultSet *results=owned->top.destination;
-    if (!control || owned->ordinary_cursor>=control->published) return true;
-    if (owned->ordinary_cursor>=control->output.len ||
-        owned->ordinary_cursor>=control->delivered_capacity ||
-        !control->delivered[owned->ordinary_cursor] ||
+    uint64_t index=owned->ordinary_returns.accepted;
+    if (!control || index>=control->published || index>=control->output.len ||
+        returned->environment!=&control->output.items[index].env ||
+        returned->outcome.term!=owned->ordinary_reified ||
         !results || results->len!=owned->ordinary_result_length) {
         owned->ordinary_refusal="OrdinaryPublicationIdentity";return false;
-    }
-    Outcome *row=&control->output.items[owned->ordinary_cursor];
-    if (!owned->ordinary_reified) {
-        Atom *value=outcome_atom_materialize_traced(control->driver.arena,row,
-            CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL);
-        owned->ordinary_reified=prime_need_observe_data(control->driver.arena,value,&row->env);
-        if (!owned->ordinary_reified)
-            owned->ordinary_reified=atom_error(control->driver.arena,
-                control->source_expression,atom_symbol(control->driver.arena,"PrimeNeedReificationCycle"));
     }
     if (!owned->ordinary_projected) {
         if (!owned->ordinary_copy) owned->ordinary_copy=atom_deep_copy_session_new(owned->output);
@@ -213,7 +268,6 @@ static bool prime_ordinary_return_project(CettaPrimeObservationReturn *owned) {
     if (owned->ordinary_refusal || !prime_ordinary_result_slot(results)) return false;
     result_set_add(results,owned->ordinary_projected);
     owned->ordinary_result_length=results->len;
-    owned->ordinary_cursor++;
     owned->ordinary_reified=owned->ordinary_projected=NULL;
     return true;
 }
@@ -222,35 +276,32 @@ static bool prime_ordinary_stop_after_row(Arena *arena,Atom *value,const Outcome
     (void)arena;(void)value;(void)env;(void)raw;
     return false; /* Existing visitor contract: accept this row, then stop. */
 }
-static void prime_ordinary_return_pump(CettaPrimeObservationReturn *owned,uint64_t allowance) {
+/* This provider advances the retained Prime controller, not a reconstructed
+ * answer list. Its work allowance is independent of accepted-return count. */
+static CettaOwnedExecutionStep prime_ordinary_return_next(void *raw,
+    CettaOwnedReturn *returned,CettaEvalCompletion *completion) {
+    CettaPrimeObservationReturn *owned=raw;
     PrimeNativeControl *control=owned->ordinary_control;
     assert(control && control->owned_top_episode==owned->top.episode);
-    if (owned->ordinary_allowance!=UINT64_MAX) {
-        if (allowance==UINT64_MAX) owned->ordinary_allowance=UINT64_MAX;
-        else if (allowance>UINT64_MAX-owned->ordinary_allowance) {
-            owned->top.owned.status=CETTA_CONTINUATION_CAPACITY;
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return;
-        } else owned->ordinary_allowance+=allowance;
-    }
-    while (true) {
-        /* Refusal retains this exact row and cached materialization. No
-         * producer or continuation selection precedes its accepted append. */
-        while (owned->ordinary_cursor<control->published)
-            if (!prime_ordinary_return_project(owned)) {
-                owned->top.owned.status=owned->ordinary_refusal?
-                    CETTA_CONTINUATION_UNSUPPORTED:CETTA_CONTINUATION_CAPACITY;
-                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return;
-            }
+    while (owned->ordinary_next>=control->published) {
         if (control->invalidated) {
             owned->top.owned.status=CETTA_CONTINUATION_INVALIDATED;
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_INVALIDATED);return;
+            *completion=CETTA_EVAL_INCOMPLETE_INVALIDATED;
+            return CETTA_OWNED_EXECUTION_HANDOFF;
         }
         if (control->failed) {
             owned->top.owned.status=CETTA_CONTINUATION_DEFERRED;
-            eval_mark_incomplete(control->completion);return;
+            /* Inner scopes can finish while their authority owner refuses
+             * an operation. The exported producer must still report that
+             * failure, rather than certify complete answer exhaustion. An
+             * unclassified host failure supplies no permission verdict. */
+            *completion=control->completion==CETTA_EVAL_COMPLETE?
+                CETTA_EVAL_INCOMPLETE_HOST_FAILURE:control->completion;
+            return CETTA_OWNED_EXECUTION_HANDOFF;
         }
         if (prime_native_control_closed(control)) {
-            owned->top.committed=true;owned->top.owned.status=CETTA_CONTINUATION_READY;return;
+            *completion=CETTA_EVAL_COMPLETE;
+            return CETTA_OWNED_EXECUTION_COMPLETE;
         }
         uint64_t before=control->steps;size_t published=control->published;
         prime_native_control_run(control,owned->ordinary_allowance,prime_ordinary_stop_after_row,NULL);
@@ -260,11 +311,82 @@ static void prime_ordinary_return_pump(CettaPrimeObservationReturn *owned,uint64
         if (control->published==published && control->steps==before) {
             owned->top.owned.status=control->invalidated?CETTA_CONTINUATION_INVALIDATED:
                 control->driver.capacity_blocked?CETTA_CONTINUATION_CAPACITY:CETTA_CONTINUATION_DEFERRED;
-            eval_mark_incomplete(control->invalidated?CETTA_EVAL_INCOMPLETE_INVALIDATED:
-                control->completion==CETTA_EVAL_COMPLETE?CETTA_EVAL_INCOMPLETE_CAPACITY:control->completion);
-            return;
+            *completion=control->invalidated?CETTA_EVAL_INCOMPLETE_INVALIDATED:
+                control->completion==CETTA_EVAL_COMPLETE?CETTA_EVAL_INCOMPLETE_CAPACITY:control->completion;
+            return CETTA_OWNED_EXECUTION_PAUSED;
         }
     }
+    uint64_t index=owned->ordinary_next;
+    if (index>=control->output.len || index>=control->delivered_capacity ||
+        !control->delivered[index]) {
+        owned->ordinary_refusal="OrdinaryPublicationIdentity";
+        owned->top.owned.status=CETTA_CONTINUATION_UNSUPPORTED;
+        *completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    }
+    Outcome *row=&control->output.items[index];
+    Atom *value=outcome_atom_materialize_traced(control->driver.arena,row,
+        CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL);
+    owned->ordinary_reified=prime_need_observe_data(control->driver.arena,value,&row->env);
+    if (!owned->ordinary_reified)
+        owned->ordinary_reified=atom_error(control->driver.arena,
+            control->source_expression,atom_symbol(control->driver.arena,"PrimeNeedReificationCycle"));
+    *returned=(CettaOwnedReturn){
+        .outcome=row->delayed?cetta_call_suspended(owned->ordinary_reified,row->delayed):
+            cetta_call_value(owned->ordinary_reified),
+        .environment=&row->env,
+        .final=index+1u==control->published && !control->invalidated &&
+            !control->failed && prime_native_control_closed(control),
+    };
+    returned->outcome.result_form=row->result_form;
+    *completion=control->completion;
+    owned->ordinary_next++;
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+static bool prime_ordinary_return_final_current(void *raw) {
+    CettaPrimeObservationReturn *owned=raw;
+    PrimeNativeControl *control=owned->ordinary_control;
+    return control && !control->invalidated && !control->failed &&
+        prime_native_control_closed(control) &&
+        prime_ordinary_source_selected(owned->top.episode->source_episode) &&
+        prime_ordinary_source_current(owned->top.episode->source_episode);
+}
+static void prime_ordinary_return_release(void *raw) {
+    CettaPrimeObservationReturn *owned=raw;
+    prime_native_control_destroy(owned->ordinary_control);
+    owned->ordinary_control=NULL;
+}
+static void prime_ordinary_return_take_control(CettaPrimeObservationReturn *owned,
+    PrimeNativeControl *control) {
+    assert(owned && !owned->ordinary_control && control);
+    control->owned_top_episode=owned->top.episode;
+    owned->ordinary_control=control;
+    owned->top.owned.initialized=true;
+    cetta_owned_execution_init(&owned->ordinary_returns,owned,
+        prime_ordinary_return_next,prime_ordinary_return_release);
+    owned->ordinary_returns.final_is_current=prime_ordinary_return_final_current;
+}
+static void prime_ordinary_return_pump(CettaPrimeObservationReturn *owned,uint64_t allowance) {
+    assert(owned->ordinary_control);
+    if (owned->ordinary_allowance!=UINT64_MAX) {
+        if (allowance==UINT64_MAX) owned->ordinary_allowance=UINT64_MAX;
+        else if (allowance>UINT64_MAX-owned->ordinary_allowance) {
+            owned->top.owned.status=CETTA_CONTINUATION_CAPACITY;
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return;
+        } else owned->ordinary_allowance+=allowance;
+    }
+    /* A zero work grant can still retry an already-paid pending publication.
+     * The shared driver's allowance counts accepted returns, not that work. */
+    CettaOwnedExecutionStep step=cetta_owned_execution_sequence(
+        &owned->ordinary_returns,UINT64_MAX,prime_ordinary_return_project,owned);
+    if (step==CETTA_OWNED_EXECUTION_COMPLETE) {
+        owned->top.committed=true;
+        owned->top.owned.status=CETTA_CONTINUATION_READY;
+    } else if (owned->ordinary_returns.has_pending) {
+        owned->top.owned.status=owned->ordinary_refusal?
+            CETTA_CONTINUATION_UNSUPPORTED:CETTA_CONTINUATION_CAPACITY;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    } else eval_mark_incomplete(owned->ordinary_returns.completion);
 }
 
 static void prime_ordinary_return_free(CettaPrimeObservationReturn *owned) {
@@ -275,7 +397,10 @@ static void prime_ordinary_return_free(CettaPrimeObservationReturn *owned) {
     assert(entered);(void)entered;
     EvalExecutionContext *previous=g_eval_execution;
     g_eval_execution=episode->execution;
-    prime_native_control_destroy(owned->ordinary_control);owned->ordinary_control=NULL;
+    cetta_owned_execution_cancel(&owned->ordinary_returns);
+    /* An exported driver no longer occupies the embedded consumer slot.
+     * The address-stable source owner still owns this same controller. */
+    if (owned->ordinary_control) prime_ordinary_return_release(owned);
     atom_deep_copy_session_free(owned->ordinary_copy);
     outcome_set_free(&owned->pending);arena_free(&owned->holders);
     g_eval_execution=previous;
@@ -362,9 +487,7 @@ static bool prime_ordinary_retained_root(Space *space, Arena *arena,
     control->driver.ordinary_ready_queue = true;
     control->driver.ordinary_refill = true;
     control->driver.ordinary_descendants = true;
-    control->owned_top_episode = owned->top.episode;
-    owned->ordinary_control = control;
-    owned->top.owned.initialized = true;
+    prime_ordinary_return_take_control(owned,control);
     prime_ordinary_return_pump(owned, 0u);
     return true;
 }
@@ -419,4 +542,161 @@ static bool prime_ordinary_owned_entry(Space *space,Arena *output,Arena *persist
         outcome->prime_observation=NULL;prime_ordinary_return_free(owned);
     }
     return true;
+}
+
+static CettaOwnedExecutionStep prime_ordinary_source_next(void *raw,
+    CettaOwnedReturn *returned,CettaEvalCompletion *completion) {
+    CettaPrimeObservationReturn *owned=raw;
+    PrimeOrdinaryReturnScope scope={0};
+    if (!prime_ordinary_return_enter(owned,&scope)) {
+        owned->top.owned.status=CETTA_CONTINUATION_INVALIDATED;
+        *completion=CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        return CETTA_OWNED_EXECUTION_HANDOFF;
+    }
+    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
+    g_eval_completion_tracker=&tracker;
+    __attribute__((cleanup(prime_eval_top_leave))) PrimeEvalTopGuard top_guard;
+    prime_eval_top_enter(&top_guard);
+    g_metta_eval_depth++;
+    owned->ordinary_allowance=owned->ordinary_quantum;
+    CettaOwnedExecutionStep step=prime_ordinary_return_next(owned,returned,completion);
+    g_metta_eval_depth--;
+    g_eval_completion_tracker=tracker.parent;
+    prime_ordinary_return_leave(owned,&scope);
+    return step;
+}
+static bool prime_ordinary_source_final_current(void *raw) {
+    CettaPrimeObservationReturn *owned=raw;
+    PrimeNativeControl *control=owned->ordinary_control;
+    return control && !control->invalidated && !control->failed &&
+        prime_native_control_closed(control) &&
+        eval_prime_source_owner_is_current(owned->top.episode->source_episode);
+}
+static void prime_ordinary_source_release(void *raw) {
+    prime_ordinary_return_free(raw);
+}
+
+static CettaPrimeObservationReturn *prime_ordinary_source_driver(
+    const CettaOwnedExecution *execution) {
+    if (!execution || execution->next!=prime_ordinary_source_next ||
+        execution->release!=prime_ordinary_source_release || !execution->computation)
+        return NULL;
+    CettaPrimeObservationReturn *owned=execution->computation;
+    PrimeNativeTopEpisode *source=owned->top.episode->source_episode;
+    if (owned->ordinary_running || !source ||
+        g_symbols!=source->source_symbols || g_var_intern!=source->source_variables ||
+        !owned->ordinary_control) return NULL;
+    return owned;
+}
+
+bool eval_prime_source_execution_is_current(const CettaOwnedExecution *execution) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    return owned && eval_prime_source_owner_is_current(owned->top.episode->source_episode);
+}
+bool eval_prime_source_execution_work(const CettaOwnedExecution *execution,uint64_t *work) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    if (!owned || !work) return false;
+    *work=owned->ordinary_control->steps;
+    return true;
+}
+bool eval_prime_source_execution_set_quantum(const CettaOwnedExecution *execution,uint64_t quantum) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    if (!owned || quantum==UINT64_MAX) return false;
+    owned->ordinary_quantum=quantum;
+    return true;
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static CettaPrimeObservationReturn *prime_ordinary_source_history_owner(
+    const CettaOwnedExecution *execution) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    return owned && prime_native_history_quiescent(owned->ordinary_control)?owned:NULL;
+}
+#endif
+CettaContinuationStatus eval_prime_source_execution_record(const CettaOwnedExecution *execution,
+    const PrimeNativeHistorySpec *spec) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_history_owner(execution);
+    if (!owned || !spec) return CETTA_CONTINUATION_UNSUPPORTED;
+    PrimeNativeRegionScope scope={0};
+    if (!prime_native_region_scope_enter(owned->top.episode,&scope))
+        return CETTA_CONTINUATION_DEFERRED;
+    bool ready=prime_native_history_configure(owned->ordinary_control,spec);
+    prime_native_region_scope_leave(&scope);
+    return ready?CETTA_CONTINUATION_READY:CETTA_CONTINUATION_UNSUPPORTED;
+#else
+    (void)execution;(void)spec;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+#endif
+}
+CettaContinuationStatus eval_prime_source_execution_forget(const CettaOwnedExecution *execution) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_history_owner(execution);
+    if (!owned) return CETTA_CONTINUATION_UNSUPPORTED;
+    PrimeNativeRegionScope scope={0};
+    if (!prime_native_region_scope_enter(owned->top.episode,&scope))
+        return CETTA_CONTINUATION_DEFERRED;
+    bool ready=prime_native_history_forget_control(owned->ordinary_control);
+    prime_native_region_scope_leave(&scope);
+    return ready?CETTA_CONTINUATION_READY:CETTA_CONTINUATION_DEFERRED;
+#else
+    (void)execution;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+#endif
+}
+CettaContinuationStatus eval_prime_source_execution_history(const CettaOwnedExecution *execution,
+    Arena *arena,Atom **result) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_history_owner(execution);
+    if (!owned || !arena || !result || *result) return CETTA_CONTINUATION_UNSUPPORTED;
+    PrimeNativeRegionScope scope={0};
+    if (!prime_native_region_scope_enter(owned->top.episode,&scope))
+        return CETTA_CONTINUATION_DEFERRED;
+    PrimeNativeHistory *history=&owned->ordinary_control->history;
+    *result=history->forgotten?atom_symbol(arena,"Forgotten"):
+        !history->spec.enabled && !history->stopped?atom_symbol(arena,"Unrecorded"):
+        prime_native_history_atom(owned->ordinary_control,arena);
+    prime_native_region_scope_leave(&scope);
+    return CETTA_CONTINUATION_READY;
+#else
+    (void)execution;(void)arena;(void)result;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+#endif
+}
+CettaContinuationStatus eval_prime_source_execution_open(CettaPrimeSourceOwner *source,
+    uint64_t quantum,CettaOwnedExecution *execution) {
+    if (!execution || execution->computation || execution->has_pending ||
+        !quantum || quantum==UINT64_MAX)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    CettaPrimeSourceScope *scope=NULL;
+    CettaContinuationStatus status=eval_prime_source_scope_open(source,0u,&scope);
+    if (status!=CETTA_CONTINUATION_READY) return status;
+    Arena receiver;arena_init_detached(&receiver);
+    EvalOutcome outcome;eval_outcome_init(&outcome);
+    bool entered=prime_ordinary_owned_entry(source->space,&receiver,source->persistent,
+        source->registry,source->request_expression,&outcome,NULL,NULL);
+    CettaPrimeObservationReturn *owned=outcome.prime_observation;
+    status=CETTA_CONTINUATION_UNSUPPORTED;
+    if (entered && owned && owned->ordinary_control &&
+        !owned->ordinary_control->steps && !outcome.results.len &&
+        !owned->ordinary_returns.accepted && !owned->ordinary_returns.has_pending &&
+        !owned->ordinary_copy && !owned->ordinary_projected) {
+        owned->ordinary_returns.relocatable=true;
+        if (cetta_owned_execution_move(execution,&owned->ordinary_returns)) {
+            execution->next=prime_ordinary_source_next;
+            execution->release=prime_ordinary_source_release;
+            execution->final_is_current=prime_ordinary_source_final_current;
+            owned->ordinary_quantum=quantum;
+            /* No pointer to either temporary publication receiver escapes. */
+            owned->output=NULL;owned->top.destination=NULL;
+            outcome.prime_observation=NULL;
+            status=CETTA_CONTINUATION_READY;
+        }
+    } else if (entered && outcome.completion==CETTA_EVAL_INCOMPLETE_CAPACITY)
+        status=CETTA_CONTINUATION_CAPACITY;
+    else if (entered && outcome.completion==CETTA_EVAL_INCOMPLETE_INVALIDATED)
+        status=CETTA_CONTINUATION_INVALIDATED;
+    eval_outcome_free(&outcome);arena_free(&receiver);
+    eval_prime_source_scope_close(scope);
+    return status;
 }

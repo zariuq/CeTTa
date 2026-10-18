@@ -482,9 +482,7 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         CettaPrimeObservationReturn *owned=g_prime_ordinary_return;
         assert(owned->ordinary && !owned->ordinary_control &&
             source->frame_depth==0u && owned->output!=control->driver.arena);
-        control->owned_top_episode=owned->top.episode;
-        owned->ordinary_control=control;
-        owned->top.owned.initialized=true;
+        prime_ordinary_return_take_control(owned,control);
         free(frames);
         return true;
     }

@@ -238,7 +238,7 @@ static bool native_dialect_admits(Space *space, Atom *expression) {
         if (cetta_profile_uses_petta_typing(g_library_context->session.profile))
             (void)petta_program_enable_analysis(g_library_context->petta_program);
     }
-    if (native_weight_form(expression) ||
+    if (native_weight_form(expression) || native_interaction_form(expression) ||
         (native_control_profile_active() && space_match_where_grade(expression))) return true;
     /* Match already has a held-pattern/template continuation in this same
      * machine. Its return is interpreted by the active host, including HE's
@@ -1105,7 +1105,7 @@ static bool native_dialect_owns_call(void *raw, const Atom *expression) {
             expr_head_is_id(policy->expr.elems[1], prime_need_symbols()->control))
             return true;
     }
-    return native_weight_form(expression) ||
+    return native_weight_form(expression) || native_interaction_form(expression) ||
         (native_control_profile_active() && space_match_where_grade(expression)) ||
         (expression && expression->kind==ATOM_EXPR && expression->expr.len==4u &&
          atom_head_symbol_id(expression)==g_builtin_syms.match);

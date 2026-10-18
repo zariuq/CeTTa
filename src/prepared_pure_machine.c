@@ -616,6 +616,9 @@ struct CettaPreparedPureProgram {
     /* Optional execution has a distinct result ABI. It never enters the
      * ordinary one-value executor or an answer-producer cursor. */
     bool optional_result;
+    /* Compilation only: a choice-zero node needs the optional result ABI.
+     * The result receiver is selected before lowering, never while running. */
+    bool has_choice_zero;
     bool optional_empty;
     uint32_t root_first_code;
     uint32_t root_register_count;
@@ -725,8 +728,10 @@ struct CettaPreparedPureClosedExecution {
     const void *owner;
     atomic_bool entered;
     uint64_t remaining, performed, terminal_dispatches;
+    uint64_t return_quantum;
     uint32_t poll_countdown, interrupt_poll_steps;
     bool initialized;
+    bool return_owned;
     bool service_enabled;
     CettaPreparedServiceRequest request;
     CettaPreparedServiceCut *cuts;
@@ -741,8 +746,8 @@ struct CettaPreparedPureClosedExecution {
     uint8_t *origin_children_ready;
     size_t origin_children_length,origin_children_capacity,origin_children_ready_capacity;
     CettaPreparedClosedStep status;
-    /* An optional return remains borrowed by the held invocation until its
-     * owner acknowledges that exact value or closes the invocation. */
+    /* An earned value remains borrowed by this invocation. Optional callers
+     * acknowledge it explicitly; a common return owner holds it until close. */
     Atom *pending_answer;
     const char *decline;
 };
@@ -3265,6 +3270,7 @@ static bool prepared_pure_compile_eval_with_role(
                     program,
                     "choice zero is not an ordinary prepared value",
                     source);
+            program->has_choice_zero = true;
             return prepared_pure_add_node(
                 program, (PreparedPureNode){.kind = PREPARED_PURE_ZERO},
                 NULL, 0u, node_out);
@@ -9135,6 +9141,12 @@ static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
     return true;
 }
 
+typedef enum {
+    PREPARED_PURE_RESULT_SINGLE,
+    PREPARED_PURE_RESULT_OPTIONAL,
+    PREPARED_PURE_RESULT_INFER,
+} PreparedPureResultMode;
+
 static CettaPreparedPureProgram *
 prepared_pure_program_compile_closed_mode(
     Space *space, Atom *expression,
@@ -9150,7 +9162,9 @@ prepared_pure_program_compile_closed_mode(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool answer_producer, bool service_source_nodes, bool optional_result) {
+    bool answer_producer, bool service_source_nodes,
+    PreparedPureResultMode result_mode) {
+    bool optional_result = result_mode != PREPARED_PURE_RESULT_SINGLE;
     if (optional_result && (answer_producer || service_source_nodes ||
             call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
             !entry_arguments_are_values))
@@ -9226,6 +9240,13 @@ prepared_pure_program_compile_closed_mode(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
+    if (result_mode == PREPARED_PURE_RESULT_INFER) {
+        /* The graph is shared by both receivers. Without a choice-zero
+         * node it is exactly the ordinary graph; otherwise strict
+         * compilation would have refused before lowering. */
+        optional_result = program->has_choice_zero;
+        program->optional_result = optional_result;
+    }
     if (call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
         prepared_pure_code_enabled()) {
         if (optional_result) {
@@ -9268,7 +9289,30 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, false, false);
+        total_structural_equality, match_decision_semantics, false, false,
+        PREPARED_PURE_RESULT_SINGLE);
+}
+
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_result(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
+    return prepared_pure_program_compile_closed_mode(
+        space, expression, call_mode, boolean_value, construct_value,
+        constructs_expression, opaque_value, register_view,
+        expression_view, pattern_view, source_view, entry_arguments_are_values,
+        total_structural_equality, match_decision_semantics, false, false,
+        PREPARED_PURE_RESULT_INFER);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
@@ -9290,7 +9334,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, true, false);
+        total_structural_equality, match_decision_semantics, false, true,
+        PREPARED_PURE_RESULT_SINGLE);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
@@ -9312,7 +9357,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, true, false, false);
+        total_structural_equality, match_decision_semantics, true, false,
+        PREPARED_PURE_RESULT_SINGLE);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
@@ -9333,7 +9379,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
         space, expression, call_mode, boolean_value, construct_value,
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view, source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, false, true);
+        total_structural_equality, match_decision_semantics, false, false,
+        PREPARED_PURE_RESULT_OPTIONAL);
 }
 
 bool cetta_prepared_pure_program_is_current(
@@ -9497,9 +9544,12 @@ struct CettaPreparedPureAnswerCursor {
     bool owns_arena;
     /* The frontier's values all live in the owned arena. */
     bool detached;
+    bool return_owned;
     CettaPreparedPureUnmatchedCall unmatched_call;
     CettaPreparedPureAnswerLimits limits;
     uint64_t remaining_transitions;
+    /* Used only by the entry-selected bounded owned-return adapter. */
+    uint64_t owned_quantum;
     /* A caller arena is charged and never recharged.  An owned arena bounds
      * the bytes live above base_live, so reclaimed storage is recharged. */
     size_t scratch_remaining;
@@ -10278,8 +10328,10 @@ unsupported:
     return PREPARED_PURE_RUN_HANDOFF;
 }
 
-CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
-    CettaPreparedPureAnswerCursor *cursor, Atom **answer_out) {
+static inline __attribute__((always_inline)) CettaPreparedPureCursorStep
+prepared_pure_answer_cursor_next_kernel(
+    CettaPreparedPureAnswerCursor *cursor, Atom **answer_out,
+    bool bounded, uint64_t allowance) {
     if (answer_out)
         *answer_out = NULL;
     if (cursor && cursor->program->execution) return CETTA_PREPARED_PURE_CURSOR_HANDOFF;
@@ -10287,6 +10339,10 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
         return CETTA_PREPARED_PURE_CURSOR_HANDOFF;
     if (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NONE)
         return CETTA_PREPARED_PURE_CURSOR_HANDOFF;
+    if (bounded && allowance == 0u)
+        return cursor->frame_len == 0u
+            ? CETTA_PREPARED_PURE_CURSOR_EXHAUSTED
+            : CETTA_PREPARED_PURE_CURSOR_PAUSED;
     cursor->undo_valid = false;
     if (cursor->answer_pending) {
         arena_reset(cursor->arena, cursor->answer_mark);
@@ -10298,6 +10354,8 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
             cursor, CETTA_PREPARED_PURE_HANDOFF_STALE);
 
     while (cursor->frame_len > 0u) {
+        if (bounded && allowance == 0u)
+            return CETTA_PREPARED_PURE_CURSOR_PAUSED;
         if (cursor->interrupt_poll && --cursor->poll_countdown == 0u) {
             cursor->poll_countdown = cursor->poll_interval;
             if (cursor->interrupt_poll(cursor->interrupt_context))
@@ -10309,6 +10367,8 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
                 cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
         prepared_pure_answer_cursor_collect(cursor);
         cursor->remaining_transitions--;
+        if (bounded)
+            allowance--;
         size_t frame_index = cursor->frame_len - 1u;
         PreparedPureAnswerFrame *frame = &cursor->frames[frame_index];
         if (frame->head_index >= program->head_len ||
@@ -10536,6 +10596,24 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     return CETTA_PREPARED_PURE_CURSOR_EXHAUSTED;
 }
 
+CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
+    CettaPreparedPureAnswerCursor *cursor, Atom **answer_out) {
+    return prepared_pure_answer_cursor_next_kernel(cursor, answer_out, false, 0u);
+}
+
+CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_advance(
+    CettaPreparedPureAnswerCursor *cursor, uint64_t allowance,
+    uint64_t *spent, Atom **answer_out) {
+    /* Advancement only spends the retained physical purse. Read its
+     * difference at the boundary instead of tallying it again in the loop. */
+    uint64_t before = spent && cursor ? cursor->remaining_transitions : 0u;
+    CettaPreparedPureCursorStep step =
+        prepared_pure_answer_cursor_next_kernel(cursor, answer_out, true, allowance);
+    if (spent)
+        *spent = before - (cursor ? cursor->remaining_transitions : 0u);
+    return step;
+}
+
 bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
     const CettaPreparedPureAnswerCursor *cursor) {
     if (!cursor || !cursor->program || cursor->program->execution ||
@@ -10561,13 +10639,9 @@ bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
     return true;
 }
 
-CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
-    void *computation, CettaOwnedReturn *returned,
-    CettaEvalCompletion *completion) {
-    CettaPreparedPureAnswerCursor *cursor = computation;
-    Atom *value = NULL;
-    CettaPreparedPureCursorStep step =
-        cetta_prepared_pure_answer_cursor_next(cursor, &value);
+static CettaOwnedExecutionStep prepared_pure_answer_return(
+    CettaPreparedPureAnswerCursor *cursor, CettaPreparedPureCursorStep step,
+    Atom *value, CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     if (step == CETTA_PREPARED_PURE_CURSOR_ANSWER) {
         returned->outcome = cetta_call_completed_value(value);
         returned->environment = NULL;
@@ -10579,6 +10653,10 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     if (step == CETTA_PREPARED_PURE_CURSOR_EXHAUSTED) {
         *completion = CETTA_EVAL_COMPLETE;
         return CETTA_OWNED_EXECUTION_COMPLETE;
+    }
+    if (step == CETTA_PREPARED_PURE_CURSOR_PAUSED) {
+        *completion = CETTA_EVAL_COMPLETE;
+        return CETTA_OWNED_EXECUTION_PAUSED;
     }
     switch (cetta_prepared_pure_answer_cursor_handoff_reason(cursor)) {
     case CETTA_PREPARED_PURE_HANDOFF_INTERRUPT:
@@ -10597,6 +10675,26 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     return CETTA_OWNED_EXECUTION_HANDOFF;
 }
 
+CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
+    void *computation, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion) {
+    CettaPreparedPureAnswerCursor *cursor = computation;
+    Atom *value = NULL;
+    CettaPreparedPureCursorStep step =
+        cetta_prepared_pure_answer_cursor_next(cursor, &value);
+    return prepared_pure_answer_return(cursor, step, value, returned, completion);
+}
+
+static CettaOwnedExecutionStep prepared_pure_answer_return_bounded(
+    void *computation, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion) {
+    CettaPreparedPureAnswerCursor *cursor = computation;
+    Atom *value = NULL;
+    CettaPreparedPureCursorStep step = cetta_prepared_pure_answer_cursor_advance(
+        cursor, cursor->owned_quantum, NULL, &value);
+    return prepared_pure_answer_return(cursor, step, value, returned, completion);
+}
+
 static void prepared_pure_answer_owned_release(void *computation) {
     cetta_prepared_pure_answer_cursor_close(computation);
 }
@@ -10605,12 +10703,31 @@ static bool prepared_pure_answer_final_is_current(void *computation) {
     return cetta_prepared_pure_answer_cursor_frontier_is_complete(computation);
 }
 
-void cetta_prepared_pure_answer_cursor_own_execution(
-    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor) {
-    if (cursor && cursor->program->execution) return;
-    cetta_owned_execution_init(execution, cursor,
-        cetta_prepared_pure_answer_cursor_return, prepared_pure_answer_owned_release);
+static bool prepared_pure_answer_cursor_take_execution(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor,
+    CettaOwnedExecutionNext next, uint64_t quantum) {
+    if (!execution || execution->computation || execution->has_pending ||
+        !cursor || cursor->return_owned || cursor->program->execution)
+        return false;
+    cursor->return_owned = true;
+    cursor->owned_quantum = quantum;
+    cetta_owned_execution_init(execution, cursor, next, prepared_pure_answer_owned_release);
     execution->final_is_current = prepared_pure_answer_final_is_current;
+    execution->relocatable = true;
+    return true;
+}
+
+bool cetta_prepared_pure_answer_cursor_own_execution(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor) {
+    return prepared_pure_answer_cursor_take_execution(execution, cursor,
+        cetta_prepared_pure_answer_cursor_return, 0u);
+}
+
+bool cetta_prepared_pure_answer_cursor_own_execution_bounded(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor,
+    uint64_t quantum) {
+    return prepared_pure_answer_cursor_take_execution(execution, cursor,
+        prepared_pure_answer_return_bounded, quantum);
 }
 
 bool cetta_prepared_pure_answer_cursor_can_detach(
@@ -13270,8 +13387,10 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
     else if (!allowance) { /* No execution or terminal acknowledgement. */ }
     else if (!cetta_prepared_pure_program_is_current(program))
         status=execution->status=CETTA_PREPARED_CLOSED_INVALIDATED;
-    else if (status==CETTA_PREPARED_CLOSED_ANSWER)
+    else if (status==CETTA_PREPARED_CLOSED_ANSWER) {
+        execution->pending_answer=NULL;
         status=execution->status=CETTA_PREPARED_CLOSED_EXHAUSTED;
+    }
     else if (status==CETTA_PREPARED_CLOSED_SUSPENDED && allowance) {
         /* A charge is a Prime node-loop iteration, an EAGER instruction,
          * or an explicitly counted terminal export-request dispatch.
@@ -13295,7 +13414,7 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
         if (ok) {
             status=execution->status=program->optional_empty
                 ? CETTA_PREPARED_CLOSED_EXHAUSTED : CETTA_PREPARED_CLOSED_ANSWER;
-            if (program->optional_result) execution->pending_answer=*answer;
+            execution->pending_answer=*answer;
         }
         else if (execution->status==CETTA_PREPARED_CLOSED_SERVICE ||
                  execution->status==CETTA_PREPARED_CLOSED_EXHAUSTED)
@@ -13411,6 +13530,86 @@ bool cetta_prepared_pure_closed_close(
     free(execution->origin_children);free(execution->origin_children_ready);
     free(execution);
     return true;
+}
+
+static CettaOwnedExecutionStep prepared_pure_closed_owned_next(void *raw,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    CettaPreparedPureClosedExecution *execution=raw;
+    assert(execution && execution->return_owned);
+    CettaPreparedClosedStep step=execution->status;
+    Atom *answer=execution->pending_answer;
+    if (step==CETTA_PREPARED_CLOSED_SUSPENDED) {
+        uint64_t spent=0u;
+        step=cetta_prepared_pure_closed_step(execution,execution->arena,
+            execution->owner,execution->return_quantum,&spent,&answer);
+    }
+    *completion=CETTA_EVAL_COMPLETE;
+    switch (step) {
+    case CETTA_PREPARED_CLOSED_ANSWER:
+        assert(answer);
+        *returned=(CettaOwnedReturn){.outcome=cetta_call_completed_value(answer),
+            .final=true};
+        return CETTA_OWNED_EXECUTION_RETURN;
+    case CETTA_PREPARED_CLOSED_EXHAUSTED:
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    case CETTA_PREPARED_CLOSED_SUSPENDED:
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    case CETTA_PREPARED_CLOSED_INVALIDATED:
+        *completion=CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        return CETTA_OWNED_EXECUTION_HANDOFF;
+    case CETTA_PREPARED_CLOSED_REFUSED:
+        *completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    case CETTA_PREPARED_CLOSED_DECLINED:
+    case CETTA_PREPARED_CLOSED_SERVICE:
+        *completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return CETTA_OWNED_EXECUTION_HANDOFF;
+    }
+    assert(false);
+    return CETTA_OWNED_EXECUTION_HANDOFF;
+}
+
+static void prepared_pure_closed_owned_release(void *raw) {
+    CettaPreparedPureClosedExecution *execution=raw;
+    bool closed=cetta_prepared_pure_closed_close(execution,execution->owner);
+    assert(closed);(void)closed;
+}
+
+bool cetta_prepared_pure_closed_own_execution(
+    CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
+    const void *owner, uint64_t quantum) {
+    if (!driver || driver->computation || driver->has_pending || !execution || !owner ||
+        owner!=execution->owner) return false;
+    bool expected=false;
+    if (!atomic_compare_exchange_strong_explicit(&execution->entered,&expected,true,
+            memory_order_acquire,memory_order_relaxed)) return false;
+    CettaPreparedPureProgram *program=execution->program;
+    bool valid=program->execution==execution && !execution->return_owned &&
+        !execution->service_enabled && !program->service_source_nodes &&
+        program->closed_program && !program->answer_producer;
+    if (valid) switch (execution->status) {
+    case CETTA_PREPARED_CLOSED_SUSPENDED:
+        valid=cetta_prepared_pure_program_is_current(program);break;
+    case CETTA_PREPARED_CLOSED_ANSWER:
+        valid=execution->pending_answer!=NULL;break;
+    case CETTA_PREPARED_CLOSED_EXHAUSTED:
+        valid=program->optional_result && program->optional_empty;break;
+    case CETTA_PREPARED_CLOSED_DECLINED:
+    case CETTA_PREPARED_CLOSED_INVALIDATED:
+        break;
+    case CETTA_PREPARED_CLOSED_REFUSED:
+    case CETTA_PREPARED_CLOSED_SERVICE:
+        valid=false;break;
+    }
+    if (valid) {
+        execution->return_quantum=quantum;
+        execution->return_owned=true;
+        cetta_owned_execution_init(driver,execution,
+            prepared_pure_closed_owned_next,prepared_pure_closed_owned_release);
+        driver->relocatable=true;
+    }
+    atomic_store_explicit(&execution->entered,false,memory_order_release);
+    return valid;
 }
 
 static bool prepared_pure_value_has_callable_node(

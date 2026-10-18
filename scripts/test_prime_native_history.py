@@ -325,18 +325,32 @@ def replay_controls():
               reports[2]['last-request'])
         checks.append(dict(case=name, passed=ok))
 
-    # The live target receives two commits during recording. Replay uses
-    # independent target images, and must not repeat those live publications.
+    # Locate a committed transaction boundary rather than baking a particular
+    # copying algorithm's tick count into the replay contract.
+    transaction_setup = ('!(bind! &jobs (new-space))\n'
+                         '!(add-atom &jobs (exec 0 (I) (O (+ A))))\n'
+                         '!(add-atom &jobs (exec 1 (I) (O (+ B))))\n')
+    boundary_name = 'replay-transaction-commit-boundary'
+    boundary_policy = replay_policy(10000, transaction=True).replace('(demand all)', '')
+    run(boundary_name, transaction_setup + f'!(select 1 {boundary_policy} &jobs)', definitions='')
+    boundary = list(observations(parse((d / (boundary_name + '.stdout')).read_text())))[-1]
+    boundary_agenda = replay_fields(boundary['agenda'])
+    transaction_grant = boundary['work']
+    checks.append(dict(case=boundary_name, passed=(len(boundary['values']) == 1 and
+        boundary_agenda['phase'] == 'Select' and boundary_agenda['commits'] == 1 and
+        isinstance(transaction_grant, int) and transaction_grant > 1),
+        committed_boundary_grant=transaction_grant))
+
+    # The live target receives one commit in each recording request. Replay
+    # uses independent target images and cannot repeat live publications.
     for changed in (False, True):
         name = 'replay-transaction-changed-target' if changed else 'replay-transaction'
-        query = ('!(bind! &jobs (new-space))\n'
-                 '!(add-atom &jobs (exec 0 (I) (O (+ A))))\n'
-                 '!(add-atom &jobs (exec 1 (I) (O (+ B))))\n'
+        query = (transaction_setup +
                  f'!(bind! &capsule (history:capture (quote (cost:run '
                  f'{replay_policy(transaction=True)} &jobs)) '
                  '(ReplayLimits 8 8192 536870912)))\n'
-                 '!(history:record &capsule 18)\n'
-                 '!(history:record &capsule 18)\n'
+                 f'!(history:record &capsule {transaction_grant})\n'
+                 f'!(history:record &capsule {transaction_grant})\n'
                  '!(history:replay &capsule 2000000000)\n')
         if changed:
             query += '!(add-atom &jobs Extra)\n!(remove-atom &jobs Extra)\n'
@@ -365,6 +379,25 @@ def replay_controls():
                   {k: v for k, v in recorded_word.items() if k != 'retained-word-bytes'} ==
                   {k: v for k, v in retained_word.items() if k != 'retained-word-bytes'})
         checks.append(dict(case=name, passed=ok))
+
+    name = 'replay-transaction-unrestorable-cut'
+    query = (transaction_setup +
+             f'!(bind! &capsule (history:capture (quote (cost:run '
+             f'{replay_policy(transaction=True)} &jobs)) '
+             '(ReplayLimits 8 8192 536870912)))\n'
+             f'!(history:record &capsule {transaction_grant - 1})\n'
+             '!(history:replay &capsule 2000000000)\n'
+             '!(collapse (get-atoms &jobs))\n!(history:dispose &capsule)')
+    run(name, query, definitions='')
+    reports = replay_reports(name)
+    trees = parse((d / (name + '.stdout')).read_text())
+    stores = [form[0] for form in trees if isinstance(form, list) and len(form) == 1 and
+              isinstance(form[0], list) and len(form[0]) == 2 and
+              all(isinstance(row, list) and row and row[0] == 'exec' for row in form[0])]
+    checks.append(dict(case=name, passed=(len(reports) == 2 and
+        reports[0]['refusal'] == 'UnrestorableCut' and
+        all(report['accepted-requests'] == 0 and report['replay-authenticated'] == 'False'
+            for report in reports) and len(stores) == 1)))
 
     for stem in ('retained_replay', 'retained_transaction_replay'):
         name = 'replay-client-' + stem
@@ -1273,34 +1306,38 @@ def resource_breakpoint_controls(recording=True):
                 checks.append(dict(case=label, passed=ok))
 
 
-def interaction_history_controls():
+def interaction_history_controls(profile='Transaction'):
     page = ('(InteractionChoices (choices $choices) (status $status) '
             '(pending $pending) (quanta $quanta) (residual $residual))')
     held = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) (agenda $a))'
+    raw = profile == 'MM2'
+    inputs = ',' if raw else 'I'
+    option = 'MM2 ' if raw else ''
+    tag = 'interaction-history-mm2' if raw else 'interaction-history'
     prefix = ('!(bind! &jobs (new-space))\n'
-              '!(add-atom &jobs (exec A (I) (O (+ A))))\n'
-              '!(add-atom &jobs (exec B (I) (O (+ B))))\n'
-              '!(bind! &menu (interaction:choices &jobs 1000))\n'
+              f'!(add-atom &jobs (exec A ({inputs}) (O (+ A))))\n'
+              f'!(add-atom &jobs (exec B ({inputs}) (O (+ B))))\n'
+              f'!(bind! &menu (interaction:choices &jobs {option}1000))\n'
               f'!(bind! &discovery (let {page} &menu $residual))\n'
               '!(bind! &selected (interaction:perform &discovery 2 0))\n'
               f'!(bind! &held (let {held} &selected $r))\n'
               '!(interaction:dispose &discovery)\n')
     def resource(limit, observer=''):
-        return (f'!(select {limit} (search-policy (control FIFO (resources Transaction) '
+        return (f'!(select {limit} (search-policy (control FIFO (resources {profile}) '
                 f'(workers 1) (budget 1000) {observer})) &held)\n')
-    ordinary = run('interaction-history-ordinary', prefix + resource(1) + resource(2), definitions='')
-    recorded = run('interaction-history-optional', prefix + resource(1, history) +
+    ordinary = run(tag+'-ordinary', prefix + resource(1) + resource(2), definitions='')
+    recorded = run(tag+'-optional', prefix + resource(1, history) +
                    resource(2, '(history False)'), definitions='')
-    checks.append(dict(case='interaction-history-erases-to-normal-owned-execution', passed=
+    checks.append(dict(case=tag+'-erases-to-normal-owned-execution', passed=
         len(ordinary) == len(recorded) == 2 and
         all(same_observation(left, right) for left, right in zip(ordinary, recorded)) and
         all('history' not in report for report in ordinary)))
     before = fields(recorded[0]['history']) if recorded else {}
     stopped = fields(recorded[1]['history']) if len(recorded) == 2 else {}
-    checks.append(dict(case='interaction-history-stop-preserves-the-selected-prefix', passed=
+    checks.append(dict(case=tag+'-stop-preserves-the-selected-prefix', passed=
         bool(before.get('selections')) and before.get('recording') == 'True' and
         stopped.get('recording') == 'False' and stopped.get('selections') == before.get('selections')))
-    name = 'interaction-history-forget-and-continue'
+    name = tag+'-forget-and-continue'
     forgotten = run(name, prefix + resource(1, history) + '!(history:forget &held 100000)\n' +
                     resource(2) + '!(collapse (get-atoms &jobs))', definitions='')
     policies = [node for node in walk(parse((d / (name + '.stdout')).read_text()))
@@ -1494,7 +1531,8 @@ def debug_controls():
     checks.append(dict(case=name, passed=actual == expected and
                        not (d / (name + '.stderr')).read_text()))
     name = 'debug-responsive-monitor-zero-budget'
-    run(name, client.read_text().replace('(budget 20)', '(budget 0)'), definitions='')
+    monitor = client.read_text().split('; A request/reply server', 1)[0]
+    run(name, monitor.replace('(budget 20)', '(budget 0)'), definitions='')
     actual = (d / (name + '.stdout')).read_text()
     checks.append(dict(case=name, passed=actual ==
         '(ControlReturned 0 False suspended)\n'
@@ -1981,6 +2019,7 @@ for language in ('prime', 'he', 'petta'):
 breakpoint_controls()
 resource_breakpoint_controls()
 interaction_history_controls()
+interaction_history_controls('MM2')
 debug_controls()
 
 finish()

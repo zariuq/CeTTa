@@ -120,6 +120,19 @@ bool cetta_prepared_pure_closed_owned_by(
 bool cetta_prepared_pure_closed_close(
     CettaPreparedPureClosedExecution *execution, const void *owner);
 
+/* Transfer a pure scalar/optional invocation into the common return driver.
+ * The receiving driver must be zero-initialized or previously cancelled.
+ * Program, arena and source/services remain caller-held until cancellation;
+ * the driver releases the invocation, not those enclosing owners. Each pull
+ * grants at most quantum instruction/node iterations. Zero grants no work.
+ * An earned value is a final borrowed return, retained across consumer refusal
+ * and source edits; unfinished work still requires its captured source view.
+ * A previously acknowledged answer and service-bearing programs cannot be
+ * transferred. Failure preserves both invocation and receiving driver. */
+bool cetta_prepared_pure_closed_own_execution(
+    CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
+    const void *owner, uint64_t quantum);
+
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -273,6 +286,26 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
  * explicit-stack machine used by prepared folds.  Callable arguments are
  * retained as machine suspensions and forced according to call_mode. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
+/* Prepare an eager value-argument call once for a receiver accepting either
+ * an ordinary value or an optional result. Prefer the ordinary result ABI
+ * when the compiled graph needs no choice-zero node; otherwise enforce the
+ * same at-most-one admission as compile_closed_optional. Inspect
+ * program_returns_optional before selecting the executor. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_result(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
@@ -479,6 +512,9 @@ typedef enum {
     CETTA_PREPARED_PURE_CURSOR_EXHAUSTED = 1,
     /* The frontier is intact and the reason says why this cursor stopped. */
     CETTA_PREPARED_PURE_CURSOR_HANDOFF = 2,
+    /* A requested scheduling quantum ended with the full frontier retained.
+     * This is resumable and does not spend or replenish the physical purse. */
+    CETTA_PREPARED_PURE_CURSOR_PAUSED = 3,
 } CettaPreparedPureCursorStep;
 
 typedef enum {
@@ -543,6 +579,18 @@ CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
 CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     CettaPreparedPureAnswerCursor *cursor, Atom **answer_out);
 
+/* Advance at most allowance ordinary cursor-loop transitions, stopping at
+ * the first answer, exhaustion, handoff or scheduling pause. spent counts
+ * those transitions, not source firings, elapsed time or all primitive work.
+ * Zero allowance preserves the borrowed answer and the complete frontier;
+ * it reports only an already empty frontier or stored handoff as terminal.
+ * A positive call releases the preceding borrowed answer as next does.
+ * Physical limits and interruption remain handoffs, never scheduler pauses.
+ * The caller holds the same exclusive cursor and its source/services. */
+CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_advance(
+    CettaPreparedPureAnswerCursor *cursor, uint64_t allowance,
+    uint64_t *spent, Atom **answer_out);
+
 /* Read-only completion evidence for the retained frontier. True means every
  * remaining call has matched and has no untried equation, so only reclamation
  * remains. This executes no body, continuation, guard or interrupt observer;
@@ -566,19 +614,23 @@ bool cetta_prepared_pure_answer_cursor_detach(
     CettaPreparedPureAnswerCursor *cursor);
 
 /* Transfer the cursor to a resumable return/sequence owner. Completed answers
- * are loaned unchanged; a handoff preserves the cursor's complete residual. */
-void cetta_prepared_pure_answer_cursor_own_execution(
+ * are loaned unchanged; a handoff preserves the cursor's complete residual.
+ * The destination must be zero-initialized or cancelled. A cursor transfers
+ * at most once; refusal preserves both owners. The caller serializes transfer
+ * and uses the receiving driver for advancement and release afterward. */
+bool cetta_prepared_pure_answer_cursor_own_execution(
     CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor);
+/* Select bounded pulling once when transferring the cursor to its owner.
+ * Each next request permits at most quantum cursor-loop transitions. A
+ * scheduling pause retains the same computation and any accepted prefix.
+ * Zero quantum is inert; cancellation still releases the owned cursor. */
+bool cetta_prepared_pure_answer_cursor_own_execution_bounded(
+    CettaOwnedExecution *execution, CettaPreparedPureAnswerCursor *cursor,
+    uint64_t quantum);
 /* The cursor's native return adapter, also usable by an owner that adds
  * independent host-authority checks around the same stored computation. */
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
-
-/* Read the retained equation frontier without interpreting or polling it.
- * Untried equations, no-rule observations, handoff and stale source authority
- * refuse completion. A withdrawn answer restores an unfinished equation. */
-bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
-    const CettaPreparedPureAnswerCursor *cursor);
 
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer

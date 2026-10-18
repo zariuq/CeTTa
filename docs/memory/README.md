@@ -173,6 +173,18 @@ operator-selected MeTTa program over correlated CSP1/CAV1 stdin/stdout messages.
 Its requests carry values, not generated source strings. It has its parent's
 authority and is **not a sandbox for untrusted programs**.
 
+The worker defaults to PeTTa's extended profile. Select Prime's default profile
+with `--lang prime`; an optional `--num-threads N` sets the ordinary
+evaluator's thread budget before loading
+the module. `Worker(..., language="prime", num_threads=N)` exposes the same
+choice in the Python client. The program in
+`examples/space-service/prime_worker.metta` transforms captured rows through
+ordinary evaluation. Fetch every page from one snapshot, pass the rows to
+`work:transform`, and publish its completed outputs in a conditional batch
+using the revision returned by that snapshot. A descriptor may predate the
+query; its old revision is not the publication revision. A stale batch must
+be refused rather than retried against a refreshed revision.
+
 The separate space service still advertises `no-eval`. It accepts stored values
 and conditional batches, never worker code. Native tensor clients require the
 `tensor-ctn1-native` capability. This collection currently uses native spaces;

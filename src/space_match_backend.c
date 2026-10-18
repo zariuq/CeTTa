@@ -12112,6 +12112,7 @@ struct SpaceQueryCursor {
     Arena *arena;
     Atom *pattern;
     SpaceReadView reads;
+    SpaceOccurrenceCursor captured_source;
     SpaceQueryWork *work;
     SpaceQueryWitness *last_witnesses;
     Bindings seed;
@@ -12122,6 +12123,7 @@ struct SpaceQueryCursor {
     bool fallback_constructed;
     bool fallback_complete;
     bool last_row;
+    bool captured;
 };
 
 static void space_query_sequence_release(SpaceQuerySequence *sequence) {
@@ -12216,6 +12218,7 @@ void space_query_cursor_free(SpaceQueryCursor *cursor) {
     bindings_free(&cursor->seed);
     binding_set_free(&cursor->fallback_rows);
     space_read_view_release(&cursor->reads);
+    space_occurrence_cursor_release(&cursor->captured_source);
     free(cursor);
 }
 
@@ -12224,8 +12227,8 @@ bool space_match_backend_has_native_occurrences(const Space *space) {
         space->match_backend.ops == &NATIVE_CANDIDATE_EXACT_BACKEND_OPS);
 }
 
-SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
-                                         Atom *pattern, const Bindings *seed) {
+static SpaceQueryCursor *space_query_cursor_new_internal(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed, bool captured) {
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!space || !arena || !pattern) return NULL;
     SpaceQueryCursor *cursor = cetta_malloc(sizeof(*cursor));
@@ -12234,6 +12237,7 @@ SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
     cursor->space = space;
     cursor->arena = arena;
     cursor->pattern = pattern;
+    cursor->captured = captured;
     bindings_init(&cursor->seed);
     binding_set_init(&cursor->fallback_rows);
     if (!space_read_view_capture(space, &cursor->reads)) {
@@ -12243,6 +12247,14 @@ SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
         space_query_cursor_free(cursor); return NULL;
     }
     cursor->incremental = space_read_view_has_native_occurrences(&cursor->reads);
+    if (captured) {
+        cursor->incremental = cursor->incremental && !space->overlay_base &&
+            !space->dep_count && !space->module_own_view;
+        if (cursor->incremental &&
+            !space_occurrence_cursor_init_scan(space, &cursor->captured_source)) {
+            space_query_cursor_free(cursor); return NULL;
+        }
+    }
     if (cursor->incremental) {
         SpaceQuerySequence *sequence = NULL;
         if (space_query_sequence_new(&cursor->pattern, 1u, NULL, &sequence)) {
@@ -12252,6 +12264,16 @@ SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
         if (!cursor->work) { space_query_cursor_free(cursor); return NULL; }
     }
     return cursor;
+}
+
+SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed) {
+    return space_query_cursor_new_internal(space,arena,pattern,seed,false);
+}
+
+SpaceQueryCursor *space_query_cursor_new_captured(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed) {
+    return space_query_cursor_new_internal(space,arena,pattern,seed,true);
 }
 
 /* One transport for both immutable metadata chains preserves their internal
@@ -12430,6 +12452,7 @@ static SpaceQueryCursor *space_query_cursor_clone_internal(
                           : source->pattern;
     copy->fallback_position = source->fallback_position;
     copy->incremental = source->incremental;
+    copy->captured = source->captured;
     copy->fallback_started = source->fallback_started;
     copy->fallback_constructed = source->fallback_constructed;
     copy->fallback_complete = source->fallback_complete;
@@ -12438,6 +12461,8 @@ static SpaceQueryCursor *space_query_cursor_clone_internal(
     binding_set_init(&copy->fallback_rows);
     if (!copy->pattern || !space_read_view_clone(&source->reads, &copy->reads) ||
         !space_query_clone_bindings(&copy->seed, &source->seed, arena, atoms)) goto fail;
+    if (source->captured_source.pinned &&
+        !space_occurrence_cursor_clone(&source->captured_source, &copy->captured_source)) goto fail;
     for (CettaIndex i = 0u; i < source->fallback_rows.len; i++) {
         if (!binding_set_push(&copy->fallback_rows, &source->fallback_rows.items[i]) ||
             (atoms && !bindings_copy_owned_atoms_with_session(
@@ -12543,7 +12568,8 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     cursor->last_row = false;
     space_query_witness_release(cursor->last_witnesses);
     cursor->last_witnesses = NULL;
-    if (!space_read_view_is_current(&cursor->reads))
+    if ((!cursor->captured || (!cursor->incremental && !cursor->fallback_started)) &&
+        !space_read_view_is_current(&cursor->reads))
         return SPACE_QUERY_CURSOR_INVALIDATED;
     if (!cursor->incremental) {
         if (!cursor->fallback_started) {
@@ -12599,8 +12625,9 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
             return SPACE_QUERY_CURSOR_PROGRESS;
         }
         work->grounded = bindings_apply_if_vars(&work->seed, cursor->arena, pattern);
-        if (!work->grounded || !space_occurrence_cursor_init_scan(
-                cursor->space, &work->occurrences))
+        if (!work->grounded || !(cursor->captured
+                ? space_occurrence_cursor_clone(&cursor->captured_source, &work->occurrences)
+                : space_occurrence_cursor_init_scan(cursor->space, &work->occurrences)))
             return SPACE_QUERY_CURSOR_CAPACITY;
         work->kind = SPACE_QUERY_WORK_ATOM;
         return SPACE_QUERY_CURSOR_PROGRESS;
@@ -12706,6 +12733,7 @@ void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
         return;
     arena_storage_census(cursor->arena, census);
     space_read_view_storage_census(&cursor->reads, census);
+    space_occurrence_cursor_storage_census(&cursor->captured_source, census);
     bindings_storage_census(&cursor->seed, census);
     cetta_storage_array(census, cursor->fallback_rows.items, cursor->fallback_rows.cap,
         sizeof(*cursor->fallback_rows.items), 0u);

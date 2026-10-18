@@ -972,6 +972,7 @@ ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OWNED_RETURN_IMAGE_TEST_BIN = runtime/test_owned_return_image-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NATIVE_HANDLE_OWNERSHIP_TEST_BIN = runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RELATIONAL_PLAN_TEST_OBJ = runtime/bootstrap/test_relational_plan.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 RELATIONAL_PLAN_TEST_BIN = runtime/test_relational_plan-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RELATIONAL_NAVIGATION_TEST_OBJ = runtime/bootstrap/test_relational_navigation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -1932,8 +1933,8 @@ GSLT2PARSE_AUX_OBJ = \
 STAGE0_BIN = runtime/cetta-stage0-$(BUILD_OBJ_TAG)
 VARIANT_SHAPE_TEST_BIN = runtime/test_variant_shape_roundtrip-$(BUILD_OBJ_TAG)
 BINDINGS_LOOKUP_INDEX_TEST_BIN = runtime/test_bindings_lookup_index-$(BUILD_OBJ_TAG)
-ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)
-ATOM_DATA_EQUALITY_TEST_BIN = runtime/test_atom_data_equality-$(BUILD_OBJ_TAG)
+ATOM_DEEP_COPY_TEST_BIN = runtime/test_atom_deep_copy_iterative-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+ATOM_DATA_EQUALITY_TEST_BIN = runtime/test_atom_data_equality-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ATOM_SUFFIX_TEST_BIN = runtime/test_atom_suffix-$(BUILD_OBJ_TAG)
 ATOM_GENERATIONS_TEST_BIN = runtime/test_atom_generations-$(BUILD_OBJ_TAG)
 ATOM_INTERN_VARS_TEST_BIN = runtime/test_atom_intern_vars-$(BUILD_OBJ_TAG)
@@ -4544,16 +4545,16 @@ runtime/bench_match_shared_published_reflexivity: benchmarks/inference_cost_axes
 bench-match-shared-published-reflexivity: runtime/bench_match_shared_published_reflexivity
 	@$(call cetta_exec,./runtime/bench_match_shared_published_reflexivity)
 
-$(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+$(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c tests/test_runtime_stats_stubs.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
 
-$(ATOM_DATA_EQUALITY_TEST_BIN): tests/test_atom_data_equality.c src/symbol.c src/atom.c src/binding/frame_identity.c src/atom.h $(BUILD_CONFIG_HEADER)
+$(ATOM_DATA_EQUALITY_TEST_BIN): tests/test_atom_data_equality.c src/symbol.c src/atom.c src/binding/frame_identity.c src/atom.h $(RUNTIME_STATS_SECTIONED_OBJ) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_data_equality.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--gc-sections -o $@ tests/test_atom_data_equality.c src/symbol.c src/atom.c src/binding/frame_identity.c $(RUNTIME_STATS_SECTIONED_OBJ) $(LDFLAGS)
 
 .PHONY: test-atom-data-equality
 test-atom-data-equality: $(ATOM_DATA_EQUALITY_TEST_BIN)
@@ -4874,13 +4875,13 @@ test-symbol-id-shift: $(BIN) $(SYMBOL_SHIFT_TEST_BIN)
 	fi; \
 	echo "PASS: shifted symbol IDs preserve reader, type, data and foreign-value observations"
 
-runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(BUILD_CONFIG_HEADER)
+$(NATIVE_HANDLE_OWNERSHIP_TEST_BIN): tests/test_native_handle_ownership.c src/native_handle.c src/native_handle.h src/atom.c src/binding/frame_identity.c src/atom.h src/library.h src/symbol.c $(RUNTIME_STATS_SECTIONED_OBJ) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS=1 -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS=1 -Wl,--gc-sections -o $@ tests/test_native_handle_ownership.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/symbol.c $(RUNTIME_STATS_SECTIONED_OBJ) $(LDFLAGS)
 
 .PHONY: test-native-handle-ownership
-test-native-handle-ownership: runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG)
-	@$(call cetta_exec,./runtime/test_native_handle_ownership-$(BUILD_OBJ_TAG))
+test-native-handle-ownership: $(NATIVE_HANDLE_OWNERSHIP_TEST_BIN)
+	@$(call cetta_exec,./$(NATIVE_HANDLE_OWNERSHIP_TEST_BIN))
 
 runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG): tests/test_prime_need_native_handles.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) src/atom.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -5096,7 +5097,7 @@ test-prime-need-heap-index-stats: $(BIN)
 		echo "FAIL: enable the Prime Need-heap index and runtime stats for this gate"; \
 		exit 1; \
 	fi
-	@CETTA_PRIME_NEED_HEAP_INDEX=1 CETTA_BIN="$(abspath $(BIN))" \
+	@CETTA_BIN="$(abspath $(BIN))" \
 		./scripts/test_prime_need_heap_stats.sh
 .PHONY: test-prime-need-heap-index-stats
 
@@ -45894,7 +45895,7 @@ endif
 
 .PHONY: test-durable-host
 ifeq ($(ENABLE_DURABLE),1)
-DURABLE_HOST_TEST_BIN = runtime/test-durable-host-$(BUILD_OBJ_TAG)
+DURABLE_HOST_TEST_BIN = runtime/test-durable-host-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 DURABLE_HOST_TEST_OBJ = runtime/bootstrap/test-durable-host.$(BUILD_OBJ_TAG).o
 -include $(DURABLE_HOST_TEST_OBJ:.o=.d)
 $(DURABLE_HOST_TEST_OBJ): tests/test_durable_host.c $(BUILD_CONFIG_HEADER)
@@ -46074,7 +46075,7 @@ endif
 
 .PHONY: activity-service test-durable-activity
 ifeq ($(ENABLE_DURABLE),1)
-ACTIVITY_SERVICE_BIN = runtime/activity-service-$(BUILD_OBJ_TAG)
+ACTIVITY_SERVICE_BIN = runtime/activity-service-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ACTIVITY_SERVICE_OBJ = runtime/bootstrap/activity-service.$(BUILD_OBJ_TAG).o
 -include $(ACTIVITY_SERVICE_OBJ:.o=.d)
 $(ACTIVITY_SERVICE_OBJ): examples/durable-activities/service.c $(BUILD_CONFIG_HEADER)
@@ -46169,8 +46170,8 @@ $(SPACE_SERVICE_BIN): $(SPACE_SERVICE_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRID
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 space-service: $(SPACE_SERVICE_BIN)
 	@echo "Built $(SPACE_SERVICE_BIN)"
-test-space-service: $(SPACE_SERVICE_BIN) $(BIN)
-	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN)
+test-space-service: $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
 test-memory-index-mutations: $(VALUE_WORKER_BIN)
@@ -46634,8 +46635,8 @@ endif
 test: test-supervise
 
 .PHONY: test-weight-ledger
-WEIGHT_LEDGER_TEST_BIN = runtime/test-weight-ledger-$(BUILD_OBJ_TAG)
-$(WEIGHT_LEDGER_TEST_BIN): tests/test_weight_ledger.c src/weight_ledger.c src/weight_ledger.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+WEIGHT_LEDGER_TEST_BIN = runtime/test-weight-ledger-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(WEIGHT_LEDGER_TEST_BIN): tests/test_weight_ledger.c tests/test_runtime_stats_stubs.h src/weight_ledger.c src/weight_ledger.h src/symbol.c src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_weight_ledger.c src/weight_ledger.c src/symbol.c src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 test-weight-ledger: $(WEIGHT_LEDGER_TEST_BIN)
@@ -46670,7 +46671,7 @@ test-ordinal-priority: $(ORDINAL_PRIORITY_TEST_BIN)
 	@$(ORDINAL_PRIORITY_TEST_BIN)
 test-prime: test-ordinal-priority
 
-NATIVE_COST_TEST_BIN = runtime/test-native-cost-$(BUILD_OBJ_TAG)
+NATIVE_COST_TEST_BIN = runtime/test-native-cost-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 .PHONY: test-native-cost
 test-native-cost: $(NATIVE_COST_TEST_BIN)
 	$(NATIVE_COST_TEST_BIN)
@@ -46724,7 +46725,7 @@ test-prime: test-storage-census
 
 RESOURCE_WAVE_TEST_BIN = runtime/test-resource-wave-$(BUILD_OBJ_TAG)
 NATIVE_LEASES_TEST_BIN = runtime/test-native-leases-$(BUILD_OBJ_TAG)
-NATIVE_CONTROL_LEASES_TEST_BIN = runtime/test-native-control-leases-$(BUILD_OBJ_TAG)
+NATIVE_CONTROL_LEASES_TEST_BIN = runtime/test-native-control-leases-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_PARENT_CHECKPOINT_TEST_BIN = runtime/test-native-parent-checkpoint-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_PARENT_CHECKPOINT_TEST_SOURCE = $(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),tests/test_native_parent_checkpoint.c,tests/test_native_parent_checkpoint_public.c)
 PROVIDER_GRAPH_COPY_TEST_BIN = runtime/test-provider-graph-copy-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -46769,7 +46770,7 @@ test-native-cost-join: $(NATIVE_COST_JOIN_TEST_BIN)
 	@$(NATIVE_COST_JOIN_TEST_BIN)
 test-prime: test-resource-wave test-native-leases test-native-control-leases test-native-cost-join test-provider-graph-copy
 
-NATIVE_SPACE_AGENDA_TEST_BIN = runtime/test-native-space-agenda-$(BUILD_OBJ_TAG)
+NATIVE_SPACE_AGENDA_TEST_BIN = runtime/test-native-space-agenda-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 .PHONY: test-native-space-agenda test-prime-native-parallel test-prime-native-resources
 $(NATIVE_SPACE_AGENDA_TEST_BIN): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime

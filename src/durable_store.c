@@ -415,12 +415,27 @@ const CettaDurableSnapshot *cetta_durable_observation_view(const CettaDurableObs
     return o && i<o->count ? &o->views[i] : NULL;
 }
 
-CettaDurableStatus cetta_durable_observe(CettaDurableStore *s,
-        const CettaDurableScope *scopes, size_t count, CettaDurableObservation **out) {
+static bool record_identity(const CettaDurableRecord *record, const char *key, int64_t revision) {
+    return !strcmp(record->key,key) && record->revision==revision;
+}
+
+static bool view_identity(const CettaDurableSnapshot *saved, const CettaDurableSnapshot *current) {
+    if (strcmp(saved->epoch,current->epoch) || saved->count!=current->count) return false;
+    for (size_t i=0;i<saved->count;++i)
+        if (!record_identity(&saved->records[i],current->records[i].key,current->records[i].revision))
+            return false;
+    return true;
+}
+
+static CettaDurableStatus observe_joined(CettaDurableStore *s,
+        const CettaDurableObservation *required, const CettaDurableScope *scopes,
+        size_t count, CettaDurableObservation **out) {
     if (!out) return DURABLE_INVALID;
     *out=NULL;
-    if (!s || !scopes || !count) return DURABLE_INVALID;
-    if (count>s->limits.operations) return DURABLE_LIMIT;
+    if (!s || (count && !scopes) || (!count && !required)) return DURABLE_INVALID;
+    size_t prior=required?required->count:0;
+    if (prior>SIZE_MAX-count || count+prior>s->limits.operations) return DURABLE_LIMIT;
+    size_t total=count+prior;
     for (size_t i=0;i<count;++i) {
         const CettaDurableScope *q=&scopes[i];
         if (!valid_name(q->space) || q->kind<DURABLE_KEY || q->kind>DURABLE_SPACE ||
@@ -429,17 +444,18 @@ CettaDurableStatus cetta_durable_observe(CettaDurableStore *s,
     }
     CettaDurableObservation *o=calloc(1,sizeof(*o));
     if (!o) return DURABLE_NOMEM;
-    o->count=count; o->scopes=calloc(count,sizeof(*o->scopes)); o->views=calloc(count,sizeof(*o->views));
+    o->count=total; o->scopes=calloc(total,sizeof(*o->scopes)); o->views=calloc(total,sizeof(*o->views));
     if (!o->scopes || !o->views) { cetta_durable_observation_free(o); return DURABLE_NOMEM; }
-    for (size_t i=0;i<count;++i) {
-        o->scopes[i]=(CettaDurableScope){scopes[i].kind,strdup(scopes[i].space),
-            strdup(scopes[i].kind==DURABLE_SPACE ? "" : scopes[i].key)};
+    for (size_t i=0;i<total;++i) {
+        const CettaDurableScope *q=i<count?&scopes[i]:&required->scopes[i-count];
+        o->scopes[i]=(CettaDurableScope){q->kind,strdup(q->space),
+            strdup(q->kind==DURABLE_SPACE ? "" : q->key)};
         if (!o->scopes[i].space || !o->scopes[i].key) { cetta_durable_observation_free(o); return DURABLE_NOMEM; }
     }
     pthread_mutex_lock(&s->mutex);
     CettaDurableStatus result=s->poisoned ? DURABLE_POISONED : store_status(s,exec(s,"BEGIN"),false);
     size_t used=0;
-    for (size_t i=0;i<count && result==DURABLE_OK;++i) {
+    for (size_t i=0;i<total && result==DURABLE_OK;++i) {
         const CettaDurableScope *q=&o->scopes[i];
         result=snapshot_locked(s,q->space,false,q->kind==DURABLE_SPACE ? NULL : q,&o->views[i]);
         /* Observations are for decisions, not bulk export. Bound overlapping
@@ -449,11 +465,25 @@ CettaDurableStatus cetta_durable_observe(CettaDurableStore *s,
             size_t n=r->size+strlen(r->space)+strlen(r->key)+sizeof(*r);
             if (n>s->limits.live_bytes-used) result=DURABLE_LIMIT; else used+=n;
         }
+        if (result==DURABLE_OK && i>=count &&
+            !view_identity(&required->views[i-count],&o->views[i])) result=DURABLE_CONFLICT;
     }
     if (result==DURABLE_OK) result=store_status(s,exec(s,"COMMIT"),false);
     rollback(s); pthread_mutex_unlock(&s->mutex);
     if (result==DURABLE_OK) *out=o; else cetta_durable_observation_free(o);
     return result;
+}
+
+CettaDurableStatus cetta_durable_observe(CettaDurableStore *s,
+        const CettaDurableScope *scopes, size_t count, CettaDurableObservation **out) {
+    return observe_joined(s,NULL,scopes,count,out);
+}
+
+CettaDurableStatus cetta_durable_observe_joined(CettaDurableStore *s,
+        const CettaDurableObservation *required, const CettaDurableScope *scopes,
+        size_t count, CettaDurableObservation **out) {
+    if (!required) { if (out) *out=NULL; return DURABLE_INVALID; }
+    return observe_joined(s,required,scopes,count,out);
 }
 
 static bool scope_contains(const CettaDurableScope *q, const CettaDurableOp *op) {
@@ -469,8 +499,8 @@ static CettaDurableStatus validate_observation(CettaDurableStore *s, const Cetta
         int rc=prepare_records(s,scope->space,scope,true,&q);
         size_t j=0; bool conflict=false;
         while (rc==SQLITE_OK && (rc=sqlite3_step(q))==SQLITE_ROW) {
-            if (j>=v->count || strcmp(v->records[j].key,(const char *)sqlite3_column_text(q,0)) ||
-                v->records[j].revision!=sqlite3_column_int64(q,1)) { conflict=true; break; }
+            if (j>=v->count || !record_identity(&v->records[j],
+                (const char *)sqlite3_column_text(q,0),sqlite3_column_int64(q,1))) { conflict=true; break; }
             ++j; rc=SQLITE_OK;
         }
         sqlite3_finalize(q);

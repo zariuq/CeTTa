@@ -27,17 +27,11 @@ struct CettaSharedReturnProducer {
     bool detached;
 };
 
-static void clear_moved_execution(CettaOwnedExecution *execution) {
-    *execution = (CettaOwnedExecution){
-        .terminal = true, .stop = CETTA_OWNED_EXECUTION_HANDOFF,
-    };
-}
-
 CettaSharedReturnProducer *cetta_shared_return_producer_new(
     CettaOwnedExecution *execution, size_t consumers, size_t row_limit,
     CettaSharedReturnCapture capture, CettaSharedReturnCompatible compatible,
     void *context) {
-    if (!execution || !execution->computation || !execution->next ||
+    if (!execution || !execution->computation || !execution->next || !execution->relocatable ||
         !capture || !compatible)
         return NULL;
     CettaSharedReturnProducer *producer = malloc(sizeof(*producer));
@@ -49,10 +43,14 @@ CettaSharedReturnProducer *cetta_shared_return_producer_new(
         return NULL;
     }
     *producer = (CettaSharedReturnProducer){
-        .execution = *execution, .log = log,
+        .log = log,
         .capture = capture, .compatible = compatible, .context = context,
     };
-    clear_moved_execution(execution);
+    if (!cetta_owned_execution_move(&producer->execution, execution)) {
+        cetta_occurrence_log_free(log);
+        free(producer);
+        return NULL;
+    }
     return producer;
 }
 
@@ -229,11 +227,9 @@ size_t cetta_shared_return_producer_trim(CettaSharedReturnProducer *producer) {
 
 bool cetta_shared_return_producer_detach_execution(
     CettaSharedReturnProducer *producer, CettaOwnedExecution *destination) {
-    if (!producer || !destination || destination->computation ||
-        destination->has_pending || producer->detached)
+    if (!producer || producer->detached ||
+        !cetta_owned_execution_move(destination, &producer->execution))
         return false;
-    *destination = producer->execution;
-    clear_moved_execution(&producer->execution);
     producer->detached = true;
     return true;
 }

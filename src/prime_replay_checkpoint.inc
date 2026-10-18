@@ -145,18 +145,12 @@ static CettaContinuationStatus prime_checkpoint_forget_recording(
     CettaContinuationStatus status = CETTA_CONTINUATION_UNSUPPORTED;
     if (!source || !source->owned_arena) {
         *refusal = "SourceOwner";
-    } else if (source->leased || source->active_work || source->driver.running_task ||
-            source->history.active || g_prime_eval_stack_driver == &source->driver ||
-            g_prime_eval_top_authority == &source->driver) {
+    } else if (!prime_native_history_quiescent(source)) {
         *refusal = "ActiveWriter";
         status = CETTA_CONTINUATION_DEFERRED;
     } else {
-        PrimeNativeHistory *history = &source->history;
-        PrimeNeedRecording *carrier = history->group;
-        if (!history->forgotten) prime_need_recording_demote(carrier);
-        free(history->entries);
-        *history = (PrimeNativeHistory){.group=carrier, .forgotten=true};
-        source->policy.history = (PrimeNativeHistorySpec){0};
+        bool forgotten=prime_native_history_forget_control(source);
+        assert(forgotten);(void)forgotten;
         *refusal = NULL;
         status = CETTA_CONTINUATION_READY;
     }

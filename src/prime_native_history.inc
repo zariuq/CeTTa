@@ -82,6 +82,25 @@ static bool prime_native_history_configure(PrimeNativeControl *control,
     return prime_native_history_start(control, spec);
 }
 
+/* The observer's owner supplies lifetime and authority. This shared update
+ * requires quiescence and preserves every executable frame and paid account. */
+static bool prime_native_history_quiescent(const PrimeNativeControl *control) {
+    return control && !control->leased && !control->active_work &&
+        !control->driver.running_task && !control->history.active &&
+        g_prime_eval_stack_driver!=&control->driver &&
+        g_prime_eval_top_authority!=&control->driver;
+}
+static bool prime_native_history_forget_control(PrimeNativeControl *control) {
+    if (!prime_native_history_quiescent(control)) return false;
+    PrimeNativeHistory *history=&control->history;
+    PrimeNeedRecording *carrier=history->group;
+    if (!history->forgotten) prime_need_recording_demote(carrier);
+    free(history->entries);
+    *history=(PrimeNativeHistory){.group=carrier,.forgotten=true};
+    control->policy.history=(PrimeNativeHistorySpec){0};
+    return true;
+}
+
 static PrimeNeedReceipt prime_native_history_reserve(PrimeNativeControl *control) {
     PrimeNativeHistory *history = &control->history;
     PrimeNeedReceipt receipt = {0};

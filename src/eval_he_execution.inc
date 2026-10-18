@@ -2110,11 +2110,13 @@ static inline __attribute__((always_inline)) bool he_shared_execution_try_kernel
         bindings_init(&empty);
         const Bindings *outer = environment ? environment : &empty;
         PreparedPureProgramCache *cache = eval_execution_prepared_cache();
-        Atom *single = prepared_pure_closed_call_try(
-            space, arena, source, fuel, false, false, cache);
-        if (single) {
-            outcome_set_add_prefixed(arena, outcomes, single, &empty, outer,
-                preserve_bindings);
+        CettaCallOutcome result;
+        if (prepared_pure_closed_result_try(
+                space, arena, source, fuel, false, false, cache,
+                PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &result)) {
+            if (result.kind == CETTA_CALL_VALUE)
+                outcome_set_add_prefixed(arena, outcomes, result.term, &empty,
+                    outer, preserve_bindings);
             return true;
         }
         if (eval_unwinding() || eval_cancel_check())

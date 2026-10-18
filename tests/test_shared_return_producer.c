@@ -25,7 +25,7 @@ void *__wrap_calloc(size_t count, size_t size) {
 }
 
 typedef struct {
-    unsigned next_calls, emitted, effects, captures, freed, released;
+    unsigned next_calls, emitted, effects, captures, freed, released, cursor_polls;
     bool compatible, refuse_capture, fail_log_reserve, change_during_capture;
     Space *space;
     SpaceProgramToken token;
@@ -223,9 +223,10 @@ static CettaOwnedExecution new_execution(Account *account, unsigned count) {
             packet->expr.elems[3], packet->expr.elems[4]),
         .environment = &computation->bindings,
     };
-    CettaOwnedExecution execution;
+    CettaOwnedExecution execution = {0};
     cetta_owned_execution_init(&execution, computation, next_return,
                                release_computation);
+    execution.relocatable = true;
     return execution;
 }
 
@@ -352,6 +353,14 @@ static void test_authority_and_detachment(void) {
 static void test_construction_and_terminal_states(void) {
     Account account = {.compatible = true};
     CettaOwnedExecution execution = new_execution(&account, 0u);
+    execution.relocatable = false;
+    CettaOwnedExecution unqualified = execution, destination = {0};
+    assert(!cetta_owned_execution_move(&destination, &execution));
+    assert(!cetta_shared_return_producer_new(&execution, 2u, 3u,
+                                            capture, compatible, &account));
+    assert(memcmp(&execution, &unqualified, sizeof(execution)) == 0);
+    assert(!destination.computation && !destination.has_pending && !account.released);
+    execution.relocatable = true;
     CettaOwnedExecution before = execution;
     for (unsigned fault = 0u; fault < 3u; ++fault) {
         fail_malloc = fault == 0u ? 1u : 0u;
@@ -398,6 +407,14 @@ static void test_pending_return_detachment(void) {
     const CettaOwnedExecution *owned = cetta_shared_return_producer_execution(producer);
     CettaOwnedReturn pending = owned->pending;
     void *computation = owned->computation;
+    Account occupied_account = {.compatible = true};
+    CettaOwnedExecution occupied = new_execution(&occupied_account, 1u);
+    CettaOwnedExecution occupied_before = occupied, owned_before = *owned;
+    assert(!cetta_shared_return_producer_detach_execution(producer, &occupied));
+    assert(memcmp(&occupied, &occupied_before, sizeof(occupied)) == 0);
+    assert(memcmp(owned, &owned_before, sizeof(*owned)) == 0);
+    cetta_owned_execution_cancel(&occupied);
+    assert(occupied_account.released == 1u && account.released == 0u);
     CettaOwnedExecution resumed = {0};
     assert(cetta_shared_return_producer_detach_execution(producer, &resumed));
     assert(resumed.has_pending && resumed.computation == computation);
@@ -406,10 +423,24 @@ static void test_pending_return_detachment(void) {
     assert(resumed.accepted == 0u && account.effects == 1u && account.next_calls == 1u);
     cetta_shared_return_producer_free(producer);
     assert(account.released == 0u);
+    CettaOwnedExecution before = resumed, moved = {0};
+    assert(!cetta_owned_execution_move(&resumed, &resumed));
+    assert(memcmp(&before, &resumed, sizeof(resumed)) == 0);
+    assert(!cetta_owned_execution_move(NULL, &resumed));
+    moved.has_pending = true;
+    assert(!cetta_owned_execution_move(&moved, &resumed));
+    assert(memcmp(&before, &resumed, sizeof(resumed)) == 0);
+    moved.has_pending = false;
+    assert(cetta_owned_execution_move(&moved, &resumed));
+    assert(memcmp(&before, &moved, sizeof(moved)) == 0);
+    assert(!resumed.computation && !resumed.has_pending && resumed.terminal);
+    assert(!cetta_owned_execution_move(&resumed, &resumed));
+    cetta_owned_execution_cancel(&resumed);
+    assert(account.released == 0u && account.effects == 1u && account.next_calls == 1u);
     account.refuse_capture = false;
     producer = cetta_shared_return_producer_new(
-        &resumed, 1u, 3u, capture, compatible, &account);
-    assert(producer && !resumed.computation && !resumed.has_pending);
+        &moved, 1u, 3u, capture, compatible, &account);
+    assert(producer && !moved.computation && !moved.has_pending);
     assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_PAUSED);
     assert(account.effects == 1u && account.next_calls == 1u);
     Recipient recipient = {.producer = producer};
@@ -423,7 +454,30 @@ static void test_pending_return_detachment(void) {
     puts("PASS: detaching and re-owning a pending return preserves its exact loan and never replays producer work");
 }
 
-static void test_real_prepared_producer(void) {
+static bool poll_prepared_producer(void *context) {
+    ((Account *)context)->cursor_polls++;
+    return false;
+}
+
+static CettaSharedReturnStep advance_prepared_producer(
+    CettaSharedReturnProducer *producer, Account *account,
+    uint64_t allowance, bool bounded) {
+    uint64_t target = log_info(producer).past_end + allowance;
+    for (unsigned slice = 0u; slice < 64u; ++slice) {
+        uint64_t past_end = log_info(producer).past_end;
+        unsigned polls = account->cursor_polls;
+        CettaSharedReturnStep step = cetta_shared_return_producer_advance(
+            producer, bounded ? 1u : target - past_end);
+        if (bounded)
+            assert(account->cursor_polls - polls <= 1u);
+        if (step != CETTA_SHARED_RETURN_PAUSED || log_info(producer).past_end == target)
+            return step;
+    }
+    assert(!"prepared producer failed to yield within its finite fixture");
+    return CETTA_SHARED_RETURN_INVALID;
+}
+
+static void test_real_prepared_producer(bool bounded) {
     Arena source;
     arena_init(&source);
     arena_set_hashcons(&source, NULL);
@@ -447,26 +501,38 @@ static void test_real_prepared_producer(void) {
             .compiler_identity = cetta_match_decision_compiler_identity(),
         });
     assert(program);
+    Account account = {.compatible = true, .space = &space};
     CettaPreparedPureAnswerCursorOptions options = {
         .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
                    .construct_allocation_bound = atom_expr_allocation_bound},
         .unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_FAILS,
         .allow_continuations = true,
+        .interrupt_poll = poll_prepared_producer, .interrupt_context = &account,
+        .interrupt_poll_interval = 1u,
     };
     CettaPreparedPureAnswerCursor *cursor =
         cetta_prepared_pure_answer_cursor_open(program, &options);
     assert(cursor);
-    Account account = {.compatible = true, .space = &space,
-                      .token = cetta_prepared_pure_answer_cursor_program_token(cursor)};
-    CettaOwnedExecution execution;
-    cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor);
+    account.token = cetta_prepared_pure_answer_cursor_program_token(cursor);
+    CettaOwnedExecution execution = {0};
+    if (bounded)
+        assert(cetta_prepared_pure_answer_cursor_own_execution_bounded(&execution, cursor, 1u));
+    else
+        assert(cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor));
     CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
         &execution, 2u, 2u, capture, compatible, &account);
     assert(producer);
+    CettaOwnedExecution duplicate = {0};
+    assert(!cetta_prepared_pure_answer_cursor_own_execution(&duplicate, cursor));
+    assert(!cetta_prepared_pure_answer_cursor_own_execution_bounded(&duplicate, cursor, 0u));
+    assert(cetta_shared_return_producer_advance(producer, 0u) == CETTA_SHARED_RETURN_PAUSED);
+    assert(account.cursor_polls == 0u);
     Recipient a = {.producer = producer, .consumer = 0u};
     Recipient b = {.producer = producer, .consumer = 1u};
-    assert(cetta_shared_return_producer_advance(producer, 2u) == CETTA_SHARED_RETURN_PAUSED);
+    assert(advance_prepared_producer(producer, &account, 2u, bounded) == CETTA_SHARED_RETURN_PAUSED);
+    unsigned polls = account.cursor_polls;
     assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_BACKPRESSURE);
+    assert(account.cursor_polls == polls);
     for (uint64_t i = 0u; i < 2u; ++i) {
         take_answer(producer, 0u, &a, i);
         assert(cetta_shared_return_producer_trim(producer) == 0u);
@@ -474,15 +540,18 @@ static void test_real_prepared_producer(void) {
     assert(cetta_shared_return_producer_cancel(producer, 0u));
     take_answer(producer, 1u, &b, 0u);
     assert(cetta_shared_return_producer_trim(producer) == 1u);
+    assert(account.cursor_polls == polls);
     assert(space_admit_atom(&space, &source, parse(&source, "(unrelated fact)")));
     assert(compatible(&account));
-    assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_PAUSED);
+    assert(advance_prepared_producer(producer, &account, 1u, bounded) == CETTA_SHARED_RETURN_PAUSED);
+    polls = account.cursor_polls;
     for (uint64_t i = 1u; i < 3u; ++i) {
         CettaSharedDelivery reply = take_answer(producer, 1u, &b, i);
         assert(reply.returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE);
         assert(cetta_shared_return_producer_trim(producer) == 1u);
     }
-    assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_COMPLETE);
+    assert(account.cursor_polls == polls);
+    assert(advance_prepared_producer(producer, &account, 1u, bounded) == CETTA_SHARED_RETURN_COMPLETE);
     assert(log_info(producer).completed);
     /* Program changes refuse even a cached completion. Published caller
      * answers are independently retained and remain readable afterward. */
@@ -517,7 +586,8 @@ int main(void) {
     test_authority_and_detachment();
     test_construction_and_terminal_states();
     test_pending_return_detachment();
-    test_real_prepared_producer();
+    test_real_prepared_producer(false);
+    test_real_prepared_producer(true);
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

@@ -5678,20 +5678,21 @@ Atom *space_view_get_at64(const Space *s, CettaIndex index) {
     return NULL;
 }
 
-/* False only when the row's stored header shows that it is not a rule
- * `(= lhs rhs)` or `(=% lhs rhs)`; a row without a header may be one. */
+/* Rule-family filter only; the program's profile still admits the syntax.
+ * Rows without a stored header remain possible candidates. */
 bool space_row_may_be_rule(const Space *s, CettaIndex idx) {
     if (!s || space_has_overlay_base(s) ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return true;
-    const CettaTermHdr *header =
-        tu_hdr(s->native.universe, space_get_atom_id_at64(s, idx));
+    AtomId id = space_get_atom_id_at64(s, idx);
+    const CettaTermHdr *header = tu_hdr(s->native.universe, id);
     if (!header)
         return true;
-    if (header->tag != ATOM_EXPR ||
-        (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u)
+    if (header->tag != ATOM_EXPR)
         return false;
+    if ((header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u)
+        return space_atom_id_is_graded(s, id, NULL);
     return header->sym_or_head == SYMBOL_ID_NONE ||
         header->sym_or_head == g_builtin_syms.equals ||
         header->sym_or_head == g_builtin_syms.equals_percent;
@@ -5915,18 +5916,12 @@ void space_module_own_view_release(Space *view, Space *storage) {
     space_advance_global_mutation_epoch();
 }
 
-void space_free(Space *s) {
+static SpaceInstanceRetiredHook g_space_instance_retired_hook;
+
+/* Release storage without ending a destination's logical identity. */
+static void space_release_contents(Space *s) {
     if (!s)
         return;
-    if (s->ledger_counted) {
-        s->ledger_counted = false;
-        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
-                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, -1);
-        cetta_runtime_stats_gauge_add(
-            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
-            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
-            -(int64_t)sizeof(Space));
-    }
     /* A read token may retain this address after the object lifetime ends.
        Retire thread-local execution-analysis entries while the identity is
        still readable; cache lookup also validates against its live query
@@ -5965,6 +5960,27 @@ void space_free(Space *s) {
     s->overlay_removed_base_cap = 0;
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
+}
+
+void space_free(Space *s) {
+    if (!s)
+        return;
+    if (g_space_instance_retired_hook && s->instance_id)
+        g_space_instance_retired_hook(s->instance_id);
+    if (s->ledger_counted) {
+        s->ledger_counted = false;
+        cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
+                                      CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK, -1);
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES,
+            CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK,
+            -(int64_t)sizeof(Space));
+    }
+    space_release_contents(s);
+}
+
+void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook) {
+    g_space_instance_retired_hook = hook;
 }
 
 static void disc_storage_census(const DiscNode *node, CettaStorageCensus *c) {
@@ -8266,7 +8282,7 @@ static void space_replace_contents_classified(
     dst->deps = dst->importers = NULL;
     dst->dep_count = dst->dep_cap = 0u;
     dst->importer_count = dst->importer_cap = 0u;
-    space_free(dst);
+    space_release_contents(dst);
     space_move_storage_and_backend(dst, src);
     dst->imported_len = imported;
     dst->deps = deps;
@@ -8301,6 +8317,8 @@ static void space_replace_contents_classified(
     space_reset_moved_from(src);
     if (g_space_contents_moved_hook && src_instance_id != dst_instance_id)
         g_space_contents_moved_hook(src_instance_id, dst_instance_id);
+    if (g_space_instance_retired_hook && src_instance_id != dst_instance_id)
+        g_space_instance_retired_hook(src_instance_id);
 }
 
 void space_replace_contents(Space *dst, Space *src) {

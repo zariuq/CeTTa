@@ -521,6 +521,12 @@ typedef void (*SpaceContentsMovedHook)(uint64_t from_instance,
                                        uint64_t to_instance);
 void space_set_contents_moved_hook(SpaceContentsMovedHook hook);
 SpaceContentsMovedHook space_contents_moved_hook(void);
+/* Retiring a logical instance is distinct from replacing its storage. A
+ * move first publishes its old source identity to the contents subscriber,
+ * then retires that identity. The destination identity survives. Calls are
+ * serialized with the space's other lifetime operations; one subscriber. */
+typedef void (*SpaceInstanceRetiredHook)(uint64_t instance);
+void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 bool space_is_ordered(const Space *s);
@@ -1363,6 +1369,15 @@ typedef enum {
  * representation growth. Neither permits END or discarding the cursor. */
 SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
                                          Atom *pattern, const Bindings *seed);
+/* Capture the query's original ordered bag. Native flat bags share one
+ * pinned occurrence view, including across later copy-on-write removals;
+ * each factor reads that same bounded view. Other spaces retain canonical
+ * atomic preparation and its complete/unknown result contract. Read tokens
+ * and witnesses remain those originally observed. This grants no permission
+ * to advance under changed dependencies: the controller owns that policy.
+ * Spaces/universes and the result arena retain the lifetime above. */
+SpaceQueryCursor *space_query_cursor_new_captured(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed);
 /* Clone a quiescent query's exact continuation, captured reads, last row
  * witnesses and prepared matcher/fallback state without querying or matching.
  * The original is unchanged on refusal. Mutable cursor metadata is independent;

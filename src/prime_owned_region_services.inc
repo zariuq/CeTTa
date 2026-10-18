@@ -10,8 +10,6 @@ typedef struct {
     bool active;
 } PrimeNativeRegionScope;
 
-static __thread PrimeNativeOwnedRegion *g_prime_owned_region;
-
 static void prime_native_region_context_select(PrimeNativeOwnedRegion *region,
     PrimeNativeRegionScope *scope) {
     assert(region && scope && !scope->active && region->library_ready && region->arenas_ready);
@@ -24,7 +22,7 @@ static void prime_native_region_context_select(PrimeNativeOwnedRegion *region,
     scope->active = true;
     g_prime_owned_region = region;
     g_registry = &region->registry;
-    g_eval_root_space = &region->world;
+    g_eval_root_space = prime_native_region_program(region);
     g_hashcons = NULL;
     eval_term_universe_scope_enter(&scope->universe, &region->library->term_universe);
     term_universe_set_persistent_arena(&g_eval_fallback_universe, &region->persistent);
@@ -43,8 +41,7 @@ static bool prime_native_region_scope_select(PrimeNativeOwnedRegion *region,
 
 static bool prime_native_region_scope_enter(PrimeNativeTopEpisode *episode,
     PrimeNativeRegionScope *scope) {
-    if (episode && episode->source_episode) episode=episode->source_episode;
-    return prime_native_region_scope_select(episode ? episode->owned_region : NULL, scope);
+    return prime_native_region_scope_select(prime_native_episode_region(episode), scope);
 }
 
 static void prime_native_region_scope_leave(PrimeNativeRegionScope *scope) {
@@ -95,6 +92,7 @@ static void prime_native_owned_region_storage(const PrimeNativeOwnedRegion *regi
         cetta_library_context_prime_snapshot_storage(region->library, census);
     prime_native_source_services_storage(region->services, census);
     if (region->world_ready) space_storage_census(&region->world, census);
+    if (region->program) space_storage_census(region->program, census);
     if (region->registry_ready) registry_storage_census(&region->registry, census);
     if (region->arenas_ready) {
         arena_storage_census(&region->snapshot, census);
@@ -120,6 +118,13 @@ static void prime_native_owned_region_free(PrimeNativeOwnedRegion *region) {
      * destroying them, while their enclosing private context remains live. */
     if (region->library_ready && region->world_ready && region->library->petta_program)
         petta_program_forget_space(region->library->petta_program, &region->world);
+    if (region->program) {
+        if (region->library_ready && region->library->petta_program)
+            petta_program_forget_space(region->library->petta_program,region->program);
+        space_free(region->program);
+        free(region->program);
+        region->program=NULL;
+    }
     if (region->registry_ready) registry_free(&region->registry);
     if (region->world_ready) space_free(&region->world);
     prime_native_service_leave(&scope.services);

@@ -9329,14 +9329,24 @@ static inline __attribute__((always_inline)) OemRun oem_pure_apply(
                       : atom_int(&cursor->region, value);
         if (!result)
             return OEM_RUN_HANDOFF;
-    } else if (oem_scalar_operation(head, args, count, &scalar)) {
+    } else if (!cursor->runtime.grounded_call &&
+               oem_scalar_operation(head, args, count, &scalar)) {
         result = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
             ? oem_truth(cursor, scalar.as.boolean)
             : grounded_plain_scalar_materialize(&cursor->region, &scalar);
         if (!result)
             return OEM_RUN_HANDOFF;
     } else {
-        result = grounded_dispatch(&cursor->region, head, args, count);
+        if (cursor->runtime.grounded_call) {
+            CettaCallOutcome outcome = {0};
+            if (!cursor->runtime.grounded_call(cursor->runtime.context,
+                    program->space, &cursor->region, head, args, count,
+                    &outcome) || outcome.kind != CETTA_CALL_VALUE)
+                return OEM_RUN_HOST;
+            result = outcome.term;
+        } else {
+            result = grounded_dispatch(&cursor->region, head, args, count);
+        }
         if (!result || atom_is_error(result))
             return OEM_RUN_HOST;
         if (atom_is_petta_no_result(result))

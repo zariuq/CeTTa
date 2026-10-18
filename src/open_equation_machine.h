@@ -43,6 +43,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "space.h"
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
@@ -311,6 +312,13 @@ typedef struct {
     /* The host's truth value, in `arena`, as a grounded operation's truth
      * result becomes when the search machine runs the operation. */
     Atom *(*boolean_value)(void *context, Arena *arena, bool value);
+    /* The host's pure grounded operation on ready values, including its
+     * argument contracts. Machine integers retain the admitted numeric
+     * path; other operands must use this service when supplied. A refusal
+     * performs no effect and leaves the goal for ordinary host execution. */
+    bool (*grounded_call)(void *context, Space *space, Arena *arena,
+                          Atom *head, Atom **arguments, uint32_t count,
+                          CettaCallOutcome *outcome);
     /* The search machine's own path for `(add-atom space payload)` with a
      * ground payload, which it takes once the call's arguments are values:
      * the payload joins `target` and `result_out` is the host's result or

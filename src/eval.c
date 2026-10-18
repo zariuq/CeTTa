@@ -1868,6 +1868,12 @@ typedef struct PrimeNativeOwnedRequest {
     const PrimeNativeControl *reservation;
     CettaContinuationStatus status;
 } PrimeNativeOwnedRequest;
+#if CETTA_PRIME_EVAL_STACK
+/* Selected only around synchronous entry to an already admitted root.
+ * The consumer authenticates its exact root and designated target; nested
+ * calls cannot inherit this request. Ordinary entry never touches it. */
+static __thread PrimeNativeOwnedRequest *g_prime_owned_selection_request;
+#endif
 typedef struct PrimeNativeOwnedTopRequest {
     PrimeNativeOwnedRequest owned;
     const Arena *source_owner;
@@ -1893,7 +1899,11 @@ struct CettaPrimeObservationReturn {
     bool ordinary_running;
     PrimeNativeControl *ordinary_control;
     uint64_t ordinary_allowance;
-    CettaCount ordinary_cursor;
+    /* Producer position survives movement of the consumer driver. Issuing a
+     * loan and acknowledging that loan are separate protocol boundaries. */
+    uint64_t ordinary_next;
+    uint64_t ordinary_quantum;
+    CettaOwnedExecution ordinary_returns;
     CettaCount ordinary_result_length;
     Atom *ordinary_reified;
     Atom *ordinary_projected;
@@ -1905,7 +1915,7 @@ static void prime_native_registry_observation_free(CettaPrimeObservationReturn *
 
 #if CETTA_PRIME_EVAL_STACK
 static __thread CettaPrimeSourceScope *g_prime_ordinary_source_scope;
-static bool prime_ordinary_return_project(CettaPrimeObservationReturn *);
+static void prime_ordinary_return_take_control(CettaPrimeObservationReturn *, PrimeNativeControl *);
 static void prime_ordinary_return_pump(CettaPrimeObservationReturn *, uint64_t);
 static bool prime_ordinary_retained_root(Space *, Arena *, Atom *, Atom *, int, EvalOutcome *);
 static void prime_ordinary_return_free(CettaPrimeObservationReturn *);
@@ -5483,6 +5493,21 @@ void eval_prime_set_he_signature_heads(const SymbolId *heads, size_t count) {
     g_prime_he_signature_head_count = unique;
 }
 
+void eval_prime_set_he_signature_space(Space *library) {
+    CettaCount len = space_length64(library);
+    SymbolId *heads = cetta_malloc(sizeof(*heads) * (len ? len : 1u));
+    size_t count = 0u;
+    for (CettaIndex i = 0u; i < len; i++) {
+        Atom *item = space_get_at64(library, i);
+        if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
+            atom_is_symbol_id(item->expr.elems[0], g_builtin_syms.colon) &&
+            item->expr.elems[1]->kind == ATOM_SYMBOL)
+            heads[count++] = atom_symbol_current_id(item->expr.elems[1]);
+    }
+    eval_prime_set_he_signature_heads(heads, count);
+    free(heads);
+}
+
 static bool prime_signature_is_he_authored(SymbolId head) {
     return g_prime_he_signature_heads &&
            bsearch(&head, g_prime_he_signature_heads,
@@ -5662,6 +5687,8 @@ static bool petta_atom_requires_control_eval(Atom *atom) {
 
 static bool prime_need_is_explicit_control_form(const Atom *atom);
 static bool native_weight_form(const Atom *atom);
+static bool native_interaction_form(const Atom *atom);
+static bool prime_need_interaction_arity(SymbolId head, CettaExprLen nargs);
 static bool prime_need_is_canonical_app(const Atom *atom);
 static bool prime_need_is_canonical_app_in(Space *s, Arena *a, const Atom *atom);
 
@@ -5672,7 +5699,7 @@ static bool prime_need_is_canonical_app_in(Space *s, Arena *a, const Atom *atom)
 static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u)
         return false;
-    if (native_weight_form(atom)) return false;
+    if (native_weight_form(atom) || native_interaction_form(atom)) return false;
     /* Evaluator-owned Prime forms compute even when their symbols have no
      * equation or grounded-operation registration. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
@@ -8825,12 +8852,6 @@ typedef enum {
 } CettaSearchPolicyOrder;
 
 typedef struct {
-    bool enabled;
-    bool stop;
-    size_t selections, nodes, bytes, owners;
-} PrimeNativeHistorySpec;
-
-typedef struct {
     bool present;
     CettaSearchPolicyLane lane;
     CettaSearchPolicyOrder order;
@@ -9283,7 +9304,15 @@ static bool native_cost_read_head(SymbolId head) {
 bool eval_native_weight_head(SymbolId head) {
     const PrimeNeedSymbolIds *ids = prime_need_symbols();
     return head == ids->weight_where || head == ids->weight_read ||
-           head == ids->weight_exact_rational || native_cost_read_head(head);
+           head == ids->weight_exact_rational || native_cost_read_head(head) ||
+           head == ids->interaction_choices || head == ids->interaction_perform ||
+           head == ids->interaction_dispose;
+}
+
+static bool native_interaction_form(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len &&
+        prime_need_interaction_arity(atom_head_symbol_id(atom), atom->expr.len - 1u) &&
+        native_control_profile_active();
 }
 
 static bool native_cost_read_form(const Atom *atom) {
@@ -26166,18 +26195,7 @@ static void eval_prime_ensure_he_signature_heads(void) {
     Space space;
     space_init_with_universe(&space, &universe);
     stdlib_load(&space, &arena);
-    CettaCount len = space_length64(&space);
-    SymbolId *heads = cetta_malloc(sizeof(*heads) * (len ? len : 1u));
-    size_t count = 0u;
-    for (CettaIndex i = 0u; i < len; i++) {
-        Atom *item = space_get_at64(&space, i);
-        if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
-            atom_is_symbol_id(item->expr.elems[0], g_builtin_syms.colon) &&
-            item->expr.elems[1]->kind == ATOM_SYMBOL)
-            heads[count++] = atom_symbol_current_id(item->expr.elems[1]);
-    }
-    eval_prime_set_he_signature_heads(heads, count);
-    free(heads);
+    eval_prime_set_he_signature_space(&space);
     space_free(&space);
     term_universe_free(&universe);
     arena_free(&arena);
@@ -28578,6 +28596,13 @@ static bool prime_need_form_is(const Atom *atom, SymbolId head,
            eval_current_language_id() == CETTA_LANGUAGE_PRIME;
 }
 
+static bool prime_need_interaction_arity(SymbolId head,CettaExprLen nargs) {
+    const PrimeNeedSymbolIds *syms=prime_need_symbols();
+    return ((nargs==2u || nargs==3u) &&
+            (head==syms->interaction_choices || head==syms->interaction_perform)) ||
+        (nargs==1u && head==syms->interaction_dispose);
+}
+
 static bool prime_need_is_explicit_control_form(const Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
         !atom->expr.elems[0] || atom->expr.elems[0]->kind != ATOM_SYMBOL)
@@ -28600,7 +28625,8 @@ static bool prime_need_is_explicit_control_form(const Atom *atom) {
         head == prime_lift_symbols()->scope_profile || head == g_builtin_syms.prime_meta ||
         head == prime_lift_symbols()->meta_substitute ||
         (head == g_builtin_syms.prime_new && atom->expr.len == 3u) ||
-        prime_demand_form(head) != PRIME_DEMAND_FORM_NONE)
+        prime_demand_form(head) != PRIME_DEMAND_FORM_NONE ||
+        prime_need_interaction_arity(head,atom->expr.len-1u))
         return true;
     switch (atom->expr.len) {
     case 2u:
@@ -28610,20 +28636,17 @@ static bool prime_need_is_explicit_control_form(const Atom *atom) {
             head == syms->weight_exact_rational ||
             head == syms->cost_storage || head == syms->cost_inspect ||
             head == syms->cost_trace || head == syms->cost_run ||
-            head == syms->history_checkpoint || head == syms->history_dispose ||
-            head == syms->interaction_dispose;
+            head == syms->history_checkpoint || head == syms->history_dispose;
     case 3u:
         return head == syms->suspension_restrict ||
             head == syms->same_suspension || head == syms->same_origin ||
             head == syms->ctx_get || head == syms->ctx_view ||
             head == syms->weight_where || head == syms->weight_read ||
             head == syms->cost_run || head == syms->cost_analyze ||
-            head == syms->interaction_choices || head == syms->interaction_perform ||
             head == syms->history_capture || head == syms->history_record || head == syms->history_replay ||
             head == syms->history_forget;
     case 4u:
-        return head == syms->ctx_bind || head == syms->cost_analyze ||
-            head == syms->interaction_perform;
+        return head == syms->ctx_bind || head == syms->cost_analyze;
     case 5u:
         return head == syms->cost_analyze;
     default:
@@ -33908,6 +33931,12 @@ static __attribute__((unused)) bool project_match_visible_bindings(Arena *a,
     bindings_init(projected);
     if (!full || visible->len == 0)
         return true;
+    /* Projection changes visible assignments, not the coordinates of an
+     * activation's manufactured slots. Keep its inventory and lineage. */
+    if (!bindings_retain_frame_state(projected,full)) {
+        bindings_free(projected);
+        return false;
+    }
 
     Atom **resolved_values = arena_alloc(a, sizeof(Atom *) * visible->len);
     MatchVisibleAliasSet aliases;
@@ -41448,8 +41477,7 @@ static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
         if (nargs == 1u && i == 0u &&
             (head == prime_need_symbols()->cost_storage ||
              head == prime_need_symbols()->cost_inspect ||
-             head == prime_need_symbols()->cost_trace ||
-             head == prime_need_symbols()->interaction_dispose))
+             head == prime_need_symbols()->cost_trace))
             mode = PRIME_NEED_ARGUMENT_WHNF;
         if (nargs == 2u && i == 1u &&
             ((head == g_builtin_syms.op_and && is_true_atom(expr_arg(call, 0u))) ||
@@ -41457,8 +41485,7 @@ static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
             mode = PRIME_NEED_ARGUMENT_WHNF;
         if (nargs >= 2u && nargs <= 4u && head == prime_need_symbols()->cost_analyze)
             mode = i == 0u ? PRIME_NEED_ARGUMENT_SHAPE : PRIME_NEED_ARGUMENT_WHNF;
-        if ((nargs == 2u && head == prime_need_symbols()->interaction_choices) ||
-            ((nargs == 2u || nargs == 3u) && head == prime_need_symbols()->interaction_perform))
+        if (prime_need_interaction_arity(head,nargs))
             mode = PRIME_NEED_ARGUMENT_WHNF;
         Atom *argument = expr_arg(call, i);
         bool demanded = mode == PRIME_NEED_ARGUMENT_WHNF &&
@@ -47420,7 +47447,10 @@ static bool prime_eval_stack_schedule_match_rows(Space *space, Space *query_spac
         rows->read=space_read_token(query_space);
         ready=ready && prime_native_control_record_query_read(driver->control,rows->read) &&
             collect_match_visible_vars_rec(pattern,&rows->visible);
-        if (ready) rows->cursor=space_query_cursor_new(query_space,arena,pattern,NULL);
+        Bindings coordinates;bindings_init(&coordinates);
+        ready=ready && bindings_retain_frame_state(&coordinates,&frame->env);
+        if (ready) rows->cursor=space_query_cursor_new_captured(query_space,arena,pattern,&coordinates);
+        bindings_free(&coordinates);
         ready=ready && rows->cursor && space_query_cursor_visit_reads(rows->cursor,
             prime_native_control_visit_query_read,driver->control);
         if (!space_read_token_is_current(rows->read)) {
@@ -50369,6 +50399,12 @@ typedef struct PrimeNativeWork {
     bool scoring;
 } PrimeNativeWork;
 
+/* A requested Resume is an intent to service one retained occurrence. Its
+ * descriptor is not a completed rewrite or a new execution permission. */
+typedef struct {
+    uint64_t occurrence;
+} PrimeNativeResumeChoice;
+
 static void native_dialect_work_free(NativeDialectWork *work);
 static bool native_dialect_work_pure(const NativeDialectWork *work);
 static void native_dialect_work_storage(const NativeDialectWork *work, CettaStorageCensus *census);
@@ -50502,6 +50538,7 @@ struct PrimeNativeControl {
     /* The selected provider owns its promoted preparation independently of
      * the discovery catalogue; current caller authority remains separate. */
     CettaSpaceAgendaSelection *interaction_selection;
+    PrimeNativeResumeChoice *resume_choice;
     bool resource_pending;
     SpaceProgramToken resource_program_read;
     RegistryReadView registry_read;
@@ -50658,6 +50695,16 @@ static bool prime_native_breakpoint_configure(PrimeNativeControl *control,
     Atom *pattern = policy->breakpoint_pattern
         ? atom_deep_copy(control->driver.arena, policy->breakpoint_pattern) : NULL;
     if (policy->breakpoint_pattern && !pattern) return false;
+    /* An interaction-created owner has no original select descriptor.
+     * Retain the requested invocation when arming its publication gate so
+     * inspection still checks the actual caller's authority. */
+    Atom *invocation=control->policy.policy_atom;
+    if (pattern && control->policy.resource_profile && policy->policy_atom) {
+        invocation=atom_deep_copy(control->driver.arena,policy->policy_atom);
+        if (!invocation) return false;
+    }
+    if (pattern && control->policy.resource_profile && !invocation) return false;
+    control->policy.policy_atom=invocation;
     control->policy.breakpoint_specified = true;
     control->policy.breakpoint_pattern = pattern;
     control->policy.breakpoint_budget = policy->breakpoint_budget;
@@ -50700,9 +50747,10 @@ static inline bool prime_replay_phases_requested(void) {
 #endif
 }
 
-/* Complete match rows are observations of their actual source Space.
- * Keep that authority after the row frame returns: a later coefficient or
- * consumer may still depend on the captured bindings. */
+/* Query guards follow the actual execution world. Captured query cursors
+ * keep their original read tokens and ordered rows independently. Only the
+ * authenticated publication below may advance a matching current guard;
+ * an external change still refuses before the continuation advances. */
 static void prime_native_trace_conjuncts(const PrimeNativeControl *control,
     const char *site);
 
@@ -50824,43 +50872,68 @@ static PrimeNativeControl *prime_native_trace_enclosing_control(void) {
     return NULL;
 }
 
-/* The controller's source token is the world it is currently in. Its own
- * data publication advances that world by one revision and keeps the search
- * position. A recorded query stays at the revision it observed: this does
- * not make a cached read valid in the successor store. An equation,
- * declaration, or rewritten prefix is a different publication and stays
- * stale. A token that was already behind is not moved forward.
- * A worker evaluates in a private world and can still write the preparing
- * parent's space. That parent is the search. Authenticate its token only
- * when it still names this exact pre-write revision. Do not walk further,
- * and do not refresh a stored query. */
+/* An own data publication advances execution guards at its exact predecessor
+ * revision. It does not change a captured query's read token, pinned rows or
+ * returned values. Native bag queries keep that original occurrence view;
+ * a later fresh query instead starts in the reached world. Source-program
+ * cursors still require their unchanged prefix. Stale guards and equation or
+ * declaration changes never acquire new currency here. */
 static PrimeNativeControl *prime_native_parallel_claim_owner(PrimeNativeControl *child);
+static void prime_native_adopt_control_data_publication(PrimeNativeControl *control,
+    Space *target, uint64_t revision_before, uint64_t prefix_before) {
+    if (!control || control->invalidated) return;
+    SpaceReadToken token=control->source_read;
+    if (token.space==target && token.instance_id==target->instance_id &&
+        token.revision==revision_before && token.prefix_epoch==prefix_before &&
+        space_read_token_prefix_intact(token))
+        control->source_read.revision=target->revision;
+    if (target->kind!=SPACE_KIND_ATOM || target->overlay_base || target->dep_count ||
+        target->module_own_view || !space_match_backend_has_native_occurrences(target)) return;
+    for (size_t i=0u;i<control->query_read_count;i++) {
+        SpaceReadToken *read=&control->query_reads[i];
+        if (read->space==target && read->instance_id==target->instance_id &&
+            read->revision==revision_before && read->prefix_epoch==prefix_before &&
+            !read->base_prefix_epoch && !read->base_dependency_epoch)
+            *read=space_read_token(target);
+    }
+}
+
 static void prime_native_adopt_own_data_publication(
     Space *target, uint64_t revision_before, uint64_t equation_before,
     uint64_t declaration_before, uint64_t prefix_before, bool published) {
-    PrimeNativeControl *owner;
-    SpaceReadToken token;
     if (!published || !target || revision_before == UINT64_MAX)
         return;
-    owner = prime_native_trace_enclosing_control();
+    PrimeNativeControl *owner=prime_native_trace_enclosing_control();
     if (!owner)
         return;
-    if (target != owner->space) {
-        owner = prime_native_parallel_claim_owner(owner);
-        if (!owner || target != owner->space)
-            return;
-    }
-    token = owner->source_read;
-    if (token.space != target || token.instance_id != target->instance_id ||
-        token.revision != revision_before ||
-        !space_read_token_prefix_intact(token))
+    CettaPrimeObservationReturn *returned=g_prime_ordinary_return;
+    PrimeNativeTopEpisode *source=returned && returned->top.episode
+        ? returned->top.episode->source_episode : NULL;
+    PrimeNativeOwnedRegion *region=source ? source->owned_region : NULL;
+    bool private_world=region && region->private_data && g_prime_owned_region==region &&
+        target==&region->world && space_program_token_is_current(region->program_read);
+    /* Private data has a separate frozen program Space. Removing a datum
+     * can shift this world's equation positions without moving a program
+     * cursor. Only that qualified separation permits the broader update. */
+    if (target->revision != revision_before + 1u ||
+        (!private_world && (target->equation_revision != equation_before ||
+            target->declaration_revision != declaration_before)))
         return;
-    if (target->equation_revision != equation_before ||
-        target->declaration_revision != declaration_before ||
-        target->prefix_epoch != prefix_before ||
-        target->revision != revision_before + 1u)
-        return;
-    owner->source_read.revision = target->revision;
+    if (private_world && region->data_read.space==target &&
+        region->data_read.instance_id==target->instance_id &&
+        region->data_read.revision==revision_before &&
+        region->data_read.prefix_epoch==prefix_before)
+        region->data_read=space_read_token(target);
+    prime_native_adopt_control_data_publication(owner,target,revision_before,prefix_before);
+    prime_native_adopt_control_data_publication(prime_native_parallel_claim_owner(owner),
+        target,revision_before,prefix_before);
+    for (PrimeEvalStackDriver *driver=g_prime_eval_stack_driver;driver;
+         driver=driver->authority_parent)
+        prime_native_adopt_control_data_publication(driver->control,target,revision_before,prefix_before);
+    for (PrimeEvalTopGuard *scope=g_prime_eval_top_scopes;scope;scope=scope->previous)
+        if (scope->driver)
+            prime_native_adopt_control_data_publication(scope->driver->control,
+                target,revision_before,prefix_before);
 }
 
 /* The first mutation that runs while a native control is current. Later
@@ -51328,6 +51401,9 @@ static void prime_native_control_storage_visit(const void *raw, CettaStorageCens
     if (control->base_environment_initialized) bindings_storage_census(&control->base_environment, census);
     cetta_space_agenda_storage(control->space_agenda,census);
     cetta_space_agenda_selection_storage(control->interaction_selection,census);
+    if (control->resume_choice)
+        cetta_storage_object(census, control->resume_choice,
+            sizeof(*control->resume_choice), CETTA_STORAGE_BLOCK);
     outcome_set_storage_census(&control->output, census);
     registry_storage_census(&control->registry_read.initial, census);
     registry_storage_census(&control->registry_read.consulted, census);
@@ -52157,14 +52233,29 @@ static bool prime_eval_check_call_authority(Space *space, Arena *arena,
                                             Atom *call) {
     for (PrimeEvalStackDriver *driver = prime_eval_authority_driver();
          driver; driver = driver->authority_parent) {
-        bool admitted = (!driver->control ||
-            !driver->control->owned_top_episode ||
-            !driver->control->owned_top_episode->owned_region ||
-            prime_native_owned_region_call_admitted(space,arena,call)) &&
+        PrimeNativeOwnedRegion *region=driver->control && driver->control->owned_top_episode
+            ? driver->control->owned_top_episode->owned_region : NULL;
+        /* The private source profile admits indirect calls from its held
+         * code and values. Resolution grants no additional services: the
+         * actual operation crosses this same gate before dispatch. The
+         * immutable ordinary profile keeps its original static contract. */
+        if (!region && driver->control && driver->control->owned_top_episode) {
+            PrimeNativeOwnedRegion *source=prime_native_episode_region(
+                driver->control->owned_top_episode);
+            if (source && source->private_data) region=source;
+        }
+        bool admitted = (!region ||
+            prime_native_owned_region_call_admitted(space,arena,call,region->private_data)) &&
             (!driver->pure_authority ||
              prime_native_actual_call_allowed(space,arena,call));
         if (!admitted) {
             prime_eval_refuse_authority(driver);
+            /* Classify the actual denial at its owner without marking an
+             * unrelated inner scope incomplete. Other host failures keep
+             * their own status; failed alone is not a permission verdict. */
+            if (region && region->private_data && driver->control &&
+                driver->control->completion==CETTA_EVAL_COMPLETE)
+                driver->control->completion=CETTA_EVAL_INCOMPLETE_EFFECT_DENIED;
             return false;
         }
     }
@@ -53948,7 +54039,7 @@ struct PrimeNativeStepRecording {
 
 static inline __attribute__((always_inline)) uint64_t prime_native_control_step_kernel(
     PrimeNativeControl *control, uint64_t allowance, bool replay_phases,
-    PrimeNativeStepRecording *recording) {
+    PrimeNativeStepRecording *recording, size_t requested_index, bool *accepted) {
     assert(allowance > 0u || cetta_continuation_hub_length(&control->hub));
     control->active_allowance = allowance;
     control->active_spent = 1u;
@@ -53964,7 +54055,8 @@ static inline __attribute__((always_inline)) uint64_t prime_native_control_step_
         control->active_allowance = control->active_spent = 0u;
         return 0u;
     }
-    if (lane != CETTA_SELECTION_LANE_OLDEST && control->policy.priority)
+    if (requested_index != SIZE_MAX) index = requested_index;
+    else if (lane != CETTA_SELECTION_LANE_OLDEST && control->policy.priority)
         index = prime_native_control_priority_index(control);
     PrimeNativeWork *selected_work = cetta_continuation_hub_at(&control->hub,index)->payload;
     __attribute__((cleanup(eval_shared_transition_scope_leave)))
@@ -54000,6 +54092,7 @@ static inline __attribute__((always_inline)) uint64_t prime_native_control_step_
         control->active_allowance = control->active_spent = 0u;
         return 0u;
     }
+    if (accepted) *accepted = true;
     prime_native_control_accepted_progress(control);
     PrimeNativeWork *work = owned.payload;
     control->active_occurrence = owned.occurrence_id;
@@ -54165,20 +54258,28 @@ static inline __attribute__((always_inline)) uint64_t prime_native_control_step_
 
 /* The run's literal policy selects this branch before the shared loop is
  * specialized. No recorder guard or receipt lives in the plain transition. */
-static inline __attribute__((always_inline)) uint64_t prime_native_control_step(
-    PrimeNativeControl *control, uint64_t allowance, bool record_history, bool replay_phases) {
+static inline __attribute__((always_inline)) uint64_t prime_native_control_step_at(
+    PrimeNativeControl *control, uint64_t allowance, bool record_history, bool replay_phases,
+    size_t requested_index, bool *accepted) {
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (record_history) {
         PrimeNativeStepRecording recording = {0};
         uint64_t spent = prime_native_control_step_kernel(
-            control, allowance, replay_phases, &recording);
+            control, allowance, replay_phases, &recording, requested_index, accepted);
         prime_native_history_scope_leave(&recording.scope);
         return spent;
     }
 #else
     (void)record_history;
 #endif
-    return prime_native_control_step_kernel(control, allowance, replay_phases, NULL);
+    return prime_native_control_step_kernel(control, allowance, replay_phases, NULL,
+        requested_index, accepted);
+}
+
+static inline __attribute__((always_inline)) uint64_t prime_native_control_step(
+    PrimeNativeControl *control, uint64_t allowance, bool record_history, bool replay_phases) {
+    return prime_native_control_step_at(control, allowance, record_history, replay_phases,
+        SIZE_MAX, NULL);
 }
 
 static void prime_native_control_free(PrimeNativeControl *control) {
@@ -54701,6 +54802,56 @@ static inline __attribute__((always_inline)) bool prime_native_mark_delivered(
 
 static bool prime_native_control_has_paid_work(const PrimeNativeControl *control, bool include_output);
 
+static inline void prime_native_control_retry_work(PrimeNativeControl *control) {
+    control->driver.capacity_blocked = false;
+    control->resource_pending = false;
+    cetta_space_agenda_resume(control->space_agenda);
+    if (!control->worker_execution) {
+        control->effect_pending = false;
+        control->pending_effect = NULL;
+        /* Publication, rather than retry, resumes a shared-producer wait. */
+        if (!control->need_share_thunk) control->need_pending = false;
+    }
+}
+
+/* Selected entry services the inspected occurrence once through the same
+ * transition as ordinary scheduling. The original loop then owns the rest
+ * of the allowance. No selection check is added to ordinary transitions. */
+static bool prime_native_control_resume_selected(PrimeNativeControl *control,
+    uint64_t *budget, bool record_history, bool replay_phases, bool meter_cost,
+    bool breakpoints) {
+    if (!*budget || control->failed || control->invalidated) return false;
+    size_t index = 0u, length = cetta_continuation_hub_length(&control->hub);
+    while (index < length && cetta_continuation_hub_at(&control->hub,index)->occurrence_id !=
+            control->resume_choice->occurrence) index++;
+    if (index == length) {
+        control->invalidated = true;
+        return false;
+    }
+    if (eval_unwinding() || eval_cancel_check()) {
+        control->completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
+        return false;
+    }
+    PrimeNativeWork *work = cetta_continuation_hub_at(&control->hub,index)->payload;
+    if (breakpoints && prime_native_breakpoint_stop(control,work)) return false;
+    prime_native_control_retry_work(control);
+    bool accepted = false;
+    uint64_t spent = prime_native_control_step_at(control, *budget, record_history,
+        replay_phases, index, &accepted);
+    if (accepted) control->resume_choice->occurrence = 0u;
+    if (spent) {
+        if (replay_phases) prime_replay_phase_required(CETTA_COST_QUANTUM,spent);
+        if (meter_cost) cetta_native_cost_charge_observed(CETTA_COST_QUANTUM,1u);
+    }
+    assert(spent <= *budget);
+    control->steps += spent;
+    *budget -= spent;
+    if (control->driver.capacity_blocked)
+        control->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+    return accepted && !control->resource_pending && !control->driver.capacity_blocked &&
+        !control->effect_pending && !control->need_pending;
+}
+
 /* Scope policy is fixed for this run. Literal entry choices specialize this
  * common loop and transition body; the ordinary loop has no recording-scope
  * setup/cleanup, coordinator replay-witness hooks or quantum cost probes.
@@ -54762,17 +54913,7 @@ static inline __attribute__((always_inline)) void prime_native_control_loop(
         if (retry_pending) {
             /* Retry begins with an admitted operation, not with inspection
              * or delivery of an already-computed answer. */
-            control->driver.capacity_blocked = false;
-            control->resource_pending = false;
-            cetta_space_agenda_resume(control->space_agenda);
-            if (!control->worker_execution) {
-                control->effect_pending = false;
-                control->pending_effect = NULL;
-                /* A shared-producer wait is resumed when the claim is
-                 * published. Clearing it here would re-evaluate the thunk. */
-                if (!control->need_share_thunk)
-                    control->need_pending = false;
-            }
+            prime_native_control_retry_work(control);
             retry_pending = false;
         }
         bool generated = false;
@@ -54868,6 +55009,18 @@ static inline __attribute__((always_inline)) void prime_native_control_loop(
 static inline __attribute__((always_inline)) void prime_native_control_loop_observers(
     PrimeNativeControl *control, uint64_t budget,
     OrderedOutcomeVisitor visitor, void *context, bool meter_cost, bool breakpoints) {
+    if (control->resume_choice && control->resume_choice->occurrence) {
+        /* A selected occurrence remains pending when the current request
+         * already has its observation. A later demand may service it. */
+        if (!control->policy.selection &&
+            cetta_control_plan_observation_satisfied(&control->hub.plan,control->delivered_count)) return;
+        bool recording = false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        recording = control->history.spec.enabled;
+#endif
+        if (!prime_native_control_resume_selected(control, &budget, recording,
+                prime_replay_phases_requested(), meter_cost, breakpoints)) return;
+    }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (control->history.spec.enabled) {
         if (prime_replay_phases_requested())
@@ -54909,6 +55062,9 @@ static void prime_native_control_run(
         control->invalidated = true;
         return;
     }
+    /* Taking an inspected Resume at zero allowance installs only the intent,
+     * including when some unrelated sibling already has a paid packet. */
+    if (!budget && control->resume_choice && control->resume_choice->occurrence) return;
     if (!budget && !control->refill_pending && !prime_native_control_has_paid_work(control, true))
         return;
     PrimeNativeRunGuard guard;
@@ -54989,6 +55145,7 @@ static void prime_native_control_destroy(void *payload) {
     /* Direct outcomes and captured environments can borrow proposal atoms.
      * Retire its private storage after every control-owned receiver. */
     cetta_space_agenda_selection_free(control->interaction_selection);
+    free(control->resume_choice);
     free(control);
     prime_native_region_scope_leave(&region_scope);
     if (episode) prime_native_top_episode_release(episode);
@@ -56244,14 +56401,32 @@ static bool prime_native_cost_policy_accepts(const PrimeNativeControl *control,
         (policy->cost_compact || !control->event_cost.compact)));
 }
 
-static bool prime_native_owned_cost_policy(const CettaSearchPolicySpec *p) {
-    return p && p->native_control && p->all && p->retain && p->costs &&
+static bool prime_native_owned_observation_policy(const CettaSearchPolicySpec *p) {
+    return p && p->native_control &&
         !p->implicit_first_value && !p->priority && p->workers <= 1u &&
-        !p->resource_profile && !p->resource_worlds && !p->additional &&
+        !p->resource_profile && !p->resource_worlds &&
         prime_native_owned_recording_policy(p) && !p->selection &&
         !p->key_pattern && !p->key_expression && !p->goal_pattern &&
         !p->goal_expression && !p->bound_pattern && !p->bound_expression &&
         !p->by_weight && !p->weight_law && !p->descending;
+}
+
+static bool prime_native_owned_cost_policy(const CettaSearchPolicySpec *p) {
+    return prime_native_owned_observation_policy(p) && p->all && p->retain &&
+        p->costs && !p->additional;
+}
+
+/* Additional demand is anchored once at request admission, never at each
+ * producer slice. Already delivered occurrences retain their identities. */
+static CettaObservationDemand prime_native_control_demand(const PrimeNativeControl *control,
+    uint64_t limit, const CettaSearchPolicySpec *policy) {
+    CettaObservationDemand demand={
+        .completion=policy->all ? CETTA_OBSERVATION_COMPLETE_BAG : CETTA_OBSERVATION_FINITE_PREFIX,
+        .prefix_limit=policy->all ? 0u : limit};
+    if (control && policy->additional && !policy->all)
+        demand.prefix_limit=limit>UINT64_MAX-control->delivered_count
+            ? UINT64_MAX : limit+control->delivered_count;
+    return demand;
 }
 
 /* Only the explicit capsule prelude supplies this admission. Ordinary owned
@@ -56264,7 +56439,7 @@ static bool prime_native_transaction_policy(const CettaSearchPolicySpec *p) {
     return prime_native_owned_cost_policy(&plain);
 }
 
-static CettaContinuationStatus prime_native_owned_cost_resume(
+static CettaContinuationStatus prime_native_owned_resume(
     PrimeNativeOwnedRequest *request, uint64_t allowance) {
     if (!request || !request->started)
         return CETTA_CONTINUATION_UNSUPPORTED;
@@ -56312,15 +56487,16 @@ static CettaContinuationStatus prime_native_owned_cost_resume(
     return request->status;
 }
 
-/* This is reached only from the original cost_run dispatch arm. Policy
- * parsing and CURRENT_ENV construction remain in that actual call body. */
-static void prime_native_owned_cost_dispatch(
+/* Actual cost/selection dispatch supplies its parsed policy and demand.
+ * No second evaluator or policy interpretation is used for the owned root. */
+static void prime_native_owned_dispatch(
     PrimeNativeOwnedRequest *request, Space *space, Arena *arena,
-    Atom *expression, int fuel, const Bindings *environment,
+    Atom *expression, int fuel, uint64_t limit, const Bindings *environment,
     const CettaSearchPolicySpec *policy, bool accepted) {
     request->status = CETTA_CONTINUATION_UNSUPPORTED;
     bool transaction=request->transaction_entry && prime_native_transaction_policy(policy);
-    if (!accepted || (!transaction && !prime_native_owned_cost_policy(policy)))
+    if (!accepted || (!transaction &&
+            (!prime_native_owned_observation_policy(policy) || !policy->retain)))
         return;
     Atom *registered = registry_lookup_atom(expression);
     if (registered) expression = registered;
@@ -56334,7 +56510,7 @@ static void prime_native_owned_cost_dispatch(
     request->unpublished = cetta_malloc(sizeof(*request->unpublished));
     request->initialized = prime_native_control_init(request->unpublished,
         space, arena, expression, fuel, true,
-        (CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+        prime_native_control_demand(NULL,limit,policy),
         policy, environment, NULL, NULL);
     if (request->top_episode && request->unpublished->owned_arena) {
         prime_native_top_episode_attach(&request->unpublished->storage, request->top_episode);
@@ -56346,7 +56522,7 @@ static void prime_native_owned_cost_dispatch(
         request->status = CETTA_CONTINUATION_CAPACITY;
         return;
     }
-    (void)prime_native_owned_cost_resume(request, request->allowance);
+    (void)prime_native_owned_resume(request, request->allowance);
 }
 
 #include "prime_owned_selection.inc"
@@ -56355,6 +56531,19 @@ static bool prime_native_control_select(
     Space *space, Arena *arena, Atom *expression, int fuel,
     uint64_t limit, const CettaSearchPolicySpec *policy, OutcomeSet *outcomes,
     const Bindings *environment, const PettaPlanNode *source_plan) {
+    /* The normal consumer has already parsed the actual request. Only
+     * its designated target, exact held program and policy can enter the
+     * admitted root operation. This lookup stays in the native service. */
+    PrimeNativeOwnedRequest *request=g_prime_owned_selection_request;
+    Atom *root=request && request->top_episode ? request->top_episode->request_expression : NULL;
+    if (request && request->pending==outcomes && root && root->kind==ATOM_EXPR && root->expr.len &&
+        (atom_is_symbol_id(root->expr.elems[0],g_builtin_syms.select) ||
+         atom_is_symbol_id(root->expr.elems[0],g_builtin_syms.once)) &&
+        expr_nargs(root)>=2u && expr_arg(root,expr_nargs(root)-1u)==expression &&
+        expr_arg(root,expr_nargs(root)-2u)==policy->policy_atom) {
+        prime_native_owned_dispatch(request,space,arena,expression,fuel,limit,environment,policy,true);
+        return true;
+    }
 #if !CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (policy->history.enabled) return false;
 #endif
@@ -56394,7 +56583,9 @@ static bool prime_native_control_select(
                 assert(released); (void)released;
                 return false;
             }
-            return prime_native_owned_region_select(operation,space,arena,policy,outcomes);
+            bool selected=prime_native_owned_region_select(&operation,space,arena,limit,policy,outcomes);
+            prime_native_acquired_operation_free(operation);
+            return selected;
         }
         /* Borrowed controls retain their established serial service
          * protocol. This branch grants no concurrent context lifetime. */
@@ -56418,15 +56609,7 @@ static bool prime_native_control_select(
                    : native_dialect_admits(space, expression))) {
         return false;
     }
-    CettaObservationDemand demand = {
-        .completion = policy->all ? CETTA_OBSERVATION_COMPLETE_BAG
-                                  : CETTA_OBSERVATION_FINITE_PREFIX,
-        .prefix_limit = limit,
-    };
-    if (control && policy->additional) {
-        demand.prefix_limit = limit > UINT64_MAX - control->delivered_count
-            ? UINT64_MAX : limit + control->delivered_count;
-    }
+    CettaObservationDemand demand=prime_native_control_demand(control,limit,policy);
     if (!control) {
         control = cetta_malloc(sizeof(*control));
         if (!prime_native_control_init(control, space, arena, expression, fuel,
@@ -56597,8 +56780,9 @@ static bool prime_native_control_select(
     return prime_native_control_publish(control, arena, values, policy, retained, handle_id, outcomes);
 }
 
-/* Discovery owns the catalogue, not a runnable permission. Each proposal
- * owns its storage independently, so taking one retains no siblings. */
+/* Space discovery owns independent proposals. Resume discovery instead
+ * holds the existing controller's exclusive use while paging its frontier;
+ * taking a Resume retains that controller and all its sibling occurrences. */
 typedef struct {
     Arena storage;
     RegistryReadView registry_read;
@@ -56606,12 +56790,27 @@ typedef struct {
     Space *root;
     Atom *source;
     uint64_t handle, quanta;
+    SymbolId profile;
+    CettaSpaceAgendaChoiceKind kind;
     CettaSpaceAgendaDiscoveryStep status;
+    CettaNativeHandleUse resume_use;
+    size_t resume_position, resume_length;
+    bool resume_frontier;
 } PrimeInteractionDiscovery;
+
+static void prime_interaction_resume_release(PrimeInteractionDiscovery *owner) {
+    if (!owner->resume_use.self) return;
+    PrimeNativeControl *control = cetta_native_handle_use_resource(&owner->resume_use);
+    assert(control && control->leased);
+    control->leased = false;
+    bool released = cetta_native_handle_use_release(&owner->resume_use);
+    assert(released); (void)released;
+}
 
 static void prime_interaction_discovery_destroy(void *raw) {
     PrimeInteractionDiscovery *owner = raw;
     if (!owner) return;
+    prime_interaction_resume_release(owner);
     cetta_space_agenda_discovery_free(owner->discovery);
     registry_read_view_free(&owner->registry_read);
     arena_free(&owner->storage);
@@ -56625,6 +56824,7 @@ static void prime_interaction_discovery_storage(const void *raw, CettaStorageCen
     registry_storage_census(&owner->registry_read.initial, census);
     registry_storage_census(&owner->registry_read.consulted, census);
     cetta_space_agenda_discovery_storage(owner->discovery, census);
+    cetta_native_handle_use_storage(&owner->resume_use, census);
 }
 
 static void prime_interaction_use_leave(CettaNativeHandleUse *use) {
@@ -56634,6 +56834,15 @@ static void prime_interaction_use_leave(CettaNativeHandleUse *use) {
 }
 
 static Atom *prime_interaction_choice_atom(Arena *arena, const CettaSpaceAgendaChoice *choice) {
+    if (choice->kind==CETTA_SPACE_CHOICE_MM2_ACTIVATION) {
+        Atom *fields[] = {atom_symbol(arena,"ActivationChoice"),
+            prime_native_occurrence_atom(arena,choice->ticket),
+            atom_expr2(arena,atom_symbol(arena,"occurrence"),
+                prime_native_occurrence_atom(arena,choice->source_index)),
+            atom_expr2(arena,atom_symbol(arena,"source"),
+                atom_prime_held_wrap(arena,atom_deep_copy(arena,choice->source)))};
+        return atom_expr(arena,fields,sizeof(fields)/sizeof(*fields));
+    }
     Atom *fields[] = {atom_symbol(arena, "Choice"),
         prime_native_occurrence_atom(arena, choice->ticket),
         atom_expr2(arena, atom_symbol(arena, "occurrence"),
@@ -56645,6 +56854,130 @@ static Atom *prime_interaction_choice_atom(Arena *arena, const CettaSpaceAgendaC
         atom_expr2(arena, atom_symbol(arena, "dependencies"),
             atom_prime_held_wrap(arena, atom_deep_copy(arena, choice->dependencies)))};
     return atom_expr(arena, fields, sizeof(fields) / sizeof(*fields));
+}
+
+static bool prime_interaction_resume_current(PrimeInteractionDiscovery *owner) {
+    PrimeNativeControl *control = cetta_native_handle_use_resource(&owner->resume_use);
+    if (!control || !cetta_native_handle_use_is_current(&owner->resume_use)) return false;
+    __attribute__((cleanup(prime_native_region_scope_leave)))
+    PrimeNativeRegionScope scope={0};
+    if (!prime_native_region_scope_enter(control->owned_top_episode,&scope)) return false;
+    return control->leased && !control->failed && !control->invalidated &&
+        !control->registry_read.incomplete &&
+        cetta_continuation_hub_length(&control->hub) == owner->resume_length &&
+        (!(control->space_agenda && (control->policy.selection || control->policy.key_expression)) ||
+         space_program_token_is_current(control->resource_program_read)) &&
+        (control->space_agenda ? cetta_space_agenda_current(control->space_agenda) :
+         space_read_token_is_current(control->source_read)) &&
+        prime_native_control_query_reads_current(control) &&
+        registry_read_view_validate(&control->registry_read,g_registry);
+}
+
+static Atom *prime_interaction_resume_source(Arena *arena, Atom *source,
+    const Bindings *environment, bool snapshot) {
+    if (!source) return atom_symbol(arena,"None");
+    if (!snapshot) return atom_deep_copy(arena,source);
+    Arena temporary; arena_init_detached(&temporary);
+    arena_set_scalar_cache(&temporary,false);
+    Atom *reified=prime_need_reify_suspended(&temporary,source,
+        environment ? bindings_need_view(environment) : NULL);
+    AtomDeepCopySession *copy=atom_deep_copy_session_new(arena);
+    Atom *result=reified && copy && atom_deep_copy_session_set_snapshot(copy)
+        ? atom_deep_copy_session_copy(copy,reified) : NULL;
+    atom_deep_copy_session_free(copy);
+    arena_free(&temporary);
+    return result;
+}
+
+static Atom *prime_interaction_resume_atom(Arena *arena, size_t index,
+    const CettaOwnedContinuation *item, bool snapshot) {
+    PrimeNativeWork *work = item->payload;
+    const char *operation = work->resource_step ? "Resource" :
+        work->licence ? "Weight" : work->parallel ? "Publication" :
+        work->dialect ? "Dialect" : work->task_initialized ?
+        (work->task.kind == PRIME_EVAL_STACK_TASK_BIND ? "Bind" :
+         work->task.kind == PRIME_EVAL_STACK_TASK_CALL ? "Call" :
+         work->task.kind == PRIME_EVAL_STACK_TASK_BRANCH ? "Branch" : "Normalize") : "Return";
+    Atom *source = work->task_initialized ? work->task.atom :
+        work->frame ? work->frame->atom : work->owner->source_expression;
+    const Bindings *environment=work->task_initialized && work->task.dynamic_env_initialized
+        ? &work->task.dynamic_env : work->frame && work->frame->env_initialized
+        ? &work->frame->env : NULL;
+    Atom *view=prime_interaction_resume_source(arena,source,environment,snapshot);
+    if (!view) return NULL;
+    Atom *fields[] = {atom_symbol(arena,"ResumeChoice"),
+        prime_native_occurrence_atom(arena,(uint64_t)index+1u),
+        atom_expr2(arena,atom_symbol(arena,"occurrence"),
+            prime_native_occurrence_atom(arena,item->occurrence_id)),
+        atom_expr2(arena,atom_symbol(arena,"parent"),
+            prime_native_occurrence_atom(arena,item->parent_occurrence_id)),
+        atom_expr2(arena,atom_symbol(arena,"operation"),atom_symbol(arena,operation)),
+        atom_expr2(arena,atom_symbol(arena,"source"),
+            atom_prime_held_wrap(arena,view))};
+    return atom_expr(arena,fields,sizeof(fields)/sizeof(*fields));
+}
+
+static Atom *prime_interaction_resume_choices(PrimeInteractionDiscovery *owner,
+    Arena *arena, uint64_t allowance) {
+    ResultSet page; result_set_init(&page);
+    bool selected = !owner->resume_use.self;
+    bool current = selected || prime_interaction_resume_current(owner);
+    if (!selected && current) {
+        PrimeNativeControl *control = cetta_native_handle_use_resource(&owner->resume_use);
+        __attribute__((cleanup(prime_native_region_scope_leave)))
+        PrimeNativeRegionScope scope={0};
+        bool entered=prime_native_region_scope_enter(control->owned_top_episode,&scope);
+        bool snapshot=entered && g_prime_owned_region!=NULL;
+        if (!entered) owner->status=CETTA_SPACE_DISCOVERY_INCOMPLETE;
+        while (entered && allowance && owner->resume_position < owner->resume_length &&
+                !eval_unwinding() && !eval_cancel_check()) {
+            size_t index = owner->resume_position;
+            Atom *view=prime_interaction_resume_atom(arena,index,
+                cetta_continuation_hub_at(&control->hub,index),snapshot);
+            if (!view) {owner->status=CETTA_SPACE_DISCOVERY_INCOMPLETE;break;}
+            result_set_add(&page,view);
+            owner->resume_position++;
+            owner->status=CETTA_SPACE_DISCOVERY_CHOICE;
+            allowance--;
+            if (owner->quanta < UINT64_MAX) owner->quanta++;
+        }
+    }
+    Atom *fields[] = {atom_symbol(arena,"InteractionChoices"),
+        atom_expr2(arena,atom_symbol(arena,"choices"),atom_expr(arena,page.items,page.len)),
+        atom_expr2(arena,atom_symbol(arena,"status"),atom_symbol(arena,
+            !current ? "Invalidated" : selected || owner->resume_position == owner->resume_length
+                ? "Exhausted" : owner->status==CETTA_SPACE_DISCOVERY_INCOMPLETE ? "Incomplete" : "Pending")),
+        atom_expr2(arena,atom_symbol(arena,"pending"),atom_symbol(arena,
+            !current ? "StaleResumeSource" : selected ? "Selected" :
+            owner->status==CETTA_SPACE_DISCOVERY_INCOMPLETE ? "ResumeView" : "None")),
+        atom_expr2(arena,atom_symbol(arena,"quanta"),prime_native_occurrence_atom(arena,owner->quanta)),
+        atom_expr2(arena,atom_symbol(arena,"residual"),cetta_native_handle_owned_atom(
+            g_library_context,arena,"prime-space-discovery",owner->handle))};
+    Atom *result = atom_expr(arena,fields,sizeof(fields)/sizeof(*fields));
+    result_set_free(&page);
+    return result;
+}
+
+static bool prime_interaction_check_authority(Space *space, Arena *arena, Atom *call) {
+    for (PrimeEvalStackDriver *scope = prime_eval_authority_driver(); scope;
+            scope = scope->authority_parent) {
+        if (scope->pure_authority || (scope->control &&
+                (scope->control->pure_authority || scope->control->active_scoring))) {
+            prime_eval_refuse_authority(scope);
+            return false;
+        }
+    }
+    return prime_eval_check_call_authority(space,arena,call);
+}
+
+static void prime_interaction_resume_policy(PrimeNativeControl *control,
+    uint64_t allowance, CettaSearchPolicySpec *policy, uint64_t *limit) {
+    *policy = control->policy;
+    policy->native_control = policy->retain = true;
+    policy->implicit_first_value = false;
+    policy->work_budget = allowance;
+    policy->additional = !policy->selection && !policy->all;
+    *limit = policy->selection ? control->hub.plan.prefix_limit : 1u;
 }
 
 static Atom *prime_interaction_choices_run(PrimeInteractionDiscovery *owner,
@@ -56688,28 +57021,40 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
     const PrimeNeedSymbolIds *ids = prime_need_symbols();
     SymbolId head = atom_head_symbol_id(call);
     CettaExprLen nargs = expr_nargs(call);
-    bool choices = head == ids->interaction_choices && nargs == 2u;
-    bool perform = head == ids->interaction_perform && (nargs == 2u || nargs == 3u);
-    bool dispose = head == ids->interaction_dispose && nargs == 1u;
-    if (!choices && !perform && !dispose) return false;
+    if (!prime_need_interaction_arity(head,nargs)) return false;
+    bool choices = head == ids->interaction_choices;
+    bool perform = head == ids->interaction_perform;
+    bool dispose = head == ids->interaction_dispose;
     Atom *budget = dispose ? NULL : expr_arg(call, nargs - 1u);
-    Atom *ticket = nargs == 3u ? expr_arg(call, 1u) : NULL;
+    Atom *ticket = perform && nargs == 3u ? expr_arg(call, 1u) : NULL;
+    SymbolId requested_profile=0;
+    bool requested_resume=false;
+    CettaSpaceAgendaChoiceKind requested_kind=CETTA_SPACE_CHOICE_TRANSACTION_COMMIT;
+    if (choices && nargs==3u) {
+        Atom *profile=bindings_apply_if_vars(environment,arena,expr_arg(call,1u));
+        if (profile && profile->kind==ATOM_EXPR && profile->expr.len==2u &&
+            atom_is_symbol_id(profile->expr.elems[0],ids->resource_transaction) &&
+            (atom_is_symbol(profile->expr.elems[1],"matches") ||
+             atom_is_symbol_id(profile->expr.elems[1],ids->resource_worlds))) {
+            requested_profile=ids->resource_transaction;
+            requested_kind=atom_is_symbol_id(profile->expr.elems[1],ids->resource_worlds)
+                ? CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH : CETTA_SPACE_CHOICE_TRANSACTION_MATCH;
+        } else {
+            requested_resume=atom_is_symbol(profile,"Resume");
+            if (!requested_resume && !atom_is_symbol_id(profile,ids->resource_mm2) &&
+                !atom_is_symbol_id(profile,ids->resource_transaction)) return false;
+            requested_profile=atom_symbol_current_id(profile);
+            if (requested_profile==ids->resource_mm2)
+                requested_kind=CETTA_SPACE_CHOICE_MM2_ACTIVATION;
+        }
+    }
     if (!g_library_context || (!dispose && (!budget || budget->kind != ATOM_GROUNDED ||
         budget->ground.gkind != GV_INT || budget->ground.ival < 0)) ||
         (ticket && (ticket->kind != ATOM_GROUNDED || ticket->ground.gkind != GV_INT ||
                     ticket->ground.ival <= 0))) return false;
     uint64_t allowance = dispose ? 0u : (uint64_t)budget->ground.ival;
-    if (perform || dispose) {
-        for (PrimeEvalStackDriver *scope = prime_eval_authority_driver(); scope;
-             scope = scope->authority_parent) {
-            if (scope->pure_authority || (scope->control &&
-                (scope->control->pure_authority || scope->control->active_scoring))) {
-                prime_eval_refuse_authority(scope);
-                return true;
-            }
-        }
-        if (!prime_eval_check_call_authority(space, arena, call)) return true;
-    }
+    if ((perform || dispose || requested_resume) &&
+        !prime_interaction_check_authority(space,arena,call)) return true;
     Atom *input = bindings_apply_if_vars(environment, arena, expr_arg(call, 0u));
     Atom *registered = registry_lookup_atom(input);
     if (registered) input = registered;
@@ -56723,7 +57068,7 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
                 CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return false;
         if (!cursor) {
             PrimeNativeControl *control=cetta_native_handle_use_resource(&use);
-            if (!control || !control->interaction_selection || control->leased ||
+            if (!control || (!control->interaction_selection && !control->resume_choice) || control->leased ||
                 control->active_work || control->driver.running_task ||
                 g_prime_eval_stack_driver==&control->driver ||
                 g_prime_eval_top_authority==&control->driver) return false;
@@ -56745,7 +57090,15 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
         .workers=1u, .work_budget=allowance, .resource_profile=ids->resource_transaction};
     if (perform && nargs == 2u) {
         PrimeNativeControl *control = cetta_native_handle_get_owned(g_library_context, "prime-search", input);
-        if (!control || !control->interaction_selection) return false;
+        if (!control || (!control->interaction_selection && !control->resume_choice)) return false;
+        if (control->resume_choice) {
+            uint64_t limit;
+            prime_interaction_resume_policy(control,allowance,&policy,&limit);
+            return prime_native_control_select(space,arena,input,fuel,limit,&policy,
+                target,environment,NULL);
+        }
+        policy.resource_profile = control->policy.resource_profile;
+        policy.resource_worlds = control->policy.resource_worlds;
         policy.history = control->policy.history;
         policy.costs = control->policy.costs;
         policy.cost_compact = control->policy.cost_compact;
@@ -56761,10 +57114,22 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
         if (!cetta_native_handle_acquire_owned(g_library_context, "prime-space-discovery", input,
                 CETTA_NATIVE_HANDLE_USE_EXCLUSIVE, &use)) return false;
         owner = cetta_native_handle_use_resource(&use);
-    } else if (perform || !resolve_runtime_space(g_registry, input)) return false;
-    if (perform && owner && !registry_read_view_validate(&owner->registry_read, g_registry)) return false;
-    if (perform && (!owner || !cetta_space_agenda_discovery_choice(owner->discovery,
-            (uint64_t)ticket->ground.ival, &(CettaSpaceAgendaChoice){0}))) return false;
+    } else if (perform || (!requested_resume && !resolve_runtime_space(g_registry, input))) return false;
+    if (owner && requested_profile &&
+        (owner->profile!=requested_profile || owner->kind!=requested_kind)) return false;
+    if (owner) {
+        if (choices && owner->resume_frontier && !requested_resume &&
+            !prime_interaction_check_authority(space,arena,call)) return true;
+        policy.resource_profile=owner->profile;
+        policy.resource_worlds=owner->kind==CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH;
+    }
+    if (perform && owner && !owner->resume_frontier &&
+        !registry_read_view_validate(&owner->registry_read, g_registry)) return false;
+    if (perform && (!owner || (owner->resume_frontier
+            ? !prime_interaction_resume_current(owner) ||
+              (uint64_t)ticket->ground.ival > owner->resume_position
+            : !cetta_space_agenda_discovery_choice(owner->discovery,
+                (uint64_t)ticket->ground.ival, &(CettaSpaceAgendaChoice){0})))) return false;
     /* Reserve the receiver and caller environment before preparation or a
      * linear take. This capacity is also retained by the nested return path. */
     Outcome *slot = outcome_set_push_slot(target);
@@ -56779,15 +57144,41 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
         owner = calloc(1u, sizeof(*owner));
         if (!owner) {eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;}
         arena_init_detached(&owner->storage); arena_set_hashcons(&owner->storage, NULL);
+        owner->profile=requested_profile ? requested_profile : ids->resource_transaction;
+        owner->kind=requested_kind;
         owner->root = space;
         owner->source = atom_deep_copy(&owner->storage, input);
-        Bindings captured;
-        bool ready = prime_eval_stack_capture_dynamic_env(&captured, environment);
-        ready = ready && registry_read_view_init(&owner->registry_read, g_registry, &owner->storage);
-        if (ready) owner->discovery = cetta_space_agenda_discovery_new_owned(
-            resolve_runtime_space(g_registry, input), &captured);
-        bindings_free(&captured);
-        if (!owner->discovery || !cetta_native_handle_alloc(g_library_context,
+        bool ready;
+        if (requested_resume) {
+            owner->resume_frontier=true;
+            ready=cetta_native_handle_acquire_owned(g_library_context,"prime-search",input,
+                CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&owner->resume_use);
+            PrimeNativeControl *control=ready ? cetta_native_handle_use_resource(&owner->resume_use) : NULL;
+            ready=control && control->owned_arena && !control->leased && !control->active_work &&
+                !control->driver.running_task && !control->driver.capsule_stack &&
+                !control->parallel_inflight_count && !control->parallel_wave_pending &&
+                !control->refill_pending &&
+                (!control->resume_choice || !control->resume_choice->occurrence) &&
+                g_prime_eval_stack_driver!=&control->driver &&
+                g_prime_eval_top_authority!=&control->driver;
+            if (ready) {
+                control->leased=true;
+                owner->resume_length=cetta_continuation_hub_length(&control->hub);
+                ready=prime_interaction_resume_current(owner);
+            } else if (owner->resume_use.self) {
+                bool released=cetta_native_handle_use_release(&owner->resume_use);
+                assert(released); (void)released;
+            }
+        } else {
+            Bindings captured;
+            ready = prime_eval_stack_capture_dynamic_env(&captured, environment);
+            ready = ready && registry_read_view_init(&owner->registry_read,g_registry,&owner->storage);
+            if (ready) owner->discovery = cetta_space_agenda_discovery_new_owned_kind(
+                resolve_runtime_space(g_registry,input),&captured,owner->kind);
+            bindings_free(&captured);
+            ready=owner->discovery!=NULL;
+        }
+        if (!ready || !cetta_native_handle_alloc(g_library_context,
                 "prime-space-discovery", owner, prime_interaction_discovery_destroy, &owner->handle)) {
             prime_interaction_discovery_destroy(owner); return true;
         }
@@ -56798,7 +57189,52 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
             "prime-space-discovery", owner->handle);
     }
     if (choices) {
-        slot->atom = prime_interaction_choices_run(owner, arena, allowance);
+        slot->atom = owner->resume_frontier ? prime_interaction_resume_choices(owner,arena,allowance) :
+            prime_interaction_choices_run(owner, arena, allowance);
+        return true;
+    }
+    if (owner->resume_frontier) {
+        PrimeNativeControl *control=cetta_native_handle_use_resource(&owner->resume_use);
+        bool region=control->owned_top_episode && control->owned_top_episode->owned_region;
+        uint64_t limit;
+        prime_interaction_resume_policy(control,allowance,&policy,&limit);
+        if (region && (!prime_native_owned_observation_policy(&policy) ||
+                !prime_native_owned_region_receiver(control,arena,target))) return true;
+        PrimeNativeResumeChoice *choice=control->resume_choice;
+        if (!choice) choice=calloc(1u,sizeof(*choice));
+        if (!choice) {eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;}
+        size_t index=(size_t)((uint64_t)ticket->ground.ival-1u);
+        if (region) {
+            PrimeNativeAcquiredOperation *operation=prime_native_acquired_operation_adopt(
+                &owner->resume_use,owner->source,arena,allowance);
+            if (!operation) {
+                if (choice!=control->resume_choice) free(choice);
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;
+            }
+            operation->owns_lease=true;
+            uint64_t occurrence=cetta_continuation_hub_at(&control->hub,index)->occurrence_id;
+            if (!prime_native_owned_region_select(&operation,space,arena,limit,&policy,target)) {
+                bool restored=cetta_native_handle_use_move(&owner->resume_use,&operation->use);
+                assert(restored); (void)restored;
+                operation->owns_lease=false;
+                prime_native_acquired_operation_free(operation);
+                if (choice!=control->resume_choice) free(choice);
+                return true;
+            }
+            control->resume_choice=choice;
+            choice->occurrence=occurrence;
+            outcome_free_fields(slot); target->len--;
+            return true;
+        }
+        control->resume_choice=choice;
+        choice->occurrence=cetta_continuation_hub_at(&control->hub,index)->occurrence_id;
+        prime_interaction_resume_release(owner);
+        outcome_free_fields(slot); target->len--;
+        if (!prime_native_control_select(space,arena,owner->source,fuel,limit,&policy,
+                target,environment,NULL)) {
+            outcome_set_add(target,prime_native_control_observation_atom(control,arena,
+                atom_expr(arena,NULL,0u),&policy,control->handle_id),environment);
+        }
         return true;
     }
     PrimeNativeControl *control = calloc(1u, sizeof(*control));
@@ -60434,7 +60870,7 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
      * as a top-level read, before a data plan interprets its children. */
     if (native_cost_read_form(expression))
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
-    if (native_weight_form(expression) ||
+    if (native_weight_form(expression) || native_interaction_form(expression) ||
         (native_control_profile_active() &&
          space_match_where_grade(expression))) {
         return PETTA_MACHINE_HOST_READY_OVERRIDE;
@@ -61665,8 +62101,8 @@ static bool petta_eval_machine_admit_ground_atom(
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
         prime_need_atom_contains_private_capability(payload))
         return false;
-    EvalSpaceMutationEffect effect = eval_apply_space_addition(
-        space, arena, call, payload, false);
+    EvalSpaceMutationEffect effect = eval_apply_space_mutation(
+        space, arena, call, payload, false, false);
     if (effect.error) {
         /* The machine raises the error it is handed; one the addition
          * raised is taken here, so it is raised once. */
@@ -62176,10 +62612,9 @@ static bool prime_relation_needs_owned_handler(const Atom *atom) {
            prime_need_form_is(atom, syms->cost_analyze, 2u) ||
            prime_need_form_is(atom, syms->cost_analyze, 3u) ||
            prime_need_form_is(atom, syms->cost_analyze, 4u) ||
-           prime_need_form_is(atom, syms->interaction_choices, 2u) ||
-           prime_need_form_is(atom, syms->interaction_perform, 2u) ||
-           prime_need_form_is(atom, syms->interaction_perform, 3u) ||
-           prime_need_form_is(atom, syms->interaction_dispose, 1u) ||
+           (atom && atom->kind==ATOM_EXPR && atom->expr.len>0u &&
+            eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
+            prime_need_interaction_arity(atom_head_symbol_id(atom),atom->expr.len-1u)) ||
            prime_need_form_is(atom, syms->history_capture, 2u) ||
            prime_need_form_is(atom, syms->history_record, 2u) ||
            prime_need_form_is(atom, syms->history_replay, 2u) ||
@@ -65446,7 +65881,8 @@ petta_prepared_pure_pattern_view(
 static bool prepared_pure_requires_native_handler(Space *space, const Atom *expression) {
     if (!expression || expression->kind != ATOM_EXPR || !expression->expr.len)
         return false;
-    if (native_weight_form(expression) || native_cost_read_form(expression)) return true;
+    if (native_weight_form(expression) || native_cost_read_form(expression) ||
+        native_interaction_form(expression)) return true;
     if (!native_control_profile_active()) return false;
     if (space_match_where_grade(expression)) return true;
     bool source_may_grade = expression && expression->kind == ATOM_EXPR && expression->expr.len &&
@@ -65900,6 +66336,7 @@ typedef struct PrimeCapsuleService {
 struct PrimeCapsuleSearch {
     PettaEvalMachineContext context;
     CettaPreparedPureClosedExecution *execution;
+    CettaOwnedExecution returns;
     PrimeCapsuleService *service;
     uint64_t service_requests,service_resumes;
     /* Native driver dispatches and adapter cell allocations are distinct
@@ -65946,12 +66383,14 @@ struct PrimeCapsuleSearch {
     uint64_t suspended;
     CettaPreparedClosedStep last_step;
     uint64_t slice_instructions;
-    bool exhausted;
-    bool raw_pending;
-    Atom *raw_answer;
     Bindings raw_environment;
     OutcomeSet pending_projection;
 };
+
+static CettaOwnedExecutionStep prime_capsule_search_next(void *raw,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion);
+static void prime_capsule_search_release(void *raw);
+static bool prime_capsule_search_final_current(void *raw);
 
 static void prime_capsule_search_storage_visit(const void *raw, CettaStorageCensus *census) {
     const PrimeCapsuleSearch *search = raw;
@@ -66027,10 +66466,8 @@ static void prime_capsule_search_free(PrimeCapsuleSearch *search) {
         search->symbol_instance == symbol_table_instance_id(g_symbols) &&
         search->library_revision ==
             cetta_library_petta_admission_revision(g_library_context);
-    if (search->execution) {
-        bool closed=cetta_prepared_pure_closed_close(search->execution,search);assert(closed);
-        search->execution=NULL;
-    }
+    cetta_owned_execution_cancel(&search->returns);
+    assert(!search->execution);
     prepared_pure_program_cache_free(&search->context.prepared_pure_cache);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     free(search->context.analysis_state);
@@ -66180,6 +66617,7 @@ static bool prime_capsule_search_current(PrimeCapsuleSearch *search) {
  * that separate exit contract is not supplied by this execution profile. */
 static void prime_capsule_search_stop(PrimeCapsuleSearch *search,
         CettaEvalCompletion completion) {
+    search->returns.completion=completion;
     if (search->owner) {
         if (completion==CETTA_EVAL_INCOMPLETE_INVALIDATED) {
             prime_native_trace_conjuncts(search->owner, "capsule-search-stop");
@@ -66835,6 +67273,9 @@ static inline __attribute__((always_inline)) bool prime_capsule_search_schedule_
     frame->fuel=fuel;frame->target=target;frame->preserve_bindings=preserve;
     frame->evaluator_id=g_prime_need_evaluator_id;frame->capsule_search=search;
     search->owner=driver->control;search->frame=frame;search->certificate=certificate;
+    cetta_owned_execution_init(&search->returns,search,
+        prime_capsule_search_next,prime_capsule_search_release);
+    search->returns.final_is_current=prime_capsule_search_final_current;
     search->certificate_cache=cache;
     search->certificate_source_identity=plan.source_view.root;
     search->certificate_language_id=plan.language_id;
@@ -66903,12 +67344,15 @@ CETTA_PREPARED_ENTRY(bool, prime_capsule_search_schedule,
         OutcomeSet *target),
     (space, arena, call, type, fuel, environment, preserve, target))
 
-/* The machine has already paid for this occurrence. Keep both its raw
- * answer/environment and any prepared projection until checked append
- * acknowledges it. A refusal never calls petta_machine_next again. */
-static bool prime_capsule_search_publish(PrimeEvalStackFrame *frame) {
-    PrimeCapsuleSearch *search=frame->capsule_search;
-    if (!search->raw_pending) return true;
+/* The shared driver holds the paid return while this consumer prepares its
+ * actual Need environment and checked projection. A refused append retains
+ * both, without another prepared instruction or service request. */
+static bool prime_capsule_search_consume(void *raw,
+        const CettaOwnedReturn *returned) {
+    PrimeCapsuleSearch *search=raw;
+    PrimeEvalStackFrame *frame=search->frame;
+    assert(returned->outcome.kind==CETTA_CALL_VALUE &&
+        returned->environment==&search->execution_environment);
     if (!prime_capsule_search_current(search)) {
         prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_INVALIDATED);return false;
     }
@@ -66917,19 +67361,22 @@ static bool prime_capsule_search_publish(PrimeEvalStackFrame *frame) {
          * bindings. A service-free return still belongs to the evaluating
          * occurrence. Retain this packet across every append retry. */
         Bindings carried;
-        bool ready=prime_eval_stack_capture_dynamic_env(&carried,&search->execution_environment);
+        bool ready=prime_eval_stack_capture_dynamic_env(&carried,returned->environment);
         if (ready) {
-            ready=prime_capsule_service_value_owned(search->raw_answer,&carried);
+            ready=prime_capsule_service_value_owned(returned->outcome.term,&carried);
             if (!ready) bindings_free(&carried);
         }
         if (!ready) {prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);return false;}
         bindings_free(&search->raw_environment);bindings_move(&search->raw_environment,&carried);
         search->service_environment_captured=true;
     }
-    if (!search->pending_projection.len)
+    if (!search->pending_projection.len) {
         outcome_set_add_prefixed(frame->arena,&search->pending_projection,
-            search->raw_answer,&search->raw_environment,&frame->env,
+            returned->outcome.term,&search->raw_environment,&frame->env,
             frame->preserve_bindings);
+        if (search->pending_projection.len==1u)
+            search->pending_projection.items[0].result_form=returned->outcome.result_form;
+    }
     if (search->pending_projection.len!=1u ||
         outcome_set_prepare_existing_move_in_owner(&frame->child,
             &search->pending_projection.items[0],frame->arena)!=OUTCOME_APPEND_COMMITTED) {
@@ -66939,9 +67386,77 @@ static bool prime_capsule_search_publish(PrimeEvalStackFrame *frame) {
     search->pending_projection.len=0u;
     bindings_free(&search->raw_environment);
     bindings_init(&search->raw_environment);
-    search->raw_answer=NULL;search->raw_pending=false;
     search->service_environment_captured=false;
+    search->returns.completion=CETTA_EVAL_COMPLETE;
     return true;
+}
+
+static bool prime_capsule_search_publish(PrimeEvalStackFrame *frame) {
+    PrimeCapsuleSearch *search=frame->capsule_search;
+    if (search->returns.has_pending) {
+        (void)cetta_owned_execution_sequence_with(&search->returns,1u,
+            prime_capsule_search_next,prime_capsule_search_consume,search);
+    }
+    return !search->returns.has_pending;
+}
+
+static void prime_capsule_search_release(void *raw) {
+    PrimeCapsuleSearch *search=raw;
+    if (search->execution) {
+        bool closed=cetta_prepared_pure_closed_close(search->execution,search);
+        assert(closed);(void)closed;
+        search->execution=NULL;
+    }
+}
+
+static bool prime_capsule_search_final_current(void *raw) {
+    return prime_capsule_search_current(raw);
+}
+
+/* One request advances the existing prepared invocation or its canonical
+ * service stack. Neither service suspension nor an unfinished body is an
+ * empty result. The enclosing ordinary driver owns their source authority. */
+static CettaOwnedExecutionStep prime_capsule_search_next(void *raw,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    PrimeCapsuleSearch *search=raw;
+    *completion=CETTA_EVAL_COMPLETE;
+    search->slice_instructions=0u;
+    if (search->last_step==CETTA_PREPARED_CLOSED_SERVICE) {
+        prime_capsule_service_resume(search);
+    } else if (search->last_step==CETTA_PREPARED_CLOSED_EXHAUSTED && search->service) {
+        if (!cetta_prepared_pure_closed_service_restore(search->execution,search,
+                search->service->cut))
+            prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);
+        else search->last_step=CETTA_PREPARED_CLOSED_SERVICE;
+    } else {
+        Atom *answer=NULL;uint64_t spent=0u;
+        CettaPreparedClosedStep step=cetta_prepared_pure_closed_step(
+            search->execution,search->frame->arena,search,
+            search->context.controller_quantum_limit,&spent,&answer);
+        search->last_step=step;search->resumes++;search->slice_instructions=spent;
+        search->transitions+=spent;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PREPARED_CAPSULE_STEP,spent);
+        if (step==CETTA_PREPARED_CLOSED_ANSWER) {
+            assert(answer);
+            *returned=(CettaOwnedReturn){.outcome=cetta_call_completed_value(answer),
+                .environment=&search->execution_environment,.final=search->service==NULL};
+            return CETTA_OWNED_EXECUTION_RETURN;
+        }
+        if (step==CETTA_PREPARED_CLOSED_EXHAUSTED && !search->service)
+            return CETTA_OWNED_EXECUTION_COMPLETE;
+        if (step==CETTA_PREPARED_CLOSED_EXHAUSTED) {
+            if (!cetta_prepared_pure_closed_service_restore(search->execution,search,
+                    search->service->cut))
+                prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);
+            else search->last_step=CETTA_PREPARED_CLOSED_SERVICE;
+        } else if (step==CETTA_PREPARED_CLOSED_SUSPENDED) search->suspended++;
+        else if (step==CETTA_PREPARED_CLOSED_INVALIDATED)
+            prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_INVALIDATED);
+        else if (step!=CETTA_PREPARED_CLOSED_SERVICE)
+            prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    }
+    return *completion==CETTA_EVAL_COMPLETE || *completion==CETTA_EVAL_INCOMPLETE_CAPACITY
+        ? CETTA_OWNED_EXECUTION_PAUSED : CETTA_OWNED_EXECUTION_HANDOFF;
 }
 
 static void prime_capsule_search_resume(PrimeEvalStackFrame *frame) {
@@ -66961,53 +67476,26 @@ static void prime_capsule_search_resume(PrimeEvalStackFrame *frame) {
     if (!prime_capsule_search_current(search)) {
         prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_INVALIDATED);return;
     }
-    if (search->raw_pending) {
+    if (search->returns.has_pending) {
         (void)prime_capsule_search_publish(frame);
         return;
     }
-    if (!search->exhausted) {
+    if (!search->returns.terminal) {
         if (!prime_capsule_search_environment(search)) {
             prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);return;
         }
         __attribute__((cleanup(prime_need_active_leave)))
         PrimeNeedActiveGuard need;
         prime_need_active_enter(&need, &search->execution_environment);
-        search->slice_instructions=0u;
-        if (search->last_step==CETTA_PREPARED_CLOSED_SERVICE) {
-            prime_capsule_service_resume(search);return;
-        }
-        if (search->last_step==CETTA_PREPARED_CLOSED_EXHAUSTED && search->service) {
-            if (!cetta_prepared_pure_closed_service_restore(search->execution,search,
-                    search->service->cut)) prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);
-            else search->last_step=CETTA_PREPARED_CLOSED_SERVICE;
+        uint64_t accepted=search->returns.accepted;
+        CettaOwnedExecutionStep step=cetta_owned_execution_sequence_with(&search->returns,
+            1u,prime_capsule_search_next,prime_capsule_search_consume,search);
+        /* Give the existing streaming parent its publication boundary.
+         * A later resume forwards completion without probing the producer. */
+        if (step!=CETTA_OWNED_EXECUTION_COMPLETE || search->returns.accepted!=accepted)
             return;
-        }
-        Atom *answer=NULL;uint64_t spent=0u;
-        CettaPreparedClosedStep step=cetta_prepared_pure_closed_step(
-            search->execution,frame->arena,search,
-            search->context.controller_quantum_limit,&spent,&answer);
-        search->last_step=step;search->resumes++;search->slice_instructions=spent;
-        search->transitions+=spent;
-        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_PREPARED_CAPSULE_STEP,spent);
-        if (step==CETTA_PREPARED_CLOSED_ANSWER) {
-            search->raw_answer=answer;search->raw_pending=true;
-            (void)prime_capsule_search_publish(frame);
-        } else if (step==CETTA_PREPARED_CLOSED_EXHAUSTED) {
-            if (search->service) {
-                if (!cetta_prepared_pure_closed_service_restore(search->execution,search,
-                        search->service->cut)) prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_CAPACITY);
-                else search->last_step=CETTA_PREPARED_CLOSED_SERVICE;
-            } else search->exhausted=true;
-        } else if (step==CETTA_PREPARED_CLOSED_SERVICE) { /* Retained paid node. */ }
-        else if (step==CETTA_PREPARED_CLOSED_SUSPENDED) search->suspended++;
-        else if (step==CETTA_PREPARED_CLOSED_INVALIDATED) prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_INVALIDATED);
-        else {
-            /* A paid declining instruction is blocked, not exhausted and
-             * not a licence to restart the original call on another engine. */
-            prime_capsule_search_stop(search,CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
-        }
-        if (!search->exhausted) return;
     }
+    if (search->returns.stop!=CETTA_OWNED_EXECUTION_COMPLETE) return;
     if (prime_eval_stack_forward_bind(frame)!=OUTCOME_APPEND_COMMITTED) return;
     OutcomeSet *target=frame->target;
     prime_capsule_registry_leave(&registry_guard);
@@ -67121,7 +67609,18 @@ static bool prepared_pure_closed_result_try(
         if (permits_optional && !values_ready && call_mode == CETTA_GSLT_PURE_CALL_EAGER)
             values_ready = prepared_pure_eager_entry_arguments_are_values(
                 space, destination, call, fuel);
-        if (!cetta_prepared_pure_single_result_requires_answer_effect(
+        if (permits_optional && values_ready &&
+            call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
+            program = cetta_prepared_pure_program_compile_closed_result(
+                space, call, call_mode, boolean_value, construct_value,
+                constructs_expression, opaque_value, register_view,
+                expression_view, pattern_view, &source_view, true,
+                total_structural_equality,
+                prepared_pure_match_decision_semantics(call_mode));
+            if (program) cache_entry_arguments_are_values = true;
+        } else if (!cetta_prepared_pure_single_result_requires_answer_effect(
                 space, call, expression_view)) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
@@ -67131,18 +67630,6 @@ static bool prepared_pure_closed_result_try(
                 expression_view, pattern_view, &source_view,
                 cache_entry_arguments_are_values, total_structural_equality,
                 prepared_pure_match_decision_semantics(call_mode));
-        }
-        if (!program && permits_optional && values_ready &&
-            call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
-            program = cetta_prepared_pure_program_compile_closed_optional(
-                space, call, call_mode, boolean_value, construct_value,
-                constructs_expression, opaque_value, register_view,
-                expression_view, pattern_view, &source_view, true,
-                total_structural_equality,
-                prepared_pure_match_decision_semantics(call_mode));
-            if (program) cache_entry_arguments_are_values = true;
         }
     }
     if (!program) {
@@ -68423,6 +68910,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .relation_admitted = petta_eval_open_relation_admitted,
         .resolve_space = petta_eval_machine_resolve_space,
         .boolean_value = petta_eval_machine_boolean_value,
+        .grounded_call = he ? he_machine_grounded_values : NULL,
         .admit_ground_atom = petta_eval_open_admit_ground_atom,
         .named_state = petta_eval_open_named_state,
         .source_output_constraints = source_output_constraints,
@@ -75537,8 +76025,8 @@ prime_need_strict_argument_ready:
     if(language_id==CETTA_LANGUAGE_PRIME&&prime_native_replay_dispatch(
         s,a,atom,CURRENT_ENV,preserve_bindings,os))return;
 #if CETTA_PRIME_EVAL_STACK
-    if (language_id == CETTA_LANGUAGE_PRIME && prime_native_interaction_dispatch(
-            s, a, atom, fuel, CURRENT_ENV, os)) return;
+    if (prime_need_interaction_arity(head_id, nargs) && native_control_profile_active() &&
+        prime_native_interaction_dispatch(s, a, atom, fuel, CURRENT_ENV, os)) return;
     if (native_cost_read_head(head_id) && nargs == 1u &&
         native_control_profile_active()) {
         Atom *handle = expr_arg(atom, 0u);
@@ -75602,8 +76090,10 @@ prime_need_strict_argument_ready:
         }
 
         if (owned_request) {
-            prime_native_owned_cost_dispatch(owned_request, s, a,
-                expr_arg(atom, nargs - 1u), fuel, CURRENT_ENV, &policy, accepted);
+            prime_native_owned_dispatch(owned_request, s, a,
+                expr_arg(atom, nargs - 1u), fuel, 0u, CURRENT_ENV, &policy,
+                accepted && (owned_request->transaction_entry
+                    ? prime_native_transaction_policy(&policy) : prime_native_owned_cost_policy(&policy)));
             return;
         }
         if (!accepted || !prime_native_control_select(s, a, expr_arg(atom, nargs - 1u),
@@ -76321,27 +76811,22 @@ static void metta_call_impl(
 #if CETTA_PRIME_EVAL_STACK
 /* An explicit root request, not the borrowed eval_top/ResultSet interface.
  * Until started, the caller still owns the input and its dynamic context.
- * Once started, subsequent grants use owned_cost_resume on this product. */
-static __attribute__((unused)) CettaContinuationStatus prime_native_owned_cost_call(
+ * Once started, subsequent grants use owned_resume on this product. */
+/* Keep owned-entry context storage outside the ordinary call wrapper.
+ * The admitted root and its designated pending set remain held throughout
+ * this synchronous call. The original dispatcher performs all evaluation. */
+static __attribute__((noinline)) void prime_native_owned_entry_call(
     PrimeNativeOwnedRequest *request, Space *space, Arena *arena,
     Atom *call, Atom *type, int fuel, bool preserve_bindings,
-    const Bindings *environment) {
-    if (request) request->status = CETTA_CONTINUATION_UNSUPPORTED;
-    if (!request || !space || !arena || !g_library_context ||
-        request->started || request->unpublished || request->holder ||
-        !request->holder_arena || !request->pending ||
-        !request->pending->payload_owner || request->pending->len ||
-        g_prime_eval_stack_driver ||
-        eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
-        !call || call->kind != ATOM_EXPR || !call->expr.len ||
-        !atom_is_symbol_id(call->expr.elems[0], prime_need_symbols()->cost_run) ||
-        (expr_nargs(call) != 1u && expr_nargs(call) != 2u) ||
-        (type && !atom_is_symbol_id(type,g_builtin_syms.undefined_type)))
-        return CETTA_CONTINUATION_UNSUPPORTED;
-    metta_call_impl_owned(space, arena, call, type, fuel, preserve_bindings,
-        environment, -1, request->pending, request);
-    return request->status;
+    OutcomeSet *target) {
+    assert(request && request->pending==target);
+    PrimeNativeOwnedRequest *previous=g_prime_owned_selection_request;
+    g_prime_owned_selection_request=request;
+    metta_call_impl_owned(space,arena,call,type,fuel,preserve_bindings,
+        NULL,-1,target,request);
+    g_prime_owned_selection_request=previous;
 }
+
 #endif
 
 
@@ -76395,10 +76880,9 @@ static void metta_call_owned(Space *s, Arena *a, Atom *atom, Atom *etype, int fu
             prefix_limit, NULL, observe_return);
         return;
     }
-    if (top)
-        metta_call_impl_owned(s, a, atom, etype, fuel, preserve_bindings,
-            NULL, -1, os, &top->owned);
-    else
+    if (top) {
+        prime_native_owned_entry_call(&top->owned,s,a,atom,etype,fuel,preserve_bindings,os);
+    } else
         metta_call_impl(s, a, atom, etype, fuel, preserve_bindings,
                         NULL, -1, os);
 #else
@@ -77431,7 +77915,7 @@ static CettaContinuationStatus prime_native_owned_top_resume_in_context(
     g_prime_need_region_branch_owner = NULL;
     g_metta_eval_depth++;
     if (!top->owned.pending->len)
-        (void)prime_native_owned_cost_resume(&top->owned, allowance);
+        (void)prime_native_owned_resume(&top->owned, allowance);
     if (top->owned.pending->len == 1u &&
         (!top->owned.acquired || top->owned.acquired->materialized))
         prime_native_owned_top_project(top, arena, episode->request_expression);
@@ -77693,9 +78177,7 @@ static bool prime_native_registry_observation_admits_profile(Space *space,Arena 
     Atom *expr,bool scoped,bool transaction) {
     if (!space || !(scoped ? prime_native_replay_caller_context() : prime_native_owned_top_context_admitted()) ||
         !g_library_context->petta_program || !expr ||
-        expr->kind != ATOM_EXPR || !expr->expr.len ||
-        !atom_is_symbol_id(expr->expr.elems[0], prime_need_symbols()->cost_run) ||
-        (expr_nargs(expr) != 1u && expr_nargs(expr) != 2u))
+        expr->kind != ATOM_EXPR || !expr->expr.len)
         return false;
     /* Calls selected for the original raw stack keep that dispatcher.
      * The retained root interface cannot take over its continuation. */
@@ -77703,23 +78185,36 @@ static bool prime_native_registry_observation_admits_profile(Space *space,Arena 
     if (!is_grounded_op(head) &&
         eval_equations_may_match_known_head(space, head))
         return false;
+    CettaExprLen nargs=expr_nargs(expr);
+    bool cost=head==prime_need_symbols()->cost_run;
+    bool select=head==g_builtin_syms.select;
+    bool once=head==g_builtin_syms.once;
+    if (!(cost && (nargs==1u || nargs==2u)) &&
+        !(select && (nargs==2u || nargs==3u)) && !(once && nargs==2u))
+        return false;
+    if (select && nargs==3u) {
+        Atom *limit=expr_arg(expr,0u);
+        if (limit->kind!=ATOM_GROUNDED || limit->ground.gkind!=GV_INT || limit->ground.ival<0)
+            return false;
+    }
     CettaSearchPolicySpec policy = {
         .native_control = true, .age_share = 8u,
         .work_budget = UINT64_MAX, .retain = true, .costs = true, .all = true,
     };
-    if (expr_nargs(expr) == 2u) {
-        if (parse_search_policy_atom(arena, expr_arg(expr, 0u), &policy, NULL)
+    if (!cost || nargs==2u) {
+        if (parse_search_policy_atom(arena, expr_arg(expr,nargs-2u), &policy, NULL)
                 != CETTA_SEARCH_POLICY_PARSE_OK || !policy.native_control)
             return false;
-        policy.costs = policy.retain = policy.all = true;
+        if (cost) policy.costs = policy.retain = policy.all = true;
     }
-    Atom *program = expr_arg(expr, expr_nargs(expr) - 1u);
+    Atom *program = expr_arg(expr,nargs-1u);
     uint64_t prior = 0u;
     if(transaction)
-        return scoped && policy.work_budget==0u && prime_native_transaction_policy(&policy) &&
+        return cost && scoped && policy.work_budget==0u && prime_native_transaction_policy(&policy) &&
             program && resolve_runtime_space(g_registry,program) &&
             !cetta_native_handle_arg(program,"prime-search",&prior);
-    return prime_native_owned_cost_policy(&policy) && program &&
+    return (cost ? prime_native_owned_cost_policy(&policy)
+                 : prime_native_owned_observation_policy(&policy) && policy.retain) && program &&
         program->kind == ATOM_EXPR && program->expr.len &&
         !cetta_native_handle_arg(program, "prime-search", &prior);
 }
@@ -77865,12 +78360,12 @@ bool eval_outcome_observation_state(const EvalOutcome *outcome,
         *state=(CettaPrimeObservationState){.status=owned->top.owned.status,
             .started=owned->entered,.initialized=control!=NULL,
             .committed=owned->top.committed,.normalized=owned->ordinary_reified!=NULL,
-            .pending=control?control->published-owned->ordinary_cursor:0u,
+            .pending=control?control->published-owned->ordinary_returns.accepted:0u,
             .projected=owned->ordinary_projected,.return_refusal=owned->ordinary_refusal,
             .producer_complete=control && prime_native_source_drained(control),
             .return_materialized=owned->ordinary_projected!=NULL,
-            .accepted_rows=(size_t)owned->ordinary_cursor,
-            .copied_rows=(size_t)owned->ordinary_cursor+(owned->ordinary_projected!=NULL),
+            .accepted_rows=(size_t)owned->ordinary_returns.accepted,
+            .copied_rows=(size_t)owned->ordinary_returns.accepted+(owned->ordinary_projected!=NULL),
             .remaining_allowance=owned->ordinary_allowance};
         return true;
     }
@@ -77971,6 +78466,30 @@ CettaContinuationStatus eval_outcome_resume_observation(EvalOutcome *outcome,
 #else
 /* These C endpoints decline the optional retained controller profile. The
  * ordinary interpreter remains responsible for its usual syntax/semantics. */
+CettaContinuationStatus eval_prime_source_owner_capture_context(CettaLibraryContext *context,
+    Space *space, Registry *registry, Atom *expression, CettaPrimeSourceProfile profile,
+    size_t inspections, size_t bytes, CettaPrimeSourceOwner **result) {
+    (void)context; (void)space; (void)registry; (void)expression; (void)profile;
+    (void)inspections; (void)bytes; (void)result;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+void eval_prime_source_owner_release(CettaPrimeSourceOwner *owner) {
+    assert(!owner); (void)owner;
+}
+CettaContinuationStatus eval_prime_source_execution_open(CettaPrimeSourceOwner *owner,
+    uint64_t quantum, CettaOwnedExecution *execution) {
+    (void)owner; (void)quantum; (void)execution;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+bool eval_prime_source_execution_is_current(const CettaOwnedExecution *execution) {
+    (void)execution; return false;
+}
+bool eval_prime_source_execution_work(const CettaOwnedExecution *execution, uint64_t *work) {
+    (void)execution; (void)work; return false;
+}
+bool eval_prime_source_execution_set_quantum(const CettaOwnedExecution *execution, uint64_t quantum) {
+    (void)execution; (void)quantum; return false;
+}
 static void prime_native_registry_observation_free(CettaPrimeObservationReturn *owned) {
     /* No disabled-stack entry can construct this ownership product. */
     assert(!owned);

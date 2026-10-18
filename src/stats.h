@@ -1194,7 +1194,8 @@ uint64_t cetta_runtime_stats_survivor_role_total(
 bool cetta_runtime_stats_survivor_role_account_is_exact(
     const CettaRuntimeStats *stats);
 
-#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+#if (CETTA_BUILD_WITH_RUNTIME_STATS && !defined(CETTA_RUNTIME_STATS_NOOP)) || \
+    defined(CETTA_RUNTIME_STATS_IMPL)
 CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(
     CettaSurvivorAllocationRole role);
 void cetta_survivor_allocation_scope_leave(

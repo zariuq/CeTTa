@@ -91,8 +91,10 @@ static bool prime_need_heap_index_enabled(void) {
     if (cached >= 0)
         return cached != 0;
     const char *setting = getenv("CETTA_PRIME_NEED_HEAP_INDEX");
+    /* A compiled persistent index is the ordinary lookup path. Explicit
+     * non-1 settings retain the log implementation for comparison. */
     int selected =
-        setting && setting[0] == '1' && setting[1] == '\0';
+        !setting || (setting[0] == '1' && setting[1] == '\0');
     int expected = -1;
     if (!atomic_compare_exchange_strong_explicit(
             &enabled, &expected, selected,

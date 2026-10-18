@@ -540,29 +540,38 @@ def handled_contributions(gate):
     def read(body):
         return f'(weight:read {algebra} {body})'
     cases = [
-        ('empty read', '', read('V'), 0),
-        ('zero remains a production', '', read('(weight:where V 0)'), 1),
+        ('empty read', '', read('V'), 0, 0),
+        ('zero remains a production', '', read('(weight:where V 0)'), 1, 1),
         ('inner and outer own distinct productions', '',
-         read(f'(Pair {read("(weight:where V 2)")} (weight:where W 3))'), 2),
+         read(f'(Pair {read("(weight:where V 2)")} (weight:where W 3))'), 2, 2),
         ('shared production is handled once',
          '(=w (coin) H 2) ' +
          f'(= (twice $x) (Pair {read("$x")} {read("$x")})) ',
-         read('(twice (coin))'), 1),
+         read('(twice (coin))'), 1, 1),
         ('callback production belongs to enclosing read',
          '(= (product $a $b) (weight:where (* $a $b) 7)) ',
-         read('(weight:read (algebra 0 1 + product) (weight:where V 3))'), 2),
+         read('(weight:read (algebra 0 1 + product) (weight:where V 3))'), 2, 2),
         ('captured prefix remains outer',
          '(=w (inner) V 2) ' +
-         f'(=w (outer) {read("(inner)")} 7) ', read('(outer)'), 2),
+         f'(=w (outer) {read("(inner)")} 7) ', read('(outer)'), 2, 2),
+        ('failed activation remains paid before equal shared answers',
+         (ROOT/'tests/prime/weights/shared_graded_identity.metta').read_text(),
+         read('(paired (graded-attempt))'), 2, 3),
+        ('unannotated equation makes no factor',
+         (ROOT/'tests/prime/weights/shared_graded_identity.metta').read_text(),
+         read('(plain-attempt)'), 0, 0),
+        ('explicit unit annotation remains a production',
+         (ROOT/'tests/prime/weights/shared_graded_identity.metta').read_text(),
+         read('(unit-attempt)'), 1, 1),
     ]
-    for name, source, expression, expected in cases:
+    for name, source, expression, expected, appends in cases:
         _, whole = gate.run('claim accounting ' + name,
             source + f'!(select 7 {policy(2000)} {expression})')
         final = whole[-1]
         total = receipt(final['cost'])
         assert final['closed'] == 'True' and final['values'], (name, final)
         assert total['counts']['coefficient-handle'] == expected, (name, total)
-        assert total['counts']['coefficient-append'] == expected, (name, total)
+        assert total['counts']['coefficient-append'] == appends, (name, total)
         for cut in (0, 1, 19, 71):
             trees, parts = gate.run(f'claim accounting {name} cut{cut}', source +
                 f'!(let {PATTERN} (select 7 {policy(cut)} {expression}) '
@@ -570,7 +579,9 @@ def handled_contributions(gate):
             before = receipt(trees[-1][0][2])
             after = receipt(parts[-1]['cost'])
             assert before['counts']['coefficient-handle'] <= expected
+            assert before['counts']['coefficient-append'] <= appends
             assert after['counts']['coefficient-handle'] == expected, (name, cut, after)
+            assert after['counts']['coefficient-append'] == appends, (name, cut, after)
             assert after['counts']['quantum'] == total['counts']['quantum']
             assert parts[-1]['work'] == final['work']
             assert parts[-1]['closed'] == 'True'

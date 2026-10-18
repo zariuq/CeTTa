@@ -60,16 +60,23 @@ int prime_space_identity_policy(Space *space);
 #define CETTA_PRIME_HOLDS_IDENTITY_PREFIX "__cetta_holds_"
 bool prime_scoped_judgment_reserved_name(Atom *name);
 
-/* Admission of a record that the evaluator has just published. */
+/* Admission of a checked record that the evaluator has just published.
+ * Owns its finite scalar-data key, independent of the request arena. Runtime
+ * handles, including owning integer identifiers, cannot serve as keys. */
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
 
 /* Keep what was published in a space, admitted records and theorem records,
- * with the space's contents when another space comes to hold them. */
+ * with the space's contents when another space comes to hold them. Explicit
+ * withdrawals follow the same transfer and override older destination keys. */
 void prime_scoped_judgment_follow_space_contents(void);
+/* Enrol the theorem ledger in the same logical-instance lifetime directory.
+ * Called only by theorem publication, never by a lookup. */
+void prime_scoped_judgment_note_theorem_instance(uint64_t instance);
 
 /* Whether admission published `record` in the space that `space` is or
  * views.  Kernel computation trusts no rule and no definition record that
- * admission did not publish. */
+ * admission did not publish. Membership does not replace the current
+ * signature, dependency or execution-permission checks. */
 bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record);
 
 /* A number that changes whenever what is admitted may have changed. */
@@ -79,6 +86,9 @@ uint64_t prime_scoped_judgment_admission_epoch(void);
 bool prime_scoped_judgment_instance_empty(uint64_t instance, size_t limit,
     size_t *visited, bool *empty);
 SpaceContentsMovedHook prime_scoped_judgment_contents_subscriber(void);
+/* Quiescent census of the registry and its shared immutable key collections.
+ * No ledger or observer is initialized by this requested inspection. */
+void prime_scoped_judgment_storage_census(CettaStorageCensus *census);
 
 /* What a refutation by the conversion algorithm of `left` and `right`
  * assumes in `space`: `(assumes-completeness kind ...)`, the kinds of
