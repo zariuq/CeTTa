@@ -1387,6 +1387,31 @@ static bool library_root_has_lib_dir(const char *root) {
            stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static bool library_resolve_exec_path(const char *argv0, char resolved[PATH_MAX]) {
+    const char *search = getenv("PATH");
+    if (strchr(argv0, '/') || !search)
+        return realpath(argv0, resolved) != NULL;
+    while (true) {
+        const char *end = strchr(search, ':');
+        size_t length = end ? (size_t)(end - search) : strlen(search);
+        char candidate[PATH_MAX];
+        struct stat st;
+        if (length < sizeof(candidate)) {
+            int n = length
+                ? snprintf(candidate, sizeof(candidate), "%.*s/%s",
+                           (int)length, search, argv0)
+                : snprintf(candidate, sizeof(candidate), "%s", argv0);
+            if (n > 0 && (size_t)n < sizeof(candidate) &&
+                stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+                access(candidate, X_OK) == 0 && realpath(candidate, resolved))
+                return true;
+        }
+        if (!end)
+            return false;
+        search = end + 1;
+    }
+}
+
 bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size) {
     char resolved[PATH_MAX];
@@ -1396,7 +1421,7 @@ bool cetta_library_root_for_exec_path(const char *argv0,
     if (!output || output_size == 0u)
         return false;
     output[0] = '\0';
-    if (!argv0 || !realpath(argv0, resolved))
+    if (!argv0 || !*argv0 || !library_resolve_exec_path(argv0, resolved))
         return false;
     slash = strrchr(resolved, '/');
     if (!slash)
@@ -4493,6 +4518,12 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             return library_signature_error(a, head, args, nargs, "expected: (system:entry-directory)");
         return ctx->script_dir[0] ? atom_string(a, ctx->script_dir)
             : library_signature_error(a, head, args, nargs, "entry directory is not established");
+    }
+    if (atom_is_symbol(head, "__cetta_lib_system_runtime_root")) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:runtime-root)");
+        return ctx->root_dir[0] ? atom_string(a, ctx->root_dir)
+            : library_signature_error(a, head, args, nargs, "runtime root is not established");
     }
     if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
         return system_monotonic_ns(a, head, args, nargs);
