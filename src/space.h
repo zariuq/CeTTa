@@ -880,6 +880,12 @@ typedef enum {
 
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity);
+/* Whether a call of `head` with `arity` arguments takes the untyped call
+ * policy: every argument evaluated, its result evaluated without an
+ * expected type, nothing type-checked.  HE types every call of a head that
+ * declares any type, so a call at an arity no arrow declares is HE's
+ * IncorrectNumberOfArguments; PeTTa's typing reads arrows per arity. */
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity);
 /* Whether any type annotation names the head, whatever its type or arity.
  * A dialect that type-checks calls does so for such a head even at an arity
  * no signature covers. */
