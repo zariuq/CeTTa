@@ -44874,3 +44874,8 @@ test-regex-cache-v1: $(REGEX_CACHE_V1_TEST_BIN)
 	@$(REGEX_CACHE_V1_TEST_BIN)
 test-regex-v1: test-regex-cache-v1
 test: test-regex-cache-v1
+
+.PHONY: test-tptp-resources-v1
+test-tptp-resources-v1: $(BIN) tests/support/check_tptp_resources_v1.py
+	@python3 tests/support/check_tptp_resources_v1.py --cetta "$(BIN)"
+test: test-tptp-resources-v1
