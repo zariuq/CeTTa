@@ -62,6 +62,10 @@ typedef enum {
     CETTA_PREPARED_PURE_PROJECT_APPLICATION,
     /* Interpret the entire projected term in the current program. */
     CETTA_PREPARED_PURE_PROJECT_CODE,
+    /* The same, where each variable of the term holds a value in place of
+     * which the term is read: a value that is an expression would run as
+     * code, so the machine declines it where it runs. */
+    CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES,
 } CettaPreparedPureProjectionMode;
 typedef struct {
     Atom *projected;

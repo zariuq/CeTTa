@@ -2223,13 +2223,27 @@ static PREPARED_PURE_ALWAYS_INLINE uint8_t prepared_pure_value_class(
     }
 }
 
+/* PeTTa's guard at a typed call evaluates get-type, then get-metatype, and a
+ * program may extend either.  An authored alternative, or a type annotation
+ * of a value subject, can give a value another type answer, which continues
+ * the call again, with whatever the classifier does.  A value's class stands
+ * for the guard only where neither can, as for the canonical machine's
+ * intrinsic guard. */
+static bool prepared_pure_petta_intrinsic_type_guard(Space *space) {
+    return eval_petta_classifier_extended &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_type) &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_metatype) &&
+        space_type_annotations_have_only_symbol_subjects(space);
+}
+
 /* A head's one signature, when it is an arrow of `arity` parameters whose
  * parameters and range all name value classes: classes[0, arity) the
  * parameters', classes[arity] the range's.  HE selects among several
  * function types, and evaluates a head with another type as a tuple too;
  * the machine leaves such a head to the canonical evaluator.  PeTTa 1.0.6
  * checks the same classes where it calls, and answers nothing for a call
- * that fails them; its typed line checks calls by its own contracts. */
+ * that fails them, where its guard is the intrinsic one; its typed line
+ * checks calls by its own contracts. */
 static bool prepared_pure_value_signature(
     Space *space, SymbolId head, CettaExprLen arity, uint8_t *classes) {
     if (!space || head == SYMBOL_ID_NONE || arity > 64u ||
@@ -2238,7 +2252,8 @@ static bool prepared_pure_value_signature(
     CettaLanguageId language = eval_current_language_id();
     if (language != CETTA_LANGUAGE_HE &&
         (language != CETTA_LANGUAGE_PETTA ||
-         !eval_current_petta_typed_line || eval_current_petta_typed_line()))
+         !eval_current_petta_typed_line || eval_current_petta_typed_line() ||
+         !prepared_pure_petta_intrinsic_type_guard(space)))
         return false;
     Atom *head_atom = atom_symbol_canonical(head);
     if (!head_atom)
@@ -3546,6 +3561,79 @@ static bool prepared_pure_try_expand_macro(
     return ok;
 }
 
+/* The first occurrence of each distinct variable of `term`, appended to
+ * `vars`. */
+static bool prepared_pure_term_vars(
+    Atom *term, Atom ***vars, size_t *len, size_t *capacity,
+    uint32_t depth) {
+    if (!term || depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    if (term->kind == ATOM_VAR) {
+        for (size_t i = 0u; i < *len; i++) {
+            if ((*vars)[i]->var_id == term->var_id)
+                return true;
+        }
+        if (!prepared_pure_reserve(
+                (void **)vars, sizeof(**vars), capacity, *len + 1u))
+            return false;
+        (*vars)[(*len)++] = term;
+        return true;
+    }
+    if (term->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        if (!prepared_pure_term_vars(
+                term->expr.elems[i], vars, len, capacity, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* `body` where no variable of `term` holds an expression, which declines
+ * otherwise: one test of each variable's value, outermost first. */
+static bool prepared_pure_guard_values_not_expressions(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *term, uint32_t body, uint32_t depth, uint32_t *node_out) {
+    Atom **vars = NULL;
+    size_t len = 0u;
+    size_t capacity = 0u;
+    if (!prepared_pure_term_vars(term, &vars, &len, &capacity, depth)) {
+        free(vars);
+        return prepared_pure_reject(
+            program, "eval term's variables cannot be recorded", term);
+    }
+    uint32_t guarded = body;
+    bool ok = true;
+    for (size_t i = len; ok && i > 0u; i--) {
+        uint32_t value = 0u;
+        uint32_t test = 0u;
+        uint32_t declined = 0u;
+        ok = prepared_pure_compile_template(
+                 program, context, vars[i - 1u], NULL, depth + 1u, false,
+                 &value) &&
+            prepared_pure_add_node(
+                program,
+                (PreparedPureNode){
+                    .kind = PREPARED_PURE_OBSERVE,
+                    .auxiliary = PREPARED_PURE_OBSERVE_ATOM_EXPRESSION,
+                },
+                &value, 1u, &test) &&
+            prepared_pure_add_node(
+                program, (PreparedPureNode){.kind = PREPARED_PURE_DECLINE},
+                NULL, 0u, &declined);
+        if (ok) {
+            uint32_t branch[3] = {test, declined, guarded};
+            ok = prepared_pure_add_node(
+                program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
+                branch, 3u, &guarded);
+        }
+    }
+    free(vars);
+    if (ok)
+        *node_out = guarded;
+    return ok;
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -3681,6 +3769,7 @@ static bool prepared_pure_compile_eval_with_role(
                     child_role = CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
                 break;
             case CETTA_PREPARED_PURE_PROJECT_CODE:
+            case CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES:
                 child_view = NULL;
                 child_role = CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
                 break;
@@ -3688,10 +3777,19 @@ static bool prepared_pure_compile_eval_with_role(
                 return prepared_pure_reject(
                     program, "invalid projection mode", source);
             }
+            if (expression_view.projection_mode !=
+                CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES)
+                return prepared_pure_compile_eval_with_role(
+                    program, context, expression_view.projected, child_view,
+                    child_role,
+                    depth + 1u, node_out);
+            uint32_t body = 0u;
             return prepared_pure_compile_eval_with_role(
-                program, context, expression_view.projected, child_view,
-                child_role,
-                depth + 1u, node_out);
+                       program, context, expression_view.projected,
+                       child_view, child_role, depth + 1u, &body) &&
+                prepared_pure_guard_values_not_expressions(
+                    program, context, expression_view.projected, body,
+                    depth + 1u, node_out);
         }
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_OBSERVE) {

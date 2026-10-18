@@ -70,3 +70,14 @@ __pycache__/
 
 # Local NIK diagnostics
 /.nik-*
+
+# What the PeTTa importer writes beside its inputs, as SWI-PeTTa's lib_import
+# does: static-import! converts a .metta to a .pl and compiles a .pl to a SWI
+# quick-load .qlf next to it, and git-import! clones into ./repos under the
+# working directory.  Of the static-import fixtures only the library .pl is a
+# source; of repos/ only the local library fixture.
+*.qlf
+/tests/petta/fixtures/static_import_*.pl
+!/tests/petta/fixtures/static_import_library.pl
+/repos/*
+!/repos/test_metta_lib/
