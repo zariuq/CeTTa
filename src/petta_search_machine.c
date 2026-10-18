@@ -20467,6 +20467,9 @@ static bool petta_machine_start_space_query(
             equation_len++;
         }
     }
+    /* The loop above is the candidate list's last reader; every exit below
+     * leaves after it. */
+    free(every_candidate);
 
     /* The whole body of a `once` takes its witness from the open tier's
      * first-witness portfolio, closed or open, before any other route. */
@@ -20531,7 +20534,6 @@ static bool petta_machine_start_space_query(
     /* Multiple possible occurrences own the split entry values before any
      * alternative writes bindings.  A host callback still receives a whole
      * term at its explicit observation boundary. */
-    free(every_candidate);
     Atom *whole_query = query->whole;
     BindingValue *query_values = NULL;
     /* A closed call denotes one ground term.  When a selected equation has a

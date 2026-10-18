@@ -4277,7 +4277,7 @@ static Atom *eval_grounded_application_outcome_on(Space *s, Arena *a, Atom *atom
     if (!expr_nargs_u32(atom, &nargs))
         return expr_arity_too_large_error(a, atom);
     if (outcome && !arguments_are_values &&
-        space_head_has_arrow_signature(s, head->sym_id, nargs))
+        !space_head_call_untyped(s, head->sym_id, nargs))
         return NULL;
     /* `size` is STRICT: it evaluates its (collapse …) argument and counts the
      * resulting tuple.  When the argument is (collapse MATCH) we evaluate the
@@ -16683,16 +16683,21 @@ static bool petta_prepared_pure_equation_source(
     return rhs_plan != NULL;
 }
 
+/* A builtin the active profile does not define is an uninterpreted symbol
+ * there, which the canonical evaluator leaves as it is; a head directional
+ * rules may rewrite belongs to rule search. */
 static bool eval_prepared_pure_head_admitted(void *context, Space *space, SymbolId head) {
     (void)context;
-    return !space_directional_rules_may_match_known_head(space, head);
+    if (active_profile_disables_whole_call_syntax(head))
+        return false;
+    return !(eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
+        !space_directional_rules_may_match_known_head(space, head);
 }
 
 static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
         CettaLanguageId language_id, const Atom *source) {
     CettaPreparedPureSourceView view = {0};
-    if (eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL)
-        view.head_admitted = eval_prepared_pure_head_admitted;
+    view.head_admitted = eval_prepared_pure_head_admitted;
     if (language_id != CETTA_LANGUAGE_PETTA ||
         !g_library_context || !g_library_context->petta_program)
         return view;
@@ -20598,6 +20603,10 @@ static Atom *call_signature_error(Arena *a, Atom *call, const char *expected) {
     }
     buf[sizeof(buf) - 1] = '\0';
     return atom_error(a, call, atom_symbol(a, buf));
+}
+
+Atom *cetta_call_signature_error(Arena *a, Atom *call, const char *expected) {
+    return call_signature_error(a, call, expected);
 }
 
 static void capped_msg_appendf(char *buf, size_t cap, size_t *pos,
@@ -25044,7 +25053,7 @@ static Atom *eval_expand_ground_singleton_equation(
 
     SymbolId head = bound_call->expr.elems[0]->sym_id;
     CettaExprLen arity = bound_call->expr.len - 1u;
-    if (space_head_has_arrow_signature(space, head, arity))
+    if (!space_head_call_untyped(space, head, arity))
         return NULL;
     Atom *equation = space_single_linear_equation(space, head);
     if (!equation)
@@ -33542,7 +33551,7 @@ static bool prime_need_strict_argument_needs_eval(Space *s, Arena *a,
 }
 
 static bool he_evaluated_call_answers_try(
-    Space *space, Arena *arena, Atom *call, int fuel,
+    Space *space, Arena *arena, Atom *call, Atom *etype, int fuel,
     const Bindings *tuple_env, bool preserve_bindings, OutcomeSet *outcomes);
 
 static __attribute__((noinline)) bool
@@ -34351,7 +34360,7 @@ query_done:
             }
 
             if (he_evaluated_call_answers_try(
-                    s, a, call_atom, fuel, tuple_bindings,
+                    s, a, call_atom, etype, fuel, tuple_bindings,
                     preserve_bindings, os)) {
                 outcome_set_free(&tuples);
                 return true;
@@ -34493,7 +34502,7 @@ query_done:
             }
 
             if (he_evaluated_call_answers_try(
-                    s, a, call_atom, fuel, tuple_bindings,
+                    s, a, call_atom, etype, fuel, tuple_bindings,
                     preserve_bindings, os))
                 continue;
             SearchContext qr_context;
@@ -35585,6 +35594,26 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
     }
 
     return PREPARED_MINIMAL_WORKER_DECLINED;
+}
+
+/* HE's get-type takes an optional second argument, the space it types its
+ * subject in, as Rust HE's does.  That space; or NULL, with *error_out the
+ * error HE answers for an argument that is not a space (he-compat keeps
+ * Rust HE's message, which names match). */
+static Space *eval_get_type_space_argument(Arena *a, Atom *call,
+                                           Atom *argument, Atom **error_out) {
+    Atom *space_atom = argument;
+    Atom *registered = registry_lookup_atom(space_atom);
+    if (registered)
+        space_atom = registered;
+    if (space_atom->kind == ATOM_GROUNDED &&
+        space_atom->ground.gkind == GV_SPACE)
+        return payload_resolve_space_read((Space *)space_atom->ground.ptr);
+    *error_out = atom_error(a, call, atom_symbol(a,
+        active_profile_uses_rust_he_compat_semantics()
+            ? "match expects a space as the first argument"
+            : "get-type expects a space as its second argument"));
+    return NULL;
 }
 
 #include "eval_he_boundary.inc"
@@ -46931,11 +46960,19 @@ static Atom *prepared_pure_closed_call_try(
                 early_language_id, call);
         bool early_total_structural_equality =
             active_composition_uses_total_structural_eq();
+        /* A call whose arguments are still syntax compiles its head's
+         * program together with them, so it fails wherever the head's
+         * program over values already failed. */
         if (prepared_pure_program_cache_has_decline(
                 program_cache, space, call, early_source_view.root,
                 early_language_id, early_call_mode, false,
                 entry_arguments_are_values,
-                early_total_structural_equality)) {
+                early_total_structural_equality) ||
+            (!entry_arguments_are_values &&
+             prepared_pure_program_cache_has_decline(
+                 program_cache, space, call, early_source_view.root,
+                 early_language_id, early_call_mode, false, true,
+                 early_total_structural_equality))) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
             return NULL;
@@ -47172,7 +47209,7 @@ static Atom *prepared_pure_answers_entry_call(
         call->expr.len < 2u || call->expr.len - 1u > 64u ||
         !call->expr.elems[0] ||
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
-        space_head_has_arrow_signature(
+        !space_head_call_untyped(
             space, call->expr.elems[0]->sym_id, call->expr.len - 1u))
         return NULL;
     Atom *elements[65];
@@ -47398,9 +47435,13 @@ prepared_pure_closed_answers_try(
 /* HE evaluates an untyped call's argument tuple before it queries
  * equations.  Once the tuple is evaluated, the call may be a closed call of a
  * finite-answer program that it was not while its arguments were unevaluated;
- * its answers then come from the answer producer instead of equation search. */
+ * its answers then come from the answer producer instead of equation search,
+ * cast to the type the call is expected to have as HE casts them
+ * (he_cast_computed_answer). */
+static bool he_cast_computed_answers(Space *s, Arena *a, OutcomeSet *raw,
+                                     Atom *expected, OutcomeSet *outcomes);
 static bool he_evaluated_call_answers_try(
-    Space *space, Arena *arena, Atom *call, int fuel,
+    Space *space, Arena *arena, Atom *call, Atom *etype, int fuel,
     const Bindings *tuple_env, bool preserve_bindings, OutcomeSet *outcomes) {
     if (eval_current_language_id() != CETTA_LANGUAGE_HE ||
         !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
@@ -47408,12 +47449,33 @@ static bool he_evaluated_call_answers_try(
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
         atom_has_vars(call))
         return false;
+    if (!etype || atom_is_symbol_id(etype, g_builtin_syms.undefined_type)) {
+        CettaPreparedPureAnswersResult answers =
+            prepared_pure_closed_answers_try(
+                space, arena, call, fuel, eval_execution_prepared_cache(),
+                tuple_env, preserve_bindings, outcomes);
+        return answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
+            answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED;
+    }
+    OutcomeSet raw;
+    outcome_set_init(&raw);
     CettaPreparedPureAnswersResult answers =
         prepared_pure_closed_answers_try(
             space, arena, call, fuel, eval_execution_prepared_cache(),
-            tuple_env, preserve_bindings, outcomes);
-    return answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
+            tuple_env, preserve_bindings, &raw);
+    bool answered = answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
         answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED;
+    if (answered) {
+        OutcomeSet cast;
+        outcome_set_init(&cast);
+        answered = he_cast_computed_answers(space, arena, &raw, etype, &cast);
+        if (answered)
+            outcome_set_append_prefixed_move(
+                arena, outcomes, &cast, NULL, preserve_bindings);
+        outcome_set_free(&cast);
+    }
+    outcome_set_free(&raw);
+    return answered;
 }
 
 /* Tabled, memoized and translated relations belong to canonical equation
@@ -48391,6 +48453,44 @@ static void he_library_answer(Space *s, Arena *a,
     outcome_set_add(os, value, &empty);
 }
 
+/* HE casts what a call answers to the type the call is expected to have.
+ * An answer the prepared machine computed is cast as HE casts a value: a
+ * symbol, a grounded value, () or a list is cast to the type, binding a type
+ * variable there or answering BadType; a variable, or an expression whose
+ * head declares no type, is a finished value HE answers as it is.  HE types
+ * an expression whose head declares a type when it evaluates the call, so
+ * such an answer is refused (false) and the call is evaluated canonically. */
+static bool he_cast_computed_answer(Space *s, Arena *a, Atom *answer,
+                                    Atom *expected, const Bindings *env,
+                                    OutcomeSet *outcomes) {
+    if (!answer)
+        return false;
+    if (eval_atom_is_cast_value(answer)) {
+        type_cast_outcomes(s, a, answer, expected, env, outcomes);
+        return true;
+    }
+    if (answer->kind == ATOM_EXPR && answer->expr.len > 0u &&
+        answer->expr.elems[0]->kind == ATOM_SYMBOL &&
+        !space_head_call_untyped(s, answer->expr.elems[0]->sym_id,
+                                 answer->expr.len - 1u))
+        return false;
+    outcome_set_add_prefixed(a, outcomes, answer, env, NULL, true);
+    return true;
+}
+
+/* The prepared machine's answers of a call HE expects to have `expected`,
+ * cast to it into `outcomes`; false when one of them is refused. */
+static bool he_cast_computed_answers(Space *s, Arena *a, OutcomeSet *raw,
+                                     Atom *expected, OutcomeSet *outcomes) {
+    for (CettaCount i = 0u; i < raw->len; i++) {
+        if (!he_cast_computed_answer(
+                s, a, outcome_atom_materialize(a, &raw->items[i]), expected,
+                &raw->items[i].env, outcomes))
+            return false;
+    }
+    return true;
+}
+
 static void metta_call_impl(
     Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     bool preserve_bindings, const Bindings *initial_env,
@@ -48788,7 +48888,17 @@ tail_call: ;
     }
 
     Atom *prepared_pure_result = NULL;
-    if (!prepared_sequence_fold_consumer_requires_authored_expansion(
+    /* HE casts what a call answers to the type the call is expected to have
+     * (he_cast_computed_answer).  A typed head's range meets that type before
+     * HE evaluates anything, and its errors name the call: the canonical
+     * evaluator answers such a call. */
+    bool he_expected = language_id == CETTA_LANGUAGE_HE && etype &&
+        !atom_is_symbol_id(etype, g_builtin_syms.undefined_type);
+    bool he_expected_typed_head = he_expected &&
+        head_id != SYMBOL_ID_NONE &&
+        !space_head_call_untyped(s, head_id, nargs);
+    if (!he_expected_typed_head &&
+        !prepared_sequence_fold_consumer_requires_authored_expansion(
             head, nargs)) {
         prepared_pure_result = prepared_pure_closed_call_try(
             s, a, atom, fuel, false, false, program_cache);
@@ -48796,6 +48906,21 @@ tail_call: ;
     if (!prepared_pure_result &&
         (eval_unwinding() || eval_cancel_check()))
         return;
+    if (prepared_pure_result && he_expected) {
+        OutcomeSet cast;
+        outcome_set_init(&cast);
+        bool cast_ok = he_cast_computed_answer(
+            s, a, prepared_pure_result, etype, CURRENT_ENV, &cast);
+        if (cast_ok) {
+            petta_directive_note_answer(atom, false);
+            outcome_set_append_prefixed_move(
+                a, os, &cast, NULL, preserve_bindings);
+        }
+        outcome_set_free(&cast);
+        if (cast_ok)
+            return;
+        prepared_pure_result = NULL;
+    }
     if (prepared_pure_result) {
         petta_directive_note_answer(atom, false);
         if (language_id == CETTA_LANGUAGE_PRIME) {
@@ -48828,9 +48953,30 @@ tail_call: ;
         language_id == CETTA_LANGUAGE_PETTA)
         answer_program_cache = eval_execution_prepared_cache();
     CettaPreparedPureAnswersResult prepared_answers =
-        prepared_pure_closed_answers_try(
+        CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    if (he_expected && !he_expected_typed_head) {
+        OutcomeSet raw;
+        outcome_set_init(&raw);
+        prepared_answers = prepared_pure_closed_answers_try(
+            s, a, atom, fuel, answer_program_cache,
+            CURRENT_ENV, preserve_bindings, &raw);
+        if (prepared_answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
+            prepared_answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED) {
+            OutcomeSet cast;
+            outcome_set_init(&cast);
+            if (he_cast_computed_answers(s, a, &raw, etype, &cast))
+                outcome_set_append_prefixed_move(
+                    a, os, &cast, NULL, preserve_bindings);
+            else
+                prepared_answers = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+            outcome_set_free(&cast);
+        }
+        outcome_set_free(&raw);
+    } else if (!he_expected) {
+        prepared_answers = prepared_pure_closed_answers_try(
             s, a, atom, fuel, answer_program_cache,
             CURRENT_ENV, preserve_bindings, os);
+    }
     if (prepared_answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
         prepared_answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED) {
         petta_directive_note_answer(atom, false);
@@ -50586,7 +50732,9 @@ petta_lowered_to_shared_form:
                             return;
                         }
                         bindings_builder_free(&b);
-                        TAIL_REENTER(next_atom);
+                        if (!atom_is_symbol_id(next_atom,
+                                               g_builtin_syms.not_reducible))
+                            outcome_set_add(os, next_atom, &_empty);
                         return;
                     }
                     bindings_builder_free(&b);
@@ -52020,7 +52168,7 @@ petta_lowered_to_shared_form:
                 outcome_set_add(os, atom_error(a,
                     atom_expr2(a, atom_symbol(a, "assert"), expr_arg(atom, 0)),
                     atom_expr3(a, expr_arg(atom, 0),
-                        atom_symbol(a, "not"), atom_symbol(a, "True"))), &_empty);
+                        atom_symbol(a, "not"), atom_bool(a, true))), &_empty);
             }
         }
         result_set_free(&inner);
@@ -53791,12 +53939,27 @@ petta_lowered_to_shared_form:
     }
 
     /* ── get-type ───────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.get_type && nargs == 1) {
+    /* An HE get-type's second argument, when given, is the space it types
+     * in, as in Rust HE; the declared type (-> Atom Type) leaves that form
+     * to eval, through which type-cast asks for its subject's types. */
+    if (head_id == g_builtin_syms.get_type &&
+        (nargs == 1 ||
+         (nargs == 2 && language_id != CETTA_LANGUAGE_PETTA))) {
+        Space *typed_space = s;
+        if (nargs == 2) {
+            Atom *error = NULL;
+            typed_space = eval_get_type_space_argument(
+                a, atom, expr_arg(atom, 1), &error);
+            if (!typed_space) {
+                outcome_set_add(os, error, &_empty);
+                return;
+            }
+        }
         Atom **types = NULL;
         uint32_t n = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
         if (!eval_get_type_intrinsic_answers(
-                s, a, expr_arg(atom, 0), NULL, fuel,
+                typed_space, a, expr_arg(atom, 0), NULL, fuel,
                 &types, &n, &completion)) {
             free(types);
             eval_mark_incomplete(completion);

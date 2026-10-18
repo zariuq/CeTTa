@@ -14,6 +14,12 @@
  * outside the fragment is rejected and remains on the ordinary evaluator.
  */
 typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
+/* Whether the prepared machine can call `head` with `arity` arguments: the
+ * dialect leaves the head untyped, or it is an HE head whose one signature
+ * has that arity and value-class parameters and range (Number, String, Bool
+ * or %Undefined%), which the machine checks where HE casts them. */
+bool cetta_prepared_pure_call_policy_supported(
+    Space *space, SymbolId head, CettaExprLen arity);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
