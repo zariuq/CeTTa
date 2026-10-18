@@ -41983,6 +41983,17 @@ static PettaMachineBuiltinEquations petta_eval_machine_builtin_equations(
     return PETTA_MACHINE_BUILTIN_EQUATIONS_NONE;
 }
 
+bool eval_petta_classifier_extended(Space *space, SymbolId classifier) {
+    CettaExprLen minimum = 0u;
+    CettaExprLen maximum = 0u;
+    bool exact = false;
+    return eval_rule_head_arity_bounds(space, classifier, &minimum, &maximum,
+                                       &exact, 1u) &&
+        exact &&
+        petta_eval_machine_builtin_equations(NULL, space, classifier, 1u) !=
+            PETTA_MACHINE_BUILTIN_EQUATIONS_PROTECTED;
+}
+
 static bool petta_eval_open_builtin_equations(
     void *context, Space *space, SymbolId head, uint32_t arity) {
     PettaMachineBuiltinEquations mode = petta_eval_machine_builtin_equations(
@@ -46545,6 +46556,19 @@ petta_prepared_pure_pattern_view(
     return CETTA_PREPARED_PURE_PATTERN_VIEW_DECOMPOSE;
 }
 
+/* Whether no variable of a term `eval` runs is in operator position. */
+static bool petta_eval_term_variables_are_operands(const Atom *term) {
+    if (term->kind != ATOM_EXPR || !atom_has_vars(term))
+        return true;
+    if (term->expr.len > 0u && term->expr.elems[0]->kind == ATOM_VAR)
+        return false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        if (!petta_eval_term_variables_are_operands(term->expr.elems[i]))
+            return false;
+    }
+    return true;
+}
+
 static CettaPreparedPureExpressionViewState
 petta_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view) {
@@ -46590,7 +46614,9 @@ petta_prepared_pure_expression_view(
      * that application written alone does when its head is ordinary (a
      * special form is syntax only where it is written).  `eval` runs the term
      * written in it once, which is that term's own evaluation when no
-     * variable in it holds a value to be run as code.  These projections
+     * variable in it holds a value to be run as code: each of its variables
+     * is an operand, whose value is checked not to be an expression where it
+     * runs (a variable operator names the code to run).  These projections
      * differ in their source authority: call retains translated argument
      * roles, while eval reinterprets every occurrence in the current program
      * (ExplicitEvaluation.execute_compile). Held code stays on the machine.
@@ -46618,10 +46644,12 @@ petta_prepared_pure_expression_view(
         if (form == PETTA_FORM_ID ||
             (form == PETTA_FORM_CALL && written_ordinary_call) ||
             (form == PETTA_FORM_EVAL && child->kind == ATOM_EXPR &&
-             !atom_has_vars(child))) {
+             petta_eval_term_variables_are_operands(child))) {
             view->projected = expression->expr.elems[1];
             view->projection_mode = form == PETTA_FORM_EVAL
-                ? CETTA_PREPARED_PURE_PROJECT_CODE
+                ? (atom_has_vars(child)
+                       ? CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES
+                       : CETTA_PREPARED_PURE_PROJECT_CODE)
                 : form == PETTA_FORM_CALL
                 ? CETTA_PREPARED_PURE_PROJECT_APPLICATION
                 : CETTA_PREPARED_PURE_PROJECT_SOURCE;

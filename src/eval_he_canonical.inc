@@ -1751,6 +1751,30 @@ static void he_canonical_match_initialize(HeCanonicalFrame *frame) {
     frame->phase = 1u;
 }
 
+typedef struct {
+    Arena *arena;
+    OutcomeSet *rows;
+} HeCanonicalJoinedRows;
+
+static bool he_canonical_joined_row(const Bindings *row, void *raw) {
+    HeCanonicalJoinedRows *joined = raw;
+    outcome_set_add(joined->rows, atom_unit(joined->arena), row);
+    return true;
+}
+
+/* Whether the first `legs` legs of a fused chain read one PathMap space. */
+static bool he_canonical_legs_share_pathmap(const HeCanonicalFrame *frame,
+                                            CettaExprLen legs) {
+    Space *space = frame->match_spaces[0];
+    if (!space || !space_engine_uses_pathmap(space->match_backend.kind))
+        return false;
+    for (CettaExprIndex leg = 1u; leg < legs; leg++) {
+        if (frame->match_spaces[leg] != space)
+            return false;
+    }
+    return true;
+}
+
 static void he_canonical_match_plan(HeCanonicalFrame *frame) {
     HeCanonicalRegisters *registers = frame->registers;
     Arena *a = frame->arena;
@@ -1800,7 +1824,34 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
      * acquired separately for each prefix, exactly where the source adapter
      * acquires it; a completed window is never silently reopened. */
     CettaExprLen prefix = !frame->sourced_match && count > 1u ? count - 1u : count;
-    for (CettaExprIndex leg = 0u; leg < prefix; leg++) {
+    /* No body runs before the prefix completes, so where its legs read one
+     * PathMap space their conjunction gives the same rows through the
+     * space's index. */
+    CettaExprIndex first_leg = 0u;
+    if (!frame->sourced_match && prefix > 1u &&
+        he_canonical_legs_share_pathmap(frame, prefix)) {
+        OutcomeSet joined;
+        outcome_set_init(&joined);
+        HeCanonicalJoinedRows sink = {.arena = a, .rows = &joined};
+        SpaceMatchPullVisitResult visited =
+            space_match_backend_try_visit_conjunction_indexed(
+                frame->match_spaces[0], a, registers->source, prefix, NULL,
+                he_canonical_joined_row, &sink);
+        if (visited == SPACE_MATCH_PULL_VISIT_TERMINATED) {
+            outcome_set_free(&joined);
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return;
+        }
+        if (visited == SPACE_MATCH_PULL_VISIT_COMPLETE) {
+            outcome_set_free(&frame->work);
+            outcome_set_init(&frame->work);
+            for (CettaCount i = 0u; i < joined.len; i++)
+                outcome_set_add_existing_move(&frame->work, &joined.items[i]);
+            first_leg = prefix;
+        }
+        outcome_set_free(&joined);
+    }
+    for (CettaExprIndex leg = first_leg; leg < prefix; leg++) {
         OutcomeSet next;
         outcome_set_init(&next);
         for (CettaCount i = 0u; i < frame->work.len; i++) {
