@@ -2236,9 +2236,42 @@ static bool prepared_pure_petta_intrinsic_type_guard(Space *space) {
         space_type_annotations_have_only_symbol_subjects(space);
 }
 
+static bool prepared_pure_type_mentions_var(
+    const Atom *type, VarId id, uint32_t depth) {
+    if (type->kind == ATOM_VAR)
+        return type->var_id == id;
+    if (type->kind != ATOM_EXPR)
+        return false;
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return true;
+    for (CettaExprIndex i = 0u; i < type->expr.len; i++) {
+        if (prepared_pure_type_mentions_var(
+                type->expr.elems[i], id, depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* Whether `head`'s one equation, over distinct variables, answers its
+ * parameter `index` as it is given: (= (head ... $x ...) $x). */
+static bool prepared_pure_head_answers_parameter(
+    Space *space, SymbolId head, CettaExprLen arity, CettaExprLen index) {
+    Atom *equation = space_single_linear_equation(space, head);
+    if (!equation || equation->kind != ATOM_EXPR || equation->expr.len != 3u)
+        return false;
+    Atom *lhs = equation->expr.elems[1];
+    Atom *rhs = equation->expr.elems[2];
+    return lhs->kind == ATOM_EXPR &&
+        lhs->expr.len == (CettaExprLen)(arity + 1u) &&
+        lhs->expr.elems[index + 1u]->kind == ATOM_VAR &&
+        rhs->kind == ATOM_VAR &&
+        rhs->var_id == lhs->expr.elems[index + 1u]->var_id;
+}
+
 /* A head's one signature, when it is an arrow of `arity` parameters whose
- * parameters and range all name value classes: classes[0, arity) the
- * parameters', classes[arity] the range's.  HE selects among several
+ * parameters and range all name value classes, or, in HE, type variables
+ * the machine needs no type for: classes[0, arity) the parameters',
+ * classes[arity] the range's.  HE selects among several
  * function types, and evaluates a head with another type as a tuple too;
  * the machine leaves such a head to the canonical evaluator.  PeTTa 1.0.6
  * checks the same classes where it calls, and answers nothing for a call
@@ -2267,9 +2300,32 @@ static bool prepared_pure_value_signature(
         types[0]->kind == ATOM_EXPR &&
         types[0]->expr.len == (CettaExprLen)(arity + 2u) &&
         atom_is_symbol_id(types[0]->expr.elems[0], g_builtin_syms.arrow);
-    for (CettaExprLen i = 0u; ok && i <= arity; i++)
-        ok = prepared_pure_type_value_class(
-            types[0]->expr.elems[i + 1u], &classes[i]);
+    for (CettaExprLen i = 0u; ok && i <= arity; i++) {
+        Atom *type = types[0]->expr.elems[i + 1u];
+        if (type->kind == ATOM_VAR) {
+            /* In HE a type variable written once accepts every value, as
+             * %Undefined% does, and asks nothing of the answer.  Written in
+             * two parameters, it asks their types to agree, which a value's
+             * class does not show.  A parameter's variable that is also the
+             * range asks the answer to have the argument's type, which the
+             * machine shows only where the head answers that argument.
+             * PeTTa's guard continues a call once for each type answer of
+             * the argument that the variable matches, which a class does
+             * not count. */
+            classes[i] = PREPARED_PURE_VALUE_UNDEFINED;
+            ok = language == CETTA_LANGUAGE_HE;
+            for (CettaExprLen j = 0u; ok && i < arity && j <= arity; j++)
+                ok = j == i ||
+                    !prepared_pure_type_mentions_var(
+                        types[0]->expr.elems[j + 1u], type->var_id, 0u) ||
+                    (j == arity &&
+                     types[0]->expr.elems[j + 1u]->kind == ATOM_VAR &&
+                     prepared_pure_head_answers_parameter(
+                         space, head, arity, i));
+        } else {
+            ok = prepared_pure_type_value_class(type, &classes[i]);
+        }
+    }
     free(types);
     arena_free(&scratch);
     return ok;
@@ -3102,13 +3158,16 @@ static PreparedPureStaticEqual prepared_pure_static_equal(
     return unknown ? PREPARED_PURE_EQUAL_UNKNOWN : PREPARED_PURE_EQUAL_SAME;
 }
 
-/* Where a function body's returned syntax goes: EVAL, the syntax evaluated;
- * CHAIN, the template of the chain whose computation the function was, with
- * the syntax in place of the chain's variable, run in the continuation
- * `outer`. */
+/* Where a function body's returned syntax goes: EVAL, the syntax evaluated,
+ * or, with `var`, `template_atom` evaluated with the syntax in place of
+ * `var` (the body of a callee given the syntax); CHAIN, the template of the
+ * chain whose computation the function was, with the syntax in place of the
+ * chain's variable, run in the continuation `outer`; SYNTAX, the syntax as
+ * it is, which a call whose range is Atom answers. */
 typedef enum {
     PREPARED_PURE_DELIVER_EVAL = 0,
     PREPARED_PURE_DELIVER_CHAIN,
+    PREPARED_PURE_DELIVER_SYNTAX,
 } PreparedPureDeliverKind;
 
 typedef struct PreparedPureDelivery {
@@ -3141,6 +3200,97 @@ static bool prepared_pure_no_answer_here(const Atom *value) {
         atom_is_symbol_id((Atom *)value, g_builtin_syms.not_reducible);
 }
 
+/* Whether `call` is a call of a macro definition that takes every argument
+ * as written and whose body is NotReducible: the call answers itself. */
+static bool prepared_pure_written_constructor(
+    CettaPreparedPureProgram *program, Atom *call) {
+    HeMacroArgument arguments[HE_MACRO_MAX_ARITY];
+    bool answers_syntax = false;
+    if (!he_macro_signature(program->space, call, arguments,
+                            &answers_syntax) ||
+        !answers_syntax)
+        return false;
+    for (CettaExprLen i = 0u; i + 1u < call->expr.len; i++) {
+        if (arguments[i] != HE_MACRO_ARGUMENT_WRITTEN)
+            return false;
+    }
+    Atom *equation = space_single_linear_equation(
+        program->space, call->expr.elems[0]->sym_id);
+    return equation && equation->kind == ATOM_EXPR &&
+        equation->expr.len == 3u &&
+        atom_is_symbol_id(equation->expr.elems[2],
+                          g_builtin_syms.not_reducible);
+}
+
+/* Whether HE evaluates `syntax` to itself: a value; a symbol no equation
+ * names; an expression whose head is inert and whose elements are, or that
+ * calls a written constructor (quote). */
+static bool prepared_pure_syntax_is_inert(
+    CettaPreparedPureProgram *program, Atom *syntax, uint32_t depth) {
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    if (syntax->kind == ATOM_SYMBOL)
+        return !space_equations_may_match_known_head(
+            program->space, syntax->sym_id);
+    if (syntax->kind != ATOM_EXPR || syntax->expr.len == 0u)
+        return true;
+    if (prepared_pure_head_role(program, syntax) != PREPARED_PURE_HEAD_INERT)
+        return syntax->expr.elems[0]->kind == ATOM_SYMBOL &&
+            prepared_pure_written_constructor(program, syntax);
+    for (CettaExprIndex i = 1u; i < syntax->expr.len; i++) {
+        if (!prepared_pure_syntax_is_inert(
+                program, syntax->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* `syntax` as data: never evaluated, each variable of it the value the
+ * program holds there. */
+static bool prepared_pure_compile_syntax(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *syntax, uint32_t depth, uint32_t *node_out) {
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return prepared_pure_reject(program, "syntax is too deep", syntax);
+    if (syntax->kind == ATOM_VAR) {
+        uint32_t slot = 0u;
+        if (!prepared_pure_context_lookup(context, syntax->var_id, &slot))
+            return prepared_pure_reject(
+                program, "answered syntax holds an unbound variable", syntax);
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_SLOT,
+                .auxiliary = slot,
+            },
+            NULL, 0u, node_out);
+    }
+    if (syntax->kind != ATOM_EXPR || !atom_has_vars(syntax))
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_LITERAL,
+                .atom = syntax,
+            },
+            NULL, 0u, node_out);
+    if (syntax->expr.len > UINT32_MAX ||
+        !cetta_expr_len_mul_fits_size(syntax->expr.len, sizeof(uint32_t)))
+        return false;
+    uint32_t *children = malloc(sizeof(*children) * syntax->expr.len);
+    if (!children)
+        return false;
+    bool ok = true;
+    for (CettaExprIndex i = 0u; ok && i < syntax->expr.len; i++)
+        ok = prepared_pure_compile_syntax(
+            program, context, syntax->expr.elems[i], depth + 1u,
+            &children[i]);
+    ok = ok && prepared_pure_add_node(
+        program, (PreparedPureNode){.kind = PREPARED_PURE_BUILD},
+        children, (uint32_t)syntax->expr.len, node_out);
+    free(children);
+    return ok;
+}
+
 static bool prepared_pure_compile_delivery(
     CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
     Atom *value, const PreparedPureDelivery *delivery, uint32_t depth,
@@ -3158,6 +3308,27 @@ static bool prepared_pure_compile_delivery(
         return prepared_pure_add_node(
             program, (PreparedPureNode){.kind = PREPARED_PURE_DECLINE},
             NULL, 0u, node_out);
+    /* A value the program holds is final, so syntax it answers must be
+     * what HE would make of it again: a callee given it, or a let's body,
+     * evaluates it once more. */
+    if (delivery->kind == PREPARED_PURE_DELIVER_SYNTAX)
+        return prepared_pure_syntax_is_inert(program, value, 0u)
+            ? prepared_pure_compile_syntax(
+                  program, context, value, depth + 1u, node_out)
+            : prepared_pure_reject(
+                  program, "answered syntax is evaluated where it is used",
+                  value);
+    if (delivery->var) {
+        Arena *arena = prepared_pure_syntax_arena(program);
+        value = arena ? prepared_pure_substitute_var(
+            arena, delivery->var, value, delivery->template_atom) : NULL;
+        if (!value)
+            return false;
+        if (prepared_pure_no_answer_here(value))
+            return prepared_pure_add_node(
+                program, (PreparedPureNode){.kind = PREPARED_PURE_DECLINE},
+                NULL, 0u, node_out);
+    }
     return prepared_pure_compile_eval(
         program, context, value, NULL, depth + 1u, node_out);
 }
@@ -3441,6 +3612,48 @@ static bool prepared_pure_compile_function(
         program, "function body is outside the fragment", body);
 }
 
+/* What a macro call answers once its evaluated arguments hold their values.
+ * Where its range is not Atom, its body evaluated.  Where it is, the body
+ * runs and the syntax it answers goes to `delivery`: as it is, or to the
+ * callee given it.  A body of NotReducible leaves the call itself, with the
+ * values of its evaluated arguments. */
+static bool prepared_pure_compile_expansion_body(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    const HeMacroExpansion *expansion, Atom *call,
+    const PreparedPureDelivery *delivery, uint32_t depth,
+    uint32_t *node_out) {
+    if (!expansion->answers_syntax)
+        return prepared_pure_compile_eval(
+            program, context, expansion->body, NULL, depth + 1u, node_out);
+    PreparedPureDelivery as_written = {.kind = PREPARED_PURE_DELIVER_SYNTAX};
+    if (!delivery)
+        delivery = &as_written;
+    Atom *body = expansion->body;
+    if (atom_is_symbol_id(body, g_builtin_syms.not_reducible)) {
+        Arena *arena = prepared_pure_syntax_arena(program);
+        CettaExprLen len = call->expr.len;
+        Atom **elems = arena
+            ? arena_alloc(arena, sizeof(*elems) * (size_t)len) : NULL;
+        if (!elems)
+            return false;
+        elems[0] = call->expr.elems[0];
+        for (CettaExprLen i = 1u; i < len; i++)
+            elems[i] = expansion->arguments[i - 1u] ==
+                    HE_MACRO_ARGUMENT_EVALUATED
+                ? expansion->lhs->expr.elems[i] : call->expr.elems[i];
+        Atom *unreduced = atom_expr(arena, elems, len);
+        return unreduced && prepared_pure_compile_delivery(
+            program, context, unreduced, delivery, depth + 1u, node_out);
+    }
+    if (atom_head_symbol_id(body) == g_builtin_syms.function &&
+        body->expr.len == 2u)
+        return prepared_pure_compile_function(
+            program, context, body->expr.elems[1], delivery, depth + 1u,
+            node_out);
+    return prepared_pure_compile_delivery(
+        program, context, body, delivery, depth + 1u, node_out);
+}
+
 /* The expansion's body under its arguments from `next` on: an evaluated one
  * binds its fresh parameter to its value, as HE evaluates such an argument
  * before the call; a variable given to an Expression parameter holds a
@@ -3449,14 +3662,15 @@ static bool prepared_pure_compile_function(
 static bool prepared_pure_compile_expansion(
     CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
     const HeMacroExpansion *expansion, Atom *call, const void *call_view,
-    CettaExprLen next, uint32_t depth, uint32_t *node_out) {
+    const PreparedPureDelivery *delivery, CettaExprLen next, uint32_t depth,
+    uint32_t *node_out) {
     CettaExprLen arity = call->expr.len - 1u;
     while (next < arity &&
            expansion->arguments[next] == HE_MACRO_ARGUMENT_WRITTEN)
         next++;
     if (next == arity)
-        return prepared_pure_compile_eval(
-            program, context, expansion->body, NULL, depth + 1u, node_out);
+        return prepared_pure_compile_expansion_body(
+            program, context, expansion, call, delivery, depth, node_out);
     if (expansion->arguments[next] == HE_MACRO_ARGUMENT_EXPRESSION_VALUE) {
         uint32_t value = 0u;
         if (!prepared_pure_compile_template(
@@ -3475,8 +3689,8 @@ static bool prepared_pure_compile_expansion(
             return false;
         uint32_t rest = 0u;
         if (!prepared_pure_compile_expansion(
-                program, context, expansion, call, call_view, next + 1u,
-                depth + 1u, &rest))
+                program, context, expansion, call, call_view, delivery,
+                next + 1u, depth + 1u, &rest))
             return false;
         uint32_t declined = 0u;
         if (!prepared_pure_add_node(
@@ -3502,7 +3716,7 @@ static bool prepared_pure_compile_expansion(
         return false;
     uint32_t rest = 0u;
     bool ok = prepared_pure_compile_expansion(
-        program, context, expansion, call, call_view, next + 1u,
+        program, context, expansion, call, call_view, delivery, next + 1u,
         depth + 1u, &rest);
     context->len = saved_bindings;
     if (!ok)
@@ -3524,7 +3738,8 @@ static bool prepared_pure_compile_expansion(
  * *expanded tells whether the call was a macro call. */
 static bool prepared_pure_try_expand_macro(
     CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
-    Atom *source, const void *source_view, uint32_t depth,
+    Atom *source, const void *source_view,
+    const PreparedPureDelivery *delivery, uint32_t depth,
     uint32_t *node_out, bool *expanded) {
     *expanded = false;
     if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
@@ -3554,8 +3769,142 @@ static bool prepared_pure_try_expand_macro(
     }
     program->expansion_depth++;
     bool ok = prepared_pure_compile_expansion(
-        program, context, &expansion, source, source_view, 0u, depth,
-        node_out);
+        program, context, &expansion, source, source_view, delivery, 0u,
+        depth, node_out);
+    program->expansion_depth--;
+    program->expansion_var_len = expansion_vars;
+    return ok;
+}
+
+/* Whether `head` takes every argument as a value and answers a value it is
+ * given no type for: untyped at `arity`, or one signature of %Undefined%
+ * and type variables of their own. */
+static bool prepared_pure_head_takes_values(
+    Space *space, SymbolId head, CettaExprLen arity) {
+    if (space_head_call_untyped(space, head, arity))
+        return true;
+    uint8_t classes[66];
+    if (!prepared_pure_value_signature(space, head, arity, classes))
+        return false;
+    for (CettaExprLen i = 0u; i <= arity; i++) {
+        if (classes[i] != PREPARED_PURE_VALUE_UNDEFINED)
+            return false;
+    }
+    return true;
+}
+
+/* g's parameters from `next` on: each argument but the one that answers
+ * syntax binds its parameter to its value, as HE evaluates it before the
+ * call; that one then expands, and each syntax it answers stands for its
+ * parameter in g's body, which is evaluated. */
+static bool prepared_pure_compile_syntax_consumer(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *call, Atom *lhs, Atom *body, CettaExprLen syntax_index,
+    CettaExprLen next, uint32_t depth, uint32_t *node_out) {
+    CettaExprLen arity = call->expr.len - 1u;
+    if (next == syntax_index)
+        next++;
+    if (next >= arity) {
+        PreparedPureDelivery into_body = {
+            .kind = PREPARED_PURE_DELIVER_EVAL,
+            .var = lhs->expr.elems[syntax_index + 1u],
+            .template_atom = body,
+        };
+        bool expanded = false;
+        Atom *argument = call->expr.elems[syntax_index + 1u];
+        if (!prepared_pure_try_expand_macro(
+                program, context, argument, NULL, &into_body, depth + 1u,
+                node_out, &expanded))
+            return false;
+        return expanded || prepared_pure_reject(
+            program, "an argument that answers syntax did not expand",
+            argument);
+    }
+    uint32_t bound = 0u;
+    if (!prepared_pure_compile_eval(
+            program, context, call->expr.elems[next + 1u], NULL,
+            depth + 1u, &bound))
+        return false;
+    size_t saved_bindings = context->len;
+    uint32_t pattern_index = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, lhs->expr.elems[next + 1u], &pattern_index))
+        return false;
+    uint32_t rest = 0u;
+    bool ok = prepared_pure_compile_syntax_consumer(
+        program, context, call, lhs, body, syntax_index, next + 1u,
+        depth + 1u, &rest);
+    context->len = saved_bindings;
+    if (!ok)
+        return false;
+    uint32_t children[2] = {bound, rest};
+    return prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = PREPARED_PURE_BIND,
+            .auxiliary = pattern_index,
+        },
+        children, 2u, node_out);
+}
+
+/* A call (g ... A ...) whose argument A calls a macro definition with range
+ * Atom: HE evaluates g's other arguments, gives g the syntax A answers as
+ * that argument's value, and evaluates what g answers.  Where g is one
+ * equation over distinct variables that takes values and answers a value,
+ * its body compiles in each of A's returns, the returned syntax in place of
+ * its parameter.  *inlined tells whether the call was such a call. */
+static bool prepared_pure_try_inline_syntax_consumer(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *call, uint32_t depth, uint32_t *node_out, bool *inlined) {
+    *inlined = false;
+    if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+        program->answer_producer || !eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE ||
+        call->kind != ATOM_EXPR || call->expr.len < 2u ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        return true;
+    CettaExprLen arity = call->expr.len - 1u;
+    CettaExprLen syntax_index = arity;
+    for (CettaExprLen i = 0u; i < arity; i++) {
+        HeMacroArgument arguments[HE_MACRO_MAX_ARITY];
+        bool answers_syntax = false;
+        Atom *argument = call->expr.elems[i + 1u];
+        if (argument->kind != ATOM_EXPR ||
+            !he_macro_signature(program->space, argument, arguments,
+                                &answers_syntax) ||
+            !answers_syntax)
+            continue;
+        if (syntax_index != arity)
+            return true;
+        syntax_index = i;
+    }
+    SymbolId head = call->expr.elems[0]->sym_id;
+    if (syntax_index == arity ||
+        !prepared_pure_head_takes_values(program->space, head, arity))
+        return true;
+    Atom *equation = space_single_linear_equation(program->space, head);
+    Arena *arena = prepared_pure_syntax_arena(program);
+    Atom *fresh = equation && arena
+        ? cetta_instantiate_frame_syntax(arena, equation) : NULL;
+    Atom *lhs = fresh && fresh->kind == ATOM_EXPR && fresh->expr.len == 3u
+        ? fresh->expr.elems[1] : NULL;
+    if (!lhs || lhs->kind != ATOM_EXPR ||
+        lhs->expr.len != (CettaExprLen)(arity + 1u))
+        return true;
+    *inlined = true;
+    if (program->expansion_depth >= PREPARED_PURE_MAX_EXPANSION_DEPTH)
+        return prepared_pure_reject(
+            program, "macro expansion is too deep", call);
+    size_t expansion_vars = program->expansion_var_len;
+    if (!prepared_pure_collect_expansion_vars(program, fresh, 0u)) {
+        program->expansion_var_len = expansion_vars;
+        return prepared_pure_reject(
+            program, "definition's variables cannot be recorded", call);
+    }
+    program->expansion_depth++;
+    bool ok = prepared_pure_compile_syntax_consumer(
+        program, context, call, lhs, fresh->expr.elems[2], syntax_index,
+        0u, depth, node_out);
     program->expansion_depth--;
     program->expansion_var_len = expansion_vars;
     return ok;
@@ -4226,8 +4575,12 @@ static bool prepared_pure_compile_eval_with_role(
          * asked its own effect; the macro's own effect reads its operands
          * as values, which they are not. */
         bool expanded = false;
-        bool expansion_ok = prepared_pure_try_expand_macro(
-            program, context, source, source_view, depth, node_out,
+        bool expansion_ok = prepared_pure_try_inline_syntax_consumer(
+            program, context, source, depth, node_out, &expanded);
+        if (expanded || !expansion_ok)
+            return expansion_ok;
+        expansion_ok = prepared_pure_try_expand_macro(
+            program, context, source, source_view, NULL, depth, node_out,
             &expanded);
         if (expanded || !expansion_ok)
             return expansion_ok;
@@ -9779,7 +10132,7 @@ prepared_pure_program_compile_closed_mode(
             !cetta_prepared_pure_call_policy_supported(
                 space, root_head->sym_id,
                 root_arity) &&
-            !he_macro_signature(space, expression, macro_arguments))
+            !he_macro_signature(space, expression, macro_arguments, NULL))
             return NULL;
     }
     CettaPreparedPureProgram *program = calloc(1u, sizeof(*program));

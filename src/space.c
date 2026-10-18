@@ -11447,12 +11447,14 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
 #endif
         }
     }
-    const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
-    if (!(b->head == head && !b->mixed_heads && b->len == 1))
+    /* The head's own rows, whichever heads share its hash bucket. */
+    const SpaceHeadChains *rows = &s->native.eq_idx.head_rows;
+    const SpaceHeadChain *chain = space_head_chains_find(rows, head);
+    if (!chain || chain->count != 1u)
         return NULL;
-    CettaIndex idx = b->atom_indices[0];
+    CettaIndex idx = rows->atom_indices[chain->first];
     Atom *equation = space_indexed_occurrence_atom(
-        s, b->atom_indices, b->atom_ids, 0u);
+        s, rows->atom_indices, rows->atom_ids, chain->first);
     Atom *lhs = NULL;
     Atom *rhs = NULL;
     if (!equation || !is_equation_atom(equation, &lhs, &rhs))

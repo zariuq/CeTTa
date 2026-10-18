@@ -836,9 +836,9 @@ static inline bool space_rule_head_arity_bounds(Space *s, SymbolId head,
     return space_extended_rule_head_arity_bounds(s, head, minimum, maximum,
                                                 has_exact, query_arity, admitted_forms);
 }
-/* MAM loop-body view entry guard: head resolves to exactly one equation in a
- * clean single-head bucket, no overlay base (necessary condition for the
- * deterministic-tail loop lane; conservative, cheap). */
+/* MAM loop-body view entry guard: head resolves to exactly one equation, no
+ * equation without a head symbol can match it, and the space has no overlay
+ * base (necessary condition for the deterministic-tail loop lane). */
 bool space_head_has_single_equation(Space *s, SymbolId head);
 /* Resolve that single linear equation (or NULL) -- shared by the guard and the
  * revision-keyed view cache. */
