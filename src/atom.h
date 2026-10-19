@@ -1052,18 +1052,18 @@ VarId   fresh_var_id(void);
  * substitution consult the coordinate at every variable edge; atom.c emits
  * external definitions as well for binary callers. */
 inline uint32_t var_base_id(VarId id) {
-    return (uint32_t)(id & UINT32_MAX);
+    return (uint32_t)CESTA_LAYOUT_VarId_base_BODY(id);
 }
 
 inline uint32_t var_epoch_suffix(VarId id) {
-    return (uint32_t)(id >> 32);
+    return (uint32_t)CESTA_LAYOUT_VarId_epoch_BODY(id);
 }
 
 inline VarId var_epoch_id(VarId id, uint32_t epoch) {
     uint32_t base = var_base_id(id);
     if (base == 0u)
         base = (uint32_t)fresh_var_id();
-    return ((VarId)epoch << 32) | (VarId)base;
+    return (VarId)CESTA_LAYOUT_VarId_encode_BODY(base, epoch);
 }
 
 #ifdef CETTA_TEST_HOOKS

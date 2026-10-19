@@ -1,6 +1,116 @@
 #include "owned_execution.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+struct CettaWorkCredit {
+    CettaWorkCredit *parent, *root;
+    size_t references, children;
+    uint64_t balance, spent;
+    uint64_t initial, remaining, total_spent;
+    bool closed;
+};
+
+CettaWorkCredit *cetta_work_credit_new(uint64_t amount) {
+    CettaWorkCredit *credit = calloc(1u, sizeof(*credit));
+    if (!credit) return NULL;
+    credit->root = credit;
+    credit->references = 1u;
+    credit->balance = credit->initial = credit->remaining = amount;
+    return credit;
+}
+
+bool cetta_work_credit_retain(CettaWorkCredit *credit) {
+    if (!credit || credit->references == SIZE_MAX) return false;
+    credit->references++;
+    return true;
+}
+
+CettaWorkCredit *cetta_work_credit_reserve(CettaWorkCredit *parent, uint64_t amount) {
+    if (!parent || parent->closed || amount > parent->balance ||
+        parent->children == SIZE_MAX || parent->references == SIZE_MAX)
+        return NULL;
+    CettaWorkCredit *credit = calloc(1u, sizeof(*credit));
+    if (!credit) return NULL;
+    credit->parent = parent;
+    credit->root = parent->root;
+    credit->references = 1u;
+    credit->balance = amount;
+    parent->references++;
+    parent->children++;
+    parent->balance -= amount;
+    return credit;
+}
+
+bool cetta_work_credit_transfer(CettaWorkCredit *source, CettaWorkCredit *target,
+    uint64_t amount) {
+    if (!source || !target || source == target || source->closed || target->closed ||
+        source->root != target->root || amount > source->balance ||
+        amount > UINT64_MAX - target->balance) return false;
+    source->balance -= amount;
+    target->balance += amount;
+    return true;
+}
+
+uint64_t cetta_work_credit_available(const CettaWorkCredit *credit) {
+    return credit && !credit->closed ? credit->balance : 0u;
+}
+
+bool cetta_work_credit_spend(CettaWorkCredit *credit, uint64_t amount) {
+    if (!credit || credit->closed || amount > credit->balance) return false;
+    CettaWorkCredit *root = credit->root;
+    /* The bank accounts for all descendants in constant time. Reserve and
+     * refund merely move balances; they do not increase remaining work. */
+    if (amount > root->remaining || amount > UINT64_MAX - root->total_spent ||
+        amount > UINT64_MAX - credit->spent) return false;
+    credit->balance -= amount;
+    credit->spent += amount;
+    root->remaining -= amount;
+    root->total_spent += amount;
+    return true;
+}
+
+bool cetta_work_credit_inspect(const CettaWorkCredit *credit, CettaWorkCreditView *view) {
+    if (!credit || !view) return false;
+    const CettaWorkCredit *root = credit->root;
+    *view = (CettaWorkCreditView){
+        .balance = credit->balance, .spent = credit->spent,
+        .root_initial = root->initial, .root_remaining = root->remaining,
+        .root_spent = root->total_spent, .children = credit->children,
+        .closed = credit->closed,
+    };
+    return true;
+}
+
+bool cetta_work_credit_close(CettaWorkCredit *credit) {
+    if (!credit || credit->closed || credit->children) return false;
+    if (credit->parent) {
+        CettaWorkCredit *parent = credit->parent;
+        assert(!parent->closed && parent->children &&
+            credit->balance <= UINT64_MAX - parent->balance);
+        parent->balance += credit->balance;
+        parent->children--;
+        credit->balance = 0u;
+    }
+    credit->closed = true;
+    return true;
+}
+
+void cetta_work_credit_release(CettaWorkCredit *credit) {
+    /* Iterative parent release also handles arbitrarily deep lease nesting. */
+    while (credit) {
+        assert(credit->references);
+        if (--credit->references) return;
+        assert(!credit->children);
+        if (!credit->closed) {
+            bool closed = cetta_work_credit_close(credit);
+            assert(closed); (void)closed;
+        }
+        CettaWorkCredit *parent = credit->parent;
+        free(credit);
+        credit = parent;
+    }
+}
 
 void cetta_owned_execution_init(CettaOwnedExecution *execution,
     void *computation, CettaOwnedExecutionNext next,

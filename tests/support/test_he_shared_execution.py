@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Ordered HE observations at compiled and raw continuation boundaries."""
+import argparse
+import math
 import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -297,7 +298,15 @@ def private_names(text):
 
 
 def main():
-    binary = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("binary", type=Path)
+    parser.add_argument("--timeout", type=float, default=30,
+                        help="Per-execution timeout in seconds; zero disables it (default: 30)")
+    options = parser.parse_args()
+    if not math.isfinite(options.timeout) or options.timeout < 0:
+        parser.error("--timeout must be finite and nonnegative")
+    binary = options.binary.resolve()
+    timeout = options.timeout or None
     root = Path(__file__).resolve().parents[2]
     observations = 0
     with tempfile.TemporaryDirectory(prefix="he-shared-", dir=root / "runtime") as directory:
@@ -315,7 +324,7 @@ def main():
                         env[key] = value
                 result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                         cwd=root, env=env, capture_output=True,
-                                        text=True, timeout=30)
+                                        text=True, timeout=timeout)
                 if result.returncode or private_names(result.stdout) != expected:
                     raise AssertionError((name, canonical, enabled, result.returncode,
                                           result.stdout, result.stderr))
@@ -341,7 +350,7 @@ def main():
                 result = subprocess.run([str(binary), "--lang", "he",
                                          "--profile", "he-prime", str(path)],
                                         cwd=root, env=env, capture_output=True,
-                                        text=True, timeout=30)
+                                        text=True, timeout=timeout)
                 if result.returncode or result.stdout != expected or result.stderr:
                     raise AssertionError((name, canonical, enabled, result.returncode,
                                           result.stdout, result.stderr))
@@ -355,7 +364,7 @@ def main():
                            CETTA_PREPARED_PURE_REFERENCE="1")
                 result = subprocess.run([str(binary), "--lang", "he", "--fuel",
                                          str(fuel), str(path)], cwd=root, env=env,
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, timeout=timeout)
                 if result.returncode or result.stdout != expected or result.stderr:
                     raise AssertionError((name, fuel, enabled, result.returncode,
                                           result.stdout[:4096], result.stderr[:4096]))
@@ -375,7 +384,7 @@ def main():
                    CETTA_PREPARED_PURE_REFERENCE="1")
         result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                 cwd=root, env=env, capture_output=True,
-                                text=True, timeout=30)
+                                text=True, timeout=timeout)
         if result.returncode or result.stdout != "[done]\n" or result.stderr:
             raise AssertionError(("deep instructions", result.returncode,
                                   result.stdout, result.stderr))
@@ -395,7 +404,7 @@ def main():
             path.write_text(source)
             result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                     cwd=root, env=env, capture_output=True,
-                                    text=True, timeout=30)
+                                    text=True, timeout=timeout)
             lines = result.stderr.splitlines()
             if (result.returncode or result.stdout != expected or
                     len(lines) != episodes or
@@ -413,7 +422,7 @@ def main():
                    CETTA_PETTA_MACHINE_STATS="1")
         result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                 cwd=root, env=env, capture_output=True,
-                                text=True, timeout=30)
+                                text=True, timeout=timeout)
         if result.returncode or result.stdout != expected or "PETTA_MACHINE_STATS" not in result.stderr:
             raise AssertionError(("declined-closed-duplicates", result.returncode,
                                   result.stdout, result.stderr))
@@ -428,7 +437,7 @@ def main():
                        CETTA_PREPARED_PURE_REFERENCE="1")
             result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                     cwd=root, env=env, capture_output=True,
-                                    text=True, timeout=30)
+                                    text=True, timeout=timeout)
             if result.returncode or result.stdout != expected or result.stderr:
                 raise AssertionError((name, result.returncode,
                                       result.stdout[:4096], result.stderr[:4096]))
@@ -454,7 +463,7 @@ def main():
                        CETTA_PREPARED_PURE_REFERENCE="1")
             result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                     cwd=root, env=env, capture_output=True,
-                                    text=True, timeout=30)
+                                    text=True, timeout=timeout)
             if result.returncode or result.stdout != expected:
                 raise AssertionError(("completion bank relocation", enabled,
                                       result.returncode, result.stdout, result.stderr))

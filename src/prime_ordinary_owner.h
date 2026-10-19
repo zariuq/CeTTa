@@ -79,6 +79,24 @@ bool eval_prime_source_owner_is_current(const CettaPrimeSourceOwner *);
 CettaContinuationStatus eval_prime_source_execution_open(
     CettaPrimeSourceOwner *, uint64_t quantum, CettaOwnedExecution *);
 
+/* Select conserved finite work before this fresh provider has run. Reserve
+ * amount from the caller's existing cell; refusal changes neither owner.
+ * The private lease moves with the execution, including through a shared
+ * producer. Actual controller work spends it, even on failure or suspension;
+ * cancellation returns only unspent credit. Pending delivery does not repeat
+ * producer work. Preparation, capture, delivery and service time have separate
+ * accounts. NULL payer leaves the ordinary unmetered provider selected. No
+ * per-step credit check is added to that ordinary provider. */
+CettaContinuationStatus eval_prime_source_execution_fund(
+    CettaOwnedExecution *, CettaWorkCredit *payer, uint64_t amount);
+/* Transfer a later tranche to the same funded, nonterminal provider. The
+ * supplied payer belongs to its bank; refusal changes neither cell. Paid
+ * work, the complete residual, history and a pending loan remain untouched.
+ * Unused donated credit returns to the original reservation parent on close.
+ * This does not replenish a host's independently selected total-work limit. */
+bool eval_prime_source_execution_add_credit(
+    const CettaOwnedExecution *, CettaWorkCredit *payer, uint64_t amount);
+
 /* Read-only source/service currency check for this actual quiescent driver.
  * It also applies after movement into a host task. A host combines it with
  * its current publication permission before progress and buffered delivery.

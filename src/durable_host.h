@@ -81,6 +81,10 @@ CettaDurableStatus cetta_host_evaluate(CettaHostDecision *decision,
 typedef struct {
     uint64_t quantum, work_limit;
     size_t preparation_inspections, preparation_bytes, results;
+    /* Optional caller-paid parent. Admission reserves work_limit; the owned
+     * provider retains that lease and refunds its unused balance on disposal.
+     * NULL preserves the independently selected ordinary planning path. */
+    CettaWorkCredit *credit;
 } CettaHostPlanLimits;
 /* Explicit retained Prime planning over the decision's fresh captured views.
  * Source &self changes are confined to that private snapshot; external I/O

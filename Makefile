@@ -48522,3 +48522,17 @@ test-regex-cache-v1: $(REGEX_CACHE_V1_TEST_BIN)
 	@$(REGEX_CACHE_V1_TEST_BIN)
 test-regex-v1: test-regex-cache-v1
 test: test-regex-cache-v1
+
+# Runtime word accessors are checked-in ordinary C; regeneration is optional.
+CESTA ?= cesta
+.PHONY: regenerate-layout-words check-layout-words-generated test-layout-words
+regenerate-layout-words:
+	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)"
+check-layout-words-generated:
+	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)" --check
+runtime/test_layout_words: tests/test_layout_words.c src/generated/cetta_layout_words.generated.h src/binding/frame_identity.h
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $<
+test-layout-words: runtime/test_layout_words
+	./runtime/test_layout_words
+test: test-layout-words

@@ -576,10 +576,36 @@ static void prime_ordinary_source_release(void *raw) {
     prime_ordinary_return_free(raw);
 }
 
+static CettaOwnedExecutionStep prime_ordinary_source_funded_next(void *raw,
+    CettaOwnedReturn *returned,CettaEvalCompletion *completion) {
+    CettaPrimeObservationReturn *owned=raw;
+    uint64_t quantum=owned->ordinary_quantum;
+    uint64_t available=cetta_work_credit_available(owned->ordinary_credit);
+    if (available<quantum) owned->ordinary_quantum=available;
+    uint64_t before=owned->ordinary_control->steps;
+    CettaOwnedExecutionStep step=prime_ordinary_source_next(owned,returned,completion);
+    uint64_t spent=owned->ordinary_control->steps-before;
+    owned->ordinary_quantum=quantum;
+    /* Controller allowance is enforced before execution. A violation is an
+     * internal accounting fault, never permission to publish unpaid work. */
+    if (spent>available || !cetta_work_credit_spend(owned->ordinary_credit,spent))
+        abort();
+    return step;
+}
+static void prime_ordinary_source_funded_release(void *raw) {
+    CettaPrimeObservationReturn *owned=raw;
+    CettaWorkCredit *credit=owned->ordinary_credit;
+    prime_ordinary_return_free(owned);
+    cetta_work_credit_release(credit);
+}
+
 static CettaPrimeObservationReturn *prime_ordinary_source_driver(
     const CettaOwnedExecution *execution) {
-    if (!execution || execution->next!=prime_ordinary_source_next ||
-        execution->release!=prime_ordinary_source_release || !execution->computation)
+    if (!execution || !execution->computation ||
+        !((execution->next==prime_ordinary_source_next &&
+           execution->release==prime_ordinary_source_release) ||
+          (execution->next==prime_ordinary_source_funded_next &&
+           execution->release==prime_ordinary_source_funded_release)))
         return NULL;
     CettaPrimeObservationReturn *owned=execution->computation;
     PrimeNativeTopEpisode *source=owned->top.episode->source_episode;
@@ -587,6 +613,29 @@ static CettaPrimeObservationReturn *prime_ordinary_source_driver(
         g_symbols!=source->source_symbols || g_var_intern!=source->source_variables ||
         !owned->ordinary_control) return NULL;
     return owned;
+}
+
+CettaContinuationStatus eval_prime_source_execution_fund(CettaOwnedExecution *execution,
+    CettaWorkCredit *payer,uint64_t amount) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    if (!owned || owned->ordinary_credit || execution->terminal ||
+        execution->has_pending || execution->accepted || owned->ordinary_next ||
+        owned->ordinary_control->steps)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    if (!payer) return CETTA_CONTINUATION_READY;
+    CettaWorkCredit *credit=cetta_work_credit_reserve(payer,amount);
+    if (!credit) return CETTA_CONTINUATION_CAPACITY;
+    owned->ordinary_credit=credit;
+    execution->next=prime_ordinary_source_funded_next;
+    execution->release=prime_ordinary_source_funded_release;
+    return CETTA_CONTINUATION_READY;
+}
+
+bool eval_prime_source_execution_add_credit(const CettaOwnedExecution *execution,
+    CettaWorkCredit *payer,uint64_t amount) {
+    CettaPrimeObservationReturn *owned=prime_ordinary_source_driver(execution);
+    return owned && owned->ordinary_credit && !execution->terminal &&
+        cetta_work_credit_transfer(payer,owned->ordinary_credit,amount);
 }
 
 bool eval_prime_source_execution_is_current(const CettaOwnedExecution *execution) {

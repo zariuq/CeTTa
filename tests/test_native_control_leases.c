@@ -107,27 +107,26 @@ static void match_progress_entry_case(const char *request, bool diagnostic) {
     Atom *body=expr_arg(inner,2u);
     MatchVisibleVarSet visible;match_visible_var_set_init(&visible);
     assert(collect_match_visible_vars_many(patterns,2u,&visible));
-    MatchResultSnapshot snapshot={0};DeferredSpaceSet deferred={0};
+    MatchChainCertificate certificate={.active=true};DeferredSpaceSet deferred={0};
     MatchResultDirectEvalScratch scratch={0};
     outcome_set_init(&out);bindings_init(&empty);
     MatchChainDfsCtx dfs={.s=&space,.a=&arena,.fuel=-1,.os=&out,
         .step_spaces=spaces,.step_patterns=patterns,.nsteps=2u,.visible=&visible,
-        .snapshot=&snapshot,.deferred_spaces=&deferred,.direct_scratch=&scratch,
+        .certificate=&certificate,.deferred_spaces=&deferred,.direct_scratch=&scratch,
         .body=body,.query_spaces=spaces,.nquery_spaces=2u};
     (diagnostic?match_chain_dfs_diagnostic:match_chain_dfs_plain)(&dfs,0u,&empty);
-    match_result_snapshot_eval(&space,&arena,&snapshot,-1,&out);
-    CHECK(out.len==2u);
+    CHECK(!certificate.failed && out.len==2u);
     for(CettaCount i=0u;i<out.len;i++)
         CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[i]),expected));
     CHECK(g_match_chain_progress==(diagnostic?8u:0u));
-    outcome_set_free(&out);match_result_snapshot_free(&snapshot);bindings_free(&empty);
+    outcome_set_free(&out);bindings_free(&empty);
 
     Bindings row;bindings_init(&row);
     assert(match_atoms(patterns[1],parse_one(&arena,"(Edge B C)"),&row,&arena));
     outcome_set_init(&out);
     PathmapConjunctionStreamCtx indexed={.space=&space,.arena=&arena,.fuel=-1,
         .outcomes=&out,.visible=&visible,.body=body,.query_space=&space,
-        .preserve_bindings=true,.snapshot=&snapshot,.deferred_spaces=&deferred,
+        .preserve_bindings=true,.certificate=&certificate,.deferred_spaces=&deferred,
         .direct_scratch=&scratch,.factor_count=2u};
     CHECK((diagnostic?pathmap_conjunction_stream_row_diagnostic:
         pathmap_conjunction_stream_row_plain)(&row,&indexed));
@@ -6999,15 +6998,210 @@ static const char *ordinary_shared_program=
     "(= (pick) 1) (= (pick) 1) (= (pick) 2) (= (same $x) (Pair $x $x))";
 static const char *ordinary_shared_expected[]={"(Pair 1 1)","(Pair 1 1)","(Pair 2 2)"};
 
-static void ordinary_source_shared_case(uint64_t quantum,uint32_t workers) {
+static CettaWorkCreditView work_credit_view(CettaWorkCredit *credit) {
+    CettaWorkCreditView view={0};
+    CHECK(cetta_work_credit_inspect(credit,&view));
+    CHECK(view.root_remaining==view.root_initial-view.root_spent);
+    return view;
+}
+
+static void work_credit_cases(void) {
+    CettaWorkCredit *root=cetta_work_credit_new(10u);assert(root);
+    CettaWorkCredit *first=cetta_work_credit_reserve(root,6u);
+    CettaWorkCredit *second=cetta_work_credit_reserve(root,4u);assert(first && second);
+    CHECK(!cetta_work_credit_reserve(root,1u));
+    CHECK(!cetta_work_credit_close(root));
+    CHECK(cetta_work_credit_retain(first));
+    CettaWorkCredit *alias=first;
+    CHECK(cetta_work_credit_spend(alias,2u));
+    CHECK(cetta_work_credit_available(first)==4u);
+    CettaWorkCredit *nested=cetta_work_credit_reserve(first,3u);assert(nested);
+    CHECK(!cetta_work_credit_close(first));
+    CHECK(!cetta_work_credit_spend(first,2u));
+    CHECK(cetta_work_credit_spend(nested,2u));
+    CHECK(work_credit_view(root).root_spent==4u);
+    CHECK(cetta_work_credit_close(nested));
+    CHECK(!cetta_work_credit_close(nested));
+    CHECK(!cetta_work_credit_spend(nested,0u));
+    CHECK(cetta_work_credit_available(first)==2u);
+    cetta_work_credit_release(nested);
+    CHECK(cetta_work_credit_spend(first,2u));
+    CHECK(!cetta_work_credit_spend(alias,1u));
+    CHECK(cetta_work_credit_close(alias));
+    CHECK(!cetta_work_credit_close(first));
+    CHECK(!cetta_work_credit_reserve(alias,0u));
+    cetta_work_credit_release(first);cetta_work_credit_release(alias);
+    CHECK(cetta_work_credit_close(second));
+    CHECK(!cetta_work_credit_close(second));
+    cetta_work_credit_release(second);
+    CettaWorkCreditView view=work_credit_view(root);
+    CHECK(view.balance==4u && view.root_spent==6u && !view.children);
+    CHECK(cetta_work_credit_close(root));
+    CHECK(!cetta_work_credit_spend(root,0u) && !cetta_work_credit_close(root));
+    cetta_work_credit_release(root);
+
+    root=cetta_work_credit_new(10u);assert(root);
+    first=cetta_work_credit_reserve(root,6u);
+    second=cetta_work_credit_reserve(root,4u);assert(first && second);
+    CettaWorkCredit *foreign=cetta_work_credit_new(10u);assert(foreign);
+    CHECK(cetta_work_credit_spend(first,6u));
+    CHECK(!cetta_work_credit_transfer(first,first,0u));
+    CHECK(!cetta_work_credit_transfer(foreign,first,1u));
+    CHECK(!cetta_work_credit_transfer(second,first,5u));
+    CHECK(cetta_work_credit_transfer(second,first,2u));
+    view=work_credit_view(root);
+    CHECK(view.root_spent==6u && view.root_remaining==4u && !view.balance);
+    CHECK(cetta_work_credit_available(first)==2u &&
+        cetta_work_credit_available(second)==2u);
+    CHECK(cetta_work_credit_spend(first,2u));
+    CHECK(cetta_work_credit_close(first));
+    CHECK(!cetta_work_credit_transfer(second,first,1u));
+    CHECK(!cetta_work_credit_transfer(first,second,0u));
+    CHECK(cetta_work_credit_available(second)==2u &&
+        cetta_work_credit_available(foreign)==10u);
+    cetta_work_credit_release(first);cetta_work_credit_release(second);
+    view=work_credit_view(root);
+    CHECK(view.balance==2u && view.root_spent==8u && !view.children);
+    cetta_work_credit_release(root);cetta_work_credit_release(foreign);
+
+    root=cetta_work_credit_new(UINT64_MAX);assert(root);
+    first=cetta_work_credit_reserve(root,UINT64_MAX);assert(first);
+    CHECK(cetta_work_credit_spend(first,UINT64_MAX));
+    CHECK(!cetta_work_credit_spend(first,1u));
+    CHECK(!cetta_work_credit_reserve(root,1u));
+    cetta_work_credit_release(first);
+    view=work_credit_view(root);
+    CHECK(view.root_initial==UINT64_MAX && view.root_spent==UINT64_MAX && !view.balance);
+    cetta_work_credit_release(root);
+    root=cetta_work_credit_new(0u);assert(root);
+    first=cetta_work_credit_reserve(root,0u);assert(first);
+    CHECK(cetta_work_credit_spend(first,0u));
+    CHECK(!cetta_work_credit_spend(first,1u));
+    cetta_work_credit_release(first);cetta_work_credit_release(root);
+
+    /* Releasing the deepest owner unwinds retained parents without using the
+     * C stack, while the root's independent reference keeps its account live. */
+    root=cetta_work_credit_new(37u);assert(root);first=root;
+    for(unsigned i=0u;i<4096u;i++) {
+        nested=cetta_work_credit_reserve(first,37u);assert(nested);
+        if(first!=root)cetta_work_credit_release(first);
+        first=nested;
+    }
+    CHECK(cetta_work_credit_spend(first,1u));
+    cetta_work_credit_release(first);
+    view=work_credit_view(root);
+    CHECK(view.balance==36u && view.root_spent==1u && !view.children);
+    cetta_work_credit_release(root);
+}
+
+static uint64_t ordinary_source_credit_case(const char *program,const char *query,
+    const char *const *expected,size_t count,uint64_t grant,bool completes) {
+    CettaOwnedExecution execution={0};
+    CettaPrimeSourceOwner *source=ordinary_source_driver_open(program,query,7u,1u,&execution);
+    CettaOwnedExecutionNext ordinary=execution.next;
+    CHECK(eval_prime_source_execution_fund(&execution,NULL,0u)==CETTA_CONTINUATION_READY);
+    CHECK(execution.next==ordinary);
+    CettaWorkCredit *root=cetta_work_credit_new(grant);assert(root);
+    CHECK(!eval_prime_source_execution_add_credit(&execution,root,0u));
+    if(grant<UINT64_MAX) {
+        CHECK(eval_prime_source_execution_fund(&execution,root,grant+1u)==CETTA_CONTINUATION_CAPACITY);
+        CHECK(execution.next==ordinary && work_credit_view(root).balance==grant);
+    }
+    CHECK(eval_prime_source_execution_fund(&execution,root,grant)==CETTA_CONTINUATION_READY);
+    CHECK(execution.next!=ordinary && eval_prime_source_execution_is_current(&execution));
+    CHECK(eval_prime_source_execution_fund(&execution,root,0u)==CETTA_CONTINUATION_UNSUPPORTED);
+    OrdinarySourceDelivery delivery={0};
+    uint64_t work=0u;
+    for(unsigned i=0u;i<(completes?10000u:32u) && !execution.terminal;i++) {
+        uint64_t before=work;
+        cetta_owned_execution_sequence(&execution,1u,ordinary_source_collect,&delivery);
+        CHECK(eval_prime_source_execution_work(&execution,&work));
+        CHECK(work>=before && work-before<=7u);
+        CettaWorkCreditView view=work_credit_view(root);
+        CHECK(view.root_spent==work && work<=grant && !view.balance);
+    }
+    CHECK(execution.terminal==completes);
+    if(completes)CHECK(execution.stop==CETTA_OWNED_EXECUTION_COMPLETE &&
+        execution.completion==CETTA_EVAL_COMPLETE && work>0u);
+    else {
+        CHECK(!execution.accepted && !execution.has_pending);
+        if(grant<UINT64_MAX)CHECK(work==grant);
+        else CHECK(work>0u && work<grant);
+    }
+    cetta_owned_execution_cancel(&execution);
+    CettaWorkCreditView view=work_credit_view(root);
+    CHECK(!view.children && view.balance==grant-work && view.root_spent==work);
+    cetta_owned_execution_cancel(&execution);
+    CHECK(work_credit_view(root).balance==grant-work);
+    cetta_work_credit_release(root);eval_prime_source_owner_release(source);
+    ordinary_source_delivery_check(&delivery,expected,count);
+    return work;
+}
+
+static void ordinary_source_recredit_case(void) {
+    CettaOwnedExecution execution={0};
+    CettaPrimeSourceOwner *source=ordinary_source_driver_open(
+        "(= (source-loop $n) (source-loop (+ $n 1)))","(source-loop 0)",7u,1u,&execution);
+    CettaWorkCredit *root=cetta_work_credit_new(20u);
+    CettaWorkCredit *foreign=cetta_work_credit_new(3u);assert(root && foreign);
+    CHECK(eval_prime_source_execution_fund(&execution,root,11u)==CETTA_CONTINUATION_READY);
+    CettaPrimeObservationReturn *owned=execution.computation;
+    PrimeNativeControl *control=owned->ordinary_control;
+    OrdinarySourceDelivery delivery={0};
+    uint64_t work=0u;
+    for(unsigned i=0u;i<8u;i++) {
+        CHECK(cetta_owned_execution_sequence(&execution,1u,ordinary_source_collect,&delivery)
+            ==CETTA_OWNED_EXECUTION_PAUSED);
+        CHECK(eval_prime_source_execution_work(&execution,&work));
+        CHECK(work<=11u);
+    }
+    CHECK(work==11u && work_credit_view(root).root_spent==11u);
+    CHECK(!execution.has_pending && !execution.accepted && !execution.terminal);
+    CHECK(!eval_prime_source_execution_add_credit(&execution,foreign,1u));
+    CHECK(!eval_prime_source_execution_add_credit(&execution,root,10u));
+    CHECK(work_credit_view(root).balance==9u && work_credit_view(foreign).balance==3u);
+    CHECK(eval_prime_source_execution_add_credit(&execution,root,3u));
+    CHECK(execution.computation==owned && owned->ordinary_control==control &&
+        control->steps==11u && !execution.has_pending && !execution.accepted);
+    CHECK(work_credit_view(root).root_spent==11u && work_credit_view(root).balance==6u);
+    for(unsigned i=0u;i<8u;i++) {
+        CHECK(cetta_owned_execution_sequence(&execution,1u,ordinary_source_collect,&delivery)
+            ==CETTA_OWNED_EXECUTION_PAUSED);
+        CHECK(eval_prime_source_execution_work(&execution,&work));
+        CHECK(work<=14u);
+    }
+    CHECK(work==14u && control->steps==14u && !delivery.count);
+    CHECK(work_credit_view(root).root_spent==14u && work_credit_view(root).balance==6u);
+    cetta_owned_execution_cancel(&execution);
+    CHECK(!eval_prime_source_execution_add_credit(&execution,root,1u));
+    CHECK(work_credit_view(root).balance==6u && !work_credit_view(root).children);
+    cetta_work_credit_release(root);cetta_work_credit_release(foreign);
+    eval_prime_source_owner_release(source);
+    ordinary_source_delivery_check(&delivery,NULL,0u);
+}
+
+static uint64_t ordinary_source_shared_case(uint64_t quantum,uint32_t workers,bool funded) {
     CettaOwnedExecution execution={0},moved={0};
     OrdinarySourceSharing sharing={.refusals=2u};
     sharing.owner=ordinary_source_driver_open(ordinary_shared_program,"(same (pick))",
         quantum,workers,&execution);
+    CettaWorkCredit *credit=funded?cetta_work_credit_new(20000u):NULL;
+    if(funded) {
+        assert(credit);
+        CHECK(eval_prime_source_execution_fund(&execution,credit,10000u)==CETTA_CONTINUATION_READY);
+    }
     CettaPrimeObservationReturn *owned=execution.computation;
     ordinary_source_pending(&execution,quantum);
     CettaOwnedReturn loan=execution.pending;
     uint64_t paid=owned->ordinary_control->steps;
+    if(funded) {
+        CHECK(eval_prime_source_execution_add_credit(&execution,credit,7u));
+        CHECK(owned->ordinary_control->steps==paid && execution.has_pending &&
+            execution.pending.outcome.term==loan.outcome.term &&
+            execution.pending.environment==loan.environment && !execution.accepted);
+        CHECK(work_credit_view(credit).balance==9993u &&
+            work_credit_view(credit).root_spent==paid);
+    }
     CHECK(cetta_owned_execution_move(&moved,&execution));
     cetta_owned_execution_cancel(&execution);
     CHECK(moved.has_pending && moved.pending.outcome.term==loan.outcome.term &&
@@ -7059,10 +7253,23 @@ static void ordinary_source_shared_case(uint64_t quantum,uint32_t workers) {
     CHECK(step==CETTA_SHARED_RETURN_COMPLETE && remaining.count==3u && sharing.captures==5u);
     CHECK(cetta_shared_return_producer_execution(producer)->accepted==3u && owned->ordinary_next==3u);
     CHECK(cetta_shared_return_producer_peek(producer,1u).kind==CETTA_SHARED_DELIVERY_COMPLETED);
+    paid=owned->ordinary_control->steps;
+    if(funded) {
+        CHECK(work_credit_view(credit).root_spent==paid &&
+            work_credit_view(credit).balance==9993u);
+        CHECK(!eval_prime_source_execution_add_credit(
+            cetta_shared_return_producer_execution(producer),credit,1u));
+    }
     cetta_shared_return_producer_free(producer);eval_prime_source_owner_release(sharing.owner);
+    if(funded) {
+        CettaWorkCreditView view=work_credit_view(credit);
+        CHECK(view.root_spent==paid && view.balance==20000u-paid && !view.children);
+        cetta_work_credit_release(credit);
+    }
     /* The received logical worlds and values outlive both producer owners. */
     ordinary_source_delivery_check(&first,ordinary_shared_expected,1u);
     ordinary_source_delivery_check(&remaining,ordinary_shared_expected,3u);
+    return paid;
 }
 
 static void ordinary_source_detach_case(bool pending) {
@@ -7690,6 +7897,17 @@ static void ordinary_source_task_stale_case(bool pending) {
 }
 
 static void ordinary_source_shared_cases(void) {
+    work_credit_cases();
+    ordinary_source_credit_case("","(empty)",NULL,0u,1000u,true);
+    ordinary_source_credit_case("(= (source-loop $n) (source-loop (+ $n 1)))",
+        "(source-loop 0)",NULL,0u,0u,false);
+    ordinary_source_credit_case("(= (source-loop $n) (source-loop (+ $n 1)))",
+        "(source-loop 0)",NULL,0u,11u,false);
+    ordinary_source_credit_case("(= (source-loop $n) (source-loop (+ $n 1)))",
+        "(source-loop 0)",NULL,0u,UINT64_MAX,false);
+    ordinary_source_credit_case(ordinary_shared_program,"(same (pick))",
+        ordinary_shared_expected,3u,10000u,true);
+    ordinary_source_recredit_case();
     uint64_t service_work=ordinary_source_task_case(1u,1u,false);
     CHECK(ordinary_source_task_case(7u,1u,false)==service_work);
     ordinary_source_task_case(1u,2u,false);
@@ -7718,8 +7936,10 @@ static void ordinary_source_shared_cases(void) {
     }
     for(unsigned mode=1u;mode<=6u;mode++)ordinary_source_weighted_history_case(mode);
     for(uint32_t workers=1u;workers<=2u;workers++)
-        for(uint64_t quantum=1u;quantum<=7u;quantum+=6u)
-            ordinary_source_shared_case(quantum,workers);
+        for(uint64_t quantum=1u;quantum<=7u;quantum+=6u) {
+            uint64_t ordinary_work=ordinary_source_shared_case(quantum,workers,false);
+            CHECK(ordinary_source_shared_case(quantum,workers,true)==ordinary_work);
+        }
     for(unsigned pending=0u;pending<2u;pending++) {
         ordinary_source_detach_case(pending!=0u);
         ordinary_source_currency_case(pending!=0u,false);

@@ -328,6 +328,8 @@ CettaDurableStatus cetta_host_plan_open(CettaHostDecision *d,
     if (captured==CETTA_CONTINUATION_READY)
         captured=eval_prime_source_execution_open(source,limits->quantum,&execution);
     eval_prime_source_owner_release(source);
+    if (captured==CETTA_CONTINUATION_READY && limits->credit)
+        captured=eval_prime_source_execution_fund(&execution,limits->credit,limits->work_limit);
     if (captured!=CETTA_CONTINUATION_READY) {
         status=captured==CETTA_CONTINUATION_CAPACITY?DURABLE_LIMIT:DURABLE_PRECONDITION;
         goto fail;

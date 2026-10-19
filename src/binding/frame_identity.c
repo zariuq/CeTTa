@@ -93,16 +93,7 @@ static uint32_t frame_identity_generation_max(uint32_t handle) {
 
 static CettaFrameIdentity frame_identity_spell(uint32_t handle,
                                                uint32_t generation) {
-    if (handle < CETTA_FRAME_CLASS1_FIRST)
-        return (generation << CETTA_FRAME_HANDLE_BITS) | handle;
-    if (handle < CETTA_FRAME_CLASS2_FIRST)
-        return (UINT32_C(2) << 30) | (generation << 24) |
-               (handle - CETTA_FRAME_CLASS1_FIRST);
-    if (handle < CETTA_FRAME_CLASS3_FIRST)
-        return (UINT32_C(6) << 29) | (generation << 26) |
-               (handle - CETTA_FRAME_CLASS2_FIRST);
-    return (UINT32_C(14) << 28) | (generation << 26) |
-           (handle - CETTA_FRAME_CLASS3_FIRST);
+    return (CettaFrameIdentity)FrameIdentity_encode(handle, generation);
 }
 
 /* Free handles kept by the thread that released them, so minting and the

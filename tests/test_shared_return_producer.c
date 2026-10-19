@@ -574,7 +574,27 @@ static void test_real_prepared_producer(bool bounded) {
     puts("PASS: one real prepared relation supplies ordered duplicate occurrences to independent consumers without retaining source storage");
 }
 
+static void test_credit_allocation_refusal(void) {
+    fail_calloc=1u;
+    assert(!cetta_work_credit_new(10u) && !fail_calloc);
+    CettaWorkCredit *root=cetta_work_credit_new(10u);assert(root);
+    fail_calloc=1u;
+    assert(!cetta_work_credit_reserve(root,7u) && !fail_calloc);
+    CettaWorkCreditView view;
+    assert(cetta_work_credit_inspect(root,&view) && view.balance==10u &&
+        !view.children && !view.root_spent && view.root_remaining==10u);
+    CettaWorkCredit *child=cetta_work_credit_reserve(root,7u);assert(child);
+    assert(cetta_work_credit_inspect(root,&view) && view.balance==3u && view.children==1u);
+    cetta_work_credit_release(root);
+    assert(cetta_work_credit_spend(child,4u));
+    assert(cetta_work_credit_inspect(child,&view) && view.balance==3u &&
+        view.root_spent==4u && view.root_remaining==6u);
+    cetta_work_credit_release(child);
+    puts("PASS: failed credit allocation preserves the parent purse; a live lease owns its parent lifetime");
+}
+
 int main(void) {
+    test_credit_allocation_refusal();
     SymbolTable symbols;
     VarInternTable variables;
     symbol_table_init(&symbols);

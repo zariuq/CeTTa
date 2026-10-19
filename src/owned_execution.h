@@ -8,6 +8,39 @@
 #include <assert.h>
 #include <string.h>
 
+/* Optional additive controller-work credit. Hosts serialize every operation
+ * on a bank and its leases. A retained reference aliases one balance; only
+ * reserve creates a separate purse, by transferring existing credit. These
+ * cells grant neither source access nor permission to run foreign effects.
+ * All uint64_t amounts, including zero and UINT64_MAX, are finite. An adapter
+ * selects its unmetered provider separately, without constructing a cell. */
+typedef struct CettaWorkCredit CettaWorkCredit;
+typedef struct {
+    uint64_t balance, spent;
+    uint64_t root_initial, root_remaining, root_spent;
+    size_t children;
+    bool closed;
+} CettaWorkCreditView;
+
+CettaWorkCredit *cetta_work_credit_new(uint64_t amount);
+bool cetta_work_credit_retain(CettaWorkCredit *);
+void cetta_work_credit_release(CettaWorkCredit *);
+/* Refusal leaves the parent unchanged. A child holds its parent alive. */
+CettaWorkCredit *cetta_work_credit_reserve(CettaWorkCredit *, uint64_t amount);
+/* Move existing credit between distinct live cells in the same bank. This
+ * does not change either lease's parent or its eventual refund destination.
+ * A caller supplies both references; retaining a parent is not a grant. */
+bool cetta_work_credit_transfer(CettaWorkCredit *source, CettaWorkCredit *target,
+    uint64_t amount);
+uint64_t cetta_work_credit_available(const CettaWorkCredit *);
+bool cetta_work_credit_spend(CettaWorkCredit *, uint64_t amount);
+bool cetta_work_credit_inspect(const CettaWorkCredit *, CettaWorkCreditView *);
+/* Close refuses while a child is open. First close returns only the unused
+ * child balance; a repeated close does nothing and returns false. Final
+ * reference release closes automatically. Root close retires its remaining
+ * balance. This is lifetime/accounting, not asynchronous revocation. */
+bool cetta_work_credit_close(CettaWorkCredit *);
+
 /* Intrusive owned continuation links keep dialect frames at stable addresses.
  * Push takes one frame; pop transfers it back to the adapter for publication
  * or release. The adapter owns roots and demand, so scalar values need no

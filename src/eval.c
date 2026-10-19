@@ -1927,6 +1927,7 @@ struct CettaPrimeObservationReturn {
      * loan and acknowledging that loan are separate protocol boundaries. */
     uint64_t ordinary_next;
     uint64_t ordinary_quantum;
+    CettaWorkCredit *ordinary_credit;
     CettaOwnedExecution ordinary_returns;
     CettaCount ordinary_result_length;
     Atom *ordinary_reified;
@@ -79717,8 +79718,17 @@ CettaContinuationStatus eval_prime_source_execution_open(CettaPrimeSourceOwner *
     (void)owner; (void)quantum; (void)execution;
     return CETTA_CONTINUATION_UNSUPPORTED;
 }
+CettaContinuationStatus eval_prime_source_execution_fund(CettaOwnedExecution *execution,
+    CettaWorkCredit *payer, uint64_t amount) {
+    (void)execution; (void)payer; (void)amount;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
 bool eval_prime_source_execution_is_current(const CettaOwnedExecution *execution) {
     (void)execution; return false;
+}
+bool eval_prime_source_execution_add_credit(const CettaOwnedExecution *execution,
+    CettaWorkCredit *payer, uint64_t amount) {
+    (void)execution; (void)payer; (void)amount; return false;
 }
 bool eval_prime_source_execution_work(const CettaOwnedExecution *execution, uint64_t *work) {
     (void)execution; (void)work; return false;

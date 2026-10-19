@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "../generated/cetta_layout_words.generated.h"
 
 /* A frame identity is independent of the substitution version containing it.
  * It names a handle and that handle's generation; reuse of a handle changes
@@ -53,24 +54,24 @@ typedef struct {
 static inline bool cetta_frame_identity_parts(CettaFrameIdentity identity,
                                               CettaFrameIdentityParts *out) {
     if ((identity >> 31) == 0u) {
-        out->handle = identity & CETTA_FRAME_HANDLE_MASK;
-        out->generation = identity >> 20;
+        out->handle = (uint32_t)FrameIdentity_handle(identity);
+        out->generation = (uint32_t)FrameIdentity_generation(identity);
         out->generation_max = CETTA_FRAME_GENERATION_MAX;
     } else if ((identity >> 30) == 2u) {
-        out->handle = CETTA_FRAME_CLASS1_FIRST + (identity & UINT32_C(0x00ffffff));
-        out->generation = (identity >> 24) & UINT32_C(0x3f);
+        out->handle = (uint32_t)FrameIdentity_handle(identity);
+        out->generation = (uint32_t)FrameIdentity_generation(identity);
         out->generation_max = UINT32_C(0x3e);
     } else if ((identity >> 29) == 6u) {
-        out->handle = CETTA_FRAME_CLASS2_FIRST + (identity & UINT32_C(0x03ffffff));
-        out->generation = (identity >> 26) & UINT32_C(0x7);
+        out->handle = (uint32_t)FrameIdentity_handle(identity);
+        out->generation = (uint32_t)FrameIdentity_generation(identity);
         out->generation_max = UINT32_C(0x6);
     } else if ((identity >> 28) == 14u) {
-        out->handle = CETTA_FRAME_CLASS3_FIRST + (identity & UINT32_C(0x03ffffff));
-        out->generation = (identity >> 26) & UINT32_C(0x3);
+        out->handle = (uint32_t)FrameIdentity_handle(identity);
+        out->generation = (uint32_t)FrameIdentity_generation(identity);
         out->generation_max = UINT32_C(0x2);
     } else {
-        out->handle = CETTA_FRAME_HANDLE_LIMIT + (identity & UINT32_C(0x0fffffff));
-        out->generation = 0u;
+        out->handle = (uint32_t)FrameIdentity_handle(identity);
+        out->generation = (uint32_t)FrameIdentity_generation(identity);
         out->generation_max = 0u;
         return false;
     }

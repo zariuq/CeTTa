@@ -110,6 +110,53 @@ static void retained_run(CettaHostDecision *d) {
             (unsigned long long)out->results.len,(unsigned long long)out->steps_spent);
     assert(!queue.count && out->completion==CETTA_EVAL_COMPLETE);
 }
+static void retained_credit_cases(const CettaHostProgram *p) {
+    write_record("host.inbox","native/credit","(received \"funded\")");
+    CettaHostDecision *first=retained_begin("native/credit","native/credit-first",false);
+    CettaHostDecision *loop=retained_begin("native/credit","native/credit-loop",false);
+    CettaHostDecision *refused=retained_begin("native/credit","native/credit-refused",false);
+    CettaWorkCredit *root=cetta_work_credit_new(2048u);assert(root);
+    CettaWorkCredit *caller=cetta_work_credit_reserve(root,2048u);assert(caller);
+    CettaHostPlanLimits limits=plan_limits;limits.credit=caller;limits.work_limit=1024u;
+    retained_open(first,p,"(host:transition funded () ())",limits);
+    limits.work_limit=23u;limits.quantum=7u;
+    retained_open(loop,p,"(spin 0)",limits);
+    CettaWorkCreditView initial;
+    assert(cetta_work_credit_inspect(caller,&initial) && initial.balance==1001u &&
+        initial.children==2u && !initial.root_spent);
+    limits.work_limit=1024u;
+    assert(cetta_host_plan_open(refused,p,parse("(spin 0)"),&limits)==DURABLE_LIMIT);
+    CettaWorkCreditView view;
+    assert(cetta_work_credit_inspect(caller,&view) && view.balance==initial.balance &&
+        view.children==initial.children && !view.root_spent && !cetta_host_plan_task(refused));
+    assert(!cetta_work_credit_close(caller) && !cetta_work_credit_close(root));
+    CettaOwnedTask *tasks[]={cetta_host_plan_task(first),cetta_host_plan_task(loop)};
+    for(unsigned i=0u;i<10000u;i++) {
+        for(unsigned task=0u;task<2u;task++)cetta_owned_task_poll(tasks[task],true);
+        const EvalOutcome *a=cetta_host_outcome(first),*b=cetta_host_outcome(loop);
+        assert(cetta_work_credit_inspect(root,&view));
+        assert(view.root_spent==a->steps_spent+b->steps_spent &&
+            view.root_remaining==2048u-view.root_spent && b->steps_spent<=23u);
+        if(a->completion==CETTA_EVAL_COMPLETE && b->steps_spent==23u)break;
+    }
+    const EvalOutcome *a=cetta_host_outcome(first),*b=cetta_host_outcome(loop);
+    assert(a->completion==CETTA_EVAL_COMPLETE && a->steps_spent>0u && a->results.len==1u);
+    assert(b->steps_spent==23u && !b->results.len && !tasks[1]->execution.terminal);
+    uint64_t spent=a->steps_spent+b->steps_spent;
+    for(unsigned i=0u;i<16u;i++)cetta_owned_task_poll(tasks[1],true);
+    assert(cetta_work_credit_inspect(root,&view) && view.root_spent==spent);
+    CettaHostCommit commit;assert(cetta_host_accept(first,0,&commit)==DURABLE_OK);
+    cetta_host_plan_cancel(first);cetta_host_plan_cancel(loop);
+    assert(cetta_work_credit_inspect(caller,&view) && !view.children &&
+        view.balance==2048u-spent && view.root_spent==spent);
+    cetta_host_plan_cancel(first);cetta_host_plan_cancel(loop);
+    assert(cetta_work_credit_close(caller) && !cetta_work_credit_close(caller));
+    assert(cetta_work_credit_inspect(root,&view) && !view.children &&
+        view.balance==2048u-spent && view.root_spent==spent);
+    cetta_host_decision_free(first);cetta_host_decision_free(loop);cetta_host_decision_free(refused);
+    cetta_work_credit_release(caller);cetta_work_credit_release(root);
+    puts("PASS: sibling retained plans conserve actual caller credit, retain failed work and refund only unused leases");
+}
 static void retained_host_cases(void) {
     CettaLibraryContext ctx;Space source;CettaHostProgram p;retained_program(&source,&ctx,&p);
     write_record("host.inbox","native/shared","(received \"first\")");
@@ -216,6 +263,7 @@ static void retained_host_cases(void) {
     retained_run(retry);assert(cetta_host_accept(retry,0,&commit)==DURABLE_INVALID);
     retained_open(retry,&p,"(host:transition good () ())",plan_limits);retained_run(retry);
     assert(cetta_host_accept(retry,0,&commit)==DURABLE_OK);cetta_host_decision_free(retry);
+    retained_credit_cases(&p);
     eval_set_library_context(&context);cetta_library_context_free(&ctx);space_free(&source);
     puts("PASS: retained Prime plans share the actual ready queue, finish beside a yielding loop, keep captured views, bound total work, retain refused loans and use one atomic durable acceptance");
 }
