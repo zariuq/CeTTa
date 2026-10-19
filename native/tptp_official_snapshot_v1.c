@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "native/tptp_official_snapshot_v1.h"
 #include "native/grammar_canonical_term_v1.h"
 
