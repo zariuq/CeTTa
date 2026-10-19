@@ -1320,6 +1320,13 @@ static bool bindings_value_collect_frame_ids(
     enum { FRAME_ID_SCAN_LIMIT = 16u };
     VarId *known_set = NULL;
     size_t known_mask = 0u;
+    /* A shared subgraph holds no identifier its first visit did not find,
+     * so past a few expressions each one is walked once: a value that shares
+     * its parts is read in its own size, not in the size of its tree. */
+    enum { FRAME_ID_GRAPH_AFTER = 64u };
+    AtomVisitSet visited = {0};
+    bool visit_fault = false;
+    size_t expressions = 0u;
     items[0] = value.skeleton;
     while (item_len > 0u) {
         Atom *atom = items[--item_len];
@@ -1341,10 +1348,14 @@ static bool bindings_value_collect_frame_ids(
                     }
                 }
             } else {
-                size_t slot = (size_t)(id * UINT64_C(0x9e3779b97f4a7c15)) &
-                    known_mask;
-                while (known_set[slot] != VAR_ID_NONE && known_set[slot] != id)
+                size_t slot = bindings_var_id_hash(id) & known_mask;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_LOOKUP);
+                while (known_set[slot] != VAR_ID_NONE && known_set[slot] != id) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_PROBE);
                     slot = (slot + 1u) & known_mask;
+                }
                 known = known_set[slot] == id;
                 if (!known)
                     known_set[slot] = id;
@@ -1378,8 +1389,7 @@ static bool bindings_value_collect_frame_ids(
                     grown[slot] = VAR_ID_NONE;
                 size_t mask = capacity - 1u;
                 for (size_t index = 0u; index < id_len; index++) {
-                    size_t slot = (size_t)(ids[index] *
-                                           UINT64_C(0x9e3779b97f4a7c15)) & mask;
+                    size_t slot = bindings_var_id_hash(ids[index]) & mask;
                     while (grown[slot] != VAR_ID_NONE)
                         slot = (slot + 1u) & mask;
                     grown[slot] = ids[index];
@@ -1391,6 +1401,9 @@ static bool bindings_value_collect_frame_ids(
             continue;
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+            continue;
+        if (++expressions > FRAME_ID_GRAPH_AFTER && !visit_fault &&
+            !atom_visit_set_add(&visited, atom, &visit_fault) && !visit_fault)
             continue;
         if ((size_t)atom->expr.len > SIZE_MAX - item_len)
             goto fail;
@@ -1421,6 +1434,7 @@ static bool bindings_value_collect_frame_ids(
     if (items != inline_items)
         free(items);
     free(known_set);
+    atom_visit_set_free(&visited);
     *ids_out = ids;
     *len_out = id_len;
     return true;
@@ -1431,6 +1445,7 @@ fail:
     if (ids != inline_ids)
         free(ids);
     free(known_set);
+    atom_visit_set_free(&visited);
     return false;
 }
 
@@ -4708,6 +4723,9 @@ static bool bindings_apply_memo_store(BindingApplyMemo *memo, VarId id, Atom *va
 
 struct BindingsEpochAccelerator;
 
+/* The expressions ordinary substitution opens before it keeps node images. */
+#define BINDINGS_APPLY_GRAPH_AFTER 64u
+
 /* How a skeleton's variables are read.  The rewrite fold reads them in the
  * value's own context (`epoch`, `kind`).  The epoch fold reads them on the
  * original or the stored side of an activation (`original_side`), from an
@@ -5294,6 +5312,15 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         .items = inline_items,
         .cap = BINDINGS_APPLY_INLINE_FRAMES,
     };
+    /* A term that shares subterms is substituted once per path to each
+     * unless the fold keeps node images.  Ordinary substitution starts
+     * without them and keeps them from its BINDINGS_APPLY_GRAPH_AFTER-th
+     * expression on, where its images, like graph observation's, depend on
+     * the node and the scope alone: no hook, an acyclic environment. */
+    BindingApplyGraph observed = {0};
+    bool may_observe = !graph && !epoch_fold && !fold->rewrite_var &&
+        !fold->track_cycles;
+    uint32_t expressions = 0u;
     Atom *result;
     for (;;) {
         /* Descend: the image of `atom`, or the frame that will receive it. */
@@ -5313,8 +5340,13 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
             bool created = false;
             BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
                 graph, atom, scope, &created);
-            if (!entry) goto failed;
-            if (!created) {
+            /* Kept images are only a shortcut for ordinary substitution:
+             * where they cannot grow, it walks on without them. */
+            if (!entry && graph == &observed)
+                graph = NULL;
+            else if (!entry)
+                goto failed;
+            else if (!created) {
                 /* Native syntax must be a DAG. Rational terms use their
                  * explicit graph carrier, not a recursive Atom pointer. */
                 if (!entry->image) goto failed;
@@ -5354,6 +5386,8 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
                     (BindingsApplyFrame){
                         .atom = atom, .scope = scope, .seen_len = seen_len}))
                 goto failed;
+            if (may_observe && ++expressions == BINDINGS_APPLY_GRAPH_AFTER)
+                graph = &observed;
         } else if (!result) {
             result = atom;
         }
@@ -5395,8 +5429,12 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
             }
             result = top->draft
                 ? atom_expr_builder_finish(fold->a, top->draft) : top->atom;
-            if (graph)
-                bindings_apply_graph_slot(graph, top->atom, top->scope)->image = result;
+            if (graph && graph->cap) {
+                BindingApplyGraphEntry *entry =
+                    bindings_apply_graph_slot(graph, top->atom, top->scope);
+                if (entry->source)
+                    entry->image = result;
+            }
             frames.len--;
             if (!result)
                 goto failed;
@@ -5406,10 +5444,12 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
     }
     if (frames.heap)
         free(frames.items);
+    free(observed.entries);
     return result;
 failed:
     if (frames.heap)
         free(frames.items);
+    free(observed.entries);
     return NULL;
 }
 

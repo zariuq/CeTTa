@@ -83,7 +83,6 @@
 #define LANGDEF_DEFAULT_REPLAY_DEPTH 4096u
 #define LANGDEF_DEFAULT_RESULT_LIMIT 65536u
 #define LANGDEF_DEFAULT_INCLUDE_DEPTH 4096u
-#define LANGDEF_DEFAULT_EQUATION_CONTINUATIONS 65536u
 #define LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS UINT64_C(100000000)
 #define LANGDEF_GENERATED_PROOF_GOAL_DEPTH UINT32_MAX
 
@@ -8987,8 +8986,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                     : cetta_deterministic_equation_plan_v1_run;
         if (!execute(
                 resource, call, langdef_deterministic_equation_primitive,
-                NULL, arena, LANGDEF_DEFAULT_EQUATION_CONTINUATIONS,
-                UINT64_C(100000000),
+                NULL, arena, 0u, 0u,
                 &result, &status, error, sizeof(error)))
             return langdef_error(
                 arena, head,
@@ -8998,10 +8996,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
     }
 
     if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run_allowance")) {
-        /* Test-scoped sibling of the ordinary deterministic run: the caller
-         * passes an explicit work allowance so oracle comparisons can run
-         * witnesses the fixed production budget cannot. Production uses the
-         * default run; this entry changes no default limit. */
+        /* A caller-selected work allowance. The evaluator owns a growable
+         * continuation stack; ordinary calls impose no implicit ceiling. */
         uint64_t id;
         uint64_t allowance;
         CettaDeterministicEquationPlanV1 *resource;
@@ -9029,7 +9025,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 error[0] ? error : "invalid deterministic call envelope");
         if (!cetta_deterministic_equation_plan_v1_run(
                 resource, call, langdef_deterministic_equation_primitive,
-                NULL, arena, LANGDEF_DEFAULT_EQUATION_CONTINUATIONS,
+                NULL, arena, 0u,
                 allowance,
                 &result, &status, error, sizeof(error)))
             return langdef_error(

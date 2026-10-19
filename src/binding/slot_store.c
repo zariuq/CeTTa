@@ -196,7 +196,7 @@ static void bindings_frame_table_relocate(BindingsFrameIndex *index) {
 /* Ensure the table can hold `frames` entries at no more than half load. */
 static bool bindings_frame_table_reserve(
         BindingsFrameIndex *index, uint32_t frames) {
-    if (!index || frames > CETTA_FRAME_HANDLE_MASK + 1u)
+    if (!index || frames > CETTA_FRAME_HANDLE_LIMIT)
         return false;
     uint32_t capacity = index->handle_table ? index->handle_table_mask + 1u : 0u;
     if (frames * 2u <= capacity)

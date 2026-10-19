@@ -4,6 +4,7 @@
 
 (= (fs:read-text $path) (__cetta_lib_fs_read_text $path))
 (= (fs:write $path $text) (__cetta_lib_fs_write $path $text))
+(= (fs:rename $source $target) (__cetta_lib_fs_rename $source $target))
 (= (fs:append-text $path $text) (__cetta_lib_fs_append_text $path $text))
 (= (fs:exists $path) (__cetta_lib_fs_exists $path))
 (= (fs:canonical-path $path) (__cetta_lib_fs_canonical_path $path))

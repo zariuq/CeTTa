@@ -1,3 +1,4 @@
+#include "binding/frame_identity_quiet.h"
 #include "atom.h"
 #include "space.h"
 #include "open_equation_machine.h"
@@ -13935,7 +13936,9 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     arena_set_ledger_tag(&cursor->names, CETTA_ARENA_LEDGER_CURSOR);
     arena_set_block_growth(&cursor->names, OEM_FIRST_BLOCK_BYTES);
     arena_set_hashcons(&cursor->names, NULL);
-    if (!cetta_frame_identity_acquire(&cursor->epoch)) {
+    /* A cursor that cannot open is not opened, and its caller evaluates
+     * the call the reference way: the refusal loses nothing. */
+    if (!cetta_frame_identity_acquire_quiet(&cursor->epoch)) {
         cursor->epoch = 0u;
         cetta_open_equation_cursor_close(cursor);
         return NULL;

@@ -121,8 +121,8 @@ typedef struct {
 
 typedef struct {
     CettaIndex atom_idx;
-    uint32_t epoch;
-    bool owns_identity;
+    /* The stored atom has variables: a match names them in a fresh frame. */
+    bool open;
     ImportedFlatToken *tokens;
     CettaIndex len;
 } ImportedFlatEntry;

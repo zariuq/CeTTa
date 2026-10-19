@@ -25,6 +25,13 @@ def declarations(source, dialect="petta"):
 
 
 class HandoffDeclarations(unittest.TestCase):
+    def test_io_handoff_declarations_run_instead_of_returning_private_calls(self):
+        source = (Path(__file__).resolve().parents[2] / "lib/io.metta").read_text()
+        self.assertIn("(: io:submit (-> Atom %Undefined%))", declarations(source))
+        for name in ("io:poll", "io:capabilities", "io:cancel"):
+            self.assertFalse(any(line.startswith(f"(: {name} ") for line in declarations(source)))
+        self.assertFalse(any("__cetta_lib_io_" in line for line in declarations(source)))
+
     def test_administrative_bindings_preserve_computation_and_data_parameters(self):
         body = "(function (let $p (prepare $x) (chain (eval (N $p $y)) $r (return $r))))"
         source = "(: F (-> %Undefined% Atom Atom))\n(: N (-> Atom Atom Atom))\n(= (F $x $y) " + body + ")"

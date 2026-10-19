@@ -2458,10 +2458,14 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
     return true;
 }
 
-static AtomId term_universe_intern_record(TermUniverse *universe,
-                                          const CettaTermHdr *hdr,
-                                          const uint8_t *payload,
-                                          size_t payload_len) {
+/* Intern a record, telling whether this call inserted it rather than
+ * finding it stored. */
+static AtomId term_universe_intern_record_noting(TermUniverse *universe,
+                                                 const CettaTermHdr *hdr,
+                                                 const uint8_t *payload,
+                                                 size_t payload_len,
+                                                 bool *inserted_out) {
+    *inserted_out = false;
     if (!universe || !universe->persistent_arena || !hdr)
         return CETTA_ATOM_ID_NONE;
 
@@ -2478,8 +2482,19 @@ static AtomId term_universe_intern_record(TermUniverse *universe,
 
     if (!term_universe_atom_id_capacity_available(universe))
         return CETTA_ATOM_ID_NONE;
-    return term_universe_insert_new_record(universe, hdr, payload, payload_len,
-                                           coordinate, &vacancy);
+    AtomId inserted = term_universe_insert_new_record(
+        universe, hdr, payload, payload_len, coordinate, &vacancy);
+    *inserted_out = inserted != CETTA_ATOM_ID_NONE;
+    return inserted;
+}
+
+static AtomId term_universe_intern_record(TermUniverse *universe,
+                                          const CettaTermHdr *hdr,
+                                          const uint8_t *payload,
+                                          size_t payload_len) {
+    bool inserted;
+    return term_universe_intern_record_noting(universe, hdr, payload,
+                                              payload_len, &inserted);
 }
 
 static AtomId term_universe_insert_new_record(TermUniverse *universe,
@@ -3047,9 +3062,12 @@ AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id) {
     hdr.hash32 = term_universe_hash_var_id(var_id);
     term_universe_store_u64(payload, var_id);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    AtomId result = term_universe_intern_record(universe, &hdr, payload,
-                                               sizeof(payload));
-    if (result != CETTA_ATOM_ID_NONE)
+    bool inserted;
+    AtomId result = term_universe_intern_record_noting(
+        universe, &hdr, payload, sizeof(payload), &inserted);
+    /* The stored record spells the epoch, so the universe holds it live for
+     * as long as the record; finding the record again needs no new hold. */
+    if (inserted)
         (void)cetta_frame_identity_scope_retain(
             &universe->frame_identities, var_epoch_suffix(var_id));
     return result;
@@ -3072,9 +3090,12 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
     term_universe_store_u64(payload, var_id);
     term_universe_store_u64(payload + sizeof(uint64_t), name_key_id);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    AtomId result = term_universe_intern_record(universe, &hdr, payload,
-                                               sizeof(payload));
-    if (result != CETTA_ATOM_ID_NONE)
+    bool inserted;
+    AtomId result = term_universe_intern_record_noting(
+        universe, &hdr, payload, sizeof(payload), &inserted);
+    /* The stored record spells the epoch, so the universe holds it live for
+     * as long as the record; finding the record again needs no new hold. */
+    if (inserted)
         (void)cetta_frame_identity_scope_retain(
             &universe->frame_identities, var_epoch_suffix(var_id));
     return result;
@@ -3825,11 +3846,78 @@ static AtomId term_universe_decoded_subterm_id(const TermUniverse *universe,
     return term_universe_lookup_ptr_id(universe, atom);
 }
 
+/* The ids one walk already found for the expressions it met: a value shares
+ * subterms, and each distinct subterm's id is found once.  Keyed by address;
+ * nothing the walk reads moves while it runs. */
+typedef struct {
+    const Atom *atom;
+    AtomId id;
+} TermUniverseWalkMemoSlot;
+
+typedef struct {
+    TermUniverseWalkMemoSlot *slots;
+    size_t cap;
+    size_t len;
+} TermUniverseWalkMemo;
+
+static size_t term_universe_walk_memo_slot(const Atom *atom, size_t cap) {
+    uint64_t key = (uint64_t)(uintptr_t)atom;
+    key ^= key >> 33u;
+    key *= UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+static AtomId term_universe_walk_memo_find(const TermUniverseWalkMemo *memo,
+                                           const Atom *atom) {
+    if (!memo->cap)
+        return CETTA_ATOM_ID_NONE;
+    size_t slot = term_universe_walk_memo_slot(atom, memo->cap);
+    while (memo->slots[slot].atom) {
+        if (memo->slots[slot].atom == atom)
+            return memo->slots[slot].id;
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    return CETTA_ATOM_ID_NONE;
+}
+
+/* Keep `atom`'s id; where the memo cannot grow it keeps nothing, and the
+ * walk finds the id again where it meets the atom again. */
+static void term_universe_walk_memo_store(TermUniverseWalkMemo *memo,
+                                          const Atom *atom, AtomId id) {
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        TermUniverseWalkMemoSlot *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return;
+        for (size_t i = 0u; i < memo->cap; i++) {
+            if (!memo->slots[i].atom)
+                continue;
+            size_t slot = term_universe_walk_memo_slot(memo->slots[i].atom, cap);
+            while (slots[slot].atom)
+                slot = (slot + 1u) & (cap - 1u);
+            slots[slot] = memo->slots[i];
+        }
+        free(memo->slots);
+        memo->slots = slots;
+        memo->cap = cap;
+    }
+    size_t slot = term_universe_walk_memo_slot(atom, memo->cap);
+    while (memo->slots[slot].atom) {
+        if (memo->slots[slot].atom == atom)
+            return;
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    memo->slots[slot] = (TermUniverseWalkMemoSlot){atom, id};
+    memo->len++;
+}
+
 static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
                                                      Atom *src, bool insert,
                                                      bool *out_stable) {
     TermUniverseStoreStack stack;
     term_universe_store_stack_init(&stack);
+    TermUniverseWalkMemo met = {0};
     AtomId result = CETTA_ATOM_ID_NONE;
     bool stable = false;
 
@@ -3884,6 +3972,9 @@ static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
             uint32_t child_index = frame->next_child++;
             Atom *child = atom->expr.elems[child_index];
             AtomId child_id = term_universe_decoded_subterm_id(universe, child);
+            if (child_id == CETTA_ATOM_ID_NONE && child &&
+                child->kind == ATOM_EXPR)
+                child_id = term_universe_walk_memo_find(&met, child);
             if (child_id != CETTA_ATOM_ID_NONE) {
                 stack.ids[frame->child_base + child_index] = child_id;
                 continue;
@@ -3899,6 +3990,8 @@ static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
             atom->expr.len, insert);
         if (id == CETTA_ATOM_ID_NONE)
             goto done;
+        if (frame->parent_index != UINT32_MAX)
+            term_universe_walk_memo_store(&met, atom, id);
         if (term_universe_store_stack_pop(&stack, id, &result)) {
             stable = true;
             goto done;
@@ -3907,6 +4000,7 @@ static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
 
 done:
     term_universe_store_stack_free(&stack);
+    free(met.slots);
     if (out_stable)
         *out_stable = stable;
     return result;
