@@ -10,9 +10,11 @@
 #include "mork_space_bridge_runtime.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,8 +33,16 @@ enum { CLIENTS = 32, STORES = 32, SNAPSHOTS = 64, RECEIPTS = 256,
        RECEIPT_BYTES = 16 * 1024 * 1024, QUERY_BYTES = 8 * 1024 * 1024,
        SNAPSHOT_BYTES = 32 * 1024 * 1024, PAGE_ROWS = 1024,
        QUERY_ROWS = 65536, FACT_BYTES = 512 * 1024 };
+/* Rights another account may hold on one store. Reading implies observing;
+ * writing implies reading and unconstrained appends. The service owner holds
+ * every right on every store, which is the trusted single-account profile. */
+enum { RIGHT_OBSERVE = 1u, RIGHT_READ = 2u, RIGHT_APPEND = 4u, RIGHT_WRITE = 8u };
+static const char *const RIGHT_NAMES[] = {"observe","read","append","write"};
 
 typedef struct { unsigned char *data; size_t size; } Bytes;
+/* A grant's (grant-form SHAPE UNIQUE) keeps its exact wire bytes: one term,
+ * so a variable shared by the shape and the uniqueness pattern stays one. */
+typedef struct { uint32_t uid; unsigned rights; Bytes form; } Grant;
 typedef struct {
     uint64_t id, revision;
     char name[129];
@@ -42,13 +52,16 @@ typedef struct {
     Space *space;
     CettaMorkSpaceHandle *backend;
     uint64_t live_bytes, churn;
+    Grant *grants;
+    size_t grant_count, grant_capacity;
 } Store;
 typedef struct {
     uint64_t id, source, revision, expires;
     Bytes *rows;
     size_t count, size;
+    uint32_t uid;
 } Snapshot;
-typedef struct { char id[129]; Bytes request, reply; } Receipt;
+typedef struct { char id[129]; uint32_t uid; Bytes request, reply; } Receipt;
 typedef struct {
     Store *stores[STORES];
     Snapshot snapshots[SNAPSHOTS];
@@ -61,6 +74,8 @@ typedef struct {
     size_t watchers, max_watchers;
     char uuid[33], boot[33];
     int journal, directory, lock;
+    /* The process account wrote every record that names no account. */
+    uint32_t owner_uid, process_uid;
     bool poisoned, restoring;
 } Service;
 typedef struct {
@@ -71,6 +86,10 @@ typedef struct {
     size_t output_sent;
     uint64_t deadline;
     uint64_t watch_source, watch_revision, watch_due;
+    /* The kernel's credentials for the connecting process. */
+    uint32_t uid;
+    char account[33];
+    bool owner;
     bool watching;
 } Client;
 
@@ -157,6 +176,82 @@ static size_t store_slot(Service *s) {
     for (size_t i = 0; i < STORES; ++i) if (!s->stores[i]) return i;
     return STORES;
 }
+static Grant *find_grant(Store *st, uint32_t uid) {
+    for (size_t i = 0; i < st->grant_count; ++i) if (st->grants[i].uid == uid) return &st->grants[i];
+    return NULL;
+}
+static unsigned rights_of(Client *c, Store *st) {
+    if (c->owner) return ~0u;
+    Grant *g = find_grant(st, c->uid);
+    unsigned rights = g ? g->rights : 0;
+    if (rights & RIGHT_WRITE) rights |= RIGHT_READ | RIGHT_APPEND;
+    if (rights & RIGHT_READ) rights |= RIGHT_OBSERVE;
+    return rights;
+}
+static bool grant_reserve(Store *st) {
+    if (st->grant_count < st->grant_capacity) return true;
+    size_t capacity = st->grant_capacity ? 2 * st->grant_capacity : 4;
+    Grant *grown = realloc(st->grants, capacity * sizeof(*grown));
+    if (!grown) return false;
+    st->grants = grown; st->grant_capacity = capacity; return true;
+}
+/* Replace one account's entry, taking its form bytes. No rights removes it. */
+static bool grant_set(Store *st, uint32_t uid, unsigned rights, Bytes *form_bytes) {
+    Grant *g = find_grant(st, uid);
+    if (g) bytes_free(&g->form);
+    if (!rights) {
+        if (g) *g = st->grants[--st->grant_count];
+        bytes_free(form_bytes); return true;
+    }
+    if (!g) {
+        if (!grant_reserve(st)) { bytes_free(form_bytes); return false; }
+        g = &st->grants[st->grant_count++];
+    }
+    *g = (Grant){.uid = uid, .rights = rights, .form = *form_bytes};
+    *form_bytes = (Bytes){0}; return true;
+}
+static bool rights_parse(Atom *list, unsigned *out) {
+    if (!list || list->kind != ATOM_EXPR || !atom_is_symbol(part(list,0), "rights")) return false;
+    unsigned rights = 0;
+    for (size_t i = 1; i < list->expr.len; ++i) {
+        size_t k = 0;
+        while (k < 4 && !atom_is_symbol(part(list,i), RIGHT_NAMES[k])) ++k;
+        if (k == 4) return false;
+        rights |= 1u << k;
+    }
+    *out = rights; return true;
+}
+static Atom *rights_atom(Arena *a, unsigned rights) {
+    Atom *names[4]; size_t count = 0;
+    for (size_t k = 0; k < 4; ++k) if (rights & (1u << k)) names[count++] = atom_symbol(a, RIGHT_NAMES[k]);
+    return form(a, "rights", names, count);
+}
+/* An account is named by uid; a login name may follow for readers. */
+static bool account_uid(Atom *a, uint32_t *uid) {
+    uint64_t n;
+    if (!a || a->kind != ATOM_EXPR || a->expr.len < 2 || a->expr.len > 3 ||
+        !atom_is_symbol(part(a,0), "account") || !integer(part(a,1), &n) || n > UINT32_MAX) return false;
+    *uid = (uint32_t)n; return true;
+}
+static Atom *account_atom(Arena *a, Client *c) {
+    Atom *args[] = {atom_int(a, c->uid), c->account[0] ? atom_symbol(a, c->account) : NULL};
+    return form(a, "account", args, c->account[0] ? 2 : 1);
+}
+/* The authenticated account in place of every (caller) of a grant's form. */
+static Atom *with_caller(Arena *a, Atom *atom, Atom *caller) {
+    if (!atom || atom->kind != ATOM_EXPR) return atom;
+    if (shape(atom, "caller", 1)) return caller;
+    Atom **items = NULL;
+    for (CettaExprIndex i = 0; i < atom->expr.len; ++i) {
+        Atom *next = with_caller(a, atom->expr.elems[i], caller);
+        if (next != atom->expr.elems[i] && !items) {
+            items = arena_alloc(a, atom->expr.len * sizeof(*items));
+            for (CettaExprIndex j = 0; j < i; ++j) items[j] = atom->expr.elems[j];
+        }
+        if (items) items[i] = next;
+    }
+    return items ? atom_expr(a, items, atom->expr.len) : atom;
+}
 static bool engine(Atom *a, SpaceEngine *out) {
     if (atom_is_symbol(a, "native")) *out = SPACE_ENGINE_NATIVE;
     else if (atom_is_symbol(a, "pathmap")) *out = SPACE_ENGINE_PATHMAP;
@@ -169,6 +264,8 @@ static const char *engine_name(SpaceEngine e) {
 }
 static void store_free(Store *st) {
     if (!st) return;
+    for (size_t i = 0; i < st->grant_count; ++i) bytes_free(&st->grants[i].form);
+    free(st->grants);
     if (st->space) { space_free(st->space); free(st->space); }
     if (st->backend) cetta_mork_bridge_space_free(st->backend);
     term_universe_free(&st->universe); arena_free(&st->arena); free(st);
@@ -339,12 +436,15 @@ static bool store_remove(Store *st, Atom *atom) {
     st->live_bytes -= size; st->churn += size;
     return true;
 }
-static Atom *describe(Service *s, Arena *a, Store *st) {
+/* Without the right to observe, revision and size read as zero. */
+static Atom *describe_as(Service *s, Arena *a, Store *st, unsigned rights) {
+    bool seen = rights & RIGHT_OBSERVE;
     Atom *args[] = {atom_string(a,s->uuid), atom_int(a,st->id), atom_string(a,st->name),
         atom_symbol(a,engine_name(st->engine)), atom_symbol(a,st->engine == SPACE_ENGINE_MORK ? "set" : "bag"),
-        atom_int(a,st->revision), atom_int(a,space_length64(st->space))};
+        atom_int(a,seen ? st->revision : 0), atom_int(a,seen ? space_length64(st->space) : 0)};
     return form(a,"space",args,7);
 }
+static Atom *describe(Service *s, Arena *a, Store *st) { return describe_as(s,a,st,~0u); }
 static void snapshot_free(Service *s, Snapshot *q) {
     if (!q->id) return;
     for (size_t i = 0; i < q->count; ++i) bytes_free(&q->rows[i]);
@@ -362,12 +462,18 @@ static Snapshot *find_snapshot(Service *s, uint64_t id) {
 static void receipt_free(Receipt *r) {
     bytes_free(&r->request); bytes_free(&r->reply); *r = (Receipt){0};
 }
-static Receipt *find_receipt(Service *s, const char *id) {
-    for (size_t i = 0; i < s->receipt_count; ++i) if (!strcmp(s->receipts[i].id,id)) return &s->receipts[i];
+/* Request identities belong to one account: another account's IDs neither
+ * collide with nor reveal this one's. */
+static Receipt *find_receipt(Service *s, uint32_t uid, const char *id) {
+    for (size_t i = 0; i < s->receipt_count; ++i)
+        if (s->receipts[i].uid == uid && !strcmp(s->receipts[i].id,id)) return &s->receipts[i];
     return NULL;
 }
-static bool remember(Service *s, const char *id, Bytes request, Bytes answer) {
-    if (request.size + answer.size > RECEIPT_BYTES) return false;
+static bool receipt_fits(Bytes request, Bytes answer) {
+    return request.size <= RECEIPT_BYTES && answer.size <= RECEIPT_BYTES - request.size;
+}
+static bool remember(Service *s, uint32_t uid, const char *id, Bytes request, Bytes answer) {
+    if (!receipt_fits(request,answer)) return false;
     while (s->receipt_count && (s->receipt_count == RECEIPTS ||
             s->receipt_bytes + request.size + answer.size > RECEIPT_BYTES)) {
         s->receipt_bytes -= s->receipts[0].request.size + s->receipts[0].reply.size;
@@ -375,7 +481,7 @@ static bool remember(Service *s, const char *id, Bytes request, Bytes answer) {
         memmove(s->receipts,s->receipts+1,(--s->receipt_count)*sizeof(*s->receipts));
     }
     Receipt *r = &s->receipts[s->receipt_count];
-    *r = (Receipt){0}; snprintf(r->id,sizeof(r->id),"%s",id);
+    *r = (Receipt){.uid = uid}; snprintf(r->id,sizeof(r->id),"%s",id);
     if (!bytes_copy(&r->request,request.data,request.size) ||
         !bytes_copy(&r->reply,answer.data,answer.size)) { receipt_free(r); return false; }
     s->receipt_bytes += request.size + answer.size; ++s->receipt_count;
@@ -418,6 +524,30 @@ static bool apply(Service *s, Atom *request) {
         s->stores[slot] = st; ++s->next_store; ++s->catalog_revision;
         return true;
     }
+    if (atom_is_symbol(part(request,2),"append")) {
+        uint64_t id; Atom *bundle = part(request,5);
+        if (!integer(part(request,4),&id) || !bundle || bundle->kind != ATOM_EXPR) return false;
+        Store *st = find_store(s,id);
+        if (!st || st->revision >= INT64_MAX) return false;
+        for (size_t i = 1; i < bundle->expr.len; ++i) if (!store_add(st,part(bundle,i))) return false;
+        ++st->revision; return store_consistent(st);
+    }
+    if (atom_is_symbol(part(request,2),"grant")) {
+        uint64_t id; uint32_t uid; unsigned rights;
+        if (!integer(part(request,4),&id) || !account_uid(part(request,5),&uid) ||
+            !rights_parse(part(request,6),&rights)) return false;
+        Store *st = find_store(s,id);
+        if (!st) return false;
+        Bytes form_bytes = {0};
+        Atom *forms[] = {part(request,7),part(request,8)};
+        if (!atom_is_symbol(forms[0],"none") || !atom_is_symbol(forms[1],"none")) {
+            Arena scratch; arena_init_detached(&scratch);
+            bool encoded = wire(form(&scratch,"grant-form",forms,2),&form_bytes);
+            arena_free(&scratch);
+            if (!encoded) return false;
+        }
+        return grant_set(st,uid,rights,&form_bytes);
+    }
     uint64_t id, rev;
     if (!integer(part(request,4),&id) || !integer(part(request,5),&rev)) return false;
     Store *st = find_store(s,id);
@@ -444,22 +574,27 @@ static Atom *committed(Service *s, Arena *a, Atom *request, uint64_t id, uint64_
     Atom *args[] = {atom_string(a,s->uuid),atom_int(a,id),atom_int(a,rev)};
     return reply(a,request,true,form(a,"committed",args,3));
 }
-static Atom *commit(Service *s, Arena *a, Atom *request, Bytes raw, Atom *answer) {
+static Atom *commit(Service *s, Arena *a, uint32_t uid, Atom *request, Bytes raw, Atom *answer) {
     const char *id = NULL;
     if (!token(part(request,1),&id)) return error(a,request,"invalid-id");
     Bytes result = {0}, record_bytes = {0};
     if (!wire(answer,&result)) return error(a,request,"limit");
+    /* A receipt that could not be kept refuses the request before the
+     * durable decision; after it, only uncertain integrity may stop service. */
+    if (!receipt_fits(raw,result)) { bytes_free(&result); return error(a,request,"receipt-limit"); }
     /* Persist the exact input bytes: number parsing can normalize spelling,
-     * and decoding/re-encoding cannot reconstruct an idempotence key. */
-    Atom *parts[] = {atom_string_n(a,(const char *)raw.data,raw.size),
+     * and decoding/re-encoding cannot reconstruct an idempotence key. Records
+     * of the process account keep their original form. */
+    Atom *parts[] = {atom_int(a,uid),atom_string_n(a,(const char *)raw.data,raw.size),
                     atom_string_n(a,(const char *)result.data,result.size)};
-    Atom *record = form(a,"event-bytes",parts,2);
+    Atom *record = uid == s->process_uid ? form(a,"event-bytes",parts+1,2)
+                                         : form(a,"event-from",parts,3);
     if (!wire(record,&record_bytes)) {
         bytes_free(&result); bytes_free(&record_bytes); return error(a,request,"limit");
     }
     bytes_free(&record_bytes);
     if (!journal_record(s->journal,record,true,&s->journal_bytes) || !apply(s,request) ||
-        !remember(s,id,raw,result)) {
+        !remember(s,uid,id,raw,result)) {
         s->poisoned = true; bytes_free(&result); return NULL;
     }
     bytes_free(&result); return answer;
@@ -470,7 +605,7 @@ static bool service_matches(Service *s, Atom *a) {
 static bool boot_matches(Service *s, Atom *a) {
     const char *boot = NULL; return text(a,&boot) && !strcmp(boot,s->boot);
 }
-static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting) {
+static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting, uint32_t uid) {
     bool profile=!counting && (atom_is_symbol(part(request,2),"query-profile") ||
                               atom_is_symbol(part(request,2),"query-first-profile"));
     bool first=!counting && (atom_is_symbol(part(request,2),"query-first") ||
@@ -489,7 +624,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     space_occurrence_cursor_init_empty(&cursor);
     if (!store_consistent(st) || !space_occurrence_cursor_init(st->space,pattern,&cursor))
         return error(a,request,"backend");
-    Snapshot q = {.id=s->next_cursor,.source=st->id,.revision=st->revision};
+    Snapshot q = {.id=s->next_cursor,.source=st->id,.revision=st->revision,.uid=uid};
     if (!counting) {
         q.rows = calloc((size_t)limit,sizeof(*q.rows));
         if (!q.rows) { space_occurrence_cursor_release(&cursor); return error(a,request,"memory"); }
@@ -554,13 +689,79 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     }
     return reply(a,request,true,view);
 }
+/* Whether some stored atom matches the pattern: 1, 0, or -1 on failure. This
+ * is the service's own read; the requester needs no right to read. */
+static int store_any(Store *st, Atom *pattern) {
+    SpaceOccurrenceCursor cursor;
+    space_occurrence_cursor_init_empty(&cursor);
+    if (!store_consistent(st) || !space_occurrence_cursor_init(st->space,pattern,&cursor)) return -1;
+    int found = 0; CettaIndex index;
+    SpaceOccurrenceCursorStep step = SPACE_OCCURRENCE_CURSOR_END;
+    while (!found && (step = space_occurrence_cursor_next(&cursor,&index)) == SPACE_OCCURRENCE_CURSOR_ITEM) {
+        Atom *source = space_occurrence_cursor_atom(&cursor,index);
+        if (!source) { found = -1; break; }
+        Arena scratch; arena_init_detached(&scratch);
+        Atom *row = source; Bytes fresh = {0};
+        if (atom_has_vars(source) && (!wire(source,&fresh) || !decode(&scratch,fresh,&row))) found = -1;
+        bytes_free(&fresh);
+        Bindings bindings; bindings_init(&bindings);
+        if (!found && match_atoms(pattern,row,&bindings,&scratch)) found = 1;
+        bindings_free(&bindings); arena_free(&scratch);
+    }
+    if (!found && step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) found = -1;
+    space_occurrence_cursor_release(&cursor);
+    return found;
+}
+/* Appended values are ground and bounded. When a grant has a shape, the whole
+ * bundle must be one instance of it, with (caller) bound to the authenticated
+ * account: shared variables make correlated fields agree, and the arity rules
+ * out missing, extra or forged records. A uniqueness pattern makes an
+ * identical retry a duplicate and any other reuse a conflict. NULL admits. */
+static Atom *append_admit(Service *s, Arena *a, Client *client, Store *st, Atom *request) {
+    Atom *bundle = part(request,5);
+    if (!bundle || bundle->kind != ATOM_EXPR || !atom_is_symbol(part(bundle,0),"bundle") ||
+        bundle->expr.len < 2 || bundle->expr.len > 4097) return error(a,request,"invalid-bundle");
+    uint64_t added_bytes = 0;
+    for (size_t i = 1; i < bundle->expr.len; ++i) {
+        Atom *value = part(bundle,i); Bytes b = {0};
+        if (atom_has_vars(value)) return error(a,request,"open-value");
+        if (!wire(value,&b)) return error(a,request,"unsupported-value");
+        size_t size = b.size; bytes_free(&b);
+        if (size > FACT_BYTES) return error(a,request,"fact-limit");
+        added_bytes += size;
+    }
+    if (space_length64(st->space) + (bundle->expr.len - 1) > s->max_facts ||
+        st->live_bytes + added_bytes > s->max_live_bytes) return error(a,request,"space-limit");
+    if (st->revision >= INT64_MAX) return error(a,request,"revision-limit");
+    Grant *g = client->owner ? NULL : find_grant(st,client->uid);
+    if (!g || (g->rights & RIGHT_WRITE) || !g->form.size) return NULL;
+    Atom *grant = NULL, *outcome = NULL;
+    if (!decode(a,g->form,&grant) || !shape(grant,"grant-form",3)) return error(a,request,"backend");
+    grant = with_caller(a,grant,account_atom(a,client));
+    Atom *pattern = part(grant,1), *unique = part(grant,2);
+    Bindings bindings; bindings_init(&bindings);
+    if (!atom_is_symbol(pattern,"none") && !match_atoms(pattern,bundle,&bindings,a))
+        outcome = error(a,request,"shape-mismatch");
+    if (!outcome && !atom_is_symbol(unique,"none")) {
+        Atom *key = bindings_apply(&bindings,a,unique);
+        int seen = key ? store_any(st,key) : -1;
+        if (seen < 0) outcome = error(a,request,"backend");
+        else if (seen) {
+            bool same = true;
+            for (size_t i = 1; same && i < bundle->expr.len; ++i) same = find_equal(st,part(bundle,i));
+            outcome = same ? reply(a,request,true,atom_symbol(a,"duplicate"))
+                           : error(a,request,"id-conflict");
+        }
+    }
+    bindings_free(&bindings); return outcome;
+}
 static bool compact(Service *s);
 static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes raw) {
     const char *id = NULL;
     if (!request || request->kind != ATOM_EXPR || request->expr.len < 3 ||
         !atom_is_symbol(part(request,0),"request") || !token(part(request,1),&id)) return NULL;
     if (s->poisoned) return NULL;
-    Receipt *old = find_receipt(s,id);
+    Receipt *old = find_receipt(s,client->uid,id);
     if (old) {
         if (!same_bytes(old->request,raw)) return error(a,request,"reused-id");
         Atom *answer = NULL;
@@ -571,16 +772,28 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             atom_symbol(a,"bounded-receipts"),atom_symbol(a,"journal-checkpoint"),atom_symbol(a,"no-eval"),
             atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index"),
             atom_symbol(a,"tensor-ctn1-native"),atom_symbol(a,"tensor-f32-native"),
-            atom_symbol(a,"revision-waits"),atom_symbol(a,"first-occurrence")};
+            atom_symbol(a,"revision-waits"),atom_symbol(a,"first-occurrence"),
+            atom_symbol(a,"peer-principals")};
+        /* Only the owner creates stores, so only it needs the catalog revision. */
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,s->catalog_revision),form(a,"capabilities",caps,11)};
+            atom_int(a,client->owner ? s->catalog_revision : 0),form(a,"capabilities",caps,12)};
         return reply(a,request,true,form(a,"service",args,5));
+    }
+    if (shape(request,"request",3) && atom_is_symbol(part(request,2),"whoami")) {
+        Atom *args[] = {account_atom(a,client),atom_symbol(a,client->owner ? "owner" : "member")};
+        return reply(a,request,true,form(a,"principal",args,2));
     }
     if (atom_is_symbol(part(request,2),"fetch") || atom_is_symbol(part(request,2),"close")) {
         bool closing = atom_is_symbol(part(request,2),"close"); uint64_t cursor;
         if (request->expr.len != (closing ? 5 : 7) || !boot_matches(s,part(request,3)) ||
             !integer(part(request,4),&cursor)) return error(a,request,"cursor-identity");
         Snapshot *q = find_snapshot(s,cursor);
+        /* Another account's cursor, or one over a store this account may no
+         * longer read, is indistinguishable from a closed one. */
+        if (q && !client->owner) {
+            Store *source = find_store(s,q->source);
+            if (q->uid != client->uid || !source || !(rights_of(client,source) & RIGHT_READ)) q = NULL;
+        }
         if (!q) return error(a,request,"expired-or-closed");
         if (q->expires <= now_ms()) { snapshot_free(s,q); return error(a,request,"expired-or-closed"); }
         if (closing) { snapshot_free(s,q); return reply(a,request,true,atom_symbol(a,"closed")); }
@@ -602,20 +815,23 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
     if (!service_matches(s,part(request,3))) return error(a,request,"service-identity");
     if (atom_is_symbol(part(request,2),"list") && request->expr.len == 4) {
         Atom *spaces[STORES]; size_t count=0;
-        for (size_t i=0;i<STORES;++i) if (s->stores[i])
-            spaces[count++]=describe(s,a,s->stores[i]);
-        Atom *args[]={atom_string(a,s->uuid),atom_int(a,s->catalog_revision),
+        for (size_t i=0;i<STORES;++i) if (s->stores[i]) {
+            unsigned rights=rights_of(client,s->stores[i]);
+            if (rights) spaces[count++]=describe_as(s,a,s->stores[i],rights);
+        }
+        Atom *args[]={atom_string(a,s->uuid),atom_int(a,client->owner ? s->catalog_revision : 0),
                       form(a,"spaces",spaces,count)};
         return reply(a,request,true,form(a,"catalog",args,3));
     }
     if (atom_is_symbol(part(request,2),"receipt") && request->expr.len == 5) {
         const char *target = NULL;
         if (!token(part(request,4),&target)) return error(a,request,"invalid-id");
-        Receipt *r = find_receipt(s,target); Atom *value = NULL;
+        Receipt *r = find_receipt(s,client->uid,target); Atom *value = NULL;
         if (r && !decode(a,r->reply,&value)) return NULL;
         return reply(a,request,true,r ? value : atom_symbol(a,"unknown-receipt"));
     }
     if (atom_is_symbol(part(request,2),"compact") && request->expr.len == 4) {
+        if (!client->owner) return error(a,request,"forbidden");
         if (!compact(s)) { s->poisoned=true; return NULL; }
         return reply(a,request,true,atom_symbol(a,"compacted"));
     }
@@ -624,6 +840,14 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!token(part(request,4),&name) || !engine(part(request,5),&e) ||
             !integer(part(request,6),&revision)) return error(a,request,"invalid-open");
         Store *existing = find_name(s,name);
+        /* Other accounts open only stores they hold a right on; an existing
+         * store without one answers exactly like a missing name. */
+        if (!client->owner) {
+            unsigned rights = existing ? rights_of(client,existing) : 0;
+            if (!rights) return error(a,request,"missing-space");
+            return existing->engine == e ? reply(a,request,true,describe_as(s,a,existing,rights))
+                                         : error(a,request,"backend-mismatch");
+        }
         if (existing) return existing->engine == e ? reply(a,request,true,describe(s,a,existing))
                                                   : error(a,request,"backend-mismatch");
         if (revision != s->catalog_revision) return error(a,request,"stale-catalog");
@@ -636,13 +860,16 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!probe) return error(a,request,"backend");
         Atom *answer = reply(a,request,true,describe(s,a,probe));
         store_free(probe);
-        return commit(s,a,request,raw,answer);
+        return commit(s,a,client->uid,request,raw,answer);
     }
     uint64_t store_id;
     if (!integer(part(request,4),&store_id)) return error(a,request,"invalid-space");
     Store *st = find_store(s,store_id);
-    if (!st) return error(a,request,"missing-space");
+    unsigned rights = st ? rights_of(client,st) : 0;
+    /* A store this account holds no right on is indistinguishable from none. */
+    if (!rights) return error(a,request,"missing-space");
     if (atom_is_symbol(part(request,2),"watch") && request->expr.len == 7) {
+        if (!(rights & RIGHT_OBSERVE)) return error(a,request,"forbidden");
         uint64_t revision, duration;
         if (!integer(part(request,5),&revision) || revision > st->revision ||
             !integer(part(request,6),&duration) || duration > INT_MAX)
@@ -661,9 +888,12 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         client->deadline=client->watch_due+30000;
         return NULL;
     }
-    if (atom_is_symbol(part(request,2),"describe") && request->expr.len == 5)
+    if (atom_is_symbol(part(request,2),"describe") && request->expr.len == 5) {
+        if (!(rights & RIGHT_OBSERVE)) return error(a,request,"forbidden");
         return reply(a,request,true,describe(s,a,st));
+    }
     if (atom_is_symbol(part(request,2),"verify") && request->expr.len == 5) {
+        if (!(rights & RIGHT_READ)) return error(a,request,"forbidden");
         if (space_length64(st->space)>QUERY_ROWS || st->live_bytes>QUERY_BYTES)
             return error(a,request,"verification-limit");
         if (!store_consistent(st) || !verify_backend(st))
@@ -673,10 +903,40 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         return reply(a,request,true,form(a,"verified",args,4));
     }
     if ((atom_is_symbol(part(request,2),"query") || atom_is_symbol(part(request,2),"query-first") ||
-         atom_is_symbol(part(request,2),"query-profile") || atom_is_symbol(part(request,2),"query-first-profile")) && request->expr.len == 9)
-        return query(s,a,request,st,false);
-    if (atom_is_symbol(part(request,2),"count") && request->expr.len == 6)
-        return query(s,a,request,st,true);
+         atom_is_symbol(part(request,2),"query-profile") || atom_is_symbol(part(request,2),"query-first-profile")) && request->expr.len == 9) {
+        if (!(rights & RIGHT_READ)) return error(a,request,"forbidden");
+        return query(s,a,request,st,false,client->uid);
+    }
+    if (atom_is_symbol(part(request,2),"count") && request->expr.len == 6) {
+        if (!(rights & RIGHT_READ)) return error(a,request,"forbidden");
+        return query(s,a,request,st,true,client->uid);
+    }
+    if (atom_is_symbol(part(request,2),"append") && request->expr.len == 6) {
+        if (!(rights & RIGHT_APPEND)) return error(a,request,"forbidden");
+        Atom *refused = append_admit(s,a,client,st,request);
+        if (refused) return refused;
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"appended")));
+    }
+    if (atom_is_symbol(part(request,2),"grant") && request->expr.len == 9) {
+        if (!client->owner) return error(a,request,"forbidden");
+        uint32_t uid; unsigned granted; Atom *pattern = part(request,7);
+        bool bundle = pattern && pattern->kind == ATOM_EXPR && atom_is_symbol(part(pattern,0),"bundle") &&
+            pattern->expr.len >= 2 && pattern->expr.len <= 4097;
+        if (!account_uid(part(request,5),&uid) || !rights_parse(part(request,6),&granted) ||
+            !(bundle || atom_is_symbol(pattern,"none")) || !part(request,8))
+            return error(a,request,"invalid-grant");
+        if (granted && !find_grant(st,uid) && !grant_reserve(st)) return error(a,request,"memory");
+        Atom *args[] = {part(request,5),rights_atom(a,granted)};
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,form(a,"granted",args,2)));
+    }
+    /* Another account's mutations are checked against its rights before the
+     * revision, so a refused account learns nothing about the store. */
+    if (!client->owner) {
+        bool dropping = atom_is_symbol(part(request,2),"drop") && request->expr.len == 7;
+        bool batching = atom_is_symbol(part(request,2),"batch") && request->expr.len == 7;
+        if (!dropping && !batching) return error(a,request,"unsupported-operation");
+        if (dropping || !(rights & RIGHT_WRITE)) return error(a,request,"forbidden");
+    }
     uint64_t revision;
     if (!integer(part(request,5),&revision) || revision != st->revision)
         return error(a,request,"stale-revision");
@@ -686,7 +946,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!integer(part(request,6),&catalog) || catalog != s->catalog_revision)
             return error(a,request,"stale-catalog");
         if (catalog >= INT64_MAX) return error(a,request,"revision-limit");
-        return commit(s,a,request,raw,reply(a,request,true,atom_symbol(a,"dropped")));
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"dropped")));
     }
     if (!atom_is_symbol(part(request,2),"batch") || request->expr.len != 7)
         return error(a,request,"unsupported-operation");
@@ -706,7 +966,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         st->live_bytes + added_bytes > s->max_live_bytes) return error(a,request,"space-limit");
     /* Admission is conservative: a batch at the limit may remove first and
      * add later, but no effects are attempted until the whole batch fits. */
-    return commit(s,a,request,raw,committed(s,a,request,st->id,st->revision+1));
+    return commit(s,a,client->uid,request,raw,committed(s,a,request,st->id,st->revision+1));
 }
 
 static bool record_messages(Arena *a,Atom *record,bool raw,Bytes *req,Bytes *ans,
@@ -759,12 +1019,33 @@ static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
         for (size_t i=1;i<rows->expr.len;++i) if (!store_add(st,part(rows,i))) return false;
         return store_consistent(st) && space_length64(st->space)<=s->max_facts && st->live_bytes<=s->max_live_bytes;
     }
+    if (shape(record,"restore-grant",5) && s->restoring) {
+        uint64_t id,uid,rights; Atom *text_form=part(record,4);
+        if (!integer(part(record,1),&id) || !integer(part(record,2),&uid) || uid>UINT32_MAX ||
+            !integer(part(record,3),&rights) || !rights || rights>15 ||
+            text_form->kind!=ATOM_GROUNDED || text_form->ground.gkind!=GV_STRING) return false;
+        Store *st=find_store(s,id);
+        if (!st || find_grant(st,(uint32_t)uid)) return false;
+        Bytes form_bytes={0};
+        if (atom_string_len(text_form) && !bytes_copy(&form_bytes,
+                (const unsigned char *)text_form->ground.sval,atom_string_len(text_form))) return false;
+        return grant_set(st,(uint32_t)uid,(unsigned)rights,&form_bytes);
+    }
+    /* Records that name an account carry its uid before the two messages;
+     * all others were written for the process account. */
+    uint64_t uid=s->process_uid;
+    bool owned=shape(record,"receipt-from",4) || shape(record,"event-from",4);
+    if (owned) {
+        if (!integer(part(record,1),&uid) || uid>UINT32_MAX) return false;
+        Atom *messages[]={part(record,2),part(record,3)};
+        record=form(a,shape(record,"receipt-from",4) ? "receipt-bytes" : "event-bytes",messages,2);
+    }
     bool raw_receipt=shape(record,"receipt-bytes",3);
     if ((raw_receipt || shape(record,"receipt",3)) && s->restoring) {
         const char *id=NULL; Bytes req={0},ans={0}; Atom *request=NULL,*answer=NULL;
         bool ok=record_messages(a,record,raw_receipt,&req,&ans,&request,&answer) &&
-            token(part(request,1),&id) && !find_receipt(s,id) &&
-            remember(s,id,req,ans);
+            token(part(request,1),&id) && !find_receipt(s,(uint32_t)uid,id) &&
+            remember(s,(uint32_t)uid,id,req,ans);
         bytes_free(&req); bytes_free(&ans); return ok;
     }
     if (shape(record,"sealed",4) && s->restoring) {
@@ -786,10 +1067,10 @@ static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
     const char *id=NULL; Bytes req={0},ans={0};
     if (!record_messages(a,record,raw_event,&req,&ans,&request,&answer) ||
         !token(part(request,1),&id) || !service_matches(s,part(request,3)) ||
-        find_receipt(s,id) || !apply(s,request)) {
+        find_receipt(s,(uint32_t)uid,id) || !apply(s,request)) {
         bytes_free(&req); bytes_free(&ans); return false;
     }
-    bool ok=remember(s,id,req,ans);
+    bool ok=remember(s,(uint32_t)uid,id,req,ans);
     bytes_free(&req); bytes_free(&ans); return ok;
 }
 static bool recover(Service *s) {
@@ -869,13 +1150,22 @@ static bool write_checkpoint(Service *s,int fd,uint64_t *size) {
             ok=journal_record(fd,form(&a,"restore-rows",parts,2),false,size);
             arena_free(&a);
         }
+        for (size_t g=0;ok && g<st->grant_count;++g) {
+            Grant *grant=&st->grants[g];
+            arena_init_detached(&a);
+            Atom *parts[]={atom_int(&a,st->id),atom_int(&a,grant->uid),atom_int(&a,grant->rights),
+                atom_string_n(&a,grant->form.size ? (const char *)grant->form.data : "",grant->form.size)};
+            ok=journal_record(fd,form(&a,"restore-grant",parts,4),false,size);
+            arena_free(&a);
+        }
     }
     for (size_t i=0;ok && i<s->receipt_count;++i) {
         arena_init_detached(&a);
         Receipt *r=&s->receipts[i];
-        Atom *parts[]={atom_string_n(&a,(const char *)r->request.data,r->request.size),
+        Atom *parts[]={atom_int(&a,r->uid),atom_string_n(&a,(const char *)r->request.data,r->request.size),
                       atom_string_n(&a,(const char *)r->reply.data,r->reply.size)};
-        ok=journal_record(fd,form(&a,"receipt-bytes",parts,2),false,size);
+        ok=journal_record(fd,r->uid==s->process_uid ? form(&a,"receipt-bytes",parts+1,2)
+                                                   : form(&a,"receipt-from",parts,3),false,size);
         arena_free(&a);
     }
     if (ok) {
@@ -905,6 +1195,8 @@ static bool compact(Service *s) {
             bytes_free(&b); arena_free(&a);
         }
         if (!ok) { store_free(fresh); return false; }
+        fresh->grants=old->grants; fresh->grant_count=old->grant_count; fresh->grant_capacity=old->grant_capacity;
+        old->grants=NULL; old->grant_count=old->grant_capacity=0;
         fresh->churn=0; s->stores[i]=fresh; store_free(old);
     }
     int fd=openat(s->directory,"checkpoint.new",O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
@@ -949,6 +1241,8 @@ static bool respond(Service *s,Client *c) {
 static bool client_wake(Service *s,Client *c) {
     if (!c->watching) return true;
     Store *st=find_store(s,c->watch_source);
+    /* Losing the right to observe ends a wait as if the store were gone. */
+    if (st && !(rights_of(c,st) & RIGHT_OBSERVE)) st=NULL;
     if (st && st->revision==c->watch_revision && now_ms()<c->watch_due) return true;
     Arena a; arena_init_detached(&a); Atom *request=NULL,*answer=NULL;
     bool ok=decode(&a,c->input,&request);
@@ -993,7 +1287,7 @@ static bool client_write(Client *c) {
     c->header_read=c->input_read=c->output_sent=0; c->deadline=now_ms()+30000;
     return true;
 }
-static int listen_socket(const char *path) {
+static int listen_socket(const char *path, mode_t mode, gid_t group) {
     struct sockaddr_un address={.sun_family=AF_UNIX};
     size_t n=strlen(path);
     if (path[0]!='/' || n>=sizeof(address.sun_path)) return -1;
@@ -1010,10 +1304,32 @@ static int listen_socket(const char *path) {
     } else if (errno!=ENOENT) return -1;
     int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
     if (fd<0) return -1;
-    if (bind(fd,(struct sockaddr *)&address,sizeof(address)) || chmod(path,0600) || listen(fd,CLIENTS)) {
+    if (bind(fd,(struct sockaddr *)&address,sizeof(address)) ||
+        (group != (gid_t)-1 && chown(path,(uid_t)-1,group)) || chmod(path,mode) || listen(fd,CLIENTS)) {
         close(fd); return -1;
     }
     return fd;
+}
+/* Identity is the kernel's record of the connecting process: never the
+ * listener it arrived on, a name, or anything the peer sends. */
+static void client_accept(Service *s,Client *clients,int listener) {
+    int fd=accept4(listener,NULL,NULL,SOCK_CLOEXEC|SOCK_NONBLOCK);
+    if (fd<0) return;
+    size_t slot=CLIENTS;
+    for (size_t i=0;i<CLIENTS;++i) if (clients[i].fd<0) {slot=i;break;}
+    struct ucred peer; socklen_t length=sizeof(peer);
+    if (slot==CLIENTS || getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length) || length!=sizeof(peer)) {
+        close(fd); return;
+    }
+    Client *c=&clients[slot];
+    *c=(Client){.fd=fd,.deadline=now_ms()+30000,.uid=(uint32_t)peer.uid,.owner=peer.uid==s->owner_uid};
+    /* A login name is only for readers, so keep it only when it is a plain token. */
+    struct passwd entry,*found=NULL; char buffer[2048];
+    if (!getpwuid_r(peer.uid,&entry,buffer,sizeof(buffer),&found) && found &&
+        strlen(found->pw_name)<sizeof(c->account) &&
+        strspn(found->pw_name,"abcdefghijklmnopqrstuvwxyz0123456789_-")==strlen(found->pw_name) &&
+        found->pw_name[0]>='a' && found->pw_name[0]<='z')
+        snprintf(c->account,sizeof(c->account),"%s",found->pw_name);
 }
 static bool directory_open(Service *s,const char *path) {
     if (mkdir(path,0700) && errno!=EEXIST) return false;
@@ -1033,10 +1349,11 @@ static bool argument_number(const char *text,uint64_t *value) {
     *value=(uint64_t)n; return true;
 }
 int main(int argc,char **argv) {
-    const char *path=NULL,*directory=NULL;
+    const char *path=NULL,*directory=NULL,*shared_path=NULL,*shared_group=NULL;
     Service *s=calloc(1,sizeof(*s)); if (!s) return 1;
     s->journal=s->directory=s->lock=-1;
     s->next_cursor=1;
+    s->process_uid=s->owner_uid=(uint32_t)geteuid();
     s->max_facts=1000000; s->max_live_bytes=64*1024*1024;
     s->max_query_bytes=QUERY_BYTES; s->max_snapshot_bytes=SNAPSHOT_BYTES;
     s->max_journal_bytes=32*1024*1024; s->query_ms=5000;
@@ -1044,17 +1361,23 @@ int main(int argc,char **argv) {
     for (int i=1;i<argc;++i) {
         if (!strcmp(argv[i],"--help")) {
             puts("cetta-space-service --socket ABSOLUTE_PATH --data PRIVATE_DIRECTORY\n"
+                 "  [--shared-socket ABSOLUTE_PATH --shared-group GROUP] [--owner-uid N]\n"
                  "  [--max-facts N] [--max-live-bytes N] [--max-journal-bytes N] [--query-ms N]\n"
-                 "  [--max-query-bytes N] [--max-snapshot-bytes N] [--max-watchers N]");
+                 "  [--max-query-bytes N] [--max-snapshot-bytes N] [--max-watchers N]\n"
+                 "The owner (default: this account) holds every right; other accounts reach\n"
+                 "the shared socket and hold only what the owner grants them.");
             free(s); return 0;
         }
         if (i+1>=argc) goto invalid;
         const char *option=argv[i],*value=argv[++i];
         if (!strcmp(option,"--socket")) path=value;
         else if (!strcmp(option,"--data")) directory=value;
+        else if (!strcmp(option,"--shared-socket")) shared_path=value;
+        else if (!strcmp(option,"--shared-group")) shared_group=value;
         else {
             uint64_t n; if (!argument_number(value,&n)) goto invalid;
-            if (!strcmp(option,"--max-facts")) s->max_facts=n;
+            if (!strcmp(option,"--owner-uid") && n<UINT32_MAX) s->owner_uid=(uint32_t)n;
+            else if (!strcmp(option,"--max-facts")) s->max_facts=n;
             else if (!strcmp(option,"--max-live-bytes")) s->max_live_bytes=n;
             else if (!strcmp(option,"--max-journal-bytes")) s->max_journal_bytes=n;
             else if (!strcmp(option,"--max-query-bytes")) s->max_query_bytes=n;
@@ -1064,18 +1387,28 @@ int main(int argc,char **argv) {
             else goto invalid;
         }
     }
-    if (!path || !directory || directory[0]!='/') goto invalid;
+    if (!path || !directory || directory[0]!='/' || !shared_path != !shared_group) goto invalid;
     umask(0077);
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
-    int listener=-1, result=1;
+    int listener=-1, shared=-1, result=1;
+    struct stat socket_identity={0}, shared_identity={0};
     if (!random_id(s->boot) || !directory_open(s,directory) || !recover(s)) {
         fprintf(stderr,"space-service: storage unavailable or corrupt\n"); goto done;
     }
-    listener=listen_socket(path);
+    listener=listen_socket(path,0600,(gid_t)-1);
     if (listener<0) { fprintf(stderr,"space-service: socket unavailable\n"); goto done; }
-    struct stat socket_identity;
     if (lstat(path,&socket_identity)) goto done;
+    if (shared_path) {
+        struct group entry,*found=NULL; char buffer[4096];
+        if (getgrnam_r(shared_group,&entry,buffer,sizeof(buffer),&found) || !found) {
+            fprintf(stderr,"space-service: unknown shared group\n"); goto done;
+        }
+        shared=listen_socket(shared_path,0660,found->gr_gid);
+        if (shared<0 || lstat(shared_path,&shared_identity)) {
+            fprintf(stderr,"space-service: shared socket unavailable\n"); goto done;
+        }
+    }
     struct sigaction action={.sa_handler=stop}; sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL); sigaction(SIGTERM,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
@@ -1089,12 +1422,13 @@ int main(int argc,char **argv) {
     Client clients[CLIENTS]; for (size_t i=0;i<CLIENTS;++i) clients[i]=(Client){.fd=-1};
     fprintf(stderr,"space-service: ready\n");
     while (!stopping && !s->poisoned) {
-        struct pollfd pollfds[CLIENTS+1]={{listener,POLLIN,0}};
+        /* poll ignores the negative descriptor of an absent shared listener. */
+        struct pollfd pollfds[CLIENTS+2]={{listener,POLLIN,0},{shared,POLLIN,0}};
         uint64_t current=now_ms(), deadline=current+30000;
         for (size_t i=0;i<CLIENTS;++i) {
             Client *c=&clients[i];
             if (c->fd>=0 && !client_wake(s,c)) client_close(s,c);
-            pollfds[i+1]=(struct pollfd){c->fd,c->output.data ? POLLOUT : POLLIN,0};
+            pollfds[i+2]=(struct pollfd){c->fd,c->output.data ? POLLOUT : POLLIN,0};
             if (c->fd>=0 && c->deadline<deadline) deadline=c->deadline;
             if (c->watching && c->watch_due<deadline) deadline=c->watch_due;
         }
@@ -1103,21 +1437,14 @@ int main(int argc,char **argv) {
         current=now_ms();
         int timeout=deadline>current ? (int)(deadline-current) : 0;
         struct timespec wait_time={timeout/1000,(timeout%1000)*1000000L};
-        int n=ppoll(pollfds,CLIENTS+1,&wait_time,&wait_signals);
+        int n=ppoll(pollfds,CLIENTS+2,&wait_time,&wait_signals);
         if (n<0 && errno==EINTR) continue;
         if (n<0) { s->poisoned=true; break; }
-        if (pollfds[0].revents&POLLIN) {
-            int fd=accept4(listener,NULL,NULL,SOCK_CLOEXEC|SOCK_NONBLOCK);
-            if (fd>=0) {
-                size_t slot=CLIENTS;
-                for (size_t i=0;i<CLIENTS;++i) if (clients[i].fd<0) {slot=i;break;}
-                if (slot==CLIENTS) close(fd);
-                else clients[slot]=(Client){.fd=fd,.deadline=now_ms()+30000};
-            }
-        }
+        if (pollfds[0].revents&POLLIN) client_accept(s,clients,listener);
+        if (pollfds[1].revents&POLLIN) client_accept(s,clients,shared);
         for (size_t i=0;i<CLIENTS && !s->poisoned;++i) {
             Client *c=&clients[i]; if (c->fd<0) continue;
-            short events=pollfds[i+1].revents;
+            short events=pollfds[i+2].revents;
             bool ok=true;
             if (events&POLLOUT) ok=client_write(c);
             else if (events&POLLIN) {
@@ -1140,10 +1467,13 @@ int main(int argc,char **argv) {
     struct stat current;
     if (!lstat(path,&current) && current.st_dev==socket_identity.st_dev &&
         current.st_ino==socket_identity.st_ino) unlink(path);
+    if (shared_path && !lstat(shared_path,&current) && current.st_dev==shared_identity.st_dev &&
+        current.st_ino==shared_identity.st_ino) unlink(shared_path);
     result=s->poisoned ? 1 : 0;
     if (s->poisoned) fprintf(stderr,"space-service: publication or checkpoint failed; recovery required\n");
 done:
     if (listener>=0) close(listener);
+    if (shared>=0) close(shared);
     for (size_t i=0;i<STORES;++i) store_free(s->stores[i]);
     for (size_t i=0;i<SNAPSHOTS;++i) snapshot_free(s,&s->snapshots[i]);
     for (size_t i=0;i<s->receipt_count;++i) receipt_free(&s->receipts[i]);

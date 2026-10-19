@@ -2,11 +2,13 @@
 """Cross-process storage conformance, using an independent CSP1 codec."""
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+import grp
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import os
+import pwd
 import socket
 import struct
 import subprocess
@@ -34,10 +36,11 @@ if not BACKENDS or any(x not in ("native", "pathmap", "mork") for x in BACKENDS)
 
 
 class Fixture:
-    def __init__(self, **options):
+    def __init__(self, shared=False, **options):
         self.temp = tempfile.TemporaryDirectory(prefix="cetta-space-")
         self.root = Path(self.temp.name)
         self.socket = str(self.root / "s.sock")
+        self.shared_socket = str(self.root / "shared.sock") if shared else None
         self.data = self.root / "data"
         self.options = options
         self.process = None
@@ -47,6 +50,9 @@ class Fixture:
     def start(self, success=True):
         self.log = self.error.open("ab")
         arguments = [SERVICE, "--socket", self.socket, "--data", str(self.data)]
+        if self.shared_socket:
+            arguments += ["--shared-socket", self.shared_socket,
+                          "--shared-group", grp.getgrgid(os.getgid()).gr_name]
         for name, value in self.options.items():
             arguments += ["--" + name.replace("_", "-"), str(value)]
         self.process = subprocess.Popen(arguments, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=self.log)
@@ -697,6 +703,170 @@ class ServiceTests(unittest.TestCase):
         result=subprocess.run(arguments,cwd=self.fixture.root,text=True,capture_output=True,timeout=30)
         self.assertNotEqual(result.returncode,0)
         self.assertIn("verification failed",result.stderr)
+
+
+MEMBER = os.getuid()
+NOBODY = 65534
+ACCOUNT = E("account", MEMBER, S(pwd.getpwuid(MEMBER).pw_name))
+# A send-only mailbox grant: one message and its pending record, correlated by
+# shared variables, with the authenticated account as the sender's account.
+SENDER = E("from", E("caller"), Var(2))
+SHAPE = E("bundle", E("MailboxMessage", 1, Var(0), Var(1), "", SENDER, Var(3)),
+          E("MailboxPending", 1, Var(1), "", SENDER, Var(0)))
+UNIQUE = E("MailboxMessage", 1, Var(0), Var(4), Var(5), E("from", E("caller"), Var(6)), Var(7))
+
+
+def letter(ident, to, agent, body, sender=None):
+    sender = sender or E("from", ACCOUNT, agent)
+    return (E("MailboxMessage", 1, ident, to, "", sender, body),
+            E("MailboxPending", 1, to, "", sender, ident))
+
+
+class PrincipalTests(unittest.TestCase):
+    """Another account's view, staged on one login: stores and grants are made
+    while this account owns the service, which then restarts under another
+    owner so that this account connects as an ordinary member."""
+
+    def setUp(self):
+        self.fixture = Fixture(shared=True)
+        self.addCleanup(self.fixture.close)
+
+    def connect(self, shared=False):
+        client = Client(self.fixture.shared_socket if shared else self.fixture.socket)
+        self.addCleanup(client.close)
+        return client
+
+    def as_owner(self):
+        self.fixture.options.pop("owner_uid", None)
+        self.fixture.restart()
+        return self.connect()
+
+    def as_member(self):
+        self.fixture.options["owner_uid"] = NOBODY
+        self.fixture.restart()
+        return self.connect(shared=True)
+
+    def denied(self, reason, function, *args, **kwargs):
+        with self.assertRaises(csp.ServiceError) as caught:
+            function(*args, **kwargs)
+        self.assertEqual(caught.exception.reason, S(reason))
+
+    def prepare(self, owner):
+        mail, secret, shared = owner.open("mail"), owner.open("secret"), owner.open("shared")
+        secret.add(E("private", "diary"))
+        shared.add(E("note", "hello"))
+        owner.call("grant", mail.uuid, mail.id, E("account", MEMBER), E("rights", S("append")), SHAPE, UNIQUE)
+        owner.call("grant", shared.uuid, shared.id, E("account", MEMBER), E("rights", S("read")),
+                   S("none"), S("none"))
+        return mail, secret, shared
+
+    def test_shared_socket_is_group_only_and_the_owner_is_one_principal(self):
+        state = Path(self.fixture.shared_socket).stat()
+        self.assertEqual(state.st_mode & 0o777, 0o660)
+        self.assertEqual(state.st_gid, os.getgid())
+        self.assertEqual(Path(self.fixture.socket).stat().st_mode & 0o777, 0o600)
+        private, shared = self.connect(), self.connect(shared=True)
+        for client in (private, shared):
+            self.assertEqual(client.call("whoami"), E("principal", ACCOUNT, S("owner")))
+        space = private.open("same")
+        args = (space.uuid, space.id, space.revision, E("ops", E("add", S("once"))))
+        first = private.call("batch", *args, request_id="same-request")
+        self.assertEqual(shared.call("batch", *args, request_id="same-request"), first)
+        self.assertEqual(space.match_count(S("once")), 1)
+        journal = (self.fixture.data / "journal.csl").read_bytes()
+        self.assertIn(b"event-bytes", journal)
+        self.assertNotIn(b"event-from", journal)
+
+    def test_member_sees_only_granted_stores(self):
+        _, secret, _ = self.prepare(self.connect())
+        member = self.as_member()
+        self.assertEqual(member.call("whoami"), E("principal", ACCOUNT, S("member")))
+        self.assertEqual(member.hello()[4], 0)
+        listed = {entry[3]: entry[6:] for entry in member.list_spaces()}
+        self.assertEqual(listed, {"mail": (0, 0), "shared": (1, 1)})
+        self.denied("missing-space", member.open, "secret")
+        self.denied("missing-space", member.open, "absent")
+        self.denied("missing-space", member.call, "describe", secret.uuid, secret.id)
+        self.denied("missing-space", member.call, "batch", secret.uuid, secret.id, 1, E("ops"))
+        mail = member.open("mail")
+        self.assertEqual(mail.revision, 0)
+        for operation, args in (("describe", ()), ("verify", ()), ("count", (Var(0),)),
+                                ("query", (Var(0), Var(0), 10, 1000)), ("watch", (0, 10)),
+                                ("batch", (0, E("ops"))), ("drop", (0, 0)),
+                                ("grant", (E("account", MEMBER), E("rights"), S("none"), S("none"))),
+                                ("append", (E("bundle", S("loose")),))):
+            with self.subTest(operation=operation):
+                expected = "shape-mismatch" if operation == "append" else "forbidden"
+                self.denied(expected, member.call, operation, mail.uuid, mail.id, *args)
+        self.denied("forbidden", member.call, "compact", mail.uuid)
+        shared = member.open("shared")
+        self.assertEqual(shared.match(E("note", Var(0)), Var(0)), ["hello"])
+        self.denied("forbidden", member.call, "batch", shared.uuid, shared.id, shared.revision, E("ops"))
+
+    def test_member_append_is_shaped_unique_and_authenticated(self):
+        self.prepare(self.connect())
+        member = self.as_member()
+        mail = member.open("mail")
+
+        def post(bundle):
+            return member.call("append", mail.uuid, mail.id, E("bundle", *bundle))
+
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("appended"))
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("duplicate"))
+        self.denied("id-conflict", post, letter("m1", "receiver", "writer", "changed"))
+        forged = E("from", E("account", 1), "writer")
+        self.denied("shape-mismatch", post, letter("m2", "receiver", "writer", "x", sender=forged))
+        self.denied("shape-mismatch", post, letter("m3", "receiver", "writer", "x")[:1])
+        message, _ = letter("m4", "receiver", "writer", "x")
+        _, other = letter("m5", "receiver", "writer", "x")
+        self.denied("shape-mismatch", post, (message, other))
+        ready = E("MailboxReady", 1, "m6", "receiver", 0, S("none"), "m6")
+        self.denied("shape-mismatch", post, letter("m6", "receiver", "writer", "x") + (ready,))
+        sender = E("from", ACCOUNT, "writer")
+        self.denied("open-value", post, (E("MailboxMessage", 1, Var(9), "receiver", "", sender, "x"),
+                                         E("MailboxPending", 1, "receiver", "", sender, Var(9))))
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        self.assertEqual(mail.match(E("MailboxMessage", 1, Var(0), Var(1), Var(2), Var(3), Var(4)),
+                                    E("seen", Var(0), Var(1), Var(3), Var(4))),
+                         [E("seen", "m1", "receiver", sender, "hi")])
+        self.assertEqual(mail.match_count(E("MailboxPending", 1, Var(0), Var(1), Var(2), Var(3))), 1)
+
+    @unittest.skipUnless(CETTA, "provide cetta for the MeTTa mailbox client")
+    def test_mailbox_post_from_another_account_reaches_the_owner(self):
+        owner = self.connect()
+        mail = owner.open("agent-mail")
+        owner.call("grant", mail.uuid, mail.id, E("account", MEMBER), E("rights", S("append")), SHAPE, UNIQUE)
+
+        def run(socket, source):
+            path = self.fixture.root / "client.metta"
+            path.write_text("!(import! &self mailbox)\n" + source)
+            process = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(path)], cwd=ROOT,
+                                     text=True, capture_output=True, timeout=30)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            return process.stdout
+
+        post = f'!(mailbox:post "{self.fixture.shared_socket}" "agent-mail" "p1" "receiver" "writer" "hello")\n'
+        self.as_member()
+        self.assertIn('(mailbox:sent "p1" accepted)', run(self.fixture.shared_socket, post))
+        self.assertIn('(mailbox:sent "p1" duplicate)', run(self.fixture.shared_socket, post))
+        self.as_owner()
+        account = f'(account {MEMBER} {pwd.getpwuid(MEMBER).pw_name})'
+        self.assertIn(f'(mailbox:delivery "p1" (from {account} "writer") "hello")',
+                      run(self.fixture.socket, f'!(mailbox:next "{self.fixture.socket}" "agent-mail" "receiver")\n'))
+
+    def test_grants_survive_a_checkpoint_and_revocation_removes_access(self):
+        _, _, shared = self.prepare(self.connect())
+        self.connect().call("compact", shared.uuid)
+        member = self.as_member()
+        self.assertEqual(member.open("shared").match(E("note", Var(0)), Var(0)), ["hello"])
+        owner = self.as_owner()
+        shared = owner.open("shared")
+        self.assertEqual(owner.call("grant", shared.uuid, shared.id, E("account", MEMBER), E("rights"),
+                                    S("none"), S("none")),
+                         E("granted", E("account", MEMBER), E("rights")))
+        member = self.as_member()
+        self.denied("missing-space", member.open, "shared")
 
 
 class QuotaTests(unittest.TestCase):
