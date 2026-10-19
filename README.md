@@ -286,6 +286,17 @@ make test-asan-main
 `make test-petta-release-reference` checks that the default PeTTa semantics
 and libraries are those of release 1.0.6.
 
+The `Runtime portability` workflow builds clean source archives in Ubuntu
+24.04/26.04 and Fedora, with an experimental Alpine/musl probe. It exercises the Python/HTTP/SQLite
+build, native space-service tests and mailbox crash/replay in PeTTa and Prime;
+optional Prolog and subscription sign-in are disabled in this matrix.
+Alpine currently stops at the asynchronous process module's glibc-only
+`posix_spawn_file_actions_addclosefrom_np`. Its probe is nonblocking until a
+musl adapter preserves the same child-descriptor isolation contract.
+`tools/ci_linux_portability.sh` holds the shared container check. Manual workflow
+runs can also enable experimental native macOS and Windows/MSYS2 core ownership
+probes. Those probes do not establish full agent or service support on either OS.
+
 ## Bridge builds (MORK and PathMap)
 
 `BUILD=main` and `BUILD=mork` link `rust/cetta-space-bridge` statically. They

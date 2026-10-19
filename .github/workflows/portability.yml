@@ -1,0 +1,88 @@
+name: Runtime portability
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'native/**'
+      - 'lib/**'
+      - 'Makefile'
+      - 'tests/test_atom_constructor_fields.c'
+      - 'tests/test_space_service.py'
+      - 'tests/test_agent_mailbox_recovery.py'
+      - 'tools/ci_linux_portability.sh'
+      - '.github/workflows/portability.yml'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      native_probes:
+        description: Also run experimental native macOS and Windows core probes
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  linux-services:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            experimental: false
+          - image: ubuntu:26.04
+            experimental: false
+          - image: registry.fedoraproject.org/fedora:44
+            experimental: false
+          - image: alpine:3.24
+            experimental: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build clean sources and exercise durable mail
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          git archive HEAD > "$RUNNER_TEMP/source.tar"
+          docker run --rm \
+            -v "$RUNNER_TEMP/source.tar:/source.tar:ro" \
+            -v "$GITHUB_WORKSPACE/tools/ci_linux_portability.sh:/check.sh:ro" \
+            "$IMAGE" sh /check.sh /source.tar
+  macos-core-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_probes
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: brew install gmp pkgconf
+      - name: Probe native atom ownership support
+        run: |
+          export CPATH="$(brew --prefix gmp)/include${CPATH:+:$CPATH}"
+          export LIBRARY_PATH="$(brew --prefix gmp)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          make -j1 CC=clang BUILD=core ENABLE_LIB_PROLOG=0 \
+            ENABLE_JSON_GSLT=0 LDFLAGS='-lm -pthread -lgmp' test-atom-constructor-fields
+  windows-core-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_probes
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          install: >-
+            make python
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-gmp
+            mingw-w64-ucrt-x86_64-pkgconf
+      - name: Probe native atom ownership support
+        shell: msys2 {0}
+        run: |
+          make -j1 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 \
+            LDFLAGS='-lm -pthread -lgmp' test-atom-constructor-fields
