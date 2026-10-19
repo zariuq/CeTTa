@@ -225,7 +225,7 @@ typedef struct {
 } DiscIntHashTable;
 
 /* The branches of one scalar kind.  An integer is keyed by its value; a
- * string by its content's 64-bit hash, so different strings with equal
+ * string by its cached structural hash, so different strings with equal
  * hashes share a branch, which the matcher tells apart. */
 typedef struct {
     DiscIntBranch *list;
@@ -955,18 +955,12 @@ static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
     return disc_get_scalar(pool, n, DISC_EDGE_INTEGER, val);
 }
 
-/* A string's key: a hash of its bytes, which may hold NUL.  Equal strings
- * from any arena or universe have equal keys. */
-static int64_t disc_string_key(const char *bytes, size_t len) {
-    uint64_t hash = UINT64_C(0xcbf29ce484222325);
-    for (size_t i = 0u; i < len; i++) {
-        hash ^= (unsigned char)bytes[i];
-        hash *= UINT64_C(0x100000001b3);
-    }
-    hash ^= hash >> 33u;
-    hash *= UINT64_C(0xff51afd7ed558ccd);
-    hash ^= hash >> 33u;
-    return (int64_t)hash;
+/* Strings already have an immutable content hash, shared by atom_hash and
+ * tu_hash32 (embedded NUL included). Reuse it when rebuilding an index rather
+ * than scanning every stored message's bytes again. Collisions only widen
+ * candidates: the ordinary matcher still checks the complete string. */
+static int64_t disc_string_key(Atom *atom) {
+    return (int64_t)atom_hash(atom);
 }
 
 /* Limit expansion of expression occurrences, not merely depth: a wide DAG
@@ -993,7 +987,7 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
         if (a->ground.gkind == GV_STRING)
             return disc_get_scalar(
                 pool, node, DISC_EDGE_STRING,
-                disc_string_key(a->ground.sval, a->ground.slen));
+                disc_string_key(a));
         /* Other grounded values sit on the variable branch. */
         return disc_get_var(pool, node);
     case ATOM_EXPR: {
@@ -1044,8 +1038,7 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
         } else if (tu_ground_kind(universe, atom_id) == GV_STRING) {
             *out_leaf = disc_get_scalar(
                 pool, node, DISC_EDGE_STRING,
-                disc_string_key(tu_string_cstr(universe, atom_id),
-                                tu_string_len(universe, atom_id)));
+                (int64_t)tu_hash32(universe, atom_id));
         } else {
             *out_leaf = disc_get_var(pool, node);
         }
@@ -1243,9 +1236,7 @@ static DiscNode *disc_find_atom_id_path(
         if (tu_ground_kind(universe, atom_id) == GV_STRING)
             return disc_path_step(
                 path, node, DISC_EDGE_STRING,
-                (DiscEdgeKey){.integer = disc_string_key(
-                    tu_string_cstr(universe, atom_id),
-                    tu_string_len(universe, atom_id))});
+                (DiscEdgeKey){.integer = (int64_t)tu_hash32(universe, atom_id)});
         return disc_path_step(path, node, DISC_EDGE_VARIABLE,
                               (DiscEdgeKey){0});
     case ATOM_EXPR: {
@@ -1634,7 +1625,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         else if (q->ground.gkind == GV_STRING)
             dns_push(next, disc_find_scalar_branch(
                 node, DISC_EDGE_STRING,
-                disc_string_key(q->ground.sval, q->ground.slen)));
+                disc_string_key(q)));
         /* A variable in the indexed LHS matches any grounded value */
         dns_push(next, disc_find_variable_branch(node));
         break;

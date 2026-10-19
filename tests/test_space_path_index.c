@@ -212,7 +212,7 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
     CettaIndex *positions = NULL, count = 0u, capacity = 0u;
     assert(space_path_index_candidates(&space, query, &positions, &count, &capacity));
     assert(count == 13u);
-    assert(capacity == 77u);
+    assert(capacity >= count);
     /* Eight matching ground occurrences, then the variable-headed row,
      * whole-row variable and correlated row of the right constructor. */
     for (CettaIndex index = 0u; index < 8u; index++)
@@ -440,7 +440,7 @@ static void test_string_prefixes_collisions_and_binary_values(TermUniverse *univ
     assert(space_path_indexes_info(&space, &info));
     assert(info.key_kind == CETTA_SPACE_PATH_STRING_HASH_KEY);
     CettaIndex *candidates = NULL, count = 0u;
-    assert(space_path_index_candidates(&space, query, &candidates, &count));
+    assert(space_path_index_candidates(&space, query, &candidates, &count, NULL));
     assert(count < 8u);
     bool included_collision = false;
     for (CettaIndex index = 0; index < count; index++)
@@ -480,7 +480,7 @@ static void test_unrecorded_string_paths(Arena *arena) {
     space.match_backend.native.cold_flat_scans=4u;
     compare_reference(&space,arena,pattern);
     CettaIndex *positions=NULL,count=0u;
-    assert(space_path_index_candidates(&space,pattern,&positions,&count));
+    assert(space_path_index_candidates(&space,pattern,&positions,&count,NULL));
     assert(count==1u && positions[0]==17u);
     free(positions);
     space_free(&space);

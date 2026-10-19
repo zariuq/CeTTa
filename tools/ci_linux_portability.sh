@@ -25,7 +25,8 @@ cat /etc/os-release
 set -- BUILD=python ENABLE_HTTP=1 ENABLE_DURABLE=1 SQLITE_PROVIDER=system \
     ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 PYTHON_CONFIG=python3-config
 # Use one worker until all generated bootstrap dependencies support parallel builds.
-if ! make -j1 "$@" cetta space-service value-worker test-atom-constructor-fields >build.log 2>&1; then
+if ! make -j1 "$@" cetta space-service value-worker test-atom-constructor-fields \
+    test-space-path-index test-space-service-commit >build.log 2>&1; then
     tail -100 build.log
     exit 1
 fi
