@@ -766,7 +766,7 @@ static bool prepared_pure_he_value_holds_space(const Atom *value) {
     return value && atom_has_identity_grounded(value) &&
         eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        atom_tree_any(value, prepared_pure_is_space_node, NULL);
+        atom_graph_any(value, prepared_pure_is_space_node, NULL);
 }
 
 static bool prepared_pure_reject(
@@ -2485,9 +2485,12 @@ static bool prepared_pure_head_index(
         return false;
     if (prepared_pure_head_bucket_lookup(program, head, index_out))
         return true;
+    /* A call whose head a variable supplies is admitted when it runs, by
+     * the head it then has, so it leaves the definition pure here. */
     bool defined = false;
-    if (space_query_effect_for_head(
-            program->space, head, &defined) !=
+    bool dynamic = false;
+    if (space_query_static_effect_for_head(
+            program->space, head, &defined, &dynamic) !=
             CETTA_GSLT_QUERY_EFFECT_PURE ||
         !defined ||
         !space_program_token_is_current(program->source_program)) {
@@ -3983,6 +3986,75 @@ static bool prepared_pure_guard_values_not_expressions(
     return ok;
 }
 
+/* Whether `source`, a ground HE expression, is data all the way down: each
+ * subexpression headed by a symbol that no rule defines and no declaration
+ * types, each leaf a scalar or a symbol the dialect does not keep for its own
+ * evaluator.  Evaluated, it is itself, so it compiles as the literal it is;
+ * compiled part by part, a value sharing its subterms would compile once per
+ * path to each. */
+static bool prepared_pure_ground_data(CettaPreparedPureProgram *program,
+                                      Atom *source) {
+    /* HE's: a dialect whose lowering decides what an expression denotes
+     * (PeTTa's list forms) is compiled part by part. */
+    if (!eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_HE)
+        return false;
+    if (!source || source->kind != ATOM_EXPR || source->expr.len == 0u ||
+        atom_has_vars(source) || atom_has_registry_refs(source) ||
+        atom_has_identity_grounded(source) ||
+        (source->flags & ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE))
+        return false;
+    Atom **stack = NULL;
+    size_t len = 0u, cap = 0u;
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool data = prepared_pure_reserve(
+        (void **)&stack, sizeof(*stack), &cap, 1u);
+    if (data)
+        stack[len++] = source;
+    while (data && len > 0u) {
+        Atom *node = stack[--len];
+        if (node->kind == ATOM_SYMBOL) {
+            CettaPreparedPureExpressionView view = {0};
+            data = !program->expression_view ||
+                program->expression_view(node, &view) !=
+                    CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY;
+            continue;
+        }
+        if (node->kind == ATOM_GROUNDED) {
+            switch (node->ground.gkind) {
+            case GV_INT: case GV_FLOAT: case GV_BOOL: case GV_STRING:
+            case GV_BIGINT: case GV_RATIONAL:
+                continue;
+            default:
+                data = false;
+                continue;
+            }
+        }
+        if (node->kind != ATOM_EXPR || node->expr.len == 0u) {
+            data = node->kind == ATOM_EXPR;
+            continue;
+        }
+        if (node != source && !fault &&
+            !atom_visit_set_add(&seen, node, &fault) && !fault)
+            continue;
+        Atom *head = node->expr.elems[0];
+        if (!head || head->kind != ATOM_SYMBOL ||
+            prepared_pure_head_role(program, node) != PREPARED_PURE_HEAD_INERT ||
+            space_head_declares_type(program->space, head->sym_id) ||
+            !prepared_pure_reserve((void **)&stack, sizeof(*stack), &cap,
+                                   len + node->expr.len)) {
+            data = false;
+            continue;
+        }
+        for (CettaExprIndex i = 1u; i < node->expr.len; i++)
+            stack[len++] = node->expr.elems[i];
+    }
+    free(stack);
+    atom_visit_set_free(&seen);
+    return data;
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -3992,6 +4064,16 @@ static bool prepared_pure_compile_eval_with_role(
     if (!program || !context || !source || !node_out ||
         depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
         return false;
+    if (source_role != CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL &&
+        source_role != CETTA_PREPARED_PURE_SOURCE_DECLINE &&
+        prepared_pure_ground_data(program, source))
+        return prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_LITERAL,
+                .atom = source,
+            },
+            NULL, 0u, node_out);
     if (source->kind == ATOM_VAR) {
         uint32_t slot = 0u;
         if (!prepared_pure_context_lookup(context, source->var_id, &slot))
@@ -4567,9 +4649,12 @@ static bool prepared_pure_compile_eval_with_role(
         return ok;
     }
 
+    /* Its calls of variable heads are admitted when they run (see
+     * prepared_pure_head_index). */
     bool defined = false;
-    CettaGsltQueryEffect effect =
-        space_query_effect_for_head(program->space, head, &defined);
+    bool dynamic = false;
+    CettaGsltQueryEffect effect = space_query_static_effect_for_head(
+        program->space, head, &defined, &dynamic);
     if (defined) {
         /* A macro call compiles as its expansion, each call of which is
          * asked its own effect; the macro's own effect reads its operands
@@ -13491,7 +13576,7 @@ static bool prepared_pure_value_has_callable_node(
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
     CettaPreparedPureProgram *program, Atom *value) {
     return program && value &&
-           !atom_tree_any(
+           !atom_graph_any(
                value, prepared_pure_value_has_callable_node, program);
 }
 

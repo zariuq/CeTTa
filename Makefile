@@ -3813,6 +3813,21 @@ $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN): tests/test_arena_frame_identity_owne
 test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN))
 
+# Frame identities (src/binding/frame_identity.h) are issued in four classes
+# spelled by prefixes of leading one bits: each round-trips its spelling,
+# rejects stale generations and retires a spent handle; other words do not
+# decode; a bounded table refuses without spending and serves again.
+FRAME_IDENTITY_CLASSES_TEST_BIN = runtime/test_frame_identity_classes-$(BUILD_OBJ_TAG)
+
+$(FRAME_IDENTITY_CLASSES_TEST_BIN): tests/test_frame_identity_classes.c src/atom.c src/binding/frame_identity.c src/binding/frame_identity.h src/binding/frame_identity_test.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_frame_identity_classes.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+
+.PHONY: test-frame-identity-classes
+test: test-frame-identity-classes
+test-frame-identity-classes: $(FRAME_IDENTITY_CLASSES_TEST_BIN)
+	@$(call cetta_exec,./$(FRAME_IDENTITY_CLASSES_TEST_BIN))
+
 # Reclaimable names (src/binding/name_space.h): watermarks survive non-final
 # releases, a failed weak upgrade that releases last recycles the name, owner
 # counts never wrap and spent names retire, quarantine never reuses, and live
@@ -18442,14 +18457,24 @@ test: test-plain-bnf-denotation-v1
 
 test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
-.PHONY: test-lean test-rhocalc-lean test-lean-corpus
+.PHONY: test-lean test-rhocalc-lean test-lean-corpus test-frame-writeback-lean-text
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean
 # toolchain.  Opt-in: the default suite needs neither.  METTAPEDIA_LEAN_ROOT
 # names the Lean project (default: the sibling checkout); the corpus files
 # import the checkout at its sibling location.
 METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
 test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
-	test-petta-typecheck-v3-core-parity-v1
+	test-petta-typecheck-v3-core-parity-v1 test-frame-writeback-lean-text
+
+# The C text the frame writeback bridge quotes must still be the runtime's.
+test-frame-writeback-lean-text:
+	@bridge="$(METTAPEDIA_LEAN_CHECKOUT)/Mettapedia/Languages/MeTTa/Bridges/GSLT/CeTTaFrameWriteback.lean"; \
+	if [ ! -f "$$bridge" ]; then \
+		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	fi; \
+	python3 tests/support/check_frame_writeback_lean_text.py "$$bridge" \
+		tests/frame_writeback_lean_text.tsv .
 
 test-rhocalc-lean: $(BIN)
 	@pass=0; fail=0; \
@@ -21189,6 +21214,10 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-open-crossing-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-frame-bytes-depth
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-completed-delivery-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-open-values-frame-walk-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-joint-rows-native
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-chain-natural-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-translation-linear
@@ -27398,6 +27427,24 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/combinator_captured_values.metta 2>&1); \
+	expected=$$(cat tests/petta/combinator_captured_values.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: values captured by map, fold and filter bodies"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/filter_condition_plan_lifetime.metta 2>&1); \
+	expected=$$(cat tests/petta/filter_condition_plan_lifetime.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: a filter's condition plan outlives heap collections"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_translator.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_translator.expected); \
 	if [ "$$result" != "$$expected" ]; then \
@@ -31091,6 +31138,253 @@ test-he-syntax-returns-prepared: $(BIN) tests/he/syntax_returns_prepared.metta \
 	grep -F -q 'bodies lowered to register code' <<<"$$trace"; \
 	! grep -E -q 'precheck decline: .* call=\((classify|sum-classes|evaluated|quoted|count-quotes|twice-same|pick-sum|tagged) ' <<<"$$trace"; \
 	echo 'PASS: definitions that answer syntax run in the prepared machine as Rust HE answers them, in every HE profile'
+
+# What a definition may do is read from everything it evaluates: a write and a
+# query are told apart, a constructor's elements count, and code unquote runs
+# counts; a symbol is not a call.  The prepared machine's precheck reports each
+# head's effect.  Turning the machine off changes no answer.
+.PHONY: test-he-effect-classification
+test: test-he-effect-classification
+test-he-effect-classification: $(BIN) tests/he/effect_classification.metta \
+		tests/he/effect_classification.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang he \
+			tests/he/effect_classification.metta \
+			| diff -u tests/he/effect_classification.expected -; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang he \
+		tests/he/effect_classification.metta 2>&1 >/dev/null); \
+	for row in "effect=2 defined=1 call=(writes)" \
+			"effect=2 defined=1 call=(writes-inside)" \
+			"effect=1 defined=1 call=(queries-inside)" \
+			"effect=2 defined=1 call=(unquotes-a-write)" \
+			"effect=3 defined=1 call=(does-both)" \
+			"effect=2 defined=1 call=(case-writes a)" \
+			"effect=1 defined=1 call=(case-queries x)" \
+			"effect=2 defined=1 call=(switch-writes b)"; do \
+		grep -F -q "$$row" <<<"$$trace"; \
+	done; \
+	! grep -E -q 'effect=[0-9]+ defined=1 call=\((names-a-query|pure|cases)[ )]' <<<"$$trace"; \
+	echo 'PASS: effects of writes, queries, constructor elements, case branches and unquoted code are classified'
+
+# A value of constructors is its own, and is evaluated once per distinct
+# node however often it is shared: depth 60 runs where a walk of every path
+# would not, whether the collector runs often, never or with interning.  A value with a variable in it keeps its sharing when
+# substituted (the he lane; under he@0.2.10 the shared search machine still
+# copies an open value per occurrence).  An argument that is a call still runs each time, an added
+# equation or a changed declaration still applies, and equal answers stay
+# separate.  With completed values off, and on the evaluator without its
+# canonical driver, the same programs at a depth those can finish answer
+# the same.
+.PHONY: test-he-completed-delivery
+test: test-he-completed-delivery
+test-he-completed-delivery: $(BIN) tests/he/completed_delivery.metta \
+		tests/he/completed_delivery.expected \
+		tests/he/completed_delivery_open.metta \
+		tests/he/completed_delivery_open.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_GC_BUDGET_MB=1" \
+			"CETTA_GC=0" "CETTA_GC_BUDGET_MB=1 CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/completed_delivery.metta \
+			| diff -u tests/he/completed_delivery.expected -; \
+	done; \
+	timeout 60 $(CETTA_BIN_INVOKE) --eval-hashcons --lang $$lane \
+		tests/he/completed_delivery.metta \
+		| diff -u tests/he/completed_delivery.expected -; \
+	for route in "CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_HE_CANONICAL_EXECUTION=0"; do \
+		sed 's/dag 60/dag 8/g' tests/he/completed_delivery.metta \
+			| env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang $$lane /dev/stdin \
+			| diff -u tests/he/completed_delivery.expected -; \
+	done; \
+	done; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_GC_BUDGET_MB=1" \
+			"CETTA_GC=0"; do \
+		env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang he \
+			tests/he/completed_delivery_open.metta \
+			| diff -u tests/he/completed_delivery_open.expected -; \
+	done; \
+	for route in "CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_HE_CANONICAL_EXECUTION=0"; do \
+		sed 's/dag 60/dag 8/g' tests/he/completed_delivery_open.metta \
+			| env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang he /dev/stdin \
+			| diff -u tests/he/completed_delivery_open.expected -; \
+	done; \
+	echo 'PASS: shared values are evaluated once per node, and every route answers alike'
+
+.PHONY: test-he-completed-delivery-stats
+test-he-completed-delivery-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_he_completed_delivery_stats.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+# A stored value's frame identifiers are found in the value's own size: a
+# list naming a frame per element through one source variable, and a shared
+# value whose tree is exponential in its depth, on the tier and in the
+# machine, with prepared code or without.
+.PHONY: test-petta-open-values-frame-walk test-petta-open-values-frame-walk-stats
+test-petta-semantics: test-petta-open-values-frame-walk
+test-petta-open-values-frame-walk: $(BIN) tests/petta/open_values_frame_walk.metta \
+		tests/petta/open_values_frame_walk.expected
+	@set -eu; \
+	for route in "" "CETTA_OPEN_EQUATIONS_REFERENCE=1" \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		actual=$$(env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/open_values_frame_walk.metta 2>&1) || true; \
+		if [ "$$actual" != "$$(cat tests/petta/open_values_frame_walk.expected)" ]; then \
+			echo "FAIL: frame identifiers of stored open values [$$route]"; \
+			diff <(cat tests/petta/open_values_frame_walk.expected) \
+				<(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: frame identifiers of stored open values are found in the values' own size"
+
+# Repeating a completed query holds no more frame identities than one run.
+.PHONY: test-petta-identity-repeat-stats
+test-petta-identity-repeat-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_identity_repeat_stats.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+# A refused frame identity never becomes an answer: the refusal point swept
+# over every mint of PeTTa programs that open frames, cons holes, choice
+# points, space matches and relational activations, on the tier and in the
+# machine with prepared code or without.
+.PHONY: test-frame-identity-refusal-sweep
+test-frame-identity-refusal-sweep: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_frame_identity_refusal_sweep.py ./$(BIN) \
+		tests/petta/activation_cons_let.metta tests/petta/collapse_copies_answers.metta \
+		tests/petta/match_cell_rows.metta tests/petta/open_lists.metta \
+		tests/petta/relational_control.metta tests/petta/search_machine_catch_cons.metta \
+		tests/petta/search_machine_conjunctive_match.metta \
+		tests/petta/search_machine_nested_cons_publication.metta
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+# Escaping variables print as SWI-PeTTa prints them, distinct per activation
+# and shared where the program shares them, on every route and with frequent
+# collections; three thousand of them stay distinct while identities are
+# reused.
+.PHONY: test-petta-escaping-variables
+test-petta-semantics: test-petta-escaping-variables
+test-petta-escaping-variables: $(BIN) tests/petta/escaping_variables.metta \
+		tests/petta/escaping_variables.expected tests/petta/escaping_variables_many.metta
+	@set -eu; \
+	expected=$$(cat tests/petta/escaping_variables.expected); \
+	for route in "" "CETTA_OPEN_EQUATIONS_REFERENCE=1" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PETTA_COLLECT_STRESS=1"; do \
+		actual=$$(env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/escaping_variables.metta 2>&1); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: escaping variables [$$route]"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done; \
+	distinct=$$(CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PETTA_COLLECT_STRESS=1 \
+		$(CETTA_BIN_INVOKE) --lang petta tests/petta/escaping_variables_many.metta 2>&1 | \
+		grep -o '\$$V[0-9]*' | sort -u | wc -l); \
+	if [ "$$distinct" -ne 3000 ]; then \
+		echo "FAIL: $$distinct distinct escaping variables of 3000"; \
+		exit 1; \
+	fi; \
+	echo "PASS: escaping variables stay distinct and shared as SWI-PeTTa prints them"
+
+# Identity pressure: under a bound of 40,000 identities two traversals that
+# hold about 36,000 at once run in the machine, because a collection of every
+# generation runs when the identities left fall low; left to the heap's own
+# schedule the same bound is refused, as capacity, not as an answer.
+.PHONY: test-petta-identity-pressure
+test-petta-semantics: test-petta-identity-pressure
+test-petta-identity-pressure: $(BIN) tests/petta/identity_pressure.metta \
+		tests/petta/identity_pressure.expected
+	@set -eu; \
+	machine="CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1"; \
+	expected=$$(cat tests/petta/identity_pressure.expected); \
+	for bound in "" "CETTA_DIAG_FRAME_IDENTITY_LIMIT=40000"; do \
+		actual=$$(env $$machine $$bound $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/identity_pressure.metta 2>&1) || true; \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: identity pressure collections [$$bound]"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -10; \
+			exit 1; \
+		fi; \
+	done; \
+	status=0; \
+	actual=$$(env $$machine CETTA_DIAG_FRAME_IDENTITY_LIMIT=40000 \
+		CETTA_PETTA_IDENTITY_PRESSURE=0 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/identity_pressure.metta 2>&1) || status=$$?; \
+	if [ $$status -ne 2 ] || \
+			[ "$$actual" != "error: observation incomplete: capacity-exhausted" ]; then \
+		echo "FAIL: without pressure collections the bound should be refused as capacity (status $$status)"; \
+		printf '%s\n' "$$actual" | head -5; \
+		exit 1; \
+	fi; \
+	echo "PASS: identity pressure collections run work whose live identities fit the bound"
+
+# The frame identifier set hashes whole identifiers: probes beyond the first
+# slot stay within a small multiple of the lookups.
+test-petta-open-values-frame-walk-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_open_values_frame_walk_stats.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+# A string in a pattern selects the rows holding those bytes through the
+# discrimination index, wherever the string was made; a variable stored at
+# the key still matches every key, and counts and removals see string rows.
+# Turning the machine off changes no answer.
+.PHONY: test-he-string-keys-indexed
+test: test-he-string-keys-indexed
+test-he-string-keys-indexed: $(BIN) tests/he/string_keys_indexed.metta \
+		tests/he/string_keys_indexed.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang he \
+			tests/he/string_keys_indexed.metta \
+			| diff -u tests/he/string_keys_indexed.expected -; \
+	done; \
+	echo 'PASS: string keys select their rows through the index, as every other route answers them'
+
+# A match call reads its space once, when it runs; its rows' bodies run in
+# the order of that read, each to completion; a match in a body reads when its
+# branch is reached; a write takes effect at once.  Spelling the write
+# directly, through a function or through a name for the space, or putting a
+# let between the matches, answers the same.  Every HE profile and route
+# answers alike, and PeTTa (SWI-PeTTa where PETTA_ORACLE_ROOT is set) answers
+# the same schedule.
+.PHONY: test-match-effect-schedule
+test: test-match-effect-schedule
+test-match-effect-schedule: $(BIN) tests/he/match_effect_schedule.metta \
+		tests/he/match_effect_schedule.expected \
+		tests/he/match_effect_schedule.petta.expected
+	@set -eu -o pipefail; \
+	for lane in he he@0.2.10 "he --profile extended"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/match_effect_schedule.metta \
+			| diff -u tests/he/match_effect_schedule.expected -; \
+	done; \
+	done; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/he/match_effect_schedule.metta \
+		| diff -u tests/he/match_effect_schedule.petta.expected -; \
+	if [[ -n "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		fixture="$(abspath tests/he/match_effect_schedule.metta)"; \
+		(cd "$(PETTA_ORACLE_ROOT)" && timeout 90 ./run.sh "$$fixture" --silent) \
+			| diff -u tests/he/match_effect_schedule.petta.expected -; \
+	fi; \
+	echo 'PASS: nested matches whose bodies write read on the source schedule, however the write is spelled, in every HE profile and in PeTTa'
 
 # PeTTa 1.0.6 typed calls run in the prepared machine: a value-class
 # signature's parameters are checked where the call enters, and a call that

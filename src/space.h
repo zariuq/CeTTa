@@ -814,6 +814,13 @@ bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
  * effect. */
 CettaGsltQueryEffect space_query_effect_for_head(
     Space *s, SymbolId head, bool *out_defined);
+/* The same analysis for an executor that admits each variable-headed call
+ * when it runs, by the head the variable then holds: the effects of the heads
+ * the definition names, and in *out_dynamic whether it makes such a call.
+ * Every other reader uses space_query_effect_for_head, which counts such a
+ * call as the uncertain effect. */
+CettaGsltQueryEffect space_query_static_effect_for_head(
+    Space *s, SymbolId head, bool *out_defined, bool *out_dynamic);
 /* Eagerly drops this thread's derived entries.  Revision tokens remain the
  * cross-thread authority, so a mutation cannot revive stale analysis even
  * when it originates on another evaluator thread. */

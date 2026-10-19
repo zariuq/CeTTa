@@ -837,12 +837,14 @@ static void test_type_frame_exhaustion(Arena *arena) {
         Atom *ground = parse_one(arena, "exhaustion-ground");
         Atom *poly = parse_one(arena, "exhaustion-poly");
         Atom *number = parse_one(arena, "Number");
-        CettaFrameIdentity *held = malloc(
-            sizeof(*held) * CETTA_FRAME_HANDLE_MASK);
+        /* This child bounds the handle table so that holding every handle
+         * is cheap; the bound is the facility's, the behavior the same. */
+        const size_t limit = (size_t)1u << 16;
+        cetta_frame_identity_limit_handles((uint32_t)limit);
+        CettaFrameIdentity *held = malloc(sizeof(*held) * limit);
         assert(held);
         size_t count = 0u;
-        while (count < CETTA_FRAME_HANDLE_MASK &&
-               cetta_frame_identity_acquire(&held[count]))
+        while (count < limit && cetta_frame_identity_acquire(&held[count]))
             count++;
         Atom **types = NULL;
         uint32_t length = 0u;
