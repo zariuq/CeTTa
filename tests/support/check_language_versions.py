@@ -24,22 +24,22 @@ def main():
     # a change to ordinary HE's profile or import policy.
     pairs = [
         ([], ["--lang", "petta@1.0.6"]),
-        (["--lang", "he"], ["--lang", "he@0.0.1"]),
-        (["--lang", "he"], ["--lang", "mettahe@0.0.1"]),
+        (["--lang", "he"], ["--lang", "he@0.2.10"]),
+        (["--lang", "he"], ["--lang", "mettahe@0.2.10"]),
         (["--lang", "he", "--profile", "he"],
-         ["--lang", "he@0.0.1", "--profile", "he"]),
-        (["--lang", "he", "--profile", "extended"],
-         ["--lang", "he@0.0.1", "--profile", "extended"]),
-        (["--lang", "he", "--profile", "he-prime"],
-         ["--lang", "he@0.0.1", "--profile", "he-prime"]),
+         ["--lang", "he@0.2.10", "--profile", "he"]),
         (["--lang", "he", "--profile", "he-compat"],
-         ["--lang", "he@0.2.10"]),
+         ["--lang", "he@0.2.10", "--profile", "he-compat"]),
+        (["--lang", "he", "--profile", "extended"],
+         ["--lang", "he@0.2.10", "--profile", "extended"]),
+        (["--lang", "he", "--profile", "he-prime"],
+         ["--lang", "he@0.2.10", "--profile", "he-prime"]),
         (["--lang", "prime"], ["--lang", "prime@0.0.1"]),
         (["--lang", "prime"], ["--lang", "metta-prime@0.0.1"]),
         (["--lang", "petta"], ["--lang", "petta@1.0.6"]),
         (["--lang", "petta", "--profile", "extended"],
          ["--lang", "petta@1.0.6", "--profile", "extended"]),
-        (["--lang", "petta", "--profile", "contract"], ["--lang", "petta@1.1.c"]),
+        (["--lang", "petta", "--profile", "petta@1.1.c"], ["--lang", "petta@1.1.c"]),
     ]
     for ordinary, versioned in pairs:
         for expression in ("!(+ 1 2)", "!(let $value (+ 1 2) (+ $value 4))"):
@@ -53,9 +53,9 @@ def main():
         ("prime@9", None, b"unknown source version"),
         ("petta@9", None, b"unknown source version"),
         ("petta@1.1.c", "extended", b"is not a profile"),
-        ("petta@1.0.6", "contract", b"is not a profile"),
-        ("he@0.0.1", "he-compat", b"is not a profile"),
-        ("he@0.2.10", "extended", b"is not a profile"),
+        ("petta@1.0.6", "petta@1.1.c", b"is not a profile"),
+        ("he@0.0.1", None, b"unknown source version"),
+        ("petta", "contract", b"unknown source profile"),
         ("prime@0.0.1", "extended", b"has no named profiles"),
         ("he@", None, b"is not language@version"),
         ("@0.0.1", None, b"is not language@version"),
@@ -69,13 +69,13 @@ def main():
 
     expression = "!(+ 1 2)"
     ordinary = run(["--translate", "--lang", "he", "--lang", "petta"], expression)
-    versioned = run(["--translate", "--lang", "he@0.0.1", "--lang", "petta@1.0.6"], expression)
+    versioned = run(["--translate", "--lang", "he@0.2.10", "--lang", "petta@1.0.6"], expression)
     # This build translates only rhocalc. HE/PeTTa endpoint selection must
     # still reach that same boundary; versioning does not add a translator.
     assert ordinary[0] == 2 and b"supports only rhocalc endpoints" in ordinary[2]
     assert versioned == ordinary, (ordinary, versioned)
     checks += 1
-    refused = run(["--translate", "--lang", "he@0.0.1", "--lang", "petta@9"], expression)
+    refused = run(["--translate", "--lang", "he@0.2.10", "--lang", "petta@9"], expression)
     assert refused[0] == 2 and b"unknown target version" in refused[2], refused
     checks += 1
 

@@ -398,9 +398,24 @@ static bool he_value_certified(Space *s, int fuel, Atom *atom, Atom *type) {
     return true;
 }
 
+/* Whether `value` is `own` marked as an evaluated value: the same
+ * expression over the same child atoms (atom_he_evaluated_copy). */
+static bool he_value_marked_copy_of(const Atom *value, const Atom *own) {
+    if (!atom_is_he_evaluated(value) || own->kind != ATOM_EXPR ||
+        value->expr.len != own->expr.len)
+        return false;
+    for (CettaExprIndex i = 0u; i < value->expr.len; i++)
+        if (value->expr.elems[i] != own->expr.elems[i])
+            return false;
+    return true;
+}
+
 /* Whether `built`, an expression rebuilt from evaluated parts, is `source`
- * part for part: the same atoms, or symbols and scalars equal to its own. */
-static bool he_value_same_parts(const Atom *built, const Atom *source) {
+ * part for part: the same atoms, or symbols and scalars equal to its own.
+ * With `marked`, a part may also be its own atom marked as an evaluated
+ * value: the same value, though not the same occurrence. */
+static bool he_value_parts_match(const Atom *built, const Atom *source,
+                                 bool marked) {
     if (built == source)
         return true;
     if (!built || !source || built->kind != ATOM_EXPR ||
@@ -409,7 +424,7 @@ static bool he_value_same_parts(const Atom *built, const Atom *source) {
     for (CettaExprIndex i = 0u; i < built->expr.len; i++) {
         Atom *part = built->expr.elems[i];
         Atom *own = source->expr.elems[i];
-        if (part == own)
+        if (part == own || (marked && he_value_marked_copy_of(part, own)))
             continue;
         if (!part || !own || part->kind != own->kind ||
             !he_value_argument_immediate(part) ||
@@ -417,4 +432,16 @@ static bool he_value_same_parts(const Atom *built, const Atom *source) {
             return false;
     }
     return true;
+}
+
+/* The source itself can stand for the rebuilt call: its parts are the
+ * call's parts, so publishing it keeps the sharing it was built with. */
+static bool he_value_same_parts(const Atom *built, const Atom *source) {
+    return he_value_parts_match(built, source, false);
+}
+
+/* The rebuilt call is the source as a value: each part is its own atom or
+ * that atom marked as evaluated.  The source is then its own value. */
+static bool he_value_same_value(const Atom *built, const Atom *source) {
+    return he_value_parts_match(built, source, true);
 }
