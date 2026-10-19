@@ -106,17 +106,29 @@ static bool he_compat_host_read_raw(Space *s, Arena *a, Atom *invocation,
  * The native match stores that variable on the first rule variable and
  * chains each later rule variable, so the instantiated term shows the
  * private terminal. One query variable resolved to that terminal is the
- * name to publish. Two query variables on one terminal stay as matched. */
+ * name to publish. Two query variables on one terminal stay as matched.
+ * An eligible variable may be published; with no eligibility list, every
+ * bound variable is. */
 typedef struct {
     VarId query_id;
     SymbolId spelling;
     Atom *name_key;
     VarId terminal_id;
     Atom *value;
+    bool eligible;
     bool ambiguous;
 } HeQueryRepresentative;
 
+static bool he_var_id_listed(const VarId *ids, uint32_t count, VarId id) {
+    for (uint32_t i = 0u; i < count; i++)
+        if (ids[i] == id)
+            return true;
+    return false;
+}
+
 static bool he_query_representative_collect(Arena *arena, const Bindings *bindings,
+                                            const VarId *eligible_ids,
+                                            uint32_t eligible_count,
                                             HeQueryRepresentative **out,
                                             uint32_t *count_out) {
     BindingsIterator iterator = {.bindings = bindings};
@@ -155,13 +167,16 @@ static bool he_query_representative_collect(Arena *arena, const Bindings *bindin
         reps[slot].value = value;
         reps[slot].terminal_id =
             value->kind == ATOM_VAR ? value->var_id : VAR_ID_NONE;
+        reps[slot].eligible = !eligible_ids ||
+            he_var_id_listed(eligible_ids, eligible_count, binding.var_id);
         reps[slot].ambiguous = false;
     }
     for (uint32_t i = 0u; i < count; i++) {
-        if (reps[i].terminal_id == VAR_ID_NONE)
+        if (reps[i].terminal_id == VAR_ID_NONE || !reps[i].eligible)
             continue;
         for (uint32_t j = 0u; j < count; j++) {
-            if (i != j && reps[j].terminal_id == reps[i].terminal_id)
+            if (i != j && reps[j].eligible &&
+                reps[j].terminal_id == reps[i].terminal_id)
                 reps[i].ambiguous = true;
         }
     }
@@ -181,7 +196,8 @@ static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
     if (atom->kind == ATOM_VAR) {
         const HeQueryRepresentative *found = NULL;
         for (uint32_t i = 0u; i < count; i++) {
-            if (reps[i].ambiguous || reps[i].terminal_id == VAR_ID_NONE ||
+            if (!reps[i].eligible || reps[i].ambiguous ||
+                reps[i].terminal_id == VAR_ID_NONE ||
                 reps[i].terminal_id != atom->var_id)
                 continue;
             if (found)
@@ -217,8 +233,19 @@ static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
 /* One query variable resolved to a terminal is the name to publish.
  * Two query variables on one terminal stay as matched. False is an
  * allocation failure; `atom` and `env` stay put when nothing moves. */
+static bool he_orient_query_representative_among(
+    Arena *arena, Atom **atom, Bindings *env, bool *changed_out,
+    const VarId *eligible_ids, uint32_t eligible_count);
+
 static bool he_orient_query_representative(Arena *arena, Atom **atom,
                                           Bindings *env, bool *changed_out) {
+    return he_orient_query_representative_among(
+        arena, atom, env, changed_out, NULL, 0u);
+}
+
+static bool he_orient_query_representative_among(
+    Arena *arena, Atom **atom, Bindings *env, bool *changed_out,
+    const VarId *eligible_ids, uint32_t eligible_count) {
     HeQueryRepresentative *reps = NULL;
     Atom **values = NULL;
     uint32_t count = 0u;
@@ -229,7 +256,8 @@ static bool he_orient_query_representative(Arena *arena, Atom **atom,
     if (!active_profile_uses_rust_he_compat_semantics() ||
         !arena || !atom || !*atom || !env || !bindings_has_bound_values(env))
         return true;
-    if (!he_query_representative_collect(arena, env, &reps, &count))
+    if (!he_query_representative_collect(arena, env, eligible_ids,
+                                         eligible_count, &reps, &count))
         return false;
     shown = he_rewrite_query_representative(arena, *atom, reps, count);
     if (!shown)
@@ -294,6 +322,80 @@ fail:
     free(values);
     free(reps);
     return false;
+}
+
+typedef struct {
+    VarId *ids;
+    uint32_t count;
+    uint32_t cap;
+    bool failed;
+} HeVarIdList;
+
+static bool he_var_id_list_visit(const Atom *atom, void *context) {
+    HeVarIdList *list = context;
+    if (!atom || atom->kind != ATOM_VAR ||
+        he_var_id_listed(list->ids, list->count, atom->var_id))
+        return false;
+    if (list->count == list->cap) {
+        uint32_t next = list->cap ? list->cap * 2u : 8u;
+        VarId *grown = realloc(list->ids, sizeof(*grown) * (size_t)next);
+        if (!grown) {
+            list->failed = true;
+            return true;
+        }
+        list->ids = grown;
+        list->cap = next;
+    }
+    list->ids[list->count++] = atom->var_id;
+    return false;
+}
+
+/* Rust's call return keeps the caller's variables (apply_and_retain): a
+ * variable the callee introduced that stands for a class holding exactly
+ * one variable of the invocation is published as that variable, and the
+ * invocation variable's binding to it is dropped. The invocation is read
+ * as the caller holds it, through `caller_env` when one is given. Other
+ * answers are unchanged. False is an allocation failure. */
+static bool he_return_retain_invocation(Arena *arena, Atom *invocation,
+                                        const Bindings *caller_env,
+                                        Atom **atom, Bindings *env) {
+    if (!active_profile_uses_rust_he_compat_semantics() || !arena ||
+        !invocation || !atom || !*atom || !env ||
+        !atom_has_vars(invocation) || !bindings_has_bound_values(env))
+        return true;
+    HeVarIdList list = {0};
+    (void)atom_tree_any(invocation, he_var_id_list_visit, &list);
+    if (!list.failed && caller_env && bindings_has_bound_values(caller_env)) {
+        Atom *held = bindings_apply_if_vars(caller_env, arena, invocation);
+        if (held && held != invocation)
+            (void)atom_tree_any(held, he_var_id_list_visit, &list);
+    }
+    bool ok = !list.failed &&
+        (list.count == 0u ||
+         he_orient_query_representative_among(
+             arena, atom, env, NULL, list.ids, list.count));
+    free(list.ids);
+    return ok;
+}
+
+/* The same return stage for an outcome a caller receives. */
+static bool he_return_retain_invocation_outcome(Arena *arena,
+                                                Atom *invocation,
+                                                const Bindings *caller_env,
+                                                Outcome *out) {
+    if (!out || out->kind != CETTA_OUTCOME_INLINE || !out->atom ||
+        variant_instance_present(&out->variant) ||
+        !active_profile_uses_rust_he_compat_semantics())
+        return true;
+    Atom *shown = out->atom;
+    if (!he_return_retain_invocation(arena, invocation, caller_env,
+                                     &shown, &out->env))
+        return false;
+    if (shown != out->atom) {
+        out->atom = shown;
+        out->materialized_atom = NULL;
+    }
+    return true;
 }
 
 static bool he_raw_query_result(Atom *result, const Bindings *bindings,
@@ -364,12 +466,20 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
     } else if (he_compat_host_read_raw(s, a, atom, &env, NULL, &raw,
                                       &unused_type)) {
         invoked = true;
-    } else if (head == g_builtin_syms.get_type && nargs == 1u) {
+    } else if (head == g_builtin_syms.get_type &&
+               (nargs == 1u || nargs == 2u)) {
+        Space *typed_space = s;
+        Atom *error = NULL;
+        if (nargs == 2u)
+            typed_space = eval_get_type_space_argument(
+                a, atom, expr_arg(atom, 1), &error);
         Atom **types = NULL;
         uint32_t count = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
-        if (!eval_get_type_intrinsic_answers(
-                s, a, expr_arg(atom, 0), NULL, fuel, &types, &count,
+        if (!typed_space) {
+            outcome_set_add(&raw, error, &env);
+        } else if (!eval_get_type_intrinsic_answers(
+                typed_space, a, expr_arg(atom, 0), NULL, fuel, &types, &count,
                 &completion)) {
             free(types);
             outcome_set_free(&raw);
@@ -869,6 +979,8 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 }
                 outcome_set_add(os, result, &item->env);
             } else if (frame->phase == HE_INSTRUCTION_CHAIN) {
+                /* The result replaces the destination first; the template
+                 * takes the result's environment when it runs. */
                 Atom *body = instantiate_template_variable_once(a,
                     expr_arg(frame->atom, 2),
                     expr_arg(frame->atom, 1)->var_id, result);

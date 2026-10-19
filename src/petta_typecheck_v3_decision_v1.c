@@ -555,6 +555,9 @@ typedef struct {
     VarId variable;
     const Atom *type;
     const Atom *evidence;
+    /* Type membership alone permits a free value. This flag comes from a
+     * literal, a validated builtin rule, or an enforced direct parameter. */
+    bool boolean_bound;
 } V3SourceBinding;
 
 typedef struct {
@@ -597,6 +600,66 @@ static const Atom *v3_source_environment_evidence(
             return environment->bindings[index - 1u].evidence;
     }
     return NULL;
+}
+
+static V3UniqueDecision v3_manifest_boolean(
+    const CettaGsltHornProgram *program,
+    const CettaGsltProviderRegistryV1 *providers, Arena *arena,
+    const V3SourceEnvironment *environment, const Atom *expression,
+    CettaGsltHornLimits limits, CettaGsltHornOutcome *outcome,
+    char *error, size_t error_size, uint32_t depth);
+
+static V3UniqueDecision v3_builtin_boolean_inputs(
+    const CettaGsltHornProgram *program,
+    const CettaGsltProviderRegistryV1 *providers, Arena *arena,
+    const V3SourceEnvironment *environment, const Atom *expression,
+    CettaGsltHornLimits limits, CettaGsltHornOutcome *outcome,
+    char *error, size_t error_size, uint32_t depth) {
+    if (!expression || depth > 128u || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u || expression->expr.elems[0]->kind != ATOM_SYMBOL)
+        return V3_UNIQUE_NONE;
+    Atom *rule = atom_var(arena, "v3-builtin-rule");
+    Atom *query = v3_relation3(arena, "KnownBuiltinCardinalityRule",
+        expression->expr.elems[0], atom_int(arena, expression->expr.len - 1u), rule);
+    Atom *answer = NULL;
+    V3UniqueDecision found = v3_run_unique(program, providers, arena, query,
+        limits, &answer, outcome, error, error_size);
+    if (found != V3_UNIQUE_ONE)
+        return found;
+    if (!v3_head_is(answer, "KnownBuiltinCardinalityRule") ||
+        answer->expr.len != 4u || !v3_symbol_is(answer->expr.elems[3], "BoundBooleanInputs"))
+        return V3_UNIQUE_NONE;
+    for (CettaExprIndex index = 1u; index < expression->expr.len; index++) {
+        V3UniqueDecision bound = v3_manifest_boolean(program, providers, arena,
+            environment, expression->expr.elems[index], limits, outcome,
+            error, error_size, depth + 1u);
+        if (bound != V3_UNIQUE_ONE)
+            return bound;
+    }
+    return V3_UNIQUE_ONE;
+}
+
+static V3UniqueDecision v3_manifest_boolean(
+    const CettaGsltHornProgram *program,
+    const CettaGsltProviderRegistryV1 *providers, Arena *arena,
+    const V3SourceEnvironment *environment, const Atom *expression,
+    CettaGsltHornLimits limits, CettaGsltHornOutcome *outcome,
+    char *error, size_t error_size, uint32_t depth) {
+    if (!expression || depth > 128u)
+        return V3_UNIQUE_NONE;
+    if ((expression->kind == ATOM_GROUNDED && expression->ground.gkind == GV_BOOL) ||
+        v3_symbol_is(expression, "true") || v3_symbol_is(expression, "false") ||
+        v3_symbol_is(expression, "True") || v3_symbol_is(expression, "False"))
+        return V3_UNIQUE_ONE;
+    if (expression->kind == ATOM_VAR && environment) {
+        for (size_t index = environment->count; index > 0u; index--)
+            if (environment->bindings[index - 1u].variable == expression->var_id)
+                return environment->bindings[index - 1u].boolean_bound
+                    ? V3_UNIQUE_ONE : V3_UNIQUE_NONE;
+        return V3_UNIQUE_NONE;
+    }
+    return v3_builtin_boolean_inputs(program, providers, arena, environment,
+        expression, limits, outcome, error, error_size, depth + 1u);
 }
 
 static V3UniqueDecision v3_source_callable_signature(
@@ -1850,12 +1913,21 @@ static V3SourceCompilation v3_compile_contextual_variable_bindings(
         const Atom *actual = v3_runtime_evidence_actual(value.evidence);
         if (!actual)
             return compiled;
+        V3UniqueDecision boolean = v3_manifest_boolean(program, providers, arena,
+            &local, values[index], limits, &compiled.search_outcome,
+            error, error_size, depth + 1u);
+        if (boolean == V3_UNIQUE_FAULT || boolean == V3_UNIQUE_INCOMPLETE) {
+            compiled.status = boolean == V3_UNIQUE_FAULT ? V3_SOURCE_FAULT : V3_SOURCE_INCOMPLETE;
+            compiled.relation = "KnownBuiltinCardinalityRule";
+            return compiled;
+        }
         if (!v3_push_lexical_evidence(
                 &local, binders[index], actual, value.evidence,
                 error, error_size)) {
             compiled.status = V3_SOURCE_FAULT;
             return compiled;
         }
+        local.bindings[local.count - 1u].boolean_bound = boolean == V3_UNIQUE_ONE;
         value_evidence[index] = value.evidence;
     }
 
@@ -1953,6 +2025,16 @@ static V3SourceCompilation v3_compile_application_call(
     } else {
         return compiled;
     }
+    V3UniqueDecision boolean_call = v3_builtin_boolean_inputs(program, providers,
+        arena, environment, expression, limits, &compiled.search_outcome,
+        error, error_size, depth + 1u);
+    if (boolean_call == V3_UNIQUE_FAULT || boolean_call == V3_UNIQUE_INCOMPLETE) {
+        compiled.status = boolean_call == V3_UNIQUE_FAULT ? V3_SOURCE_FAULT : V3_SOURCE_INCOMPLETE;
+        compiled.relation = "KnownBuiltinCardinalityRule";
+        return compiled;
+    }
+    if (boolean_call == V3_UNIQUE_ONE)
+        aggregate_card = atom_symbol(arena, "V3Det");
     const Atom *domains = signature->expr.elems[1];
     for (CettaExprIndex index = 1u;
          index < expression->expr.len; index++) {
@@ -2828,6 +2910,19 @@ static bool v3_decide_definition_internal_v1(
                 decision->search_outcome = admission.search_outcome;
                 arena_free(&scratch);
                 return true;
+            }
+            const Atom *domain = domains->expr.elems[1];
+            bool committed = v3_head_is(demand, "V3Grade") && demand->expr.len == 2u &&
+                (v3_symbol_is(demand->expr.elems[1], "V3Det") ||
+                 v3_symbol_is(demand->expr.elems[1], "V3Semidet"));
+            if (committed && pattern->kind == ATOM_VAR &&
+                v3_head_is(domain, "V3Prim") && domain->expr.len == 2u &&
+                v3_symbol_is(domain->expr.elems[1], "V3Bool")) {
+                for (size_t binding = source_environment.count; binding > 0u; binding--)
+                    if (source_environment.bindings[binding - 1u].variable == pattern->var_id) {
+                        source_environment.bindings[binding - 1u].boolean_bound = true;
+                        break;
+                    }
             }
             domains = domains->expr.elems[2];
         }

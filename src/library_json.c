@@ -481,7 +481,7 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             parser, input, legacy,
             4000000u, 1024u, 16u * 1024u * 1024u,
             &bytes, &len, &status, error, sizeof(error)) :
-        cetta_json_value_v1_emit(input, legacy, 0u, 0u, 0u,
+        cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, input, legacy, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error));
     if (!ok) {
         return json_failure_or_error(

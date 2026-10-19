@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import queue
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
@@ -12,12 +13,13 @@ import tempfile
 
 
 class Service:
-    def __init__(self, directory, capacity=4):
+    def __init__(self, directory, capacity=4, policy=None, quantum=1, work_limit=100000):
         self.directory = Path(directory)
         self.path = self.directory / "worker.sock"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.listener.bind(str(self.path)); self.listener.listen(16)
         self.capacity = capacity
+        self.planning = [] if policy is None else [str(policy), str(quantum), str(work_limit)]
         self.process = None
         self.lines = []
         self.start()
@@ -26,7 +28,7 @@ class Service:
         self.events = queue.Queue()
         self.process = subprocess.Popen([os.environ["CETTA_ACTIVITY_SERVICE"],
             str(self.directory / "journal.sqlite3"), str(self.listener.fileno()),
-            "activities", str(self.capacity)], pass_fds=[self.listener.fileno()],
+            "activities", str(self.capacity)] + self.planning, pass_fds=[self.listener.fileno()],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
         def read():
@@ -86,6 +88,114 @@ class Service:
             assert self.process.returncode == 0, stderr
             self.process.stdin.close(); self.process.stdout.close(); self.process.stderr.close()
         self.listener.close()
+
+
+# A self-contained authored policy exercises the same native intake, worker
+# origins, timer envelopes and commit grants as the installed HE client.
+# The divergent branch is intentional; its peers still have to complete.
+PRIME_POLICY = '''
+(= (activity:spin $n) (activity:spin (+ $n 1)))
+(= (activity:count $n $plan)
+   (if (== $n 0) $plan (activity:count (- $n 1) $plan)))
+(= (activity:receive $worker)
+   (match &self (host:record 0 $key
+      (activity:input 1 $id $owner $generation $kind $body $due $period))
+    (if (== $body "spin") (activity:spin 0)
+     (if (== $kind work)
+      (host:transition (activity:waiting 1 $id $owner $generation) ()
+       ((host:send 0 (worker:request 1 $worker $body)
+          (activity:return 1 $id $owner $generation))))
+      (if (== $kind timer)
+       (host:transition (activity:timing 1 $id $owner $generation) ()
+        ((host:send 1 (timer:at 1 $due $period FireOnce 0 $body)
+           (activity:tick 1 $id $owner $generation))))
+       (activity:count 12
+        (host:transition (activity:done 1 $id $owner $generation)
+         ((host:put 0 $id (activity:noticed 1 $owner $generation $body))) ())))))))
+(= (activity:reply $worker $result-key $task-key $intent-key)
+   (match &self (host:record 0 $key (host:worker-result 1 $worker $task $revision $body))
+    (match &self (host:record 5 $intent-key
+       (host:intent 1 "worker.request" "1" $request (activity:return 1 $id $owner $generation)))
+     (host:transition (activity:done 1 $id $owner $generation)
+      ((host:put 0 $result-key (activity:result 1 $owner $generation current $body))) ()))))
+(= (activity:timer-reply $result-key $intent-key $effect-id)
+   (match &self (host:record 0 $key
+      (host:timer-event 1 $effect-id $sequence $kind $due $now $represented $body
+       (activity:tick 1 $id $owner $generation)))
+    (host:transition (activity:timing 1 $id $owner $generation)
+     ((host:put 0 $result-key
+       (activity:timer-result 1 $owner $generation $sequence $kind $due $now $represented current $body))) ())))
+'''
+
+
+@unittest.skipUnless(os.environ.get("CETTA_ACTIVITY_SERVICE"), "set CETTA_ACTIVITY_SERVICE")
+class PrimeActivityTests(unittest.TestCase):
+    def service(self, quantum=1, work_limit=100000, capacity=4):
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        policy = Path(temporary.name) / "policy.metta"; policy.write_text(PRIME_POLICY)
+        service = Service(temporary.name, capacity, policy, quantum, work_limit)
+        self.addCleanup(service.close)
+        return service
+
+    def test_retained_prime_planning_services_worker_timer_and_late_input(self):
+        s = self.service()
+        s.record("work", "worker", body="external observation")
+        task, body = s.task(); self.assertEqual(body, "external observation")
+        s.record("notice", "continuing", body="spin")
+        s.record("timer", "clock", due=int(time.time() * 1000) + 20, body="tick")
+        s.record("notice", "late", body="new input")
+        self.assertEqual(s.rpc(2, task, "worker answer")[0], 66)
+        results = {}
+        for identity in ("worker", "late", "clock/0"):
+            prefix = "result " + identity + " "
+            results[identity] = next((l for l in s.lines if l.startswith(prefix)), None) or s.wait(
+                lambda l: l.startswith(prefix), 15)
+        self.assertIn('current "worker answer"', results["worker"])
+        self.assertIn('"new input"', results["late"])
+        self.assertIn(" fired ", results["clock/0"])
+        self.assertFalse(any(l.startswith("result continuing ") for l in s.lines))
+
+    def test_native_quantum_changes_turns_without_repeating_work(self):
+        paid = []
+        for quantum in (1, 7):
+            s = self.service(quantum=quantum)
+            s.record("notice", "same", body="same source")
+            self.assertIn('"same source"', s.wait(lambda l: l.startswith("result same "), 15))
+            s.close(); s.process = None
+            stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
+            paid.append(stats["plan_work"])
+            self.assertGreater(stats["plan_polls"], 1)
+            print("native activity quantum", quantum, "stats", json.dumps(stats), flush=True)
+        self.assertEqual(paid[0], paid[1]); self.assertGreater(paid[0], 0)
+
+    def test_zero_purse_parks_without_refill_and_keeps_capacity_backpressure(self):
+        s = self.service(work_limit=0, capacity=1)
+        s.record("notice", "parked")
+        s.record("notice", "unadmitted")
+        self.assertEqual(s.rpc(1)[0], 64)
+        s.close(); s.process = None
+        stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
+        self.assertEqual(stats["plan_work"], 0); self.assertEqual(stats["plan_polls"], 1)
+        self.assertEqual(stats["ready"], 1)
+        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+
+    def test_parked_native_plan_restart_reuses_input_then_replays_completed_result(self):
+        s = self.service(work_limit=0)
+        s.record("notice", "restart", body="restart")
+        self.assertEqual(s.rpc(1)[0], 64)
+        s.kill()
+        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+        # Restart owns a fresh planning ticket; the persisted input survives
+        # retirement of the exhausted in-process task and its original purse.
+        s.planning[-1] = "100000"
+        s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
+        s.kill(); s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
+        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 1)
 
 
 @unittest.skipUnless(os.environ.get("CETTA_ACTIVITY_SERVICE"), "set CETTA_ACTIVITY_SERVICE")

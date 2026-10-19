@@ -45,6 +45,8 @@ typedef struct {
     RSDFAV1Program program;
     CettaLpNativeGrammar grammar;
     PPNativeV1PreparedStartFamily prepared;
+    const CettaLpNativeGllPrepared *gll;
+    const CettaLpNativeGlrPrepared *glr;
     uint32_t start_state_id;
     uint32_t trivia_terminal;
     uint32_t eof_terminal;
@@ -380,11 +382,173 @@ bool cetta_parser_token_runtime_v1_prepare(
     if (!ppnative_v1_prepared_start_family_prepare(&runtime->prepared,
             &runtime->grammar, runtime->binding, &runtime->start_state_id, 1u,
             error, error_size)) goto fail;
+    if (!ppnative_v1_prepared_start_family_lookup(&runtime->prepared,
+            runtime->binding, runtime->start_state_id, &runtime->gll,
+            &runtime->glr, error, error_size)) goto fail;
     cetta_parser_token_runtime_v1_free(out);
     *out = candidate;
     return true;
 fail:
     cetta_parser_token_runtime_v1_free(&candidate);
+    return false;
+}
+
+static Atom *stored_form(Arena *arena, const char *name, Atom **fields, uint32_t len) {
+    Atom **items = arena_alloc(arena, ((size_t)len + 1u) * sizeof(*items));
+    if (!items) return NULL;
+    items[0] = atom_symbol(arena, name);
+    if (len) memcpy(items + 1u, fields, (size_t)len * sizeof(*items));
+    return atom_expr(arena, items, (size_t)len + 1u);
+}
+
+static bool stored_uint(Atom *value, uint32_t *out) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT ||
+        value->ground.ival < 0 || (uint64_t)value->ground.ival > UINT32_MAX) return false;
+    *out = (uint32_t)value->ground.ival;
+    return true;
+}
+
+static bool stored_digest(Atom *value, char out[65]) {
+    if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_STRING ||
+        strlen(value->ground.sval) != 64u) return false;
+    for (uint32_t i = 0u; i < 64u; ++i) {
+        char c = value->ground.sval[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    memcpy(out, value->ground.sval, 65u);
+    return true;
+}
+
+static bool stored_vector(Atom *value, const char *name, uint32_t *len) {
+    if (!value || value->kind != ATOM_EXPR || !value->expr.len ||
+        value->expr.len - 1u > UINT32_MAX || !atom_is_symbol(value->expr.elems[0], name)) return false;
+    *len = (uint32_t)(value->expr.len - 1u);
+    return true;
+}
+
+bool cetta_parser_token_runtime_v1_export_program(
+    const CettaParserTokenRuntimeV1 *runtime_value, PPTableSnapshotV1 *out,
+    Arena *arena, Atom **metadata, char *error, size_t error_size) {
+    const TokenRuntime *runtime = runtime_value ? runtime_value->implementation : NULL;
+    PPTableSnapshotV1 candidate;
+    pp_table_snapshot_v1_init(&candidate);
+    if (metadata) *metadata = NULL;
+    if (!runtime || !out || !arena || !metadata) {
+        token_error(error, error_size, "missing immutable token program");
+        goto failed;
+    }
+    candidate.kernel = PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL;
+    strcpy(candidate.profile, "parserpack-token");
+    memcpy(candidate.syntax_digest, runtime->compiled->pack.source_digest, 65u);
+    memcpy(candidate.artifact_digest, runtime->compiled->pack.pack_digest, 65u);
+    if (!rsdfa_v1_program_copy(&candidate.dfa, &runtime->program, error, error_size) ||
+        !cetta_lp_native_gll_prepared_export_program(runtime->gll, &candidate.gll, error, error_size) ||
+        !cetta_lp_native_glr_prepared_export_program(runtime->glr, &candidate.slr, error, error_size))
+        goto failed;
+    Atom **rows = arena_alloc(arena, ((size_t)runtime->rule_len + 1u) * sizeof(*rows));
+    if (!rows) goto failed;
+    for (uint32_t i = 0u; i < runtime->rule_len; ++i) {
+        const TokenRule *rule = &runtime->rules[i];
+        Atom **points = arena_alloc(arena, ((size_t)rule->comment_suffix_len + 1u) * sizeof(*points));
+        if (!points) goto failed;
+        for (uint32_t j = 0u; j < rule->comment_suffix_len; ++j)
+            points[j] = atom_int(arena, rule->comment_suffix[j]);
+        Atom *suffix = stored_form(arena, "ParserLexerSuffixV1", points, rule->comment_suffix_len);
+        Atom *fields[] = {rule->tag, atom_int(arena, rule->kind), rule->value_kind,
+            atom_int(arena, rule->terminal_id), atom_int(arena, rule->priority), suffix};
+        rows[i] = stored_form(arena, "ParserLexerRuleV1", fields, 6u);
+    }
+    Atom *rules = stored_form(arena, "ParserLexerRulesV1", rows, runtime->rule_len);
+    Atom **tags = arena_alloc(arena, ((size_t)runtime->program.tag_len + 1u) * sizeof(*tags));
+    if (!tags) goto failed;
+    for (uint32_t i = 0u; i < runtime->program.tag_len; ++i)
+        tags[i] = atom_int(arena, runtime->tag_rules[i]);
+    Atom *fields[] = {atom_int(arena, runtime->policy_kind), atom_int(arena, runtime->start_state_id),
+        atom_int(arena, runtime->trivia_terminal), atom_int(arena, runtime->eof_terminal),
+        atom_string(arena, runtime->binding), atom_string(arena, runtime->authority_binding),
+        rules, stored_form(arena, "ParserLexerTagsV1", tags, runtime->program.tag_len)};
+    Atom *stored = stored_form(arena, "ParserLexerStoredV1", fields, 8u);
+    if (!stored || !(*metadata = atom_deep_copy(arena, stored))) goto failed;
+    pp_table_snapshot_v1_free(out);
+    *out = candidate;
+    return true;
+failed:
+    pp_table_snapshot_v1_free(&candidate);
+    if (error && error_size && !error[0]) token_error(error, error_size, "token program export allocation failed");
+    return false;
+}
+
+bool cetta_parser_token_runtime_v1_import_program(
+    CettaParserTokenRuntimeV1 *out, const CettaLdParserPackV1 *compiled,
+    const CettaParserTokenProfileV1 *profile, const PPTableSnapshotV1 *snapshot,
+    Atom *metadata, char *error, size_t error_size) {
+    CettaParserTokenRuntimeV1 candidate = {0};
+    if (!out || !compiled || !compiled->tokenized || !profile || !snapshot ||
+        snapshot->kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL ||
+        !form(metadata, "ParserLexerStoredV1", 8u))
+        return token_error(error, error_size, "missing stored token program");
+    TokenRuntime *runtime = calloc(1u, sizeof(*runtime));
+    if (!runtime) return token_error(error, error_size, "token program import allocation failed");
+    candidate.implementation = runtime;
+    arena_init(&runtime->arena);
+    runtime->arena.hashcons = NULL;
+    runtime->compiled = compiled;
+    runtime->profile = profile;
+    metadata = atom_deep_copy(&runtime->arena, metadata);
+    uint32_t policy, rules_len, tags_len;
+    Atom *rules = metadata ? metadata->expr.elems[7] : NULL;
+    Atom *tags = metadata ? metadata->expr.elems[8] : NULL;
+    if (!metadata || !stored_uint(metadata->expr.elems[1], &policy) ||
+        policy > CETTA_BNFC_C_FLEX_2_9_6_3_V1 || policy != (uint32_t)profile->policy_kind ||
+        !stored_uint(metadata->expr.elems[2], &runtime->start_state_id) ||
+        runtime->start_state_id != snapshot->gll.start_nonterminal ||
+        !stored_uint(metadata->expr.elems[3], &runtime->trivia_terminal) ||
+        !stored_uint(metadata->expr.elems[4], &runtime->eof_terminal) ||
+        !stored_digest(metadata->expr.elems[5], runtime->binding) ||
+        !stored_digest(metadata->expr.elems[6], runtime->authority_binding) ||
+        !stored_vector(rules, "ParserLexerRulesV1", &rules_len) || !rules_len ||
+        !stored_vector(tags, "ParserLexerTagsV1", &tags_len) || tags_len != snapshot->dfa.tag_len)
+        goto failed;
+    uint64_t terminal_count = (uint64_t)compiled->pack.terminal_len + compiled->token_bindings.extension.terminal_len;
+    if (runtime->eof_terminal >= compiled->pack.terminal_len ||
+        runtime->trivia_terminal >= terminal_count) goto failed;
+    runtime->policy_kind = (CettaBnfcLexicalPolicyV1)policy;
+    runtime->rules = calloc(rules_len, sizeof(*runtime->rules));
+    runtime->tag_rules = calloc(tags_len ? tags_len : 1u, sizeof(*runtime->tag_rules));
+    if (!runtime->rules || !runtime->tag_rules) goto failed;
+    runtime->rule_len = runtime->rule_capacity = rules_len;
+    for (uint32_t i = 0u; i < rules_len; ++i) {
+        Atom *row = rules->expr.elems[i + 1u];
+        uint32_t kind, len;
+        TokenRule *rule = &runtime->rules[i];
+        if (!form(row, "ParserLexerRuleV1", 6u) ||
+            !stored_uint(row->expr.elems[2], &kind) || kind > TOKEN_RULE_BLOCK_COMMENT ||
+            !stored_uint(row->expr.elems[4], &rule->terminal_id) || rule->terminal_id >= terminal_count ||
+            !stored_uint(row->expr.elems[5], &rule->priority) ||
+            !stored_vector(row->expr.elems[6], "ParserLexerSuffixV1", &len)) goto failed;
+        rule->tag = row->expr.elems[1];
+        rule->kind = (TokenRuleKind)kind;
+        rule->value_kind = row->expr.elems[3];
+        rule->comment_suffix = arena_alloc(&runtime->arena, ((size_t)len + 1u) * sizeof(uint32_t));
+        if (!rule->comment_suffix) goto failed;
+        rule->comment_suffix_len = len;
+        for (uint32_t j = 0u; j < len; ++j)
+            if (!stored_uint(row->expr.elems[6]->expr.elems[j + 1u], &rule->comment_suffix[j])) goto failed;
+    }
+    for (uint32_t i = 0u; i < tags_len; ++i)
+        if (!stored_uint(tags->expr.elems[i + 1u], &runtime->tag_rules[i]) ||
+            runtime->tag_rules[i] >= rules_len) goto failed;
+    if (!rsdfa_v1_program_copy(&runtime->program, &snapshot->dfa, error, error_size) ||
+        !ppnative_v1_prepared_start_family_import_programs(&runtime->prepared, runtime->binding,
+            &snapshot->gll, &snapshot->slr, error, error_size) ||
+        !ppnative_v1_prepared_start_family_lookup(&runtime->prepared, runtime->binding,
+            runtime->start_state_id, &runtime->gll, &runtime->glr, error, error_size)) goto failed;
+    cetta_parser_token_runtime_v1_free(out);
+    *out = candidate;
+    return true;
+failed:
+    cetta_parser_token_runtime_v1_free(&candidate);
+    if (error && error_size && !error[0]) token_error(error, error_size, "malformed stored token program");
     return false;
 }
 
@@ -394,6 +558,43 @@ void cetta_parser_token_scan_v1_init(CettaParserTokenScanV1 *scan) {
     arena_init(&scan->arena);
     scan->arena.hashcons = NULL;
     cetta_lp_native_utf8_scalar_buffer_init(&scan->source);
+}
+
+bool cetta_parser_token_runtime_v1_check_metadata(
+    const CettaParserTokenRuntimeV1 *value, char *error, size_t error_size) {
+    const TokenRuntime *runtime = value ? value->implementation : NULL;
+    TokenRuntime expected = {0};
+    bool ok = false;
+    if (!runtime || !runtime->compiled || !runtime->profile ||
+        memcmp(runtime->authority_binding, runtime->compiled->binding_sha256, 65u) ||
+        runtime->policy_kind != runtime->profile->policy_kind)
+        return token_error(error, error_size, "stored lexer authority differs from its profile");
+    arena_init(&expected.arena);
+    expected.arena.hashcons = NULL;
+    expected.compiled = runtime->compiled;
+    expected.profile = runtime->profile;
+    expected.policy_kind = runtime->policy_kind;
+    if (!runtime_rules(&expected, error, error_size)) goto done;
+    if (runtime->rule_len != expected.rule_len ||
+        runtime->trivia_terminal != expected.trivia_terminal ||
+        runtime->eof_terminal != expected.eof_terminal) goto inconsistent;
+    for (uint32_t i = 0u; i < runtime->rule_len; ++i) {
+        const TokenRule *left = &runtime->rules[i], *right = &expected.rules[i];
+        if (left->kind != right->kind || left->terminal_id != right->terminal_id ||
+            left->priority != right->priority || !atom_eq(left->tag, right->tag) ||
+            !atom_eq(left->value_kind, right->value_kind) ||
+            left->comment_suffix_len != right->comment_suffix_len ||
+            (left->comment_suffix_len && memcmp(left->comment_suffix, right->comment_suffix,
+                (size_t)left->comment_suffix_len * sizeof(*left->comment_suffix)))) goto inconsistent;
+    }
+    ok = true;
+    goto done;
+inconsistent:
+    token_error(error, error_size, "stored lexer metadata differs from its profile");
+done:
+    free(expected.rules);
+    arena_free(&expected.arena);
+    return ok;
 }
 
 void cetta_parser_token_scan_v1_free(CettaParserTokenScanV1 *scan) {
@@ -547,10 +748,10 @@ static bool c_character_end(const uint8_t *bytes, uint32_t length, uint32_t left
     return true;
 }
 
-bool cetta_parser_token_runtime_v1_scan(
+static bool token_runtime_scan(
     const CettaParserTokenRuntimeV1 *runtime_value,
     const uint8_t *bytes, size_t length, uint64_t work_limit,
-    CettaParserTokenScanV1 *out, char *error, size_t error_size) {
+    bool audit, CettaParserTokenScanV1 *out, char *error, size_t error_size) {
     const TokenRuntime *runtime = runtime_value ? runtime_value->implementation : NULL;
     CettaParserTokenScanV1 scan;
     RSDFAV1Token *matches = NULL;
@@ -558,8 +759,9 @@ bool cetta_parser_token_runtime_v1_scan(
     bool ok = false;
     cetta_parser_token_scan_v1_init(&scan);
     if (!runtime || !out || (!bytes && length) || length > UINT32_MAX ||
-        !work_limit || memcmp(runtime->authority_binding, runtime->compiled->binding_sha256, 65u) ||
-        runtime->policy_kind != runtime->profile->policy_kind) {
+        !work_limit || (audit &&
+        (memcmp(runtime->authority_binding, runtime->compiled->binding_sha256, 65u) ||
+         runtime->policy_kind != runtime->profile->policy_kind))) {
         token_error(error, error_size, "unbound or changed token runtime"); goto done;
     }
     if (!cetta_lp_native_utf8_scalar_buffer_decode(&scan.source, bytes, length, error, error_size)) goto done;
@@ -703,8 +905,10 @@ bool cetta_parser_token_runtime_v1_scan(
         .scalar_len = view->scalar_len, .input_byte_len = view->input_byte_len,
         .decoded_byte_len = view->decoded_byte_len, .source_pass_count = view->source_pass_count,
     };
-    memcpy(scan.binding_sha256, runtime->binding, sizeof(scan.binding_sha256));
-    if (!cetta_lp_native_utf8_lattice_validate(&scan.lattice, error, error_size)) goto done;
+    if (audit) {
+        memcpy(scan.binding_sha256, runtime->binding, sizeof(scan.binding_sha256));
+        if (!cetta_lp_native_utf8_lattice_validate(&scan.lattice, error, error_size)) goto done;
+    }
     cetta_parser_token_scan_v1_free(out);
     *out = scan;
     memset(&scan, 0, sizeof(scan));
@@ -715,19 +919,40 @@ done:
     return ok;
 }
 
-bool cetta_parser_token_runtime_v1_parse(
+bool cetta_parser_token_runtime_v1_scan(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const uint8_t *bytes, size_t length, uint64_t work_limit,
+    CettaParserTokenScanV1 *out, char *error, size_t error_size) {
+    return token_runtime_scan(runtime_value, bytes, length, work_limit,
+                              true, out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_scan_values(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const uint8_t *bytes, size_t length, uint64_t work_limit,
+    CettaParserTokenScanV1 *out, char *error, size_t error_size) {
+    return token_runtime_scan(runtime_value, bytes, length, work_limit,
+                              false, out, error, error_size);
+}
+
+static bool token_runtime_parse_into(
     const CettaParserTokenRuntimeV1 *runtime_value,
     const CettaParserTokenScanV1 *scan, bool use_glr,
     uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    bool values, const PPNativeV1FamilySelection *selection,
     PPNativeV1Result *out, char *error, size_t error_size) {
     const TokenRuntime *runtime = runtime_value ? runtime_value->implementation : NULL;
     const CettaLpNativeGllPrepared *gll;
     const CettaLpNativeGlrPrepared *glr;
-    if (!runtime || !scan || !out || !work_limit ||
-        memcmp(runtime->authority_binding, runtime->compiled->binding_sha256, 65u) ||
+    if (!runtime || !scan || !out || !work_limit)
+        return token_error(error, error_size, "unbound token parser");
+    gll = runtime->gll;
+    glr = runtime->glr;
+    if (!values &&
+        (memcmp(runtime->authority_binding, runtime->compiled->binding_sha256, 65u) ||
         memcmp(runtime->binding, scan->binding_sha256, 65u) ||
         !ppnative_v1_prepared_start_family_lookup(&runtime->prepared, runtime->binding,
-            runtime->start_state_id, &gll, &glr, error, error_size))
+            runtime->start_state_id, &gll, &glr, error, error_size)))
         return token_error(error, error_size, "unbound or changed token parser");
     /* The recognizers first decide completions and reductions by the next
      * non-layout terminal.  That keeps long lists linear and leaves an
@@ -738,9 +963,13 @@ bool cetta_parser_token_runtime_v1_parse(
     lattice.layout_lookahead = true;
     lattice.layout_terminal_id = runtime->trivia_terminal;
     for (;;) {
-        if (!(use_glr ? cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from(glr,
+        if (!(use_glr ? (values
+                ? cetta_lp_native_glr_prepared_parse_owned_utf8_lattice_forest_from
+                : cetta_lp_native_glr_prepared_parse_utf8_lattice_forest_from)(glr,
                 &lattice, 0u, work_limit, &out->forest, error, error_size)
-            : cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete(gll,
+            : (values
+                ? cetta_lp_native_gll_prepared_parse_owned_utf8_lattice_forest_from_complete
+                : cetta_lp_native_gll_prepared_parse_utf8_lattice_forest_from_complete)(gll,
                 &lattice, 0u, work_limit, &out->forest, error, error_size))) return false;
         if (!lattice.layout_lookahead || out->forest.root_len != 0u ||
             out->forest.outcome != CETTA_LP_NATIVE_UTF8_FOREST_COMPLETED) break;
@@ -759,10 +988,116 @@ bool cetta_parser_token_runtime_v1_parse(
     PPNativeV1ForestExtension extension = runtime->compiled->token_bindings.extension;
     extension.witness_values = scan->witness_values;
     extension.witness_len = scan->witness_len;
-    if (!ppnative_v1_finish_extended(out, &runtime->compiled->pack,
-            runtime->compiled->start_state, &extension, replay_depth, result_limit, error, error_size)) return false;
+    if (!(values ? ppnative_v1_finish_values_selected(out, &runtime->compiled->pack,
+            &extension, replay_depth, result_limit, selection, error, error_size)
+        : ppnative_v1_finish_extended(out, &runtime->compiled->pack,
+            runtime->compiled->start_state, &extension, replay_depth, result_limit, error, error_size))) return false;
     out->accepted = out->forest.root_len != 0u;
     return true;
+}
+
+static bool token_runtime_parse(
+    const CettaParserTokenRuntimeV1 *runtime,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    bool values, const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
+    PPNativeV1Result result;
+    if (!out) return token_error(error, error_size, "missing parser result destination");
+    ppnative_v1_result_init(&result);
+    bool ok = token_runtime_parse_into(runtime, scan, use_glr, work_limit,
+        replay_depth, result_limit, values, selection, &result, error, error_size);
+    if (ok) {
+        ppnative_v1_result_free(out);
+        *out = result;
+        memset(&result, 0, sizeof(result));
+    }
+    ppnative_v1_result_free(&result);
+    return ok;
+}
+
+bool cetta_parser_token_runtime_v1_parse(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    PPNativeV1Result *out, char *error, size_t error_size) {
+    return token_runtime_parse(runtime_value, scan, use_glr, work_limit,
+        replay_depth, result_limit, false, NULL, out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_values(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    PPNativeV1Result *out, char *error, size_t error_size) {
+    return cetta_parser_token_runtime_v1_parse_values_selected(runtime_value,
+        scan, use_glr, work_limit, replay_depth, result_limit, NULL,
+        out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_values_selected(
+    const CettaParserTokenRuntimeV1 *runtime_value,
+    const CettaParserTokenScanV1 *scan, bool use_glr,
+    uint32_t work_limit, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
+    return token_runtime_parse(runtime_value, scan, use_glr, work_limit,
+        replay_depth, result_limit, true, selection, out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_build_predictive(
+    const CettaParserTokenRuntimeV1 *value,
+    CettaLpNativePredictiveProgram *out, char *error, size_t error_size) {
+    const TokenRuntime *runtime = value ? value->implementation : NULL;
+    if (!runtime) return token_error(error, error_size, "missing token runtime for specialization");
+    return cetta_lp_native_predictive_build(runtime->gll, NULL, 0u, true,
+        runtime->eof_terminal, out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_check_predictive(
+    const CettaParserTokenRuntimeV1 *value, const CettaLpNativePredictiveProgram *program,
+    char *error, size_t error_size) {
+    const TokenRuntime *runtime = value ? value->implementation : NULL;
+    return runtime && program && program->token_chain && program->eof_terminal_id == runtime->eof_terminal &&
+        cetta_lp_native_predictive_check(runtime->gll, program, NULL, 0u, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_predictive_values(
+    const CettaParserTokenRuntimeV1 *value, const CettaLpNativePredictiveProgram *program,
+    const CettaParserTokenScanV1 *scan, uint32_t work_limit, uint32_t replay_depth,
+    uint32_t result_limit, PPNativeV1Result *out, char *error, size_t error_size) {
+    return cetta_parser_token_runtime_v1_parse_predictive_values_selected(value,
+        program, scan, work_limit, replay_depth, result_limit, NULL,
+        out, error, error_size);
+}
+
+bool cetta_parser_token_runtime_v1_parse_predictive_values_selected(
+    const CettaParserTokenRuntimeV1 *value, const CettaLpNativePredictiveProgram *program,
+    const CettaParserTokenScanV1 *scan, uint32_t work_limit, uint32_t replay_depth,
+    uint32_t result_limit, const PPNativeV1FamilySelection *selection,
+    PPNativeV1Result *out, char *error, size_t error_size) {
+    const TokenRuntime *runtime = value ? value->implementation : NULL;
+    PPNativeV1Result result;
+    ppnative_v1_result_init(&result);
+    if (!runtime || !scan || !out)
+        return token_error(error, error_size, "missing predictive token input binding");
+    bool ok = cetta_lp_native_predictive_parse_owned_lattice_forest(runtime->gll, program,
+        &scan->lattice, work_limit, &result.forest, error, error_size);
+    if (ok && result.forest.outcome == CETTA_LP_NATIVE_UTF8_FOREST_RESOURCE_LIMIT) {
+        result.outcome = PPNATIVE_V1_RECOGNIZER_LIMIT;
+        (void)snprintf(result.detail, sizeof(result.detail), "predictive work limit %u", work_limit);
+    } else if (ok) {
+        result.accepted = result.forest.root_len != 0u;
+        PPNativeV1ForestExtension extension = runtime->compiled->token_bindings.extension;
+        extension.witness_values = scan->witness_values; extension.witness_len = scan->witness_len;
+        ok = ppnative_v1_finish_values_selected(&result, &runtime->compiled->pack, &extension,
+            replay_depth, result_limit, selection, error, error_size);
+    }
+    if (ok) {
+        ppnative_v1_result_free(out); *out = result; memset(&result, 0, sizeof(result));
+    }
+    ppnative_v1_result_free(&result);
+    return ok;
 }
 
 bool cetta_parser_token_runtime_v1_materialize(

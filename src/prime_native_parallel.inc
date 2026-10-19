@@ -360,15 +360,18 @@ static bool prime_native_parallel_read_service_admitted(PrimeNativeControl *chil
         !prime_native_actual_call_allowed(space,arena,call))return false;
     RegistryReadView registry=child->registry_read;
     if (!registry_read_view_validate(&registry,g_registry)) return false;
-    PettaResolvedCallClass kind = petta_program_classify_resolved_call(
-        g_library_context->petta_program,space,call);
-    /* The admitted ordinary closure already retains this relation's source
-     * and private world. Only its checked optional type service adds a
-     * coordinator dependency; subsequent calls still cross actual authority
-     * and persistent-effect guards. An arbitrary relation is not a service. */
-    return kind == PETTA_RESOLVED_CALL_MACHINE_LOCAL ||
-        (kind == PETTA_RESOLVED_CALL_RELATION &&
-         prime_native_guest_call(space,arena,call) == PRIME_NATIVE_GUEST_REQUIRED);
+    /* This admits the retained read-only type service, not the relation's
+     * body effects. The current borrowed source and actual-call guard above
+     * establish its caller; subsequent body calls retain their own guards.
+     * A relation-safety cache miss in a shared scope has no compiled plans
+     * and cannot decide this service's authority. */
+    SymbolId head = atom_head_symbol_id(call);
+    if (head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) &&
+        prime_native_guest_call(space, arena, call) == PRIME_NATIVE_GUEST_REQUIRED &&
+        eval_equations_may_match_known_head(space, head))
+        return true;
+    return petta_program_classify_resolved_call(
+        g_library_context->petta_program, space, call) == PETTA_RESOLVED_CALL_MACHINE_LOCAL;
 }
 
 /* The optional checker is owned by the already borrowed library context.
@@ -426,7 +429,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     if (work->parallel && work->parallel->child &&
         work->parallel->child->driver.capsule_stack &&
         (work->parallel->child->driver.capsule_frontier ||
-         cetta_native_cost_active() || owner->policy.receipts ||
+         cetta_native_cost_account_scope() || owner->policy.receipts ||
          cetta_native_cost_observer_active()
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
          || owner->history.spec.enabled || g_prime_need_recording_scope
@@ -489,6 +492,10 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     Arena *arena = owner->driver.arena;
     Atom *expression = bindings_apply_if_vars(&task->dynamic_env, arena, task->atom);
     const PrimeNeedSnapshot *need = bindings_need_view(&task->dynamic_env);
+    PrimeNativeOwnedRegion *region=prime_native_episode_region(owner->owned_top_episode);
+    if (region && region->private_data &&
+        !prime_native_expression_safe(task->space,arena,expression,need))
+        return false;
     PrimeEvalStackFrame *force_owner = prime_native_force_owner(work);
     uint64_t activation = prime_native_equation_attachment(work);
     PrimeNativeAttachment attachment = force_owner ? PRIME_NATIVE_ATTACHMENT_FORCE
@@ -586,7 +593,8 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
         return false;
     }
     parallel->captured_need = *bindings_need_view(&captured);
-    PrimeNeedActiveGuard active = prime_need_active_enter(&captured);
+    PrimeNeedActiveGuard active;
+    prime_need_active_enter(&active, &captured);
     Registry *previous_registry = g_registry;
     g_registry = &parallel->world.registry;
     PrimeNativeControl *child = calloc(1u, sizeof(*child));
@@ -594,6 +602,9 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     CettaSearchPolicySpec policy = {
         .native_control = true, .all = true, .age_share = 8u,
         .work_budget = UINT64_MAX, .costs = owner->cost_enabled, .workers = 1u,
+        .cost_compact = owner->policy.cost_compact,
+        .cost_equations = owner->event_cost.equations.enabled,
+        .cost_source_only = owner->cost_enabled && !owner->event_cost.native_enabled,
         .receipts = owner->policy.receipts,
         .prepared_node_quantum = owner->policy.prepared_node_quantum,
     };
@@ -645,7 +656,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     if (owner->driver.ordinary_ordered && (shared_source || prime_native_private_capsule_source(parallel)) &&
         owner->driver.ordinary_descendants && task->fuel < 0 &&
         !owner->cost_enabled && !owner->policy.receipts &&
-        !cetta_native_cost_active() && !cetta_native_cost_observer_active()
+        !cetta_native_cost_account_scope() && !cetta_native_cost_observer_active()
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         && !owner->history.spec.enabled && !g_prime_need_recording_scope
 #endif
@@ -783,9 +794,9 @@ static bool prime_native_need_share_install(const PrimeNeedSnapshot *published) 
     return true;
 }
 
-static bool prime_native_need_share_barrier(
+static inline __attribute__((always_inline)) bool prime_native_need_share_barrier_kernel(
         PrimeNativeControl *control, PrimeNativeParallel *parallel,
-        uint64_t thunk_id, const PrimeNeedCellView *current) {
+        uint64_t thunk_id, const PrimeNeedCellView *current, bool receipts, bool traced) {
     PrimeNativeControl *registry = parallel ? parallel->claim_control : NULL;
     PrimeNativeNeedClaim *claim;
     uint64_t session, authority;
@@ -802,7 +813,7 @@ static bool prime_native_need_share_barrier(
         PrimeNeedSnapshot published = claim->published;
         pthread_mutex_unlock(&registry->need_claim_mu);
         g_prime_need_share_claimed = false;
-        prime_native_need_share_trace("claim-value", thunk_id);
+        if (traced) prime_native_need_share_trace("claim-value", thunk_id);
         if (prime_native_need_share_install(&published))
             control->need_pending = false;
         else {
@@ -810,7 +821,7 @@ static bool prime_native_need_share_barrier(
              * observes this one published value. */
             g_prime_need_share_value = published;
             g_prime_need_share_value_ready = true;
-            prime_native_need_share_trace("install-refused", thunk_id);
+            if (traced) prime_native_need_share_trace("install-refused", thunk_id);
         }
         return false;
     }
@@ -824,8 +835,8 @@ static bool prime_native_need_share_barrier(
     }
     if (claim && claim->state == PRIME_NATIVE_NEED_CLAIM_EVALUATING) {
         pthread_mutex_unlock(&registry->need_claim_mu);
-        prime_native_need_share_trace("claim-evaluating", thunk_id);
-        prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
+        if (traced) prime_native_need_share_trace("claim-evaluating", thunk_id);
+        if (receipts) prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
         control->need_pending = true;
         control->need_share_thunk = thunk_id;
         control->need_share_waiting = true;
@@ -861,7 +872,7 @@ static bool prime_native_need_share_barrier(
     claim->base = g_prime_need_active;
     g_prime_need_share_claimed = true;
     pthread_mutex_unlock(&registry->need_claim_mu);
-    prime_native_need_share_trace("claim-created", thunk_id);
+    if (traced) prime_native_need_share_trace("claim-created", thunk_id);
     return false;
 }
 
@@ -1023,7 +1034,7 @@ static bool prime_native_resume_shared_need_frames(PrimeNativeControl *control) 
         if (!frame->shared_need_wait || frame->control_closed ||
             frame->thunk_id != control->need_share_thunk || !frame->target)
             continue;
-        guard = prime_need_active_enter(frame->env_initialized ? &frame->env : NULL);
+        prime_need_active_enter(&guard, frame->env_initialized ? &frame->env : NULL);
         if (failed) {
             /* An abandoned attempt is not an empty answer. Requeue the
              * unpaid source demand in its receiver's retained world. */
@@ -1072,8 +1083,6 @@ static bool prime_native_resume_shared_need_frames(PrimeNativeControl *control) 
 }
 
 static void prime_native_need_share_trace(const char *why, uint64_t thunk_id) {
-    if (!getenv("CETTA_PRIME_NATIVE_CONTROL_TRACE"))
-        return;
     fprintf(stderr, "[need-share] %s thunk=%llu\n",
         why ? why : "?", (unsigned long long)thunk_id);
     fflush(stderr);
@@ -1106,9 +1115,9 @@ static bool prime_native_need_scalar_share_admitted(Space *space, Atom *origin) 
     return admitted;
 }
 
-static bool prime_native_parallel_force_barrier(
+static inline __attribute__((always_inline)) bool prime_native_parallel_force_barrier_kernel(
         Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel,
-        OutcomeSet *target) {
+        OutcomeSet *target, bool receipts, bool traced) {
     PrimeNativeParallel *parallel = g_prime_native_parallel_current;
     PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
     PrimeNativeControl *control = driver ? driver->control : NULL;
@@ -1124,7 +1133,7 @@ static bool prime_native_parallel_force_barrier(
         return false;
     if (!parallel || parallel->attachment == PRIME_NATIVE_ATTACHMENT_NONE || !control ||
         parallel->captured_need.session_id != g_prime_need_active.session_id) {
-        prime_native_need_share_trace(
+        if (traced) prime_native_need_share_trace(
             !parallel ? "no-parallel" :
             parallel->attachment == PRIME_NATIVE_ATTACHMENT_NONE ? "attachment-none" :
             !control ? "no-control" : "session-mismatch", thunk_id);
@@ -1140,7 +1149,7 @@ static bool prime_native_parallel_force_barrier(
         const char *why = !captured_ok || !current_ok ? "lookup-miss" :
             captured.authority_id != current.authority_id ? "authority" :
             current.cache_state == PRIME_NEED_CACHE_VALUE ? "local-value" : "local-fault";
-        prime_native_need_share_trace(why, thunk_id);
+        if (traced) prime_native_need_share_trace(why, thunk_id);
         return false;
     }
     /* Self-demand remains the native blackhole. A private producer created
@@ -1150,8 +1159,8 @@ static bool prime_native_parallel_force_barrier(
         return false;
     if (!control->worker_execution) {
         /* One coordinator thread evaluates. It does not suspend on itself. */
-        prime_native_need_share_trace("coordinator", thunk_id);
-        prime_native_need_receipt(control, parallel, "Coordinator", thunk_id);
+        if (traced) prime_native_need_share_trace("coordinator", thunk_id);
+        if (receipts) prime_native_need_receipt(control, parallel, "Coordinator", thunk_id);
         return false;
     }
     if (!prime_native_need_scalar_share_admitted(space, current.origin)) {
@@ -1161,14 +1170,15 @@ static bool prime_native_parallel_force_barrier(
                 g_prime_need_logical_env, g_prime_need_logical_env,
                 g_prime_need_evaluator_id, target))
             eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
+        if (receipts) prime_native_need_receipt(control, parallel, "Suspended", thunk_id);
         control->need_pending = true;
         return true;
     }
     /* Every worker force, including a force inside an equation-tagged task,
      * shares one thunk or waits. Incomparable snapshots are not merged.
      * Sibling equation tasks are not themselves this force. */
-    return prime_native_need_share_barrier(control, parallel, thunk_id, &current);
+    return prime_native_need_share_barrier_kernel(
+        control, parallel, thunk_id, &current, receipts, traced);
 }
 
 static bool prime_native_parallel_ignore(Arena *arena, Atom *value,
@@ -1178,16 +1188,102 @@ static bool prime_native_parallel_ignore(Arena *arena, Atom *value,
     return true;
 }
 
+/* This is the force operation itself, selected with its enclosing scope.
+ * The plain protocol has neither receipt callbacks nor environment probes. */
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_force_barrier, plain,
+    (Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel, OutcomeSet *target),
+    (space, arena, ref, thunk_id, fuel, target), false, false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_force_barrier, receipts,
+    (Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel, OutcomeSet *target),
+    (space, arena, ref, thunk_id, fuel, target), true, false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_force_barrier, traced,
+    (Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel, OutcomeSet *target),
+    (space, arena, ref, thunk_id, fuel, target), false, true)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_force_barrier, receipts_traced,
+    (Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel, OutcomeSet *target),
+    (space, arena, ref, thunk_id, fuel, target), true, true)
+CETTA_OPERATION_ENTRY(bool, return, prime_native_parallel_force_barrier,
+    (Space *space, Arena *arena, Atom *ref, uint64_t thunk_id, int fuel, OutcomeSet *target),
+    (space, arena, ref, thunk_id, fuel, target))
+
+static inline __attribute__((always_inline)) bool prime_native_parallel_effect_barrier_kernel(
+    PrimeNativeControl *control, Space *s, Arena *a, Atom *atom, Atom *etype,
+    int fuel, bool preserve_bindings, bool dispatch_head_ready, int strict_ready_argument,
+    BindingsBuilder *environment_builder, OutcomeSet *os, bool receipts) {
+    if ((control->pure_authority || control->active_scoring ||
+         g_prime_eval_stack_driver->pure_authority) &&
+        !prime_native_actual_call_allowed(s, a, atom)) {
+        control->failed = true;
+        return true;
+    }
+    bool private_read_service=prime_native_parallel_read_service_admitted(
+        control,s,a,atom,os);
+    if (!control->worker_execution && !private_read_service &&
+        !prime_native_parallel_pin_effect(control->parallel_owner)) {
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return true;
+    }
+    if (control->worker_execution) {
+        /* The same owned call returns on the coordinator. No effect has
+         * executed, and its target, branch world and path fuel survive. */
+        int retained_ready_argument = !dispatch_head_ready &&
+            strict_ready_argument == PRIME_EVAL_STACK_READY_HEAD
+                ? -1 : strict_ready_argument;
+        const Bindings *environment = bindings_builder_bindings(environment_builder);
+        bool retained = prime_eval_stack_schedule_call(s, a, atom, etype,
+            fuel, preserve_bindings, retained_ready_argument, environment,
+            environment, g_prime_need_evaluator_id, os);
+        if (!retained) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return true;
+        }
+        if (private_read_service) {
+            control->parallel_owner->coordinator_private=true;
+            control->parallel_owner->coordinator_only=true;
+        }
+        if (receipts) prime_native_effect_receipt(control, "Suspended", atom);
+        control->effect_pending = true;
+        control->pending_effect = atom;
+        return true;
+    }
+    if (private_read_service) {
+        control->parallel_owner->coordinator_private=true;
+        control->parallel_owner->coordinator_only=true;
+    }
+    if (receipts && control->parallel_owner) prime_native_effect_receipt(control, "Coordinator", atom);
+    return false;
+}
+
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_effect_barrier, plain,
+    (PrimeNativeControl *control, Space *s, Arena *a, Atom *atom, Atom *etype,
+     int fuel, bool preserve_bindings, bool dispatch_head_ready, int strict_ready_argument,
+     BindingsBuilder *environment_builder, OutcomeSet *os),
+    (control, s, a, atom, etype, fuel, preserve_bindings, dispatch_head_ready,
+     strict_ready_argument, environment_builder, os), false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_effect_barrier, receipts,
+    (PrimeNativeControl *control, Space *s, Arena *a, Atom *atom, Atom *etype,
+     int fuel, bool preserve_bindings, bool dispatch_head_ready, int strict_ready_argument,
+     BindingsBuilder *environment_builder, OutcomeSet *os),
+    (control, s, a, atom, etype, fuel, preserve_bindings, dispatch_head_ready,
+     strict_ready_argument, environment_builder, os), true)
+CETTA_OPERATION_ENTRY(bool, return, prime_native_parallel_effect_barrier,
+    (PrimeNativeControl *control, Space *s, Arena *a, Atom *atom, Atom *etype,
+     int fuel, bool preserve_bindings, bool dispatch_head_ready, int strict_ready_argument,
+     BindingsBuilder *environment_builder, OutcomeSet *os),
+    (control, s, a, atom, etype, fuel, preserve_bindings, dispatch_head_ready,
+     strict_ready_argument, environment_builder, os))
+
 static uint64_t prime_native_monotonic_ns(void) {
     struct timespec time;
     if (clock_gettime(CLOCK_MONOTONIC, &time) != 0) return 0u;
     return (uint64_t)time.tv_sec * UINT64_C(1000000000) + (uint64_t)time.tv_nsec;
 }
 
-static bool prime_native_resource_match_task(CettaParallelWorker *worker,
-        PrimeNativeParallel *parallel, PrimeNativeParallelRun *run) {
+static inline __attribute__((always_inline)) bool prime_native_resource_match_task_kernel(
+        CettaParallelWorker *worker, PrimeNativeParallel *parallel,
+        PrimeNativeParallelRun *run, bool receipts) {
     parallel->attempted=true;parallel->worker=cetta_parallel_worker_index(worker);
-    if(run->receipts) {
+    if(receipts) {
         parallel->started_ns=prime_native_monotonic_ns();
         uint32_t active=atomic_fetch_add_explicit(&run->active,1u,memory_order_acq_rel)+1u;
         uint32_t previous=atomic_load_explicit(&run->overlap,memory_order_relaxed);
@@ -1198,14 +1294,16 @@ static bool prime_native_resource_match_task(CettaParallelWorker *worker,
     EvalContextState previous_context=eval_context_capture();
     eval_swap_library_context(run->library);eval_context_restore(&parallel->context);
     CettaNativeCostScope *containing=cetta_native_cost_detach_begin(),cost;
-    if(parallel->metered)cetta_native_cost_scope_enter(&cost,&parallel->slice_cost,parallel->occurrence);
-    cetta_native_cost_charge(CETTA_COST_QUANTUM,1u);
+    if(parallel->metered) {
+        cetta_native_cost_scope_enter(&cost,&parallel->slice_cost,parallel->occurrence);
+        cetta_native_cost_charge_observed(CETTA_COST_QUANTUM,1u);
+    }
     parallel->spent=cetta_space_agenda_match_run(parallel->resource_match,
         CETTA_SPACE_AGENDA_MATCH_NODES)?1u:0u;
     if(parallel->metered)cetta_native_cost_scope_leave(&cost);
     cetta_native_cost_detach_end(containing);
     eval_swap_library_context(library);eval_context_restore(&previous_context);
-    if(run->receipts) {
+    if(receipts) {
         parallel->finished_ns=prime_native_monotonic_ns();
         atomic_fetch_sub_explicit(&run->active,1u,memory_order_acq_rel);
     }
@@ -1213,19 +1311,14 @@ static bool prime_native_resource_match_task(CettaParallelWorker *worker,
 }
 
 
-static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
-                                       void *context) {
+static inline __attribute__((always_inline)) bool prime_native_parallel_task_kernel(
+    CettaParallelWorker *worker, void *raw, void *context, bool receipts) {
     PrimeNativeParallel *parallel = raw;
     PrimeNativeParallelRun *run = context;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    __attribute__((cleanup(prime_need_recording_leave)))
-    PrimeNeedRecordingScope history_scope = {0};
-    if (parallel->history_enabled)
-        prime_need_recording_enter(&history_scope, &parallel->history);
-#endif
-    if(parallel->resource_provider)return prime_native_resource_match_task(worker,parallel,run);
+    if(parallel->resource_provider)
+        return prime_native_resource_match_task_kernel(worker,parallel,run,receipts);
     if (parallel->execution.profile != PRIME_NATIVE_EXECUTION_NONE)
-        return prime_native_execution_task(worker, parallel, run);
+        return prime_native_execution_task_kernel(worker, parallel, run, receipts);
     PrimeNativeControl *child = parallel->child;
     if(parallel->borrowed_source.root.space &&
         !prime_native_parallel_borrowed_current(parallel,run->library)) {
@@ -1237,7 +1330,7 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
         !parallel->coordinator_private;
     parallel->worker = cetta_parallel_worker_index(worker);
     parallel->attempted = true;
-    if (run->receipts) {
+    if (receipts) {
         parallel->started_ns = prime_native_monotonic_ns();
         uint32_t active = atomic_fetch_add_explicit(&run->active, 1u, memory_order_acq_rel) + 1u;
         uint32_t previous = atomic_load_explicit(&run->overlap, memory_order_relaxed);
@@ -1316,7 +1409,8 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
         child->active_occurrence = parallel->occurrence;
         child->active_scoring = parallel->dialect_operation->scoring;
         native_dialect_parallel_operation(parallel->dialect_operation);
-        cetta_native_cost_charge(CETTA_COST_QUANTUM, 1u);
+        if (metered)
+            cetta_native_cost_charge_observed(CETTA_COST_QUANTUM, 1u);
         child->steps++;
         child->active_occurrence = 0u;
         child->active_scoring = false;
@@ -1356,11 +1450,58 @@ static bool prime_native_parallel_task(CettaParallelWorker *worker, void *raw,
     eval_set_cancel_token(cancel);
     eval_term_universe_scope_leave(&universe);
     g_prime_native_parallel_current = previous_parallel;
-    if (run->receipts) {
+    if (receipts) {
         parallel->finished_ns = prime_native_monotonic_ns();
         atomic_fetch_sub_explicit(&run->active, 1u, memory_order_acq_rel);
     }
     return true;
+}
+
+/* The diary scope belongs only to a recorded worker entry. Keeping it
+ * outside the common worker also prevents a plain cleanup branch surviving
+ * optimization of a zero-initialized guard. */
+static inline __attribute__((always_inline)) bool prime_native_parallel_recorded_task_kernel(
+    CettaParallelWorker *worker, void *raw, void *context, bool receipts) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    PrimeNativeParallel *parallel = raw;
+    __attribute__((cleanup(prime_native_history_scope_leave)))
+    PrimeNeedRecordingScope history_scope = {0};
+    if (parallel->history_enabled)
+        prime_need_recording_enter(&history_scope, &parallel->history);
+#endif
+    return prime_native_parallel_task_kernel(worker, raw, context, receipts);
+}
+
+/* Select the actual worker operation once for an issued episode. The plain
+ * specialization omits receipt timing, overlap accounting and diary scopes. */
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_task, plain,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_task, receipts,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), true)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_recorded_task, plain,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_recorded_task, receipts,
+    (CettaParallelWorker *worker, void *raw, void *context),
+    (worker, raw, context), true)
+
+static bool prime_native_parallel_history_requested(const PrimeNativeControl *owner) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    return owner->history.spec.enabled || g_prime_need_recording_scope != NULL;
+#else
+    (void)owner;
+    return false;
+#endif
+}
+
+static CettaParallelTaskFn prime_native_parallel_task_select(const PrimeNativeControl *owner) {
+    if (prime_native_parallel_history_requested(owner))
+        return owner->policy.receipts ? prime_native_parallel_recorded_task_receipts
+                                      : prime_native_parallel_recorded_task_plain;
+    return owner->policy.receipts ? prime_native_parallel_task_receipts
+                                  : prime_native_parallel_task_plain;
 }
 
 static void prime_native_parallel_enter(CettaParallelWorker *worker, void *context) {
@@ -1394,27 +1535,33 @@ static bool prime_native_parallel_validate(PrimeNativeControl *owner,
     return !owner->registry_read.stale && !owner->registry_read.incomplete;
 }
 
-static bool prime_native_parallel_publish(PrimeNativeControl *owner,
-                                          PrimeNativeWork *work) {
+static inline __attribute__((always_inline)) bool prime_native_parallel_publish_kernel(
+        PrimeNativeControl *owner, PrimeNativeWork *work,
+        bool receipts, bool carried) {
     PrimeNativeParallel *parallel = work->parallel;
     OutcomeSet *target = work->dialect ? native_dialect_work_target(work->dialect)
         : work->task.target;
     bool preserve_bindings = work->dialect || work->task.preserve_bindings;
-    for (; parallel->need_barriers_forwarded < parallel->child->need_barrier_count;
-         parallel->need_barriers_forwarded++) {
-        if (!owner->policy.receipts) continue;
-        owner->need_barriers = cetta_realloc(owner->need_barriers,
-            (owner->need_barrier_count + 1u) * sizeof(*owner->need_barriers));
-        owner->need_barriers[owner->need_barrier_count++] = atom_deep_copy(
-            owner->driver.arena, parallel->child->need_barriers[parallel->need_barriers_forwarded]);
-    }
-    for (; parallel->barriers_forwarded < parallel->child->effect_barrier_count;
-         parallel->barriers_forwarded++) {
-        if (!owner->policy.receipts) continue;
-        owner->effect_barriers = cetta_realloc(owner->effect_barriers,
-            (owner->effect_barrier_count + 1u) * sizeof(*owner->effect_barriers));
-        owner->effect_barriers[owner->effect_barrier_count++] = atom_deep_copy(
-            owner->driver.arena, parallel->child->effect_barriers[parallel->barriers_forwarded]);
+    if (receipts) {
+        for (; parallel->need_barriers_forwarded < parallel->child->need_barrier_count;
+             parallel->need_barriers_forwarded++) {
+            owner->need_barriers = cetta_realloc(owner->need_barriers,
+                (owner->need_barrier_count + 1u) * sizeof(*owner->need_barriers));
+            owner->need_barriers[owner->need_barrier_count++] = atom_deep_copy(
+                owner->driver.arena, parallel->child->need_barriers[parallel->need_barriers_forwarded]);
+        }
+        for (; parallel->barriers_forwarded < parallel->child->effect_barrier_count;
+             parallel->barriers_forwarded++) {
+            owner->effect_barriers = cetta_realloc(owner->effect_barriers,
+                (owner->effect_barrier_count + 1u) * sizeof(*owner->effect_barriers));
+            owner->effect_barriers[owner->effect_barrier_count++] = atom_deep_copy(
+                owner->driver.arena, parallel->child->effect_barriers[parallel->barriers_forwarded]);
+        }
+    } else if (carried) {
+        /* Stopping omits this interval; a later recording must not publish
+         * these old child receipts as though they occurred in its suffix. */
+        parallel->need_barriers_forwarded = parallel->child->need_barrier_count;
+        parallel->barriers_forwarded = parallel->child->effect_barrier_count;
     }
     if (!prime_native_parallel_validate(owner, parallel)) {
         owner->invalidated = true;
@@ -1483,6 +1630,48 @@ static bool prime_native_parallel_publish(PrimeNativeControl *owner,
     return true;
 }
 
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_publish, plain,
+    (PrimeNativeControl *owner, PrimeNativeWork *work), (owner, work), false, false)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_publish, carried,
+    (PrimeNativeControl *owner, PrimeNativeWork *work), (owner, work), false, true)
+CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_publish, receipts,
+    (PrimeNativeControl *owner, PrimeNativeWork *work), (owner, work), true, false)
+CETTA_OPERATION_ENTRY(bool, return, prime_native_parallel_publish,
+    (PrimeNativeControl *owner, PrimeNativeWork *work), (owner, work))
+
+/* Controller ownership selects its actual operations at run boundaries. */
+static void prime_native_parallel_operations_select(void) {
+    const PrimeNativeControl *control = g_prime_eval_stack_driver
+        ? g_prime_eval_stack_driver->control : NULL;
+    bool receipts = control && control->policy.receipts;
+    bool carried = control && control->receipts_started;
+    bool traced = prime_native_control_trace_enabled() != 0;
+    static _Thread_local int selected_diagnostics = -1;
+    static _Thread_local bool selected_receipts;
+    static _Thread_local bool selected_carried;
+    if (selected_diagnostics == (int)traced && selected_receipts == receipts &&
+        selected_carried == carried) return;
+    selected_diagnostics = traced;
+    selected_receipts = receipts;
+    selected_carried = carried;
+    eval_apply_space_mutation_selected = traced
+        ? eval_apply_space_mutation_traced : eval_apply_space_mutation_plain;
+    prime_weight_exact_rational_selected = traced
+        ? prime_weight_exact_rational_traced : prime_weight_exact_rational_plain;
+    prime_native_parallel_publish_selected = receipts
+        ? prime_native_parallel_publish_receipts
+        : (carried ? prime_native_parallel_publish_carried
+                   : prime_native_parallel_publish_plain);
+    prime_native_parallel_effect_barrier_selected = receipts
+        ? prime_native_parallel_effect_barrier_receipts
+        : prime_native_parallel_effect_barrier_plain;
+    prime_native_parallel_force_barrier_selected = receipts
+        ? (traced ? prime_native_parallel_force_barrier_receipts_traced
+                  : prime_native_parallel_force_barrier_receipts)
+        : (traced ? prime_native_parallel_force_barrier_traced
+                  : prime_native_parallel_force_barrier_plain);
+}
+
 /* Read dependencies are part of the paid packet's publication authority.
  * Moving application to parent selection must not discard empty query reads. */
 static bool prime_native_parallel_apply_ready(PrimeNativeControl *owner,PrimeNativeWork *work) {
@@ -1496,8 +1685,10 @@ static bool prime_native_parallel_apply_ready(PrimeNativeControl *owner,PrimeNat
  * after the join. A refused reservation leaves this slice unrecorded and
  * does not mark the parent slice incomplete. */
 static void prime_native_parallel_history_inherit(PrimeNativeParallel *parallel) {
-    if (parallel->history.recording)
+    if (parallel->history.recording &&
+        prime_need_recording_readable(&parallel->history))
         return;
+    parallel->history = (PrimeNeedReceipt){0};
     if (!prime_need_recording_inherit(&parallel->history)) {
         parallel->history_enabled = false;
         parallel->history = (PrimeNeedReceipt){0};
@@ -1512,6 +1703,8 @@ static void prime_native_parallel_history_publish(PrimeNativeParallel *parallel)
 
 static void prime_native_parallel_slice_begin(PrimeNativeControl *owner,
         PrimeNativeParallel *parallel, uint64_t grant, uint64_t occurrence) {
+    if (owner->event_cost.compact && parallel->child)
+        parallel->child->policy.cost_compact = true;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     parallel->history_enabled = owner->history.spec.enabled ||
         g_prime_need_recording_scope != NULL;
@@ -1530,10 +1723,23 @@ static void prime_native_parallel_slice_begin(PrimeNativeControl *owner,
     /* An inner agenda may have no public meter of its own while executing
      * inside an enclosing observation. Its physical worker slice still
      * belongs to that observation, with the original event identities. */
-    parallel->metered = cetta_native_cost_active();
-    if (parallel->metered) cetta_native_cost_init(&parallel->slice_cost);
-    if (parallel->child && parallel->execution.profile == PRIME_NATIVE_EXECUTION_NONE)
+    parallel->metered = cetta_native_cost_account_scope() != NULL;
+    if (parallel->metered) {
+        if (!cetta_native_cost_active())
+            cetta_native_cost_init_equations(&parallel->slice_cost);
+        else if (cetta_native_cost_events_requested())
+            cetta_native_cost_init(&parallel->slice_cost);
+        else
+            cetta_native_cost_init_compact(&parallel->slice_cost);
+        if (cetta_native_cost_equations_requested()) {
+            bool enabled = cetta_native_cost_enable_equations(&parallel->slice_cost);
+            assert(enabled); (void)enabled;
+        }
+    }
+    if (parallel->child && parallel->execution.profile == PRIME_NATIVE_EXECUTION_NONE) {
         parallel->child->policy.receipts = owner->policy.receipts;
+        if (owner->policy.receipts) parallel->child->receipts_started = true;
+    }
     parallel->grant = grant;
     parallel->spent = 0u;
     parallel->occurrence = occurrence;
@@ -1631,7 +1837,7 @@ static uint64_t prime_native_descendant_grant(PrimeNativeControl *owner,
         owner->parallel_wave_pending || owner->active_allowance < 2u ||
         cetta_parallel_worker_active() || g_prime_native_parallel_current ||
         cetta_shared_transition_guard_held_by_current_thread() ||
-        cetta_native_cost_active() || cetta_native_cost_observer_active() ||
+        cetta_native_cost_account_scope() || cetta_native_cost_observer_active() ||
         owner->policy.receipts || owned->provider != &prime_native_work_provider ||
         !owned->payload || !owned->resume_lease ||
         owned->resume_store != owner->hub.store.identity ||
@@ -1742,7 +1948,7 @@ static void prime_native_parallel_single(PrimeNativeControl *owner,
     PrimeNativeControl *stack_child=candidate->parallel->child;
     bool needs_adoption=stack_child && stack_child->driver.capsule_stack &&
         (stack_child->driver.capsule_frontier || stack_child->need_pending ||
-         stack_child->effect_pending || cetta_native_cost_active() ||
+         stack_child->effect_pending || cetta_native_cost_account_scope() ||
          cetta_native_cost_observer_active() || owner->policy.receipts
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
          || owner->history.spec.enabled || g_prime_need_recording_scope
@@ -1801,9 +2007,10 @@ static void prime_native_parallel_single(PrimeNativeControl *owner,
         }
         prime_native_parallel_slice_begin(owner,work->parallel,grant,owned->occurrence_id);
         CettaParallelWorker worker={.index=0u};
-        (void)prime_native_parallel_task(&worker,work->parallel,&run);
+        (void)prime_native_parallel_task_select(owner)(&worker,work->parallel,&run);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        prime_native_parallel_history_publish(work->parallel);
+        if (prime_native_parallel_history_requested(owner))
+            prime_native_parallel_history_publish(work->parallel);
 #endif
         owner->active_spent=work->parallel->spent;
         assert(owner->active_spent<=owner->active_allowance);
@@ -1830,13 +2037,14 @@ static uint64_t prime_native_parallel_execute(PrimeNativeControl *owner,
     uint64_t refill_spent=0u;
     if (prime_native_refill_execute(owner,works,owned,count,workers,&refill_spent))
         return refill_spent;
-    bool metered = cetta_native_cost_active();
+    bool metered = cetta_native_cost_account_scope() != NULL;
     CettaNativeCostLedger **slices = metered ? cetta_malloc(count*sizeof(*slices)) : NULL;
     PrimeNativeParallelRun run = {.library = g_library_context, .receipts = owner->policy.receipts};
+    CettaParallelTaskFn task = prime_native_parallel_task_select(owner);
     CettaParallelExecutor executor;
     CettaParallelExecutorConfig config = {
         .thread_count = workers, .prefer_persistent_workers = true,
-        .user = &run, .task_fn = prime_native_parallel_task,
+        .user = &run, .task_fn = task,
         .worker_enter = prime_native_parallel_enter, .worker_leave = prime_native_parallel_leave,
         .worker_failure_message = "native worker episode",
     };
@@ -1856,15 +2064,16 @@ static uint64_t prime_native_parallel_execute(PrimeNativeControl *owner,
         for (size_t i = 0u; i < count; i++) if (!works[i]->parallel->attempted) {
             CettaParallelWorker worker = {.index = 0u};
             works[i]->parallel->phase = 1u;
-            (void)prime_native_parallel_task(&worker,works[i]->parallel,&run);
+            (void)task(&worker,works[i]->parallel,&run);
         }
     }
-    for (size_t i = 0u; i < count; i++) {
+    for (size_t i = 0u; i < count; i++)
         prime_native_execution_joined(works[i]->parallel);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        prime_native_parallel_history_publish(works[i]->parallel);
+    if (prime_native_parallel_history_requested(owner))
+        for (size_t i = 0u; i < count; i++)
+            prime_native_parallel_history_publish(works[i]->parallel);
 #endif
-    }
     uint64_t spent = 0u;
     Atom **branches = run.receipts ? cetta_malloc(count*sizeof(*branches)) : NULL;
     CettaNativeCostPlacement *placement = metered ? cetta_malloc(count*sizeof(*placement)) : NULL;

@@ -2,12 +2,13 @@
 
 #include "library_io.h"
 #include "http_worker.h"
-#include "library_proc.h"
+#include "library_proc_run.h"
 #include "proc_owner.h"
 #include "ipc_client.h"
 #include "library_cwp.h"
 #include "atom_wire.h"
 #include "host_notice.h"
+#include "siwc.h"
 
 #include "symbol.h"
 
@@ -54,7 +55,8 @@ typedef struct CettaIoHeader {
 } CettaIoHeader;
 
 typedef struct CettaIoRequest {
-    enum { IO_HTTP, IO_PROCESS, IO_TIMER, IO_CWP, IO_SPACE, IO_NOTICE, IO_FILE } provider;
+    enum { IO_HTTP, IO_PROCESS, IO_TIMER, IO_CWP, IO_SPACE, IO_NOTICE, IO_FILE, IO_SIWC } provider;
+    CettaSiwcOperation *siwc;
     int file_fd;
     char *file_directory, *file_name;
     char **file_names;
@@ -207,6 +209,7 @@ static void io_header_list_free(CettaIoHeader *header) {
 
 static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     if (!request) return;
+    cetta_siwc_free(request->siwc);
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     if (runtime && runtime->worker && request->id && request->provider == IO_HTTP)
         cetta_http_worker_abandon(runtime->worker, request->id);
@@ -319,6 +322,16 @@ static bool io_http_url(const char *url) {
  * credentials never follow redirects. No secret reaches an Atom or error. */
 static bool io_credential_header(const char *alias, const char *url,
                                  bool follow, CettaIoHeader *copy) {
+    if (alias && !strncmp(alias, "SIWC:", 5)) {
+        if (follow) return false;
+        char *secret = cetta_siwc_bearer(alias, url);
+        if (!secret || !*secret || !io_valid_header_value(secret) || strlen(secret) > 8000u) {
+            free(secret); return false;
+        }
+        copy->key = io_strdup("Authorization"); copy->credential_secret = secret;
+        copy->value = cetta_malloc(strlen(secret) + 8u);
+        strcpy(copy->value, "Bearer "); strcat(copy->value, secret); return true;
+    }
     if (!alias || !*alias || strlen(alias) > 48u || follow) return false;
     for (const unsigned char *p = (const unsigned char *)alias; *p; ++p)
         if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) return false;
@@ -804,6 +817,7 @@ static void io_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
     uint64_t now = io_now_ms();
     for (CettaIoRequest *r = runtime->requests; r; r = r->next) {
         if (r->ready) continue;
+        if (r->provider == IO_SIWC && cetta_siwc_ready(r->siwc)) io_ready_append(runtime, r);
 #ifndef __EMSCRIPTEN__
 #ifdef __linux__
         if (r->provider == IO_FILE) {
@@ -869,7 +883,8 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
     if (!io_zero_arg_ok(args, nargs))
         return io_error(arena, head, args, nargs,
                         "expected: (io:capabilities)");
-    Atom *providers[7]; size_t count = 0;
+    Atom *providers[8]; size_t count = 0;
+    if (runtime && cetta_siwc_available()) providers[count++] = atom_symbol(arena, "siwc");
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     if (runtime && runtime->worker) providers[count++] = atom_symbol(arena, "http");
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
@@ -974,6 +989,20 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
     CettaIoRequest *request = NULL;
 #ifndef __EMSCRIPTEN__
     Atom *input = args[0];
+    if (input && input->kind == ATOM_EXPR && input->expr.len && atom_is_symbol(input->expr.elems[0], "siwc:request")) {
+        int64_t port, deadline;
+        const char *kind = input->expr.len == 5 ? io_text_arg(input->expr.elems[1]) : NULL;
+        const char *registration = input->expr.len == 5 ? io_text_arg(input->expr.elems[2]) : NULL;
+        if (!kind || !registration || !io_nonnegative_int_arg(input->expr.elems[3], &port) || port > 65535 ||
+            !io_nonnegative_int_arg(input->expr.elems[4], &deadline))
+            return io_error(arena, head, args, nargs, "expected (siwc:request kind registration port deadline-ms)");
+        request = calloc(1, sizeof(*request));
+        if (request) {
+            request->provider = IO_SIWC;
+            request->siwc = cetta_siwc_start(kind, registration, (unsigned)port, (uint64_t)deadline, runtime->wakeup[1]);
+            if (!request->siwc) { free(request); request = NULL; snprintf(error, sizeof(error), "SIWC provider unavailable or invalid operation"); }
+        }
+    } else
 #ifdef __linux__
     if (input && input->kind == ATOM_EXPR && input->expr.len &&
         atom_is_symbol(input->expr.elems[0], "fs:changed")) {
@@ -998,7 +1027,16 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
             }
         }
         request->file_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-        if (request->file_fd < 0 || inotify_add_watch(request->file_fd, directory,
+        if (request->file_fd < 0) {
+            /* No watch instance: the user's inotify instances or the
+             * process's descriptors are used up, whatever the directory. */
+            bool exhausted = errno == EMFILE || errno == ENFILE || errno == ENOMEM;
+            io_request_free(NULL, request);
+            return io_error(arena, head, args, nargs, exhausted
+                ? "file-watch cannot start: no inotify instance or descriptor is available"
+                : "file-watch cannot start");
+        }
+        if (inotify_add_watch(request->file_fd, directory,
             IN_CREATE | IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF) < 0) {
             io_request_free(NULL, request);
             return io_error(arena, head, args, nargs, "file-watch directory is unavailable");
@@ -1175,7 +1213,9 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     }
     io_ready_remove(runtime, request);
     io_request_unlink(runtime, request);
-    Atom *result =
+    char *siwc_result = request->provider == IO_SIWC ? cetta_siwc_result(request->siwc) : NULL;
+    Atom *result = request->provider == IO_SIWC ? atom_expr2(arena, atom_symbol(arena, "siwc:result"),
+        atom_string(arena, siwc_result ? siwc_result : "{\"status\":\"error\",\"code\":\"result-unavailable\"}")) :
 #ifndef __EMSCRIPTEN__
                  request->provider == IO_PROCESS ? io_process_result(arena, request) :
                  request->provider == IO_CWP || request->provider == IO_SPACE ? io_ipc_result(arena, request) :
@@ -1191,6 +1231,7 @@ static Atom *io_poll(CettaIoRuntime *runtime, Arena *arena,
     Atom *event = atom_expr3(
         arena, atom_symbol(arena, "io:event"),
         atom_int(arena, (int64_t)request->id), result);
+    free(siwc_result);
 #ifndef CETTA_IO_MUTATION_REPLAY_COMPLETION
     io_request_free(runtime, request);
 #else
@@ -1208,6 +1249,11 @@ static Atom *io_status(CettaIoRuntime *runtime, Arena *arena,
         return io_error(arena,head,args,nargs,"expected (io:status positive-id)");
     CettaIoRequest *request=io_request_find(runtime,(uint64_t)id);
     if (!request) return atom_expr2(arena,atom_symbol(arena,"io:unknown"),atom_int(arena,id));
+    if (request->provider == IO_SIWC) {
+        char *status = cetta_siwc_status(request->siwc);
+        Atom *out = atom_expr2(arena, atom_symbol(arena, "siwc:progress"), atom_string(arena, status ? status : "{}"));
+        free(status); return out;
+    }
     if (request->provider != IO_HTTP) {
         io_pump(runtime, id);
 #ifndef __EMSCRIPTEN__

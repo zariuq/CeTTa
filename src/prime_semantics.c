@@ -12,6 +12,8 @@
 #include <string.h>
 
 #include "abt.h"
+#include "answer_storage.h"
+#include "shared_transition.h"
 #include "eval.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
 #include "generated/prime_typing_open_regular_kernel_source_binding_v1.generated.h"
@@ -14476,6 +14478,7 @@ Atom *prime_semantics_kernel_query(
 
 typedef struct {
     uint64_t space;          /* the publishing space, by instance */
+    CettaAnswerStorage *storage; /* the space's append-only statement owner */
     Atom *name;
     Atom *type;              /* the statement as published */
     Atom **contexts;         /* (PrimeTheoremContextV1 dependency ...) */
@@ -14485,7 +14488,7 @@ typedef struct {
 
 static struct {
     bool ready;
-    Arena arena;             /* owns every recorded atom for the process */
+    CettaAnswerStorageAccount *storage;
     PrimeTheoremRecord *records;
     size_t count;
     size_t capacity;
@@ -14588,13 +14591,18 @@ Atom *prime_semantics_theorem_context(
 
 static PrimeTheoremRecord *prime_theorem_record_slot(
     uint64_t space, Atom *name, Atom *type) {
+    CettaAnswerStorage *storage = NULL;
     for (size_t i = 0u; i < g_prime_theorems.count; i++) {
         PrimeTheoremRecord *record = &g_prime_theorems.records[i];
-        if (record->space == space && atom_eq(record->name, name) &&
-            atom_alpha_eq(record->type, type))
-            return record;
+        if (record->space == space) {
+            storage = record->storage;
+            if (atom_eq(record->name, name) && atom_alpha_eq(record->type, type))
+                return record;
+        }
     }
     if (g_prime_theorems.count == g_prime_theorems.capacity) {
+        if (g_prime_theorems.capacity > SIZE_MAX / 2u / sizeof(PrimeTheoremRecord))
+            cetta_oom(SIZE_MAX);
         g_prime_theorems.capacity = g_prime_theorems.capacity
             ? g_prime_theorems.capacity * 2u : 16u;
         g_prime_theorems.records = cetta_realloc(
@@ -14603,10 +14611,17 @@ static PrimeTheoremRecord *prime_theorem_record_slot(
     }
     PrimeTheoremRecord *record =
         &g_prime_theorems.records[g_prime_theorems.count++];
+    if (!storage) {
+        storage = cetta_answer_storage_new(&g_prime_theorems.storage);
+        if (!storage) cetta_oom(SIZE_MAX);
+        prime_scoped_judgment_note_theorem_instance(space);
+    }
+    cetta_answer_storage_prepare(storage);
     *record = (PrimeTheoremRecord){
         .space = space,
-        .name = atom_deep_copy(&g_prime_theorems.arena, name),
-        .type = atom_deep_copy(&g_prime_theorems.arena, type),
+        .storage = storage,
+        .name = atom_deep_copy(&storage->arena, name),
+        .type = atom_deep_copy(&storage->arena, type),
     };
     return record;
 }
@@ -14616,18 +14631,20 @@ static void prime_theorem_record_add_context(PrimeTheoremRecord *record,
     for (size_t i = 0u; i < record->context_count; i++)
         if (atom_alpha_eq(record->contexts[i], context)) return;
     if (record->context_count == record->context_capacity) {
+        if (record->context_capacity > SIZE_MAX / 2u / sizeof(Atom *))
+            cetta_oom(SIZE_MAX);
         record->context_capacity = record->context_capacity
             ? record->context_capacity * 2u : 2u;
         record->contexts = cetta_realloc(
             record->contexts, sizeof(Atom *) * record->context_capacity);
     }
+    cetta_answer_storage_prepare(record->storage);
     record->contexts[record->context_count++] =
-        atom_deep_copy(&g_prime_theorems.arena, context);
+        atom_deep_copy(&record->storage->arena, context);
 }
 
 static void prime_theorem_ledger_ready(void) {
     if (g_prime_theorems.ready) return;
-    arena_init_detached(&g_prime_theorems.arena);
     g_prime_theorems.ready = true;
     /* An import's working copy and the space that takes over its contents
      * hold the same theorems, so they hold the same records. */
@@ -14637,15 +14654,19 @@ static void prime_theorem_ledger_ready(void) {
 void prime_semantics_theorem_record(
     Space *space, Atom *name, Atom *type,
     Atom *const *contexts, size_t context_count) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
     if (!space || !name || !type || !contexts) return;
+    uint64_t instance = prime_theorem_space_key(space);
+    if (!instance || instance == UINT64_MAX) return;
     prime_theorem_ledger_ready();
     PrimeTheoremRecord *record = prime_theorem_record_slot(
-        prime_theorem_space_key(space), name, type);
+        instance, name, type);
     for (size_t i = 0u; i < context_count; i++)
         if (contexts[i]) prime_theorem_record_add_context(record, contexts[i]);
 }
 
 void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to) {
+    CETTA_SCOPED_SHARED_TRANSITION(transfer);
     if (from == to || !g_prime_theorems.ready) return;
     size_t count = g_prime_theorems.count;
     for (size_t i = 0u; i < count; i++) {
@@ -14658,6 +14679,50 @@ void prime_semantics_theorem_ledger_follow(uint64_t from, uint64_t to) {
         for (size_t c = 0u; c < source->context_count; c++)
             prime_theorem_record_add_context(target, source->contexts[c]);
     }
+}
+
+void prime_semantics_theorem_ledger_retire(uint64_t instance) {
+    CETTA_SCOPED_SHARED_TRANSITION(retirement);
+    CettaAnswerStorage *storage = NULL;
+    size_t kept = 0u;
+    for (size_t i = 0u; i < g_prime_theorems.count; i++) {
+        PrimeTheoremRecord record = g_prime_theorems.records[i];
+        if (record.space == instance) {
+            storage = record.storage;
+            free(record.contexts);
+        } else
+            g_prime_theorems.records[kept++] = record;
+    }
+    if (!storage) return;
+    /* All records of this instance append to the same collection. Contents
+     * transfer has already copied their statements into the destination's
+     * independent collection before this builder is released. */
+    g_prime_theorems.count = kept;
+    cetta_answer_storage_release(storage);
+    if (!kept) {
+        free(g_prime_theorems.records);
+        g_prime_theorems.records = NULL;
+        g_prime_theorems.capacity = 0u;
+        cetta_answer_storage_account_release(g_prime_theorems.storage);
+        g_prime_theorems.storage = NULL;
+    } else if (g_prime_theorems.capacity > 16u &&
+               kept < g_prime_theorems.capacity / 4u) {
+        g_prime_theorems.capacity /= 2u;
+        g_prime_theorems.records = cetta_realloc(g_prime_theorems.records,
+            g_prime_theorems.capacity * sizeof(*g_prime_theorems.records));
+    }
+}
+
+void prime_semantics_theorem_storage_census(CettaStorageCensus *census) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    cetta_storage_array(census, g_prime_theorems.records, g_prime_theorems.capacity,
+                        sizeof(*g_prime_theorems.records), 0u);
+    for (size_t i = 0u; i < g_prime_theorems.count; i++) {
+        const PrimeTheoremRecord *record = &g_prime_theorems.records[i];
+        cetta_storage_array(census, record->contexts, record->context_capacity,
+                            sizeof(*record->contexts), 0u);
+    }
+    cetta_answer_storage_account_census(g_prime_theorems.storage, census);
 }
 
 /* The record whose statement the space now declares for `name`. */
@@ -14777,6 +14842,7 @@ static bool prime_theorem_available(
 
 static bool prime_theorem_context_unavailable(
     Space *space, Arena *arena, Atom *name, Atom **reason_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (!g_prime_theorems.count || !space || !arena || !name) return false;
     uint64_t key = prime_theorem_space_key(space);
     const PrimeTheoremRecord *record =
@@ -14923,6 +14989,7 @@ Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
 
 bool prime_semantics_theorem_instance_empty(uint64_t instance, size_t limit,
         size_t *visited, bool *empty) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (visited) *visited=0u;
     if (empty) *empty=false;
     if (!visited || !empty || !instance || instance==UINT64_MAX) return false;

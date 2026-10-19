@@ -61,7 +61,7 @@ static bool prime_native_execution_prepare(PrimeNativeControl *parent,
         !prime_native_control_frame_ready(frame) || frame->control_pending ||
         parent->worker_execution || parent->policy.selection || parent->policy.by_weight ||
         !parent->owned_arena || parent->active_scoring ||
-        !prime_native_owned_cost_policy(&frame->control_nested_policy) ||
+        !prime_native_owned_observation_policy(&frame->control_nested_policy) ||
         g_context_home_depth || g_context_here_depth || g_owned_outcome_variant_bank ||
         g_prime_need_answer_observer || g_prime_need_answer_observer_context ||
         cetta_native_cost_observer_active() ||
@@ -79,7 +79,8 @@ static bool prime_native_execution_prepare(PrimeNativeControl *parent,
         child->space != &region->world || child->source_services ||
         child->failed || child->invalidated || child->effect_pending || child->need_pending ||
         child->registry_read.incomplete || child->steps == UINT64_MAX ||
-        prime_native_control_closed(child) || prime_native_control_waiting_verdict(child)) return false;
+        prime_native_control_closed(child) || prime_native_control_waiting_verdict(child) ||
+        cetta_control_plan_observation_satisfied(&child->hub.plan,child->delivered_count)) return false;
     PrimeEvalStackFrame *target_owner = frame->target == &parent->output ? NULL
         : prime_native_control_target_owner(parent, frame->target);
     if (frame->target != &parent->output && !target_owner) return false;
@@ -145,8 +146,9 @@ static bool prime_native_execution_prepare(PrimeNativeControl *parent,
     return true;
 }
 
-static bool prime_native_execution_task(CettaParallelWorker *worker,
-    PrimeNativeParallel *parallel, PrimeNativeParallelRun *run) {
+static inline __attribute__((always_inline)) bool prime_native_execution_task_kernel(
+    CettaParallelWorker *worker, PrimeNativeParallel *parallel,
+    PrimeNativeParallelRun *run, bool receipts) {
     PrimeNativeExecutionSlice *slice = &parallel->execution;
     assert(slice->self == slice && slice->phase == PRIME_NATIVE_EXECUTION_RESERVED &&
         slice->profile == PRIME_NATIVE_EXECUTION_OWNED_NESTED &&
@@ -174,7 +176,7 @@ static bool prime_native_execution_task(CettaParallelWorker *worker,
     slice->output_before = child->published;
     slice->ledger_identity = child->event_cost.identity;
     slice->cost_before = child->event_cost.total.work;
-    if (run->receipts) {
+    if (receipts) {
         parallel->started_ns = prime_native_monotonic_ns();
         uint32_t active = atomic_fetch_add_explicit(&run->active, 1u, memory_order_acq_rel) + 1u;
         uint32_t previous = atomic_load_explicit(&run->overlap, memory_order_relaxed);
@@ -231,7 +233,7 @@ static bool prime_native_execution_task(CettaParallelWorker *worker,
     g_prime_service_reservation = previous_reservation;
     g_prime_native_parallel_current = previous_parallel;
     eval_set_cancel_token(previous_cancel);
-    if (run->receipts) {
+    if (receipts) {
         parallel->finished_ns = prime_native_monotonic_ns();
         atomic_fetch_sub_explicit(&run->active, 1u, memory_order_acq_rel);
     }

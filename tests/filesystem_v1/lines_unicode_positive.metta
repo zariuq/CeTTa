@@ -1,0 +1,5 @@
+!(import! &self str)
+!(let $text (str:unescape metta "one\\xc2\\x85\\xe2\\x80\\xa8three\\xe2\\x80\\xa9")
+  (let $initial (str:line-new)
+    (let $segments (str:line-segments $text False)
+      (str:collect-lines $initial $segments True))))

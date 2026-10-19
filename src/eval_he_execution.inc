@@ -126,7 +126,8 @@ static bool he_stream_head_total(Space *space, SymbolId head,
 static bool he_execution_intrinsic(SymbolId head) {
     return head == g_builtin_syms.let || head == g_builtin_syms.if_text ||
         head == g_builtin_syms.op_plus || head == g_builtin_syms.op_minus ||
-        head == g_builtin_syms.op_mul || head == g_builtin_syms.op_eq ||
+        head == g_builtin_syms.op_mul || head == g_builtin_syms.op_div ||
+        head == g_builtin_syms.op_mod || head == g_builtin_syms.op_eq ||
         head == g_builtin_syms.op_lt || head == g_builtin_syms.op_gt ||
         head == g_builtin_syms.op_le || head == g_builtin_syms.op_ge ||
         head == g_builtin_syms.empty_form;
@@ -218,7 +219,7 @@ static bool he_execution_term_holds_resource(Atom *term) {
  * canonical owner, since a superposed error or Empty, or a set operation's
  * argument fault, would reach a consumer before completion removes it. */
 static bool he_execution_collection(SymbolId head) {
-    return head == g_builtin_syms.collapse || head == g_builtin_syms.superpose ||
+    return eval_is_reify_head(head) || head == g_builtin_syms.superpose ||
         head == g_builtin_syms.unique_atom || head == g_builtin_syms.union_atom ||
         head == g_builtin_syms.subtraction_atom ||
         head == g_builtin_syms.intersection_atom;
@@ -268,7 +269,9 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
                 he_execution_type_name(parts[3], "Bool");
         } else {
             bool arithmetic = head == g_builtin_syms.op_plus ||
-                head == g_builtin_syms.op_minus || head == g_builtin_syms.op_mul;
+                head == g_builtin_syms.op_minus ||
+                head == g_builtin_syms.op_mul ||
+                head == g_builtin_syms.op_div || head == g_builtin_syms.op_mod;
             admitted = he_execution_type_name(parts[1], "Number") &&
                 he_execution_type_name(parts[2], "Number") &&
                 he_execution_type_name(parts[3], arithmetic ? "Number" : "Bool");
@@ -358,9 +361,11 @@ static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
                 return false;
             bit = 1u;
         } else {
-            bool truth = false;
+            /* HE's if rows are keyed by its Bool values only; PeTTa's
+             * lowercase spellings are ordinary symbols in HE. */
+            bool truth = lhs->expr.len >= 2u && is_true_atom(lhs->expr.elems[1]);
             if ((lhs->expr.len != 3u && lhs->expr.len != 4u) ||
-                !petta_semantics_truth_value(lhs->expr.elems[1], &truth) ||
+                (!truth && !is_false_atom(lhs->expr.elems[1])) ||
                 lhs->expr.elems[2]->kind != ATOM_VAR ||
                 (lhs->expr.len == 4u &&
                  lhs->expr.elems[3]->kind != ATOM_VAR))
@@ -399,38 +404,174 @@ static void he_raw_flow_merge(HeRawFlowFlags *into,
     into->raw_literal |= from->raw_literal;
 }
 
-/* Whether evaluating `term` may give more than one answer: it reaches,
- * outside a collection, a superpose, a match, or a call of a head with
- * equations.  A collapse gives one tuple, the atom an add-atom or a
- * remove-atom stores is not evaluated, and a value gives itself.  The
- * shared machine reads terms the same way (petta_machine_he_may_branch).
- * Past the depth bound it answers yes. */
+/* Heads whose single answer is being decided (he_head_single_answer_in). */
+typedef struct {
+    SymbolId *heads;
+    size_t len, cap;
+} HeSingleAnswerScope;
+
+static bool he_head_single_answer_in(Space *space, SymbolId head,
+                                     HeSingleAnswerScope *scope,
+                                     uint32_t depth);
+
+/* Whether evaluating `term` gives at most one answer.  A superpose, a
+ * match or a space's atoms may give several; a collection gives one tuple,
+ * the atom an add-atom or a remove-atom stores is not evaluated, and a
+ * value gives itself.  A binder, a branch and an intrinsic give one answer
+ * from single parts, and a call of a head with equations does when the
+ * head answers once (he_head_single_answer_in).  Past the depth bound it
+ * answers no. */
+static bool he_term_single_answer_in(Space *space, const Atom *term,
+                                     HeSingleAnswerScope *scope,
+                                     uint32_t depth) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u)
+        return true;
+    if (depth >= 256u)
+        return false;
+    const Atom *head = term->expr.elems[0];
+    CettaExprLen len = term->expr.len;
+    SymbolId id = head->kind == ATOM_SYMBOL ? atom_symbol_current_id(head)
+                                            : SYMBOL_ID_NONE;
+    if (eval_is_reify_head(id) || id == g_builtin_syms.quote ||
+        id == g_builtin_syms.add_atom || id == g_builtin_syms.remove_atom)
+        return true;
+    if (id == g_builtin_syms.superpose || id == g_builtin_syms.match ||
+        id == g_builtin_syms.get_atoms)
+        return false;
+    if (id == g_builtin_syms.let && len == 4u)
+        return he_term_single_answer_in(space, term->expr.elems[2], scope,
+                                        depth + 1u) &&
+            he_term_single_answer_in(space, term->expr.elems[3], scope,
+                                     depth + 1u);
+    if (id == g_builtin_syms.let_star && len == 3u) {
+        const Atom *bindings = term->expr.elems[1];
+        if (bindings->kind != ATOM_EXPR)
+            return false;
+        for (CettaExprIndex index = 0u; index < bindings->expr.len; index++) {
+            const Atom *binding = bindings->expr.elems[index];
+            if (binding->kind != ATOM_EXPR || binding->expr.len != 2u ||
+                !he_term_single_answer_in(space, binding->expr.elems[1],
+                                          scope, depth + 1u))
+                return false;
+        }
+        return he_term_single_answer_in(space, term->expr.elems[2], scope,
+                                        depth + 1u);
+    }
+    if (id == g_builtin_syms.case_text && len == 3u) {
+        const Atom *branches = term->expr.elems[2];
+        if (branches->kind != ATOM_EXPR ||
+            !he_term_single_answer_in(space, term->expr.elems[1], scope,
+                                      depth + 1u))
+            return false;
+        for (CettaExprIndex index = 0u; index < branches->expr.len; index++) {
+            const Atom *branch = branches->expr.elems[index];
+            if (branch->kind != ATOM_EXPR || branch->expr.len != 2u ||
+                !he_term_single_answer_in(space, branch->expr.elems[1],
+                                          scope, depth + 1u))
+                return false;
+        }
+        return true;
+    }
+    if (id != SYMBOL_ID_NONE && !he_execution_intrinsic(id) &&
+        eval_space_has_equations(space, id) &&
+        !he_head_single_answer_in(space, id, scope, depth + 1u))
+        return false;
+    for (CettaExprIndex index = id != SYMBOL_ID_NONE ? 1u : 0u;
+         index < len; index++) {
+        if (!he_term_single_answer_in(space, term->expr.elems[index], scope,
+                                      depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* Whether every call of `head` gives at most one answer: it has one
+ * equation, whose head's arguments are distinct variables, so a call of its
+ * arity takes that equation and any other call is its own value, and the
+ * equation's body gives at most one answer.  A head whose answer is being
+ * decided counts as single where it recurs, which holds by induction on the
+ * evaluation; only the outermost decision is kept, once per program
+ * revision, since an inner one may rest on an assumption that fails. */
+typedef struct {
+    SymbolId head;
+    bool single;
+    SpaceProgramToken token;
+} HeSingleAnswerDecision;
+
+#define HE_SINGLE_ANSWER_DECISIONS 256u
+
+static bool he_head_single_answer_in(Space *space, SymbolId head,
+                                     HeSingleAnswerScope *scope,
+                                     uint32_t depth) {
+    HeSingleAnswerDecision *decisions = he_admission_cache(
+        &g_he_admission_caches.single_answer_decisions,
+        sizeof(HeSingleAnswerDecision) * HE_SINGLE_ANSWER_DECISIONS);
+    HeSingleAnswerDecision *slot = &decisions[
+        (uint32_t)((uint64_t)head * 2654435761u) % HE_SINGLE_ANSWER_DECISIONS];
+    if (slot->head == head && slot->token.space == space &&
+        space_program_token_is_current(slot->token))
+        return slot->single;
+    for (size_t index = 0u; index < scope->len; index++)
+        if (scope->heads[index] == head)
+            return true;
+    if (depth >= 256u)
+        return false;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(space, head, eval_admitted_rule_forms(),
+                                &cursor))
+        return false;
+    const Atom *body = NULL;
+    bool single = true;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        SpaceEquationOccurrence occurrence;
+        if (step != SPACE_EQUATION_CURSOR_ITEM || body ||
+            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(),
+                                           &occurrence) ||
+            !occurrence.lhs || occurrence.lhs->kind != ATOM_EXPR) {
+            single = false;
+            break;
+        }
+        const Atom *lhs = occurrence.lhs;
+        for (CettaExprIndex i = 1u; single && i < lhs->expr.len; i++) {
+            single = lhs->expr.elems[i]->kind == ATOM_VAR;
+            for (CettaExprIndex j = 1u; single && j < i; j++)
+                single = lhs->expr.elems[j]->var_id !=
+                    lhs->expr.elems[i]->var_id;
+        }
+        body = occurrence.rhs;
+    }
+    if (single && body) {
+        if (scope->len == scope->cap) {
+            scope->cap = scope->cap ? scope->cap * 2u : 8u;
+            scope->heads = cetta_realloc(scope->heads,
+                                         scope->cap * sizeof(*scope->heads));
+        }
+        scope->heads[scope->len++] = head;
+        single = he_term_single_answer_in(space, body, scope, depth + 1u);
+        scope->len--;
+    } else {
+        single = false;
+    }
+    if (scope->len == 0u)
+        *slot = (HeSingleAnswerDecision){.head = head, .single = single,
+            .token = space_program_token(space)};
+    return single;
+}
+
+/* Whether evaluating `term` may give more than one answer
+ * (he_term_single_answer_in, from no assumption).  The shared machine's
+ * completion reads any call of a head with equations as one that may
+ * (petta_machine_he_may_branch), which only completes more. */
 static bool he_term_may_branch(Space *space, const Atom *term,
                                uint32_t depth) {
-    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u)
-        return false;
-    if (depth >= 256u)
-        return true;
-    const Atom *head = term->expr.elems[0];
-    if (head->kind == ATOM_SYMBOL) {
-        SymbolId id = atom_symbol_current_id(head);
-        if (id == g_builtin_syms.collapse || id == g_builtin_syms.quote ||
-            id == g_builtin_syms.add_atom || id == g_builtin_syms.remove_atom)
-            return false;
-        if (id == g_builtin_syms.superpose || id == g_builtin_syms.match ||
-            id == g_builtin_syms.get_atoms)
-            return true;
-        if (!he_execution_intrinsic(id) && id != g_builtin_syms.let_star &&
-            id != g_builtin_syms.case_text &&
-            eval_space_has_equations(space, id))
-            return true;
-    }
-    for (CettaExprIndex index = head->kind == ATOM_SYMBOL ? 1u : 0u;
-         index < term->expr.len; index++) {
-        if (he_term_may_branch(space, term->expr.elems[index], depth + 1u))
-            return true;
-    }
-    return false;
+    HeSingleAnswerScope scope = {0};
+    bool single = he_term_single_answer_in(space, term, &scope, depth);
+    free(scope.heads);
+    return !single;
 }
 
 /* Whether `term`, read where its value is consumed in place, keeps every
@@ -463,7 +604,7 @@ static bool he_answers_leave_in_tail(Space *space, const Atom *term,
     const Atom *head = term->expr.elems[0];
     SymbolId id = head->kind == ATOM_SYMBOL ? atom_symbol_current_id(head) : SYMBOL_ID_NONE;
     CettaExprLen len = term->expr.len;
-    if (id == g_builtin_syms.collapse && len == 2u)
+    if (eval_is_reify_head(id) && len == 2u)
         return he_answers_leave_in_tail(space, term->expr.elems[1], true,
                                         depth + 1u);
     if (id == g_builtin_syms.quote || id == g_builtin_syms.add_atom ||
@@ -514,7 +655,8 @@ static bool he_answers_leave_in_tail(Space *space, const Atom *term,
     if (id == g_builtin_syms.superpose)
         return false;
     if (id != SYMBOL_ID_NONE && !he_execution_intrinsic(id) && !tail &&
-        eval_space_has_equations(space, id))
+        eval_space_has_equations(space, id) &&
+        he_term_may_branch(space, term, depth))
         return false;
     for (CettaExprIndex index = id != SYMBOL_ID_NONE ? 1u : 0u;
          index < len; index++) {
@@ -524,31 +666,12 @@ static bool he_answers_leave_in_tail(Space *space, const Atom *term,
     return true;
 }
 
-/* Whether `term` reads the variable `id`.  Past the depth bound it answers
- * yes. */
-static bool he_term_reads_variable(const Atom *term, VarId id,
-                                   uint32_t depth) {
-    if (!term)
-        return false;
-    if (term->kind == ATOM_VAR)
-        return term->var_id == id;
-    if (term->kind != ATOM_EXPR)
-        return false;
-    if (depth >= 256u)
-        return true;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++)
-        if (he_term_reads_variable(term->expr.elems[index], id, depth + 1u))
-            return true;
-    return false;
-}
-
 /* Whether `term` has only forms whose values the compiled machine, raising
- * HE's errors, gives as HE does.  A collection's value goes unread, as the
- * value of a let whose variable the body does not use: HE reads a
- * collection that held only errors where it is instantiated, which gives
- * its first error, while the machine reads the tuple.  No case, which
- * takes an error as a value, and no superpose, whose alternatives HE runs
- * in an order of its own.  Past the depth bound it answers no. */
+ * HE's errors, gives as HE does: no case, which takes an error as a value,
+ * and no superpose, whose alternatives HE runs in an order of its own.  A
+ * collection's tuple, errors included, is as HE gives it: a run that
+ * raises reads no collected value where HE would evaluate it again
+ * (he_raw_flow_rereads).  Past the depth bound it answers no. */
 static bool he_raise_forms_admitted(const Atom *term, uint32_t depth) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u)
         return true;
@@ -557,20 +680,8 @@ static bool he_raise_forms_admitted(const Atom *term, uint32_t depth) {
     SymbolId id = atom_head_symbol_id(term);
     if (id == g_builtin_syms.quote)
         return true;
-    if (id == g_builtin_syms.case_text || id == g_builtin_syms.superpose ||
-        id == g_builtin_syms.collapse)
+    if (id == g_builtin_syms.case_text || id == g_builtin_syms.superpose)
         return false;
-    if (id == g_builtin_syms.let && term->expr.len == 4u &&
-        term->expr.elems[1]->kind == ATOM_VAR &&
-        term->expr.elems[2]->kind == ATOM_EXPR &&
-        term->expr.elems[2]->expr.len == 2u &&
-        atom_head_symbol_id(term->expr.elems[2]) == g_builtin_syms.collapse)
-        return !he_term_reads_variable(term->expr.elems[3],
-                                       term->expr.elems[1]->var_id,
-                                       depth + 1u) &&
-            he_raise_forms_admitted(term->expr.elems[2]->expr.elems[1],
-                                    depth + 1u) &&
-            he_raise_forms_admitted(term->expr.elems[3], depth + 1u);
     for (CettaExprIndex index = 0u; index < term->expr.len; index++)
         if (!he_raise_forms_admitted(term->expr.elems[index], depth + 1u))
             return false;
@@ -584,6 +695,121 @@ static bool he_raise_forms_admitted(const Atom *term, uint32_t depth) {
 static bool he_body_raise_shaped(Space *space, const Atom *body) {
     return he_answers_leave_in_tail(space, body, true, 0u) &&
         he_raise_forms_admitted(body, 0u);
+}
+
+/* HE's library collection functions: `unique` collects its argument and
+ * keeps each value's first occurrence, and `union`, `intersection` and
+ * `subtraction` collect both arguments and combine them.  Each takes its
+ * arguments unevaluated (Atom parameters) and returns the combined values
+ * as alternatives.  Where `term` calls one whose only equation in the space
+ * is the library's own,
+ *   (= (f $a) (let $c (reify $a) (let $u (f-atom $c) (superpose $u))))
+ * or its two-argument form, the aggregate is f-atom's head; otherwise none.
+ * A program's own definition of the name keeps its meaning. */
+static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
+    if (!space || !term || term->kind != ATOM_EXPR || term->expr.len < 2u ||
+        term->expr.elems[0]->kind != ATOM_SYMBOL)
+        return SYMBOL_ID_NONE;
+    SymbolId head = atom_symbol_current_id(term->expr.elems[0]);
+    uint32_t arity = (uint32_t)term->expr.len - 1u;
+    SymbolId aggregate = SYMBOL_ID_NONE;
+    switch (petta_semantics_form(head)) {
+    case PETTA_FORM_STREAM_UNIQUE:
+        aggregate = arity == 1u ? g_builtin_syms.unique_atom : SYMBOL_ID_NONE;
+        break;
+    case PETTA_FORM_STREAM_UNION:
+        aggregate = arity == 2u ? g_builtin_syms.union_atom : SYMBOL_ID_NONE;
+        break;
+    case PETTA_FORM_STREAM_INTERSECTION:
+        aggregate = arity == 2u ? g_builtin_syms.intersection_atom
+                                : SYMBOL_ID_NONE;
+        break;
+    case PETTA_FORM_STREAM_SUBTRACTION:
+        aggregate = arity == 2u ? g_builtin_syms.subtraction_atom
+                                : SYMBOL_ID_NONE;
+        break;
+    default:
+        break;
+    }
+    if (aggregate == SYMBOL_ID_NONE)
+        return SYMBOL_ID_NONE;
+    SpaceEquationCursor cursor;
+    if (!space_rule_cursor_init(space, head, eval_admitted_rule_forms(),
+                                &cursor))
+        return SYMBOL_ID_NONE;
+    SpaceEquationOccurrence occurrence = {0};
+    uint32_t count = 0u;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        if (step != SPACE_EQUATION_CURSOR_ITEM || ++count > 1u ||
+            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(),
+                                           &occurrence))
+            return SYMBOL_ID_NONE;
+    }
+    const Atom *lhs = occurrence.lhs;
+    const Atom *rhs = occurrence.rhs;
+    if (count != 1u || !lhs || lhs->kind != ATOM_EXPR ||
+        lhs->expr.len != arity + 1u)
+        return SYMBOL_ID_NONE;
+    const Atom *params[2] = {NULL, NULL};
+    for (uint32_t index = 0u; index < arity; index++) {
+        params[index] = lhs->expr.elems[index + 1u];
+        if (params[index]->kind != ATOM_VAR)
+            return SYMBOL_ID_NONE;
+    }
+    if (arity == 2u && params[0]->var_id == params[1]->var_id)
+        return SYMBOL_ID_NONE;
+    /* The collections bind in order, then the aggregate, then the emit. */
+    const Atom *collected[2] = {NULL, NULL};
+    const Atom *body = rhs;
+    for (uint32_t index = 0u; index < arity; index++) {
+        if (!body || body->kind != ATOM_EXPR || body->expr.len != 4u ||
+            !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let) ||
+            body->expr.elems[1]->kind != ATOM_VAR)
+            return SYMBOL_ID_NONE;
+        const Atom *value = body->expr.elems[2];
+        if (value->kind != ATOM_EXPR || value->expr.len != 2u ||
+            !eval_is_reify_head(atom_head_symbol_id(value)) ||
+            value->expr.elems[1]->kind != ATOM_VAR ||
+            value->expr.elems[1]->var_id != params[index]->var_id)
+            return SYMBOL_ID_NONE;
+        collected[index] = body->expr.elems[1];
+        body = body->expr.elems[3];
+    }
+    if (!body || body->kind != ATOM_EXPR || body->expr.len != 4u ||
+        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let) ||
+        body->expr.elems[1]->kind != ATOM_VAR)
+        return SYMBOL_ID_NONE;
+    const Atom *combined = body->expr.elems[2];
+    const Atom *result = body->expr.elems[1];
+    const Atom *emit = body->expr.elems[3];
+    if (combined->kind != ATOM_EXPR || combined->expr.len != arity + 1u ||
+        !atom_is_symbol_id(combined->expr.elems[0], aggregate))
+        return SYMBOL_ID_NONE;
+    for (uint32_t index = 0u; index < arity; index++)
+        if (combined->expr.elems[index + 1u]->kind != ATOM_VAR ||
+            combined->expr.elems[index + 1u]->var_id !=
+                collected[index]->var_id)
+            return SYMBOL_ID_NONE;
+    if (emit->kind != ATOM_EXPR || emit->expr.len != 2u ||
+        !atom_is_symbol_id(emit->expr.elems[0], g_builtin_syms.superpose) ||
+        emit->expr.elems[1]->kind != ATOM_VAR ||
+        emit->expr.elems[1]->var_id != result->var_id)
+        return SYMBOL_ID_NONE;
+    return aggregate;
+}
+
+/* Current machine coverage, not a restriction on HE. A head rejected here
+ * retains the canonical interpreter. Keep the root precheck and the full
+ * admission walk on the same predicate, including the library exception. */
+static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
+    bool intrinsic, bool collection, bool library_stream) {
+    return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
+        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+                           space_head_declares_type(space, head));
 }
 
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
@@ -635,6 +861,11 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
         }
         if (!term || he_execution_term_holds_resource(term) ||
             he_not_reducible(term))
+            return false;
+        /* NotReducible is HE's call-return marker: a body that is
+         * NotReducible leaves its own call unreduced, at that call's
+         * boundary, which the canonical owner keeps. */
+        if (atom_is_symbol_id(term, g_builtin_syms.not_reducible))
             return false;
         /* A superpose's argument is a tuple of alternatives, each walked as
          * a term of its own; the tuple itself is no call. */
@@ -715,8 +946,14 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             !he_execution_primitive_signature(admission, head))
             return false;
         bool collection = !admission->stream && he_execution_collection(head);
+        /* A call of a library collection function is its definition, which
+         * the machine runs with the arguments in place: its declared type
+         * passes them unevaluated, as the definition reads them. */
+        bool library_stream = expression && !admission->stream &&
+            he_library_stream_aggregate(admission->space, term) !=
+                SYMBOL_ID_NONE;
         if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            petta_semantics_form(head) != PETTA_FORM_NONE)
+            !library_stream && petta_semantics_form(head) != PETTA_FORM_NONE)
             return false;
         if ((head == g_builtin_syms.if_text ||
              head == g_builtin_syms.empty_form) &&
@@ -731,9 +968,12 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             !he_execution_scalar_head_inert(admission->space, term))
             return false;
         if (expression && head == g_builtin_syms.if_text) {
-            bool truth;
+            /* A literal condition is admitted only as an HE Bool value: any
+             * other symbol, PeTTa's lowercase false included, leaves the if
+             * call unreduced, which the canonical evaluator answers. */
             if ((term->expr.len != 3u && term->expr.len != 4u) ||
-                (!petta_semantics_truth_value(term->expr.elems[1], &truth) &&
+                (!is_true_atom(term->expr.elems[1]) &&
+                 !is_false_atom(term->expr.elems[1]) &&
                  (!he_execution_condition_head(
                       atom_head_symbol_id(term->expr.elems[1])) ||
                   expr_nargs(term->expr.elems[1]) != 2u)))
@@ -751,9 +991,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
-        if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-             space_head_declares_type(admission->space, head)))
+        if (he_execution_head_requires_canonical(admission->space, head,
+                intrinsic, collection, library_stream))
             return false;
         /* A streamed call of a relation must always meet an equation. */
         if (admission->stream && expression && !intrinsic &&
@@ -1121,7 +1360,7 @@ static unsigned he_raw_flow_source(HeRawFlow *flow, const Atom *term,
         return HE_RAW_VALUE | HE_CALL_VALUE;
     SymbolId id = atom_head_symbol_id(term);
     CettaExprLen len = term->expr.len;
-    if (id == g_builtin_syms.collapse || he_raw_set_operation(id))
+    if (eval_is_reify_head(id) || he_raw_set_operation(id))
         return HE_RAW_VALUE;
     if (id == g_builtin_syms.quote || id == g_builtin_syms.add_atom ||
         id == g_builtin_syms.remove_atom)
@@ -1224,7 +1463,7 @@ static void he_raw_flow_walk(HeRawFlow *flow, const Atom *term, bool tail,
         he_raw_flow_walk(flow, term->expr.elems[1], false, depth + 1u);
         return;
     }
-    if (id == g_builtin_syms.collapse && len == 2u) {
+    if (eval_is_reify_head(id) && len == 2u) {
         flow->flags.raw_tail |= tail;
         he_raw_flow_walk(flow, term->expr.elems[1], false, depth + 1u);
         return;
@@ -1548,7 +1787,7 @@ static bool he_term_collects(const Atom *term, uint32_t depth) {
     if (!term || term->kind != ATOM_EXPR)
         return false;
     if (depth >= 256u ||
-        atom_head_symbol_id(term) == g_builtin_syms.collapse)
+        eval_is_reify_head(atom_head_symbol_id(term)))
         return true;
     for (CettaExprIndex index = 0u; index < term->expr.len; index++)
         if (he_term_collects(term->expr.elems[index], depth + 1u))
@@ -1787,9 +2026,20 @@ static bool he_execution_plain_arguments(Atom *source) {
     return true;
 }
 
-static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
-    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
-    OutcomeSet *outcomes) {
+/* What the admission of a source to HE's shared execution decided for
+ * its run: the run's effects, whether it reads a collected value where HE
+ * evaluates it again, and whether a caller can bind or observe one of its
+ * variables. */
+typedef struct {
+    bool effects;
+    bool rereads;
+    bool open_root;
+} HeSharedExecutionPlan;
+
+/* The checks that need no read window: the language, the switches, the
+ * evaluation's context, and the source's head. */
+static inline __attribute__((always_inline)) bool he_shared_execution_candidate(
+    Space *space, Atom *source, Atom *type, int fuel, bool observe_boundaries) {
     if (eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
     /* A completed scalar is interpreted by HE's value/cast boundary. Only
@@ -1803,7 +2053,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
          * and the machine's queries read a space's own rows. */
         space->overlay_base ||
         space_has_dependencies(space) || g_active_search_controller_requested ||
-        g_active_search_controller_auto || gslt_match_chain_trace_active() ||
+        g_active_search_controller_auto || observe_boundaries ||
         petta_eval_machine_diagnostic_transition_limit())
         return false;
     /* Intrinsic controls retain the canonical demand adapter; their ordinary
@@ -1819,6 +2069,15 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         source_head != g_builtin_syms.match &&
         !he_execution_collection(source_head))
         return false;
+    /* Typed ordinary heads are refused by full admission before their
+     * closure is visited. Do not first walk their argument/flow trees just
+     * to rediscover that refusal. This is an uncached fallback selection;
+     * the canonical call still observes the current declarations and body. */
+    if (source_head != g_builtin_syms.match &&
+        he_execution_head_requires_canonical(space, source_head, false,
+            he_execution_collection(source_head),
+            he_library_stream_aggregate(space, source) != SYMBOL_ID_NONE))
+        return false;
     /* Such a root gains on the machine only when something in it computes;
      * a match that only builds data is the canonical frame's single query. */
     if ((source_head == g_builtin_syms.match ||
@@ -1827,15 +2086,23 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         return false;
     /* A closed data tuple computes only in its fields.  Each field that is a
      * call meets its own call boundary, where a closed realization is tried
-     * before any program is synchronized. */
+     * before any program is synchronized.  A match and a collection are no
+     * data: they compute themselves, judged above. */
     if (source_head != SYMBOL_ID_NONE && !atom_has_vars(source) &&
-        !eval_space_has_equations(space, source_head))
+        !eval_space_has_equations(space, source_head) &&
+        source_head != g_builtin_syms.match &&
+        !he_execution_collection(source_head))
         return false;
-    /* The source qualification and the program observation form one read
-     * window. A suspended program owner alone cannot establish currency.
-     * Workers retain their canonical adapter until shared program mutation
-     * and compiled episodes have a separately qualified concurrent contract. */
-    CETTA_SCOPED_SHARED_TRANSITION(he_execution_observation);
+    return true;
+}
+
+/* The admission, inside the caller's read window: the source and the
+ * closure it reaches keep HE's rules on the shared machine.  Records the
+ * closure decisions as it walks. */
+static bool he_shared_execution_admit(Space *space, Arena *arena,
+                                      Atom *source, bool preserve_bindings,
+                                      HeSharedExecutionPlan *plan) {
+    SymbolId source_head = atom_head_symbol_id(source);
     /* A root is open when a caller can bind or observe one of its
      * variables: a caller that keeps the root's bindings observes them all,
      * and any caller binds a free one. When the caller keeps none, a
@@ -1886,29 +2153,57 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     }
     free(admission.terms);
     free(admission.heads);
-    if (!admitted)
+    *plan = (HeSharedExecutionPlan){
+        .effects = admission.effects,
+        .rereads = he_raw_flow_rereads(&run_flow),
+        .open_root = admission.open_root,
+    };
+    return admitted;
+}
+
+static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes);
+static inline __attribute__((always_inline)) bool he_shared_execution_try_kernel(
+    Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes, bool observe_boundaries) {
+    if (!he_shared_execution_candidate(space, source, type, fuel,
+                                        observe_boundaries))
+        return false;
+    /* The source qualification and the program observation form one read
+     * window. A suspended program owner alone cannot establish currency.
+     * Workers retain their canonical adapter until shared program mutation
+     * and compiled episodes have a separately qualified concurrent contract. */
+    CETTA_SCOPED_SHARED_TRANSITION(he_execution_observation);
+    HeSharedExecutionPlan plan;
+    if (!he_shared_execution_admit(space, arena, source, preserve_bindings,
+                                   &plan))
         return false;
     /* A bounded call (see he_canonical_call_bounded) asks for the successes
      * its selection still needs. The machine completes an effectful closure
      * before it delivers an answer, so it would perform the effects of the
      * alternatives the selection skips: the canonical owner runs it. */
-    if (admission.effects && g_he_answer_bound.root &&
+    if (plan.effects && g_he_answer_bound.root &&
         source == g_he_answer_bound.root)
         return false;
+    SymbolId source_head = atom_head_symbol_id(source);
     /* Retain the existing qualified closed realizations before allocating a
      * relational episode. A decline publishes nothing and leaves the source
      * for the general machine; open calls never enter this closed attempt. */
-    if (!admission.open_root && source && source->kind == ATOM_EXPR &&
+    if (!plan.open_root && source && source->kind == ATOM_EXPR &&
         source_head != SYMBOL_ID_NONE && !symbol_id_is_builtin(source_head)) {
         Bindings empty;
         bindings_init(&empty);
         const Bindings *outer = environment ? environment : &empty;
         PreparedPureProgramCache *cache = eval_execution_prepared_cache();
-        Atom *single = prepared_pure_closed_call_try(
-            space, arena, source, fuel, false, false, cache);
-        if (single) {
-            outcome_set_add_prefixed(arena, outcomes, single, &empty, outer,
-                preserve_bindings);
+        CettaCallOutcome result;
+        if (prepared_pure_closed_result_try(
+                space, arena, source, fuel, false, false, cache,
+                PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &result)) {
+            if (result.kind == CETTA_CALL_VALUE)
+                outcome_set_add_prefixed(arena, outcomes, result.term, &empty,
+                    outer, preserve_bindings);
             return true;
         }
         if (eval_unwinding() || eval_cancel_check())
@@ -1926,8 +2221,8 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         return false;
     bool enclosing_active = g_active_petta_search_machine;
     g_he_shared_execution = true;
-    g_he_shared_execution_effect_free = !admission.effects;
-    g_he_shared_execution_rereads = he_raw_flow_rereads(&run_flow);
+    g_he_shared_execution_effect_free = !plan.effects;
+    g_he_shared_execution_rereads = plan.rereads;
     g_active_petta_search_machine = true;
     bool complete = petta_eval_machine_run(space, arena, source, type, fuel,
         environment, preserve_bindings, outcomes, PETTA_RELATION_SAFETY_STATIC,
@@ -1936,3 +2231,9 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_he_shared_execution = false;
     return complete;
 }
+
+CETTA_PREPARED_ENTRY(bool, he_shared_execution_try,
+    (Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes),
+    (space, arena, source, type, fuel, environment, preserve_bindings, outcomes))

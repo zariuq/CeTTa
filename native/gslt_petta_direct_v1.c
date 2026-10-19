@@ -1160,6 +1160,9 @@ typedef struct {
     size_t unequal_left_argument;
     size_t unequal_right_argument;
     bool equality_arguments_quoted;
+    /* The condition is noreduce-eq: its sides are compared unreduced, as a
+     * quoted `==` compares them, in every target that defines it. */
+    bool equality_unreduced;
 } DirectGroundDisequalityCapabilityV1;
 
 static bool direct_terms_equal_v1(const Atom *left, const Atom *right,
@@ -1747,7 +1750,8 @@ static bool direct_target_ground_disequality_capability_v1(
     const Atom *success_branch;
     if (!direct_head_v1(right, "if", 3u) ||
         !(condition = right->expr.elems[1]) ||
-        !direct_head_v1(condition, "==", 2u) ||
+        (!direct_head_v1(condition, "==", 2u) &&
+         !direct_head_v1(condition, "noreduce-eq", 2u)) ||
         !(empty_branch = right->expr.elems[2]) ||
         !direct_head_v1(empty_branch, "metta-nullary", 1u) ||
         !direct_symbol_v1(empty_branch->expr.elems[1], "empty") ||
@@ -1760,8 +1764,11 @@ static bool direct_target_ground_disequality_capability_v1(
 
     const Atom *left_condition = condition->expr.elems[1];
     const Atom *right_condition = condition->expr.elems[2];
-    bool left_quoted = direct_head_v1(left_condition, "quote", 1u);
-    bool right_quoted = direct_head_v1(right_condition, "quote", 1u);
+    bool unreduced = direct_head_v1(condition, "noreduce-eq", 2u);
+    bool left_quoted = !unreduced &&
+        direct_head_v1(left_condition, "quote", 1u);
+    bool right_quoted = !unreduced &&
+        direct_head_v1(right_condition, "quote", 1u);
     if (left_quoted != right_quoted)
         return false;
     if (left_quoted) {
@@ -1786,6 +1793,7 @@ static bool direct_target_ground_disequality_capability_v1(
     result->unequal_left_argument = left_argument;
     result->unequal_right_argument = right_argument;
     result->equality_arguments_quoted = left_quoted;
+    result->equality_unreduced = unreduced;
     return true;
 }
 
@@ -3774,7 +3782,6 @@ static bool direct_render_factored_group_v1(
     DirectFactorNodeV1 **arg_nodes = NULL;
     const Atom **subs = NULL;
     size_t slot_count = 0u;
-    size_t input_slots = 0u;
     size_t output_slots = 0u;
     bool aborted = false;
     bool ok = false;
@@ -3857,8 +3864,6 @@ static bool direct_render_factored_group_v1(
             if (node->slot) {
                 if (node->slot_output)
                     output_slots++;
-                else
-                    input_slots++;
                 continue;
             }
             for (size_t child = 0u; child < node->child_count;
@@ -4065,6 +4070,7 @@ typedef struct {
     size_t unequal_left_argument;
     size_t unequal_right_argument;
     bool equality_arguments_quoted;
+    bool equality_unreduced;
 } DirectEqualityPartitionV1;
 
 /* Recognize the complete two-rule partition
@@ -4088,6 +4094,7 @@ static bool direct_equality_partition_v1(
     size_t unequal_left_argument = SIZE_MAX;
     size_t unequal_right_argument = SIZE_MAX;
     bool equality_arguments_quoted = false;
+    bool equality_unreduced = false;
     size_t relation_rule_count = 0u;
 
     if (!rules || !target_equations || !mode || !partition ||
@@ -4152,6 +4159,7 @@ static bool direct_equality_partition_v1(
             unequal_right_argument = capability.unequal_right_argument;
             equality_arguments_quoted =
                 capability.equality_arguments_quoted;
+            equality_unreduced = capability.equality_unreduced;
             continue;
         }
         return false;
@@ -4167,6 +4175,7 @@ static bool direct_equality_partition_v1(
         .unequal_left_argument = unequal_left_argument,
         .unequal_right_argument = unequal_right_argument,
         .equality_arguments_quoted = equality_arguments_quoted,
+        .equality_unreduced = equality_unreduced,
     };
     return true;
 }
@@ -4186,7 +4195,8 @@ static bool direct_render_equality_partition_v1(
            direct_render_function_call_v1(
                program, partition->different_rule->head,
                mode, scratch) &&
-           direct_literal_v1(program, "\n   (if (== ") &&
+           direct_literal_v1(program, partition->equality_unreduced
+               ? "\n   (if (noreduce-eq " : "\n   (if (== ") &&
            (!partition->equality_arguments_quoted ||
             direct_literal_v1(program, "(quote ")) &&
            direct_render_term_v1(

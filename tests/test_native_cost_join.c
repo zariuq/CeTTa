@@ -3,7 +3,44 @@
 #include <stdio.h>
 static size_t checks;
 #define CHECK(X) do {assert(X); checks++;} while(0)
+static void compact_joins(void) {
+ CettaNativeCostLedger parent,left,right;CettaNativeCostScope scope;
+ cetta_native_cost_init_compact(&parent);cetta_native_cost_init_compact(&left);cetta_native_cost_init(&right);
+ cetta_native_cost_append(&parent,CETTA_COST_CAPTURE,2u,1u);
+ cetta_native_cost_append(&left,CETTA_COST_HEAP_LOOKUP,3u,2u);
+ cetta_native_cost_append(&right,CETTA_COST_HEAP_UPDATE,5u,3u);
+ cetta_native_cost_scope_enter(&scope,&parent,1u);
+ CettaNativeCostLedger *parts[]={&left,&right};
+ CHECK(cetta_native_cost_join(parts,2u));
+ CHECK(parent.total.work==10u && parent.total.span==7u && parent.total.parallel);
+ CHECK(!parent.events && !parent.length && !parent.capacity && !parent.total.trace_incomplete);
+ CHECK(!cetta_native_cost_join(parts,2u) && parent.total.work==10u);
+ cetta_native_cost_scope_leave(&scope);
+ cetta_native_cost_free(&parent);cetta_native_cost_free(&left);cetta_native_cost_free(&right);
+
+ cetta_native_cost_init(&parent);cetta_native_cost_init_compact(&left);
+ cetta_native_cost_append(&left,CETTA_COST_CAPTURE,7u,2u);
+ cetta_native_cost_scope_enter(&scope,&parent,1u);
+ CettaNativeCostSegment segment={.ledger=&left,.occurrence=2u,.order=1u,.worker=0u};
+ CHECK(cetta_native_cost_join_segments(&segment,1u,1u));
+ CHECK(parent.total.work==7u && parent.total.span==7u && parent.total.trace_incomplete && !parent.events);
+ cetta_native_cost_scope_leave(&scope);
+ cetta_native_cost_free(&parent);cetta_native_cost_free(&left);
+
+ cetta_native_cost_init_compact(&parent);cetta_native_cost_init_compact(&left);cetta_native_cost_init_compact(&right);
+ cetta_native_cost_append(&left,CETTA_COST_CAPTURE,3u,2u);cetta_native_cost_append(&right,CETTA_COST_CAPTURE,5u,3u);
+ CettaNativeCostSegment segments[]={
+  {.ledger=&left,.occurrence=2u,.order=1u,.worker=0u},
+  {.ledger=&right,.occurrence=3u,.order=2u,.worker=1u}};
+ cetta_native_cost_scope_enter(&scope,&parent,1u);
+ CHECK(cetta_native_cost_join_segments(segments,2u,2u));
+ CHECK(parent.total.work==8u && parent.total.span==5u && parent.total.parallel && !parent.total.trace_incomplete && !parent.events);
+ cetta_native_cost_scope_leave(&scope);
+ cetta_native_cost_free(&parent);cetta_native_cost_free(&left);cetta_native_cost_free(&right);
+}
+
 int main(void) {
+ compact_joins();
  CettaNativeCostLedger parent,left,right;CettaNativeCostScope p,l,r;
  cetta_native_cost_init(&parent);cetta_native_cost_init(&left);cetta_native_cost_init(&right);
  cetta_native_cost_scope_enter(&p,&parent,1);cetta_native_cost_charge(CETTA_COST_CAPTURE,2);

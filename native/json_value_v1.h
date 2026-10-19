@@ -68,8 +68,14 @@ bool cetta_json_value_v1_stringify(
     char *error_buf,
     size_t error_buf_size);
 
-/* Strict emission without per-value reference parsing or certification. */
-bool cetta_json_value_v1_emit(Atom *value, bool legacy_input,
+/* Borrowed, synchronous interpretation of a complete number lexeme. The
+ * caller supplies the validator for its admitted JSON grammar. */
+typedef bool (*CettaJsonNumberValidatorV1)(const uint8_t *bytes, size_t length);
+
+/* Strict emission using the supplied number validator, without per-value
+ * reference parsing or certification. A missing validator refuses emission. */
+bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, bool legacy_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);

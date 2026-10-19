@@ -482,8 +482,12 @@ tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test
 tests/test_he_exact_index_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frame_schema_merge.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_host_return_provenance.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_he_joint_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_malformed.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_prepared.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_let_step.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
+tests/test_he_library_collections.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_case.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_closed_answers.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_collections.metta	he	metta	extended	main	native	test	golden	-
@@ -497,6 +501,7 @@ tests/test_he_path_index_open_rows.metta	he	metta	extended	main	native	test	gold
 tests/test_he_path_index_swap_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_program_rule_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_raise_completion.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_raw_case_root.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_relay_delivery.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_return_contract_correlation.metta	he	metta	extended	main	native	test	golden	-
@@ -558,7 +563,7 @@ tests/test_io_rho_bridge.metta	he	metta	extended	core	native	test-opt-in-feature
 tests/test_io_syntax.metta	he	metta	extended	core	native	test-opt-in-feature	property	assertion-only property without golden oracle
 tests/test_isinf_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_isnan_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
-tests/test_json_direct_reference.metta	he	metta	extended	main	native	test	golden	-
+tests/test_json_direct_reference.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_byte_lengths.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_hostile_constructors.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_json_gslt_invalid_number.metta	he	metta	extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
@@ -616,6 +621,7 @@ tests/test_map_filter_atom.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_advanced.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_atoms_bidir.metta	he	metta	extended	main	native	test	golden	-
+tests/test_match_bound_query.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_chain_cross_space_pathmap_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_match_chain_imported_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_match_chain_inner_space.metta	he	metta	extended	main	native	test	golden	-
@@ -700,6 +706,7 @@ tests/test_outcome_variant_observation_seam_regression.metta	he	metta	extended	r
 tests/test_path_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_pathmap_backend_primary_destructive_regression.metta	he	metta	extended	pathmap	pathmap	probe-pathmap-lane	probe	pathmap destructive syntax diagnostic
 tests/test_pathmap_backend_primary_growth_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_chain_prefix_join.metta	he	metta	extended	runtime-stats	pathmap	test-pathmap-runtime-stats-lane	golden	PathMap conjunction bridge initialization and indexed-hit regression
 tests/test_pathmap_contextual_var_projection_remove.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_counted_space_syntax.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_direct_store_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
@@ -880,5 +887,8 @@ tests/test_with_space_snapshot_equation_regression.metta	he	metta	extended	main	
 tests/test_with_space_snapshot_non_exact_query_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_passthrough.metta	he	metta	extended	main	native	test	golden	-
 tests/test_with_space_snapshot_queue_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_control.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_observers.metta	he	metta	extended	main	native	test	golden	-
+tests/test_work_routes.metta	he	metta	extended	main	native	test	golden	-
 tests/test_xor.metta	he	metta	extended	main	native	test	golden	-
 tests/test_zero_arity_function_overload.metta	he	metta	extended	main	native	test	golden	-

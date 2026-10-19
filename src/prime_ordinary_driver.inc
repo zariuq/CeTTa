@@ -108,7 +108,7 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if(!prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&before) ||
-            !prime_need_branch_state_payloads_satisfy(&frame->producer_receipt,
+            !prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&evaluating))return false;
 #endif
         const PrimeNeedEquationContinuation *equation=frame->equation_search;
@@ -154,6 +154,7 @@ static const char *prime_share_grounded_refusal(GroundedKind kind) {
     case GV_BINDINGS: return "immutable-bindings";
     case GV_TERM_GRAPH: return "immutable-term-graph";
     case GV_TENSOR: return "immutable-tensor";
+    case GV_SEAL: return "immutable-seal";
     }
     return "immutable-grounded";
 }
@@ -401,8 +402,10 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     PrimeNativeControl *control=calloc(1u,sizeof(*control));
     if(!control)goto decline;
     int64_t prepared_quantum=eval_option_int_or_default("prepared-node-quantum",1);
+    /* Full-bag work amortizes worker handoff across a bounded batch.
+     * Authored control policies retain their explicitly requested quantum. */
     CettaSearchPolicySpec policy={.native_control=true,.all=true,.workers=workers,
-        .work_budget=UINT64_MAX,.worker_quantum=64u,
+        .work_budget=UINT64_MAX,.worker_quantum=4096u,
         .prepared_node_quantum=prepared_quantum>0?(uint64_t)prepared_quantum:1u};
 #ifdef CETTA_PRIME_ORDINARY_TEST_OBSERVER
     policy.worker_quantum=prime_ordinary_test_quantum();
@@ -482,9 +485,7 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         CettaPrimeObservationReturn *owned=g_prime_ordinary_return;
         assert(owned->ordinary && !owned->ordinary_control &&
             source->frame_depth==0u && owned->output!=control->driver.arena);
-        control->owned_top_episode=owned->top.episode;
-        owned->ordinary_control=control;
-        owned->top.owned.initialized=true;
+        prime_ordinary_return_take_control(owned,control);
         free(frames);
         return true;
     }
@@ -603,17 +604,11 @@ refuse:
     free(frames);return false;
 }
 
-static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {
+/* The borrowed observer policies stay fixed for this run. Unobserved adapter
+ * transitions do not probe cost or replay services at every quantum/return. */
+static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_loop(
+    PrimeNativeControl *control,uint64_t grant,bool meter_cost,bool replay_phases) {
     PrimeEvalStackDriver *driver=&control->driver;
-    assert(driver->capsule_stack && driver->control==control && !control->cost_enabled);
-    if (!grant || control->failed || control->invalidated) return;
-    if (!space_read_token_is_current(control->source_read) ||
-        !prime_native_control_query_reads_current(control) ||
-        !registry_read_view_validate(&control->registry_read,g_registry)) {
-        control->invalidated=true;return;
-    }
-    PrimeNativeRunGuard guard;
-    prime_native_run_enter(control,&guard);
     while (grant && (driver->task_ready || driver->top) &&
            !driver->capsule_frontier && !control->need_pending &&
            !control->effect_pending && !control->failed && !control->invalidated) {
@@ -632,7 +627,8 @@ static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_
         CettaEvalCompletion result=eval_completion_child_end(&completion);
         /* An adapter dispatch remains a paid unit, even if it suspends.
          * It is deliberately not equated with an old agenda quantum. */
-        cetta_native_cost_charge(CETTA_COST_QUANTUM,1u);
+        if (meter_cost)
+            cetta_native_cost_charge_observed(CETTA_COST_QUANTUM,1u);
         control->steps++;grant--;
         if (result!=CETTA_EVAL_COMPLETE) {
             control->completion=result;control->failed=true;
@@ -646,10 +642,35 @@ static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_
             driver->capacity_blocked=true;
             control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;break;
         }
-        (void)prime_native_mark_delivered(control,i);control->published++;
+        (void)prime_native_mark_delivered(control,i,replay_phases);
+        control->published++;
     }
     if (control->registry_read.stale) control->invalidated=true;
     if (control->registry_read.incomplete || driver->capacity_blocked)
         control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+}
+
+static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {
+    PrimeEvalStackDriver *driver=&control->driver;
+    assert(driver->capsule_stack && driver->control==control && !control->cost_enabled);
+    if (!grant || control->failed || control->invalidated) return;
+    if (!space_read_token_is_current(control->source_read) ||
+        !prime_native_control_query_reads_current(control) ||
+        !registry_read_view_validate(&control->registry_read,g_registry)) {
+        control->invalidated=true;return;
+    }
+    PrimeNativeRunGuard guard;
+    prime_native_run_enter(control,&guard);
+    if (guard.cost_active) {
+        if (prime_replay_phases_requested())
+            prime_ordinary_capsule_stack_loop(control,grant,true,true);
+        else
+            prime_ordinary_capsule_stack_loop(control,grant,true,false);
+    } else {
+        if (prime_replay_phases_requested())
+            prime_ordinary_capsule_stack_loop(control,grant,false,true);
+        else
+            prime_ordinary_capsule_stack_loop(control,grant,false,false);
+    }
     prime_native_run_leave(&guard);
 }

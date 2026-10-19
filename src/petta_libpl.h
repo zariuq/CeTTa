@@ -11,6 +11,13 @@ PeTTaNamedArity petta_libpl_named_arity(
     CettaLibPrologRuntime *runtime, SymbolId head,
     CettaExprLen supplied);
 
+/* petta_libpl_named_arity restricted to the reference library's functions
+ * that have no effect (they read only their arguments): unknown for every
+ * other name, including a reference name an explicit import took over. */
+PeTTaNamedArity petta_libpl_effect_free_named_arity(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    CettaExprLen supplied);
+
 /*
  * Monotone identity for the currently published foreign-call capability
  * syntax.  Consumers may cache classifications only while this value is
@@ -18,6 +25,11 @@ PeTTaNamedArity petta_libpl_named_arity(
  */
 uint64_t petta_libpl_capability_revision(
     const CettaLibPrologRuntime *runtime);
+
+/* States of the Prolog eval/2 bridge allocated and not yet released, over
+ * every runtime: zero whenever no eval/2 call is running or holds pending
+ * answers.  Zero in a build without Prolog. */
+uint64_t petta_libpl_eval_states_live(void);
 
 /*
  * Plan-time resolution of a source application head against the live

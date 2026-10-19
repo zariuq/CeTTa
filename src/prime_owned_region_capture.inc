@@ -1,13 +1,14 @@
-/* V1 captures one ordinary native world and a finite structural DAG. It
- * declines computed application heads and service-bearing values. The
- * caller keeps every source live and quiescent throughout this function;
+/* Capture one ordinary native world and a finite structural DAG. The
+ * immutable profile declines computed heads; the private-data profile
+ * checks their resolved operations at invocation. Both refuse opaque leaves.
+ * The caller keeps every source live and quiescent throughout this function;
  * concurrent source mutation and process-global shutdown are not admitted. */
 typedef struct {
     Atom *source, *image;
     AtomId stored;
     size_t edge;
     unsigned char state;
-    bool value;
+    bool value, executable;
 } PrimeNativeRegionNode;
 
 typedef struct {
@@ -15,7 +16,7 @@ typedef struct {
     PrimeNativeRegionNode *nodes;
     size_t *stack;
     size_t length, capacity, depth;
-    bool value;
+    bool value, executable;
     CettaContinuationStatus status;
 } PrimeNativeRegionCapture;
 
@@ -54,8 +55,10 @@ static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *so
     if (known != SIZE_MAX) {
         PrimeNativeRegionNode *node=&capture->nodes[known];
         if (node->state != 2u) return false;
-        if (capture->value && !node->value) {
-            node->value=true; node->state=1u; node->edge=0u;
+        if ((capture->value && !node->value) ||
+            (capture->executable && !node->executable)) {
+            node->value|=capture->value; node->executable|=capture->executable;
+            node->state=1u; node->edge=0u;
             capture->stack[capture->depth++]=known;
         }
         return true;
@@ -90,7 +93,8 @@ static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *so
     } else if (source->kind != ATOM_SYMBOL && source->kind != ATOM_VAR && source->kind != ATOM_EXPR)
         return false;
     size_t index = capture->length++;
-    capture->nodes[index] = (PrimeNativeRegionNode){.source=source,.state=1u,.value=capture->value};
+    capture->nodes[index] = (PrimeNativeRegionNode){.source=source,.state=1u,
+        .value=capture->value,.executable=capture->executable};
     capture->stack[capture->depth++] = index;
     return true;
 }
@@ -129,9 +133,7 @@ static bool prime_native_region_world_registered(PrimeNativeRegionCapture *captu
     return okay;
 }
 
-/* This finite first-order closure cannot manufacture an application head
- * from a value or acquire a new owner. Higher-order/effectful closure
- * inference remains an ordinary fallback, never an empty successful run. */
+/* Operations admitted by the immutable first-order profile. */
 static bool prime_native_region_primitive(SymbolId head) {
     return head == g_builtin_syms.quote || head == g_builtin_syms.superpose ||
         head == g_builtin_syms.if_text || head == g_builtin_syms.if_equal ||
@@ -157,18 +159,35 @@ static bool prime_native_owned_region_scalar_head(Space *space, Arena *arena, At
         atom_has_constructor_head(space, arena, call);
 }
 
-static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena, Atom *call) {
+static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
+    Atom *call, bool private_data) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len) return true;
     Atom *head_atom = call->expr.elems[0];
+    if (private_data && head_atom &&
+        (head_atom->kind == ATOM_VAR || head_atom->kind == ATOM_EXPR))
+        return true;
     if (!head_atom || head_atom->kind != ATOM_SYMBOL)
         return prime_native_owned_region_scalar_head(space, arena, call);
     SymbolId head = atom_symbol_current_id(head_atom);
     if (prime_native_region_primitive(head)) return true;
+    if (private_data && (head == g_builtin_syms.match ||
+        head == g_builtin_syms.get_atoms || head == g_builtin_syms.add_atom ||
+        head == g_builtin_syms.remove_atom || head == g_builtin_syms.collapse ||
+        head == g_builtin_syms.function || head == g_builtin_syms.return_text ||
+        head == g_builtin_syms.eval))
+        return true;
+    /* These semantic handlers use the same inspected equation/argument
+     * closure. Costs, interaction services and effectful primitives retain
+     * their separate admission contracts. Every descendant is still checked. */
+    const PrimeNeedSymbolIds *weights=prime_need_symbols();
+    if (head==weights->weight_where || head==weights->weight_read ||
+        head==weights->weight_exact_rational) return true;
     /* These are declaration/data constructors, not mutable services. */
     if (head == g_builtin_syms.equals || head == g_builtin_syms.colon ||
         head == g_builtin_syms.arrow) return true;
     if (symbol_id_is_builtin(head) || registry_lookup_atom(head_atom) ||
         eval_native_weight_head(head) || cetta_prime_host_intrinsic_head(head)) return false;
+    if (private_data && eval_equations_may_match_known_head(space,head)) return true;
     return g_library_context && g_library_context->petta_program &&
         petta_program_classify_resolved_call(g_library_context->petta_program, space, call)
             != PETTA_RESOLVED_CALL_UNSAFE;
@@ -196,9 +215,12 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
     Registry *saved_registry = g_registry;
     g_registry = registry;
     bool left_scalar = prime_native_owned_region_scalar_head(source, &region->snapshot, node);
-    bool left = (symbol_head || left_scalar) &&
+    bool indirect = region->private_data &&
+        (head_atom->kind == ATOM_VAR || head_atom->kind == ATOM_EXPR);
+    bool left = (symbol_head || left_scalar || indirect) &&
         (node == expression || left_scalar ||
-         prime_native_owned_region_call_admitted(source, &region->snapshot, node));
+         prime_native_owned_region_call_admitted(source, &region->snapshot, node,
+             region->private_data));
     PettaResolvedCallClass left_class = petta_program_classify_resolved_call(
         origin->petta_program, source, node);
     bool left_grounded = symbol_head && is_grounded_op(head);
@@ -210,9 +232,12 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
         bool right_symbol = image_head->kind == ATOM_SYMBOL;
         bool right_scalar = prime_native_owned_region_scalar_head(
             &region->world, &region->snapshot, image);
-        bool right = (right_symbol || right_scalar) &&
+        bool right_indirect = region->private_data &&
+            (image_head->kind == ATOM_VAR || image_head->kind == ATOM_EXPR);
+        bool right = (right_symbol || right_scalar || right_indirect) &&
             (node == expression || right_scalar ||
-             prime_native_owned_region_call_admitted(&region->world, &region->snapshot, image));
+             prime_native_owned_region_call_admitted(&region->world, &region->snapshot, image,
+                 region->private_data));
         PettaResolvedCallClass right_class = petta_program_classify_resolved_call(
             region->library->petta_program, &region->world, image);
         bool foreign_known = false;
@@ -222,7 +247,9 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
             foreign_known = foreign.known;
         }
         bool same_category = symbol_head == right_symbol && left_scalar == right_scalar &&
+            indirect == right_indirect &&
             (symbol_head ? atom_symbols_equal(head_atom, image_head) :
+             indirect ? head_atom->kind == image_head->kind :
              left_scalar && head_atom->ground.gkind == image_head->ground.gkind);
         okay = right && same_category && !foreign_known && left_class == right_class &&
             left_grounded == (right_symbol && is_grounded_op(atom_symbol_current_id(image_head)));
@@ -369,10 +396,11 @@ static bool prime_native_region_prepare_programs(PrimeNativeRegionCapture *captu
 }
 
 static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
-    Space *source, Registry *registry, Atom *expression,
-    size_t inspection_limit, size_t byte_limit, CettaContinuationStatus *status) {
+    Space *source, Registry *registry, Atom *expression, Atom *program,
+    size_t inspection_limit, size_t byte_limit, bool private_data,
+    CettaContinuationStatus *status) {
     *status = CETTA_CONTINUATION_UNSUPPORTED;
-    if (!source || !registry || !expression || !prime_native_owned_top_context_admitted() ||
+    if (!source || !registry || !expression || !program || !prime_native_owned_top_context_admitted() ||
         !prime_native_region_baseline(g_library_context) || g_prime_owned_region ||
         g_prime_need_active.top || g_prime_need_logical_env ||
         g_prime_need_answer_observer || g_prime_need_answer_observer_context ||
@@ -388,11 +416,12 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
     PrimeNativeOwnedRegion *region = calloc(1u, sizeof(*region));
     if (!region) { *status=CETTA_CONTINUATION_CAPACITY; return NULL; }
     region->inspection_limit=inspection_limit; region->byte_limit=byte_limit;
+    region->private_data=private_data;
     region->symbols=symbol_table_instance_id(g_symbols);
     cetta_native_cost_init(&region->preparation);
     CettaNativeCostScope cost;
     cetta_native_cost_scope_enter(&cost, &region->preparation, 0u);
-    PrimeNativeRegionCapture capture = {.region=region,.value=true,
+    PrimeNativeRegionCapture capture = {.region=region,.value=true,.executable=program==expression,
         .status=CETTA_CONTINUATION_UNSUPPORTED};
     AtomDeepCopySession *copy=NULL;
     SpaceReadToken source_read={0};
@@ -403,6 +432,16 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
     }
     okay=okay && prime_native_region_world_registered(&capture,source) &&
         prime_native_region_walk(&capture,expression);
+    /* The admitted top request interprets its policy as data. Only its
+     * program executes. A node shared with that program, a world row or a
+     * registry value is still checked in its executable role. */
+    capture.executable=true;
+    if (okay && program!=expression) {
+        okay=prime_native_region_walk(&capture,program);
+        size_t root=prime_native_region_find(&capture,expression);
+        okay=okay && root!=SIZE_MAX;
+        if (okay) capture.nodes[root].executable=true;
+    }
     CettaCount rows=space_length64(source);
     for (CettaIndex i=0u; okay && i<rows; i++) {
         okay=prime_native_region_tick(&capture) &&
@@ -514,18 +553,20 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         }
     }
     if (okay) okay=prime_native_region_prepare_programs(&capture,origin,source,registry,copy);
-    /* Inspect every call-shaped node, including RHS, policy and quoted
-     * payloads. Unknown dynamic heads decline rather than escape analysis.
+    /* Inspect every executable call-shaped node, including RHS and quoted
+     * payloads. Admitted top-policy data retains its separate role. Private
+     * indirect heads retain the invocation-time service gate.
      * The omitted foreign capability is compared even for inert names. */
     for (size_t i=0u; okay && i<capture.length; i++) {
         Atom *node=capture.nodes[i].source, *image=capture.nodes[i].image;
         if (node->kind==ATOM_SYMBOL && capture.nodes[i].value) {
             Atom *binding=registry_lookup_symbol(registry,node);
             if (binding && binding->kind==ATOM_GROUNDED && binding->ground.gkind==GV_SPACE) {
-                okay=false; break;
+                okay=region->private_data && binding->ground.ptr==source;
+                if (!okay) break;
             }
         }
-        if (node->kind!=ATOM_EXPR || !node->expr.len) continue;
+        if (!capture.nodes[i].executable || node->kind!=ATOM_EXPR || !node->expr.len) continue;
         if (!prime_native_region_tick(&capture)) {
             okay=false; break;
         }

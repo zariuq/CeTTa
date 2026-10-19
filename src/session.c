@@ -12,6 +12,7 @@ static const CettaProfile CETTA_PROFILE_HE_FORMAL_VALUE = {
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
@@ -23,6 +24,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = true,
+    .version = CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
@@ -34,6 +36,7 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
@@ -45,6 +48,7 @@ static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
 };
 
 static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
@@ -56,6 +60,7 @@ static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PRIME_0_0_1,
 };
 
 /* Four identity profiles of the draft: the same programs run under each so
@@ -163,6 +168,18 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .version = CETTA_LANGUAGE_VERSION_PETTA_1_0_6,
 };
 
+static const CettaProfile CETTA_PROFILE_PETTA_CONTRACT_VALUE = {
+    .id = CETTA_PROFILE_PETTA_CONTRACT,
+    .language_id = CETTA_LANGUAGE_PETTA,
+    .name = "contract",
+    .note = "PeTTa's typed line with call contracts: a failed check raises on every route.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = false,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1_C,
+};
+
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .id = CETTA_PROFILE_PETTA_TYPECHECK_V2,
@@ -266,6 +283,15 @@ static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+static const CettaProfile CETTA_HOL_PROFILES[] = {
+    {.id = CETTA_PROFILE_HOL_STANDARD, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
+     .name = "standard", .note = "Default: permit only checked HOL Light standard axioms."},
+    {.id = CETTA_PROFILE_HOL_OPEN, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
+     .name = "open", .note = "Permit explicit user axioms and retain their dependencies."},
+    {.id = CETTA_PROFILE_HOL_SEALED, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
+     .name = "sealed", .note = "Permit no new axioms."},
+};
+
 /* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
@@ -318,6 +344,14 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"unify", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-budget", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-cancel", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-count", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-exists", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-new", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-record", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-route", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"work-take", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
 };
 
 static const CettaModuleProviderDescriptor CETTA_MODULE_PROVIDER_DESCRIPTORS[] = {
@@ -404,6 +438,8 @@ static uint32_t cetta_language_base_builtin_mask(CettaLanguageId language_id) {
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_LANGUAGE_PETTA:
         return CETTA_PROFILE_MASK_PETTA_BASE;
+    case CETTA_LANGUAGE_HOL_LIGHT:
+        return 0;
     case CETTA_LANGUAGE_MM2:
     case CETTA_LANGUAGE_AMBIENT:
     case CETTA_LANGUAGE_CALCULATOR:
@@ -475,44 +511,69 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 #endif
 }
 
+bool cetta_profile_petta_contracts(const CettaProfile *profile) {
+    return profile && profile->id == CETTA_PROFILE_PETTA_CONTRACT;
+}
+
+bool cetta_language_version_petta_typed_line(
+    const CettaLanguageVersion *version) {
+    return version && (version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1 ||
+                       version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1_C);
+}
+
 /* PeTTa 1.0.6 reads the libraries vendored from release v1.0.6.  PeTTa 1.1
  * reads the typed libraries of PeTTa's main line first (typecheck/), and
- * runs under its checker unless a program names another 1.1 profile. */
+ * runs under its checker unless a program names another 1.1 profile.
+ * PeTTa 1.1.c keeps 1.0.6's type language and libraries, takes the typed
+ * line's evaluation and module laws, and runs declarations as contracts. */
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_LANGUAGE_PETTA, "1.0.6",
-     NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default"},
+     NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default",
+     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
-     "typecheck-v2", "typecheck", "PeTTa's typed language"},
+     "typecheck-v2", "typecheck", "PeTTa's typed language",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "1.1.c",
+     "contract", NULL, "CeTTa's contract version of PeTTa's typed line",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_HE_0_0_1, CETTA_LANGUAGE_HE, "0.0.1",
+     NULL, NULL, "CeTTa HE contract; formal/default and explicit extensions",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
+    {CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10, CETTA_LANGUAGE_HE, "0.2.10",
+     "he-compat", NULL, "Rust Hyperon Experimental HE 0.2.10 compatibility lane",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = false},
+    {CETTA_LANGUAGE_VERSION_PRIME_0_0_1, CETTA_LANGUAGE_PRIME, "0.0.1",
+     NULL, NULL, "MeTTa-Prime: this line's Prime runtime, under the registry's 0.0.1 spelling",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
 };
 
-const CettaLanguageVersion *cetta_language_version_from_name(
-    CettaLanguageId language_id, const char *name) {
-    if (!name)
-        return NULL;
+static const CettaLanguageVersion *language_version_find(
+    CettaLanguageId language_id, CettaLanguageVersionId id, const char *name) {
     for (size_t i = 0u;
          i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
          i++) {
-        if (CETTA_LANGUAGE_VERSIONS[i].language_id == language_id &&
-            strcmp(CETTA_LANGUAGE_VERSIONS[i].name, name) == 0)
-            return &CETTA_LANGUAGE_VERSIONS[i];
+        const CettaLanguageVersion *version = &CETTA_LANGUAGE_VERSIONS[i];
+        if (version->language_id != language_id)
+            continue;
+        if (name ? strcmp(version->name, name) == 0
+                 : id == CETTA_LANGUAGE_VERSION_NONE ? version->is_default
+                                                     : version->id == id)
+            return version;
     }
     return NULL;
+}
+
+const CettaLanguageVersion *cetta_language_version_from_name(
+    CettaLanguageId language_id, const char *name) {
+    return name ? language_version_find(language_id, CETTA_LANGUAGE_VERSION_NONE, name)
+                : NULL;
 }
 
 const CettaLanguageVersion *cetta_language_version_of(
     CettaLanguageId language_id, const CettaProfile *profile) {
     CettaLanguageVersionId id = profile && profile->language_id == language_id
         ? profile->version : CETTA_LANGUAGE_VERSION_NONE;
-    if (id == CETTA_LANGUAGE_VERSION_NONE &&
-        language_id == CETTA_LANGUAGE_PETTA)
-        id = CETTA_LANGUAGE_VERSION_PETTA_1_0_6;
-    for (size_t i = 0u;
-         i < sizeof CETTA_LANGUAGE_VERSIONS / sizeof CETTA_LANGUAGE_VERSIONS[0];
-         i++) {
-        if (CETTA_LANGUAGE_VERSIONS[i].id == id)
-            return &CETTA_LANGUAGE_VERSIONS[i];
-    }
-    return NULL;
+    return language_version_find(language_id, id, NULL);
 }
 
 void cetta_language_print_versions(FILE *out, CettaLanguageId language_id) {
@@ -526,7 +587,8 @@ void cetta_language_print_versions(FILE *out, CettaLanguageId language_id) {
 }
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
-    return language_id == CETTA_LANGUAGE_HE ||
+    return language_id == CETTA_LANGUAGE_HOL_LIGHT ||
+           language_id == CETTA_LANGUAGE_HE ||
            language_id == CETTA_LANGUAGE_PRIME ||
            language_id == CETTA_LANGUAGE_MM2 ||
            language_id == CETTA_LANGUAGE_PETTA ||
@@ -542,6 +604,11 @@ bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
 const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
                                                          const char *name) {
     if (!name) return NULL;
+    if (language_id == CETTA_LANGUAGE_HOL_LIGHT) {
+        for (size_t i = 0; i < sizeof CETTA_HOL_PROFILES / sizeof CETTA_HOL_PROFILES[0]; ++i)
+            if (!strcmp(name, CETTA_HOL_PROFILES[i].name)) return &CETTA_HOL_PROFILES[i];
+        return NULL;
+    }
     if (!cetta_language_has_named_profiles(language_id)) {
         return NULL;
     }
@@ -605,6 +672,10 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             strcmp(name, "petta-extended") == 0) {
             return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
         }
+        if (cetta_profile_name_matches(
+                name, &CETTA_PROFILE_PETTA_CONTRACT_VALUE)) {
+            return &CETTA_PROFILE_PETTA_CONTRACT_VALUE;
+        }
     }
     if (language_id == CETTA_LANGUAGE_ZERO &&
         cetta_profile_name_matches(name, &CETTA_PROFILE_ZERO_EXP_VALUE)) {
@@ -653,6 +724,10 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_ZERO_INTERACT:
     case CETTA_PROFILE_MM2_GSLT:
         return CETTA_PROFILE_MASK_ALL;
+    case CETTA_PROFILE_HOL_STANDARD:
+    case CETTA_PROFILE_HOL_OPEN:
+    case CETTA_PROFILE_HOL_SEALED:
+        return 0;
     case CETTA_PROFILE_PETTA_TYPECHECK_V2:
     case CETTA_PROFILE_PETTA_TYPECHECK_V3:
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -662,6 +737,8 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
 #endif
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
+    case CETTA_PROFILE_PETTA_CONTRACT:
+        return CETTA_PROFILE_MASK_PETTA_BASE;
     }
     return 0;
 }
@@ -683,6 +760,11 @@ bool cetta_language_visible_in(CettaLanguageId language_id,
 void cetta_profile_print_inventory_for_language(FILE *out,
                                                 CettaLanguageId language_id) {
     if (!out) return;
+    if (language_id == CETTA_LANGUAGE_HOL_LIGHT) {
+        for (size_t i = 0; i < sizeof CETTA_HOL_PROFILES / sizeof CETTA_HOL_PROFILES[0]; ++i)
+            fprintf(out, "%s\t%s\n", CETTA_HOL_PROFILES[i].name, CETTA_HOL_PROFILES[i].note);
+        return;
+    }
     if (!cetta_language_has_named_profiles(language_id)) {
         fprintf(out, "language '%s' has no named profiles\n",
                 cetta_language_canonical_name(language_id));
@@ -730,6 +812,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.name,
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_CONTRACT_VALUE.name,
+                CETTA_PROFILE_PETTA_CONTRACT_VALUE.note);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
@@ -955,7 +1040,9 @@ void cetta_module_policy_init_for_language_profile(CettaModulePolicy *policy,
             policy->provider_flags |= desc->flag;
         }
     }
-    policy->relative_module_policy = cetta_language_relative_module_policy(language_id);
+    const CettaLanguageVersion *version = cetta_language_version_of(language_id, profile);
+    policy->relative_module_policy = version ? version->relative_imports
+        : cetta_language_relative_module_policy(language_id);
     policy->transactional_imports = true;
 }
 
@@ -1068,14 +1155,22 @@ void cetta_eval_session_clear_process_exit(CettaEvalSession *session) {
         return;
     session->process_control.exit_requested = false;
     session->process_control.exit_code = 0;
+    session->process_control.answer_policy = CETTA_EXIT_DISCARD_ANSWER_DISPLAY;
 }
 
 void cetta_eval_session_request_process_exit(CettaEvalSession *session,
                                              int exit_code) {
+    cetta_eval_session_request_process_exit_with_answer_policy(
+        session, exit_code, CETTA_EXIT_DISCARD_ANSWER_DISPLAY);
+}
+
+void cetta_eval_session_request_process_exit_with_answer_policy(
+    CettaEvalSession *session, int exit_code, CettaExitAnswerPolicy policy) {
     if (!session || session->process_control.exit_requested)
         return;
     session->process_control.exit_requested = true;
     session->process_control.exit_code = exit_code;
+    session->process_control.answer_policy = policy;
 }
 
 bool cetta_eval_session_process_exit_requested(

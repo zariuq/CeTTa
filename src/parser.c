@@ -180,6 +180,31 @@ bool parser_set_builtin_document_reader(bool builtin) {
     return old;
 }
 
+Atom *parser_read_document_term_n(Arena *a, const char *text, size_t text_len,
+                                  bool *handled) {
+    *handled = false;
+    if (!a || !text || !g_document_ids_backend.parse_term_bytes_id ||
+        g_document_ids_backend_active)
+        return NULL;
+    *handled = true;
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    AtomId id = CETTA_ATOM_ID_NONE;
+    g_document_ids_backend_active = true;
+    int status = g_document_ids_backend.parse_term_bytes_id(
+        g_document_ids_backend.context, (const uint8_t *)text, text_len,
+        &universe, &id, NULL, 0u);
+    g_document_ids_backend_active = false;
+    Atom *term = status == 0 && id != CETTA_ATOM_ID_NONE
+        ? term_universe_copy_atom(&universe, a, id) : NULL;
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    return term;
+}
+
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
 /* The scanners read text_len bytes of text, which may hold NUL and is
@@ -1891,6 +1916,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_BINDINGS:
     case GV_TENSOR:
     case GV_FOREIGN:
+    case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:

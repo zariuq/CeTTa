@@ -225,10 +225,15 @@ def unwrap_function(form):
 
 
 def value_handoff_call(form):
-    """CALL of (function (chain (eval CALL) $r (return $r))), or None."""
+    """A sealed native handoff, optionally preceded by value bindings."""
     if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"):
         return None
     chain = form[1]
+    while (isinstance(chain, list) and len(chain) == 4 and chain[0] == "let"
+           and isinstance(chain[0], Symbol) and is_variable(chain[1])):
+        if unsealed_return(chain[2]):
+            return None
+        chain = chain[3]
     if not (isinstance(chain, list) and len(chain) == 4 and chain[0] == "chain"):
         return None
     evaluated, var, body = chain[1], chain[2], chain[3]
@@ -237,6 +242,58 @@ def value_handoff_call(form):
             and is_return_of(body, var)):
         return None
     return evaluated[1]
+
+
+def unsealed_return(form):
+    """Explicit control belonging to an enclosing function is not a value binding."""
+    if isinstance(form, list):
+        if form and form[0] == Symbol("function") and isinstance(form[0], Symbol):
+            return False
+        return any(unsealed_return(item) for item in form)
+    return isinstance(form, Symbol) and form == "return"
+
+
+def value_handoff_bindings(form):
+    """Administrative value bindings preceding a recognized native handoff."""
+    bindings = []
+    body = form[1]
+    while (isinstance(body, list) and len(body) == 4 and body[0] == "let"
+           and isinstance(body[0], Symbol) and is_variable(body[1])):
+        bindings.append((body[1], body[2]))
+        body = body[3]
+    return bindings
+
+
+def sealed_native_case_call(form):
+    """CALL of the legacy native return-envelope handoff, or None.
+
+    This recognizes declaration semantics only; the two case branches keep
+    their existing dialect spelling and still unwrap the native envelope.
+    """
+    if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"
+            and isinstance(form[0], Symbol)):
+        return None
+    case = form[1]
+    if not (isinstance(case, list) and len(case) == 3 and case[0] == "case"
+            and isinstance(case[0], Symbol)):
+        return None
+    call, branches = case[1], case[2]
+    if not (isinstance(call, list) and call and isinstance(call[0], Symbol)
+            and call[0].startswith("__cetta_lib_")
+            and isinstance(branches, list) and len(branches) == 2):
+        return None
+    wrapped, plain = branches
+    if not (isinstance(wrapped, list) and len(wrapped) == 2
+            and isinstance(wrapped[0], list) and len(wrapped[0]) == 2
+            and wrapped[0][0] == "return" and isinstance(wrapped[0][0], Symbol)
+            and is_variable(wrapped[0][1])
+            and is_return_of(wrapped[1], wrapped[0][1])
+            and isinstance(wrapped[1][0], Symbol)
+            and isinstance(plain, list) and len(plain) == 2
+            and is_variable(plain[0]) and is_return_of(plain[1], plain[0])
+            and isinstance(plain[1][0], Symbol)):
+        return None
+    return call
 
 
 def spell_value_handoff(call, dialect: str):
@@ -331,7 +388,10 @@ def transform(form, dialect: str):
             return form
         handoff = value_handoff_call(form)
         if handoff is not None:
-            return spell_value_handoff(transform(handoff, dialect), dialect)
+            spelled = spell_value_handoff(transform(handoff, dialect), dialect)
+            for binder, value in reversed(value_handoff_bindings(form)):
+                spelled = [Symbol("let"), binder, transform(value, dialect), spelled]
+            return spelled
         if dialect == "petta":
             # HE module names designate MeTTa libraries. PeTTa also imports
             # Python modules by bare name (notably math and io), so preserve
@@ -391,6 +451,8 @@ def handoff_heads(forms):
             continue
         head = form[1][0]
         call = value_handoff_call(form[2])
+        if call is None:
+            call = sealed_native_case_call(form[2])
         if call is None:
             other.add(head)
             continue

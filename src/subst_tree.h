@@ -89,6 +89,23 @@ typedef struct {
     uint32_t count;         /* number of occupied slots */
 } IntHashTable;
 
+/* A string, bigint or rational key, by content: a string's bytes (NUL
+ * included), a number's canonical text.  The branch owns its copy of the
+ * bytes and frees it with its node.  Interning the text instead would make
+ * every indexed or queried value a permanent symbol. */
+typedef struct {
+    uint64_t hash;          /* symbol_hash_span of the bytes */
+    uint8_t *bytes;         /* owned; len bytes and a terminating NUL */
+    uint32_t len;
+    struct SubstNode *child;
+} SubstTextBranch;
+
+typedef struct {
+    SubstTextBranch *entries;  /* power-of-2 sized, child==NULL = empty slot */
+    uint32_t mask;
+    uint32_t count;
+} TextHashTable;
+
 typedef struct SubstNode {
     /* Symbol branches (SymbolId -> child) */
     SubstSymBranch *sym;
@@ -115,6 +132,12 @@ typedef struct SubstNode {
     uint32_t nints, cints;
     IntHashTable int_ht;
     bool int_hashed;
+
+    /* Grounded text branches (content -> child) */
+    SubstTextBranch *text;
+    uint32_t ntext, ctext;
+    TextHashTable text_ht;
+    bool text_hashed;
 
     /* Leaves: (space atom index, epoch for standardization apart) */
     struct { CettaIndex idx; uint32_t epoch; bool owns_identity; } *leaves;

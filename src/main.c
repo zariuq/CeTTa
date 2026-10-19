@@ -30,6 +30,8 @@
 #include "eval.h"
 #include "he_type_policy.h"
 #include "library.h"
+#include "native_handle.h"
+#include "native/hol_light/hol_cli.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -45,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -52,7 +55,7 @@ static char alt_stack_buf[16384];  /* alternate signal stack for SIGSEGV handler
 
 static void handle_sigsegv(int sig) {
     (void)sig;
-    const char msg[] = "\nStack overflow. Use tail recursion or increase the stack limit.\n";
+    const char msg[] = "\nFatal memory fault (SIGSEGV); stack overflow is one possible cause.\n";
     ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1);
     (void)r;
     _exit(2);
@@ -61,6 +64,7 @@ static void handle_sigsegv(int sig) {
 static bool g_count_only = false;
 static bool g_durable_admin = false;
 static bool g_quiet_results = false;
+static bool g_no_results = false;
 static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
@@ -746,6 +750,8 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
             return atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
         case GV_TENSOR:
             return atom_tensor(dst, src->ground.ptr);
+        case GV_SEAL:
+            return atom_seal(dst, src->ground.ptr);
         case GV_TERM_GRAPH: {
             const CettaTermGraphRef *ref = src->ground.ptr;
             return atom_term_graph(dst, ref->graph, ref->node);
@@ -1234,6 +1240,7 @@ done:
 static void write_results(FILE *out, ResultSet *rs,
                           CettaLanguageId language_id,
                           const CettaProfile *profile) {
+    if (g_no_results) return;
     FILE *logical_dest = stdout;
     ResultSet visible = {0};
     Atom **visible_items = NULL;
@@ -1422,6 +1429,19 @@ static bool endpoint_resolve_version(CettaCliEndpoint *endpoint,
     return true;
 }
 
+/* The languages whose profiles include this name. */
+static void endpoint_note_profile_languages(const char *profile_name) {
+    static const char *const names[] = {
+        "petta", "he", "prime", "hol-light", "rhocalc", "mm2"};
+    for (size_t i = 0u; i < sizeof names / sizeof names[0]; i++) {
+        const CettaLanguageSpec *lang = cetta_language_lookup(names[i]);
+        if (lang && cetta_language_has_named_profiles(lang->id) &&
+            cetta_profile_from_name_for_language(lang->id, profile_name))
+            fprintf(stderr, "note: profile '%s' is a profile of --lang %s\n",
+                    profile_name, lang->canonical);
+    }
+}
+
 static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
                              const char *exec_path) {
     char langdef_error[256] = {0};
@@ -1471,6 +1491,7 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
             fprintf(stderr, "error: unknown %s profile '%s' for language '%s'\n",
                     role, endpoint->profile_name, endpoint->lang->canonical);
             cetta_profile_print_inventory_for_language(stderr, endpoint->lang->id);
+            endpoint_note_profile_languages(endpoint->profile_name);
             return false;
         }
     }
@@ -1478,6 +1499,8 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
         return false;
     if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_PRIME)
         endpoint->profile = cetta_profile_prime_default();
+    if (!endpoint->profile && endpoint->lang->id == CETTA_LANGUAGE_HOL_LIGHT)
+        endpoint->profile = cetta_profile_from_name_for_language(CETTA_LANGUAGE_HOL_LIGHT, "standard");
     return true;
 }
 
@@ -1827,12 +1850,20 @@ done:
 }
 
 static void print_usage(FILE *out) {
-    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>\n", out);
+    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
+    fputs("       note: without --lang, cetta runs petta (petta@1.0.6)\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang prime [--profile <prime-default|identity-j|identity-scoped|identity-uip|identity-univalence>] <file.metta>\n", out);
+    fputs("       cetta --lang he@0.0.1 [--profile extended] <file.metta> # default CeTTa HE contract\n", out);
+    fputs("       cetta --lang he@0.2.10 <file.metta> # Rust-HE compatibility profile\n", out);
+    fputs("       cetta --lang prime@0.0.1 <file.metta> # Prime runtime\n", out);
+    fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
+    fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
+    fputs("       cetta --lang petta@1.0.6 <file.metta> # default PeTTa version\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+    fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
 #endif
@@ -1856,6 +1887,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
+    fputs("       cetta --no-results <file.metta>         # suppress answer display, not explicit output\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
@@ -2414,6 +2446,13 @@ static int main_petta_compiled_text_backend(
         error_buf, error_buf_size);
 }
 
+static int main_petta_compiled_term_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId *out_id, char *error_buf, size_t error_buf_size) {
+    return petta_compiled_reader_v1_parse_term_bytes_id(
+        context, bytes, length, universe, out_id, error_buf, error_buf_size);
+}
+
 static int main_petta_compiled_file_backend(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
@@ -2580,6 +2619,11 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
         if (fclose(cleanup->output_spool) != 0) ok = false;
         cleanup->output_spool = NULL;
     }
+
+    /* Handles may retain computations over registry-owned spaces and
+     * document providers. Close them before either dependency is released. */
+    if (cleanup->libraries_initialized)
+        cetta_native_handle_cleanup_all(cleanup->libraries);
 
     free(cleanup->atoms);
     cleanup->atoms = NULL;
@@ -3030,7 +3074,8 @@ static int cetta_main(int argc, char **argv) {
         CETTA_GSLT_REALIZATION_HORN_REFERENCE;
     bool gslt_realization_requested = false;
 
-    endpoint_init(&source_endpoint, "he");
+    /* PeTTa is the most widely used dialect: a program names another. */
+    endpoint_init(&source_endpoint, "petta");
     endpoint_init(&target_endpoint, NULL);
     current_endpoint = &source_endpoint;
 
@@ -3091,6 +3136,10 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--quiet") == 0) {
             g_quiet_results = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--no-results") == 0) {
+            g_no_results = true;
             continue;
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
@@ -3567,6 +3616,24 @@ static int cetta_main(int argc, char **argv) {
         return translate_rc;
     }
 
+    if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {
+        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
+            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
+            gslt_realization_requested || langdef_proof_execution_requested ||
+            mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
+            fputs("error: hol-light reads a HOLR proof file; evaluator-specific options do not apply\n", stderr);
+            free(inline_buf);
+            return 2;
+        }
+        HolAxiomPolicy policy = profile && profile->id == CETTA_PROFILE_HOL_OPEN ? HOL_AXIOMS_OPEN :
+            profile && profile->id == CETTA_PROFILE_HOL_SEALED ? HOL_AXIOMS_SEALED : HOL_AXIOMS_STANDARD;
+        uint64_t fuel = fuel_override_requested ? (fuel_override < 0 ? 0 : (uint64_t)fuel_override) : 0;
+        int hol_rc = cetta_hol_run_file(filename, policy, fuel, count_only, g_no_results, emit_runtime_stats);
+        free(inline_buf);
+        return hol_rc;
+    }
+
     if (lang->id == CETTA_LANGUAGE_RHOCALC) {
         RhocalcSemanticProfileId semantic_profile =
             rhocalc_semantic_profile_for_endpoint(&source_endpoint);
@@ -3935,6 +4002,7 @@ static int cetta_main(int argc, char **argv) {
             .context = petta_compiled_reader,
             .parse_text_ids = main_petta_compiled_text_backend,
             .parse_file_ids = main_petta_compiled_file_backend,
+            .parse_term_bytes_id = main_petta_compiled_term_backend,
         };
         if (!parser_set_document_ids_backend(&reader_backend)) {
             fprintf(stderr,
@@ -4230,20 +4298,7 @@ static int cetta_main(int argc, char **argv) {
      * holds exactly the library at this point, so the symbols it declares a
      * type for are read from its annotations. */
     if (lang->id == CETTA_LANGUAGE_PRIME) {
-        CettaCount stdlib_len = space_length64(&space);
-        SymbolId *he_heads = cetta_malloc(
-            sizeof(*he_heads) * (stdlib_len ? stdlib_len : 1u));
-        size_t he_head_count = 0u;
-        for (CettaIndex i = 0u; i < stdlib_len; i++) {
-            Atom *item = space_get_at64(&space, i);
-            if (item && item->kind == ATOM_EXPR && item->expr.len == 3u &&
-                atom_is_symbol_id(item->expr.elems[0],
-                                  g_builtin_syms.colon) &&
-                item->expr.elems[1]->kind == ATOM_SYMBOL)
-                he_heads[he_head_count++] = atom_symbol_current_id(item->expr.elems[1]);
-        }
-        eval_prime_set_he_signature_heads(he_heads, he_head_count);
-        free(he_heads);
+        eval_prime_set_he_signature_space(&space);
     }
 
     /* Add grounded op type declarations (HE stdlib implicit types) */
@@ -4269,7 +4324,7 @@ static int cetta_main(int argc, char **argv) {
     bool prime_oracle_check_failed = false;
     bool petta_answer_without_text = false;
     FILE *output_spool = NULL;
-    if (!compile_mode) {
+    if (!compile_mode && !g_no_results) {
         const char *tmpdir = getenv("TMPDIR");
         if (tmpdir && tmpdir[0] != '\0') {
             char spool_path[512];
@@ -4287,6 +4342,14 @@ static int cetta_main(int argc, char **argv) {
         }
         if (!output_spool)
             output_spool = tmpfile();
+        /* Internal answer storage must not resurrect a closed standard
+         * channel. No program has run yet, and this stream is still empty. */
+        if (output_spool && fileno(output_spool) < 3) {
+            int promoted = fcntl(fileno(output_spool), F_DUPFD_CLOEXEC, 3);
+            fclose(output_spool);
+            output_spool = promoted >= 0 ? fdopen(promoted, "w+") : NULL;
+            if (promoted >= 0 && !output_spool) close(promoted);
+        }
         if (!output_spool) {
             fprintf(stderr, "error: could not create output spool\n");
             rc = 1;
@@ -4475,10 +4538,13 @@ process_petta_document:
                     rc = cetta_eval_session_process_exit_code(
                         &libraries.session);
                     result_set_free(&rs);
+                    if (libraries.session.process_control.answer_policy ==
+                            CETTA_EXIT_PUBLISH_PRIOR_ANSWERS)
+                        goto publish_answers;
                     goto cleanup;
                 }
                 write_results(output_spool, &rs, lang->id, profile);
-                if (fflush(output_spool) != 0) {
+                if (output_spool && fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     result_set_free(&rs);
                     rc = 1;
@@ -4644,6 +4710,9 @@ process_petta_document:
                 else
                     result_set_free(&rs);
                 prime_need_trace_printer_free(&trace);
+                if (libraries.session.process_control.answer_policy ==
+                        CETTA_EXIT_PUBLISH_PRIOR_ANSWERS)
+                    goto publish_answers;
                 goto cleanup;
             }
             int typecheck_exit_code = 0;
@@ -4748,7 +4817,7 @@ process_petta_document:
                 bool python_error = formal && formal->kind == ATOM_EXPR &&
                     formal->expr.len >= 3u &&
                     atom_is_symbol(formal->expr.elems[0], "python_error");
-                if (run_cli || python_error) {
+                if (run_cli || python_error || atom_is_symbol(formal, "car_atom_empty")) {
                     CettaErrorPresentation view;
                     cetta_error_present(exception, diagnostic_details, &view);
                     run_cli_query_fault(run_cli, &view);
@@ -4782,16 +4851,19 @@ process_petta_document:
                 if (!report_incomplete_and_continue)
                     write_results(output_spool, results, lang->id, profile);
                 /* The trust records of the oracles this answer used, and
-                 * a failed check of one, which stops the run. */
+                 * a failed check of one, which stops the run.  Without an
+                 * answer spool (--no-results) only the check runs. */
                 if (lang->id == CETTA_LANGUAGE_PRIME) {
-                    prime_arith_oracle_query_report(output_spool);
+                    if (output_spool)
+                        prime_arith_oracle_query_report(output_spool);
                     if (prime_arith_oracle_check_failed()) {
-                        prime_arith_oracle_report_failure(output_spool);
+                        if (output_spool)
+                            prime_arith_oracle_report_failure(output_spool);
                         prime_oracle_check_failed = true;
                         stop_after_error = true;
                     }
                 }
-                if (fflush(output_spool) != 0) {
+                if (output_spool && fflush(output_spool) != 0) {
                     fprintf(stderr, "error: could not write output spool\n");
                     if (detailed_initialized)
                         eval_outcome_free(&detailed);
@@ -4960,6 +5032,7 @@ petta_document_complete:
     if (petta_answer_without_text && !petta_uncaught_error)
         fputs("error: a PeTTa answer is not a finite term, so it has no "
               "text\n", stderr);
+publish_answers: ;
     bool he_fault_reached = he_source_fault && !stop_document_sequence;
     if (he_fault_reached) {
         fprintf(stderr, "error: compiled HE reader: %s\n",
@@ -4969,7 +5042,7 @@ petta_document_complete:
                 ? "error: could not parse inline MeTTa text\n"
                 : "error: could not read %s\n", filename);
     }
-    bool write_answers = !petta_uncaught_error && !petta_answer_without_text &&
+    bool write_answers = !g_no_results && !petta_uncaught_error && !petta_answer_without_text &&
         !he_fault_reached;
     if (write_answers && fseek(output_spool, 0, SEEK_SET) != 0) {
         fprintf(stderr, "error: could not rewind output spool\n");
@@ -4994,13 +5067,16 @@ petta_document_complete:
         cetta_runtime_stats_print(stderr, &stats);
     }
 
-    rc = prime_need_trace_failed || prime_incomplete_seen || he_fault_reached ? 1
+    if (!cetta_eval_session_process_exit_requested(&libraries.session))
+      rc = prime_need_trace_failed || prime_incomplete_seen || he_fault_reached ? 1
         : petta_uncaught_error || petta_answer_without_text ? 2 : 0;
     prime_arith_oracle_report_audit(stderr);
     if (prime_oracle_check_failed) rc = 3;
 
 cleanup: {
-    bool output_ok = fflush(stdout) == 0 && !ferror(stdout);
+    bool stdout_ok = !ferror(stdout) && fflush(stdout) == 0 && !ferror(stdout);
+    bool stderr_ok = !ferror(stderr) && fflush(stderr) == 0 && !ferror(stderr);
+    bool output_ok = stdout_ok && stderr_ok;
     bool cleanup_ok = cetta_main_cleanup(&cleanup);
     if (!output_ok || !cleanup_ok) rc = 1;
     rc = run_cli_finish(run_cli, rc, output_ok, cleanup_ok, run_report_path, run_contract);

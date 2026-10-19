@@ -85,18 +85,6 @@ typedef struct {
     uint32_t witness_len;
 } PPNativeV1ForestExtension;
 
-/*
- * One replay scope validates a shared forest extension before replaying a
- * batch. The pack, extension, their arrays, and all referenced atoms are
- * borrowed and must remain alive and immutable until the scope is freed.
- * This scope is local to that batch; it is not a cache across source inputs.
- * Failed preparation leaves the previous binding intact. Each finish checks
- * the borrowed metadata and validates the individual forest as usual.
- */
-typedef struct {
-    void *implementation;
-} PPNativeV1ReplayScope;
-
 typedef struct {
     const Atom *state;
     const Atom *tag;
@@ -120,6 +108,11 @@ typedef struct {
 void ppnative_v1_token_binding_plan_init(PPNativeV1TokenBindingPlan *plan);
 void ppnative_v1_token_binding_plan_free(PPNativeV1TokenBindingPlan *plan);
 
+Atom *ppnative_v1_token_binding_plan_export_storage(
+    Arena *, const PPNativeV1TokenBindingPlan *, char *, size_t);
+bool ppnative_v1_token_binding_plan_import_storage(
+    PPNativeV1TokenBindingPlan *, const PPABIV1Pack *, Atom *, char *, size_t);
+
 /* Failure leaves out unchanged. A state already defined by a base grammar
  * production is not an external token state. Unreferenced declared tokens
  * receive real extension states, so they are retained rather than erased. */
@@ -127,6 +120,29 @@ bool ppnative_v1_token_binding_plan_build(
     const PPABIV1Pack *pack, const Atom *start,
     const PPNativeV1TokenBindingInput *inputs, uint32_t input_len,
     PPNativeV1TokenBindingPlan *out, char *error_buf, size_t error_buf_size);
+
+/*
+ * One replay scope validates a shared forest extension before replaying a
+ * batch. The pack, extension, their arrays, and all referenced atoms are
+ * borrowed and must remain alive and immutable until the scope is freed.
+ * This scope is local to that batch; it is not a cache across source inputs.
+ * Failed preparation leaves the previous binding intact. Each finish checks
+ * the borrowed metadata and validates the individual forest as usual.
+ */
+typedef struct {
+    void *implementation;
+} PPNativeV1ReplayScope;
+
+/* A pure, input-local observation on one symbol/production family. Rejected
+ * families contribute no selected derivations. Recognition, source positions
+ * and every record of the original forest remain unchanged. The callback and
+ * its context are borrowed only until the selected replay returns. */
+typedef struct {
+    bool (*accepts)(void *context, const PPABIV1Pack *pack,
+                    const CettaLpNativeUtf8Forest *forest,
+                    uint32_t symbol_node, uint32_t production_index);
+    void *context;
+} PPNativeV1FamilySelection;
 
 typedef struct {
     Arena arena;
@@ -156,6 +172,18 @@ bool ppnative_v1_prepared_view(
     PPNativeV1PreparedView *view,
     char *error_buf,
     size_t error_buf_size);
+/* The owner keeps the pack and start immutable until the last parse finishes.
+ * Unlike prepared_view, this does not re-render or audit borrowed authorities. */
+bool ppnative_v1_prepared_immutable_view(
+    const PPNativeV1Prepared *prepared, PPNativeV1PreparedView *view);
+/* Restore an immutable preparation by copying its stored terminal decisions
+ * and GLL/GLR programs. The enclosing owner retains pack for its lifetime.
+ * This does not rebuild classes, FIRST/FOLLOW, LR tables or provenance. */
+bool ppnative_v1_prepared_import_programs(
+    PPNativeV1Prepared *out, const PPABIV1Pack *pack, uint32_t start_state_id,
+    const PPNativeV1TerminalPlan *terminals,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size);
 uint32_t ppnative_v1_prepared_table_build_count(
     const PPNativeV1Prepared *prepared);
 
@@ -171,6 +199,10 @@ bool ppnative_v1_prepared_start_family_prepare(
     uint32_t start_state_len,
     char *error_buf,
     size_t error_buf_size);
+bool ppnative_v1_prepared_start_family_import_programs(
+    PPNativeV1PreparedStartFamily *out, const char *binding_digest,
+    const CettaLpNativeGllProgram *gll, const CettaLpNativeSlrProgram *glr,
+    char *error, size_t error_size);
 bool ppnative_v1_prepared_start_family_lookup(
     const PPNativeV1PreparedStartFamily *family,
     const char *binding_digest,
@@ -234,6 +266,41 @@ bool ppnative_v1_finish(PPNativeV1Result *result,
                         uint32_t result_limit,
                         char *error_buf,
                         size_t error_buf_size);
+
+/* Replay a fresh native forest against its immutable compiled owner. No
+ * canonical evidence or digest is constructed. Equal-valued derivations
+ * remain distinct. External forest data must use the checked finish APIs. */
+bool ppnative_v1_finish_values(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth, uint32_t result_limit,
+    char *error_buf, size_t error_buf_size);
+
+/* Apply the declared family observation before child-product expansion. The
+ * returned values retain derivation order and multiplicity. A NULL selection
+ * is the ordinary unrestricted replay. An accepted raw forest may have no
+ * selected values; this is not a recognizer rejection. */
+bool ppnative_v1_finish_values_selected(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    char *error_buf, size_t error_buf_size);
+
+/* The values of a deterministic corridor's postfix derivation trace. Each
+ * step is replayed exactly as the forest replay replays the corresponding
+ * node of a tree-shaped forest: terminal values, production actions and
+ * span materialization. This route requires replay_depth == UINT32_MAX;
+ * bounded replay uses the forest route. Selection, if supplied, must depend
+ * only on the production, input scalars and the current node's scalar
+ * boundaries. Its one-node view does not expose forest topology or original
+ * node identities. Other observers use ppnative_v1_finish_values_selected.
+ * result->forest carries the parsed input; result->accepted is the caller's. */
+bool ppnative_v1_finish_values_trace(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const CettaLpNativeLrTrace *trace, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    char *error_buf, size_t error_buf_size);
 
 bool ppnative_v1_finish_extended(
     PPNativeV1Result *result,

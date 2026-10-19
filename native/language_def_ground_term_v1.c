@@ -1,4 +1,5 @@
 #include "language_def_ground_term_v1.h"
+#include "utf8_scalar_v1.h"
 
 #include "src/symbol.h"
 
@@ -14,6 +15,7 @@ typedef struct {
     const CettaLdGrammarRuleV1 *rule;
     const CettaLdTypeDeclV1 *result_type;
     const CettaLdTypeDeclV1 **parameter_types;
+    bool constructor_profile;
 } LdGroundTermRuleIndexEntryV1;
 
 typedef struct {
@@ -410,6 +412,7 @@ static bool ground_term_index_init(LdGroundTermContextV1 *context,
                 &context->language->terms[position];
             const CettaLdTypeDeclV1 *result_type;
             const CettaLdTypeDeclV1 **parameter_types = NULL;
+            bool constructor_profile = true;
             uint32_t type_matches = 0u;
             SymbolId symbol;
             if (!ground_term_take_work(context, 0u))
@@ -457,12 +460,12 @@ static bool ground_term_index_init(LdGroundTermContextV1 *context,
                     &rule->params[parameter_index];
                 if (parameter->kind != CETTA_LD_PARAM_SIMPLE_V1 ||
                     parameter->type.kind != CETTA_LD_TYPE_BASE_V1) {
-                    free(parameter_types);
-                    (void)ground_term_fail(
-                        context,
-                        CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
-                        "ground admission supports only simple base-typed parameters");
-                    goto failure;
+                    /* A partial consumer's domain is not a restriction on
+                     * the whole language. Keep this declaration in selection
+                     * (including ambiguity checks), but require its profile
+                     * only if it is selected or reached by a codec query. */
+                    constructor_profile = false;
+                    continue;
                 }
                 type_matches = 0u;
                 parameter_types[parameter_index] =
@@ -491,6 +494,7 @@ static bool ground_term_index_init(LdGroundTermContextV1 *context,
                 .rule = rule,
                 .result_type = result_type,
                 .parameter_types = parameter_types,
+                .constructor_profile = constructor_profile,
             };
         }
         qsort(index->rules, index->rule_len, sizeof(*index->rules),
@@ -625,6 +629,12 @@ static const LdGroundTermRuleIndexEntryV1 *ground_term_select_rule(
             "constructor arity differs from its LanguageDef declaration");
         return NULL;
     }
+    if (!selected->constructor_profile) {
+        (void)ground_term_fail(
+            context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+            "selected constructor requires a binding or non-base parameter codec");
+        return NULL;
+    }
     return selected;
 }
 
@@ -684,6 +694,12 @@ static const LdGroundTermRuleIndexEntryV1 *ground_term_select_rule_text(
             "constructor arity differs from its LanguageDef declaration");
         return NULL;
     }
+    if (!selected->constructor_profile) {
+        (void)ground_term_fail(
+            context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+            "selected constructor requires a binding or non-base parameter codec");
+        return NULL;
+    }
     return selected;
 }
 
@@ -729,18 +745,11 @@ static bool ground_term_admit_iterative(
                 stack.len--;
                 continue;
             }
-            switch (frame->expected_type->carrier) {
-            case CETTA_LD_CARRIER_AST_V1:
-                if (frame->term->kind != ATOM_EXPR ||
-                    frame->term->expr.len == 0u ||
-                    !frame->term->expr.elems ||
-                    !frame->term->expr.elems[0] ||
-                    frame->term->expr.elems[0]->kind != ATOM_SYMBOL) {
-                    (void)ground_term_fail(
-                        context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
-                        "CarrierAst values require an expression with a constructor head");
-                    goto done;
-                }
+            /* A built-in carrier adds grounded leaves; it does not remove
+             * the language's declared constructors at that sort. */
+            if (frame->term->kind == ATOM_EXPR && frame->term->expr.len &&
+                frame->term->expr.elems && frame->term->expr.elems[0] &&
+                frame->term->expr.elems[0]->kind == ATOM_SYMBOL) {
                 if (frame->term->expr.len - 1u > UINT32_MAX) {
                     (void)ground_term_fail(
                         context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -756,6 +765,13 @@ static bool ground_term_admit_iterative(
                     goto done;
                 frame->entered = true;
                 continue;
+            }
+            switch (frame->expected_type->carrier) {
+            case CETTA_LD_CARRIER_AST_V1:
+                (void)ground_term_fail(
+                    context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
+                    "CarrierAst values require an expression with a constructor head");
+                goto done;
             case CETTA_LD_CARRIER_BUILTIN_INT_V1:
                 if (frame->term->kind != ATOM_GROUNDED ||
                     frame->term->ground.gkind != GV_INT) {
@@ -969,7 +985,7 @@ static bool ground_term_to_pattern_at(
                 context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
                 "term is not a grounded string");
         value = term->ground.sval;
-        len = strlen(value);
+        len = atom_string_len(term);
         if (len > UINT32_MAX)
             return ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -1031,32 +1047,6 @@ static bool ground_term_pattern_is_leaf(
         pattern->as.apply.arguments.len == 0u &&
         (pattern->as.apply.head.len == 0u ||
          pattern->as.apply.head.bytes != NULL);
-}
-
-static bool ground_term_pattern_text_to_c_string(
-    LdGroundTermContextV1 *context,
-    const CettaLdTextV1 *text,
-    char **out) {
-    char *result;
-
-    if (!text || !out || (text->len > 0u && !text->bytes))
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
-            "Pattern atom text has invalid storage");
-    if (text->len > 0u && memchr(text->bytes, '\0', text->len))
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_NONCANONICAL_BUILTIN,
-            "Pattern atom text contains an embedded NUL byte");
-    result = malloc((size_t)text->len + 1u);
-    if (!result)
-        return ground_term_fail(
-            context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
-            "Pattern atom text allocation failed");
-    if (text->len > 0u)
-        memcpy(result, text->bytes, text->len);
-    result[text->len] = '\0';
-    *out = result;
-    return true;
 }
 
 static bool ground_term_pattern_parse_int64(
@@ -1193,7 +1183,6 @@ static Atom *ground_term_from_pattern_at(
         return result;
     }
     case CETTA_LD_CARRIER_BUILTIN_STRING_V1: {
-        char *value = NULL;
         Atom *result;
 
         if (!ground_term_pattern_is_leaf(pattern)) {
@@ -1202,11 +1191,8 @@ static Atom *ground_term_from_pattern_at(
                 "String carrier requires a nullary Pattern atom");
             return NULL;
         }
-        if (!ground_term_pattern_text_to_c_string(
-                context, &pattern->as.apply.head, &value))
-            return NULL;
-        result = atom_string(arena, value);
-        free(value);
+        result = atom_string_n(arena, (const char *)pattern->as.apply.head.bytes,
+                               pattern->as.apply.head.len);
         if (!result)
             (void)ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
@@ -1294,7 +1280,7 @@ static bool ground_term_type_supports_pattern_codec(
             break;
         case CETTA_LD_CARRIER_BUILTIN_STRING_V1:
         case CETTA_LD_CARRIER_BUILTIN_INT_V1:
-            continue;
+            break;
         case CETTA_LD_CARRIER_BUILTIN_BOOL_V1:
             (void)ground_term_fail(
                 context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
@@ -1322,6 +1308,21 @@ static bool ground_term_type_supports_pattern_codec(
                 goto done;
             if (rule->result_type != type)
                 continue;
+            /* Admission permits constructors in builtin carriers too. The
+             * untagged leaf codec cannot distinguish a nullary constructor
+             * from a string with the same text; do not claim a full codec. */
+            if (type->carrier != CETTA_LD_CARRIER_AST_V1) {
+                (void)ground_term_fail(
+                    context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                    "builtin-plus-constructor carrier needs a tagged Pattern interpretation");
+                goto done;
+            }
+            if (!rule->constructor_profile) {
+                (void)ground_term_fail(
+                    context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                    "reachable constructor requires a binding or non-base parameter codec");
+                goto done;
+            }
             for (uint32_t parameter_index = 0u;
                  parameter_index < rule->rule->param_len;
                  parameter_index++) {
@@ -1609,9 +1610,667 @@ Atom *cetta_language_def_ground_term_v1_from_pattern(
     return result;
 }
 
+typedef struct {
+    const Atom *ast;
+    const CettaLdTypeDeclV1 *type;
+    const LdGroundTermRuleIndexEntryV1 *rule;
+    Atom *term, *span, *position;
+    uint32_t depth, first_child, child_len, parent, slot;
+} LdAstNodeV1;
+
+static bool ground_ast_form(const Atom *value, const char *head, uint32_t arity) {
+    return value && value->kind == ATOM_EXPR && value->expr.len == arity + 1u &&
+        atom_is_symbol(value->expr.elems[0], head);
+}
+
+static bool ground_ast_string(const Atom *value) {
+    return value && value->kind == ATOM_GROUNDED &&
+        value->ground.gkind == GV_STRING && value->ground.sval;
+}
+
+static Atom *ground_ast_span(Arena *arena, const Atom *span) {
+    if (!ground_ast_form(span, "LbnfSourceSpanV1", 4u)) return NULL;
+    Atom *elements[5] = {atom_symbol(arena, "LbnfSourceSpanV1")};
+    for (uint32_t i = 1u; i <= 4u; ++i) {
+        const Atom *n = span->expr.elems[i];
+        if (!n || n->kind != ATOM_GROUNDED || n->ground.gkind != GV_INT ||
+            n->ground.ival < 0) return NULL;
+        elements[i] = atom_int(arena, n->ground.ival);
+    }
+    if (elements[2]->ground.ival < elements[1]->ground.ival ||
+        elements[4]->ground.ival < elements[3]->ground.ival) return NULL;
+    return atom_expr(arena, elements, 5u);
+}
+
+static bool ground_ast_contains(const Atom *parent, const Atom *child) {
+    return parent->expr.elems[1]->ground.ival <= child->expr.elems[1]->ground.ival &&
+        child->expr.elems[2]->ground.ival <= parent->expr.elems[2]->ground.ival &&
+        parent->expr.elems[3]->ground.ival <= child->expr.elems[3]->ground.ival &&
+        child->expr.elems[4]->ground.ival <= parent->expr.elems[4]->ground.ival;
+}
+
+static bool ground_ast_text(LdGroundTermContextV1 *context, const Atom *value,
+                            uint32_t depth, uint8_t **out, size_t *out_len) {
+    uint8_t *bytes = NULL;
+    size_t len = 0u, cap = 0u;
+    const Atom *cursor = value;
+    while (ground_ast_form(cursor, "bnf-v1:text-cons", 2u)) {
+        if (!ground_term_take_work(context, depth)) goto failed;
+        const Atom *point = cursor->expr.elems[1];
+        if (!point || point->kind != ATOM_GROUNDED || point->ground.gkind != GV_INT ||
+            point->ground.ival <= 0 || point->ground.ival > 0x10ffff ||
+            (point->ground.ival >= 0xd800 && point->ground.ival <= 0xdfff)) {
+            (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "token payload is outside the NUL-free builtin string carrier");
+            goto failed;
+        }
+        if (!cetta_utf8_append_scalar_impl_v1(&bytes, &len, &cap, point->ground.ival)) {
+            (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
+                "could not allocate token text projection");
+            goto failed;
+        }
+        cursor = cursor->expr.elems[2];
+    }
+    if (!ground_ast_form(cursor, "bnf-v1:text-nil", 0u)) {
+        (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+            "parser token payload is not finite scalar text");
+        goto failed;
+    }
+    if (!bytes) {
+        bytes = calloc(1u, 1u);
+        if (!bytes) {
+            (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
+                "could not allocate empty token text");
+            goto failed;
+        }
+    }
+    *out = bytes; *out_len = len;
+    return true;
+failed:
+    free(bytes);
+    return false;
+}
+
+static Atom *ground_ast_builtin(LdGroundTermContextV1 *context, Arena *arena,
+                                LdAstNodeV1 *node) {
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    Atom *result = NULL;
+    CettaLdCarrierKindV1 carrier = node->type->carrier;
+    if (carrier != CETTA_LD_CARRIER_BUILTIN_INT_V1 &&
+        carrier != CETTA_LD_CARRIER_BUILTIN_STRING_V1 &&
+        carrier != CETTA_LD_CARRIER_BUILTIN_BOOL_V1) {
+        (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+            "token carriers require an explicit token admission profile");
+        return NULL;
+    }
+    if (!ground_ast_text(context, node->ast->expr.elems[3], node->depth, &bytes, &len))
+        return NULL;
+    if (carrier == CETTA_LD_CARRIER_BUILTIN_STRING_V1) result = atom_string(arena, (char *)bytes);
+    else if (carrier == CETTA_LD_CARRIER_BUILTIN_BOOL_V1) {
+        if (len == 4u && !memcmp(bytes, "True", 4u)) result = atom_bool(arena, true);
+        else if (len == 5u && !memcmp(bytes, "False", 5u)) result = atom_bool(arena, false);
+    } else {
+        /* Decimal lexical spellings project to the builtin int64 value;
+         * canonical decimal is required only by the Pattern codec. */
+        size_t at = len && bytes[0] == '-' ? 1u : 0u;
+        bool decimal = at < len;
+        for (; at < len; ++at) decimal = decimal && bytes[at] >= '0' && bytes[at] <= '9';
+        if (decimal) {
+            char *end = NULL;
+            errno = 0;
+            intmax_t n = strtoimax((char *)bytes, &end, 10);
+            if (errno != ERANGE && end == (char *)bytes + len && n >= INT64_MIN && n <= INT64_MAX)
+                result = atom_int(arena, (int64_t)n);
+        }
+    }
+    free(bytes);
+    if (!result) (void)ground_term_fail(context, CETTA_LD_GROUND_TERM_V1_NONCANONICAL_BUILTIN,
+        "token payload has no value in the declared builtin carrier");
+    return result;
+}
+
+bool cetta_language_def_ground_term_v1_project_ast(
+    Arena *arena, const CettaLanguageDefCoreV1 *language,
+    const char *expected_type, const Atom *ast,
+    uint32_t depth_limit, uint64_t work_limit,
+    Atom **out_term, Atom **out_sources, const Atom **blame_span,
+    CettaLdGroundTermV1Status *status, char *error_buf, size_t error_buf_size) {
+    LdGroundTermContextV1 context = {0};
+    LdGroundTermIndexV1 index = {0};
+    LdAstNodeV1 *nodes = NULL;
+    size_t len = 1u, capacity = 32u;
+    bool accepted = false;
+    if (status) *status = CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT;
+    if (blame_span) *blame_span = NULL;
+    if (error_buf && error_buf_size) error_buf[0] = '\0';
+    if (!arena || !language || !expected_type || !*expected_type ||
+        strlen(expected_type) > UINT32_MAX || !ast || !out_term || !out_sources ||
+        !status || !g_symbols || !work_limit) return false;
+    context.language = language; context.depth_limit = depth_limit;
+    context.remaining_work = work_limit; context.error_buf = error_buf;
+    context.error_buf_size = error_buf_size;
+    if (!ground_term_index_init(&context, &index)) goto done;
+    context.index = &index;
+    CettaLdTextV1 expected = {.bytes = (uint8_t *)(uintptr_t)expected_type,
+                              .len = (uint32_t)strlen(expected_type)};
+    const CettaLdTypeDeclV1 *root_type = ground_term_find_type(&context, &expected, 0u);
+    if (!root_type) goto done;
+    nodes = calloc(capacity, sizeof(*nodes));
+    if (!nodes) goto resource;
+    nodes[0] = (LdAstNodeV1){.ast = ast, .type = root_type, .parent = UINT32_MAX, .slot = UINT32_MAX};
+    /* Parents precede children. Reverse traversal constructs values without
+     * C recursion; the source map keeps exact occurrence edges, not a DAG
+     * quotient of equal terms. */
+    for (size_t i = 0u; i < len; ++i) {
+        LdAstNodeV1 *node = &nodes[i];
+        bool token = ground_ast_form(node->ast, "LbnfAstTokenV1", 6u);
+        bool ctor = ground_ast_form(node->ast, "LbnfAstNodeV1", 4u);
+        bool list = ground_ast_form(node->ast, "LbnfAstListV1", 3u);
+        if (blame_span) *blame_span = token || ctor || list
+            ? node->ast->expr.elems[token ? 5u : ctor ? 3u : 2u] : NULL;
+        if (!ground_term_take_work(&context, node->depth)) goto done;
+        if (!token && !ctor && !list) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                "expected a labelled parser AST node, token, or list"); goto done;
+        }
+        const Atom *span = node->ast->expr.elems[token ? 5u : ctor ? 3u : 2u];
+        if (blame_span) *blame_span = span;
+        node->span = ground_ast_span(arena, span);
+        const Atom *category = node->ast->expr.elems[1];
+        if (!node->span || !ground_ast_string(category)) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                "AST category or source span is malformed"); goto done;
+        }
+        if (node->parent != UINT32_MAX && !ground_ast_contains(nodes[node->parent].span, node->span)) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                "AST child span lies outside its parent span"); goto done;
+        }
+        CettaLdTextV1 category_text = {.bytes = (uint8_t *)category->ground.sval,
+                                     .len = category->ground.slen};
+        if (ld_text_compare(&category_text, &node->type->name)) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
+                "AST category differs from the selected LanguageDef type"); goto done;
+        }
+        Atom *no_position[] = {atom_symbol(arena, "LbnfNoTokenPositionV1")};
+        node->position = atom_expr(arena, no_position, 1u);
+        if (token) {
+            const Atom *position = node->ast->expr.elems[4];
+            if (ground_ast_form(position, "LbnfTokenPositionV1", 2u)) {
+                Atom *elements[3] = {atom_symbol(arena, "LbnfTokenPositionV1")};
+                for (uint32_t p = 1u; p <= 2u; ++p) {
+                    const Atom *n = position->expr.elems[p];
+                    if (!n || n->kind != ATOM_GROUNDED || n->ground.gkind != GV_INT || n->ground.ival < 1) {
+                        (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                            "AST token position is malformed"); goto done;
+                    }
+                    elements[p] = atom_int(arena, n->ground.ival);
+                }
+                node->position = atom_expr(arena, elements, 3u);
+            } else if (!atom_is_symbol((Atom *)position, "LbnfNoTokenPositionV1") &&
+                       !ground_ast_form(position, "LbnfNoTokenPositionV1", 0u)) {
+                (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                    "AST token position is malformed"); goto done;
+            }
+            node->term = ground_ast_builtin(&context, arena, node);
+            if (!node->term) goto done;
+            continue;
+        }
+        if (list || node->type->carrier != CETTA_LD_CARRIER_AST_V1) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "AST list or constructor requires a declared ground-carrier projection"); goto done;
+        }
+        const Atom *label = node->ast->expr.elems[2];
+        if (!ground_ast_string(label)) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                "AST constructor label is malformed"); goto done;
+        }
+        const Atom *children = node->ast->expr.elems[4], *cursor = children;
+        uint32_t count = 0u;
+        while (ground_ast_form(cursor, "LCons", 2u)) {
+            if (!ground_term_take_work(&context, node->depth)) goto done;
+            if (count == UINT32_MAX) goto resource;
+            ++count; cursor = cursor->expr.elems[2];
+        }
+        if (!atom_is_symbol((Atom *)cursor, "LNil")) {
+            (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+                "AST constructor fields are not a finite list"); goto done;
+        }
+        node->rule = ground_term_select_rule(&context, node->type,
+            symbol_intern_bytes(g_symbols, (uint8_t *)label->ground.sval, label->ground.slen), count, node->depth);
+        if (!node->rule) goto done;
+        if (count && node->depth == UINT32_MAX) goto resource;
+        if (len > UINT32_MAX - count || len + count > SIZE_MAX / sizeof(*nodes)) goto resource;
+        if (len + count > capacity) {
+            size_t next = capacity;
+            while (next < len + count) {
+                if (next > SIZE_MAX / 2u) goto resource;
+                next *= 2u;
+            }
+            if (next > SIZE_MAX / sizeof(*nodes)) goto resource;
+            LdAstNodeV1 *grown = realloc(nodes, next * sizeof(*nodes));
+            if (!grown) goto resource;
+            nodes = grown; capacity = next; node = &nodes[i];
+        }
+        node->first_child = (uint32_t)len; node->child_len = count;
+        cursor = children;
+        for (uint32_t c = 0u; c < count; ++c) {
+            nodes[len++] = (LdAstNodeV1){.ast = cursor->expr.elems[1],
+                .type = node->rule->parameter_types[c], .depth = node->depth + 1u,
+                .parent = (uint32_t)i, .slot = c};
+            cursor = cursor->expr.elems[2];
+        }
+    }
+    Atom **sources = arena_alloc(arena, len * sizeof(*sources));
+    if (!sources) goto resource;
+    for (size_t i = len; i-- > 0u;) {
+        LdAstNodeV1 *node = &nodes[i];
+        if (blame_span) *blame_span = node->span;
+        if (!ground_term_take_work(&context, node->depth)) goto done;
+        if (node->rule) {
+            size_t n = (size_t)node->child_len + 1u;
+            Atom **elements = arena_alloc(arena, n * sizeof(*elements));
+            if (!elements) goto resource;
+            elements[0] = atom_symbol_id(arena, node->rule->symbol);
+            for (uint32_t c = 0u; c < node->child_len; ++c) elements[c + 1u] = nodes[node->first_child + c].term;
+            node->term = atom_expr(arena, elements, (CettaExprLen)n);
+            if (!node->term) goto resource;
+        }
+        Atom *row[] = {atom_symbol(arena, "LangDef:TermSourceV1"), atom_int(arena, (int64_t)i),
+            atom_int(arena, node->parent == UINT32_MAX ? -1 : (int64_t)node->parent),
+            atom_int(arena, node->slot == UINT32_MAX ? -1 : (int64_t)node->slot), node->span, node->position};
+        sources[i] = atom_expr(arena, row, 6u);
+        if (!sources[i]) goto resource;
+    }
+    Atom *source_map = atom_expr(arena, sources, (CettaExprLen)len);
+    if (!source_map) goto resource;
+    *out_term = nodes[0].term;
+    *out_sources = source_map;
+    if (blame_span) *blame_span = NULL;
+    accepted = true;
+    goto done;
+resource:
+    (void)ground_term_fail(&context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
+        "AST projection exhausted its allocation or occurrence bound");
+done:
+    *status = context.status;
+    ground_term_index_clear(&index);
+    free(nodes);
+    return accepted;
+}
+
+/* Named-token projection shares the AST boundary and source-map convention
+ * above, but targets the existing locally nameless Pattern carrier. */
+typedef struct {
+    const Atom *ast;
+    const CettaLdTextV1 *sort;
+    const CettaLdGrammarRuleV1 *rule;
+    Atom *span, *position, *term;
+    Atom *binder_name, *binder_span, *binder_position;
+    const CettaLdTextV1 *binder_sort;
+    uint32_t parent, slot, environment, depth, first_child, child_len;
+} LdNamedNodeV1;
+
+typedef struct {
+    Atom *name;
+    const CettaLdTextV1 *sort;
+    uint32_t outer;
+} LdNamedScopeV1;
+
+static Atom *named_form(Arena *arena, const char *head, Atom **arguments, uint32_t count) {
+    Atom **items = arena_alloc(arena, ((size_t)count + 1u) * sizeof(*items));
+    if (!items) return NULL;
+    items[0] = atom_symbol(arena, head);
+    for (uint32_t i = 0u; i < count; ++i) items[i + 1u] = arguments[i];
+    return atom_expr(arena, items, count + 1u);
+}
+
+static bool named_equal(const CettaLdTextV1 *a, const CettaLdTextV1 *b) {
+    return a && b && !ld_text_compare(a, b);
+}
+
+static const CettaLdTypeDeclV1 *named_type(LdGroundTermContextV1 *w, const CettaLdTextV1 *name) {
+    const CettaLdTypeDeclV1 *found = NULL;
+    for (uint32_t i = 0u; i < w->language->type_len; ++i) {
+        if (!ground_term_take_work(w, 0u)) return NULL;
+        const CettaLdTypeDeclV1 *type = &w->language->types[i];
+        if (!named_equal(name, &type->name)) continue;
+        if (found && found->carrier != type->carrier) {
+            ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "The selected name sort has conflicting carrier interpretations"); return NULL;
+        }
+        found = type;
+    }
+    if (!found) ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNKNOWN_TYPE,
+        "The projection sort is not declared");
+    return found;
+}
+
+static bool named_profile_has(LdGroundTermContextV1 *w, const Atom *profile,
+                              const CettaLdTextV1 *sort, bool validate, bool *has) {
+    *has = false;
+    const Atom *list = profile->expr.elems[1];
+    while (ground_ast_form(list, "LCons", 2u)) {
+        if (!ground_term_take_work(w, 0u)) return false;
+        const Atom *name = list->expr.elems[1];
+        if (!ground_ast_string(name)) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+            "Named-token profile expects a finite list of category strings");
+        CettaLdTextV1 text = {.bytes = (uint8_t *)name->ground.sval, .len = name->ground.slen};
+        if (validate) {
+            const CettaLdTypeDeclV1 *type = named_type(w, &text);
+            if (!type) return false;
+            if (type->carrier != CETTA_LD_CARRIER_TOKEN_LABEL_V1 && type->carrier != CETTA_LD_CARRIER_TOKEN_RAW_V1)
+                return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                    "Named-token interpretation requires a declared raw or label token carrier");
+        }
+        if (named_equal(sort, &text)) *has = true;
+        list = list->expr.elems[2];
+    }
+    return atom_is_symbol((Atom *)list, "LNil") || ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+        "Named-token profile expects a finite category list");
+}
+
+static bool named_metadata(LdGroundTermContextV1 *w, Arena *arena, const Atom *ast,
+    const CettaLdTextV1 *sort, const Atom *parent, Atom **span, Atom **position, const Atom **blame) {
+    bool token = ground_ast_form(ast, "LbnfAstTokenV1", 6u);
+    bool ctor = ground_ast_form(ast, "LbnfAstNodeV1", 4u);
+    if (!token && !ctor) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "This interpretation accepts labelled constructors and named tokens");
+    const Atom *source_span = ast->expr.elems[token ? 5u : 3u];
+    if (blame) *blame = source_span;
+    *span = ground_ast_span(arena, source_span);
+    const Atom *category = ast->expr.elems[1];
+    if (!*span || !ground_ast_string(category)) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+        "Malformed AST category or span");
+    CettaLdTextV1 text = {.bytes = (uint8_t *)category->ground.sval, .len = category->ground.slen};
+    if (!named_equal(sort, &text)) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
+        "AST category differs from the declared argument sort");
+    if (parent && !ground_ast_contains(parent, *span)) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+        "AST child span lies outside its parent span");
+    *position = named_form(arena, "LbnfNoTokenPositionV1", NULL, 0u);
+    if (!token) return *position != NULL;
+    const Atom *p = ast->expr.elems[4];
+    if (atom_is_symbol((Atom *)p, "LbnfNoTokenPositionV1") || ground_ast_form(p, "LbnfNoTokenPositionV1", 0u)) return true;
+    if (!ground_ast_form(p, "LbnfTokenPositionV1", 2u)) return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT,
+        "Malformed named-token position");
+    Atom *coords[2];
+    for (uint32_t i = 0u; i < 2u; ++i) {
+        const Atom *n = p->expr.elems[i + 1u];
+        if (!n || n->kind != ATOM_GROUNDED || n->ground.gkind != GV_INT || n->ground.ival < 1)
+            return ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT, "Malformed named-token coordinate");
+        coords[i] = atom_int(arena, n->ground.ival);
+    }
+    *position = named_form(arena, "LbnfTokenPositionV1", coords, 2u);
+    return *position != NULL;
+}
+
+static Atom *named_token(LdGroundTermContextV1 *w, Arena *arena, const Atom *ast, uint32_t depth) {
+    if (!ground_ast_form(ast, "LbnfAstTokenV1", 6u)) {
+        ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+            "This name interpretation needs a token, not a constructor-valued spelling"); return NULL;
+    }
+    uint8_t *bytes = NULL; size_t length = 0u;
+    if (!ground_ast_text(w, ast->expr.elems[3], depth, &bytes, &length)) return NULL;
+    Atom *name = atom_string(arena, (const char *)bytes);
+    free(bytes);
+    return name;
+}
+
+/* Equal-valued declaration occurrences need no arbitrary selection. Different
+ * signatures with one label require an occurrence-aware interpretation. */
+static bool named_same_type(const CettaLdTypeExprV1 *a, const CettaLdTypeExprV1 *b) {
+    if (!a || !b || a->kind != b->kind) return false;
+    if (a->kind == CETTA_LD_TYPE_BASE_V1) return named_equal(&a->as.base, &b->as.base);
+    return a->kind == CETTA_LD_TYPE_ARROW_V1 && a->as.arrow.domain && b->as.arrow.domain &&
+        a->as.arrow.codomain && b->as.arrow.codomain &&
+        a->as.arrow.domain->kind == CETTA_LD_TYPE_BASE_V1 && b->as.arrow.domain->kind == CETTA_LD_TYPE_BASE_V1 &&
+        a->as.arrow.codomain->kind == CETTA_LD_TYPE_BASE_V1 && b->as.arrow.codomain->kind == CETTA_LD_TYPE_BASE_V1 &&
+        named_equal(&a->as.arrow.domain->as.base, &b->as.arrow.domain->as.base) &&
+        named_equal(&a->as.arrow.codomain->as.base, &b->as.arrow.codomain->as.base);
+}
+
+static const CettaLdGrammarRuleV1 *named_rule(LdGroundTermContextV1 *w,
+    const CettaLdTextV1 *sort, const Atom *label) {
+    if (!ground_ast_string(label)) {
+        ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT, "Malformed AST constructor label"); return NULL;
+    }
+    CettaLdTextV1 name = {.bytes = (uint8_t *)label->ground.sval, .len = label->ground.slen};
+    const CettaLdGrammarRuleV1 *found = NULL;
+    for (uint32_t i = 0u; i < w->language->term_len; ++i) {
+        if (!ground_term_take_work(w, 0u)) return NULL;
+        const CettaLdGrammarRuleV1 *r = &w->language->terms[i];
+        if (!named_equal(&r->category, sort) || !named_equal(&r->label, &name)) continue;
+        bool same = !found || (found->param_len == r->param_len && found->syntax_pattern.len == r->syntax_pattern.len);
+        for (uint32_t p = 0u; found && same && p < r->param_len; ++p) {
+            if (!ground_term_take_work(w, 0u)) return NULL;
+            const CettaLdTermParamV1 *a = &found->params[p], *b = &r->params[p];
+            same = a->kind == b->kind && named_equal(&a->body_name, &b->body_name) && named_same_type(&a->type, &b->type);
+            if (same && a->kind == CETTA_LD_PARAM_ABSTRACTION_NAMED_V1)
+                same = a->names.binder.present == b->names.binder.present &&
+                    (!a->names.binder.present || named_equal(&a->names.binder.value, &b->names.binder.value));
+        }
+        for (uint32_t p = 0u; found && same && p < r->syntax_pattern.len; ++p) {
+            if (!ground_term_take_work(w, 0u)) return NULL;
+            const CettaLdSyntaxItemV1 *a = &found->syntax_pattern.items[p], *b = &r->syntax_pattern.items[p];
+            same = a->kind == b->kind && (a->kind != CETTA_LD_SYNTAX_NONTERMINAL_V1 || named_equal(&a->as.text, &b->as.text));
+        }
+        if (!same) {
+            ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "One AST label has distinct projection signatures; occurrence correspondence is unresolved"); return NULL;
+        }
+        found = r;
+    }
+    if (!found) ground_term_fail(w, CETTA_LD_GROUND_TERM_V1_UNKNOWN_CONSTRUCTOR,
+        "AST constructor is absent from the selected core category");
+    return found;
+}
+
+static bool named_grow(void **items, size_t *capacity, size_t needed, size_t size) {
+    if (needed > UINT32_MAX || needed > SIZE_MAX / size) return false;
+    if (*capacity >= needed) return true;
+    size_t cap = *capacity ? *capacity : 32u;
+    while (cap < needed) {
+        if (cap > SIZE_MAX / 2u) return false;
+        cap *= 2u;
+    }
+    if (cap > SIZE_MAX / size) return false;
+    void *grown = realloc(*items, cap * size);
+    if (!grown) return false;
+    *items = grown; *capacity = cap; return true;
+}
+
+bool cetta_language_def_pattern_v1_project_ast(
+    Arena *arena, const CettaLanguageDefCoreV1 *language,
+    const char *expected_type, const Atom *profile, const Atom *ast,
+    uint32_t depth_limit, uint64_t work_limit,
+    Atom **out_pattern, Atom **out_sources, const Atom **blame_span,
+    CettaLdGroundTermV1Status *status, char *error_buf, size_t error_buf_size) {
+    LdGroundTermContextV1 w = {.language = language, .depth_limit = depth_limit,
+        .remaining_work = work_limit, .error_buf = error_buf, .error_buf_size = error_buf_size};
+    LdNamedNodeV1 *nodes = NULL;
+    LdNamedScopeV1 *scopes = NULL;
+    size_t count = 0u, capacity = 0u, scope_count = 0u, scope_capacity = 0u;
+    const Atom **fields = NULL;
+    const CettaLdTextV1 **slots = NULL;
+    bool *used = NULL, ok = false;
+    if (status) *status = CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT;
+    if (blame_span) *blame_span = NULL;
+    if (error_buf && error_buf_size) *error_buf = '\0';
+    if (!arena || !language || !expected_type || !*expected_type || strlen(expected_type) > UINT32_MAX ||
+        !ast || !status || !out_pattern || !out_sources || !work_limit ||
+        !ground_ast_form(profile, "LangDef:NamedTokensV1", 1u)) return false;
+    CettaLdTextV1 root = {.bytes = (uint8_t *)(uintptr_t)expected_type, .len = (uint32_t)strlen(expected_type)};
+    bool ignored;
+    if (!named_type(&w, &root) || !named_profile_has(&w, profile, &root, true, &ignored)) goto done;
+    if (!named_grow((void **)&nodes, &capacity, 1u, sizeof(*nodes))) goto resource;
+    nodes[count++] = (LdNamedNodeV1){.ast = ast, .sort = &root, .parent = UINT32_MAX,
+        .slot = UINT32_MAX, .environment = UINT32_MAX};
+    for (size_t i = 0u; i < count; ++i) {
+        LdNamedNodeV1 node = nodes[i];
+        if (!ground_term_take_work(&w, node.depth)) goto done;
+        if (!named_metadata(&w, arena, node.ast, node.sort,
+                node.parent == UINT32_MAX ? NULL : nodes[node.parent].span,
+                &node.span, &node.position, blame_span)) goto done;
+        nodes[i].span = node.span; nodes[i].position = node.position;
+        if (node.binder_name) {
+            if (node.depth == UINT32_MAX || !named_grow((void **)&scopes, &scope_capacity, scope_count + 1u, sizeof(*scopes)) ||
+                !named_grow((void **)&nodes, &capacity, count + 1u, sizeof(*nodes))) goto resource;
+            scopes[scope_count] = (LdNamedScopeV1){node.binder_name, node.binder_sort, node.environment};
+            nodes[i].first_child = (uint32_t)count; nodes[i].child_len = 1u;
+            nodes[count++] = (LdNamedNodeV1){.ast = node.ast, .sort = node.sort, .parent = (uint32_t)i,
+                .slot = 0u, .environment = (uint32_t)scope_count++, .depth = node.depth + 1u};
+            continue;
+        }
+        if (ground_ast_form(node.ast, "LbnfAstTokenV1", 6u)) {
+            bool names;
+            if (!named_profile_has(&w, profile, node.sort, false, &names)) goto done;
+            if (!names) { ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "No name interpretation was supplied for this token category"); goto done; }
+            Atom *name = named_token(&w, arena, node.ast, node.depth);
+            if (!name) goto done;
+            uint32_t frame = node.environment, index = 0u;
+            while (frame != UINT32_MAX) {
+                if (!ground_term_take_work(&w, node.depth)) goto done;
+                const LdNamedScopeV1 *scope = &scopes[frame];
+                if (named_equal(scope->sort, node.sort) && atom_eq(scope->name, name)) break;
+                frame = scope->outer; ++index;
+            }
+            if (frame == UINT32_MAX) { ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_SCOPE_MISMATCH,
+                "A name has no binding in its declared category namespace"); goto done; }
+            Atom *number = atom_int(arena, index);
+            nodes[i].term = named_form(arena, "Var", &number, 1u);
+            if (!nodes[i].term) goto resource;
+            continue;
+        }
+        const CettaLdTypeDeclV1 *type = named_type(&w, node.sort);
+        if (!type) goto done;
+        if (type->carrier != CETTA_LD_CARRIER_AST_V1) { ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+            "Constructor projection needs an AST carrier"); goto done; }
+        const CettaLdGrammarRuleV1 *rule = named_rule(&w, node.sort, node.ast->expr.elems[2]);
+        if (!rule) goto done;
+        nodes[i].rule = rule;
+        uint32_t nslots = 0u;
+        for (uint32_t j = 0u; j < rule->syntax_pattern.len; ++j) {
+            if (!ground_term_take_work(&w, node.depth)) goto done;
+            CettaLdSyntaxItemKindV1 kind = rule->syntax_pattern.items[j].kind;
+            if (kind == CETTA_LD_SYNTAX_NONTERMINAL_V1) ++nslots;
+            else if (kind != CETTA_LD_SYNTAX_TERMINAL_V1) { ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "Structured syntax operations need their own projection correspondence"); goto done; }
+        }
+        fields = calloc(nslots ? nslots : 1u, sizeof(*fields));
+        slots = calloc(nslots ? nslots : 1u, sizeof(*slots));
+        used = calloc(nslots ? nslots : 1u, sizeof(*used));
+        if (!fields || !slots || !used) goto resource;
+        const Atom *cursor = node.ast->expr.elems[4];
+        uint32_t field = 0u;
+        for (uint32_t j = 0u; j < rule->syntax_pattern.len; ++j) {
+            if (!ground_term_take_work(&w, node.depth)) goto done;
+            const CettaLdSyntaxItemV1 *item = &rule->syntax_pattern.items[j];
+            if (item->kind != CETTA_LD_SYNTAX_NONTERMINAL_V1) continue;
+            if (!ground_ast_form(cursor, "LCons", 2u)) goto arity;
+            slots[field] = &item->as.text; fields[field++] = cursor->expr.elems[1]; cursor = cursor->expr.elems[2];
+        }
+        if (!atom_is_symbol((Atom *)cursor, "LNil")) goto arity;
+        if (node.depth == UINT32_MAX || !named_grow((void **)&nodes, &capacity, count + rule->param_len, sizeof(*nodes))) goto resource;
+        nodes[i].first_child = (uint32_t)count; nodes[i].child_len = rule->param_len;
+        for (uint32_t p = 0u; p < rule->param_len; ++p) {
+            const CettaLdTermParamV1 *param = &rule->params[p];
+            const CettaLdTypeExprV1 *body_type = &param->type, *domain = NULL;
+            bool binding = param->kind == CETTA_LD_PARAM_ABSTRACTION_NAMED_V1;
+            if (binding && param->type.kind == CETTA_LD_TYPE_ARROW_V1) {
+                domain = param->type.as.arrow.domain; body_type = param->type.as.arrow.codomain;
+            } else if (binding) domain = body_type;
+            if ((!binding && param->kind != CETTA_LD_PARAM_SIMPLE_V1) || !body_type || body_type->kind != CETTA_LD_TYPE_BASE_V1 ||
+                (binding && (!domain || domain->kind != CETTA_LD_TYPE_BASE_V1 || !param->names.binder.present))) {
+                ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                    "This projection covers base arguments and explicitly named single binders"); goto done;
+            }
+            uint32_t body = UINT32_MAX, binder = UINT32_MAX;
+            for (uint32_t j = 0u; j < nslots; ++j) {
+                if (!ground_term_take_work(&w, node.depth)) goto done;
+                if (named_equal(slots[j], &param->body_name)) {
+                    if (body != UINT32_MAX) goto mapping;
+                    body = j;
+                }
+                if (binding && named_equal(slots[j], &param->names.binder.value)) {
+                    if (binder != UINT32_MAX) goto mapping;
+                    binder = j;
+                }
+            }
+            if (body == UINT32_MAX || used[body] || (binding && (binder == UINT32_MAX || binder == body))) goto mapping;
+            used[body] = true;
+            LdNamedNodeV1 child = {.ast = fields[body], .sort = &body_type->as.base, .parent = (uint32_t)i,
+                .slot = p, .environment = node.environment, .depth = node.depth + 1u};
+            if (binding) {
+                bool names;
+                if (!named_profile_has(&w, profile, &domain->as.base, false, &names)) goto done;
+                if (!names) goto mapping;
+                child.binder_sort = &domain->as.base;
+                if (!named_metadata(&w, arena, fields[binder], child.binder_sort, node.span,
+                        &child.binder_span, &child.binder_position, blame_span)) goto done;
+                child.binder_name = named_token(&w, arena, fields[binder], node.depth);
+                if (!child.binder_name) goto done;
+                used[binder] = true;
+            }
+            nodes[count++] = child;
+        }
+        for (uint32_t j = 0u; j < nslots; ++j) if (!used[j]) goto mapping;
+        free(fields); fields = NULL; free(slots); slots = NULL; free(used); used = NULL;
+    }
+    if (count + scope_count > UINT32_MAX || count + scope_count > SIZE_MAX / sizeof(Atom *)) goto resource;
+    Atom **sources = arena_alloc(arena, (count + scope_count) * sizeof(*sources));
+    if (!sources) goto resource;
+    size_t source_count = count;
+    for (size_t i = count; i-- > 0u;) {
+        LdNamedNodeV1 *node = &nodes[i];
+        if (!ground_term_take_work(&w, node->depth)) goto done;
+        if (node->binder_name) {
+            Atom *args[] = {atom_symbol(arena, "BNone"), nodes[node->first_child].term};
+            node->term = named_form(arena, "PLam", args, 2u);
+            Atom *location[] = {atom_int(arena, i), node->binder_name, node->binder_span, node->binder_position};
+            sources[source_count++] = named_form(arena, "LangDef:BinderSourceV1", location, 4u);
+        } else if (node->rule) {
+            Atom *list = atom_symbol(arena, "LNil");
+            for (uint32_t c = node->child_len; c-- > 0u;) {
+                Atom *args[] = {nodes[node->first_child + c].term, list};
+                list = named_form(arena, "LCons", args, 2u);
+                if (!list) goto resource;
+            }
+            Atom *label = atom_deep_copy(arena, node->ast->expr.elems[2]);
+            Atom *args[] = {label, list};
+            node->term = named_form(arena, "PApp", args, 2u);
+        }
+        if (!node->term) goto resource;
+        Atom *location[] = {atom_int(arena, i), atom_int(arena, node->parent == UINT32_MAX ? -1 : (int64_t)node->parent),
+            atom_int(arena, node->slot == UINT32_MAX ? -1 : (int64_t)node->slot), node->span, node->position};
+        sources[i] = named_form(arena, "LangDef:TermSourceV1", location, 5u);
+        if (!sources[i]) goto resource;
+    }
+    Atom *map = atom_expr(arena, sources, (CettaExprLen)source_count);
+    if (!map) goto resource;
+    *out_pattern = nodes[0].term; *out_sources = map;
+    if (blame_span) *blame_span = NULL;
+    ok = true; goto done;
+mapping:
+    ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "The declaration does not determine this profile's argument and binder-slot correspondence"); goto done;
+arity:
+    ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_ARITY_MISMATCH,
+        "AST fields do not match the declared concrete notation"); goto done;
+resource:
+    ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT, "Named projection allocation or occurrence limit");
+done:
+    free(fields); free(slots); free(used); free(nodes); free(scopes);
+    if (!ok && w.status == CETTA_LD_GROUND_TERM_V1_OK)
+        ground_term_fail(&w, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT, "Could not allocate a projected Pattern value");
+    *status = w.status; return ok;
+}
+
 const char *cetta_ld_ground_term_v1_status_name(
     CettaLdGroundTermV1Status status) {
     switch (status) {
+    case CETTA_LD_GROUND_TERM_V1_SCOPE_MISMATCH:
+        return "scope_mismatch";
     case CETTA_LD_GROUND_TERM_V1_OK:
         return "ok";
     case CETTA_LD_GROUND_TERM_V1_BAD_ARGUMENT:

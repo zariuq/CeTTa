@@ -16,6 +16,8 @@ int main(void) {
  cetta_library_context_init_for_language_profile(context,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());eval_set_library_context(context);
  Atom *sentinel=atom_int(&arena,7),*out=sentinel;CettaContinuationStatus status=CETTA_CONTINUATION_CAPACITY;
  assert(!cetta_prime_checkpoint_copy_new(context,sentinel,&status));assert(status==CETTA_CONTINUATION_UNSUPPORTED);
+ assert(!cetta_prime_checkpoint_copy_new_reserved(context,sentinel,&status));assert(status==CETTA_CONTINUATION_UNSUPPORTED);
+ assert(cetta_prime_checkpoint_copy_replace(NULL,NULL)==CETTA_CONTINUATION_UNSUPPORTED);
  AtomDeepCopyArenaPair pair={&arena,&arena};
  assert(!cetta_prime_checkpoint_copy_arena_pair(NULL,&pair));assert(pair.source==&arena&&pair.destination==&arena);
  assert(cetta_prime_checkpoint_copy_prepare(NULL,NULL)==CETTA_CONTINUATION_UNSUPPORTED);

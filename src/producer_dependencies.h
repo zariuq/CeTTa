@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "storage_census.h"
 
 typedef struct CettaProducerDependencyNode CettaProducerDependencyNode;
 typedef struct CettaProducerDependencyEdge CettaProducerDependencyEdge;
@@ -34,5 +35,7 @@ void cetta_producer_dependencies_retire(CettaProducerDependencies *graph,
 bool cetta_producer_dependencies_readers(const CettaProducerDependencies *graph,
     size_t producer, CettaProducerReaderFn visit, void *context);
 size_t cetta_producer_dependencies_bytes(const CettaProducerDependencies *graph);
+void cetta_producer_dependencies_storage_census(
+    const CettaProducerDependencies *graph, CettaStorageCensus *census);
 
 #endif

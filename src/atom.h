@@ -77,7 +77,11 @@ typedef enum {
     GV_BINDINGS,
     /* A node of a rational term's graph (term_graph.h). */
     GV_TERM_GRAPH,
-    GV_TENSOR
+    GV_TENSOR,
+    /* An opaque authority object of the shared seal substrate (seal.h): a
+     * brand facet, a capsule or a key.  Its only identity is the object
+     * itself; no printed form, number or payload reconstructs one. */
+    GV_SEAL
 } GroundedKind;
 
 typedef enum {
@@ -220,6 +224,10 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * It certifies carrier lifetime only: it grants neither a shallow-copy or
  * hash-cons licence nor permission to use a closed registry resource. */
 #define ATOM_STRUCTURAL_OWNER_CLOSED UINT32_C(0x00000800)
+/* A string leaf carries a retained immutable byte owner after its Atom.
+ * This is a representation fact of that leaf alone, never an inherited
+ * occurrence bit. String equality, hashing and printing still use bytes. */
+#define ATOM_STRUCTURAL_STRING_STORAGE UINT32_C(0x00001000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -230,7 +238,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
-                       ATOM_STRUCTURAL_OWNER_CLOSED ==
+                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -239,7 +247,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
-                    ATOM_STRUCTURAL_OWNER_CLOSED),
+                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE),
                "structural fact bits overlap");
 
 /*
@@ -669,6 +677,22 @@ typedef enum {
     CETTA_ARENA_RUNTIME_KIND_SURVIVOR = 4,
 } CettaArenaRuntimeKind;
 
+/* The resource-ledger category an arena's blocks are charged to under
+ * runtime statistics.  It follows the runtime kind unless an owner names a
+ * category (cursor working storage, space storage); NONE marks an arena
+ * created while statistics were off, which is never charged.  Diagnostic
+ * only: no category changes allocation or evaluation. */
+typedef enum {
+    CETTA_ARENA_LEDGER_NONE = 0,
+    CETTA_ARENA_LEDGER_OTHER = 1,
+    CETTA_ARENA_LEDGER_PERSISTENT = 2,
+    CETTA_ARENA_LEDGER_EVAL = 3,
+    CETTA_ARENA_LEDGER_SCRATCH = 4,
+    CETTA_ARENA_LEDGER_SURVIVOR = 5,
+    CETTA_ARENA_LEDGER_CURSOR = 6,
+    CETTA_ARENA_LEDGER_SPACE = 7,
+} CettaArenaLedgerTag;
+
 typedef struct ArenaBlock {
     struct ArenaBlock *next;
     size_t capacity;
@@ -676,7 +700,7 @@ typedef struct ArenaBlock {
     char data[ARENA_BLOCK_SIZE];
 } ArenaBlock;
 
-typedef struct ArenaRetainedOwner ArenaRetainedOwner;
+typedef struct ArenaRetainedOwnerSet ArenaRetainedOwnerSet;
 typedef struct ArenaFrameIdentitySet ArenaFrameIdentitySet;
 
 typedef struct Arena {
@@ -714,7 +738,11 @@ typedef struct Arena {
      */
     uint64_t reset_epoch;
     ArenaFinalizer *finalizers;
-    ArenaRetainedOwner *retained_owners;
+    /* Owners this arena holds a reference to, one per distinct (owner,
+     * release) pair, in acquisition order with a hash index.  Each hold
+     * is also a finalizer, so a reset releases exactly the holds
+     * acquired after its mark. */
+    ArenaRetainedOwnerSet *retained_owners;
     /* Frame-identity ownership for this arena's live allocation region.  The
      * set holds one reference for each distinct full generational identity
      * reachable from syntax allocated here, so allocating many variable
@@ -729,6 +757,13 @@ typedef struct Arena {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
+    /* block_capacity is the first block's size; a later block matches what
+     * the arena already holds (arena_set_block_growth). */
+    bool block_growth;
+    /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
+     * owner named it (otherwise it follows the runtime kind). */
+    uint8_t ledger_tag;
+    bool ledger_tag_named;
 } Arena;
 
 typedef struct {
@@ -781,10 +816,19 @@ void  arena_init_detached(Arena *a);
  * own size. */
 void  arena_set_block_capacity(Arena *a, size_t capacity);
 void arena_storage_census(const Arena *arena, CettaStorageCensus *census);
+/* The first block has `first` bytes, and each later block claimed from the
+ * allocator is as large as all the blocks the arena holds, up to
+ * ARENA_BLOCK_SIZE: what an arena holds grows geometrically with what it
+ * allocates, and an arena that gives back every block starts small again.
+ * An allocation larger than that still gets a block of its own size. */
+void  arena_set_block_growth(Arena *a, size_t first);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
+/* Charge this arena's blocks to `tag` in the resource ledger from now on,
+ * moving what it already holds there. */
+void  arena_set_ledger_tag(Arena *a, CettaArenaLedgerTag tag);
 void  arena_set_block_recycling(Arena *a, bool enabled);
 /* Name `older` as the older generation of `young`, whose atoms may then share
  * its storage.  The owner releases `older` only together with `young`.  An
@@ -802,6 +846,10 @@ bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
 /* Ownership observations for the arena frame-identity lifetime tests. */
 uint32_t arena_frame_identity_count_test(const Arena *a);
 uint32_t arena_frame_identity_capacity_test(const Arena *a);
+/* Mint the next fresh arena name at `next` (a test starting near the end of
+ * the name space), and count releases of names nobody owned. */
+void arena_identity_test_start_fresh_at(uint32_t next);
+uint64_t arena_identity_test_stale_releases(void);
 bool arena_frame_identity_owned_test(const Arena *a,
                                      CettaFrameIdentity identity);
 #endif
@@ -866,6 +914,10 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
                                     void (*release)(void *));
 /* Test the actual retained holder, not integer equality or printed syntax. */
 bool atom_native_handle_identifier_has_owner(const Atom *identifier, const void *owner);
+/* Compare the retained authority, not just the printed integer. */
+bool atom_native_handle_identifier_matches(const Atom *atom, const void *owner,
+                                           void (*retain)(void *),
+                                           void (*release)(void *));
 Atom *atom_int_copy(Arena *a, const Atom *source);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
@@ -1066,6 +1118,10 @@ typedef bool (*AtomSymbolVisitor)(SymbolId id, void *context);
 bool atom_visit_syntax_symbols(const Atom *root, AtomSymbolVisitor visit,
                                void *context);
 void atom_pin_syntax_symbols(const Atom *root);
+/* The symbol's one atom owned by the symbol table (no arena): for atoms a
+ * compiled program hands to terms that may outlive it.  NULL without a
+ * table or for an id it does not hold. */
+Atom *atom_symbol_canonical(SymbolId sym_id);
 Atom *atom_var(Arena *a, const char *name);
 Atom *atom_var_with_id(Arena *a, const char *name, VarId id);
 Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id);
@@ -1102,6 +1158,9 @@ Atom *atom_bool(Arena *a, bool val);
  * a NUL-terminated C string. */
 #define CETTA_STRING_BYTES_MAX 0x7FFFFFFFu
 Atom *atom_string_n(Arena *a, const char *bytes, size_t len);
+#ifdef CETTA_TEST_HOOKS
+size_t atom_string_storage_references_test(const Atom *atom);
+#endif
 Atom *atom_string(Arena *a, const char *val);
 static inline size_t atom_string_len(const Atom *atom) {
     return atom->ground.slen;
@@ -1244,6 +1303,51 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value);
 /* Immutable native value. The atom retains a hold until its arena retires. */
 Atom *atom_tensor(Arena *a, CettaTensor *value);
 
+/* A seal object (seal.h) begins with a pointer to its hold: a static
+ * table of the object's class, so the hold is shared by all objects.
+ * An arena holding an atom of the object retains it once (per lifetime
+ * segment) and releases it on the reset or free that drops the atom.
+ * `display` writes the public observer only, `(Sealed NICK)` and the like:
+ * never an address, counter or payload.  `identity` is a private stable
+ * mixing key for hashing, consistent with identity equality; it is never
+ * printed, compared across processes or accepted from a program. */
+typedef struct CettaSealHold {
+    void (*retain)(void *object);
+    void (*release)(void *object);
+    /* snprintf semantics: writes at most `capacity` bytes, NUL included,
+     * and returns the length of the whole observer text. */
+    size_t (*display)(const void *object, char *buffer, size_t capacity);
+    uint64_t (*identity)(const void *object);
+    /* The object's type symbol for get-type: Sealed, SealFacet or Key. */
+    const char *(*type_name)(const void *object);
+} CettaSealHold;
+
+/* The atom of seal object `object`, retained by `a`.  NULL when the object
+ * is not a seal object or the arena cannot record its hold. */
+Atom *atom_seal(Arena *a, void *object);
+/* The seal object of a GV_SEAL atom, borrowed for as long as an arena holds
+ * the atom, or NULL. */
+void *atom_seal_object(const Atom *atom);
+static inline const CettaSealHold *cetta_seal_hold_of(const void *object) {
+    return object ? *(const CettaSealHold *const *)object : NULL;
+}
+static inline bool atom_is_seal(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_SEAL;
+}
+/* Whether `atom` is or contains an authority object (a seal facet, capsule
+ * or key) anywhere in its expression structure.  Portable encoders refuse
+ * such values instead of dropping or printing their authority. */
+bool atom_contains_seal(const Atom *atom);
+/* The observer text of a GV_SEAL atom into `buffer` (snprintf semantics);
+ * 0 for any other atom. */
+size_t atom_seal_display_text(const Atom *atom, char *buffer, size_t capacity);
+/* The private identity key of a GV_SEAL atom (0 for any other atom), for
+ * hashing and ordering consistent with identity equality.  Never printed. */
+uint64_t atom_seal_identity(const Atom *atom);
+/* The type symbol name of a GV_SEAL atom, or NULL. */
+const char *atom_seal_type_name(const Atom *atom);
+
 /* A node of a rational term's graph (term_graph.h), the payload of a
  * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms
  * of one node hold the same pointer. */
@@ -1336,6 +1440,13 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* A read-only expression header over borrowed coordinates. The header and
+ * vector are valid only for the consuming call; neither may be retained or
+ * returned as an owned result. Structural summaries grant no ownership. */
+typedef struct { Atom root; } AtomExprBorrowedView;
+bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
+                                  Atom **elems, CettaExprLen len);
+
 /* The part of an expression's summary a fixed head gives it, folded once:
  * atom_expr_headed then builds, from children headed by that head, exactly
  * the expression atom_expr builds. */
@@ -1403,6 +1514,8 @@ Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
 
 Atom *atom_empty(Arena *a);     /* Symbol "Empty" */
 Atom *atom_unit(Arena *a);      /* Expression () — empty expr */
+/* The empty expression's one atom for the process, owned by no arena. */
+Atom *atom_unit_canonical(void);
 Atom *atom_true(Arena *a);      /* Symbol "True" */
 Atom *atom_false(Arena *a);     /* Symbol "False" */
 
@@ -1426,10 +1539,8 @@ bool atom_meta_type_accepts(Arena *a, Atom *formal, Atom *actual);
 
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
-/* `name` must have static storage duration: a string literal or a constant
- * table of literals.  The symbol it spells is cached by the pointer, so a
- * name in memory that is later reused for another spelling would be read as
- * the old one.  Use atom_is_symbol_named for any other string. */
+/* Compare name contents; unlike literal constructors, mutable buffers and
+ * names belonging to a separately owned prepared artifact are valid here. */
 bool atom_is_symbol(Atom *a, const char *name);
 /* The same predicate for a name in arena, heap or stack memory: compares the
  * spelling, without the pointer cache. */
@@ -1477,6 +1588,12 @@ bool atom_data_equal(Atom *left, Atom *right);
  * scalar-data DAGs. Identical subgraphs can then be skipped without repeating
  * validation. This is not a validator for untrusted or mutable graph inputs. */
 bool atom_data_equal_validated(Atom *left, Atom *right);
+
+/* Exact scalar-data key comparison on the same finite DAG domain, also
+ * admitting inert internal tags. Numeric kinds and float bits are distinct;
+ * variables retain their identity, spelling and structural name. No runtime
+ * handle, value comparison callback or persistent cache participates. */
+bool atom_data_identical(Atom *left, Atom *right);
 /* MeTTa's ==: a comparison that never binds.  Expressions compare element
  * by element, and a NaN equals nothing, even itself.
  * PeTTa: numbers are equal when their values are, whatever their
@@ -1794,9 +1911,23 @@ Atom *atom_deep_copy_session_forwarded(
  * it is owned by the destination arena and closed for it. */
 bool atom_deep_copy_session_settled(
     const AtomDeepCopySession *session, const Atom *atom);
+bool atom_deep_copy_session_failed(const AtomDeepCopySession *session);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
 void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
     CettaStorageCensus *census);
+/* Companion graph owners share one relocation inventory per copy episode.
+ * Keys identify a caller's inventory kind, not content. Installed inventories
+ * own their entries and release them when the session ends, including failure.
+ * No inventory or source-pointer key survives into another episode. A
+ * supplied storage visitor describes its actual retained edges; without one,
+ * a nonempty inventory remains opaque to bounded census. Inventories do not
+ * acquire a clone/relocation operation from having a storage visitor. */
+typedef void (*AtomDeepCopyInventoryRelease)(void *inventory);
+void *atom_deep_copy_session_inventory(const AtomDeepCopySession *session,
+                                      const void *kind);
+bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
+    const void *kind, void *inventory, AtomDeepCopyInventoryRelease release,
+    CettaStorageVisitor storage);
 /* Deep-copy with structural sharing for immutable atoms, also preserving source
    pointer sharing within one copy episode.
    Safe only for arenas whose contents outlive the global hash-cons table. */

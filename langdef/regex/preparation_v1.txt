@@ -1,0 +1,556 @@
+Regex module and prepared program boundary v1
+===========================================
+
+Selected matching
+-----------------
+
+Import re to compile textual or constructed patterns. The source grammar in
+RegexSyntax.module is prepared into the baked regex-pattern-reader parser.
+The regular compiler in RegexSelectionCompiler.module has fifty constructors
+and fifty-eight equations. RegexExtendedCompiler.module includes that literal
+prefix and adds context/capture-dependent compilation, for seventy-one
+constructors and ninety-nine equations. Its equation packet is exported from
+the corresponding Lean LanguageDef, then prepared into a CEQ1 program by
+the ordinary C build. Neither preparation is repeated when matching.
+
+  !(import! &self re)
+  !(let $pattern (re:compile "(?<word>a+)")
+      (re:captures $pattern "baa"))
+
+  (re:compile-value (re:alt (re:literal 97) (re:literal 955)))
+
+Constructed operands remain data. Compute fields explicitly with let before
+the handoff. The native convenience embeds integer scalar/group payloads
+as canonical decimal strings for the authored compiler; this is an explicit
+adapter, not an extra LanguageDef primitive.
+It also accepts the ordinary typed codec's nullary (constructor) spelling,
+using the prepared signature rather than a second constructor catalog.
+Assertion payloads are grounded strings; bare assertion symbols have an
+explicit convenience embedding into that carrier.
+
+The selected regular profile is priority-first, with greedy/lazy choices.
+Full matching constrains eligible success to the whole input before choosing
+an answer. Group zero is the whole match; explicit groups retain their source
+identities through bounded expansion, including groups elided by {0} in
+textual and constructed patterns.
+An unmatched group differs from an empty participating span. Named groups
+retain names alongside their numeric identities.
+
+  (re:match start-byte end-byte groups)
+  (re:capture-span group start-byte end-byte)
+  (re:unmatched group)
+  (re:named-group name group-observation)
+  re:no-match
+
+The no-match marker is the symbol re:no-match, not an empty expression.
+Spans are half-open byte ranges into the original UTF-8 input. Input is not
+normalized. find-all returns (re:matches ordered-list), using LCons/LNil,
+not nondeterministic answers. It suppresses empty matches immediately
+adjoining the previous match end, advances through whole scalars after an
+empty match, and permits a final end-of-input empty match at most once.
+
+Available operations are compile, compile-with, compile-value, find, captures, full-match,
+is-match, find-all, split, replace-literal, replace-template, find-bounded,
+store, restore and close. find-bounded's
+nonzero bound counts instruction-state visits and, for backreferences,
+compared scalars; zero means no caller-imposed
+bound. Exhaustion produces re:incomplete, never re:no-match. Operation faults
+remain re:failed values. Explicit close invalidates that handle, not other
+restored owners. The context also releases remaining owners on shutdown.
+
+split returns (re:pieces ordered-list), including leading and trailing gaps.
+It uses exactly the same match cursor as find-all. Splitting the empty pattern
+over aλ yields ("" "a" "λ" ""). Captures in a delimiter do not add split pieces.
+
+replace-literal inserts replacement bytes verbatim: dollars have no special
+meaning. replace-template takes either an LCons/LNil list of (re:text "literal")
+and (re:group index-or-name) parts, or a textual template. Text accepts $digits,
+${digits}, ${name} and $$ for a literal dollar. An unbraced numeric reference
+consumes the longest decimal run; $12 never falls back to group 1 followed by 2.
+Unicode Nd digits may be mixed in a reference. Capture zero denotes the entire
+match; an unmatched known group explicitly expands to empty text.
+Unknown textual references produce re:failed re:template-reference; malformed
+templates produce re:failed re:template. Malformed constructed parts retain
+the latter result. These checks also run when the input has no match.
+Inserted text is never searched again or normalized.
+
+Both replacement operations use find-all's empty-match rule. Replacing a*
+over baaa with <> yields <>b<>, without a trailing adjacent empty match.
+The older formal leftmost-longest replacement observer is a different
+named model, not the library's iteration policy.
+
+The implemented text projection covers literals and simple escaped
+characters, concatenation, ordered alternatives, groups and names, greedy
+and lazy optional/star/plus/bounded repetition, scalar ranges and their
+complements, dot, text/line anchors, word assertions and i/m/s/u/U/x flags.
+The default dot excludes LF; the underlying recognition wildcard is unchanged.
+Unicode 16.0.0 supplies named properties, \p{...}/\P{...}, \d/\s/\w and
+simple-fold equivalence classes. Property aliases are resolved independently
+of host locale. Explicit properties stay Unicode when u is disabled; shorthand
+classes, word assertions and case folding then use their ASCII interpretations.
+Simple folding does not perform full multi-character expansions such as ss.
+Case-insensitive negation complements the fold-closed positive class.
+The braced \x{...}/\u{...} escapes use ASCII hexadecimal and reject surrogate
+or out-of-universe values. Decimal counts accept mixed Unicode Nd blocks;
+superscripts are not decimal digits. These choices do not change host dialect
+reader numerals.
+
+Whitespace is literal unless x is active. Extended mode removes Unicode
+White_Space and #-through-LF comments outside escapes and character classes.
+Its scopes restore on group exit. Flag directives use the old lexical mode
+until their closing delimiter, then take effect. A compact contiguous-copy
+map retains original source positions, with immutable reconstruction preserving
+shared CST nodes. Nonregular constructs still require a suitable realization;
+an accepted but uninterpreted form remains an explicit interpretation request.
+Bracketed regions use their longest complete class-shaped lexical prefix,
+including nested brackets. If none completes, the remainder is retained for
+the syntax reader to refuse rather than deleting trivia from an unfinished
+class. Thus (?x)[[] # ] is one class region and includes # as a member;
+escape a literal opening bracket as \[ to prevent its nesting interpretation.
+
+The fast parser can return (ParserWithForestV1 observation forest) through
+langdef:parser-parse-text-forest. It materializes the existing packed forest;
+it does not run a second parser. Regex lowering selects only a unique syntax
+tree. Ambiguous/rejected input retains the complete parser observation, and
+an interpretation-needed source form retains it as its final field. An
+insufficient forest allowance is incomplete work, not rejection. Source
+diagnostic offsets are scalar indices; match/capture offsets are UTF-8 bytes.
+Class adjacency denotes union and binds more tightly than the left-associative
+intersection &&, difference -- and symmetric difference ~~ tier. Nested
+brackets and [^...] express grouping and negation. Case closure applies to
+positive primitive classes before Boolean operations, not to their final
+result: (?i)[a--A] is empty. For example, [a-z--[aeiou]] contains consonants,
+and [\p{Greek}&&\p{Letter}] contains Greek letters. Singleton & and ~ remain
+literal class members. Ranges can use scalar escapes as endpoints; a set-valued
+shorthand such as \d is not one scalar endpoint. Genuine parse ambiguity is
+retained, not resolved by a backend's first result.
+Compiled patterns carry an owned copy of their Unicode word interpretation;
+ASCII word assertions are distinct instructions. Neither uses the host locale.
+Packed forests keep their lexed coordinates, with an explicit provenance
+wrapper when extended-mode preparation changes the source. CST and diagnostic
+coordinates are relocated to the original source. Strings passed as data
+retain embedded NUL bytes.
+
+Numeric backreferences consume their maximal Unicode Nd run, independently of
+which captures exist. Thus \12 requests group 12; it never falls back to group
+1 and literal 2. This lexical observation is applied in cleaned source scalar
+coordinates before provenance relocation. The original packed forest is kept.
+
+CRP2 stores actual ordered regular instructions, ranges, capture slots and names.
+It never reinterprets a CRP1 recognition artifact. Live and restored
+programs use the same immutable owned representation. Stored word ranges
+retain their interpretation even when a later compiler changes its provider
+defaults. A standalone baked
+capture-program consumer links only the execution machine and libc, not the
+compiler, module parser, Python, Rust or Lean.
+
+Context and remembered text
+--------------------------
+
+Lookahead (?=body) and (?!body) inspect the original input without moving the
+outer cursor. Positive lookaround chooses one local answer atomically and
+exports its captures. Failure of a later outer operation does not backtrack
+inside that local observation. Negative lookaround succeeds only after local
+absence is established, and exports no changed captures. A stopped observation
+cannot establish negative success.
+
+Variable-length lookbehind (?<=body) and (?<!body) has a declared direction.
+The default evaluates the written body forwards, requiring it to end at the
+assertion position. Among candidate starts it prefers the least branch-priority
+trace, including selected nested positive observations, then the nearest start
+on equal traces. Greedy and lazy choices retain their written meaning.
+
+  (re:compile "(?<=([ab]+)([bc]+))$")
+  (re:compile-with "(?<=([ab]+)([bc]+))$" (re:lookbehind-policy Reverse))
+
+On abc the first returns captures ab/c; the second consumes backwards and
+returns a/bc. Both retain source group IDs and normalized half-open byte spans.
+Reverse traversal is not a claim of full JavaScript regex compatibility.
+Nested assertions retain their own declared directions. Captures can lie
+before or after the whole match because lookaround does not consume its body.
+
+Backreferences use \digits, \k<name> or (?P=name). Names and numeric identities
+resolve against the complete source layout, including groups elided by {0}.
+Forward references therefore retain their identity, but cannot match until
+their group participates. Unmatched or currently open captures fail;
+participating empty captures match empty text. References compare the remembered
+original text exactly, or use ASCII/Unicode simple folding under the flags at
+the reference site. Simple folding still does not introduce full expansions.
+
+Constructed forms are ordinary data:
+
+  (re:backref 1 Exact)
+  (re:lookahead (re:literal 58))
+  (re:not-lookahead (re:literal 115))
+  (re:lookbehind Forward (re:literal 97))
+  (re:not-lookbehind Reverse (re:literal 97))
+
+Exact, AsciiFold and UnicodeFold name reference comparison. Forward and Reverse
+name lookbehind traversal. The authored lowerer performs reverse-body lowering
+once, before graph emission; emission never reparses pattern text.
+
+Pure regular graphs retain the original point-simple Pike realization and CRP2
+bytes. A graph containing lookaround or a backreference uses the extended
+full-configuration-simple search profile. Its cycle key retains capture
+contents and open/closed state: equal instruction/position alone does not
+determine a backreference's future. Closed spans are normalized before entering
+that key, not only when rendering results; a forward and a reverse capture of
+the same input span denote the same remembered text. Consequently nullable capture selection can
+differ when a pattern is placed in an extended context. Exact regular graph
+preservation does not assert capture-aware contextual conservativity.
+
+CRP3 carries the extended graph, checked assertion-nesting ranks and any owned
+simple-fold interpretation. Assertion entries strictly decrease rank; ordinary
+edges do not increase it. This certificate prevents recursive observation cycles
+without a fixed nesting cap. Restoring or baking CRP3 does not parse, admit or
+compile its source again. Existing CRP1/CRP2 profiles are not reinterpreted.
+
+The extended fallback explores ordered branches and can take exponential work.
+Written-forward variable lookbehind also explores candidate start positions.
+No default depth or work cap is imposed. find-bounded exposes a caller-selected
+work allowance; reaching it returns re:incomplete. Native execution policies
+also support cooperative cancellation, separately reported from absence and
+work exhaustion. Public operations connect it to the host interruption guard.
+These controls are not physical-time deadlines or resumable native checkpoints.
+
+Tests:
+  make test-regex-class-source-v1 test-regex-extended-v1
+  make test-regex-extended-baked-v1 test-regex-execution-policy-v1
+
+The class, lookaround, backreference and traversal-policy examples each include
+two positive observations and a negative or incomplete control.
+
+Cursor advancement is transactional at the public observation boundary.
+Suppressed empty candidates do not publish progress if cancellation or an
+allowance prevents the call from returning a match or completed absence.
+Retrying the same cursor therefore cannot silently skip unreturned work.
+
+Tests:
+  make test-regex-selection-v1 test-regex-workflow-v1
+  make test-regex-selection-baked-v1
+
+The optional Rust differential oracle is pinned in
+tests/support/regex_oracle_v1. It is not required by the C build or runtime.
+It compares every capture and ordered iteration, not just recognition.
+Python's final empty-iteration capture can differ: on (a|)* matching aa,
+this regular profile retains the final a at [1,2), not Python's empty group.
+RetainedElidedCaptureLayoutV1 is a named difference from Rust 1.12.3: this
+library keeps trailing groups removed by {0} as unmatched; Rust's compiled
+layout drops them. Neither implementation renumbers intervening groups.
+
+Formal boundaries
+-----------------
+
+The independent authored theory equals its languageDef! presentation, and
+the native readable modules recover the independently exported portable
+core declarations. The original eighteen graph equations remain unchanged;
+appended equations lower source data/counts and accumulate output rows.
+The compiler program is extracted from those actual fifty-eight equations.
+Its fuelled evaluator computes the independently defined
+symbolic emitter exactly, including arbitrary nested optional/plus forms.
+General source-to-symbolic-emitter recognition is proved in both directions
+for every source pattern with an assertion-free regular erasure. It establishes
+recognition conservativity for capture/preference additions; that observation
+class does not include selected captures or contextual assertions.
+
+Counted repetition is authored, not expanded by a separate native semantic
+implementation. A zero minimum lowers to star; a positive minimum n lowers
+to n-1 mandatory copies followed by plus. Thus {1,} and + have identical
+selected graphs, including nullable-body captures. Exact counts and finite
+ranges have their own equations. Counts use re:count-zero/re:count-succ;
+finite ranges store their extra optional count after the mandatory prefix.
+Source capture layout is retained before {0} erases execution, including
+nested elisions.
+Counts beyond the native index carrier retain their accepted syntax as an
+interpretation-needed value; they are not reported as invalid mathematics.
+
+Actual equation execution/reflection and independent factor-count recognition
+theorems cover these lowerings. Old direct-call outcomes are unchanged at
+every fuel. This operational observation does not establish unrestricted
+contextual equational conservativity.
+
+The accumulator emitter passes the remaining rows as an explicit argument.
+Its result is proved equal to the original emitter's rows followed by that
+argument, retaining every instruction address and its order. No source pattern
+is reassociated. This avoids repeated authored append calls on left-associated
+alternatives. Physical native compile costs require separate measurement.
+
+Separate results prove ordered graph erasure, Pike driver soundness and
+iteration order/nonoverlap/completion with scalar-to-byte transport. The
+admitted equation packet, C relocation, byte decoder and native execution
+are tested implementations, not fully verified C refinements. The equation
+execution theorem is not inferred from declaration equality: it uses the
+actual equation evaluator. The graph theory proves least simple path
+existence/uniqueness, whole-driver sufficient fuel, and actual compiled-row
+transport. Global point-memoized DFS is proved equivalent to least simple
+selection, including captures, for point-based eligibility. Its completed
+negative excludes every finite accepting trace, and sufficient recursion fuel
+avoids an incomplete outcome. The full reference Pike driver is proved equal
+to that selected observation, including capture registers. Independent source
+semantics and actual authored equation execution connect this result to the
+compiled pattern. No minimum-parse-tree theorem is claimed.
+
+The raw-byte reference theorem joins verified UTF-8 decoding, the complete
+authored parser, explicit tree selection, Unicode-aware projection and the
+authored compiler to that winner. It is not a proof of the native injected-
+start optimization or native decoder. Native conformance tests compare search
+with ordered anchored calls over the same original haystack, including
+assertions, captures, absence and incomplete work.
+An independent extended-mode lexical judgment is also proved equivalent to
+the terminating reference scanner and joined to complete parsing and attributed
+projection. Retained units preserve original scalar provenance. This does not
+prove refinement of the native compressed source-map representation.
+
+Trace-rendering results characterize split/replacement by independent gap/match
+decompositions and transport those partitions through UTF-8 encoding. They use
+the completed iteration trace and preserve its adjacency rule. Separate
+text-template decoding, reference preparation and rendering theorems preserve
+and reflect the declared template meaning. C refinement remains separate.
+
+Payload preparation, source projection and equation evaluation use explicit
+traversal stacks. Zero depth/work allowances request no caller-imposed bound;
+explicit nonzero allowances remain incomplete outcomes. The parser backend
+still has finite-width work/index capacity. Symbolic graph addresses are
+interned locally by constructor and parent identity, without recursive term
+hashing. This representation change does not alter the emitted graph.
+
+Native ground-term admission follows both declared constructor signatures
+and builtin leaf carriers. The reversible Pattern codec is a separate,
+narrower partial interpretation: native payload tags must be checked before
+erasure. A carrier annotation is not a license to confuse a grounded string
+with a nullary constructor bearing the same spelling.
+
+Language definitions
+--------------------
+
+RegexClass.module supplies nine typed class constructors and eleven equations;
+its readable, portable and Lean definitions agree exactly. ClassScalar has an
+integer carrier; admission does not by itself establish a valid Unicode scalar.
+The independent meaning is a scalar set with explicit property/folding providers.
+The class interpreter and actual finite-interval lowerer preserve and reflect
+that meaning. A finite checker establishes the fold-provider laws required by
+the equations. Importing the module does not install host definitional equality.
+
+The provider catalogue in langdef/unicode is separate shared-data MeTTa syntax.
+Property rows refer to shared interval/list identities rather than duplicate
+fact trees. Generated C is a prepared lookup realization, not the language's
+authority. Ordinary builds consume the checked-in C product; regeneration and
+audit use the explicit preparation tools. UCD source files are not a normal
+build or runtime dependency. The existing Unicode license accompanies the data.
+
+RegexCore.module is a readable declaration of the existing RegexDerivatives
+LanguageDef: four sorts, sixteen constructor/request signatures and twenty-six
+rewrite occurrences. It adds no new core fields. Its types, parameter names,
+premises and constructor heads are compared exactly with independent Lean
+declarations, not just with counts or hashes.
+
+Example declaration:
+
+  Types { Scalar = String; Regex; }
+  Terms { "rx:literal". a:Scalar |- "rx:literal" a : Regex; }
+  Rewrites {
+    "DERIV-LITERAL-EQ". a:Scalar, expected:Scalar |
+      "rx:scalar_eq"(expected, a) |-
+      "rx:derivative"(a, "rx:literal"(expected)) ~> "rx:epsilon"();
+  }
+
+The readable theory-builder notation currently covers the first-order subset
+used here. Its quoted names preserve punctuation without inheriting the BNFC
+reserved-word policy for constructor identifiers. The complete finite carrier
+also has a portable data notation, including abstraction parameters, collection
+algebra, scoped-step premises and rule binding/occurrence specifications:
+
+  (module:document (LanguageDefV2 ...))
+
+The same notation carries ExtendedLanguageDefV1, ordered declaration entries,
+opaque future payloads and module/1 import/export envelopes. Unknown payloads
+remain data. Obtaining a core or executing a declaration is a separate checked
+operation; retaining a payload establishes neither its interpretation nor
+conservativity.
+
+In MeTTa:
+
+  (module:read-file ModulePortableV1 "source" "language.module")
+  (module:read-text ModulePortableV1 "source" source-text)
+  (module:write-text ModulePortableV1 value)
+  (module:core module-value "ExportOrDisplayName")
+
+Bind computations producing input values with let before the inert handoff.
+Portable writing emits codepoint escapes when string spellings would depend
+on the host dialect. It preserves embedded NUL in strings and symbolic names,
+natural numbers beyond machine width, declaration order and multiplicity.
+Commands and multiple top-level declarations are refused. The text carrier
+does not evaluate embedded equations or fetch imports.
+
+The fixed portable-data reader restores build-time GLL and GLR programs.
+Reading a new document decodes its text and projects its syntax, but does not
+reconstruct the reader grammar, prediction sets or LR states.
+
+Only a declared module/1 envelope requests the known schema checks; other
+schema versions remain data for their own interpretations. The module/1
+envelope checks its identifier, unique export names, dependency
+reference spellings, duplicate parsed reference keys, 32-byte commitments and
+finite value payloads. Bare and file: paths share a duplicate-detection key.
+These structural checks do not verify cryptographic commitments, resolve a
+catalog or license an export's semantics. Collection budgets are host policy,
+not intrinsic mathematical limits on module composition.
+
+Examples:
+  examples/module_regex_readable_v1.metta
+  examples/module_portable_roundtrip_v1.metta
+  examples/module_portable_refusal_v1.metta
+
+The readable example explicitly applies NULL-ZERO and NULL-EPSILON and
+returns an admission fault for an undeclared constructor. These are uses of
+the actual regex core rules, not a claim of textual pattern matching.
+
+Preparation and ownership
+-------------------------
+
+The C build host admits the regular-token, base parser, tokenized parser and
+BNFC lexical-policy equation families and stores CEQ1 prepared programs. The
+ordinary built-in loading paths restore these programs rather than parse and
+admit their source. Explicit source-driven compiler experiments retain their
+separate source admission path.
+
+CEQ1 stores the admitted equation trees, operator signatures, primitive
+classes and an explicit vocabulary ABI. It uses symbolic names, fresh local
+variables and a portable dispatch ordering, not process-local symbol or
+variable IDs. Restore checks lengths, shapes, ordering and primitive classes.
+An explicit audit additionally checks linearity, closed rule results,
+exclusivity and structural descent. Trusted build artifacts do not request
+that audit again. An ABI name alone cannot provide a missing primitive.
+
+The regular-token compiler can itself be stored/restored through the native
+regular_token_compiler_v1 API. Its lexical class pack is an explicit borrowed
+parameter, not secretly captured in the equation image. After compilation,
+regular_pattern_v1 owns the resolved immutable DFA arrays independently of
+the compiler, its class pack and source arena. Each input uses separate scan
+state. Retain/release support shared immutable pattern ownership.
+
+CRP1 serializes those DFA decisions under the explicit
+regular-single-pattern-v1 profile. It can be restored from file bytes or a
+baked const byte array. Neither path determinizes an automaton or constructs
+new recognizer tables. Bounds and automaton validation run at ingress;
+prevalidated scan operations reuse the retained program. Artifact publication
+shares the parser artifact's same-directory atomic replacement helper.
+
+Qualification commands
+----------------------
+
+  make BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-regex-v1
+
+  make BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+    test-language-def-core-v1 test-module-workflow-v1 \
+    test-regular-token-value-compiler-v1 test-regular-pattern-baked-v1
+
+The optional Lean fixture exporter is
+GSLT/Tools/ExportNativeModuleFixtures.lean. It is not a normal C build
+dependency. The checked-in fixtures are generated from the complete portable
+core codec. The readable regex declaration is independently authored through
+languageDef!, with exact equality to RegexTheory.theory. Native fixture
+agreement is regression evidence, not a Lean proof of the C implementation.
+
+Capability boundaries
+----------------------
+
+The native core carrier preserves more than every consumer executes. The
+existing historical BNFC projection returns a TypedCoreSyntaxV1 obligation
+rather than discard typed declarations. The complete typed core remains
+available to admission and explicit rewrite consumers within their existing
+profiles. Scoped-step and collection-algebra execution need established
+interpretations; retention alone does not enable them.
+
+CRP1 does not store prioritized matches, capture registers or replacement
+semantics. The lexical DFA, derivative theory and selected compiler are
+distinct realizations. The selected compiler has its own authored re:*
+source, symbolic graph equations and CRP2 artifact. Recognition equivalence
+alone cannot justify selected-match or capture equivalence. The complete
+developer-tool consumer and broader release qualification remain separate
+work. The stated Unicode profile is
+not a claim of full UTS #18 conformance, grapheme matching or full case folding.
+
+Packed selection and occurrence queries
+--------------------------------------
+
+The pattern reader declares maximal numeric-reference selection using
+ParserSelectionV1 and ParserRejectFollowingClassV1, with its existing
+RxDigitClass interpretation. Selection rejects a packed production family
+before expanding its child products. The original accepted forest is retained,
+including alternatives rejected by this observer. Unknown guard interpretations
+produce ParserSelectionObligationV1; they are not silently treated as success.
+The Lean extractor proves exact ordered-list agreement with late selection.
+The regex action catalogue separately checks that its actions retain the
+children needed by that late physical-CST observation.
+
+langdef:parser-parse-text-selected is an explicit selected-value projection
+of the same packed execution. Resolved accepted results omit canonical-forest
+rendering; unknown interpretations and rejected/cyclic diagnostics retain the
+full evidence. Normal regex preparation uses this projection. If semantic
+lowering cannot supply an interpretation, it obtains full diagnostic evidence
+from the same prepared reader. That exceptional parse does not reconstruct the
+grammar or compiler and preserves the existing diagnostic contract.
+
+Textual compilation runs lexical preparation, the reader, selection, lowering
+and the authored compiler as one native composition; no intermediate syntax
+is copied between those stages. Each context restores the baked reader once
+and releases it with its other native resources. When the reader's
+value-only execution is locally deterministic, its unique derivation is
+replayed as it is recorded, without first building a packed forest; any other
+input uses the general parser. The separate staged operations remain
+available, and the composition gate requires identical programs and failures
+from both.
+
+An ordinary definition can be retained, printed and read as data:
+
+  (re:pattern "(?<word>[a-z]+)")
+  (re:pattern "(?<=([ab]+)([bc]+))$" (re:lookbehind-policy Reverse))
+
+Use re:prepare to turn that definition into a reusable compiled owner once.
+Owners are retained by the values using them and released with those values;
+re:close is an optional early release, not a mandatory finalizer in every
+program. A definition is not itself a cache entry and nothing retains a
+program on its behalf. While some owner of an equal definition (the same text
+and look-behind policy, in the same context) is live, a later preparation
+borrows that program instead of reading the text again; equal semantic
+patterns with equal capture layouts likewise share one program. Every owner
+remains independently closable, and the last owner's release retires the
+sharing. No serialization of native owner identities is promised.
+
+Existing re:match results remain compact byte spans. re:group-span accepts a
+group number or name and returns re:span or re:unmatched. re:group-text takes
+the match, original input and group identifier, returning only the requested
+slice. Empty participating text is "", not re:unmatched. Unknown identifiers
+are explicit failures. Slices are copied on request rather than eagerly for
+every group of every result.
+
+re:match-relation enumerates overlapping simple outer-path occurrences,
+including equal-output occurrences reached by distinct branch histories.
+It is not re:find-all, which selects nonoverlapping matches in order. Regular
+programs use point-simple paths; extended programs use full-configuration-simple
+paths. Nested positive lookaround still selects one atomic local result.
+Neither arbitrary looping derivations nor discarded local assertion answers
+are added to this declared relation.
+
+For explicit demand, re:relation-open returns a retained token. Calling
+re:relation-next returns re:relation-yield with a match and next token, or
+re:relation-complete. Re-reading a token repeats its cached observation rather
+than consuming another occurrence. re:relation-next-bounded can return
+re:relation-pending with the same token; a later call resumes the exact native
+frontier. No match is lost on interruption. The owner keeps the demanded
+prefix for multishot access, so its memory includes cached demanded captures
+as well as the live search frontier. re:relation-close permits early release.
+
+The pull interface is lazy on every supported host. PeTTa also consumes the
+ordinary nondeterministic wrapper incrementally. HE and frozen Prime currently
+evaluate its alternatives eagerly, so once on that wrapper does not bound
+producer work there. Use the explicit pull interface for bounded demand on
+those hosts. Enumeration can have exponentially many distinct occurrences;
+this is not a linear-time selected-search claim.
+
+system:monotonic-ns supplies monotonic timestamps in nanosecond units. The
+regex workflow's --scale mode reports preparation, matching and whole-process
+cost separately; unit precision is not a claim of clock accuracy. It prints
+compact observations, not the matched haystack. The complete vocabulary
+checker uses one compiled pattern throughout its streaming filesystem scan;
+its Python implementation remains an independent whole-tool oracle.

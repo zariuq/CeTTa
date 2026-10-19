@@ -14,6 +14,7 @@
 !(json:get-all (json:parse "{\"k\": 5, \"k\": 6}") "k")
 !(json:members (json:parse "{\"k\": 5}"))
 !(json:stringify (json:parse "{\"nested\": [[1], {\"t\": true}]}"))
+!(json-stringify (json:to-legacy (json:parse "[1,true]")))
 
 ; A value the program passes through a variable is that program's value.
 ; HE interprets an argument at a parameter that is not Atom-typed, as

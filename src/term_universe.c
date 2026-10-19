@@ -1611,6 +1611,7 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -1815,6 +1816,7 @@ static uint64_t term_universe_record_slot_hash(
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -1949,6 +1951,7 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -2129,6 +2132,7 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -3212,7 +3216,22 @@ bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
     return true;
 }
 
-AtomId tu_intern_float(TermUniverse *universe, double value) {
+/* A grounded leaf's record is built once, for interning and for lookup
+ * alike: a lookup finds a leaf under the header, payload and slot it was
+ * interned under. */
+static AtomId term_universe_leaf_record(TermUniverse *universe,
+                                        const CettaTermHdr *hdr,
+                                        const uint8_t *payload,
+                                        size_t payload_len, bool insert) {
+    if (!insert)
+        return term_universe_lookup_record_id(universe, hdr, payload,
+                                              payload_len);
+    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
+    return term_universe_intern_record(universe, hdr, payload, payload_len);
+}
+
+static AtomId term_universe_float_record(TermUniverse *universe,
+                                         double value, bool insert) {
     CettaTermHdr hdr = {0};
     uint8_t payload[sizeof(double)] = {0};
     hdr.tag = (uint8_t)ATOM_GROUNDED;
@@ -3220,23 +3239,31 @@ AtomId tu_intern_float(TermUniverse *universe, double value) {
     hdr.aux32 = term_universe_aux_make(0u, false);
     hdr.hash32 = term_universe_hash_float_value(value);
     term_universe_store_double(payload, value);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    return term_universe_intern_record(universe, &hdr, payload,
-                                       sizeof(payload));
+    return term_universe_leaf_record(universe, &hdr, payload,
+                                     sizeof(payload), insert);
 }
 
-AtomId tu_intern_bool(TermUniverse *universe, bool value) {
+AtomId tu_intern_float(TermUniverse *universe, double value) {
+    return term_universe_float_record(universe, value, true);
+}
+
+static AtomId term_universe_bool_record(TermUniverse *universe, bool value,
+                                        bool insert) {
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_GROUNDED;
     hdr.subtag = (uint8_t)GV_BOOL;
     hdr.aux32 = term_universe_aux_make(value ? 1u : 0u, false);
     hdr.hash32 = term_universe_hash_bool_value(value);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    return term_universe_intern_record(universe, &hdr, NULL, 0u);
+    return term_universe_leaf_record(universe, &hdr, NULL, 0u, insert);
+}
+
+AtomId tu_intern_bool(TermUniverse *universe, bool value) {
+    return term_universe_bool_record(universe, value, true);
 }
 
 /* Admit immutable structural tags under atom.h's retention judgment. */
-AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
+static AtomId term_universe_stable_tag_record(TermUniverse *universe,
+                                              int64_t tag, bool insert) {
     if (!cetta_internal_tag_is_term_stable(tag))
         return CETTA_ATOM_ID_NONE;
     CettaTermHdr hdr = {0};
@@ -3244,12 +3271,16 @@ AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
     hdr.subtag = (uint8_t)GV_INTERNAL_TAG;
     hdr.aux32 = term_universe_aux_make((uint32_t)tag, false);
     hdr.hash32 = term_universe_hash_list_tag_value(tag);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    return term_universe_intern_record(universe, &hdr, NULL, 0u);
+    return term_universe_leaf_record(universe, &hdr, NULL, 0u, insert);
 }
 
-AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
-                          size_t len_sz) {
+AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
+    return term_universe_stable_tag_record(universe, tag, true);
+}
+
+static AtomId term_universe_string_record(TermUniverse *universe,
+                                          const char *bytes, size_t len_sz,
+                                          bool insert) {
     if (!bytes || len_sz > CETTA_STRING_BYTES_MAX)
         return CETTA_ATOM_ID_NONE;
     uint32_t len = (uint32_t)len_sz;
@@ -3259,7 +3290,6 @@ AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_string_bytes(bytes, len);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
     /* The payload is the bytes and a NUL kept for C interoperation. */
     uint8_t stack_payload[256];
     uint8_t *payload = len + 1u <= sizeof stack_payload
@@ -3269,11 +3299,16 @@ AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
         return CETTA_ATOM_ID_NONE;
     memcpy(payload, bytes, len);
     payload[len] = 0u;
-    AtomId id = term_universe_intern_record(universe, &hdr, payload,
-                                            len + 1u);
+    AtomId id = term_universe_leaf_record(universe, &hdr, payload, len + 1u,
+                                          insert);
     if (payload != stack_payload)
         free(payload);
     return id;
+}
+
+AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
+                          size_t len_sz) {
+    return term_universe_string_record(universe, bytes, len_sz, true);
 }
 
 AtomId tu_intern_string(TermUniverse *universe, const char *value) {
@@ -3282,7 +3317,8 @@ AtomId tu_intern_string(TermUniverse *universe, const char *value) {
     return tu_intern_string_n(universe, value, strlen(value));
 }
 
-AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
+static AtomId term_universe_bigint_record(TermUniverse *universe,
+                                          const char *value, bool insert) {
     if (!value)
         return CETTA_ATOM_ID_NONE;
     char *canonical = cetta_bigint_canonicalize_owned(value);
@@ -3291,7 +3327,8 @@ AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
     int64_t small = 0;
     if (cetta_bigint_text_fits_i64(canonical, &small)) {
         free(canonical);
-        return tu_intern_int(universe, small);
+        return insert ? tu_intern_int(universe, small)
+                      : term_universe_lookup_integer(universe, small, NULL);
     }
     size_t len_sz = strlen(canonical);
     if (len_sz > (size_t)UINT32_MAX - 1u) {
@@ -3305,15 +3342,19 @@ AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_bigint_value(canonical);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    AtomId id = term_universe_intern_record(universe, &hdr,
-                                            (const uint8_t *)canonical,
-                                            len + 1u);
+    AtomId id = term_universe_leaf_record(universe, &hdr,
+                                          (const uint8_t *)canonical,
+                                          len + 1u, insert);
     free(canonical);
     return id;
 }
 
-AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
+AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
+    return term_universe_bigint_record(universe, value, true);
+}
+
+static AtomId term_universe_rational_record(TermUniverse *universe,
+                                            const char *value, bool insert) {
     if (!value)
         return CETTA_ATOM_ID_NONE;
     char *canonical = cetta_rational_canonicalize_owned(value);
@@ -3322,7 +3363,7 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
     char *slash = strchr(canonical, '/');
     if (slash && strcmp(slash + 1, "1") == 0) {
         *slash = '\0';
-        AtomId id = tu_intern_bigint(universe, canonical);
+        AtomId id = term_universe_bigint_record(universe, canonical, insert);
         free(canonical);
         return id;
     }
@@ -3338,12 +3379,15 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
     hdr.arity_or_len = len > UINT16_MAX ? UINT16_MAX : (uint16_t)len;
     hdr.aux32 = term_universe_aux_make(len, false);
     hdr.hash32 = term_universe_hash_rational_value(canonical);
-    TU_DIAG_INC(universe, direct_constructor_leaf_hits);
-    AtomId id = term_universe_intern_record(universe, &hdr,
-                                            (const uint8_t *)canonical,
-                                            len + 1u);
+    AtomId id = term_universe_leaf_record(universe, &hdr,
+                                          (const uint8_t *)canonical,
+                                          len + 1u, insert);
     free(canonical);
     return id;
+}
+
+AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
+    return term_universe_rational_record(universe, value, true);
 }
 
 /* The list [elems...], or [elems... | rest] when rest is not
@@ -3703,6 +3747,18 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
                                     bool insert) {
     if (!universe || !src)
         return CETTA_ATOM_ID_NONE;
+    SymbolId symbol = src->kind == ATOM_SYMBOL
+        ? atom_symbol_current_id(src) : SYMBOL_ID_NONE;
+    if (!insert && symbol != SYMBOL_ID_NONE) {
+        /* A numbered symbol's record is its header alone; a spelling the
+         * table does not number takes the stable lookup. */
+        CettaTermHdr hdr = {0};
+        hdr.tag = (uint8_t)ATOM_SYMBOL;
+        hdr.sym_or_head = symbol;
+        hdr.aux32 = term_universe_aux_make(0u, false);
+        hdr.hash32 = term_universe_hash_symbol_id(symbol);
+        return term_universe_lookup_record_id(universe, &hdr, NULL, 0u);
+    }
     if (!insert)
         return term_universe_lookup_stable_id(universe, src);
     switch (src->kind) {
@@ -3738,6 +3794,7 @@ static AtomId term_universe_leaf_id(TermUniverse *universe, Atom *src,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -3843,6 +3900,20 @@ done:
     return result;
 }
 
+/* The id of a subterm the universe decoded itself: an entry whose
+ * decoded_cache is this very atom, so walking the subterm would only find
+ * that entry again.  Decoded atoms live in the persistent arena, or, where
+ * that arena interns, are the shared atoms it returns (arena identity 0); an
+ * atom of any other arena (a term being built) is never probed. */
+static AtomId term_universe_decoded_subterm_id(const TermUniverse *universe,
+                                               Atom *atom) {
+    const Arena *persistent = universe->persistent_arena;
+    if (!persistent || !atom || atom->kind != ATOM_EXPR ||
+        (atom->arena_id != persistent->identity && atom->arena_id != 0u))
+        return CETTA_ATOM_ID_NONE;
+    return term_universe_lookup_ptr_id(universe, atom);
+}
+
 static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
                                                      Atom *src, bool insert,
                                                      bool *out_stable) {
@@ -3900,8 +3971,13 @@ static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
 
         if (frame->next_child < atom->expr.len) {
             uint32_t child_index = frame->next_child++;
-            if (!term_universe_store_stack_push(
-                    &stack, atom->expr.elems[child_index], child_index))
+            Atom *child = atom->expr.elems[child_index];
+            AtomId child_id = term_universe_decoded_subterm_id(universe, child);
+            if (child_id != CETTA_ATOM_ID_NONE) {
+                stack.ids[frame->child_base + child_index] = child_id;
+                continue;
+            }
+            if (!term_universe_store_stack_push(&stack, child, child_index))
                 goto done;
             continue;
         }
@@ -3991,7 +4067,7 @@ static AtomId term_universe_stable_atom_id_iterative_source_memo(
             bool source_hit = false;
             if (child && child->kind == ATOM_EXPR &&
                 source_memo && source_memo->memo) {
-                child_id = term_universe_lookup_ptr_id(universe, child);
+                child_id = term_universe_decoded_subterm_id(universe, child);
                 if (child_id == CETTA_ATOM_ID_NONE) {
                     source_hit = term_universe_source_memo_lookup(
                         source_memo, child, &child_id);
@@ -4171,6 +4247,7 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -4490,6 +4567,7 @@ static Atom *term_universe_copy_atom_finish(const TermUniverse *universe,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -4912,6 +4990,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -4954,6 +5033,30 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
         AtomId id = term_universe_stable_atom_id_iterative(
             (TermUniverse *)universe, src, false, &stable);
         return stable ? id : CETTA_ATOM_ID_NONE;
+    }
+    if (src->kind == ATOM_GROUNDED) {
+        /* Lookup only: the record functions intern nothing when told not to. */
+        TermUniverse *records = (TermUniverse *)universe;
+        switch (src->ground.gkind) {
+        case GV_FLOAT:
+            return term_universe_float_record(records, src->ground.fval, false);
+        case GV_BOOL:
+            return term_universe_bool_record(records, src->ground.bval, false);
+        case GV_STRING:
+            return term_universe_string_record(records, src->ground.sval,
+                                               src->ground.slen, false);
+        case GV_BIGINT:
+            return term_universe_bigint_record(records, atom_bigint_cstr(src),
+                                               false);
+        case GV_RATIONAL:
+            return term_universe_rational_record(
+                records, atom_rational_cstr(src), false);
+        case GV_INTERNAL_TAG:
+            return term_universe_stable_tag_record(records, src->ground.ival,
+                                                   false);
+        default:
+            break;
+        }
     }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
     TU_DIAG_INC((TermUniverse *)universe, legacy_hash_recompute_count);
@@ -5311,6 +5414,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -5457,6 +5561,7 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:

@@ -47,13 +47,15 @@ static bool prime_replay_compare_policy(const CettaSearchPolicySpec *a,
 #define RP(f) RC_FIELDS("policy",a,b,f)
     RP(present);RP(lane);RP(order);RP(native_control);RP(implicit_first_value);
     RP(priority);RP(age_share);RP(work_budget);RP(workers);RP(worker_quantum);
-    RP(resource_profile);RP(resource_worlds);RP(retain);RP(receipts);RP(costs);
+    RP(resource_profile);RP(resource_worlds);RP(retain);RP(receipts);RP(costs);RP(cost_compact);RP(cost_equations);RP(cost_source_only);
     RP(source_share);RP(prepare_meter);
+    RP(breakpoint_specified);RP(breakpoint_budget);
     RP(additional);RP(all);RP(descending);RP(by_weight);RP(weight_law);RP(selection);
 #undef RP
 #define RA(f) RC_A("policy."#f,a->f,b->f)
     RA(policy_atom);RA(key_pattern);RA(key_expression);RA(goal_pattern);RA(goal_expression);
     RA(bound_pattern);RA(bound_expression);
+    RA(breakpoint_pattern);
 #undef RA
     return prime_replay_compare_history_spec(&a->history,&b->history,read);
 }
@@ -243,8 +245,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
         !prime_need_snapshot_compare(&a->before,&b->before,read)||
         !prime_need_snapshot_compare(&a->evaluating,&b->evaluating,read))return false;
     RC_F("frame.child_bound_capacity",a->control_child_bound_capacity,b->control_child_bound_capacity);
-    return prime_need_receipt_compare(&a->before_receipt,&b->before_receipt,read)&&
-        prime_need_receipt_compare(&a->producer_receipt,&b->producer_receipt,read);
+    return prime_need_receipt_compare(&a->before_receipt,&b->before_receipt,read);
 }
 
 static bool prime_replay_compare_program(SpaceProgramToken a,SpaceProgramToken b,
@@ -329,6 +330,12 @@ static bool prime_replay_compare_cost(const CettaNativeCostLedger *a,
         (a->length&&!a->events)||(b->length&&!b->events))return false;
     RC_I("cost.ledger",CETTA_CHECKPOINT_COST_LEDGER,a->identity,b->identity);
     RC_S("cost.imported",a->imported,b->imported);
+    RC_S("cost.compact",a->compact,b->compact);
+    RC_S("cost.native_enabled",a->native_enabled,b->native_enabled);
+    RC_S("cost.used",a->used,b->used);
+#define RE(f) RC_FIELDS("cost.equations",(&a->equations),(&b->equations),f)
+    RE(enabled);RE(work);RE(span);RE(work_overflow);RE(span_overflow);RE(incomplete);RE(parallel);
+#undef RE
     RC_F("cost.rows",a->length,b->length);RC_F("cost.capacity",a->capacity,b->capacity);
     RC_F("cost.storage",(uintptr_t)a->events,(uintptr_t)b->events);
     if(!prime_replay_compare_cost_snapshot(&a->total,&b->total,read))return false;
@@ -364,7 +371,7 @@ static bool prime_replay_compare_arena(const Arena *a,const Arena *b,
     RC_S("arena.scalar_cache",a->scalar_cache,b->scalar_cache);
 #define AP(f) RC_F("arena."#f,a->f,b->f)
     AP(persistent_bytes);AP(live_bytes);AP(external_bytes);AP(reserved_bytes);AP(spare_bytes);
-    AP(block_count);AP(spare_block_count);AP(block_capacity);AP(reset_epoch);
+    AP(block_count);AP(spare_block_count);AP(block_capacity);AP(block_growth);AP(reset_epoch);
 #undef AP
     RC_F("arena.blocks",(uintptr_t)a->head,(uintptr_t)b->head);
     RC_F("arena.spares",(uintptr_t)a->spare,(uintptr_t)b->spare);
@@ -403,10 +410,10 @@ static bool prime_replay_compare_episode(const PrimeNativeControl *ac,
     RC_A("episode.request",a->request_expression,b->request_expression);
     if(!prime_replay_compare_arena(&a->arena,&b->arena,read)||
         !prime_replay_compare_arena(&a->request_storage,&b->request_storage,read)||
-        !prime_need_snapshot_compare(&a->need,&b->need,read)||
-        !prime_need_receipt_compare(&a->branch,&b->branch,read)||
-        !prime_need_receipt_compare(&a->receipt,&b->receipt,read)||
-        !cetta_weight_ledger_compare(&a->weights,&b->weights,read))return false;
+        !prime_need_snapshot_compare(&a->context.value.previous,&b->context.value.previous,read)||
+        !prime_need_receipt_compare(&a->context.value.previous_branch_state,&b->context.value.previous_branch_state,read)||
+        !prime_need_receipt_compare(prime_need_saved_context_receipt(&a->context),prime_need_saved_context_receipt(&b->context),read)||
+        !cetta_weight_ledger_compare(&a->context.value.previous_weights,&b->context.value.previous_weights,read))return false;
     const PrimeNeedRegionPool *x=&a->regions,*y=&b->regions;
     if(x->depth||y->depth||!cetta_checkpoint_extent(x->levels,x->level_count,x->level_capacity,
         y->levels,y->level_count,y->level_capacity))return false;
@@ -550,15 +557,19 @@ static bool prime_replay_compare_driver(const PrimeEvalStackDriver *a,
 }
 static bool prime_replay_compare_history(const PrimeNativeHistory *a,const PrimeNativeHistory *b,
     const CettaCheckpointCompare *read) {
+    PrimeNativeHistory absent = {0};
+    /* Retired carrier metadata is not an observer or a replay diary. */
+    if(a->forgotten)a=&absent;
+    if(b->forgotten)b=&absent;
     if(a->active||b->active||a->count!=b->count||a->count>a->spec.selections||b->count>b->spec.selections||
         a->reservations>a->spec.selections||b->reservations>b->spec.selections||
         (a->count&&(!a->entries||!b->entries)))return false;
     if(!prime_replay_compare_history_spec(&a->spec,&b->spec,read)||
         !prime_need_recording_compare(a->group,b->group,read))return false;
 #define HH(f) RC_FIELDS("history",a,b,f)
-    HH(count);HH(reservations);HH(omitted);HH(overflow);
+    HH(count);HH(reservations);HH(omitted);HH(overflow);HH(stopped);HH(stop);
 #undef HH
-    RC_I("history.start",CETTA_CHECKPOINT_RECEIPT_NODE,a->start,b->start);
+    RC_S("history.start",a->start,b->start);
     RC_F("history.entries",(uintptr_t)a->entries,(uintptr_t)b->entries);
     for(size_t i=0u;i<a->count;i++) {
         const PrimeNativeHistorySelection *p=&a->entries[i],*q=&b->entries[i];
@@ -744,6 +755,9 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     CC(key_generation);CC(active_scoring);CC(pure_authority);CC(worker_execution);
     CC(effect_pending);CC(need_pending);CC(open_frames);CC(failed);CC(invalidated);
     CC(completion);CC(owned_arena);CC(resource_pending);CC(cost_enabled);
+    CC(breakpoint_hit);CC(breakpoint_incomplete);CC(breakpoint_operation);CC(breakpoint_checks);
+    CC(breakpoint_resource_commit);
+    CC(breakpoint_resource_activation);
     CC(published);CC(delivered_count);CC(steps);CC(base_environment_initialized);
     CC(goal_generation);CC(goal_size);CC(next_last);CC(next_pick_valid);CC(empty_pick_generated);
     CC(goal_found);CC(goal_reported);CC(selected_length);CC(selected_delivered);CC(costs_completed);
@@ -754,6 +768,7 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     CC(weight_keys);CC(weight_licensed);CC(weight_stopped_early);
 #undef CC
     RC_I("control.active_occurrence",CETTA_CHECKPOINT_ISSUED_OCCURRENCE,a->active_occurrence,b->active_occurrence);
+    RC_I("control.breakpoint_occurrence",CETTA_CHECKPOINT_ISSUED_OCCURRENCE,a->breakpoint_occurrence,b->breakpoint_occurrence);
 #define CA(f) RC_A("control."#f,a->f,b->f)
     CA(active_key);CA(active_bound);CA(pending_effect);CA(source_expression);CA(weight_algebra);CA(weight_subject);
     CA(weight_coefficient_variable);CA(weight_factor_variable);CA(weight_refusal);

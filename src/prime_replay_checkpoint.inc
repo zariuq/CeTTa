@@ -127,6 +127,38 @@ static void prime_replay_sources_free(PrimeReplaySources *sources) {
     free(sources->spaces);free(sources->reads);*sources=(PrimeReplaySources){0};
 }
 
+/* Release this observer without copying its computation. Real ownership of
+ * the handle and quiescent writer state authorize the transition. Incidental
+ * receipt handles keep only their control blocks; independent readers keep
+ * their own payload leases. The positive limit admits one observer transition,
+ * not a traversal of executable worlds or a replay check. */
+static CettaContinuationStatus prime_checkpoint_forget_recording(
+    Atom *holder, size_t limit, const char **refusal) {
+    *refusal = "InspectionLimit";
+    if (!limit) return CETTA_CONTINUATION_UNSUPPORTED;
+    CettaNativeHandleUse use = {0};
+    *refusal = "SourceOwner";
+    if (!cetta_native_handle_acquire_owned(g_library_context, "prime-search", holder,
+            CETTA_NATIVE_HANDLE_USE_EXCLUSIVE, &use))
+        return CETTA_CONTINUATION_DEFERRED;
+    PrimeNativeControl *source = cetta_native_handle_use_resource(&use);
+    CettaContinuationStatus status = CETTA_CONTINUATION_UNSUPPORTED;
+    if (!source || !source->owned_arena) {
+        *refusal = "SourceOwner";
+    } else if (!prime_native_history_quiescent(source)) {
+        *refusal = "ActiveWriter";
+        status = CETTA_CONTINUATION_DEFERRED;
+    } else {
+        bool forgotten=prime_native_history_forget_control(source);
+        assert(forgotten);(void)forgotten;
+        *refusal = NULL;
+        status = CETTA_CONTINUATION_READY;
+    }
+    bool released = cetta_native_handle_use_release(&use);
+    assert(released); (void)released;
+    return status;
+}
+
 static bool prime_replay_checkpoint_current(const PrimeNativeControl *control,Arena *inspection) {
     if(!control||!control->owned_top_episode||control->invalidated||control->failed||
         !space_read_token_is_current(control->source_read)||
@@ -141,8 +173,9 @@ static bool prime_replay_checkpoint_current(const PrimeNativeControl *control,Ar
 
 static bool prime_replay_checkpoint_complete(const PrimeNativeControl *control,
     const PrimeReplaySourceScan *scan) {
-    if(!control->cost_enabled||!control->event_cost.identity||
-        control->event_cost.identity==UINT64_MAX||control->event_cost.total.overflow||
+    if(!control->cost_enabled||control->event_cost.equations.enabled||!control->event_cost.native_enabled||
+        !control->event_cost.identity||
+        control->event_cost.identity==UINT64_MAX||control->event_cost.compact||control->event_cost.total.overflow||
         control->event_cost.total.trace_incomplete||!control->history.spec.enabled||
         !control->history.group||control->history.omitted||control->history.overflow)
         return false;
@@ -297,6 +330,11 @@ static bool prime_replay_checkpoint_prepare_profile(CettaLibraryContext *context
      * read must already be subject to the restrictive global-owner domain. */
     if(!atom_deep_copy_session_set_runtime_arena_map(atoms,pairs,count)) {
         out->refusal="ArenaMap";goto done;
+    }
+    /* The recording policy uses the admitted arena map. Choose duplication
+     * before preparing recording frames or copying parent receipt carriers. */
+    if(scan.recording_count && !prime_need_recording_copy_enable(atoms)) {
+        out->refusal="RecordingMode";goto done;
     }
     for(size_t i=0u;i<scan.recording_count;i++)
         if(!prime_need_recording_copy_prepare(records[i],atoms)) {

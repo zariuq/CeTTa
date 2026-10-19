@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "native/langdef_module.h"
+#include "native/prepared_artifact_v1.h"
 #include "eval.h"
 #include "lang.h"
 #include "native/grammar_canonical_bnf_v1.h"
@@ -18,7 +19,9 @@
 #include "native/language_def_parser_pack_v1.h"
 #include "native/parser_token_runtime_v1.h"
 #include "native/parser_token_ast_v1.h"
+#include "native/parser_baked_v1.h"
 #include "native/language_def_pattern_atom_v1.h"
+#include "native/language_def_pattern_admission_v1.h"
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/decimal_value_v1.h"
 #include "native/ebnf_derivation_projection_native_v1.h"
@@ -28,6 +31,9 @@
 #include "native/structural_tree_relabel_v1.h"
 #include "native/syntax_gslt_v1.h"
 #include "native/lbnf_document_v1.h"
+#include "native/module_value_v1.h"
+#include "native/module_value_internal_v1.h"
+#include "native/module_fields_v1.h"
 #include "native_handle.h"
 #include "finite_horn_ground_term_v1.h"
 #include "parser_pack_gll_v1.h"
@@ -62,6 +68,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define LANGDEF_HANDLE_KIND "cetta.langdef.v1"
 #define LANGUAGE_DEF_TERM_HANDLE_KIND "cetta.language-def-term.v1"
@@ -167,7 +174,7 @@ typedef struct {
     char contextual_error[256];
 } CettaLanguageDefTermV1;
 
-typedef struct {
+typedef struct CettaAuthoredParserV1 {
     CettaOperationalLanguageDefV1 wire;
     CettaLanguageDefCoreV1 language;
     CettaOpLangV1Document profile_document;
@@ -175,8 +182,36 @@ typedef struct {
     CettaLdParserPackV1 compiled;
     PPNativeV1Prepared prepared;
     CettaParserTokenRuntimeV1 token_runtime;
+    CettaLpNativePredictiveProgram predictive;
+    bool predictive_ready;
     char *name;
+    CettaLibraryContext *cache_context;
+    struct CettaAuthoredParserV1 *cache_next;
+    uint32_t users;
+    bool preparation_ready;
+    bool corridor_licensed;
+    Arena storage;
+    Atom *syntax_value;
+    char syntax_key[65];
+    /* Restored programs share by their actual immutable carrier bytes, not
+     * by source provenance alone or by an unaudited stored digest. */
+    uint8_t *artifact_bytes;
+    size_t artifact_length;
+    /* The baked parser a library instance retains, and that handle. */
+    const CettaBakedParserV1 *library_baked;
+    uint64_t library_handle;
 } CettaAuthoredParserV1;
+
+typedef enum {
+    PARSER_STRATEGY_GENERAL_V1 = 0,
+    PARSER_STRATEGY_AUTO_V1,
+    PARSER_STRATEGY_PREDICTIVE_V1
+} CettaParserStrategyV1;
+
+typedef struct {
+    CettaAuthoredParserV1 *owner;
+    CettaParserStrategyV1 strategy;
+} CettaParserInstanceV1;
 
 typedef struct {
     CettaLdTextV1 relation;
@@ -209,8 +244,17 @@ static bool langdef_set_error(char *buffer, size_t size,
                               const char *format, ...);
 
 #ifndef CETTA_LANGDEF_ARTIFACT_ONLY
+static Atom *langdef_expr(Arena *, const char *, Atom **, uint32_t);
 static Atom *langdef_error(Arena *arena, Atom *source, const char *message) {
     return atom_error(arena, source, atom_string(arena, message));
+}
+
+static Atom *langdef_owned_handle(CettaLibraryContext *ctx, Arena *arena,
+                                  Atom *source, const char *kind, uint64_t id) {
+    Atom *value = cetta_native_handle_owned_atom(ctx, arena, kind, id);
+    if (value) return value;
+    cetta_native_handle_close(ctx, kind, id);
+    return langdef_error(arena, source, "native handle publication allocation failed");
 }
 
 static void language_def_term_resource_free(void *opaque) {
@@ -228,7 +272,23 @@ static void authored_parser_resource_free(void *opaque) {
 
     if (!resource)
         return;
+    CettaLibraryContext *ctx = resource->cache_context;
+    if (ctx) {
+        pthread_mutex_lock(&ctx->parser_cache_mutex);
+        if (--resource->users) {
+            pthread_mutex_unlock(&ctx->parser_cache_mutex);
+            return;
+        }
+        CettaAuthoredParserV1 **entry = &ctx->parser_cache;
+        while (*entry && *entry != resource)
+            entry = &(*entry)->cache_next;
+        if (*entry)
+            *entry = resource->cache_next;
+        pthread_mutex_unlock(&ctx->parser_cache_mutex);
+    }
     free(resource->name);
+    free(resource->artifact_bytes);
+    cetta_lp_native_predictive_program_free(&resource->predictive);
     cetta_parser_token_runtime_v1_free(&resource->token_runtime);
     ppnative_v1_prepared_free(&resource->prepared);
     cetta_ld_parser_pack_v1_free(&resource->compiled);
@@ -236,7 +296,62 @@ static void authored_parser_resource_free(void *opaque) {
     cetta_op_lang_v1_document_free(&resource->profile_document);
     cetta_language_def_core_v1_free(&resource->language);
     cetta_op_lang_v1_free(&resource->wire);
+    arena_free(&resource->storage);
     free(resource);
+}
+
+static void authored_parser_instance_free(void *opaque) {
+    CettaParserInstanceV1 *instance = opaque;
+    if (!instance) return;
+    authored_parser_resource_free(instance->owner);
+    free(instance);
+}
+
+static CettaAuthoredParserV1 *authored_parser_resource_get(CettaLibraryContext *ctx, uint64_t id) {
+    CettaParserInstanceV1 *instance = cetta_native_handle_get(ctx, AUTHORED_PARSER_HANDLE_KIND, id);
+    return instance ? instance->owner : NULL;
+}
+
+static bool authored_parser_handle_alloc(CettaLibraryContext *ctx,
+    CettaAuthoredParserV1 *owner, CettaParserStrategyV1 strategy, uint64_t *id) {
+    CettaParserInstanceV1 *instance = malloc(sizeof(*instance));
+    if (!instance) return false;
+    *instance = (CettaParserInstanceV1){owner, strategy};
+    if (!cetta_native_handle_alloc(ctx, AUTHORED_PARSER_HANDLE_KIND, instance,
+            authored_parser_instance_free, id)) { free(instance); return false; }
+    return true;
+}
+
+static const char *authored_parser_strategy_name(CettaParserStrategyV1 strategy) {
+    return strategy == PARSER_STRATEGY_GENERAL_V1 ? "general"
+        : strategy == PARSER_STRATEGY_AUTO_V1 ? "auto" : "predictive";
+}
+
+static bool authored_parser_instance_predictive(const CettaParserInstanceV1 *instance) {
+    return instance && instance->strategy != PARSER_STRATEGY_GENERAL_V1 &&
+        instance->owner->predictive_ready &&
+        instance->owner->predictive.status == CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE;
+}
+
+static Atom *authored_parser_predictive_witness(Arena *arena, const CettaAuthoredParserV1 *owner) {
+    if (!owner->predictive_ready) return atom_symbol(arena, "ParserLegacyGeneralProgramV1");
+    const CettaLpNativePredictiveProgram *program = &owner->predictive;
+    if (program->status == CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE)
+        return atom_symbol(arena, "ParserPredictiveEligibleV1");
+    if (program->status == CETTA_LP_NATIVE_PREDICTIVE_ZERO_PROGRESS_CYCLE) {
+        Atom **items = arena_alloc(arena, (size_t)program->cycle_len * sizeof(*items));
+        if (!items) return NULL;
+        for (uint32_t i = 0u; i < program->cycle_len; ++i)
+            items[i] = atom_int(arena, program->cycle_productions[i]);
+        Atom *args[] = {atom_int(arena, program->conflict_nonterminal),
+            atom_expr(arena, items, program->cycle_len)};
+        return langdef_expr(arena, "ParserZeroProgressCycleV1", args, 2u);
+    }
+    Atom *args[] = {atom_int(arena, program->conflict_nonterminal),
+        atom_int(arena, program->conflict_productions[0]), atom_int(arena, program->conflict_productions[1]),
+        atom_int(arena, program->conflict_terminals[0]), atom_int(arena, program->conflict_terminals[1]),
+        atom_int(arena, program->conflict_scalar)};
+    return langdef_expr(arena, "ParserSelectConflictV1", args, 6u);
 }
 
 static void tptp_reader_resource_free(void *opaque) {
@@ -562,10 +677,12 @@ static CettaAuthoredParserV1 *authored_parser_resource_alloc(
     cetta_ld_parser_pack_v1_init(&resource->compiled);
     ppnative_v1_prepared_init(&resource->prepared);
     cetta_parser_token_runtime_v1_init(&resource->token_runtime);
+    arena_init(&resource->storage);
+    resource->users = 1u;
     return resource;
 }
 
-static bool authored_parser_resource_finish(
+static bool authored_parser_resource_decode(
     CettaAuthoredParserV1 *resource,
     char *error, size_t error_size) {
     CettaLdCoreV1Status core_status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
@@ -598,6 +715,29 @@ static bool authored_parser_resource_finish(
         }
         return false;
     }
+    return true;
+}
+
+static bool authored_parser_build_predictive(
+    CettaAuthoredParserV1 *resource, char *error, size_t error_size) {
+    bool ok;
+    if (resource->compiled.tokenized) {
+        ok = cetta_parser_token_runtime_v1_build_predictive(&resource->token_runtime,
+            &resource->predictive, error, error_size);
+    } else {
+        PPNativeV1PreparedView view;
+        ok = ppnative_v1_prepared_immutable_view(&resource->prepared, &view) &&
+            cetta_lp_native_predictive_build(view.gll, view.terminal_plan->terminals,
+                view.terminal_plan->len, false, UINT32_MAX, &resource->predictive, error, error_size);
+    }
+    resource->predictive_ready = ok;
+    return ok;
+}
+
+static bool authored_parser_resource_finish(
+    CettaAuthoredParserV1 *resource, char *error, size_t error_size) {
+    CettaLdParserPackV1Status parser_status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    if (!authored_parser_resource_decode(resource, error, error_size)) return false;
     if (error && error_size > 0u)
         error[0] = '\0';
     if (!cetta_language_def_parser_pack_v1_compile(
@@ -622,6 +762,7 @@ static bool authored_parser_resource_finish(
             resource->compiled.start_state, error, error_size))) {
         return false;
     }
+    if (!authored_parser_build_predictive(resource, error, error_size)) return false;
     resource->name = malloc((size_t)resource->language.name.len + 1u);
     if (!resource->name) {
         langdef_set_error(error, error_size,
@@ -633,10 +774,64 @@ static bool authored_parser_resource_finish(
                resource->language.name.len);
     }
     resource->name[resource->language.name.len] = '\0';
+    resource->preparation_ready = true;
+    resource->corridor_licensed = true;
     return true;
 }
 
+static CettaAuthoredParserV1 *authored_parser_resource_share(
+    CettaLibraryContext *ctx, CettaAuthoredParserV1 *candidate,
+    char *error, size_t error_size) {
+    if (ctx && !ctx->parser_cache_mutex_ready) {
+        langdef_set_error(error, error_size, "parser cache mutex unavailable");
+        authored_parser_resource_free(candidate);
+        return NULL;
+    }
+    if (ctx) {
+        pthread_mutex_lock(&ctx->parser_cache_mutex);
+        for (CettaAuthoredParserV1 *entry = ctx->parser_cache; entry;
+             entry = entry->cache_next) {
+            if (!strcmp(entry->wire.authority_sha256, candidate->wire.authority_sha256) &&
+                !strcmp(entry->profile_document.authority_sha256,
+                        candidate->profile_document.authority_sha256) &&
+                !strcmp(entry->syntax_key, candidate->syntax_key) &&
+                entry->artifact_length == candidate->artifact_length &&
+                (!candidate->artifact_length ||
+                 !memcmp(entry->artifact_bytes, candidate->artifact_bytes,
+                         candidate->artifact_length)) &&
+                (!candidate->corridor_licensed || entry->corridor_licensed) &&
+                ((candidate->preparation_ready && entry->predictive_ready == candidate->predictive_ready) ||
+                 (!candidate->preparation_ready && entry->predictive_ready))) {
+                if (entry->users == UINT32_MAX) {
+                    pthread_mutex_unlock(&ctx->parser_cache_mutex);
+                    authored_parser_resource_free(candidate);
+                    langdef_set_error(error, error_size, "parser ownership count overflow");
+                    return NULL;
+                }
+                ++entry->users;
+                pthread_mutex_unlock(&ctx->parser_cache_mutex);
+                authored_parser_resource_free(candidate);
+                return entry;
+            }
+        }
+    }
+    bool ready = candidate->preparation_ready || authored_parser_resource_finish(candidate, error, error_size);
+    if (ready && ctx) {
+        candidate->cache_context = ctx;
+        candidate->cache_next = ctx->parser_cache;
+        ctx->parser_cache = candidate;
+    }
+    if (ctx)
+        pthread_mutex_unlock(&ctx->parser_cache_mutex);
+    if (!ready) {
+        authored_parser_resource_free(candidate);
+        return NULL;
+    }
+    return candidate;
+}
+
 static CettaAuthoredParserV1 *authored_parser_resource_load(
+    CettaLibraryContext *ctx,
     const char *language_path, const char *profile_path,
     char *error, size_t error_size) {
     CettaAuthoredParserV1 *resource;
@@ -673,9 +868,7 @@ static CettaAuthoredParserV1 *authored_parser_resource_load(
         }
         goto failed;
     }
-    if (!authored_parser_resource_finish(resource, error, error_size))
-        goto failed;
-    return resource;
+    return authored_parser_resource_share(ctx, resource, error, error_size);
 
 failed:
     authored_parser_resource_free(resource);
@@ -743,6 +936,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         text = atom_name_cstr(value);
         if (!text)
             goto unsupported;
+        if (strlen(text) != atom_symbol_length(value)) goto unsupported_symbol;
         node->kind = CETTA_OP_LANG_V1_SEXPR_SYMBOL;
         node->as.symbol = authored_parser_structured_text_copy(
             context, text, strlen(text));
@@ -753,7 +947,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
     if (value->kind == ATOM_GROUNDED &&
         value->ground.gkind == GV_STRING) {
         text = value->ground.sval;
-        length = strlen(text);
+        length = atom_string_len(value);
         if (length > UINT32_MAX)
             goto too_large;
         node->kind = CETTA_OP_LANG_V1_SEXPR_STRING;
@@ -762,6 +956,14 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         if (!node->as.string.bytes)
             goto failed;
         node->as.string.len = (uint32_t)length;
+        return node;
+    }
+    if (value->kind == ATOM_GROUNDED && value->ground.gkind == GV_BIGINT) {
+        const char *digits = atom_bigint_cstr(value);
+        if (!digits || !*digits || strspn(digits, "0123456789") != strlen(digits)) goto unsupported;
+        node->kind = CETTA_OP_LANG_V1_SEXPR_NATURAL;
+        node->as.natural = authored_parser_structured_text_copy(context, digits, strlen(digits));
+        if (!node->as.natural) goto failed;
         return node;
     }
     if (value->kind == ATOM_GROUNDED &&
@@ -785,6 +987,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         text = atom_name_cstr(value->expr.elems[0]);
         if (!text)
             goto unsupported;
+        if (strlen(text) != atom_symbol_length(value->expr.elems[0])) goto unsupported_symbol;
         node->kind = CETTA_OP_LANG_V1_SEXPR_APPLICATION;
         node->as.application.head = authored_parser_structured_text_copy(
             context, text, strlen(text));
@@ -811,6 +1014,11 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode_node(
         return node;
     }
 
+    goto unsupported;
+unsupported_symbol:
+    langdef_set_error(context->error, context->error_size,
+        "structured parser value contains a NUL-bearing wire symbol");
+    goto failed;
 unsupported:
     langdef_set_error(
         context->error, context->error_size,
@@ -887,8 +1095,10 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode(
     static const uint8_t domain[] =
         "cetta-structured-language-value-v1";
 
-    cetta_native_sha256_init(&sha);
-    cetta_native_sha256_update(&sha, domain, sizeof(domain) - 1u);
+    if (authority_sha256) {
+        cetta_native_sha256_init(&sha);
+        cetta_native_sha256_update(&sha, domain, sizeof(domain) - 1u);
+    }
     /* Preorder decoding also emits exactly the existing tagged digest
      * stream: node header, then each child from left to right. No text
      * round trip or second tree traversal is needed. */
@@ -906,7 +1116,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode(
         }
         uint32_t argument_len = node->kind == CETTA_OP_LANG_V1_SEXPR_APPLICATION
             ? (uint32_t)(value->expr.len - 1u) : 0u;
-        authored_parser_structured_digest_header(&sha, node, argument_len);
+        if (authority_sha256) authored_parser_structured_digest_header(&sha, node, argument_len);
         if (argument_len > 0u) {
             if (frame_len == frame_cap) {
                 size_t next = frame_cap ? frame_cap * 2u : 32u;
@@ -933,7 +1143,7 @@ static CettaOpLangV1SExpr *authored_parser_structured_value_decode(
             break;
     }
     free(frames);
-    cetta_native_sha256_finish_hex(&sha, authority_sha256);
+    if (authority_sha256) cetta_native_sha256_finish_hex(&sha, authority_sha256);
     return root;
 
 allocation_failed:
@@ -995,8 +1205,28 @@ static bool authored_parser_structured_value_decode_document(
     return true;
 }
 
+static CettaLanguageDefTermV1 *language_def_term_resource_from_value(
+    Atom *value, char *error, size_t error_size) {
+    CettaLanguageDefTermV1 *resource = calloc(1u, sizeof(*resource));
+    if (!resource) { langdef_set_error(error, error_size, "LanguageDef allocation failed"); return NULL; }
+    cetta_op_lang_v1_init(&resource->wire);
+    cetta_language_def_core_v1_init(&resource->language);
+    cetta_ld_cr_v1_program_init(&resource->contextual_program);
+    CettaLdCoreV1Status status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
+    if (!authored_parser_structured_value_decode_language(&resource->wire, value, error, error_size) ||
+        !cetta_language_def_core_v1_decode(&resource->language, &resource->wire, 200000u, &status, error, error_size)) {
+        language_def_term_resource_free(resource); return NULL;
+    }
+    resource->contextual_status = CETTA_LD_CR_V1_OK;
+    resource->contextual_ready = cetta_ld_cr_v1_compile(&resource->contextual_program, &resource->language,
+        &resource->contextual_status, resource->contextual_error, sizeof(resource->contextual_error));
+    return resource;
+}
+
 static CettaAuthoredParserV1 *authored_parser_resource_load_values(
+    CettaLibraryContext *ctx,
     Atom *language_value, Atom *profile_value,
+    Atom *syntax_value,
     char *error, size_t error_size) {
     CettaAuthoredParserV1 *resource = NULL;
 
@@ -1018,9 +1248,16 @@ static CettaAuthoredParserV1 *authored_parser_resource_load_values(
             profile_value, error, error_size)) {
         goto failed;
     }
-    if (!authored_parser_resource_finish(resource, error, error_size))
-        goto failed;
-    return resource;
+    if (syntax_value) {
+        uint8_t *bytes = NULL;
+        size_t length = 0u;
+        if (!fh_ground_term_v1_render(syntax_value, &bytes, &length, error, error_size)) goto failed;
+        cetta_native_sha256_hex(bytes, length, resource->syntax_key);
+        free(bytes);
+        resource->syntax_value = atom_deep_copy(&resource->storage, syntax_value);
+        if (!resource->syntax_value) goto failed;
+    }
+    return authored_parser_resource_share(ctx, resource, error, error_size);
 
 failed:
     authored_parser_resource_free(resource);
@@ -1029,13 +1266,373 @@ failed:
 
 static bool syntax_gslt_admission_v1(
     Atom *language, Atom *profile, char *error, size_t error_size) {
-    CettaAuthoredParserV1 *resource = authored_parser_resource_load_values(
-        language, profile, error, error_size);
+    CettaAuthoredParserV1 *resource = authored_parser_resource_alloc(error, error_size);
     if (!resource) return false;
-    /* Admission installs no handle or module. The existing compiler and its
-     * closure check are authoritative; the temporary realization is released. */
+    CettaLdParserPackV1Status status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    bool ok = authored_parser_structured_value_decode_language(
+            &resource->wire, language, error, error_size) &&
+        authored_parser_structured_value_decode_document(
+            &resource->profile_document, profile, error, error_size) &&
+        authored_parser_resource_decode(resource, error, error_size) &&
+        cetta_language_def_parser_pack_v1_validate_structure(
+            &resource->language, &resource->profile, 2000000u, &status, error, error_size);
     authored_parser_resource_free(resource);
+    return ok;
+}
+
+/* Convert physical grammar data without evaluating it or assigning new
+ * authority. The explicit stack supports large declaration lists. */
+static Atom *authored_parser_store_source(Arena *arena, const CettaOpLangV1SExpr *root) {
+    typedef struct { const CettaOpLangV1SExpr *node; Atom **fields; uint32_t next; } Frame;
+    Frame *frames = NULL;
+    size_t depth = 0u, capacity = 0u;
+    const CettaOpLangV1SExpr *node = root;
+    Atom *value = NULL;
+    for (;;) {
+        if (!node) goto failed;
+        if (node->kind == CETTA_OP_LANG_V1_SEXPR_APPLICATION) {
+            uint32_t length = node->as.application.argument_len;
+            if (length == UINT32_MAX) goto failed;
+            Atom **fields = arena_alloc(arena, ((size_t)length + 1u) * sizeof(*fields));
+            if (!fields) goto failed;
+            fields[0] = atom_symbol(arena, node->as.application.head);
+            if (length) {
+                if (depth == capacity) {
+                    size_t next = capacity ? capacity * 2u : 32u;
+                    if (next <= capacity || next > SIZE_MAX / sizeof(*frames)) goto failed;
+                    Frame *grown = realloc(frames, next * sizeof(*frames));
+                    if (!grown) goto failed;
+                    frames = grown; capacity = next;
+                }
+                frames[depth++] = (Frame){node, fields, 0u};
+                node = node->as.application.arguments[0];
+                continue;
+            }
+            value = atom_expr(arena, fields, 1u);
+        } else if (node->kind == CETTA_OP_LANG_V1_SEXPR_SYMBOL)
+            value = atom_symbol(arena, node->as.symbol);
+        else if (node->kind == CETTA_OP_LANG_V1_SEXPR_STRING)
+            value = atom_string_n(arena, (const char *)node->as.string.bytes, node->as.string.len);
+        else if (node->kind == CETTA_OP_LANG_V1_SEXPR_NATURAL)
+            value = atom_bigint(arena, node->as.natural);
+        else goto failed;
+        if (!value) goto failed;
+        while (depth) {
+            Frame *frame = &frames[depth - 1u];
+            frame->fields[++frame->next] = value;
+            if (frame->next < frame->node->as.application.argument_len) {
+                node = frame->node->as.application.arguments[frame->next];
+                break;
+            }
+            value = atom_expr(arena, frame->fields, frame->next + 1u);
+            if (!value) goto failed;
+            --depth;
+        }
+        if (!depth) { free(frames); return value; }
+    }
+failed:
+    free(frames);
+    return NULL;
+}
+
+/* The digest slot is excluded from its own content identity. Trusted loading
+ * consumes the stored identity; only freeze and checked load hash the bytes. */
+static bool authored_parser_artifact_digest(const uint8_t *bytes, size_t length, char out[65]) {
+    static const uint8_t zero_digest[64] =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    static const uint8_t domain[] = "cetta-general-parser-artifact-v1";
+    if (!bytes || length < 136u) return false;
+    CettaNativeSha256 sha;
+    cetta_native_sha256_init(&sha);
+    cetta_native_sha256_update(&sha, domain, sizeof(domain) - 1u);
+    cetta_native_sha256_update(&sha, bytes, 72u);
+    cetta_native_sha256_update(&sha, zero_digest, sizeof(zero_digest));
+    cetta_native_sha256_update(&sha, bytes + 136u, length - 136u);
+    cetta_native_sha256_finish_hex(&sha, out);
     return true;
+}
+
+static bool authored_parser_freeze_bytes(const CettaAuthoredParserV1 *resource,
+    CettaParserStrategyV1 strategy,
+    uint8_t **bytes, size_t *length, char digest[65], char *error, size_t error_size) {
+    PPTableSnapshotV1 snapshot;
+    Arena arena;
+    Atom *lexer = NULL;
+    uint8_t *output = NULL;
+    size_t metadata_len = 0u, size = 0u, written = 0u;
+    bool ok = false;
+    pp_table_snapshot_v1_init(&snapshot);
+    arena_init(&arena);
+    if (!resource || !bytes || !length || !resource->preparation_ready) goto done;
+    if (resource->compiled.tokenized) {
+        if (!cetta_parser_token_runtime_v1_export_program(&resource->token_runtime,
+                &snapshot, &arena, &lexer, error, error_size)) goto done;
+    } else {
+        PPNativeV1PreparedView view;
+        if (!ppnative_v1_prepared_immutable_view(&resource->prepared, &view) ||
+            !cetta_lp_native_gll_prepared_export_program(view.gll, &snapshot.gll, error, error_size) ||
+            !cetta_lp_native_glr_prepared_export_program(view.glr, &snapshot.slr, error, error_size)) goto done;
+        snapshot.kernel = PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL;
+        strcpy(snapshot.profile, "parserpack-general");
+        memcpy(snapshot.syntax_digest, resource->compiled.pack.source_digest, 65u);
+        snapshot.scalar_terminals.terminals = calloc(view.terminal_plan->len ? view.terminal_plan->len : 1u,
+            sizeof(*snapshot.scalar_terminals.terminals));
+        snapshot.scalar_terminals.owned_ranges = calloc(view.terminal_plan->len ? view.terminal_plan->len : 1u,
+            sizeof(*snapshot.scalar_terminals.owned_ranges));
+        if (!snapshot.scalar_terminals.terminals || !snapshot.scalar_terminals.owned_ranges) goto done;
+        snapshot.scalar_terminals.len = view.terminal_plan->len;
+        for (uint32_t i = 0u; i < view.terminal_plan->len; ++i) {
+            const CettaLpNativeUtf8Terminal *source = &view.terminal_plan->terminals[i];
+            snapshot.scalar_terminals.terminals[i] = *source;
+            if (!source->range_len) {
+                snapshot.scalar_terminals.terminals[i].ranges = NULL;
+                continue;
+            }
+            CettaLpNativeUnicodeRange *ranges = malloc((size_t)source->range_len * sizeof(*ranges));
+            if (!ranges) goto done;
+            memcpy(ranges, source->ranges, (size_t)source->range_len * sizeof(*ranges));
+            snapshot.scalar_terminals.terminals[i].ranges = ranges;
+            snapshot.scalar_terminals.owned_ranges[i] = ranges;
+        }
+        lexer = atom_symbol(&arena, "ParserNoTokenProgramV1");
+    }
+    memset(snapshot.artifact_digest, '0', 64u); snapshot.artifact_digest[64] = '\0';
+    Atom *args[] = {atom_int(&arena, 2u), authored_parser_store_source(&arena, resource->wire.root),
+        authored_parser_store_source(&arena, resource->profile_document.root),
+        cetta_ld_parser_pack_v1_export_storage(&arena, &resource->compiled, error, error_size), lexer,
+        resource->syntax_value ? atom_deep_copy(&arena, resource->syntax_value)
+                               : atom_symbol(&arena, "ParserNoSyntaxEnvelopeV1"),
+        atom_string(&arena, resource->syntax_key),
+        resource->predictive_ready ? cetta_lp_native_predictive_export_storage(&arena, &resource->predictive)
+                                   : atom_symbol(&arena, "ParserNoPredictiveProgramV1"),
+        atom_int(&arena, strategy)};
+    for (uint32_t i = 0u; i < 9u; ++i) if (!args[i]) goto done;
+    Atom *metadata = langdef_expr(&arena, "ParserArtifactStoredV1", args, 9u);
+    if (!metadata || !fh_ground_term_v1_render(metadata, &snapshot.general_metadata,
+            &metadata_len, error, error_size) || metadata_len > UINT32_MAX) goto done;
+    snapshot.general_metadata_len = (uint32_t)metadata_len;
+    if (!pp_table_snapshot_v1_size(&snapshot, &size, error, error_size)) goto done;
+    output = malloc(size);
+    if (!output || !pp_table_snapshot_v1_write(&snapshot, output, size, &written, error, error_size) ||
+        written != size || !authored_parser_artifact_digest(output, size, digest)) goto done;
+    memcpy(output + 72u, digest, 64u);
+    *bytes = output; *length = size; output = NULL;
+    ok = true;
+done:
+    free(output);
+    arena_free(&arena);
+    pp_table_snapshot_v1_free(&snapshot);
+    if (!ok && error && error_size && !error[0])
+        langdef_set_error(error, error_size, "parser artifact export failed");
+    return ok;
+}
+
+static bool authored_parser_stored_grammar_matches(
+    const CettaLdParserPackV1 *compiled, const CettaLpNativeGllProgram *grammar,
+    char *error, size_t error_size) {
+    const PPABIV1Pack *pack = &compiled->pack;
+    const PPNativeV1ForestExtension *extension = compiled->tokenized ? &compiled->token_bindings.extension : NULL;
+    uint64_t total = (uint64_t)pack->production_len + (extension ? extension->production_len : 0u);
+    if (total != grammar->production_len || !grammar->productions) goto failed;
+    int32_t start = ppnative_v1_state_find_extended(pack, extension, compiled->start_state);
+    if (start < 0 || (uint32_t)start != grammar->start_nonterminal) goto failed;
+    for (uint32_t p = 0u; p < grammar->production_len; ++p) {
+        uint32_t lhs, length;
+        const PPABIV1Item *items;
+        if (p < pack->production_len) {
+            const PPABIV1Production *production = &pack->productions[p];
+            lhs = production->lhs_state_id; length = production->item_len; items = production->items;
+        } else {
+            const PPNativeV1ProductionExtension *production = &extension->productions[p - pack->production_len];
+            lhs = production->lhs_state_id; length = production->item_len; items = production->items;
+        }
+        const CettaLpNativeProduction *stored = &grammar->productions[p];
+        if (stored->lhs != lhs || stored->rhs_len != length || (length && !stored->rhs)) goto failed;
+        for (uint32_t j = 0u; j < length; ++j) {
+            CettaLpNativeSymbolKind kind = items[j].kind == PPABI_V1_ITEM_TERMINAL
+                ? CETTA_LP_NATIVE_SYMBOL_TM : CETTA_LP_NATIVE_SYMBOL_HL;
+            if (stored->rhs[j].kind != kind || stored->rhs[j].name != items[j].dense_id || stored->rhs[j].scope)
+                goto failed;
+        }
+    }
+    return true;
+failed:
+    langdef_set_error(error, error_size, "stored recognizer occurrence grammar differs from its ParserPack");
+    return false;
+}
+
+static CettaAuthoredParserV1 *authored_parser_restore_bytes(
+    CettaLibraryContext *ctx, const uint8_t *bytes, size_t length, bool checked,
+    bool compiler_owned,
+    CettaParserStrategyV1 *strategy,
+    char *error, size_t error_size) {
+    PPTableSnapshotV1 snapshot;
+    Arena arena;
+    Atom *metadata = NULL;
+    CettaAuthoredParserV1 *resource = NULL;
+    pp_table_snapshot_v1_init(&snapshot);
+    arena_init(&arena);
+    if (!pp_table_snapshot_v1_read(&snapshot, bytes, length, error, error_size) ||
+        snapshot.kernel != PP_TABLE_SNAPSHOT_V1_KERNEL_GENERAL) goto failed;
+    if (checked) {
+        char digest[65];
+        if (!authored_parser_artifact_digest(bytes, length, digest) ||
+            strcmp(digest, snapshot.artifact_digest)) {
+            langdef_set_error(error, error_size, "parser artifact integrity mismatch"); goto failed;
+        }
+    }
+    if (!fh_ground_term_v1_read_source(&arena, snapshot.general_metadata, snapshot.general_metadata_len,
+            &metadata, error, error_size) || !metadata || metadata->kind != ATOM_EXPR ||
+        (metadata->expr.len != 8u && metadata->expr.len != 10u) ||
+        !atom_is_symbol(metadata->expr.elems[0], "ParserArtifactStoredV1") ||
+        !metadata->expr.elems[1] || metadata->expr.elems[1]->kind != ATOM_GROUNDED ||
+        metadata->expr.elems[1]->ground.gkind != GV_INT ||
+        !((metadata->expr.len == 8u && metadata->expr.elems[1]->ground.ival == 1) ||
+          (metadata->expr.len == 10u && metadata->expr.elems[1]->ground.ival == 2))) goto failed;
+    *strategy = PARSER_STRATEGY_GENERAL_V1;
+    if (metadata->expr.len == 10u) {
+        const Atom *stored_strategy = metadata->expr.elems[9];
+        if (!stored_strategy || stored_strategy->kind != ATOM_GROUNDED ||
+            stored_strategy->ground.gkind != GV_INT || stored_strategy->ground.ival < 0 ||
+            stored_strategy->ground.ival > PARSER_STRATEGY_PREDICTIVE_V1) goto failed;
+        *strategy = (CettaParserStrategyV1)stored_strategy->ground.ival;
+    }
+    resource = authored_parser_resource_alloc(error, error_size);
+    if (!resource || !cetta_ld_parser_pack_v1_import_storage(&resource->compiled,
+            metadata->expr.elems[4], error, error_size)) goto failed;
+    AuthoredParserStructuredValueContext context = {500000u, error, error_size};
+    CettaOpLangV1Status status;
+    CettaOpLangV1SExpr *root = authored_parser_structured_value_decode(metadata->expr.elems[2], &context, NULL);
+    if (!root || !cetta_op_lang_v1_adopt_structured_root(&resource->wire, root,
+            resource->compiled.language_authority_sha256, &status, error, error_size)) goto failed;
+    context.remaining_work = 500000u;
+    resource->profile_document.root = authored_parser_structured_value_decode(metadata->expr.elems[3], &context, NULL);
+    if (!resource->profile_document.root) goto failed;
+    memcpy(resource->profile_document.authority_sha256, resource->compiled.profile_authority_sha256, 65u);
+    if (!authored_parser_resource_decode(resource, error, error_size) ||
+        resource->compiled.tokenized != (resource->profile.tokens != NULL)) goto failed;
+    Atom *key = metadata->expr.elems[7];
+    const char *syntax_key;
+    if (!cetta_langdef_text_arg(key, &syntax_key) ||
+        (syntax_key[0] && (strlen(syntax_key) != 64u || strspn(syntax_key, "0123456789abcdef") != 64u))) goto failed;
+    strcpy(resource->syntax_key, syntax_key);
+    if (resource->syntax_key[0]) {
+        resource->syntax_value = atom_deep_copy(&resource->storage, metadata->expr.elems[6]);
+        if (!resource->syntax_value) goto failed;
+    } else if (!atom_is_symbol(metadata->expr.elems[6], "ParserNoSyntaxEnvelopeV1")) goto failed;
+    if (checked) {
+        CettaLdParserPackV1Status parser_status;
+        if (!ppabi_v1_pack_check_storage(&resource->compiled.pack, error, error_size) ||
+            !authored_parser_stored_grammar_matches(&resource->compiled, &snapshot.gll, error, error_size) ||
+            !cetta_language_def_parser_pack_v1_validate_structure(&resource->language, &resource->profile,
+                2000000u, &parser_status, error, error_size) ||
+            !cetta_lp_native_slr_program_validate(&snapshot.slr, error, error_size) ||
+            (resource->compiled.tokenized && !rsdfa_v1_program_validate(&snapshot.dfa, error, error_size))) goto failed;
+        if (resource->syntax_value) {
+            uint8_t *syntax_bytes = NULL;
+            size_t syntax_length = 0u;
+            char syntax_digest[65];
+            if (!fh_ground_term_v1_render(resource->syntax_value, &syntax_bytes,
+                    &syntax_length, error, error_size)) goto failed;
+            cetta_native_sha256_hex(syntax_bytes, syntax_length, syntax_digest);
+            free(syntax_bytes);
+            if (strcmp(syntax_digest, resource->syntax_key)) {
+                langdef_set_error(error, error_size, "stored syntax identity mismatch"); goto failed;
+            }
+            Atom *inspection = cetta_syntax_gslt_inspect_checked_v1(&arena,
+                resource->syntax_value, syntax_gslt_admission_v1);
+            if (!inspection || inspection->kind != ATOM_EXPR || inspection->expr.len != 5u ||
+                !atom_is_symbol(inspection->expr.elems[0], "SyntaxGSLTInspectionV1") ||
+                !atom_eq(inspection->expr.elems[1], metadata->expr.elems[2]) ||
+                !atom_eq(inspection->expr.elems[2], metadata->expr.elems[3])) {
+                langdef_set_error(error, error_size, "stored syntax origins/envelope are inconsistent"); goto failed;
+            }
+        }
+        if (snapshot.gll.production_len != snapshot.slr.production_len) {
+            langdef_set_error(error, error_size, "stored recognizer productions disagree"); goto failed;
+        }
+        for (uint32_t i = 0u; i < snapshot.gll.production_len; ++i) {
+            const CettaLpNativeProduction *gll = &snapshot.gll.productions[i];
+            const CettaLpNativeSlrProgramProduction *glr = &snapshot.slr.productions[i];
+            if (gll->lhs != glr->lhs || gll->rhs_len != glr->rhs_len ||
+                glr->rhs_begin > snapshot.slr.rhs_len ||
+                glr->rhs_len > snapshot.slr.rhs_len - glr->rhs_begin) {
+                langdef_set_error(error, error_size, "stored recognizer productions disagree"); goto failed;
+            }
+            for (uint32_t j = 0u; j < gll->rhs_len; ++j) {
+                const CettaLpNativeSymbol *left = &gll->rhs[j];
+                const CettaLpNativeSymbol *right = &snapshot.slr.rhs[glr->rhs_begin + j];
+                if (left->kind != right->kind || left->name != right->name || left->scope != right->scope) {
+                    langdef_set_error(error, error_size, "stored recognizer productions disagree"); goto failed;
+                }
+            }
+        }
+    }
+    if (!(resource->compiled.tokenized
+          ? cetta_parser_token_runtime_v1_import_program(&resource->token_runtime, &resource->compiled,
+                resource->profile.tokens, &snapshot, metadata->expr.elems[5], error, error_size)
+          : ppnative_v1_prepared_import_programs(&resource->prepared, &resource->compiled.pack,
+                snapshot.gll.start_nonterminal, &snapshot.scalar_terminals,
+                &snapshot.gll, &snapshot.slr, error, error_size))) goto failed;
+    if (metadata->expr.len == 10u &&
+        !atom_is_symbol(metadata->expr.elems[8], "ParserNoPredictiveProgramV1")) {
+        if (!cetta_lp_native_predictive_import_storage(&resource->predictive, metadata->expr.elems[8],
+                &snapshot.gll, error, error_size) ||
+            resource->predictive.token_chain != resource->compiled.tokenized) goto failed;
+        resource->predictive_ready = true;
+    }
+    if (*strategy == PARSER_STRATEGY_PREDICTIVE_V1 &&
+        (!resource->predictive_ready || resource->predictive.status != CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE))
+        goto failed;
+    if (checked) {
+        if (resource->compiled.tokenized &&
+            !cetta_parser_token_runtime_v1_check_metadata(&resource->token_runtime,
+                error, error_size)) goto failed;
+        if (resource->predictive_ready && resource->compiled.tokenized) {
+            if (!cetta_parser_token_runtime_v1_check_predictive(&resource->token_runtime,
+                    &resource->predictive, error, error_size)) goto failed;
+        } else if (!resource->compiled.tokenized) {
+            PPNativeV1PreparedView view;
+            if (!ppnative_v1_prepared_immutable_view(&resource->prepared, &view) ||
+                !(resource->predictive_ready
+                    ? cetta_lp_native_predictive_check(view.gll, &resource->predictive,
+                        view.terminal_plan->terminals, view.terminal_plan->len, error, error_size)
+                    : cetta_lp_native_gll_prepared_check_prediction(view.gll, error, error_size))) goto failed;
+        } else {
+            CettaLpNativeGllPrepared audit = {0};
+            bool valid = cetta_lp_native_gll_prepared_import_program(&audit, &snapshot.gll, error, error_size) &&
+                cetta_lp_native_gll_prepared_check_prediction(&audit, error, error_size);
+            cetta_lp_native_gll_prepared_free(&audit);
+            if (!valid) goto failed;
+        }
+    }
+    resource->name = malloc((size_t)resource->language.name.len + 1u);
+    if (!resource->name) goto failed;
+    memcpy(resource->name, resource->language.name.bytes, resource->language.name.len);
+    resource->name[resource->language.name.len] = '\0';
+    resource->artifact_bytes = malloc(length);
+    if (!resource->artifact_bytes) goto failed;
+    memcpy(resource->artifact_bytes, bytes, length);
+    resource->artifact_length = length;
+    resource->preparation_ready = true;
+    /* This authority is deliberately not decoded from artifact metadata.
+     * Structural file validation does not establish LR/GLL table agreement.
+     * Built-in bytes originate in the same owned compiler preparation. */
+    resource->corridor_licensed = compiler_owned;
+    pp_table_snapshot_v1_free(&snapshot);
+    arena_free(&arena);
+    return authored_parser_resource_share(ctx, resource, error, error_size);
+failed:
+    authored_parser_resource_free(resource);
+    pp_table_snapshot_v1_free(&snapshot);
+    arena_free(&arena);
+    if (error && error_size && !error[0]) langdef_set_error(error, error_size, "incompatible parser artifact");
+    return NULL;
+}
+
+static bool authored_parser_publish_artifact(const char *path, const uint8_t *bytes,
+    size_t length, char *error, size_t error_size) {
+    return cetta_prepared_artifact_v1_publish(path, bytes, length, error, error_size);
 }
 #endif
 
@@ -1078,7 +1675,7 @@ bool cetta_langdef_text_arg(Atom *atom, const char **out) {
     }
     if (atom->kind == ATOM_SYMBOL) {
         *out = atom_name_cstr(atom);
-        return *out != NULL;
+        return *out && strlen(*out) == atom_symbol_length(atom);
     }
     return false;
 }
@@ -3199,6 +3796,7 @@ static Atom *langdef_context_trace_atom(
                 evidence_arguments, 4u);
             break;
         case CETTA_LD_PREMISE_FOR_ALL_V1:
+        case CETTA_LD_PREMISE_SCOPED_STEP_V1:
             return NULL;
         }
     }
@@ -3331,6 +3929,16 @@ static Atom *langdef_return(Arena *arena, Atom *value) {
     return atom_expr2(arena, atom_symbol(arena, "return"), value);
 }
 
+static Atom *langdef_projection_problem(Arena *arena, const char *status,
+    int64_t alternative, const Atom *span, const char *message) {
+    Atom *fields[] = {atom_symbol(arena, status), atom_int(arena, alternative),
+        span ? atom_deep_copy(arena, (Atom *)span) : atom_symbol(arena, "NoSourceSpanV1"),
+        atom_string(arena, message)};
+    return langdef_return(arena, langdef_expr(arena,
+        !strcmp(status, "resource_limit") ? "LangDef:ProjectionIncompleteV1"
+                                         : "LangDef:ProjectionRejectedV1", fields, 4u));
+}
+
 /* Publication is a transactional boundary whose rejection must remain an
  * inspectable value.  Seal both successful and failed native results before
  * the evaluator can treat an Error payload as control flow. */
@@ -3442,6 +4050,404 @@ static Atom *authored_parser_incomplete(
     };
     return langdef_expr(
         arena, "LangDef:AuthoredParseIncomplete", arguments, 5u);
+}
+
+typedef struct {
+    bool *productions;
+    const CettaLpNativeUnicodeRange *ranges;
+    CettaLpNativeUnicodeRange *owned_ranges;
+    uint32_t range_len;
+} AuthoredParserFollowingClassGuard;
+
+typedef struct {
+    AuthoredParserFollowingClassGuard *guards;
+    uint32_t len;
+    bool unresolved;
+    char detail[512];
+} AuthoredParserFamilySelection;
+
+static void authored_parser_selection_free(AuthoredParserFamilySelection *selection) {
+    for (uint32_t i = 0u; i < selection->len; ++i) {
+        free(selection->guards[i].productions);
+        free(selection->guards[i].owned_ranges);
+    }
+    free(selection->guards);
+    memset(selection, 0, sizeof(*selection));
+}
+
+static bool authored_parser_selection_string(const Atom *value) {
+    return value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_STRING;
+}
+
+static Atom *authored_parser_action_label(const Atom *action) {
+    if (!cetta_langdef_expr_head(action, "pa-apply", 2u) ||
+        !atom_is_symbol(action->expr.elems[1], "CstRuleV1")) return NULL;
+    const Atom *arguments = action->expr.elems[2];
+    if (!cetta_langdef_expr_head(arguments, "pa-cons", 2u) ||
+        !cetta_langdef_expr_head(arguments->expr.elems[1], "pa-const", 1u)) return NULL;
+    return arguments->expr.elems[1]->expr.elems[1];
+}
+
+/* These guards select derivation families, not recognizer productions. They
+ * are evaluated before semantic child products and never mutate the forest. */
+static bool authored_parser_selection_accepts(
+    void *context, const PPABIV1Pack *pack,
+    const CettaLpNativeUtf8Forest *forest,
+    uint32_t node_index, uint32_t production_index) {
+    const AuthoredParserFamilySelection *selection = context;
+    if (selection->unresolved) return false;
+    if (production_index >= pack->production_len) return true;
+    const CettaLpNativeUtf8ForestNode *node = &forest->nodes[node_index];
+    if (node->scalar_right >= forest->scalar_len) return true;
+    uint32_t scalar = forest->codepoints[node->scalar_right];
+    for (uint32_t i = 0u; i < selection->len; ++i) {
+        const AuthoredParserFollowingClassGuard *guard = &selection->guards[i];
+        if (!guard->productions[production_index]) continue;
+        uint32_t low = 0u, high = guard->range_len;
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2u;
+            if (guard->ranges[middle].high < scalar) low = middle + 1u;
+            else high = middle;
+        }
+        if (low < guard->range_len && guard->ranges[low].low <= scalar) return false;
+    }
+    return true;
+}
+
+static bool authored_parser_selection_build(
+    const CettaAuthoredParserV1 *resource, Atom *descriptor,
+    AuthoredParserFamilySelection *selection, char *error, size_t error_size) {
+    if (!cetta_langdef_expr_head(descriptor, "ParserSelectionV1", 1u)) {
+        (void)snprintf(error, error_size, "expected ParserSelectionV1 with an ordered guard list");
+        return false;
+    }
+    const PPABIV1Pack *pack = &resource->compiled.pack;
+    PPNativeV1PreparedView prepared = {0};
+    (void)ppnative_v1_prepared_immutable_view(&resource->prepared, &prepared);
+    Atom *list = descriptor->expr.elems[1];
+    while (!atom_is_symbol(list, "LNil")) {
+        if (!cetta_langdef_expr_head(list, "LCons", 2u)) {
+            (void)snprintf(error, error_size, "selection guards must be an LCons/LNil list");
+            return false;
+        }
+        Atom *declaration = list->expr.elems[1];
+        list = list->expr.elems[2];
+        if (!cetta_langdef_expr_head(declaration, "ParserRejectFollowingClassV1", 2u)) {
+            selection->unresolved = true;
+            (void)snprintf(selection->detail, sizeof(selection->detail),
+                "family selection declaration has no supplied interpretation");
+            continue;
+        }
+        Atom *label = declaration->expr.elems[1];
+        Atom *name = declaration->expr.elems[2];
+        if (!authored_parser_selection_string(label) || !authored_parser_selection_string(name)) {
+            (void)snprintf(error, error_size, "selection labels and class names must be strings");
+            return false;
+        }
+        if (selection->len == UINT32_MAX ||
+            (size_t)selection->len + 1u > SIZE_MAX / sizeof(*selection->guards)) return false;
+        AuthoredParserFollowingClassGuard *guards = realloc(selection->guards,
+            ((size_t)selection->len + 1u) * sizeof(*guards));
+        if (!guards) return false;
+        selection->guards = guards;
+        AuthoredParserFollowingClassGuard *guard = &guards[selection->len++];
+        memset(guard, 0, sizeof(*guard));
+        guard->productions = calloc(pack->production_len ? pack->production_len : 1u,
+                                    sizeof(*guard->productions));
+        if (!guard->productions) return false;
+        bool found_label = false;
+        for (uint32_t i = 0u; i < pack->production_len; ++i) {
+            Atom *actual = authored_parser_action_label(pack->productions[i].action);
+            if (actual && atom_eq(actual, label)) {
+                guard->productions[i] = true;
+                found_label = true;
+            }
+        }
+        Atom *class_expression = NULL;
+        for (uint32_t i = 0u; i < pack->class_clause_len; ++i) {
+            Atom *candidate = pack->class_clauses[i].class_identity;
+            Atom *actual = cetta_langdef_expr_head(candidate, "pp-class", 1u)
+                ? candidate->expr.elems[1] : NULL;
+            if (actual && atom_eq(actual, name)) { class_expression = candidate; break; }
+        }
+        if (!found_label || !class_expression) {
+            selection->unresolved = true;
+            (void)snprintf(selection->detail, sizeof(selection->detail),
+                !found_label ? "selection label has no authored CST production" :
+                               "selection class is absent from the parser authority");
+            continue;
+        }
+        for (uint32_t i = 0u; prepared.terminal_plan && i < pack->terminal_len; ++i) {
+            if (pack->terminals[i].kind != PPABI_V1_TERMINAL_CLASS ||
+                !atom_eq(pack->terminals[i].class_expression, class_expression)) continue;
+            const CettaLpNativeUtf8Terminal *terminal = &prepared.terminal_plan->terminals[i];
+            guard->ranges = terminal->ranges;
+            guard->range_len = terminal->range_len;
+            break;
+        }
+        /* A declared class need not be a terminal in a tokenized reader.
+         * Interpret its existing admitted clauses once for this selection. */
+        if (!guard->ranges && !ppnative_v1_class_ranges_build(pack, class_expression,
+                &guard->owned_ranges, &guard->range_len, error, error_size)) return false;
+        if (guard->owned_ranges) guard->ranges = guard->owned_ranges;
+    }
+    return true;
+}
+
+/* A consumer observes the parse while the replayed values are still owned
+ * by the parse result. Its own result is published in place of the
+ * observation, so a native composition never copies the borrowed values. */
+static Atom *authored_parser_parse_values(
+    const CettaAuthoredParserV1 *resource,
+    bool predictive,
+    const uint8_t *bytes, size_t len, uint32_t forest_item_limit,
+    bool include_forest, Atom *selection_descriptor, Arena *arena,
+    CettaLangdefParseConsumerV1 consume, void *consume_context) {
+    PPNativeV1Result parsed;
+    CettaParserTokenScanV1 scan;
+    Atom *result = NULL;
+    char error[512] = {0};
+    AuthoredParserFamilySelection selection_plan = {0};
+    PPNativeV1FamilySelection selection = {
+        .accepts = authored_parser_selection_accepts, .context = &selection_plan};
+    const PPNativeV1FamilySelection *selected = selection_descriptor ? &selection : NULL;
+    bool unbounded = forest_item_limit == UINT32_MAX;
+    uint32_t work_limit = unbounded ? UINT32_MAX : authored_parser_work_limit(len);
+    uint32_t result_limit = unbounded ? UINT32_MAX : LANGDEF_DEFAULT_RESULT_LIMIT;
+    /* Value replay and AST projection are iterative. Their allowance follows
+     * execution work, not a C-stack recursion bound. */
+    uint32_t replay_depth = work_limit;
+    ppnative_v1_result_init(&parsed);
+    /* A consumed observation never leaves this call: its values are built
+     * without global interning, as in any detached arena. */
+    if (consume)
+        parsed.arena.hashcons = NULL;
+    cetta_parser_token_scan_v1_init(&scan);
+    if (selection_descriptor && !authored_parser_selection_build(resource,
+            selection_descriptor, &selection_plan, error, sizeof(error))) goto failed;
+    if (resource->compiled.tokenized) {
+        if (!cetta_parser_token_runtime_v1_scan_values(&resource->token_runtime,
+                bytes, len, work_limit, &scan, error, sizeof(error))) goto failed;
+        if (scan.outcome != CETTA_PARSER_TOKEN_SCAN_V1_COMPLETED) {
+            Atom *args[] = {atom_int(arena, scan.failure_scalar),
+                atom_int(arena, scan.failure_byte), atom_string(arena, scan.detail)};
+            result = langdef_expr(arena,
+                scan.outcome == CETTA_PARSER_TOKEN_SCAN_V1_WORK_LIMIT
+                    ? "ParserIncompleteV1" : "ParserLexicalRejectedV1", args, 3u);
+            goto done;
+        }
+    }
+    bool executed;
+    bool corridor_completed = false;
+    /* Value-only observation may use a locally deterministic execution of
+     * the same stored LR program. Full evidence and every unresolved branch
+     * continue through the canonical general parser. */
+    if (resource->corridor_licensed && !predictive && !resource->compiled.tokenized && !include_forest &&
+        unbounded && !selection_plan.unresolved) {
+        /* The corridor's unique derivation is replayed as it is recorded;
+         * no packed forest is built for a value-only observation. */
+        PPNativeV1PreparedView view;
+        CettaLpNativeSlrLatticeOutcome outcome;
+        CettaLpNativeLrTrace trace = {0};
+        if (!ppnative_v1_prepared_immutable_view(&resource->prepared, &view) ||
+            !cetta_lp_native_glr_prepared_parse_owned_utf8_deterministic_trace(view.glr,
+                view.terminal_plan->terminals, view.terminal_plan->len,
+                bytes, len, work_limit, &outcome, &parsed.forest, &trace, error, sizeof(error))) {
+            cetta_lp_native_lr_trace_free(&trace); goto failed;
+        }
+        if (outcome == CETTA_LP_NATIVE_SLR_LATTICE_ACCEPTED) {
+            parsed.accepted = true;
+            bool replayed = ppnative_v1_finish_values_trace(&parsed, &resource->compiled.pack,
+                &trace, replay_depth, result_limit, selected, error, sizeof(error));
+            cetta_lp_native_lr_trace_free(&trace);
+            if (!replayed) goto failed;
+            corridor_completed = parsed.outcome == PPNATIVE_V1_COMPLETED;
+        } else if (outcome == CETTA_LP_NATIVE_SLR_LATTICE_RESOURCE_LIMIT) {
+            parsed.outcome = PPNATIVE_V1_RECOGNIZER_LIMIT;
+            (void)snprintf(parsed.detail, sizeof(parsed.detail),
+                "deterministic LR work limit %u", work_limit);
+            corridor_completed = true;
+        }
+        cetta_lp_native_lr_trace_free(&trace);
+        if (!corridor_completed) {
+            ppnative_v1_result_free(&parsed);
+            ppnative_v1_result_init(&parsed);
+            if (consume)
+                parsed.arena.hashcons = NULL;
+        }
+    }
+    if (corridor_completed) {
+        executed = true;
+    } else if (predictive && resource->compiled.tokenized) {
+        executed = cetta_parser_token_runtime_v1_parse_predictive_values_selected(&resource->token_runtime,
+            &resource->predictive, &scan, work_limit, replay_depth,
+            result_limit, selected, &parsed, error, sizeof(error));
+    } else if (predictive) {
+        PPNativeV1PreparedView view;
+        executed = ppnative_v1_prepared_immutable_view(&resource->prepared, &view) &&
+            cetta_lp_native_predictive_parse_owned_utf8_forest(view.gll, &resource->predictive,
+                view.terminal_plan->terminals, view.terminal_plan->len, bytes, len, work_limit,
+                &parsed.forest, error, sizeof(error));
+        if (executed && parsed.forest.outcome == CETTA_LP_NATIVE_UTF8_FOREST_RESOURCE_LIMIT) {
+            parsed.outcome = PPNATIVE_V1_RECOGNIZER_LIMIT;
+            (void)snprintf(parsed.detail, sizeof(parsed.detail), "predictive work limit %u", work_limit);
+        } else if (executed) {
+            parsed.accepted = parsed.forest.root_len != 0u;
+            executed = ppnative_v1_finish_values_selected(&parsed, &resource->compiled.pack, NULL,
+                replay_depth, result_limit, selected, error, sizeof(error));
+        }
+    } else {
+        executed = resource->compiled.tokenized
+          ? cetta_parser_token_runtime_v1_parse_values_selected(&resource->token_runtime,
+                &scan, false, work_limit, replay_depth,
+                result_limit, selected, &parsed, error, sizeof(error))
+          : ppgll_v1_prepared_parse_values_selected(&resource->prepared, bytes, len,
+                work_limit, replay_depth,
+                result_limit, selected, &parsed, error, sizeof(error));
+    }
+    if (!executed) goto failed;
+    if (parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST) {
+        Atom *args[] = {atom_bool(arena, parsed.accepted)};
+        result = langdef_expr(arena, "ParserCyclicV1", args, 1u);
+    } else if (parsed.outcome != PPNATIVE_V1_COMPLETED) {
+        Atom *args[] = {atom_int(arena, parsed.forest.farthest_scalar),
+            atom_int(arena, parsed.forest.farthest_byte), atom_string(arena, parsed.detail)};
+        result = langdef_expr(arena, "ParserIncompleteV1", args, 3u);
+    } else if (!parsed.accepted) {
+        Atom *expected = authored_parser_expected(resource, &parsed.forest, arena);
+        if (!expected) goto failed;
+        Atom *args[] = {atom_int(arena, parsed.forest.farthest_scalar),
+            atom_int(arena, parsed.forest.farthest_byte), expected};
+        result = langdef_expr(arena, "ParserRejectedV1", args, 3u);
+    } else if (selection_plan.unresolved) {
+        Atom *args[] = {atom_deep_copy(arena, selection_descriptor),
+                        atom_string(arena, selection_plan.detail)};
+        result = langdef_expr(arena, "ParserSelectionObligationV1", args, 2u);
+    } else {
+        Atom **values = parsed.semantic_result_len
+            ? arena_alloc(arena, sizeof(*values) * parsed.semantic_result_len) : NULL;
+        if (parsed.semantic_result_len && !values) goto failed;
+        for (uint32_t i = 0u; i < parsed.semantic_result_len; ++i) {
+            Atom *value = NULL;
+            if (!langdef_result_value(parsed.semantic_results[i], &value)) goto failed;
+            if (resource->compiled.tokenized) {
+                CettaParserTokenAstOutcomeV1 outcome;
+                if (!cetta_parser_token_ast_v1_project_owned_outcome(arena, resource->profile.tokens,
+                        &resource->profile.start_sort, &scan.source.view, value,
+                        replay_depth, work_limit, &values[i], &outcome, error, sizeof(error))) {
+                    if (outcome == CETTA_PARSER_TOKEN_AST_INCOMPLETE_V1) {
+                        Atom *args[] = {atom_int(arena, parsed.forest.farthest_scalar),
+                            atom_int(arena, parsed.forest.farthest_byte), atom_string(arena, error)};
+                        result = langdef_expr(arena, "ParserIncompleteV1", args, 3u);
+                        goto done;
+                    }
+                    goto failed;
+                }
+            } else values[i] = consume ? value : atom_deep_copy(arena, value);
+            if (!values[i]) goto failed;
+        }
+        Atom *span_args[] = {atom_int(arena, 0), atom_int(arena, len),
+            atom_int(arena, 0), atom_int(arena, parsed.forest.scalar_len)};
+        Atom *args[] = {atom_expr(arena, values, parsed.semantic_result_len),
+            langdef_expr(arena, "ParserSpanV1", span_args, 4u)};
+        result = langdef_expr(arena, "ParserAcceptedV1", args, 2u);
+    }
+    bool retain_forest = include_forest || (selection_descriptor &&
+        (selection_plan.unresolved || !parsed.accepted || parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST));
+    if (retain_forest && forest_item_limit &&
+        (parsed.outcome == PPNATIVE_V1_COMPLETED || parsed.outcome == PPNATIVE_V1_CYCLIC_FOREST)) {
+        bool encoded = resource->compiled.tokenized
+            ? cetta_parser_token_runtime_v1_materialize(&resource->token_runtime, &scan,
+                &parsed, forest_item_limit, error, sizeof(error))
+            : ppnative_v1_materialize_canonical_forest(&parsed, &resource->compiled.pack,
+                resource->compiled.start_state, forest_item_limit, error, sizeof(error));
+        if (!encoded) {
+            Atom *args[] = {atom_int(arena, parsed.forest.farthest_scalar),
+                atom_int(arena, parsed.forest.farthest_byte), atom_string(arena, error)};
+            result = langdef_expr(arena, "ParserIncompleteV1", args, 3u);
+        } else {
+            Atom *args[] = {result, atom_deep_copy(arena, parsed.canonical_forest)};
+            result = langdef_expr(arena, "ParserWithForestV1", args, 2u);
+        }
+    }
+    goto done;
+failed:
+    {
+        Atom *args[] = {atom_string(arena,
+            error[0] ? error : "parser value execution failed")};
+        result = langdef_expr(arena, "ParserFailureV1", args, 1u);
+    }
+done:
+    if (consume && result)
+        result = consume(consume_context, arena, result);
+    authored_parser_selection_free(&selection_plan);
+    cetta_parser_token_scan_v1_free(&scan);
+    ppnative_v1_result_free(&parsed);
+    return result;
+}
+
+/* A library's own use of a baked parser keeps one context-owned instance.
+ * It is restored once, shared through the ordinary parser cache, and
+ * released with the context's other native handles. */
+#define LANGDEF_LIBRARY_PARSER_KIND "cetta.langdef-library-parser.v1"
+static CettaParserInstanceV1 *authored_parser_library_instance(
+    CettaLibraryContext *ctx, const char *name, char *error, size_t error_size) {
+    const CettaBakedParserV1 *baked = cetta_parser_baked_v1_find(name);
+    if (!baked) { langdef_set_error(error, error_size, "unknown baked parser name"); return NULL; }
+    if (!ctx->parser_cache_mutex_ready) {
+        langdef_set_error(error, error_size, "parser cache mutex unavailable");
+        return NULL;
+    }
+    {
+        uint64_t id = 0u;
+        pthread_mutex_lock(&ctx->parser_cache_mutex);
+        for (CettaAuthoredParserV1 *entry = ctx->parser_cache; entry; entry = entry->cache_next)
+            if (entry->library_baked == baked) { id = entry->library_handle; break; }
+        pthread_mutex_unlock(&ctx->parser_cache_mutex);
+        CettaParserInstanceV1 *instance = id ?
+            cetta_native_handle_get(ctx, LANGDEF_LIBRARY_PARSER_KIND, id) : NULL;
+        if (instance) return instance;
+    }
+    CettaParserStrategyV1 strategy = PARSER_STRATEGY_GENERAL_V1;
+    CettaAuthoredParserV1 *resource = authored_parser_restore_bytes(ctx, baked->bytes, baked->length,
+        false, true, &strategy, error, error_size);
+    if (!resource) return NULL;
+    CettaParserInstanceV1 *instance = malloc(sizeof(*instance));
+    uint64_t id = 0u;
+    if (!instance) {
+        authored_parser_resource_free(resource);
+        langdef_set_error(error, error_size, "library parser instance allocation failed");
+        return NULL;
+    }
+    *instance = (CettaParserInstanceV1){resource, strategy};
+    if (!cetta_native_handle_alloc(ctx, LANGDEF_LIBRARY_PARSER_KIND, instance,
+            authored_parser_instance_free, &id)) {
+        authored_parser_instance_free(instance);
+        langdef_set_error(error, error_size, "library parser handle allocation failed");
+        return NULL;
+    }
+    /* A restored resource is always published in this context's cache. */
+    pthread_mutex_lock(&ctx->parser_cache_mutex);
+    resource->library_baked = baked;
+    resource->library_handle = id;
+    pthread_mutex_unlock(&ctx->parser_cache_mutex);
+    return instance;
+}
+
+Atom *cetta_langdef_baked_parse_consume_v1(
+    CettaLibraryContext *ctx, const char *name,
+    const uint8_t *bytes, size_t len, Atom *selection, bool include_forest,
+    Arena *arena, CettaLangdefParseConsumerV1 consume, void *consume_context,
+    char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!ctx || !name || (!bytes && len) || !arena || !consume) {
+        langdef_set_error(error, error_size, "invalid library parse request");
+        return NULL;
+    }
+    CettaParserInstanceV1 *instance = authored_parser_library_instance(ctx, name, error, error_size);
+    if (!instance) return NULL;
+    return authored_parser_parse_values(instance->owner, authored_parser_instance_predictive(instance),
+        bytes, len, UINT32_MAX, include_forest, selection, arena, consume, consume_context);
 }
 
 static Atom *authored_parser_parse_bytes(
@@ -5557,50 +6563,7 @@ bool cetta_langdef_run_file_v1(
 
 static bool langdef_utf8_append(uint8_t **bytes, size_t *len, size_t *cap,
                                 uint32_t codepoint) {
-    uint8_t encoded[4];
-    size_t width;
-    uint8_t *next;
-    if (codepoint == 0u || codepoint > 0x10ffffu ||
-        (codepoint >= 0xd800u && codepoint <= 0xdfffu))
-        return false;
-    if (codepoint <= 0x7fu) {
-        encoded[0] = (uint8_t)codepoint;
-        width = 1u;
-    } else if (codepoint <= 0x7ffu) {
-        encoded[0] = (uint8_t)(0xc0u | (codepoint >> 6u));
-        encoded[1] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 2u;
-    } else if (codepoint <= 0xffffu) {
-        encoded[0] = (uint8_t)(0xe0u | (codepoint >> 12u));
-        encoded[1] = (uint8_t)(0x80u | ((codepoint >> 6u) & 0x3fu));
-        encoded[2] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 3u;
-    } else {
-        encoded[0] = (uint8_t)(0xf0u | (codepoint >> 18u));
-        encoded[1] = (uint8_t)(0x80u | ((codepoint >> 12u) & 0x3fu));
-        encoded[2] = (uint8_t)(0x80u | ((codepoint >> 6u) & 0x3fu));
-        encoded[3] = (uint8_t)(0x80u | (codepoint & 0x3fu));
-        width = 4u;
-    }
-    if (*len > SIZE_MAX - width - 1u)
-        return false;
-    if (*len + width + 1u > *cap) {
-        size_t new_cap = *cap ? *cap : 32u;
-        while (new_cap < *len + width + 1u) {
-            if (new_cap > SIZE_MAX / 2u)
-                return false;
-            new_cap *= 2u;
-        }
-        next = realloc(*bytes, new_cap);
-        if (!next)
-            return false;
-        *bytes = next;
-        *cap = new_cap;
-    }
-    memcpy(*bytes + *len, encoded, width);
-    *len += width;
-    (*bytes)[*len] = 0u;
-    return true;
+    return cetta_utf8_append_scalar_impl_v1(bytes, len, cap, codepoint);
 }
 
 bool cetta_utf8_append_scalar_v1(uint8_t **bytes, size_t *len, size_t *cap,
@@ -7001,8 +7964,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "tptp reader handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, TPTP_READER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, TPTP_READER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_tptp_reader_info_v1")) {
@@ -7532,50 +8494,106 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 "langdef:load-authored-parser expects LanguageDef and parser-profile paths");
         }
         resource = authored_parser_resource_load(
-            language_path, profile_path, error, sizeof(error));
+            ctx, language_path, profile_path, error, sizeof(error));
         if (!resource) {
             return langdef_error(
                 arena, head,
                 error[0] ? error : "authored parser load failed");
         }
-        if (!cetta_native_handle_alloc(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, resource,
-                authored_parser_resource_free, &id)) {
+        if (!authored_parser_handle_alloc(ctx, resource, PARSER_STRATEGY_AUTO_V1, &id)) {
             authored_parser_resource_free(resource);
             return langdef_error(
                 arena, head, "authored parser handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_authored_parser_load_values")) {
+    if (atom_is_symbol(head, "__cetta_lib_authored_parser_load_values") ||
+        atom_is_symbol(head, "__cetta_lib_authored_parser_load_syntax") ||
+        atom_is_symbol(head, "__cetta_lib_parser_compile")) {
         CettaAuthoredParserV1 *resource;
+        CettaParserStrategyV1 strategy = PARSER_STRATEGY_AUTO_V1;
         uint64_t id;
-
-        if (nargs != 2u) {
+        Atom *syntax = NULL, *language = NULL, *profile = NULL;
+        bool compile = atom_is_symbol(head, "__cetta_lib_parser_compile");
+        if (compile) {
+            if (nargs != 2u || !args[1] || args[1]->kind != ATOM_SYMBOL ||
+                !(atom_is_symbol(args[1], "auto") || atom_is_symbol(args[1], "general") ||
+                  atom_is_symbol(args[1], "predictive"))) {
+                Atom *args[] = {atom_string(arena, "compile-parser expects syntax and auto, general or predictive")};
+                return langdef_expr(arena, "ParserFailureV1", args, 1u);
+            }
+            strategy = atom_is_symbol(args[1], "auto") ? PARSER_STRATEGY_AUTO_V1
+                : atom_is_symbol(args[1], "general") ? PARSER_STRATEGY_GENERAL_V1 : PARSER_STRATEGY_PREDICTIVE_V1;
+        }
+        if ((atom_is_symbol(head, "__cetta_lib_authored_parser_load_syntax") && nargs == 1u) || compile) {
+            Atom *inspection = cetta_syntax_gslt_inspect_checked_v1(arena, args[0], syntax_gslt_admission_v1);
+            if (!inspection || inspection->kind != ATOM_EXPR || inspection->expr.len != 5u ||
+                !atom_is_symbol(inspection->expr.elems[0], "SyntaxGSLTInspectionV1")) return inspection;
+            syntax = args[0]; language = inspection->expr.elems[1]; profile = inspection->expr.elems[2];
+        } else if (nargs == 2u && atom_is_symbol(head, "__cetta_lib_authored_parser_load_values")) {
+            language = args[0]; profile = args[1];
+        } else {
             return langdef_error(
                 arena, head,
                 "langdef:load-authored-parser-values expects LanguageDef and parser-profile values");
         }
         resource = authored_parser_resource_load_values(
-            args[0], args[1], error, sizeof(error));
+            ctx, language, profile, syntax, error, sizeof(error));
         if (!resource) {
             return langdef_error(
                 arena, head,
                 error[0] ? error : "authored parser value load failed");
         }
-        if (!cetta_native_handle_alloc(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, resource,
-                authored_parser_resource_free, &id)) {
+        if (strategy == PARSER_STRATEGY_PREDICTIVE_V1 &&
+            (!resource->predictive_ready || resource->predictive.status != CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE)) {
+            Atom *witness = authored_parser_predictive_witness(arena, resource);
+            Atom *args[] = {witness};
+            Atom *refusal = witness ? langdef_expr(arena, "ParserPredictiveRefusedV1", args, 1u) : NULL;
+            authored_parser_resource_free(resource);
+            return refusal;
+        }
+        if (!authored_parser_handle_alloc(ctx, resource, strategy, &id)) {
             authored_parser_resource_free(resource);
             return langdef_error(
                 arena, head, "authored parser handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, AUTHORED_PARSER_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_parser_select_strategy")) {
+        uint64_t source_id, id;
+        CettaAuthoredParserV1 *resource;
+        if (nargs != 2u || !cetta_native_handle_arg(args[0], AUTHORED_PARSER_HANDLE_KIND, &source_id) ||
+            !(resource = authored_parser_resource_get(ctx, source_id)) || !args[1] ||
+            args[1]->kind != ATOM_SYMBOL || !(atom_is_symbol(args[1], "general") ||
+                atom_is_symbol(args[1], "auto") || atom_is_symbol(args[1], "predictive"))) {
+            Atom *args[] = {atom_string(arena, "strategy selection expects a live parser and named strategy")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        CettaParserStrategyV1 strategy = atom_is_symbol(args[1], "auto") ? PARSER_STRATEGY_AUTO_V1
+            : atom_is_symbol(args[1], "general") ? PARSER_STRATEGY_GENERAL_V1 : PARSER_STRATEGY_PREDICTIVE_V1;
+        if (strategy == PARSER_STRATEGY_PREDICTIVE_V1 &&
+            (!resource->predictive_ready || resource->predictive.status != CETTA_LP_NATIVE_PREDICTIVE_ELIGIBLE)) {
+            Atom *args[] = {authored_parser_predictive_witness(arena, resource)};
+            return langdef_expr(arena, "ParserPredictiveRefusedV1", args, 1u);
+        }
+        if (resource->cache_context != ctx) {
+            Atom *args[] = {atom_string(arena, "parser ownership context mismatch")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        pthread_mutex_lock(&ctx->parser_cache_mutex);
+        bool retained = resource->users != UINT32_MAX;
+        if (retained) ++resource->users;
+        pthread_mutex_unlock(&ctx->parser_cache_mutex);
+        if (!retained || !authored_parser_handle_alloc(ctx, resource, strategy, &id)) {
+            if (retained) authored_parser_resource_free(resource);
+            Atom *args[] = {atom_string(arena, "parser strategy handle allocation failed")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        return langdef_return(arena, langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_authored_parser_close")) {
@@ -7602,8 +8620,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (nargs != 1u ||
             !cetta_native_handle_arg(
                 args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
-            !(resource = cetta_native_handle_get(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, id))) {
+            !(resource = authored_parser_resource_get(ctx, id))) {
             return langdef_error(
                 arena, head,
                 "langdef:authored-parser-info expects a live authored parser handle");
@@ -7626,6 +8643,139 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, "LangDef:AuthoredParserInfo", arguments, 7u));
     }
 
+    if (atom_is_symbol(head, "__cetta_lib_parser_freeze")) {
+        uint64_t id;
+        const char *path;
+        CettaAuthoredParserV1 *resource;
+        uint8_t *bytes = NULL;
+        size_t length = 0u;
+        char digest[65];
+        if (nargs != 2u || !cetta_native_handle_arg(args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
+            !cetta_langdef_text_arg(args[1], &path)) {
+            Atom *args[] = {atom_string(arena, "freeze expects a live parser and artifact path")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        CettaParserInstanceV1 *instance = cetta_native_handle_get(ctx, AUTHORED_PARSER_HANDLE_KIND, id);
+        bool ok = authored_parser_freeze_bytes(resource, instance->strategy, &bytes, &length, digest, error, sizeof(error)) &&
+            authored_parser_publish_artifact(path, bytes, length, error, sizeof(error));
+        free(bytes);
+        if (!ok) {
+            Atom *args[] = {atom_string(arena, error)};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        Atom *args[] = {atom_string(arena, digest), atom_int(arena, length)};
+        return langdef_expr(arena, "ParserArtifactV1", args, 2u);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_parser_load_artifact") ||
+        atom_is_symbol(head, "__cetta_lib_parser_load_artifact_checked") ||
+        atom_is_symbol(head, "__cetta_lib_parser_load_baked")) {
+        const char *path;
+        uint8_t *bytes = NULL;
+        size_t length = 0u;
+        CettaAuthoredParserV1 *resource = NULL;
+        CettaParserStrategyV1 strategy = PARSER_STRATEGY_GENERAL_V1;
+        if (nargs == 1u && cetta_langdef_text_arg(args[0], &path)) {
+            if (atom_is_symbol(head, "__cetta_lib_parser_load_baked")) {
+                const CettaBakedParserV1 *baked = cetta_parser_baked_v1_find(path);
+                if (baked)
+                    resource = authored_parser_restore_bytes(ctx, baked->bytes, baked->length,
+                        false, true, &strategy, error, sizeof(error));
+                else langdef_set_error(error, sizeof(error), "unknown baked parser name");
+            } else if (cetta_langdef_slurp(path, &bytes, &length, error, sizeof(error)))
+                resource = authored_parser_restore_bytes(ctx, bytes, length,
+                    atom_is_symbol(head, "__cetta_lib_parser_load_artifact_checked"), false, &strategy, error, sizeof(error));
+        }
+        free(bytes);
+        if (!resource) {
+            Atom *args[] = {atom_string(arena, error[0] ? error : "artifact path required")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        uint64_t id = 0u;
+        if (!authored_parser_handle_alloc(ctx, resource, strategy, &id)) {
+            authored_parser_resource_free(resource);
+            Atom *args[] = {atom_string(arena, "artifact handle allocation failed")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        return langdef_owned_handle(ctx, arena, head, AUTHORED_PARSER_HANDLE_KIND, id);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_parser_parse_text") ||
+        atom_is_symbol(head, "__cetta_lib_parser_parse_text_selected") ||
+        atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest") ||
+        atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest_selected") ||
+        atom_is_symbol(head, "__cetta_lib_parser_parse_file")) {
+        uint64_t id;
+        CettaAuthoredParserV1 *resource;
+        const char *input;
+        uint8_t *owned_bytes = NULL;
+        const uint8_t *bytes;
+        size_t len;
+        bool selected_view = atom_is_symbol(head, "__cetta_lib_parser_parse_text_selected");
+        bool selected = selected_view || atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest_selected");
+        bool with_forest = !selected_view && (selected || atom_is_symbol(head, "__cetta_lib_parser_parse_text_forest"));
+        bool file = atom_is_symbol(head, "__cetta_lib_parser_parse_file");
+        uint32_t forest_limit = selected_view ? UINT32_MAX : 0u;
+        if (nargs != (selected_view ? 3u : selected ? 4u : with_forest ? 3u : 2u) ||
+            !cetta_native_handle_arg(args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
+            !(file ? cetta_langdef_text_arg(args[1], &input) :
+              args[1] && args[1]->kind == ATOM_GROUNDED && args[1]->ground.gkind == GV_STRING
+                ? (input = args[1]->ground.sval) != NULL : cetta_langdef_text_arg(args[1], &input))) {
+            Atom *args[] = {atom_string(arena, "expected a live parser and text or path")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        if (with_forest) {
+            Atom *allowance = args[selected ? 3u : 2u];
+            if (!allowance || allowance->kind != ATOM_GROUNDED || allowance->ground.gkind != GV_INT ||
+                allowance->ground.ival < 0 || (uint64_t)allowance->ground.ival > UINT32_MAX) {
+                Atom *args[] = {atom_string(arena, "expected a nonnegative packed-forest item allowance (zero is unbounded)")};
+                return langdef_expr(arena, "ParserFailureV1", args, 1u);
+            }
+            forest_limit = allowance->ground.ival ? (uint32_t)allowance->ground.ival : UINT32_MAX;
+        }
+        bytes = (const uint8_t *)input;
+        len = !file && args[1]->kind == ATOM_GROUNDED ? atom_string_len(args[1]) : strlen(input);
+        if (file) {
+            if (!cetta_langdef_slurp(input, &owned_bytes, &len, error, sizeof(error))) {
+                Atom *args[] = {atom_string(arena, error)};
+                return langdef_expr(arena, "ParserFailureV1", args, 1u);
+            }
+            bytes = owned_bytes;
+        }
+        CettaParserInstanceV1 *instance = cetta_native_handle_get(ctx, AUTHORED_PARSER_HANDLE_KIND, id);
+        Atom *result = authored_parser_parse_values(resource,
+            authored_parser_instance_predictive(instance), bytes, len, forest_limit,
+            with_forest, selected ? args[2] : NULL, arena, NULL, NULL);
+        free(owned_bytes);
+        return result;
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_parser_info")) {
+        uint64_t id;
+        CettaAuthoredParserV1 *resource;
+        if (nargs != 1u ||
+            !cetta_native_handle_arg(args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
+            !(resource = authored_parser_resource_get(ctx, id))) {
+            Atom *args[] = {atom_string(arena, "expected a live parser")};
+            return langdef_expr(arena, "ParserFailureV1", args, 1u);
+        }
+        uint32_t users = 1u;
+        if (resource->cache_context) {
+            pthread_mutex_lock(&resource->cache_context->parser_cache_mutex);
+            users = resource->users;
+            pthread_mutex_unlock(&resource->cache_context->parser_cache_mutex);
+        }
+        CettaParserInstanceV1 *instance = cetta_native_handle_get(ctx, AUTHORED_PARSER_HANDLE_KIND, id);
+        Atom *args[] = {atom_string(arena, resource->name),
+            atom_symbol(arena, authored_parser_strategy_name(instance->strategy)),
+            atom_symbol(arena, authored_parser_instance_predictive(instance) ? "predictive" : "gll"),
+            atom_int(arena, users), atom_int(arena, resource->compiled.pack.production_len),
+            authored_parser_predictive_witness(arena, resource)};
+        return langdef_expr(arena, "ParserInfoV1", args, 6u);
+    }
+
     if (atom_is_symbol(head, "__cetta_lib_authored_parser_parse_text")) {
         uint64_t id;
         CettaAuthoredParserV1 *resource;
@@ -7635,8 +8785,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (nargs != 2u ||
             !cetta_native_handle_arg(
                 args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
-            !(resource = cetta_native_handle_get(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, id)) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
             !cetta_langdef_text_arg(args[1], &source_text)) {
             return langdef_error(
                 arena, head,
@@ -7661,8 +8810,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (nargs != 2u ||
             !cetta_native_handle_arg(
                 args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
-            !(resource = cetta_native_handle_get(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, id)) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
             !cetta_langdef_text_arg(args[1], &source_path)) {
             return langdef_error(
                 arena, head,
@@ -7693,8 +8841,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (nargs != 3u ||
             !cetta_native_handle_arg(
                 args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
-            !(resource = cetta_native_handle_get(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, id)) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
             !cetta_langdef_text_arg(args[1], &source_text) ||
             !args[2] || args[2]->kind != ATOM_GROUNDED ||
             args[2]->ground.gkind != GV_INT) {
@@ -7730,8 +8877,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         if (nargs != 3u ||
             !cetta_native_handle_arg(
                 args[0], AUTHORED_PARSER_HANDLE_KIND, &id) ||
-            !(resource = cetta_native_handle_get(
-                ctx, AUTHORED_PARSER_HANDLE_KIND, id)) ||
+            !(resource = authored_parser_resource_get(ctx, id)) ||
             !cetta_langdef_text_arg(args[1], &source_path) ||
             !args[2] || args[2]->kind != ATOM_GROUNDED ||
             args[2]->ground.gkind != GV_INT) {
@@ -7791,8 +8937,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 "deterministic equation handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, DETERMINISTIC_EQUATION_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, DETERMINISTIC_EQUATION_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run") ||
@@ -7986,17 +9131,19 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                     ctx, STRUCTURAL_TREE_RELABEL_HANDLE_KIND, id)));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_term_load")) {
-        const char *path;
+    if (atom_is_symbol(head, "__cetta_lib_language_def_term_load") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_term_load_value")) {
+        const char *path = NULL;
         CettaLanguageDefTermV1 *resource;
         uint64_t id;
 
-        if (nargs != 1u || !cetta_langdef_text_arg(args[0], &path))
+        bool structured = atom_is_symbol(head, "__cetta_lib_language_def_term_load_value");
+        if (nargs != 1u || (!structured && !cetta_langdef_text_arg(args[0], &path)))
             return langdef_error(
                 arena, head,
                 "langdef:load-language expects one LanguageDef wire path");
-        resource = language_def_term_resource_load(
-            path, error, sizeof(error));
+        resource = structured ? language_def_term_resource_from_value(args[0], error, sizeof(error)) :
+            language_def_term_resource_load(path, error, sizeof(error));
         if (!resource)
             return langdef_error(
                 arena, head,
@@ -8009,8 +9156,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, head, "LanguageDef handle allocation failed");
         }
         return langdef_return(
-            arena, cetta_native_handle_owned_atom(
-                ctx, arena, LANGUAGE_DEF_TERM_HANDLE_KIND, id));
+            arena, langdef_owned_handle(ctx, arena, head, LANGUAGE_DEF_TERM_HANDLE_KIND, id));
     }
 
     if (atom_is_symbol(head, "__cetta_lib_language_def_term_close")) {
@@ -8049,7 +9195,122 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 arena, "LangDef:LanguageWireSHA256", arguments, 1u));
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_term_admit")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_contextual_result_term")) {
+        Atom *envelope = nargs == 2u ? args[0] : NULL;
+        if (!envelope || envelope->kind != ATOM_EXPR || envelope->expr.len < 2u ||
+            !atom_is_symbol(envelope->expr.elems[0], "LangDef:ContextualResults") ||
+            !args[1] || args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+            args[1]->ground.ival < 0 || (uint64_t)args[1]->ground.ival >= envelope->expr.len - 2u)
+            return langdef_context_fault(arena, "bad_argument", "Expected a contextual result and an in-range alternative index");
+        Atom *entry = envelope->expr.elems[(size_t)args[1]->ground.ival + 2u];
+        if (!cetta_langdef_expr_head(entry, "LangDef:ContextualResult", 2u))
+            return langdef_context_fault(arena, "bad_argument", "Malformed contextual result entry");
+        return langdef_return(arena, atom_deep_copy(arena, entry->expr.elems[1]));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_projected_term")) {
+        if (nargs != 2u || !cetta_langdef_expr_head(args[0], "LangDef:ProjectedTermsV1", 2u) ||
+            !args[0]->expr.elems[1] || args[0]->expr.elems[1]->kind != ATOM_EXPR ||
+            !args[1] || args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+            args[1]->ground.ival < 0 || (uint64_t)args[1]->ground.ival >= args[0]->expr.elems[1]->expr.len)
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "langdef:projected-term expects a projection and an in-range alternative index");
+        Atom *entry = args[0]->expr.elems[1]->expr.elems[args[1]->ground.ival];
+        if (!cetta_langdef_expr_head(entry, "LangDef:ProjectedTermV1", 2u))
+            return langdef_projection_problem(arena, "bad_argument", args[1]->ground.ival, NULL,
+                "malformed projected term entry");
+        return langdef_return(arena, atom_deep_copy(arena, entry->expr.elems[1]));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_project_parser_result") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_project_parser_pattern_result")) {
+        bool pattern_projection = atom_is_symbol(head, "__cetta_lib_language_def_project_parser_pattern_result");
+        uint64_t id;
+        CettaLanguageDefTermV1 *resource;
+        const char *category;
+        if (nargs != (pattern_projection ? 4u : 3u) ||
+            !cetta_native_handle_arg(args[0], LANGUAGE_DEF_TERM_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(ctx, LANGUAGE_DEF_TERM_HANDLE_KIND, id)) ||
+            !cetta_langdef_text_arg(args[1], &category))
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "Projection expects a live LanguageDef handle, category, optional Pattern profile and parser result");
+        Atom *input = args[pattern_projection ? 3u : 2u];
+        if (cetta_langdef_expr_head(input, "ParserRejectedV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserLexicalRejectedV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserIncompleteV1", 3u) ||
+            cetta_langdef_expr_head(input, "ParserCyclicV1", 1u) ||
+            cetta_langdef_expr_head(input, "ParserFailureV1", 1u))
+            return langdef_return(arena, atom_deep_copy(arena, input));
+        if (!cetta_langdef_expr_head(input, "ParserAcceptedV1", 2u) ||
+            !input->expr.elems[1] || input->expr.elems[1]->kind != ATOM_EXPR ||
+            !input->expr.elems[1]->expr.len ||
+            !cetta_langdef_expr_head(input->expr.elems[2], "ParserSpanV1", 4u))
+            return langdef_projection_problem(arena, "bad_argument", -1, NULL,
+                "expected a nonempty accepted parser value vector or parser outcome");
+        Atom *values = input->expr.elems[1];
+        if ((size_t)values->expr.len > SIZE_MAX / sizeof(Atom *))
+            return langdef_projection_problem(arena, "resource_limit", -1, NULL,
+                "AST projection alternative vector exceeds its allocation bound");
+        Atom **projected = arena_alloc(arena, (size_t)values->expr.len * sizeof(*projected));
+        if (!projected)
+            return langdef_projection_problem(arena, "resource_limit", -1, NULL,
+                "could not allocate the AST projection alternative vector");
+        for (CettaExprLen i = 0u; i < values->expr.len; ++i) {
+            CettaLdGroundTermV1Status status;
+            char error[256] = {0};
+            Atom *term = NULL, *sources = NULL;
+            const Atom *blame = NULL;
+            bool ok = pattern_projection ? cetta_language_def_pattern_v1_project_ast(arena, &resource->language,
+                    category, args[2], values->expr.elems[i], UINT32_MAX, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+                    &term, &sources, &blame, &status, error, sizeof(error)) :
+                cetta_language_def_ground_term_v1_project_ast(arena, &resource->language,
+                    category, values->expr.elems[i], UINT32_MAX, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+                    &term, &sources, &blame, &status, error, sizeof(error));
+            if (!ok) {
+                return langdef_projection_problem(arena, cetta_ld_ground_term_v1_status_name(status),
+                    i, blame, error[0] ? error : "AST projection rejected the value");
+            }
+            Atom *entry[] = {term, sources};
+            projected[i] = langdef_expr(arena, "LangDef:ProjectedTermV1", entry, 2u);
+        }
+        Atom *result[] = {atom_expr(arena, projected, values->expr.len),
+            atom_deep_copy(arena, input->expr.elems[2])};
+        return langdef_return(arena, langdef_expr(arena, "LangDef:ProjectedTermsV1", result, 2u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_pattern_admit_data")) {
+        uint64_t id;
+        CettaLanguageDefTermV1 *resource;
+        const char *category;
+        if (nargs != 3u ||
+            !cetta_native_handle_arg(args[0], LANGUAGE_DEF_TERM_HANDLE_KIND, &id) ||
+            !(resource = cetta_native_handle_get(ctx, LANGUAGE_DEF_TERM_HANDLE_KIND, id)) ||
+            !cetta_langdef_text_arg(args[1], &category))
+            return langdef_error(arena, head,
+                "langdef:admit-pattern-data expects a live LanguageDef handle, category and Pattern");
+        CettaLdPatternV1 pattern;
+        CettaLdPatternAtomV1Status wire_status;
+        CettaLdPatternAdmissionV1Status admission_status;
+        char detail[256] = {0};
+        cetta_ld_pattern_v1_init(&pattern);
+        bool decoded = cetta_ld_pattern_atom_v1_decode(&pattern, args[2], LANGDEF_DEFAULT_REPLAY_DEPTH,
+            LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS, &wire_status, detail, sizeof(detail));
+        bool admitted = decoded && cetta_language_def_pattern_v1_admit(&resource->language,
+            category, &pattern, LANGDEF_DEFAULT_REPLAY_DEPTH, LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
+            &admission_status, detail, sizeof(detail));
+        cetta_ld_pattern_v1_free(&pattern);
+        if (admitted) return langdef_return(arena, langdef_expr(arena, "LangDef:TermAdmitted", NULL, 0u));
+        Atom *fields[] = {atom_symbol(arena, decoded ?
+            cetta_ld_pattern_admission_v1_status_name(admission_status) : cetta_ld_pattern_atom_v1_status_name(wire_status)),
+            atom_string(arena, detail)};
+        bool incomplete = decoded ? admission_status == CETTA_LD_PA_V1_RESOURCE_LIMIT :
+            (wire_status == CETTA_LD_PATTERN_ATOM_V1_RESOURCE_LIMIT || wire_status == CETTA_LD_PATTERN_ATOM_V1_ALLOCATION_FAILURE);
+        return langdef_return(arena, langdef_expr(arena,
+            incomplete ? "LangDef:TermIncompleteV1" : "LangDef:TermRejected", fields, 2u));
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_language_def_term_admit") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_term_admit_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         const char *category;
@@ -8089,7 +9350,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         }
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_rewrite_pattern_at_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         CettaLanguageDefRelationEnvV1 relation_environment = {0};
@@ -8174,7 +9436,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         return langdef_return(arena, encoded);
     }
 
-    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at")) {
+    if (atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at") ||
+        atom_is_symbol(head, "__cetta_lib_language_def_rewrite_term_at_data")) {
         uint64_t id;
         CettaLanguageDefTermV1 *resource;
         CettaLanguageDefRelationEnvV1 relation_environment = {0};
@@ -8764,6 +10027,147 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
 
     /* Syntax GSLT values close the chain: the earlier operations keep their
      * existing dispatch cost. */
+    if (atom_is_symbol(head, "__cetta_lib_module_attach_layer_v1")) {
+        ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+        if (nargs != 5u) {
+            module_fail_v1(&work, "malformed-layer", "Layer attachment expects a base, origin, schema, category and fields.");
+            return work.refusal;
+        }
+        CettaLanguageDefTermV1 *schema = language_def_term_resource_from_value(args[2], error, sizeof(error));
+        if (!schema) {
+            module_fail_v1(&work, "malformed-layer-schema", error[0] ? error : "Expected an authoring LanguageDef.");
+            return work.refusal;
+        }
+        Atom *result = cetta_module_attach_layer_v1(arena, args[0], args[1], args[2],
+            &schema->language, args[3], args[4]);
+        language_def_term_resource_free(schema);
+        return result;
+    }
+    if (atom_is_symbol(head, "__cetta_lib_module_join_layers_over_v1")) {
+        ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+        if (nargs != 3u) {
+            module_fail_v1(&work, "malformed-layer-operation", "Layer change of base expects a target core and two decorated values.");
+            return work.refusal;
+        }
+        CettaLanguageDefTermV1 *target = language_def_term_resource_from_value(args[0], error, sizeof(error));
+        if (!target) {
+            module_fail_v1(&work, "malformed-layer-base", error[0] ? error : "Expected a target LanguageDef.");
+            return work.refusal;
+        }
+        language_def_term_resource_free(target);
+        return cetta_module_join_layers_over_v1(arena, args[0], args[1], args[2]);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_module_join_layers_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_base_core_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_layer_fields_v1")) {
+        bool core_only = atom_is_symbol(head, "__cetta_lib_module_base_core_v1");
+        if (nargs != (core_only ? 1u : 2u)) {
+            ModuleWorkV1 work = {.arena = arena, .remaining = 1000000u};
+            module_fail_v1(&work, "malformed-layer-operation", "Layer operation has the wrong number of operands.");
+            return work.refusal;
+        }
+        if (core_only) return cetta_module_base_core_v1(arena, args[0]);
+        if (atom_is_symbol(head, "__cetta_lib_module_join_layers_v1"))
+            return cetta_module_join_layers_v1(arena, args[0], args[1]);
+        return cetta_module_layer_fields_v1(arena, args[0], args[1]);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_rewrite_rules_v1")) {
+        Atom *rules = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module rule export expects a presentation and a language name.");
+        bool ok = cetta_module_value_v1_rewrite_rules(arena, args[0], args[1], 1000000u, &rules, &refusal);
+        return ok ? rules : refusal ? refusal : langdef_error(arena, head, "Module rule export failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_interpret_v1")) {
+        Atom *result = NULL, *refusal = NULL;
+        if (nargs != 3u) return langdef_error(arena, head,
+            "Module interpretation expects required and supplied presentations and a method.");
+        bool ok = cetta_module_value_v1_interpret(arena, args[0], args[1], args[2], 1000000u, &result, &refusal);
+        return ok ? result : refusal ? refusal : langdef_error(arena, head, "Module interpretation failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_core_v1")) {
+        Atom *language = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module core construction expects a presentation and a language name.");
+        bool ok = cetta_module_value_v1_core(arena, args[0], args[1], 1000000u, &language, &refusal);
+        return ok ? language : refusal ? refusal : langdef_error(arena, head, "Module core construction failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_language_v1")) {
+        CettaLbnfLoweredV1 lowered = {0}; Atom *language = NULL, *refusal = NULL;
+        if (nargs != 4u) return langdef_error(arena, head,
+            "Module language lowering expects a presentation, name, start category and lexical policy.");
+        if (!cetta_module_value_v1_language(arena, args[0], args[1], args[2], args[3], 1000000u,
+                &lowered, &language, &refusal))
+            return refusal ? refusal : langdef_error(arena, head, "Module language lowering failed.");
+        Atom *syntax = cetta_syntax_gslt_admit_v1(arena, lowered.language, lowered.profile,
+            lowered.policy, lowered.origins, syntax_gslt_admission_v1);
+        Atom *fields[] = {language, syntax};
+        return module_make_v1(arena, "ModuleLanguageV1", fields, 2u);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_language_core_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_language_syntax_v1")) {
+        if (nargs != 1u || !module_form_v1(args[0], "ModuleLanguageV1", 2u))
+            return langdef_error(arena, head, "Expected a lowered module language value.");
+        return atom_deep_copy(arena, args[0]->expr.elems[atom_is_symbol(head, "__cetta_lib_module_language_core_v1") ? 1u : 2u]);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_assemble_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 6u) return langdef_error(arena, head,
+            "Module assembly expects a module, theory, arguments, catalog, origin policy and instance key.");
+        CettaGsltOriginPolicyV1 policy;
+        if (atom_is_symbol(args[4], "OriginCoherentV1")) policy = CETTA_GSLT_ORIGIN_COHERENT_V1;
+        else if (atom_is_symbol(args[4], "OriginViewV1")) policy = CETTA_GSLT_ORIGIN_VIEW_V1;
+        else return langdef_error(arena, head, "Expected a named module origin policy.");
+        bool ok = cetta_module_value_v1_assemble(arena, args[0], args[1], args[2], args[3],
+            policy, args[5], 1000000u, &value, &refusal);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, "Module assembly failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_write_portable_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 1u) return langdef_error(arena, head, "Portable writing expects one data value.");
+        bool ok = cetta_module_portable_v1_write(arena, args[0], 1000000u, &value, &refusal);
+        return ok ? value : refusal;
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_read_portable_v1")) {
+        const char *input = NULL;
+        if (nargs != 3u)
+            return langdef_error(arena, head, "Portable module reading expects a namespace, text/file selector and source.");
+        CettaOpLangV1Document document;
+        CettaOpLangV1Status status;
+        cetta_op_lang_v1_document_init(&document);
+        bool ok;
+        if (atom_is_symbol(args[1], "file") && cetta_langdef_text_arg(args[2], &input))
+            ok = cetta_op_lang_v1_parse_document_file(&document, input, 4000000u, 8000000u, &status, error, sizeof(error));
+        else if (atom_is_symbol(args[1], "text") && args[2]->kind == ATOM_GROUNDED && args[2]->ground.gkind == GV_STRING)
+            ok = cetta_op_lang_v1_parse_document_bytes(&document, (const uint8_t *)args[2]->ground.sval,
+                atom_string_len(args[2]), 4000000u, 8000000u, &status, error, sizeof(error));
+        else ok = false;
+        Atom *value = NULL, *refusal = NULL;
+        Atom *data = ok ? authored_parser_store_source(arena, document.root) : NULL;
+        ok = data && cetta_module_portable_v1_read(arena, args[0], data, 1000000u, &value, &refusal);
+        cetta_op_lang_v1_document_free(&document);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, error[0] ? error : "Portable module read failed.");
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_module_document_v1") ||
+        atom_is_symbol(head, "__cetta_lib_module_finish_v1")) {
+        Atom *value = NULL, *refusal = NULL;
+        if (nargs != 2u) return langdef_error(arena, head,
+            "Module reading expects a source namespace and labelled parser data.");
+        bool ok = atom_is_symbol(head, "__cetta_lib_module_document_v1")
+            ? cetta_module_value_v1_project(arena, args[0], args[1], 1000000u, &value, &refusal)
+            : cetta_module_value_v1_finish_read(arena, args[0], args[1], 1000000u, &value, &refusal);
+        return ok ? value : refusal ? refusal : langdef_error(arena, head, "Module projection failed.");
+    }
+
     if (atom_is_symbol(head, "__cetta_lib_lbnf_bootstrap_v1")) {
         Atom *document = NULL;
         char error[512];
@@ -8812,6 +10216,11 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
 
     if (atom_is_symbol(head, "__cetta_lib_syntax_gslt_inspect_v1")) {
         return cetta_syntax_gslt_inspect_v1(
+            arena, nargs == 1u ? args[0] : NULL);
+    }
+
+    if (atom_is_symbol(head, "__cetta_lib_syntax_gslt_inspect_checked_v1")) {
+        return cetta_syntax_gslt_inspect_checked_v1(
             arena, nargs == 1u ? args[0] : NULL, syntax_gslt_admission_v1);
     }
 

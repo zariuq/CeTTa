@@ -124,7 +124,6 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
         copy_need(r,&sf->before,&df->before);copy_need(r,&sf->evaluating,&df->evaluating);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         copy_receipt(r,&sf->before_receipt,&df->before_receipt,3);
-        copy_receipt(r,&sf->producer_receipt,&df->producer_receipt,3);
 #endif
         if(sf->match_rows)copy_bindings(r,&sf->match_rows->pending,&df->match_rows->pending);
         if(sf->equation_search){

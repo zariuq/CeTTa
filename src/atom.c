@@ -5,6 +5,7 @@
 #include "lang.h"
 #include "petta_numeric.h"
 #include "stats.h"
+#include "binding/name_space.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <assert.h>
 #include <ctype.h>
@@ -82,10 +83,20 @@ struct ArenaFinalizer {
     size_t accounted_payload_bytes;
 };
 
-struct ArenaRetainedOwner {
-    ArenaFinalizer finalizer;
-    struct ArenaRetainedOwner *next_owner;
-    CettaStorageVisitor storage;
+/* One hold per distinct (owner, release) pair.  The holds are finalizers on
+ * the arena's chain; `holds` lists them in acquisition order and `slots`
+ * indexes them, with the same discipline as the frame-identity set below: a
+ * reset pops holds newest first, so the popped hold is always the last record
+ * and survivors' probe chains never pass through it.  A hold's storage
+ * visitor, when its owner has one, is the finalizer's `storage`. */
+struct ArenaRetainedOwnerSet {
+    ArenaFinalizer **holds;   /* acquisition order                    */
+    uint32_t *slots;          /* index slot -> record position + 1    */
+    uint32_t *index;          /* record position -> its index slot    */
+    uint32_t len;
+    uint32_t cap;
+    uint32_t slot_cap;        /* power of two, or zero                */
+    uint32_t slot_mask;
 };
 
 typedef struct {
@@ -97,13 +108,76 @@ typedef struct {
     CettaStorageVisitor storage;
 } NativeHandleIdentifier;
 
+/* Large byte values travel through many publication arenas. Retain their
+ * immutable storage instead of copying every byte at each boundary. Small
+ * strings remain inline arena allocations; neither form changes Atom's ABI. */
+typedef struct {
+    _Atomic(size_t) references;
+    size_t length;
+    char bytes[];
+} AtomStringStorage;
+
+typedef struct {
+    Atom atom;
+    AtomStringStorage *storage;
+} RetainedStringAtom;
+
+enum { ATOM_STRING_RETAINED_MIN_BYTES = 4096u };
+
+static bool arena_retained_owner_set_find(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *));
+
+static void atom_string_storage_retain(void *ptr) {
+    AtomStringStorage *storage = ptr;
+    size_t before = atomic_fetch_add_explicit(&storage->references, 1u,
+                                              memory_order_relaxed);
+    if (before == SIZE_MAX)
+        abort();
+}
+
+static void atom_string_storage_release(void *ptr) {
+    AtomStringStorage *storage = ptr;
+    if (atomic_fetch_sub_explicit(&storage->references, 1u,
+                                  memory_order_acq_rel) == 1u)
+        free(storage);
+}
+
+static void atom_string_storage_census(const void *raw, CettaStorageCensus *census) {
+    const AtomStringStorage *storage = raw;
+    if (storage)
+        cetta_storage_object(census, storage,
+            sizeof(*storage) + storage->length + 1u, CETTA_STORAGE_BLOCK);
+}
+
+static Atom *atom_string_retain_storage(Arena *arena, const Atom *value,
+                                        AtomStringStorage *storage) {
+    bool held = arena_retained_owner_set_find(arena->retained_owners, storage,
+                                              atom_string_storage_release);
+    if (!arena_retain_owner_with_storage(arena, storage, atom_string_storage_retain,
+                            atom_string_storage_release, atom_string_storage_census))
+        return NULL;
+    /* Count each reachable buffer once in this arena's allocation pressure,
+     * including a restored survivor. Sharing across arenas is conservative
+     * pressure accounting, not a claim of unique physical allocation. */
+    if (!held)
+        arena_account_external_bytes(arena, sizeof(*storage) + storage->length + 1u);
+    RetainedStringAtom *copy = arena_alloc(arena, sizeof(*copy));
+    copy->atom = *value;
+    copy->atom.arena_id = arena->identity;
+    copy->atom.name_key = NULL;
+    copy->atom.structural_facts |= ATOM_STRUCTURAL_STRING_STORAGE;
+    copy->atom.ground.sval = storage->bytes;
+    copy->storage = storage;
+    return &copy->atom;
+}
+
 static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
 static void cetta_bigint_free_owned(CettaBigInt *big);
 static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
 static void cetta_rational_free_owned(CettaRational *rat);
 static Atom *atom_prime_context_deep_copy(
     Arena *dst, const CettaPrimeContext *context);
-static _Atomic(uint32_t) g_arena_identity_counter = 1u;
 static _Atomic(uint64_t) g_hashcons_reclamation_epoch = 1u;
 static _Atomic(uint64_t) g_hashcons_next_instance = 1u;
 
@@ -125,22 +199,44 @@ typedef struct {
     uint64_t source_epoch, destination_epoch;
     CettaArenaRuntimeKind runtime_kind;
     bool scalar_cache;
+    uint32_t block_capacity;
+    bool block_growth;
     const HashConsTable *hashcons;
 } AtomDeepCopyArenaState;
 
-/* The region a session copies out of that dies when the session ends: the
- * atoms of arena `identity` outside the kept ranges, which are the storage
- * the arena keeps below the caller's mark.  A copied atom of the region
+/* The storage a session copies out of that dies when the session ends: for
+ * each dying arena, its atoms outside the kept ranges, which are the storage
+ * that arena keeps below the caller's mark.  A copied atom of a dying arena
  * records its copy in place (ATOM_ARENA_ID_FORWARDED, and its name key the
- * copy) rather than in the session's table.  `identity` zero: none. */
-enum { ATOM_DEEP_COPY_REGION_KEPT_MAX = 16u };
-
+ * copy) rather than in the session's table.  Both lists grow as needed: any
+ * number of dying arenas, and of blocks kept below a mark. */
 typedef struct {
     uint32_t identity;
     uint32_t kept_len;
-    uintptr_t kept_start[ATOM_DEEP_COPY_REGION_KEPT_MAX];
-    uintptr_t kept_end[ATOM_DEEP_COPY_REGION_KEPT_MAX];
+    uintptr_t *kept;          /* kept_len pairs: start, end */
+} AtomDeepCopyDyingArena;
+
+typedef struct {
+    uint32_t len;
+    uint32_t cap;
+    AtomDeepCopyDyingArena *arenas;
 } AtomDeepCopyRegion;
+
+/* The identity of a freed arena struct: never an atom's.  Allocating from
+ * it is fatal until arena_init opens it again.  (ATOM_ARENA_ID_FORWARDED,
+ * the arena id of an atom whose copy it records, is in atom.h.) */
+#define ARENA_ID_DEAD (UINT32_MAX - 1u)
+
+/* Arena identities are reclaimable names (binding/name_space.h): an arena
+ * owns its name from arena_init to arena_free, and a younger arena linked
+ * to it as its older generation owns it too, so the name is reused only
+ * once neither can name the arena's atoms.  An identity's generation is the
+ * arena's reset epoch, which continues across incarnations of the name, so
+ * an (identity, reset epoch) pair never repeats. */
+static CettaNameSpace g_arena_names =
+    CETTA_NAME_SPACE_INITIALIZER("arena identities", 1u, ARENA_ID_DEAD);
+static _Thread_local CettaNameLocal g_arena_name_local;
+CETTA_NAME_SPACE_ONCE_FUNCTION(arena_names_once, g_arena_names)
 
 typedef struct AtomDeepCopyMemo {
     AtomDeepCopyMemoSlot inline_slots[CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP];
@@ -176,6 +272,13 @@ typedef struct {
     uint32_t destination_identity;
     uint64_t destination_epoch;
 } AtomDeepCopyObjectSlot;
+typedef struct AtomDeepCopyInventory {
+    const void *kind;
+    void *value;
+    AtomDeepCopyInventoryRelease release;
+    CettaStorageVisitor storage;
+    struct AtomDeepCopyInventory *next;
+} AtomDeepCopyInventory;
 
 struct AtomDeepCopySession {
     Arena *dst;
@@ -190,6 +293,7 @@ struct AtomDeepCopySession {
     void *map_context;
     bool failed;
     AtomDeepCopyRegion region;
+    AtomDeepCopyInventory *inventories;
 };
 
 bool atom_deep_copy_session_retain_frame(
@@ -298,6 +402,68 @@ static void arena_runtime_note_alloc(const Arena *a, size_t size) {
                                    (uint64_t)a->reserved_bytes);
 }
 
+/* ── Resource ledger (runtime statistics only) ─────────────────────────
+ * An arena created while statistics are enabled is charged, under its
+ * ledger tag, one live arena and the bytes of every block it holds (spare
+ * blocks included), until it is freed.  Each charge is returned by the
+ * arena that made it, so the gauges return to zero with the arenas. */
+
+static CettaArenaLedgerTag arena_ledger_tag_for_kind(
+        CettaArenaRuntimeKind kind) {
+    switch (kind) {
+    case CETTA_ARENA_RUNTIME_KIND_PERSISTENT: return CETTA_ARENA_LEDGER_PERSISTENT;
+    case CETTA_ARENA_RUNTIME_KIND_EVAL: return CETTA_ARENA_LEDGER_EVAL;
+    case CETTA_ARENA_RUNTIME_KIND_SCRATCH: return CETTA_ARENA_LEDGER_SCRATCH;
+    case CETTA_ARENA_RUNTIME_KIND_SURVIVOR: return CETTA_ARENA_LEDGER_SURVIVOR;
+    default: return CETTA_ARENA_LEDGER_OTHER;
+    }
+}
+
+static void arena_ledger_charge(CettaArenaLedgerTag tag, int64_t arenas,
+                                int64_t bytes) {
+    if (tag == CETTA_ARENA_LEDGER_NONE)
+        return;
+    CettaRuntimeCounter base = (CettaRuntimeCounter)(
+        CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE +
+        4u * ((uint32_t)tag - (uint32_t)CETTA_ARENA_LEDGER_OTHER));
+    if (arenas)
+        cetta_runtime_stats_gauge_add(base, (CettaRuntimeCounter)(base + 1u),
+                                      arenas);
+    if (bytes)
+        cetta_runtime_stats_gauge_add((CettaRuntimeCounter)(base + 2u),
+                                      (CettaRuntimeCounter)(base + 3u),
+                                      bytes);
+}
+
+static void arena_ledger_open(Arena *a) {
+    a->ledger_tag_named = false;
+    a->ledger_tag = cetta_runtime_stats_is_enabled()
+        ? (uint8_t)arena_ledger_tag_for_kind(a->runtime_kind)
+        : (uint8_t)CETTA_ARENA_LEDGER_NONE;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 1, 0);
+}
+
+static void arena_ledger_close(Arena *a) {
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, -1,
+                        -(int64_t)a->reserved_bytes);
+    a->ledger_tag = (uint8_t)CETTA_ARENA_LEDGER_NONE;
+}
+
+static void arena_ledger_retag(Arena *a, CettaArenaLedgerTag tag) {
+    if (a->ledger_tag == CETTA_ARENA_LEDGER_NONE || a->ledger_tag == tag)
+        return;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, -1,
+                        -(int64_t)a->reserved_bytes);
+    a->ledger_tag = (uint8_t)tag;
+    arena_ledger_charge(tag, 1, (int64_t)a->reserved_bytes);
+}
+
+static void arena_ledger_stock(int64_t bytes) {
+    cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES,
+                                  CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES_PEAK,
+                                  bytes);
+}
+
 void *cetta_malloc(size_t size) {
     void *ptr = malloc(size == 0 ? 1 : size);
     if (!ptr) cetta_oom(size);
@@ -349,6 +515,7 @@ static void arena_stock_release(void *unused) {
     while (block) {
         ArenaBlock *next = block->next;
         ARENA_STOCK_UNPOISON(block);
+        arena_ledger_stock(-(int64_t)block->capacity);
         free(block);
         block = next;
     }
@@ -375,6 +542,7 @@ static void arena_retire_block(ArenaBlock *block, bool recycle) {
     ARENA_STOCK_POISON(block);
     g_arena_stock = block;
     g_arena_stock_len++;
+    arena_ledger_stock((int64_t)block->capacity);
 }
 
 static ArenaBlock *arena_stock_take(void) {
@@ -386,6 +554,7 @@ static ArenaBlock *arena_stock_take(void) {
     g_arena_stock_len--;
     block->next = NULL;
     block->used = 0;
+    arena_ledger_stock(-(int64_t)block->capacity);
     return block;
 }
 
@@ -431,7 +600,17 @@ static ArenaBlock *arena_take_spare_block(Arena *a, size_t min_capacity) {
     return NULL;
 }
 
+/* An arena's storage ends with arena_free; only arena_init opens it again.
+ * Every allocation from a freed arena reaches a block claim first, since
+ * freeing drops all its blocks, so the check costs nothing elsewhere. */
+static __attribute__((cold, noinline)) void arena_used_after_free(void) {
+    fputs("fatal: arena used after arena_free without arena_init\n", stderr);
+    abort();
+}
+
 static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
+    if (__builtin_expect(a->identity == ARENA_ID_DEAD, 0))
+        arena_used_after_free();
     ArenaBlock *block = arena_take_spare_block(a, min_capacity);
     if (block)
         return block;
@@ -439,11 +618,16 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity) {
 
     size_t capacity = a->block_capacity ? a->block_capacity
                                         : ARENA_BLOCK_SIZE;
+    if (a->block_growth && a->reserved_bytes > capacity)
+        capacity = a->reserved_bytes < ARENA_BLOCK_SIZE
+            ? a->reserved_bytes : ARENA_BLOCK_SIZE;
     if (min_capacity > capacity)
         capacity = min_capacity;
     block = arena_block_alloc(capacity, a->recycle_blocks);
     a->reserved_bytes += block->capacity;
     a->block_count++;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
+                        (int64_t)block->capacity);
     arena_runtime_note_usage(a);
     return block;
 }
@@ -553,8 +737,13 @@ static void provenance_register_arena(const Arena *arena) {
     pthread_mutex_unlock(&g_provenance_arena_mutex);
 }
 
+typedef struct {
+    const Arena *arena;
+    uint32_t older_identity;
+} ProvenanceOwners;
+
 static const Arena *provenance_transient_owner_of(const void *ptr,
-                                                  const Arena *allowed_owner) {
+                                                  ProvenanceOwners allowed_owner) {
     const Arena *owner = NULL;
     if (!ptr)
         return NULL;
@@ -562,7 +751,9 @@ static const Arena *provenance_transient_owner_of(const void *ptr,
     for (ProvenanceArenaNode *node = g_provenance_arenas; node;
          node = node->next) {
         const Arena *arena = node->arena;
-        if (arena == allowed_owner)
+        if (arena == allowed_owner.arena ||
+            (allowed_owner.older_identity != 0u &&
+             arena->identity == allowed_owner.older_identity))
             continue;
         if (arena_owns_ptr(arena, ptr)) {
             owner = arena;
@@ -589,7 +780,7 @@ static void provenance_fail(Atom *root, const char *site, const char *what,
 }
 
 static void provenance_check_ptr(Atom *root, const char *site,
-                                 const Arena *allowed_owner,
+                                 ProvenanceOwners allowed_owner,
                                  const char *what, const void *ptr) {
     const Arena *owner = provenance_transient_owner_of(ptr, allowed_owner);
     if (owner)
@@ -679,7 +870,7 @@ static void provenance_atom_stack_push(
 }
 
 static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
-                                  const Arena *allowed_owner,
+                                  ProvenanceOwners allowed_owner,
                                   uint32_t depth) {
     (void)depth;
     if (!atom)
@@ -758,6 +949,10 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         }
         case GV_INTERNAL_TAG:
             break;
+        case GV_SEAL:
+            /* A seal object is a heap record retained by the arena's hold,
+             * not storage of any arena. */
+            break;
         case GV_PRIME_NEED_CAPABILITY:
             provenance_check_ptr(root, site, allowed_owner,
                                  "Prime Need capability",
@@ -813,16 +1008,18 @@ void cetta_provenance_assert_not_transient(Atom *atom, const char *site) {
 
 void cetta_provenance_assert_not_transient_except(Atom *atom, const char *site,
                                                  const Arena *allowed_owner) {
-    provenance_check_atom(atom, atom, site, allowed_owner, 0);
+    provenance_check_atom(atom, atom, site,
+                          (ProvenanceOwners){.arena = allowed_owner}, 0);
 }
 
 void cetta_provenance_assert_state_cell_not_transient(const StateCell *cell,
                                                      const char *site) {
     if (!cell)
         return;
-    provenance_check_ptr(NULL, site, NULL, "StateCell", cell);
-    provenance_check_atom(cell->value, cell->value, site, NULL, 0);
-    provenance_check_atom(cell->content_type, cell->content_type, site, NULL, 0);
+    provenance_check_ptr(NULL, site, (ProvenanceOwners){0}, "StateCell", cell);
+    provenance_check_atom(cell->value, cell->value, site, (ProvenanceOwners){0}, 0);
+    provenance_check_atom(cell->content_type, cell->content_type, site,
+                          (ProvenanceOwners){0}, 0);
 }
 #else
 static void provenance_unregister_arena(const Arena *arena) {
@@ -833,6 +1030,21 @@ static void provenance_register_arena(const Arena *arena) {
     (void)arena;
 }
 #endif
+
+/* Copy elision admits the destination's explicitly linked older generation.
+ * Publication diagnostics above still admit only their named arena: a
+ * borrowing licence must not become a persistent ownership certificate. */
+static inline void provenance_assert_settled(Atom *atom, const char *site,
+                                             const Arena *destination) {
+#if CETTA_PROVENANCE_ASSERT
+    provenance_check_atom(atom, atom, site,
+        (ProvenanceOwners){destination, destination->older_identity}, 0);
+#else
+    (void)atom;
+    (void)site;
+    (void)destination;
+#endif
+}
 
 enum {
     HASHCONS_SMALL_INT_MIN = -128,
@@ -898,6 +1110,21 @@ void atom_managed_symbol_stats(AtomManagedSymbolStats *out) {
     out->allocated_bytes = atomic_load_explicit(&managed_symbol_allocated_bytes, memory_order_relaxed);
 }
 
+/* Name an arena for a new incarnation: its identity, and a reset epoch
+ * above every epoch an earlier incarnation of that name used. */
+static void arena_take_name(Arena *a) {
+    uint32_t name = 0u;
+    uint64_t generation = 0u;
+    if (!cetta_name_acquire(&g_arena_names, &g_arena_name_local,
+                            arena_names_once, &name, &generation)) {
+        fputs("fatal: resource exhausted: every arena identity names a live "
+              "arena\n", stderr);
+        abort();
+    }
+    a->identity = name;
+    a->reset_epoch = generation;
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
@@ -913,21 +1140,16 @@ void arena_init(Arena *a) {
     a->block_count = 0;
     a->spare_block_count = 0;
     a->runtime_kind = CETTA_ARENA_RUNTIME_KIND_OTHER;
-    uint32_t identity = atomic_fetch_add_explicit(
-        &g_arena_identity_counter, 1u, memory_order_relaxed);
-    if (identity == 0u || identity == ATOM_ARENA_ID_FORWARDED) {
-        fputs("fatal: arena allocation identity space exhausted\n", stderr);
-        abort();
-    }
-    a->identity = identity;
+    arena_take_name(a);
     a->older_identity = 0u;
     a->block_capacity = 0u;
-    a->reset_epoch = 1u;
     a->finalizers = NULL;
     a->retained_owners = NULL;
     a->frame_identities = NULL;
     a->scalar_cache = false;
     a->recycle_blocks = false;
+    a->block_growth = false;
+    arena_ledger_open(a);
 }
 
 void arena_init_detached(Arena *a) {
@@ -938,14 +1160,25 @@ void arena_init_detached(Arena *a) {
 void arena_set_block_capacity(Arena *a, size_t capacity) {
     a->block_capacity = capacity > ARENA_BLOCK_SIZE ? 0u
                                                     : (uint32_t)capacity;
+    a->block_growth = false;
+}
+
+void arena_set_block_growth(Arena *a, size_t first) {
+    arena_set_block_capacity(a, first);
+    a->block_growth = a->block_capacity != 0u &&
+        a->block_capacity < ARENA_BLOCK_SIZE;
 }
 
 static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     while (a->finalizers != stop) {
         ArenaFinalizer *node = a->finalizers;
         a->finalizers = node->next;
-        if (a->retained_owners && node == &a->retained_owners->finalizer)
-            a->retained_owners = a->retained_owners->next_owner;
+        ArenaRetainedOwnerSet *owners = a->retained_owners;
+        if (owners && owners->len &&
+            node == owners->holds[owners->len - 1u]) {
+            owners->len--;
+            owners->slots[owners->index[owners->len]] = 0u;
+        }
         node->fn(node->ptr);
         free(node);
     }
@@ -963,23 +1196,140 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     arena_account_external_bytes(a, sizeof(*node));
 }
 
+enum {
+    ARENA_RETAINED_OWNER_SET_MIN_CAPACITY = 8u,
+    ARENA_RETAINED_OWNER_SET_MAX_CAPACITY = UINT32_C(0x80000000),
+};
+
+static void arena_account_persistent_bytes(Arena *arena, size_t bytes);
+
+static size_t arena_retained_owner_set_bytes(const ArenaRetainedOwnerSet *set) {
+    if (!set)
+        return 0u;
+    return sizeof(*set) + (size_t)set->cap * sizeof(*set->holds) +
+           (size_t)set->cap * sizeof(*set->index) +
+           (size_t)set->slot_cap * sizeof(*set->slots);
+}
+
+static uint32_t arena_retained_owner_slot(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *)) {
+    uint64_t mixed = (uint64_t)(uintptr_t)owner ^
+        ((uint64_t)(uintptr_t)release << 17u ^
+         (uint64_t)(uintptr_t)release >> 47u);
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    return (uint32_t)mixed & set->slot_mask;
+}
+
+static bool arena_retained_owner_set_index_reserve(ArenaRetainedOwnerSet *set,
+                                                   uint32_t needed) {
+    if (needed > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u)
+        return false;
+    uint32_t wanted = ARENA_RETAINED_OWNER_SET_MIN_CAPACITY;
+    while (wanted < needed * 2u) {
+        if (wanted > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u)
+            return false;
+        wanted *= 2u;
+    }
+    if (set->slot_cap >= wanted)
+        return true;
+    free(set->slots);
+    set->slots = cetta_malloc((size_t)wanted * sizeof(*set->slots));
+    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    set->slot_cap = wanted;
+    set->slot_mask = wanted - 1u;
+    /* Reinsert in acquisition order, which keeps every probe chain made of
+     * records older than the record it leads to. */
+    for (uint32_t i = 0u; i < set->len; i++) {
+        uint32_t slot = arena_retained_owner_slot(
+            set, set->holds[i]->ptr, set->holds[i]->fn);
+        while (set->slots[slot])
+            slot = (slot + 1u) & set->slot_mask;
+        set->slots[slot] = i + 1u;
+        set->index[i] = slot;
+    }
+    return true;
+}
+
+static bool arena_retained_owner_set_records_reserve(ArenaRetainedOwnerSet *set,
+                                                     uint32_t needed) {
+    if (needed <= set->cap)
+        return true;
+    uint32_t capacity = set->cap ? set->cap
+                                 : ARENA_RETAINED_OWNER_SET_MIN_CAPACITY;
+    while (capacity < needed) {
+        if (capacity > ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2u;
+    }
+    if ((size_t)capacity > SIZE_MAX / sizeof(*set->holds))
+        return false;
+    set->holds = cetta_realloc(set->holds, (size_t)capacity * sizeof(*set->holds));
+    set->index = cetta_realloc(set->index, (size_t)capacity * sizeof(*set->index));
+    set->cap = capacity;
+    return true;
+}
+
+/* The newest hold is the likeliest repeat (one owner retained by a run of
+ * borrows), so it is checked before the index. */
+static bool arena_retained_owner_set_find(const ArenaRetainedOwnerSet *set,
+                                          const void *owner,
+                                          void (*release)(void *)) {
+    if (!set || set->len == 0u)
+        return false;
+    const ArenaFinalizer *newest = set->holds[set->len - 1u];
+    if (newest->ptr == owner && newest->fn == release)
+        return true;
+    if (!set->slot_cap)
+        return false;
+    uint32_t slot = arena_retained_owner_slot(set, owner, release);
+    for (uint32_t entry; (entry = set->slots[slot]) != 0u;
+         slot = (slot + 1u) & set->slot_mask) {
+        const ArenaFinalizer *held = set->holds[entry - 1u];
+        if (held->ptr == owner && held->fn == release)
+            return true;
+    }
+    return false;
+}
+
 bool arena_retain_owner_with_storage(Arena *a, void *owner,
         void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage) {
     if (!a || !owner || !retain || !release)
         return false;
-    for (ArenaRetainedOwner *held = a->retained_owners; held; held = held->next_owner) {
-        if (held->finalizer.ptr == owner && held->finalizer.fn == release)
-            return true;
+    if (!a->retained_owners) {
+        a->retained_owners = cetta_malloc(sizeof(*a->retained_owners));
+        *a->retained_owners = (ArenaRetainedOwnerSet){0};
+        arena_account_persistent_bytes(
+            a, arena_retained_owner_set_bytes(a->retained_owners));
     }
-    ArenaRetainedOwner *held = cetta_malloc(sizeof(*held));
+    ArenaRetainedOwnerSet *set = a->retained_owners;
+    if (arena_retained_owner_set_find(set, owner, release))
+        return true;
+    size_t before = arena_retained_owner_set_bytes(set);
+    if (set->len >= ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u ||
+        !arena_retained_owner_set_records_reserve(set, set->len + 1u) ||
+        !arena_retained_owner_set_index_reserve(set, set->len + 1u))
+        return false;
+    ArenaFinalizer *held = cetta_malloc(sizeof(*held));
     retain(owner);
-    *held = (ArenaRetainedOwner){
-        .finalizer = {.fn = release, .ptr = owner, .next = a->finalizers},
-        .next_owner = a->retained_owners,
-        .storage = storage,
-    };
-    a->finalizers = &held->finalizer;
-    a->retained_owners = held;
+    *held = (ArenaFinalizer){.fn = release, .ptr = owner, .next = a->finalizers,
+                             .storage = storage};
+    a->finalizers = held;
+    uint32_t position = set->len;
+    uint32_t slot = arena_retained_owner_slot(set, owner, release);
+    while (set->slots[slot])
+        slot = (slot + 1u) & set->slot_mask;
+    set->slots[slot] = position + 1u;
+    set->holds[position] = held;
+    set->index[position] = slot;
+    set->len = position + 1u;
+    /* The set's capacity survives a partial reset; the hold itself is
+     * released by the reset that pops it. */
+    arena_account_persistent_bytes(a, arena_retained_owner_set_bytes(set) - before);
     arena_account_external_bytes(a, sizeof(*held));
     return true;
 }
@@ -993,27 +1343,45 @@ bool arena_retains_owner(const Arena *a, const void *owner,
                          void (*release)(void *)) {
     if (!a || !owner || !release)
         return false;
-    for (const ArenaRetainedOwner *held = a->retained_owners;
-         held; held = held->next_owner)
-        if (held->finalizer.ptr == owner && held->finalizer.fn == release)
-            return true;
-    return false;
+    return arena_retained_owner_set_find(a->retained_owners, owner, release);
 }
 
+/* Newest first, as holds are released. */
 const void *arena_retained_owner_at(const Arena *arena,
     void (*release)(void *), size_t index) {
-    if (!arena || !release) return NULL;
-    for (const ArenaRetainedOwner *held=arena->retained_owners;
-         held; held=held->next_owner) {
-        if (held->finalizer.fn != release) continue;
-        if (!index) return held->finalizer.ptr;
+    if (!arena || !release || !arena->retained_owners) return NULL;
+    const ArenaRetainedOwnerSet *set = arena->retained_owners;
+    for (uint32_t i = set->len; i-- > 0u;) {
+        const ArenaFinalizer *held = set->holds[i];
+        if (held->fn != release) continue;
+        if (!index) return held->ptr;
         index--;
     }
     return NULL;
 }
 
+/* What one retained owner costs an arena that holds no other: its hold and
+ * the smallest owner set.  A later hold of the same arena costs its hold and
+ * a share of the set's growth, which is less, so this bounds every link. */
 size_t arena_retained_owner_allocation_bytes(void) {
-    return sizeof(ArenaRetainedOwner);
+    return sizeof(ArenaFinalizer) + sizeof(ArenaRetainedOwnerSet) +
+        (size_t)ARENA_RETAINED_OWNER_SET_MIN_CAPACITY *
+            (sizeof(ArenaFinalizer *) + 2u * sizeof(uint32_t));
+}
+
+/* Called after every hold has been popped from the finalizer chain. */
+static void arena_release_retained_owner_set(Arena *a) {
+    ArenaRetainedOwnerSet *set = a->retained_owners;
+    if (!set)
+        return;
+    size_t bytes = arena_retained_owner_set_bytes(set);
+    free(set->holds);
+    free(set->slots);
+    free(set->index);
+    free(set);
+    a->retained_owners = NULL;
+    a->persistent_bytes = a->persistent_bytes >= bytes
+        ? a->persistent_bytes - bytes : 0u;
 }
 
 /* ── Arena frame-identity ownership ─────────────────────────────────────── */
@@ -1296,6 +1664,26 @@ static void arena_invalidate_allocations(
     a->reset_epoch++;
 }
 
+/* End the incarnation: release the older generation this arena kept named
+ * and its own name, whose next incarnation starts above the epochs this one
+ * used.  The struct is left dead until arena_init opens it again. */
+static void arena_release_names(Arena *a) {
+    if (a->older_identity != 0u) {
+        cetta_name_release(&g_arena_names, &g_arena_name_local,
+                           arena_names_once, a->older_identity, 0u);
+        a->older_identity = 0u;
+    }
+    if (a->identity != 0u && a->identity != ARENA_ID_DEAD) {
+        /* The next incarnation starts above every epoch this one used; with
+         * none left, the name is retired. */
+        uint64_t next = a->reset_epoch == UINT64_MAX ? UINT64_MAX
+                                                     : a->reset_epoch + 1u;
+        cetta_name_release(&g_arena_names, &g_arena_name_local,
+                           arena_names_once, a->identity, next);
+        a->identity = ARENA_ID_DEAD;
+    }
+}
+
 void arena_free(Arena *a) {
     if (!a)
         return;
@@ -1311,6 +1699,9 @@ void arena_free(Arena *a) {
     arena_free_block_list(a->spare, a->recycle_blocks);
     arena_symbol_cache_free(a);
     arena_release_frame_identities(a);
+    arena_release_retained_owner_set(a);
+    arena_ledger_close(a);
+    arena_release_names(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -1358,14 +1749,35 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     provenance_unregister_arena(a);
     a->runtime_kind = kind;
     provenance_register_arena(a);
+    if (!a->ledger_tag_named)
+        arena_ledger_retag(a, arena_ledger_tag_for_kind(kind));
     arena_runtime_note_usage(a);
+}
+
+void arena_set_ledger_tag(Arena *a, CettaArenaLedgerTag tag) {
+    if (!a || tag == CETTA_ARENA_LEDGER_NONE)
+        return;
+    a->ledger_tag_named = true;
+    arena_ledger_retag(a, tag);
 }
 
 void arena_set_older_generation(Arena *young, const Arena *older) {
     if (!young)
         return;
-    young->older_identity = older && older != young &&
-        older->older_identity == 0u ? older->identity : 0u;
+    uint32_t linked = older && older != young &&
+        older->older_identity == 0u && older->identity != 0u &&
+        older->identity != ARENA_ID_DEAD ? older->identity : 0u;
+    if (linked != young->older_identity) {
+        /* The link owns the older arena's name, so the name cannot pass to
+         * another arena while this one still takes its atoms as settled. */
+        if (linked)
+            cetta_name_retain(&g_arena_names, linked);
+        if (young->older_identity)
+            cetta_name_release(&g_arena_names, &g_arena_name_local,
+                               arena_names_once, young->older_identity, 0u);
+        young->older_identity = linked;
+    }
+    /* The storage census reaches the older generation through the link. */
     if (young->older_identity)
         arena_frame_identity_set_ensure(young)->older_owner = older;
     else if (young->frame_identities)
@@ -1434,6 +1846,8 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
         a->spare_block_count--;
         a->reserved_bytes -= block->capacity;
         a->block_count--;
+        arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
+                            -(int64_t)block->capacity);
         arena_retire_block(block, a->recycle_blocks);
     }
     arena_runtime_note_usage(a);
@@ -1556,6 +1970,14 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             break; /* mutable/contextual — don't hash-cons */
+        case GV_SEAL: {
+            /* Identity equality: copies of one object hash alike, distinct
+             * objects (even of equal payload) usually differ. */
+            uint64_t key = atom_seal_identity(a);
+            h = ((h << 5) + h) ^ (uint32_t)(key & 0xFFFFFFFFu);
+            h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
+            break;
+        }
         case GV_INTERNAL_TAG:
             h = ((h << 5) + h) ^ (uint32_t)(a->ground.ival & 0xFFFFFFFF);
             break;
@@ -1868,6 +2290,11 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
             break;
         }
         expected = atom_flags_for_grounded_kind(atom->ground.gkind);
+        /* Interning copies a string's bytes into independent global storage;
+         * its arena-retention representation is not an admissibility change. */
+        if (atom->ground.gkind == GV_STRING)
+            expected_structural_facts |= atom->structural_facts &
+                ATOM_STRUCTURAL_STRING_STORAGE;
         if (atom->ground.gkind == GV_FLOAT && isnan(atom->ground.fval))
             expected_structural_facts |= ATOM_STRUCTURAL_HAS_NAN;
         break;
@@ -1994,6 +2421,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
+        case GV_SEAL:
             h = hashcons_index_mix(
                 h, (uint64_t)(uintptr_t)atom->ground.ptr);
             break;
@@ -2181,6 +2609,7 @@ static Atom *hashcons_alloc_owned(HashConsTable *hc, const Atom *atom) {
         memcpy(bytes, atom->ground.sval, len);
         bytes[len] = '\0';
         owned->ground.sval = bytes;
+        owned->structural_facts &= ~ATOM_STRUCTURAL_STRING_STORAGE;
     } else if (atom->kind == ATOM_GROUNDED &&
                atom->ground.gkind == GV_BIGINT) {
         owned->ground.bigint = cetta_bigint_clone_owned(atom->ground.bigint);
@@ -2343,6 +2772,7 @@ bool fresh_var_id_try(VarId *id_out) {
 
     if (!id_out || !fresh_var_base_try(&base))
         return false;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_FRESH_VAR_BASE_MINT);
     *id_out = (VarId)base;
     return true;
 }
@@ -2370,6 +2800,18 @@ void fresh_var_id_test_reset(uint64_t next_base) {
  * with variable occurrences. */
 uint32_t arena_frame_identity_count_test(const Arena *a) {
     return a && a->frame_identities ? a->frame_identities->len : 0u;
+}
+
+void arena_identity_test_start_fresh_at(uint32_t next) {
+    pthread_mutex_lock(&g_arena_names.mutex);
+    if (next >= g_arena_names.first && next <= g_arena_names.limit)
+        g_arena_names.next_fresh = next;
+    pthread_mutex_unlock(&g_arena_names.mutex);
+}
+
+uint64_t arena_identity_test_stale_releases(void) {
+    return atomic_load_explicit(&g_arena_names.stale_releases,
+                                memory_order_relaxed);
 }
 
 uint32_t arena_frame_identity_capacity_test(const Arena *a) {
@@ -3108,6 +3550,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_SEAL:
         return false;
     }
     return false;
@@ -3121,6 +3564,8 @@ static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
     if (cetta_gslt_identity_bearing_grounded_kind(gkind))
         flags |= ATOM_FLAG_HAS_IDENTITY_GROUNDED |
                  ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE;
+    if (gkind == GV_SEAL)
+        flags |= ATOM_FLAG_HAS_IDENTITY_GROUNDED;
     return flags;
 }
 
@@ -3455,7 +3900,8 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
-                                      ATOM_STRUCTURAL_FRONT_SLACK))
+                                      ATOM_STRUCTURAL_FRONT_SLACK |
+                                      ATOM_STRUCTURAL_STRING_STORAGE))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -3583,6 +4029,70 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     if (arena_symbol_cache_is_active(a) && (owner || !a->scalar_cache))
         arena_symbol_cache_store(a, sym_id, at);
     return at;
+}
+
+/* One atom per symbol of the current table, owned by the table rather than
+ * an arena (arena identity 0, as the shared list tags), with its hash fixed
+ * when made, so every thread reads it and none writes it.  For symbols that
+ * code compiled into a program hands to the terms it builds: those terms may
+ * outlive the program. */
+Atom *atom_symbol_canonical(SymbolId sym_id) {
+    if (!g_symbols || sym_id == SYMBOL_ID_NONE || !symbol_pin(g_symbols, sym_id))
+        return NULL;
+    Atom *atom = symbol_canonical_atom(g_symbols, sym_id);
+    if (atom)
+        return atom;
+    Atom *made = cetta_malloc(sizeof(*made));
+    *made = (Atom){
+        .kind = ATOM_SYMBOL,
+        .flags = atom_flags_for_symbol_id(sym_id),
+        .var_id = VAR_ID_NONE,
+        .symbol_number = sym_id,
+        .arena_id = 0u,
+        .name_key = NULL,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+    };
+    made->hash_cache = atom_hash_compute(made);
+    if (atom_is_hash_stable(made))
+        made->flags |= ATOM_FLAG_HASH_VALID;
+    atom = symbol_publish_canonical_atom(g_symbols, sym_id, made);
+    if (atom != made)
+        free(made);
+    return atom;
+}
+
+static _Atomic(Atom *) g_atom_unit_canonical;
+
+/* The empty expression's one atom for the process, owned by no arena, as
+ * atom_symbol_canonical's are owned by the symbol table. */
+Atom *atom_unit_canonical(void) {
+    Atom *atom = atomic_load_explicit(&g_atom_unit_canonical,
+                                      memory_order_acquire);
+    if (atom)
+        return atom;
+    uint32_t structural_facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, NULL, 0u,
+                                              &structural_facts);
+    Atom *made = cetta_malloc(sizeof(*made));
+    *made = (Atom){
+        .kind = ATOM_EXPR,
+        .flags = flags,
+        .var_id = VAR_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
+        .arena_id = 0u,
+        .name_key = NULL,
+        .structural_facts = structural_facts,
+        .expr = {.elems = NULL, .len = 0u},
+    };
+    made->hash_cache = atom_hash_compute(made);
+    if (atom_is_hash_stable(made))
+        made->flags |= ATOM_FLAG_HASH_VALID;
+    if (atomic_compare_exchange_strong_explicit(
+            &g_atom_unit_canonical, &atom, made,
+            memory_order_acq_rel, memory_order_acquire))
+        return made;
+    free(made);
+    return atom;
 }
 
 Atom *atom_symbol(Arena *a, const char *name) {
@@ -4011,6 +4521,16 @@ bool atom_native_handle_identifier_has_owner(const Atom *identifier, const void 
         ((const NativeHandleIdentifier *)identifier)->owner == owner;
 }
 
+bool atom_native_handle_identifier_matches(const Atom *atom, const void *owner,
+                                           void (*retain)(void *),
+                                           void (*release)(void *)) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_INT ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
+        return false;
+    const NativeHandleIdentifier *value = (const NativeHandleIdentifier *)atom;
+    return value->owner == owner && value->retain == retain && value->release == release;
+}
+
 Atom *atom_int_copy(Arena *a, const Atom *source) {
     if (!a || !source || source->kind != ATOM_GROUNDED ||
         source->ground.gkind != GV_INT)
@@ -4029,6 +4549,22 @@ Atom *atom_int_copy(Arena *a, const Atom *source) {
     }
 #endif
     return atom_int(a, source->ground.ival);
+}
+
+/* A grounded leaf of this kind in this arena with every field written: the
+ * fields it does not name are zero, and name_key in particular is NULL, as on
+ * every atom but a variable.  A collection reads that field as its mark and
+ * as its forwarding copy. */
+static inline Atom atom_grounded_leaf(const Arena *a, GroundedKind gkind) {
+    return (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(gkind),
+        .var_id = VAR_ID_NONE,
+        .symbol_number = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(gkind),
+        .ground = {.gkind = gkind},
+    };
 }
 
 Atom *atom_bigint(Arena *a, const char *val) {
@@ -4058,15 +4594,8 @@ Atom *atom_bigint(Arena *a, const char *val) {
         return shared;
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = temp.kind;
-    at->flags = temp.flags;
-    at->var_id = temp.var_id;
-    at->symbol_number = SYMBOL_ID_NONE;
+    *at = temp;
     at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts = temp.structural_facts;
-    at->ground.gkind = temp.ground.gkind;
     at->ground.bigint = cetta_bigint_new_arena(a, canonical);
     free(canonical);
     return at;
@@ -4144,16 +4673,7 @@ Atom *atom_bigint_from_mpz(Arena *a, const mpz_t value) {
             return atom_int(a, (int64_t)small);
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_BIGINT);
-    at->ground.gkind = GV_BIGINT;
+    *at = atom_grounded_leaf(a, GV_BIGINT);
     /* Arithmetic values are deliberately not hash-consed.  A growing numeric
      * loop produces unique leaves; interning them forces decimal hashing and
      * retains the entire history. */
@@ -4171,16 +4691,7 @@ Atom *atom_bigint_take_mpz(Arena *a, mpz_t value) {
             return atom_int(a, narrowed);
     }
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_BIGINT);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_BIGINT);
-    at->ground.gkind = GV_BIGINT;
+    *at = atom_grounded_leaf(a, GV_BIGINT);
     at->ground.bigint = cetta_bigint_new_arena_take_mpz(a, value);
     return at;
 }
@@ -4273,15 +4784,8 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
     }
 
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = temp.kind;
-    at->flags = temp.flags;
-    at->var_id = temp.var_id;
-    at->symbol_number = SYMBOL_ID_NONE;
+    *at = temp;
     at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts = temp.structural_facts;
-    at->ground.gkind = temp.ground.gkind;
     at->ground.rational = cetta_rational_new_arena(a, text);
     mpq_set(at->ground.rational->value, q);
 
@@ -4296,48 +4800,21 @@ Atom *atom_rational_from_mpq(Arena *a, const mpq_t value) {
 
 Atom *atom_space(Arena *a, void *space_ptr) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_SPACE);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_SPACE);
-    at->ground.gkind = GV_SPACE;
+    *at = atom_grounded_leaf(a, GV_SPACE);
     at->ground.ptr = space_ptr;
     return at;
 }
 
 Atom *atom_state(Arena *a, StateCell *cell) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_STATE);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_STATE);
-    at->ground.gkind = GV_STATE;
+    *at = atom_grounded_leaf(a, GV_STATE);
     at->ground.ptr = cell;
     return at;
 }
 
 Atom *atom_capture(Arena *a, CaptureClosure *closure) {
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_CAPTURE);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_CAPTURE);
-    at->ground.gkind = GV_CAPTURE;
+    *at = atom_grounded_leaf(a, GV_CAPTURE);
     at->ground.ptr = closure;
     return at;
 }
@@ -4356,16 +4833,7 @@ static void arena_hold_foreign(Arena *a, CettaForeignValue *value) {
 Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     arena_hold_foreign(a, value);
     Atom *at = arena_alloc(a, sizeof(Atom));
-    *at = (Atom){0};
-    at->kind = ATOM_GROUNDED;
-    at->flags = atom_flags_for_grounded_kind(GV_FOREIGN);
-    at->var_id = VAR_ID_NONE;
-    at->symbol_number = SYMBOL_ID_NONE;
-    at->arena_id = a->identity;
-    at->hash_cache = 0;
-    at->structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_FOREIGN);
-    at->ground.gkind = GV_FOREIGN;
+    *at = atom_grounded_leaf(a, GV_FOREIGN);
     at->ground.ptr = value;
     return at;
 }
@@ -4390,6 +4858,70 @@ Atom *atom_tensor(Arena *a, CettaTensor *value) {
         .ground = {.gkind = GV_TENSOR, .ptr = value},
     };
     return at;
+}
+
+Atom *atom_seal(Arena *a, void *object) {
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    if (!a || !hold || !hold->retain || !hold->release ||
+        !arena_retain_owner(a, object, hold->retain, hold->release))
+        return NULL;
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    *at = atom_grounded_leaf(a, GV_SEAL);
+    at->ground.ptr = object;
+    return at;
+}
+
+void *atom_seal_object(const Atom *atom) {
+    return atom_is_seal(atom) ? atom->ground.ptr : NULL;
+}
+
+size_t atom_seal_display_text(const Atom *atom, char *buffer,
+                              size_t capacity) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    if (!hold) {
+        if (buffer && capacity)
+            buffer[0] = '\0';
+        return 0u;
+    }
+    if (hold->display)
+        return hold->display(object, buffer, capacity);
+    static const char fallback[] = "(Sealed)";
+    if (buffer && capacity) {
+        size_t n = sizeof(fallback) - 1u < capacity - 1u
+            ? sizeof(fallback) - 1u : capacity - 1u;
+        memcpy(buffer, fallback, n);
+        buffer[n] = '\0';
+    }
+    return sizeof(fallback) - 1u;
+}
+
+uint64_t atom_seal_identity(const Atom *atom) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    return hold && hold->identity ? hold->identity(object) : 0u;
+}
+
+const char *atom_seal_type_name(const Atom *atom) {
+    void *object = atom_seal_object(atom);
+    const CettaSealHold *hold = cetta_seal_hold_of(object);
+    return hold && hold->type_name ? hold->type_name(object) : NULL;
+}
+
+static bool atom_tree_is_seal(const Atom *atom, void *context) {
+    (void)context;
+    return atom_is_seal(atom);
+}
+
+bool atom_contains_seal(const Atom *atom) {
+    if (!atom)
+        return false;
+    /* The inherited identity summary proves absence only for atoms whose
+     * constructor computed it; anything else is scanned exactly. */
+    if ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
+        (atom->flags & ATOM_FLAG_HAS_IDENTITY_GROUNDED) == 0u)
+        return false;
+    return atom_tree_any(atom, atom_tree_is_seal, NULL);
 }
 
 Atom *atom_bindings_value(Arena *arena, CettaBindingsValue *value) {
@@ -5084,6 +5616,18 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
     temp.ground.sval = bytes ? bytes : "";
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
+    if (len >= ATOM_STRING_RETAINED_MIN_BYTES) {
+        if (len > SIZE_MAX - sizeof(AtomStringStorage) - 1u)
+            cetta_oom(SIZE_MAX);
+        AtomStringStorage *storage = cetta_malloc(sizeof(*storage) + len + 1u);
+        atomic_init(&storage->references, 1u);
+        storage->length = len;
+        memcpy(storage->bytes, bytes, len);
+        storage->bytes[len] = '\0';
+        Atom *value = atom_string_retain_storage(a, &temp, storage);
+        atom_string_storage_release(storage);
+        return value;
+    }
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = (Atom){0};
     at->kind = temp.kind;
@@ -5107,6 +5651,16 @@ Atom *atom_string_n(Arena *a, const char *bytes, size_t len) {
 Atom *atom_string(Arena *a, const char *val) {
     return atom_string_n(a, val, val ? strlen(val) : 0u);
 }
+
+#ifdef CETTA_TEST_HOOKS
+size_t atom_string_storage_references_test(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_STRING ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_STRING_STORAGE))
+        return 0u;
+    return atomic_load_explicit(&((const RetainedStringAtom *)atom)->storage->references,
+                                memory_order_acquire);
+}
+#endif
 
 bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out) {
     if (!bytes_out ||
@@ -5260,6 +5814,29 @@ Atom *atom_expr_headed(Arena *a, const AtomExprHead *head, Atom **elems,
         }
     }
     return atom_expr(a, elems, len);
+}
+
+bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
+                                  Atom **elems, CettaExprLen len) {
+    if (!out || (len != 0u && !elems))
+        return false;
+    for (CettaExprIndex index = 0u; index < len; index++)
+        if (!elems[index])
+            return false;
+    uint32_t facts = 0u;
+    uint32_t flags = atom_flags_from_children(0u, 0u, elems, len, &facts);
+    /* Splicing a LIST/rest representation needs a constructed value. */
+    if (atom_list_rest_parts_splice(elems, len, facts))
+        return false;
+    flags &= ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_HASHCONS_ELIGIBLE);
+    facts &= ~(ATOM_STRUCTURAL_OWNER_CLOSED |
+               ATOM_STRUCTURAL_GENERATION_CLOSED | ATOM_STRUCTURAL_FRONT_SLACK);
+    out->root = (Atom){
+        .kind = ATOM_EXPR, .flags = flags, .structural_facts = facts,
+        .var_id = atom_single_variable_id_of(flags, elems, len),
+        .symbol_number = SYMBOL_ID_NONE, .expr = {.elems = elems, .len = len},
+    };
+    return true;
 }
 
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
@@ -5819,7 +6396,7 @@ Atom *atom_error(Arena *a, Atom *source, Atom *message) {
 /* ── Predicates ─────────────────────────────────────────────────────────── */
 
 bool atom_is_symbol(Atom *a, const char *name) {
-    return atom_is_symbol_id(a, symbol_cached_literal(name));
+    return atom_is_symbol_named(a, name);
 }
 
 bool atom_is_symbol_named(Atom *a, const char *name) {
@@ -6515,6 +7092,7 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_CAPTURE:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
+            case GV_SEAL:
                 equal = a->ground.ptr == b->ground.ptr;
                 break;
             case GV_BINDINGS: {
@@ -6573,14 +7151,16 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                                                 &g_state_cell_pairs) != 0)
                             abort();
                     }
-                    uint32_t cap = g_state_cell_pairs_cap
-                        ? g_state_cell_pairs_cap * 2u : 8u;
-                    if (cap < g_state_cell_pairs_cap ||
-                        cap > SIZE_MAX / sizeof(*g_state_cell_pairs))
+                    uint32_t cap = 8u;
+                    size_t bytes;
+                    if ((g_state_cell_pairs_cap &&
+                         __builtin_mul_overflow(g_state_cell_pairs_cap, 2u,
+                                                &cap)) ||
+                        __builtin_mul_overflow(cap, sizeof(*g_state_cell_pairs),
+                                               &bytes))
                         cetta_oom(SIZE_MAX);
                     g_state_cell_pairs = cetta_realloc(
-                        g_state_cell_pairs,
-                        sizeof(*g_state_cell_pairs) * cap);
+                        g_state_cell_pairs, bytes);
                     g_state_cell_pairs_cap = cap;
                 }
                 g_state_cell_pairs[g_state_cell_pairs_len++] =
@@ -6843,7 +7423,8 @@ static bool atom_data_equality_grow(AtomDataEqualityMemo *memo) {
         if (entry.left)
             *atom_data_equality_find(&grown, entry.left, entry.right) = entry;
     }
-    free(memo->entries);
+    if (memo->capacity > 64u)
+        free(memo->entries);
     *memo = grown;
     return true;
 }
@@ -6868,16 +7449,33 @@ typedef struct {
     bool entered;
 } AtomDataEqualityFrame;
 
-static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated) {
+static bool atom_data_leaf_identical(Atom *left, Atom *right) {
+    if (left->kind == ATOM_VAR)
+        return left->var_id == right->var_id &&
+               atom_symbols_equal(left, right);
+    if (left->kind == ATOM_GROUNDED) {
+        if (left->ground.gkind != right->ground.gkind)
+            return false;
+        if (left->ground.gkind == GV_FLOAT)
+            return memcmp(&left->ground.fval, &right->ground.fval,
+                          sizeof(left->ground.fval)) == 0;
+        if (left->ground.gkind == GV_INTERNAL_TAG)
+            return left->ground.ival == right->ground.ival;
+    }
+    return atom_eq(left, right);
+}
+
+static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
+                                 bool exact) {
     if (!left || !right)
         return false;
     if (validated && left == right)
         return true;
-    AtomDataEqualityMemo memo = {.capacity = 64u};
-    memo.entries = cetta_malloc(memo.capacity * sizeof(*memo.entries));
-    memset(memo.entries, 0, memo.capacity * sizeof(*memo.entries));
+    AtomDataEqualityEntry inline_entries[64] = {0};
+    AtomDataEqualityMemo memo = {.capacity = 64u, .entries = inline_entries};
     size_t count = 1u, capacity = 32u;
-    AtomDataEqualityFrame *frames = cetta_malloc(capacity * sizeof(*frames));
+    AtomDataEqualityFrame inline_frames[32];
+    AtomDataEqualityFrame *frames = inline_frames;
     frames[0] = (AtomDataEqualityFrame){.left = left, .right = right};
     bool equal = false;
     while (count) {
@@ -6889,13 +7487,27 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated) {
         }
         if (!a || !b || a->kind != b->kind)
             goto done;
-        if (a->kind != ATOM_EXPR) {
-            if (!atom_scalar_data(a) || !atom_scalar_data(b) || !atom_eq(a, b))
+        if (exact && ((a->structural_facts | b->structural_facts) &
+                      ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
+            goto done;
+        bool named = exact && a->kind == ATOM_VAR &&
+                     (a->name_key || b->name_key);
+        if (named && (a->var_id != b->var_id || !a->name_key || !b->name_key))
+            goto done;
+        if (a->kind != ATOM_EXPR && !named) {
+            bool data_a = atom_scalar_data(a) ||
+                (exact && a->kind == ATOM_GROUNDED &&
+                 a->ground.gkind == GV_INTERNAL_TAG);
+            bool data_b = atom_scalar_data(b) ||
+                (exact && b->kind == ATOM_GROUNDED &&
+                 b->ground.gkind == GV_INTERNAL_TAG);
+            if (!data_a || !data_b ||
+                !(exact ? atom_data_leaf_identical(a, b) : atom_eq(a, b)))
                 goto done;
             count--;
             continue;
         }
-        if (a->expr.len != b->expr.len)
+        if (!named && a->expr.len != b->expr.len)
             goto done;
         if (!frame->entered) {
             if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo))
@@ -6911,16 +7523,21 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated) {
             memo.count++;
             frame->entered = true;
         }
-        if (frame->next_child < a->expr.len) {
+        if (frame->next_child < (named ? 1u : a->expr.len)) {
             CettaExprIndex index = frame->next_child++;
             AtomDataEqualityFrame child = {
-                .left = a->expr.elems[index], .right = b->expr.elems[index],
+                .left = named ? a->name_key : a->expr.elems[index],
+                .right = named ? b->name_key : b->expr.elems[index],
             };
             if (count == capacity) {
                 if (capacity > SIZE_MAX / 2u / sizeof(*frames))
                     goto done;
                 capacity *= 2u;
-                frames = cetta_realloc(frames, capacity * sizeof(*frames));
+                if (frames == inline_frames) {
+                    frames = cetta_malloc(capacity * sizeof(*frames));
+                    memcpy(frames, inline_frames, count * sizeof(*frames));
+                } else
+                    frames = cetta_realloc(frames, capacity * sizeof(*frames));
             }
             frames[count++] = child;
         } else {
@@ -6930,17 +7547,23 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated) {
     }
     equal = true;
 done:
-    free(frames);
-    free(memo.entries);
+    if (frames != inline_frames)
+        free(frames);
+    if (memo.entries != inline_entries)
+        free(memo.entries);
     return equal;
 }
 
 bool atom_data_equal(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false);
+    return atom_data_equal_impl(left, right, false, false);
 }
 
 bool atom_data_equal_validated(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, true);
+    return atom_data_equal_impl(left, right, true, false);
+}
+
+bool atom_data_identical(Atom *left, Atom *right) {
+    return atom_data_equal_impl(left, right, false, true);
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
@@ -7222,15 +7845,19 @@ static bool atom_deep_copy_memo_store(AtomDeepCopyMemo *memo,
 
 static inline bool atom_deep_copy_region_dying(
     const AtomDeepCopyRegion *region, const Atom *atom) {
-    if (atom->arena_id != region->identity)
-        return false;
-    uintptr_t address = (uintptr_t)atom;
-    for (uint32_t i = 0u; i < region->kept_len; i++) {
-        if (address >= region->kept_start[i] &&
-            address < region->kept_end[i])
-            return false;
+    for (uint32_t a = 0u; a < region->len; a++) {
+        const AtomDeepCopyDyingArena *dying = &region->arenas[a];
+        if (atom->arena_id != dying->identity)
+            continue;
+        uintptr_t address = (uintptr_t)atom;
+        for (uint32_t i = 0u; i < dying->kept_len; i++) {
+            if (address >= dying->kept[2u * i] &&
+                address < dying->kept[2u * i + 1u])
+                return false;
+        }
+        return true;
     }
-    return true;
+    return false;
 }
 
 /* The copy already made of `src` in this episode, or NULL. */
@@ -7254,8 +7881,12 @@ static inline bool atom_deep_copy_record(AtomDeepCopyMemo *memo, Atom *src,
     if (region && src && dst && atom_deep_copy_region_dying(region, src)) {
         src->arena_id = ATOM_ARENA_ID_FORWARDED;
         src->name_key = dst;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_PLACE);
         return true;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_TABLE);
     if (!atom_deep_copy_memo_store(memo, src, dst)) return false;
     if (memo->arenas && src == dst && src && src->kind == ATOM_EXPR &&
         src->expr.len)
@@ -7289,6 +7920,12 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
                                       : atom_bool(dst, src->ground.bval);
             break;
         case GV_STRING:
+            if ((!share || !g_hashcons) && !dst->hashcons &&
+                (src->structural_facts & ATOM_STRUCTURAL_STRING_STORAGE)) {
+                out = atom_string_retain_storage(dst, src,
+                    ((const RetainedStringAtom *)src)->storage);
+                break;
+            }
             out = share && g_hashcons
                 ? hashcons_get(g_hashcons,
                                atom_string_n(dst, src->ground.sval,
@@ -7319,6 +7956,10 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_TENSOR:
             out = atom_tensor(dst, src->ground.ptr);
+            break;
+        case GV_SEAL:
+            /* A copied reference keeps the object's identity. */
+            out = atom_seal(dst, src->ground.ptr);
             break;
         case GV_TERM_GRAPH: {
             /* The graph is immutable: the copy shares it. */
@@ -7610,7 +8251,7 @@ static Atom *atom_deep_copy_impl(
                     return NULL;
                 }
                 if (!retained)
-                    cetta_provenance_assert_not_transient_except(
+                    provenance_assert_settled(
                         child,
                         "atom_deep_copy_impl.destination-closed-child",
                         dst);
@@ -7752,7 +8393,7 @@ Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
     if (!dst || !src)
         return NULL;
     if (atom_settled_for_arena(dst, src)) {
-        cetta_provenance_assert_not_transient_except(
+        provenance_assert_settled(
             src, "atom_deep_copy_single.destination-closed", dst);
         return src;
     }
@@ -7776,6 +8417,7 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->map_context = NULL;
     session->failed = false;
     session->region = (AtomDeepCopyRegion){0};
+    session->inventories = NULL;
     atom_deep_copy_memo_init(&session->memo);
     return session;
 }
@@ -7811,6 +8453,10 @@ static bool atom_deep_copy_arena_map_current(const AtomDeepCopySession *session)
             destination->hashcons != state->hashcons ||
             source->scalar_cache != state->scalar_cache ||
             destination->scalar_cache != state->scalar_cache ||
+            source->block_capacity != state->block_capacity ||
+            destination->block_capacity != state->block_capacity ||
+            source->block_growth != state->block_growth ||
+            destination->block_growth != state->block_growth ||
             source->runtime_kind != state->runtime_kind ||
             destination->runtime_kind != state->runtime_kind) return false;
     }
@@ -7957,7 +8603,7 @@ bool atom_deep_copy_session_set_snapshot(AtomDeepCopySession *session) {
         session->dst->older_identity || session->memo.used ||
         session->memo.buffer_used || session->memo.arenas ||
         session->memo.snapshot || session->memo.global_nodes || session->memo.region ||
-        session->object_count || session->destination_scope ||
+        session->object_count || session->inventories || session->destination_scope ||
         session->resolver || session->resolver_context)
         return false;
     session->memo.snapshot = true;
@@ -8004,7 +8650,7 @@ static bool atom_deep_copy_session_set_arena_map_impl(AtomDeepCopySession *sessi
         session->memo.global_instance != hashcons_instance_id(session->memo.global_owner) ||
         session->memo.global_symbols != symbol_table_instance_id(g_symbols))) return false;
     if (!session || session->failed || session->map || !pairs || !count || session->memo.used ||
-        session->object_count || session->destination_scope ||
+        session->object_count || session->inventories || session->destination_scope ||
         session->memo.buffer_used || session->memo.arenas || session->memo.snapshot || session->resolver ||
         session->resolver_context || session->memo.region ||
         count > SIZE_MAX / 2u / sizeof(AtomDeepCopyArenaState)) return false;
@@ -8016,7 +8662,9 @@ static bool atom_deep_copy_session_set_arena_map_impl(AtomDeepCopySession *sessi
             !atom_deep_copy_arena_policy(session,source,destination,runtime_globals) ||
             (source != destination && destination->symbol_cache) ||
             source->runtime_kind != destination->runtime_kind ||
-            source->scalar_cache != destination->scalar_cache) return false;
+            source->scalar_cache != destination->scalar_cache ||
+            source->block_capacity != destination->block_capacity ||
+            source->block_growth != destination->block_growth) return false;
         primary |= destination == session->dst;
         for (size_t j = 0u; j < count; j++) {
             if (!pairs[j].source || !pairs[j].destination ||
@@ -8058,7 +8706,9 @@ static bool atom_deep_copy_session_set_arena_map_impl(AtomDeepCopySession *sessi
         if ((source->older_identity && !older_image) ||
             destination->older_identity != older_image ||
             !atom_deep_copy_arena_policy(session,source,destination,runtime_globals) || source->scalar_cache != destination->scalar_cache ||
-            source->runtime_kind != destination->runtime_kind) {
+            source->runtime_kind != destination->runtime_kind ||
+            source->block_capacity != destination->block_capacity ||
+            source->block_growth != destination->block_growth) {
             free(states); return false;
         }
         states[i].source_identity = source->identity;
@@ -8069,6 +8719,8 @@ static bool atom_deep_copy_session_set_arena_map_impl(AtomDeepCopySession *sessi
         states[i].destination_older = destination->older_identity;
         states[i].runtime_kind = source->runtime_kind;
         states[i].scalar_cache = source->scalar_cache;
+        states[i].block_capacity = source->block_capacity;
+        states[i].block_growth = source->block_growth;
         states[i].hashcons = source->hashcons;
     }
     session->memo.arenas = states;
@@ -8341,8 +8993,8 @@ bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
 AtomDeepCopySession *atom_deep_copy_session_clone(
         const AtomDeepCopySession *source) {
     if (!source || source->failed || source->map || !source->dst || source->resolver ||
-        source->memo.arenas || source->memo.snapshot || source->memo.global_nodes || source->object_count ||
-        source->resolver_context || source->memo.region || source->region.identity ||
+        source->memo.arenas || source->memo.snapshot || source->memo.global_nodes || source->object_count || source->inventories ||
+        source->resolver_context || source->memo.region || source->region.len ||
         !source->memo.slots || source->memo.used > source->memo.cap ||
         source->memo.cap < CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP ||
         source->memo.cap > SIZE_MAX / sizeof(*source->memo.slots) ||
@@ -8386,7 +9038,7 @@ bool atom_deep_copy_session_relocation_targets(
     return atom_deep_copy_session_targets(session, destination) &&
         !destination->hashcons && !session->resolver &&
         !session->resolver_context && !session->memo.region &&
-        !session->region.identity && atom_deep_copy_arena_map_current(session);
+        !session->region.len && atom_deep_copy_arena_map_current(session);
 }
 
 static bool atom_deep_copy_observe_header(AtomDeepCopyMemo *views, Atom *header) {
@@ -8523,28 +9175,60 @@ AtomDeepCopySession *atom_deep_copy_session_new_mapped(
     return session;
 }
 
+/* Add `arena`'s storage above `mark` to the storage dying with the session
+ * (a null mark: the whole arena).  An arena already dying keeps its first
+ * mark. */
 bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
                                            const Arena *arena,
                                            ArenaMark mark) {
     if (!session || session->map || !arena || arena->identity == 0u || session->memo.arenas || session->memo.snapshot)
         return false;
-    AtomDeepCopyRegion region = {.identity = arena->identity};
+    AtomDeepCopyRegion *region = &session->region;
+    for (uint32_t a = 0u; a < region->len; a++) {
+        if (region->arenas[a].identity == arena->identity)
+            return false;
+    }
+    uint32_t kept_len = 0u;
     if (mark.head) {
-        region.kept_start[0] = (uintptr_t)mark.head->data;
-        region.kept_end[0] = (uintptr_t)mark.head->data + mark.used;
-        region.kept_len = 1u;
+        kept_len = 1u;
         for (const ArenaBlock *block = mark.head->next; block;
              block = block->next) {
-            if (region.kept_len == ATOM_DEEP_COPY_REGION_KEPT_MAX)
+            if (kept_len == UINT32_MAX)
                 return false;
-            region.kept_start[region.kept_len] = (uintptr_t)block->data;
-            region.kept_end[region.kept_len] =
-                (uintptr_t)block->data + block->used;
-            region.kept_len++;
+            kept_len++;
         }
     }
-    session->region = region;
-    session->memo.region = &session->region;
+    uintptr_t *kept = NULL;
+    if (kept_len) {
+        if ((size_t)kept_len > SIZE_MAX / (2u * sizeof(*kept)))
+            return false;
+        kept = malloc((size_t)kept_len * 2u * sizeof(*kept));
+        if (!kept)
+            return false;
+        kept[0] = (uintptr_t)mark.head->data;
+        kept[1] = (uintptr_t)mark.head->data + mark.used;
+        uint32_t i = 1u;
+        for (const ArenaBlock *block = mark.head->next; block;
+             block = block->next, i++) {
+            kept[2u * i] = (uintptr_t)block->data;
+            kept[2u * i + 1u] = (uintptr_t)block->data + block->used;
+        }
+    }
+    if (region->len == region->cap) {
+        uint32_t cap = region->cap ? region->cap * 2u : 2u;
+        AtomDeepCopyDyingArena *grown = cap > region->cap
+            ? realloc(region->arenas, (size_t)cap * sizeof(*grown)) : NULL;
+        if (!grown) {
+            free(kept);
+            return false;
+        }
+        region->arenas = grown;
+        region->cap = cap;
+    }
+    region->arenas[region->len++] = (AtomDeepCopyDyingArena){
+        .identity = arena->identity, .kept_len = kept_len, .kept = kept,
+    };
+    session->memo.region = region;
     return true;
 }
 
@@ -8584,7 +9268,7 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
         atom_settled_for_arena(session->dst, src)) {
         if (!atom_deep_copy_memo_store(&session->memo, src, src))
             return NULL;
-        cetta_provenance_assert_not_transient_except(
+        provenance_assert_settled(
             src, "atom_deep_copy_session_copy.destination-closed",
             session->dst);
         return src;
@@ -8612,10 +9296,48 @@ bool atom_deep_copy_session_settled(
            atom_settled_for_arena(session->dst, atom);
 }
 
+void *atom_deep_copy_session_inventory(const AtomDeepCopySession *session,
+                                      const void *kind) {
+    if (!session || session->failed || !atom_deep_copy_arena_map_current(session))
+        return NULL;
+    for (AtomDeepCopyInventory *entry = session->inventories;
+         entry; entry = entry->next)
+        if (entry->kind == kind) return entry->value;
+    return NULL;
+}
+
+bool atom_deep_copy_session_failed(const AtomDeepCopySession *session) {
+    return !session || session->failed;
+}
+
+bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
+    const void *kind, void *inventory, AtomDeepCopyInventoryRelease release,
+    CettaStorageVisitor storage) {
+    if (!session || session->failed || !kind || !inventory || !release ||
+        !atom_deep_copy_arena_map_current(session) ||
+        atom_deep_copy_session_inventory(session, kind))
+        return false;
+    AtomDeepCopyInventory *entry = cetta_malloc(sizeof(*entry));
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+                           sizeof(*entry));
+    *entry = (AtomDeepCopyInventory){.kind = kind, .value = inventory,
+        .release = release, .storage = storage, .next = session->inventories};
+    session->inventories = entry;
+    return true;
+}
+
 void atom_deep_copy_session_free(AtomDeepCopySession *session) {
     if (!session)
         return;
     assert(!session->destination_scope);
+    while (session->inventories) {
+        AtomDeepCopyInventory *entry = session->inventories;
+        session->inventories = entry->next;
+        entry->release(entry->value);
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
+                               sizeof(*entry));
+        free(entry);
+    }
     for (size_t i = 0u; i < session->object_capacity; i++) {
         const AtomDeepCopyObjectSlot *entry = &session->objects_by_source[i];
         if (entry->source && entry->release) {
@@ -8625,6 +9347,9 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
     }
     free(session->objects_by_source);
     free(session->objects_by_image);
+    for (uint32_t a = 0u; a < session->region.len; a++)
+        free(session->region.arenas[a].kept);
+    free(session->region.arenas);
     atom_deep_copy_memo_free(&session->memo);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         sizeof(*session));
@@ -8635,6 +9360,13 @@ void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
         CettaStorageCensus *census) {
     if (!session || !cetta_storage_object(census,session,sizeof(*session),CETTA_STORAGE_BLOCK))
         return;
+    for (const AtomDeepCopyInventory *entry = session->inventories; entry; entry = entry->next) {
+        if (!cetta_storage_object(census, entry, sizeof(*entry), CETTA_STORAGE_BLOCK)) continue;
+        if (entry->value) {
+            if (entry->storage) entry->storage(entry->value, census);
+            else cetta_storage_refuse(census, "OpaqueCopySessionInventory");
+        }
+    }
     arena_storage_census(session->dst,census);
     const AtomDeepCopyMemo *memo = &session->memo;
     if (memo->global_nodes) {
@@ -9174,6 +9906,20 @@ static void atom_print_mode(
                 fprintf(out, "<foreign %p>", a->ground.ptr);
             break;
         }
+        case GV_SEAL: {
+            /* `(Sealed NICK)` and the like: no address, counter or payload. */
+            char text[256];
+            size_t length = atom_seal_display_text(a, text, sizeof(text));
+            if (length < sizeof(text)) {
+                fputs(text, out);
+            } else {
+                char *long_text = cetta_malloc(length + 1u);
+                atom_seal_display_text(a, long_text, length + 1u);
+                fputs(long_text, out);
+                free(long_text);
+            }
+            break;
+        }
         case GV_INTERNAL_TAG:
             fprintf(out, "<internal-tag %ld>", (long)a->ground.ival);
             break;
@@ -9396,10 +10142,12 @@ static void arena_storage_visit(const void *raw, CettaStorageCensus *census) {
         if (node->storage) node->storage(node->ptr, census);
         else cetta_storage_refuse(census, "OpaqueNativeHandleOwner");
     }
-    for (const ArenaRetainedOwner *held = arena->retained_owners;
-            held; held = held->next_owner) {
+    /* Newest first, as the holds are released. */
+    const ArenaRetainedOwnerSet *owners = arena->retained_owners;
+    for (uint32_t i = owners ? owners->len : 0u; i-- > 0u;) {
+        const ArenaFinalizer *held = owners->holds[i];
         if (held->storage)
-            held->storage(held->finalizer.ptr, census);
+            held->storage(held->ptr, census);
         else
             cetta_storage_refuse(census, "OpaqueRetainedOwner");
     }

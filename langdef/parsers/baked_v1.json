@@ -1,0 +1,20 @@
+{
+  "format": "ParserBuildManifestV1",
+  "parsers": [
+    {"name": "bnf-reader", "format": "authored", "language": "../bnf/plain_bnf_source_v1.metta", "profile": "../bnf/plain_bnf_parser_profile_v1.metta"},
+    {"name": "ebnf-reader", "format": "reader", "reader": "ebnf"},
+    {"name": "lbnf-reader", "format": "reader", "reader": "lbnf"},
+    {"name": "module-core-reader", "format": "lbnf", "source": "module_core_v1.cf", "start": "Module", "strategy": "general"},
+    {"name": "regex-pattern-reader", "format": "module", "reader": "module-core-reader", "source": "../regex/RegexSyntax.module", "theory": "PatternText", "start": "RxPattern", "profile": "../regex/source_profile_v1.metta", "strategy": "general"},
+    {"name": "bnf-program", "format": "bnf", "source": "reusable_v1.bnf", "start": "s"},
+    {"name": "ebnf-program", "format": "ebnf", "source": "reusable_v1.ebnf", "start": "s"},
+    {"name": "joined-left", "format": "lbnf", "source": "joined_left_v1.cf", "start": "S"},
+    {"name": "joined-right", "format": "lbnf", "source": "joined_right_v1.cf", "start": "S"},
+    {"name": "joined-parser", "format": "join", "operands": ["joined-left", "joined-right"], "start": "S"},
+    {"name": "token-word", "format": "lbnf", "source": "predictive_word_v1.cf", "start": "S"},
+    {"name": "token-joined", "format": "join", "operands": ["joined-left", "token-word"], "start": "S"},
+    {"name": "predictive-left", "format": "syntax", "source": "predictive_left_v1.metta"},
+    {"name": "predictive-right", "format": "syntax", "source": "predictive_right_v1.metta"},
+    {"name": "predictive-joined", "format": "join", "operands": ["predictive-left", "predictive-right"], "start": "E"}
+  ]
+}

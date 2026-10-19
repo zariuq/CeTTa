@@ -1,0 +1,5 @@
+settled
+(workers-hold (true true) then-release 0)
+(workers-release 0)
+(rebinding-reuses 1)
+(rollback-keeps 1 7)

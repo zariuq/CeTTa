@@ -6470,13 +6470,14 @@ occurrence_done:
             goto done;
         }
     }
-    if (unique_value_len > SIZE_MAX / sizeof(*sorted_bytes)) {
+    size_t sorted_size;
+    if (__builtin_mul_overflow(unique_value_len ? unique_value_len : 1u,
+                               sizeof(*sorted_bytes), &sorted_size)) {
         set_error(error, error_size,
                   "parser occurrence value inventory is too large to validate");
         goto done;
     }
-    sorted_bytes = malloc(
-        (unique_value_len ? unique_value_len : 1u) * sizeof(*sorted_bytes));
+    sorted_bytes = malloc(sorted_size);
     if (!sorted_bytes) {
         set_error(error, error_size,
                   "out of memory validating occurrence value injectivity");

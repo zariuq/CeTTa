@@ -2,6 +2,7 @@
 #define CETTA_DURABLE_HOST_H
 #include "durable_store.h"
 #include "eval.h"
+#include "owned_execution.h"
 
 /* Native coordination boundary; deliberately not an evaluator builtin.
  * A ticket owns the exact observation and authority supplied by the host.
@@ -46,11 +47,23 @@ typedef struct {
  * Store must outlive its decisions; each decision has one caller at a time. */
 CettaDurableStatus cetta_host_begin(CettaDurableStore *store,
     const CettaHostDecisionSpec *spec, CettaHostDecision **out);
+/* Use when immutable grant/program policy was derived from durable records.
+ * The host builds that policy from required, then retains its dependencies in
+ * the decision's complete commit/watch observation. A changed policy record
+ * refuses begin or acceptance even while the old policy context remains live.
+ * required must be non-NULL and may be freed after successful begin; policy
+ * contexts still outlive the decision. Hidden dependency views do not add
+ * space/channel grants or host:record facts. No per-planning-poll validation. */
+CettaDurableStatus cetta_host_begin_with_dependencies(CettaDurableStore *store,
+    const CettaHostDecisionSpec *spec, const CettaDurableObservation *required,
+    CettaHostDecision **out);
 void cetta_host_decision_free(CettaHostDecision *decision);
 /* Receipt key remains available after UNKNOWN for recovery inspection. */
 const char *cetta_host_decision_key(const CettaHostDecision *decision);
 /* View 0 = input, 1 = actor, 2+i = space grant i. Only these views may inform
- * this decision. Build fresh in-memory query spaces from them, without cached
+ * the evaluator's data projection. Policy contexts may additionally depend on
+ * the observation supplied to begin_with_dependencies. Build fresh query spaces
+ * from these views, without cached
  * state. LLM/time/random observations must first have been recorded as input. */
 const CettaDurableSnapshot *cetta_host_view(const CettaHostDecision *decision, size_t index);
 
@@ -65,6 +78,29 @@ const CettaDurableSnapshot *cetta_host_view(const CettaHostDecision *decision, s
  * DURABLE_OK means evaluation ran, not that it completed or can be accepted. */
 CettaDurableStatus cetta_host_evaluate(CettaHostDecision *decision,
     const CettaHostProgram *program, Atom *expression, int fuel);
+typedef struct {
+    uint64_t quantum, work_limit;
+    size_t preparation_inspections, preparation_bytes, results;
+} CettaHostPlanLimits;
+/* Explicit retained Prime planning over the decision's fresh captured views.
+ * Source &self changes are confined to that private snapshot; external I/O
+ * and capabilities are not admitted. No durable mutation occurs during
+ * planning. Commit revalidates the original host observations and grants.
+ * quantum bounds native controller work per poll, work_limit the complete
+ * non-refilling purse; neither is a semantic firing or CPU-time bound.
+ * Preparation and retained result limits are separate. Zero total work is
+ * inert; quantum must be positive and finite. No synchronous fallback.
+ * Previous evaluation/ready membership is disposed even on admission failure. */
+CettaDurableStatus cetta_host_plan_open(CettaHostDecision *,
+    const CettaHostProgram *, Atom *, const CettaHostPlanLimits *);
+/* Borrow the stable task for admission/service through the existing ready
+ * queue. The decision owns it. Do not change its fields or cancel it directly;
+ * use plan_cancel/decision_free so final work and results remain inspectable.
+ * Decisions, original intern contexts and trusted host program outlive use. */
+CettaOwnedTask *cetta_host_plan_task(CettaHostDecision *);
+/* Cancel planning without consuming durable input or attempting commitment.
+ * Completed data stays readable; the outcome becomes incomplete/cancelled. */
+void cetta_host_plan_cancel(CettaHostDecision *);
 /* Borrowed inspection only; invalidated by re-evaluation or decision free. */
 const EvalOutcome *cetta_host_outcome(const CettaHostDecision *decision);
 /* Wake a blocked decision only after its dependencies change. Copies metadata

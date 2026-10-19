@@ -6,7 +6,7 @@
 ; carries the proofs; this presentation carries the same rules for the
 ; generation pipeline.  Keeping the names aligned is the drift alarm.
 ;
-; The language manifest, checked generated plan, five-provider catalog, and
+; The language manifest, checked generated plan, six-provider catalog, and
 ; isolated reference/compiled qualification harness are present.  The
 ; inherited providers carry the v2 wire vocabulary; explicit V3Elaborate*
 ; rules translate that shared contract into the native v3 calculus.
@@ -48,6 +48,8 @@
     (operator EnvDeclared 2)
     (operator EnvDeclaredList 2)
     (operator EnvNonNewtype 1)
+    (operator KnownBuiltinCardinalityRule 3)
+    (operator BoundBooleanInputs 0)
     (operator KnownExpressionEffect 2)
     (operator KnownExpressionResultType 2)
     (operator V3ResolveInput 2)

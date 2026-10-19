@@ -10,6 +10,15 @@
 #include <errno.h>
 #include <dlfcn.h>
 #include "native_parent_checkpoint_compare.inc"
+static const void *recording_retirement_watch;
+static unsigned recording_retirements;
+void __real_free(void *pointer);
+void __wrap_free(void *pointer) {
+ if(pointer && pointer==recording_retirement_watch) {
+  recording_retirements++;recording_retirement_watch=NULL;
+ }
+ __real_free(pointer);
+}
 static Atom *parse(Arena *a,const char *t){Atom **x=NULL;int n=parse_metta_text(t,a,&x);assert(n==1);Atom *r=x[0];free(x);return r;}
 typedef struct {Arena storage;Atom *values[32];size_t count;size_t lengths[32];int64_t factors[32][16];
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -88,6 +97,7 @@ static void one(unsigned client,unsigned cut){
  assert(prime_need_receipt_begin(&syntax,bindings_receipt_mut(&inherited)));
  CettaPrimeNeedAnswerObserver prior_observer=g_prime_need_answer_observer;
  g_prime_need_answer_observer=request_causal_receipt;
+ prime_need_answer_observer_changed();
 #endif
  assert(prime_native_control_init(source,&space,&syntax,parse(&syntax,programs[client]),-1,true,(CettaObservationDemand){.completion=client>=7u?CETTA_OBSERVATION_FINITE_PREFIX:CETTA_OBSERVATION_COMPLETE_BAG,.prefix_limit=client==10u?3u:client>=7u?2u:0u},&policy,&inherited,NULL,NULL));
  bindings_free(&inherited);
@@ -96,7 +106,6 @@ static void one(unsigned client,unsigned cut){
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
   if(f->before_receipt.top)causal_frame_views++;
-  if(f->producer_receipt.top)causal_frame_views++;
  }
 #endif
  uint64_t source_handle=0u,image_handle=0u;
@@ -207,6 +216,7 @@ static void one(unsigned client,unsigned cut){
  printf("{\"client\":%u,\"cut\":%u,\"copied\":%s,\"reason\":\"%s\",\"prefix\":%zu,\"source_answers\":%zu,\"image_answers\":%zu,\"source_steps\":%"PRIu64",\"image_steps\":%"PRIu64",\"failures\":%zu}\n",client,cut,copied?"true":"false",reason?reason:"",prefix.count,a.count,b.count,steps,image_steps,failures);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  g_prime_need_answer_observer=prior_observer;
+ prime_need_answer_observer_changed();
 #endif
  assert(cetta_native_handle_close(lib,"prime-search",image_handle));arena_free(&a.storage);arena_free(&b.storage);arena_free(&prefix.storage);
  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
@@ -274,6 +284,126 @@ static void lifecycle_cases(void);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 #include "native_parent_recording_compare.inc"
 #endif
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static void forgetting_recorded_parent(bool weighted, bool replace) {
+ const unsigned client=200u+(unsigned)weighted+2u*(unsigned)replace,cut=19u;
+ Arena syntax,notebook;arena_init(&syntax);arena_init_detached(&notebook);arena_set_hashcons(&syntax,NULL);
+ Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
+ registry_bind(&reg,"&self",atom_space(&syntax,&space));
+ CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+ cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+ eval_set_library_context(lib);
+ const char *equations[]={weighted?"(=w (coin) 2 3)":"(= (coin) 2)",
+  weighted?"(=w (coin) 2 3)":"(= (coin) 2)",
+  weighted?"(=w (coin) 5 7)":"(= (coin) 5)","(= (paired $x) (Pair $x $x))"};
+ for(size_t i=0u;i<4u;i++)space_add(&space,parse(&syntax,equations[i]));
+ CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u,
+  .work_budget=UINT64_MAX,.costs=true,
+  .history={.enabled=true,.selections=512u,.nodes=32u,.bytes=65536u,.owners=10000u}};
+ PrimeNativeControl *source=malloc(sizeof(*source));assert(source);
+ CHECK(prime_native_control_init(source,&space,&syntax,parse(&syntax,"(paired (coin))"),-1,true,
+  (CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},&policy,NULL,NULL,NULL));
+ Result prefix={0},suffix={0};arena_init(&prefix.storage);arena_init(&suffix.storage);
+ prime_native_control_run(source,cut,seen,&prefix);
+ CHECK(source->steps==cut&&source->history.count&&source->history.group&&!prime_native_control_closed(source));
+ PrimeNeedRecording *recording=source->history.group;
+ unsigned retired_before=recording_retirements;
+ assert(!recording_retirement_watch);recording_retirement_watch=recording;
+ PrimeNeedReceipt outside=source->history.entries[0].operation;
+ CHECK(prime_need_recording_promote(&notebook,&outside)&&
+  arena_retains_owner(&notebook,recording,prime_need_recording_release));
+ uint64_t source_id=0u,image_id=0u;
+ CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&source_id));
+ source->handle_id=source_id;
+ Atom *source_token=cetta_native_handle_owned_atom(lib,&syntax,"prime-search",source_id);assert(source_token);
+ Atom *alias=atom_deep_copy(&prefix.storage,source_token);assert(alias);
+ CettaNativeHandleUse use={0},other_use={0};
+ if(replace)CHECK(cetta_native_handle_acquire_owned(lib,"prime-search",source_token,
+  CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use));
+ PrimeNativeControl before=*source;
+ CettaContinuationStatus status;
+ CettaPrimeCheckpointCopy *copy=replace
+  ?cetta_prime_checkpoint_copy_new_reserved(lib,source_token,&status)
+  :cetta_prime_checkpoint_copy_new(lib,source_token,&status);
+ CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
+ PrimeNativeControl *image=copy->image;
+ size_t count=cetta_prime_checkpoint_copy_arena_pair_count(copy);
+ AtomDeepCopyArenaPair *pairs=calloc(count+2u,sizeof(*pairs));assert(pairs);
+ for(size_t i=0u;i<count;i++)CHECK(cetta_prime_checkpoint_copy_arena_pair_at(copy,i,&pairs[i]));
+ pairs[count++]=(AtomDeepCopyArenaPair){&syntax,&syntax};
+ if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)
+  pairs[count++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
+ AtomDeepCopySession *atoms=atom_deep_copy_session_new(&image->storage);assert(atoms);
+ CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count)&&prime_need_recording_copy_forget(atoms));
+ status=cetta_prime_checkpoint_copy_prepare(copy,atoms);
+ if(status!=CETTA_CONTINUATION_READY)fprintf(stderr,"FORGET_REFUSAL %s\n",cetta_prime_checkpoint_copy_refusal(copy));
+ if(replace)before.leased=true;
+ CHECK(status==CETTA_CONTINUATION_READY&&!memcmp(&before,source,sizeof(before)));
+ CHECK(!image->history.spec.enabled&&!image->policy.history.enabled&&!image->history.group&&
+  !image->history.entries&&!image->history.count&&image->steps==source->steps&&
+  image->event_cost.total.work==source->event_cost.total.work&&
+  !arena_retains_owner(&image->storage,recording,prime_need_recording_release));
+ atom_deep_copy_session_free(atoms);free(pairs);
+ Atom *image_token=NULL;
+ if(replace) {
+  CHECK(source->leased&&copy->reserved);
+  CHECK(cetta_prime_checkpoint_copy_publish(copy,&syntax,&image_token)==CETTA_CONTINUATION_UNSUPPORTED&&!image_token);
+  CHECK(cetta_native_handle_use_fork_lifetime(&other_use,&use));
+  CHECK(cetta_prime_checkpoint_copy_replace(copy,&use)==CETTA_CONTINUATION_DEFERRED&&
+   copy->image==image&&copy->prepared&&source->leased);
+  CHECK(cetta_native_handle_get_owned(lib,"prime-search",alias)==source&&recording_retirements==retired_before);
+  CHECK(cetta_native_handle_use_release(&other_use));
+  CHECK(cetta_prime_checkpoint_copy_replace(copy,&use)==CETTA_CONTINUATION_READY);
+  image_token=source_token;image_id=source_id;
+  CHECK(cetta_native_handle_get_owned(lib,"prime-search",alias)==image&&
+   cetta_native_handle_get_owned(lib,"prime-search",source_token)==image&&
+   cetta_native_handle_use_resource(&use)==image&&image->handle_id==source_id&&!image->leased);
+  CHECK(!copy->image&&!copy->source&&!copy->reserved&&!copy->prepared);
+  CHECK(cetta_native_handle_use_release(&use));
+ } else {
+  CHECK(cetta_prime_checkpoint_copy_publish(copy,&syntax,&image_token)==CETTA_CONTINUATION_READY);
+  assert(image_token&&cetta_native_handle_arg(image_token,"prime-search",&image_id));
+ }
+ cetta_prime_checkpoint_copy_free(copy);
+ if(!replace)CHECK(cetta_native_handle_close(lib,"prime-search",source_id));
+ CHECK(recording_retirements==retired_before);
+ CHECK(prime_need_recording_status(prime_need_receipt_recording_owner(&outside)).nodes>0u);
+ arena_free(&notebook);
+ CHECK(recording_retirements==retired_before+1u&&!recording_retirement_watch);
+ if(replace) {
+  CettaSearchPolicySpec resumed_policy=image->policy;resumed_policy.work_budget=10000u;
+  OutcomeSet observed;outcome_set_init(&observed);
+  CHECK(prime_native_control_select(&space,&syntax,alias,-1,0u,&resumed_policy,&observed,NULL,NULL));
+  CHECK(observed.len==1u&&observed.items[0].atom->kind==ATOM_EXPR&&
+   atom_is_symbol(observed.items[0].atom->expr.elems[0],"Observation"));
+  Atom *values=observed.items[0].atom->expr.elems[1];
+  CHECK(values->kind==ATOM_EXPR&&prefix.count+values->expr.len==3u);
+  CHECK(cetta_native_handle_get_owned(lib,"prime-search",alias)==image);
+  for(size_t i=0u;i<values->expr.len;i++) {
+   const Outcome *row=&image->output.items[prefix.count+i];
+   CHECK(atom_eq(values->expr.elems[i],row->atom));
+   (void)seen(&syntax,row->atom,row,&suffix);
+  }
+  outcome_set_free(&observed);
+ } else prime_native_control_run(image,10000u,seen,&suffix);
+ CHECK(prime_native_control_closed(image)&&prefix.count+suffix.count==3u&&!image->history.spec.enabled);
+ const char *expected[]={"(Pair 2 2)","(Pair 2 2)","(Pair 5 5)"};
+ for(size_t i=0u;i<3u;i++) {
+  Result *packet=i<prefix.count?&prefix:&suffix;
+  size_t position=i<prefix.count?i:i-prefix.count;
+  CHECK(!strcmp(atom_to_string(&syntax,packet->values[position]),expected[i]));
+  CHECK(packet->lengths[position]==(weighted?1u:0u));
+  if(weighted)CHECK(packet->factors[position][0]==(i<2u?3:7));
+ }
+ for(size_t i=0u;i<suffix.count;i++)CHECK(!suffix.graphs[i]);
+ CHECK(cetta_native_handle_close(lib,"prime-search",image_id));
+ arena_free(&prefix.storage);arena_free(&suffix.storage);
+ cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);
+ registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ printf("FORGOTTEN_PARENT weighted=%u replace=%u failures=%zu\n",weighted,replace,failures);
+}
+#endif
+
 int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
  return_advice_copy_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
@@ -282,6 +412,10 @@ int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_built
  printf("CAUSAL_FRAME_VIEWS %zu\n",causal_frame_views);
  assert(causal_frame_views>0u);
  recorded_cases();
+ forgetting_recorded_parent(false,false);
+ forgetting_recorded_parent(true,false);
+ forgetting_recorded_parent(false,true);
+ forgetting_recorded_parent(true,true);
 #endif
  checkpoint_selection_resume_cases();
  checkpoint_captured_scope_cases();
@@ -292,7 +426,7 @@ typedef struct { unsigned retains, releases; } RetirementCounter;
 static void count_retention(void *raw) { ++((RetirementCounter *)raw)->retains; }
 static void count_retirement(void *raw) { ++((RetirementCounter *)raw)->releases; }
 static void lifecycle_cases(void) {
- for(unsigned mode=0u;mode<10u;mode++) {
+ for(unsigned mode=0u;mode<12u;mode++) {
   unsigned client=100u+mode,cut=19u;
   Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
   Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
@@ -315,16 +449,18 @@ static void lifecycle_cases(void) {
   CHECK(!cetta_prime_checkpoint_copy_new(lib,textual,&status));
   CHECK(status==CETTA_CONTINUATION_INVALIDATED);
   if(mode==7u) {
-   uint64_t issued=lib->native_handle_next_id;uint32_t slots=lib->native_handle_len;
+   uint64_t issued=lib->native_handle_next_id;size_t slots=cetta_native_handle_count(lib);
    CHECK(!cetta_prime_checkpoint_copy_new(lib,handle,&status));
    CHECK(status==CETTA_CONTINUATION_UNSUPPORTED);
    CHECK(!memcmp(&original,source,sizeof(original)));
-   CHECK(lib->native_handle_next_id==issued&&lib->native_handle_len==slots);
+   CHECK(lib->native_handle_next_id==issued&&cetta_native_handle_count(lib)==slots);
    arena_free(&source->driver.prepared_pure_cache.execution_scratch);
    source->driver.prepared_pure_cache.execution_scratch_ready=false;
    original=*source;
   }
-  CettaPrimeCheckpointCopy *copy=cetta_prime_checkpoint_copy_new(lib,handle,&status);CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
+  CettaPrimeCheckpointCopy *copy=mode>=10u
+   ?cetta_prime_checkpoint_copy_new_reserved(lib,handle,&status)
+   :cetta_prime_checkpoint_copy_new(lib,handle,&status);CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
   CHECK(source->leased);CHECK(!cetta_prime_checkpoint_copy_new(lib,handle,&status)&&status==CETTA_CONTINUATION_DEFERRED);
   AtomDeepCopyArenaPair pairs[3];CHECK(cetta_prime_checkpoint_copy_arena_pair(copy,&pairs[0]));
   pairs[1]=(AtomDeepCopyArenaPair){&syntax,&syntax};size_t count=2u;
@@ -344,13 +480,24 @@ static void lifecycle_cases(void) {
    if(mode==8u){cetta_library_context_free(lib);free(lib);lib=NULL;source=NULL;eval_set_library_context(NULL);CHECK(!copy->context&&!copy->source&&!copy->image&&!copy->reserved);}
    status=cetta_prime_checkpoint_copy_prepare(copy,atoms);
    if(mode==5u)eval_set_library_context(lib);
-   CHECK(status==((mode==2u||mode==3u||mode==9u)?CETTA_CONTINUATION_READY:
+   CHECK(status==((mode==2u||mode==3u||mode==9u||mode>=10u)?CETTA_CONTINUATION_READY:
      (mode==4u||mode==5u||mode==8u)?CETTA_CONTINUATION_INVALIDATED:CETTA_CONTINUATION_UNSUPPORTED));
    CHECK(cetta_prime_checkpoint_copy_prepare(copy,atoms)==status);
    if(mode==7u)CHECK(copy->refusal&&!strcmp(copy->refusal,"QuiescentOwnerProfile"));
    atom_deep_copy_session_free(atoms);atoms=NULL;
   }
-  if(source)CHECK(!memcmp(&original,source,sizeof(original)));
+  if(source){if(mode>=10u)original.leased=true;CHECK(!memcmp(&original,source,sizeof(original)));}
+  if(mode>=10u) {
+   CHECK(source->leased&&copy->reserved&&copy->prepared);
+   if(mode==11u) {
+    CHECK(cetta_native_handle_close(lib,"prime-search",id));source=NULL;
+    CettaNativeHandleUse empty={0};
+    CHECK(cetta_prime_checkpoint_copy_replace(copy,&empty)==CETTA_CONTINUATION_INVALIDATED);
+    CHECK(copy->prepared&&copy->image);
+   }
+   cetta_prime_checkpoint_copy_free(copy);copy=NULL;
+   if(source){CHECK(!source->leased);original.leased=false;CHECK(!memcmp(&original,source,sizeof(original)));}
+  }
   if(mode==9u) {
    CHECK(copy->prepared&&copy->image&&copy->image->frames&&cetta_continuation_hub_length(&copy->image->hub)>0u);
    RetirementCounter retirements={0};

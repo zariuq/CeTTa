@@ -15,6 +15,8 @@ def spell(source, dialect="petta"):
 
 
 HANDOFF = "(= (F $x $y) (function (chain (eval (N $x $y)) $r (return $r))))"
+CASE_HANDOFF = ("(= (F $x $y) (function (case (__cetta_lib_probe $x $y) "
+                "(((return $r) (return $r)) ($raw (return $raw))))))")
 
 
 def declarations(source, dialect="petta"):
@@ -23,6 +25,54 @@ def declarations(source, dialect="petta"):
 
 
 class HandoffDeclarations(unittest.TestCase):
+    def test_administrative_bindings_preserve_computation_and_data_parameters(self):
+        body = "(function (let $p (prepare $x) (chain (eval (N $p $y)) $r (return $r))))"
+        source = "(: F (-> %Undefined% Atom Atom))\n(: N (-> Atom Atom Atom))\n(= (F $x $y) " + body + ")"
+        for dialect in ("petta", "prime"):
+            self.assertEqual(declarations(source, dialect), ["(: F (-> %Undefined% Atom %Undefined%))"])
+        self.assertEqual(spell(body), "(let $p (prepare $x) (N $p $y))")
+        self.assertEqual(spell(body, "prime"),
+                         "(let $p (prepare $x) (function (case (N $p $y) (($result (return $result))))))")
+
+    def test_nested_administrative_bindings_keep_dependency_order(self):
+        source = "(function (let $a (f $x) (let $b (g $a) (chain (eval (N $b)) $r (return $r)))))"
+        self.assertEqual(spell(source), "(let $a (f $x) (let $b (g $a) (N $b)))")
+
+    def test_nontransparent_binding_tails_do_not_erase_function_control(self):
+        source = "(function (let $p (prepare $x) (chain (eval (N $p)) $r (return changed))))"
+        self.assertIn("(function", spell(source))
+        self.assertEqual(declarations("(: F (-> Number Atom))\n(= (F $x) " + source + ")"),
+                         ["(: F (-> Number Atom))"])
+
+    def test_early_return_in_binding_is_not_an_administrative_handoff(self):
+        source = "(function (let $p (return stop) (chain (eval (N $p)) $r (return $r))))"
+        self.assertIn("(function", spell(source))
+        self.assertIn("(return stop)", spell(source))
+
+    def test_native_case_handoff_retains_data_parameters_not_he_result_type(self):
+        for dialect in ("petta", "prime"):
+            source = ("(: F (-> Number Atom Atom))\n"
+                      "(: __cetta_lib_probe (-> Number Atom %Undefined%))\n" + CASE_HANDOFF)
+            with self.subTest(dialect=dialect):
+                self.assertEqual(declarations(source, dialect),
+                                 ["(: F (-> Number Atom %Undefined%))"])
+
+    def test_native_case_handoff_keeps_return_envelope_spelling(self):
+        self.assertIn("(case (__cetta_lib_probe $x $y)", spelling(CASE_HANDOFF, "petta"))
+        self.assertIn("((return $r) $r)", spelling(CASE_HANDOFF, "petta"))
+
+    def test_nontransparent_cases_do_not_drop_declarations(self):
+        for body in (
+            CASE_HANDOFF.replace("(return $raw)", "(return changed)"),
+            CASE_HANDOFF.replace("(return $r))", "(return $x))"),
+            CASE_HANDOFF.replace("__cetta_lib_probe", "ordinary"),
+            CASE_HANDOFF.replace("(return $r)", '("return" $r)'),
+            CASE_HANDOFF.replace("(return $raw)", '("return" $raw)'),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(declarations("(: F (-> Number Atom Atom))\n" + body),
+                                 ["(: F (-> Number Atom Atom))"])
+
     def test_datum_parameters_survive_with_a_running_body(self):
         for dialect in ("petta", "prime"):
             for declared, spelled in (

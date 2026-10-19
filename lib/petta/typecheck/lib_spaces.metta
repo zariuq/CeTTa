@@ -22,7 +22,7 @@
 !(add-translator-rule! succeedsPredicate)
 
 ;Remove all atoms of a space:
-(= (remove-all-atoms $space) 
+(= (remove-all-atoms $space)
    (collapse (match $space $x (remove-atom $space $x))))
 
 ;Efficiently count the amount of particular items in the space without listifying the items:

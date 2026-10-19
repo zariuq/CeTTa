@@ -20,7 +20,7 @@ compiler = shlex.split(args.cc)
 flags = shlex.split(args.flags) + ['-DCETTA_RUNTIME_STATS_IMPL=1',
     '-ffunction-sections', '-fdata-sections']
 sources = ['tests/test_term_match_graph.c', 'src/petta_semantics.c', 'src/atom.c',
-           'src/symbol.c', 'src/binding/frame_identity.c', 'src/name_key.c',
+           'src/symbol.c', 'src/scalar_trie.c', 'src/binding/frame_identity.c', 'src/name_key.c',
            'src/atom_blob.c', 'src/term_canon.c']
 
 

@@ -30,6 +30,18 @@ struct RegisteredSymbols {
 };
 
 static _Atomic uint64_t next_table = 1;
+/* Live entries and payload bytes summed over every table: a gauge of the
+ * counted runtime names (registry keys, named-state keys) still held. */
+static _Atomic uint64_t g_live_entries;
+static _Atomic uint64_t g_live_payload_bytes;
+
+void registered_symbols_live_totals(uint64_t *entries, uint64_t *payload_bytes) {
+    if (entries)
+        *entries = atomic_load_explicit(&g_live_entries, memory_order_relaxed);
+    if (payload_bytes)
+        *payload_bytes = atomic_load_explicit(&g_live_payload_bytes,
+                                              memory_order_relaxed);
+}
 
 static uint64_t spelling_hash(const uint8_t *bytes, uint32_t length) {
     uint64_t hash = UINT64_C(1469598103934665603);
@@ -164,6 +176,9 @@ bool registered_symbol_acquire(RegisteredSymbols *table, const uint8_t *bytes,
         table->stats.entries++;
         table->stats.payload_bytes += (uint64_t)length + 1;
         table->stats.metadata_bytes += sizeof(*entry);
+        atomic_fetch_add_explicit(&g_live_entries, 1u, memory_order_relaxed);
+        atomic_fetch_add_explicit(&g_live_payload_bytes, (uint64_t)length + 1,
+                                  memory_order_relaxed);
         note_peak(table, 0);
     }
     ok = retain(table, entry);
@@ -230,6 +245,9 @@ bool registered_symbol_release(RegisteredSymbols *table, RegisteredSymbol *owned
             table->stats.payload_bytes -= bytes;
             table->stats.metadata_bytes -= sizeof(*entry);
             table->stats.entries--;
+            atomic_fetch_sub_explicit(&g_live_entries, 1u, memory_order_relaxed);
+            atomic_fetch_sub_explicit(&g_live_payload_bytes, bytes,
+                                      memory_order_relaxed);
             if (table->stats.reclaimed_entries != UINT64_MAX)
                 table->stats.reclaimed_entries++;
             if (bytes > UINT64_MAX - table->stats.reclaimed_bytes)

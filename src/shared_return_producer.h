@@ -74,7 +74,8 @@ typedef struct {
 
 /* Success moves execution, including any pending return, into the producer
  * and clears the source handle. Failure leaves it unchanged. The callback
- * context and the execution's source authority must outlive the producer. */
+ * context and the execution's source authority must outlive the producer.
+ * The native adapter must have qualified relocation of this driver. */
 CettaSharedReturnProducer *cetta_shared_return_producer_new(
     CettaOwnedExecution *execution, size_t consumers, size_t row_limit,
     CettaSharedReturnCapture capture, CettaSharedReturnCompatible compatible,

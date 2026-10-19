@@ -1,0 +1,78 @@
+Prime history integration into cetta-ours
+2026-10-16, Codex
+
+Source
+------
+538ccdf9 merges upstream 00ff0803 with the agent engine at 0e782a6c.
+The merge applied without conflicts and retains the native sign-in additions.
+CeTTa main is outside this reconciliation.
+
+Local corrections for upstream
+------------------------------
+218723a8 includes retained_replay and retained_transaction_replay, each with
+its expected output. The history runner already referenced these clients,
+but the four files were untracked in the upstream checkout and absent from
+the pushed commit. A fresh checkout therefore could not finish its controls.
+This commit also removes one imported trailing space.
+
+99e0cf11 repairs the Telegram qualification's overload producer. The producer
+previously exited on a transient connection reset, before generating the
+required load, with both parent and merged service builds. It now retries
+the identical submission key and bytes. Flood volume, receipt checks and
+individual operator-response deadlines remain unchanged.
+
+Semantic changes added locally: none. Both corrections concern qualification
+artifacts; the adopted upstream evaluator is unchanged.
+
+Qualification
+-------------
+The Python-enabled build includes HTTP, durable services, shared SQLite,
+managed symbols, optional Prolog, native sign-in and causal history support.
+Recording is opt-in; its qualification uses ENABLE_PRIME_CAUSAL_RECEIPTS=1.
+
+- Native history: 199 controls pass.
+- Parallel workers: 205 controls pass.
+- Native resources: 143 controls pass.
+- Native weights: the 436-check core passes, together with the additional
+  authored-handler controls in the same driver.
+- Native costs, including history controls: 62 checks pass.
+- Agent-side native attention, memory spaces, context, HTTP and notice
+  cleanup: 92 tests pass without skips.
+- Native I/O providers: 13 tests pass.
+- The shared Prolog syntax checks pass in HE, Prime and PeTTa.
+- Native sign-in: 18 tests run, 17 pass and one optional test is skipped.
+- Mailbox publication, service crash, replay, acknowledgement and round trip
+  pass with both PeTTa and Prime clients against the newly built service.
+- Telegram operator controls pass with the corrected overload producer.
+  The native notice responder also passes its real-service cleanup test.
+
+The default 60-second Prime fast gate reports 279 passes and two timeouts:
+iggp_multiplebuttonsandlights_ground_truth and
+hopper_table1_first_order_ground_truth. Both produce their exact complete
+expected outputs when run separately with a longer completion allowance.
+The parent engine produces the same expected outputs. No expected output,
+input population or individual operator-response deadline was weakened.
+This is not a claim that the original fast-gate invocation exited green.
+
+Recorded agent comparison
+-------------------------
+All 92 historical task projections and 414 recorded turns agree with the
+current agent engine. Effects are deterministic shadows; historical commands
+are not executed again. The recordings remain private.
+
+One paired 414-turn run consumes 130.89 CPU seconds on the current engine
+and 129.80 on the merged engine, with 729.2/730.9 MiB peak RSS. This supports
+approximate parity for that workload. It is not a statistical speed claim.
+
+Two larger Prime cases show workload-dependent timings in single pairs:
+the game corpus takes about 68/65 CPU seconds and Hopper about 48/53 CPU
+seconds, parent/merged respectively. Both pairs retain exact outputs; Hopper
+uses about 1.93 GiB peak RSS on each engine. These timings do not establish
+general performance bounds.
+
+Deployment status
+-----------------
+The agents continue to use the qualified 0e782a6c engine. The new revision has
+not undergone a fresh ASan/TSan run or long soak. Those rollout checks remain
+before changing the agents' engine. The separately deployed queued-notice
+repair uses the existing engine and is not dependent on this integration.

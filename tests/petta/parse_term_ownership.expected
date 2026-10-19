@@ -1,0 +1,6 @@
+true
+true
+(fresh-head (fresh-word "quoted"))
+true
+[fresh-word fresh-tail]
+true

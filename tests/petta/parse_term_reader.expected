@@ -1,0 +1,11 @@
+false
+false
+ok
+false
+true
+true
+false
+(f true false)
+(f 2/3)
+(f 2/3)
+(f "x y" 1.5)

@@ -10,6 +10,7 @@
 
 typedef struct {
     Arena *arena;
+    CettaJsonNumberValidatorV1 number_validator;
     uint64_t work;
     uint32_t work_limit;
     uint32_t depth_limit;
@@ -610,10 +611,6 @@ static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
     return json_bytes_char(out, '"');
 }
 
-static bool json_number_lexeme_valid(const char *bytes, size_t len) {
-    return cetta_json_direct_v1_number_valid((const uint8_t *)bytes, len);
-}
-
 static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
     if (atom_is_symbol(value, "JsonNullV1"))
         return json_bytes_append(out, "null", 4u);
@@ -636,7 +633,10 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out)
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                     "JsonNumberV1 expects exact text");
         }
-        if (!json_number_lexeme_valid(number->ground.sval, number->ground.slen))
+        /* Reference emission is checked by the full runtime roundtrip.
+         * Fast emission supplies its lexical interpretation explicitly. */
+        if (ctx->number_validator && !ctx->number_validator(
+                (const uint8_t *)number->ground.sval, number->ground.slen))
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
                                     "JSON syntax rejected by authored grammar");
         return json_bytes_append(out, number->ground.sval,
@@ -720,7 +720,8 @@ failed:
 }
 
 static bool json_stringify_impl(
-    const CettaJsonRuntimeV1 *runtime, Atom *value, bool legacy_input,
+    const CettaJsonRuntimeV1 *runtime, CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, bool legacy_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out,
     CettaJsonValueV1Status *status,
@@ -738,7 +739,7 @@ static bool json_stringify_impl(
 
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
-    if (!value || !bytes_out || !byte_len_out) {
+    if ((!runtime && !number_validator) || !value || !bytes_out || !byte_len_out) {
         if (error_buf && error_buf_size > 0u) {
             (void)snprintf(error_buf, error_buf_size,
                            "bad JSON stringify arguments");
@@ -757,6 +758,7 @@ static bool json_stringify_impl(
         goto done;
     }
     ctx = (JsonValueCtxV1){
+        .number_validator = number_validator,
         .work_limit = work_limit,
         .depth_limit = depth_limit,
         .status = CETTA_JSON_VALUE_V1_OK,
@@ -811,15 +813,16 @@ bool cetta_json_value_v1_stringify(
         if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
         return false;
     }
-    return json_stringify_impl(runtime, value, legacy_input, work_limit,
+    return json_stringify_impl(runtime, NULL, value, legacy_input, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
-bool cetta_json_value_v1_emit(Atom *value, bool legacy_input,
+bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, bool legacy_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_stringify_impl(NULL, value, legacy_input, work_limit,
+    return json_stringify_impl(NULL, number_validator, value, legacy_input, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 

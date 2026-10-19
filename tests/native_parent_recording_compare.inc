@@ -29,10 +29,14 @@ static void recorded_one(unsigned client,unsigned cut){
  bindings_free(&inherited);
  Result a={0},b={0},prefix={0};arena_init(&a.storage);arena_init(&b.storage);arena_init(&prefix.storage);
  prime_native_control_run(source,cut,policy.selection?checkpoint_first_seen:seen,&prefix);
+ if(recording_profile==6u) {
+  PrimeNativeHistorySpec stop={.stop=true};
+  CHECK(prime_native_history_configure(source,&stop));
+  CHECK(source->history.stopped&&!source->history.spec.enabled);
+ }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
   if(f->before_receipt.recording)causal_frame_views++;
-  if(f->producer_receipt.recording)causal_frame_views++;
  }
 #endif
  bool paid_holder=false;
@@ -79,6 +83,8 @@ static void recorded_one(unsigned client,unsigned cut){
  CHECK(copied&&image->history.group&&image->history.group!=source->history.group);
  CHECK(copied&&image->history.count==source->history.count&&image->history.reservations==source->history.reservations&&
    image->history.start==source->history.start&&image->history.omitted==source->history.omitted&&image->history.overflow==source->history.overflow);
+ CHECK(copied&&image->history.stopped==source->history.stopped&&
+  image->history.stop==source->history.stop&&image->history.spec.enabled==source->history.spec.enabled);
  if(copied){
   PrimeNeedRecordingStatus x=prime_need_recording_status(source->history.group),y=prime_need_recording_status(image->history.group);
   CHECK(recording_status_equal(x,y));
@@ -299,7 +305,7 @@ static void recorded_public_refusal(unsigned cut) {
 
 static void recorded_cases(void) {
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
- for(recording_profile=1u;recording_profile<=5u;recording_profile++)
+ for(recording_profile=1u;recording_profile<=6u;recording_profile++)
   for(unsigned c=0;c<12;c++)for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)
    recorded_one(c,cuts[i]);
  printf("RECORDED_OWNER_VIEWS paid=%zu truncated=%zu prepared=%zu\n",

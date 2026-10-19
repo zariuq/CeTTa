@@ -43,6 +43,32 @@ static bool bindings_frame_index_write_slot(
 static bool bindings_builder_restore_frame_registration_count(
         BindingsBuilder *bb, uint32_t target_len);
 
+/* The bytes a frame's slot arrays of capacity `cap` occupy, kept as a live
+ * total and its peak where runtime statistics are built in. */
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+static _Atomic uint64_t g_bindings_frame_storage_bytes;
+
+static uint64_t bindings_frame_storage_bytes(uint32_t cap) {
+    return (uint64_t)cap * (sizeof(BindingValue) + sizeof(uint64_t));
+}
+
+static void bindings_frame_storage_account(uint64_t added, uint64_t removed) {
+    uint64_t live = added >= removed
+        ? atomic_fetch_add_explicit(&g_bindings_frame_storage_bytes,
+                                    added - removed, memory_order_relaxed) +
+            (added - removed)
+        : atomic_fetch_sub_explicit(&g_bindings_frame_storage_bytes,
+                                    removed - added, memory_order_relaxed) -
+            (removed - added);
+    cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_BYTES,
+                            live);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_BYTES_PEAK, live);
+}
+#else
+#define bindings_frame_storage_account(added, removed) ((void)0)
+#endif
+
 static void bindings_frame_index_entry_free(
         BindingsFrameIndexEntry *entry) {
     if (!entry)
@@ -55,6 +81,8 @@ static void bindings_frame_index_entry_free(
             entry->storage_references, 1u, memory_order_acq_rel);
         assert(previous > 0u);
         if (previous == 1u) {
+            bindings_frame_storage_account(
+                0u, bindings_frame_storage_bytes(entry->cap));
             free(entry->values);
             free(entry->write_version);
             free(entry->storage_references);
@@ -74,6 +102,33 @@ static void bindings_frame_index_entry_retain(
     uint32_t previous = atomic_fetch_add_explicit(
         entry->storage_references, 1u, memory_order_relaxed);
     assert(previous > 0u && previous < UINT32_MAX);
+}
+
+void bindings_frame_index_entry_hold(BindingsFrameIndexEntry *image,
+                                     const BindingsFrameIndexEntry *source) {
+    assert(image && source && source->storage_references);
+    *image = *source;
+    bindings_frame_index_entry_retain(image);
+}
+
+void bindings_frame_index_entry_drop(BindingsFrameIndexEntry *image) {
+    bindings_frame_index_entry_free(image);
+}
+
+void bindings_frame_index_entry_share_payload(BindingsFrameIndexEntry *view,
+                                              const BindingsFrameIndexEntry *image) {
+    assert(view && image && image->storage_references && view->slot_len == image->slot_len);
+    BindingsFrameIndexEntry retained = *image;
+    retained.owns_identity = false;
+    bindings_frame_index_entry_retain(&retained);
+    BindingsFrameIndexEntry old = *view;
+    old.owns_identity = false;
+    view->schema = retained.schema;
+    view->storage_references = retained.storage_references;
+    view->values = retained.values;
+    view->write_version = retained.write_version;
+    view->cap = retained.cap;
+    bindings_frame_index_entry_free(&old);
 }
 
 bool bindings_frame_index_entry_detach(
@@ -99,6 +154,7 @@ bool bindings_frame_index_entry_detach(
                (size_t)entry->slot_len * sizeof(*write_version));
     }
     atomic_init(storage_references, 1u);
+    bindings_frame_storage_account(bindings_frame_storage_bytes(entry->cap), 0u);
     uint32_t previous = atomic_fetch_sub_explicit(
         entry->storage_references, 1u, memory_order_acq_rel);
     assert(previous > 1u);
@@ -290,6 +346,8 @@ static bool bindings_frame_index_initialize_entry(
         storage.write_version = cetta_malloc(
             (size_t)source_len * sizeof(*storage.write_version));
         storage.cap = source_len;
+        bindings_frame_storage_account(
+            bindings_frame_storage_bytes(source_len), 0u);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_ALLOC);
     }
@@ -400,6 +458,8 @@ bool bindings_frame_index_grow_slots(Bindings *bindings,
         frame->values = cetta_realloc(frame->values, (size_t)cap * sizeof(*frame->values));
         frame->write_version = cetta_realloc(
             frame->write_version, (size_t)cap * sizeof(*frame->write_version));
+        bindings_frame_storage_account(bindings_frame_storage_bytes(cap),
+                                       bindings_frame_storage_bytes(frame->cap));
         frame->cap = cap;
     }
     memset(frame->values + frame->slot_len, 0,
@@ -878,6 +938,8 @@ bool bindings_frame_index_register_kind(
             }
         }
         bindings_frame_schema_release(existing->schema);
+        bindings_frame_storage_account(bindings_frame_storage_bytes(merged_len),
+                                       bindings_frame_storage_bytes(existing->cap));
         free(existing->values);
         free(existing->write_version);
         existing->schema = merged_schema;

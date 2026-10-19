@@ -78,6 +78,30 @@ The host must enforce three observation invariants:
 Together with denial of durable reads during evaluation, these rules make the
 host-supplied observation the complete durable read set of the decision.
 
+Policy loaders can carry their own observed dependencies into that read set.
+`cetta_durable_observe_joined` checks an earlier observation while reading new
+scopes in one transaction. New views come first, followed by owned copies of
+the earlier scopes. Their database epoch, complete keys and record revisions
+must still agree. This includes recorded absences and complete prefix results;
+an unrelated update may proceed. The returned observation remains independent
+of the earlier owner and protects every combined scope at commit or watch.
+
+When space/channel grants or the immutable program policy were derived from
+durable records, pass that policy observation to
+`cetta_host_begin_with_dependencies`. The host still constructs the permitted
+grants and pure validation context; observing a record grants no capabilities.
+A policy change can refuse either admission or later acceptance, even while
+the old context is alive. Restoring its old bytes under a fresh revision also
+refuses. Dependency views do not add indexed grants or `host:record` facts to
+the evaluator. Planning runs against its original capture without checking the
+database each quantum. A conflict requires a new policy observation, context
+and decision; it cannot retarget an existing plan.
+
+This revocation orders against acceptance. An already accepted outbox intent
+or an external operation in progress needs the channel's own cancellation and
+uncertain-outcome protocol. The original `cetta_host_begin` remains appropriate
+for grants whose policy is fixed for the decision's lifetime.
+
 Validation uses exact comparisons, not hashes, and needs no tombstone table.
 Unrelated writes do not conflict. A removed and reinserted record has a new
 revision and invalidates a positive read. An insertion followed by removal
@@ -317,6 +341,41 @@ inputs must be bounded before symbol interning; use strings for unbounded IDs
 and external text. Pending ticket count and aggregate observation memory also
 require bounded admission in the service.
 
+`cetta_host_plan_open` supplies an explicit retained Prime alternative. It
+captures the same fresh views in a private world and exposes its actual owned
+task through `cetta_host_plan_task`. A host may admit that task to the existing
+ready queue or poll it after its enclosing service selects the candidate.
+Planning has no durable mutation or external I/O. A captured snapshot may
+finish after live records change; `cetta_host_accept` still validates the
+original scopes and grants at the atomic commit boundary.
+
+`CettaHostPlanLimits` separates a finite per-poll controller quantum, a total
+work purse, preparation inspection/storage limits and retained result count.
+The purse never refills when a task is polled again. Zero total work preserves
+the initial task. Controller work is implementation telemetry, separate from
+source-semantic cost and whole-callback time. Refused result collection keeps
+the same pending loan. `cetta_host_plan_cancel` removes ready membership and
+releases the computation while keeping copied results and final paid work
+inspectable; cancellation prevents later acceptance.
+
+When the Need index is compiled in, captured computations use it by default.
+The persistent index keeps older and sibling snapshots separate while avoiding
+linear history scans. `CETTA_PRIME_NEED_HEAP_INDEX=0` selects the log fallback
+for diagnostic comparisons. Native lookup telemetry can differ between these
+implementations; source firings and controller allowances retain their meanings.
+Indexed lookup alone does not bound the duration of a complete planning poll.
+
+This retained profile accepts self-contained Prime default contexts. Imported
+module contexts and opaque capabilities need their own capture/ownership
+contracts and are declined without a synchronous fallback. The existing
+`cetta_host_evaluate` route retains its HE extended semantics. Neither route
+requires a history recorder or correctness receipt.
+
+The durable service's existing input, commit and intent records are operational
+state for recovery and idempotence. They are distinct from optional evaluator
+history or proof-checking certificates; ordinary evaluation does not open a
+journal merely because this service is available.
+
 For draft supersession, key inbound occurrences by chat/update and include a
 read-only prefix scope for that chat's inbox lane. New input in the same lane
 invalidates the unaccepted decision; another chat's input does not. This does
@@ -338,8 +397,11 @@ commit attempt, including aliases through different grants. A send uses a channe
 reply continuation. These indices select authority bound to the native ticket;
 writing a channel name or another number grants no additional permission.
 Native channel validators are pure and bounded, and enforce payload/method/chat
-permissions before commitment. Their context must stay immutable until the
-host retires the ticket; a policy change must retire affected tickets. Programs
+permissions before commitment. Their context stays immutable until the host
+retires the ticket. For a fixed-policy `cetta_host_begin` ticket, changing that
+policy requires retiring affected tickets. `cetta_host_begin_with_dependencies`
+instead retains the policy's observed records, so later acceptance detects
+their revocation without replacing the original context. Programs
 cannot write reserved `host.*` spaces through state grants.
 
 `cetta_host_accept` requires bounded, complete evaluation with no effect denials.
@@ -1309,6 +1371,16 @@ Disconnecting a worker does not cancel its task. Revoking a waiting generation
 keeps a subsequent reply as late evidence. Cancelling a periodic timer also
 retires its native resource through an idempotent terminal observation.
 
+An embedding can instead supply a self-contained Prime policy and set
+`CettaActivityConfig.planning` with a positive quantum and explicit limits.
+The same candidate queue then retains each host decision and polls its owned
+task once per candidate visit, continuing intake, IPC and timers between
+polls. A changed input occurrence disposes its old plan. An exhausted purse
+parks the retained decision behind a scope watch; unchanged observations do
+not authorize another purse. If observations change, a new decision may be
+captured. Full admission capacity remains backpressure: a permanently parked
+candidate does not imply fairness for inputs that have not been admitted.
+
 Build and test the runnable embedding example:
 
 ```sh
@@ -1324,6 +1396,18 @@ observation, not an external delivery receipt. The process-worker adapter and
 delayed HTTP replay live on MeTTaClaw's
 [`feature/durable-responsive-activities-20261012`](https://github.com/godelclaw/mettaclaw/tree/feature/durable-responsive-activities-20261012)
 branch.
+
+The example accepts optional `PRIME-POLICY [QUANTUM [WORK-LIMIT]]` arguments
+after ready capacity. It reads the trusted policy once at startup as equations
+and type declarations, without executing startup directives or imports. The
+policy implements the same `activity:receive`, `activity:cancel`,
+`activity:reply` and `activity:timer-reply` entry contracts required by its
+supported inputs, using the ticket's `host:record` views through `&self`.
+Native routing still supplies all scopes, actors and channel grants. The
+installed `durable:activity` module remains the HE policy. Native controller
+poll/work totals accompany the existing whole-step and process-memory
+measurements. A larger quantum changes service turns without restarting paid
+planning work.
 
 This is an activity runtime component, not a migration of the foreground
 cognitive loop. Full prompts need immutable context references when they

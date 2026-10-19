@@ -1030,7 +1030,147 @@ typedef enum {
     CETTA_RUNTIME_COUNTER_SPACE_MARKED_ROW = 1004,
     CETTA_RUNTIME_COUNTER_SPACE_MARK_SETTLE = 1005,
     CETTA_RUNTIME_COUNTER_SPACE_MARK_SETTLE_ROW = 1006,
-    CETTA_RUNTIME_COUNTER_COUNT = 1007
+    /* Counted runtime names held by every registry (live storage gauges). */
+    CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT = 1007,
+    CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES = 1008,
+    /* Bytes the C allocator holds for live allocations (glibc mallinfo2:
+     * in-use arena chunks plus mmapped blocks); 0 where unavailable. */
+    CETTA_RUNTIME_COUNTER_HEAP_IN_USE_BYTES = 1009,
+    /* Spaces the evaluator created and still keeps (new-space, named and
+     * algebra spaces), and how many of them the shadow trace from the
+     * registry's bindings and named states does not reach; filled by
+     * runtime-stats!.  The trace does not yet see running forms, choice
+     * points, transactions, workers or foreign holders, so an unreached
+     * space is not thereby garbage. */
+    CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT = 1010,
+    CETTA_RUNTIME_COUNTER_SPACE_SHADOW_UNREACHED_COUNT = 1011,
+    /* States of the Prolog eval/2 bridge held now (live gauge): zero
+     * whenever no eval/2 call is running or holds pending answers. */
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE = 1012,
+    /* The slot arrays of binding frames that are allocated now (values
+     * and write versions, a spare's included), and their peak. */
+    CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_BYTES = 1013,
+    CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_BYTES_PEAK = 1014,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_JOINT_ROWS_COMPLETED = 1015,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_JOINT_ROWS_DECLINED = 1016,
+    CETTA_RUNTIME_COUNTER_PETTA_TRANSLATION_VALUE_NODE = 1017,
+    CETTA_RUNTIME_COUNTER_PETTA_TRANSLATION_VALUE_REUSE = 1018,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_COMPILE = 1019,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW = 1020,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_HOST_READ = 1021,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_HOST_REUSE = 1022,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_SPACE_REUSE = 1023,
+    CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_CHECK = 1024,
+    CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_REUSE = 1025,
+    CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_GUARD = 1026,
+    CETTA_RUNTIME_COUNTER_PETTA_TYPE_INERT_DEFER = 1027,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_COMPILED = 1028,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_ENTRY = 1029,
+    CETTA_RUNTIME_COUNTER_PETTA_CONTRACT_VERSION_REFUSED = 1030,
+    CETTA_RUNTIME_COUNTER_PREPARED_PURE_LIST_CARRIER_CELL_READ = 1031,
+    CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_DECLINED_NO_TEMPLATE = 1032,
+    CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_PLACE = 1033,
+    CETTA_RUNTIME_COUNTER_ATOM_DEEP_COPY_RECORDED_IN_TABLE = 1034,
+    CETTA_RUNTIME_COUNTER_MATCH_NATIVE_EXACT_OCCURRENCES = 1035,
+    CETTA_RUNTIME_COUNTER_SPACE_EXACT_FRONTIER_CERTIFIED = 1036,
+    /* The resource ledger.  Gauges hold what is live now and peaks their
+     * high-water marks; both count only resources created while statistics
+     * were enabled, so every gauge returns to zero when they are released.
+     * Arena gauges come in fours per ledger tag (live arenas, its peak, held
+     * block bytes, its peak), in CettaArenaLedgerTag order from OTHER. */
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE = 1037,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_LIVE_PEAK = 1038,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_HELD_BYTES = 1039,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_OTHER_HELD_BYTES_PEAK = 1040,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_LIVE = 1041,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_LIVE_PEAK = 1042,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_HELD_BYTES = 1043,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_PERSISTENT_HELD_BYTES_PEAK = 1044,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_LIVE = 1045,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_LIVE_PEAK = 1046,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_HELD_BYTES = 1047,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_EVAL_HELD_BYTES_PEAK = 1048,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_LIVE = 1049,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_LIVE_PEAK = 1050,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_HELD_BYTES = 1051,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SCRATCH_HELD_BYTES_PEAK = 1052,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_LIVE = 1053,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_LIVE_PEAK = 1054,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_HELD_BYTES = 1055,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SURVIVOR_HELD_BYTES_PEAK = 1056,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_LIVE = 1057,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_LIVE_PEAK = 1058,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_HELD_BYTES = 1059,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_CURSOR_HELD_BYTES_PEAK = 1060,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_LIVE = 1061,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_LIVE_PEAK = 1062,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_HELD_BYTES = 1063,
+    CETTA_RUNTIME_COUNTER_ARENA_LEDGER_SPACE_HELD_BYTES_PEAK = 1064,
+    /* Full-size blocks retired into thread stocks, held for reuse. */
+    CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES = 1065,
+    CETTA_RUNTIME_COUNTER_ARENA_STOCK_BYTES_PEAK = 1066,
+    /* Open-equation cursors open now, suspended or running. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE = 1067,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_LIVE_PEAK = 1068,
+    /* Spaces initialized and not yet freed, and their structs' bytes, which
+     * live in whatever storage their creator chose. */
+    CETTA_RUNTIME_COUNTER_SPACE_LIVE = 1069,
+    CETTA_RUNTIME_COUNTER_SPACE_LIVE_PEAK = 1070,
+    CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES = 1071,
+    CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES_PEAK = 1072,
+    /* Heap bytes allocated while a space was initialized (C library heap
+     * accounting; zero where it is unavailable). */
+    CETTA_RUNTIME_COUNTER_SPACE_INIT_HEAP_BYTES = 1073,
+    /* Activation identities: acquisitions, handles returned at their last
+     * release (retired ones included), and the gauge of those live. */
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_MINT = 1074,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_FREE = 1075,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE = 1076,
+    CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_LIVE_PEAK = 1077,
+    /* Global fresh-variable bases minted, and the symbol table's entries
+     * when the snapshot is taken: both are permanent. */
+    CETTA_RUNTIME_COUNTER_FRESH_VAR_BASE_MINT = 1078,
+    CETTA_RUNTIME_COUNTER_SYMBOL_TABLE_ENTRIES = 1079,
+    /* The deepest PeTTa search-machine choice stack. */
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_DEPTH_PEAK = 1080,
+    /* One when this binary records statistics: a build without them still
+     * prints every counter, all zero, which is not a measurement. */
+    CETTA_RUNTIME_COUNTER_RUNTIME_STATISTICS_RECORDED = 1081,
+    /* Untried equations selection refuted because their bodies begin by
+     * destructuring a value decons-atom has no answer for. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ENTRY_GUARD_REFUTED = 1082,
+    /* States of Prolog `eval` calls that may still be retried: created at the
+     * first call, disposed by its last answer, its failure or its prune. */
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK = 1083,
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED = 1084,
+    /* Collections of the search machine's heap while choices are pending,
+     * the major ones among them, and those due but declined because a
+     * pending choice cannot move its atoms. */
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTIONS = 1085,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_MAJOR_COLLECTIONS = 1086,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED = 1087,
+    /* The program versions open-equation cursors keep, one per program a
+     * cursor entered, and the open tier's compiled programs alive. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_VERSIONS_LIVE = 1088,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_VERSIONS_LIVE_PEAK = 1089,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE = 1090,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE_PEAK = 1091,
+    /* The open-equation cursors' collections: minor and major ones that
+     * copied, those declined for finding most of their generation reached,
+     * the bytes minor collections promoted, the old generation's largest
+     * size after a collection, and the region's largest size when one was
+     * tried. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS = 1092,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS = 1093,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS_DECLINED = 1094,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS_DECLINED = 1095,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROMOTED_BYTES = 1096,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_OLD_BYTES_PEAK = 1097,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_REGION_AT_COLLECTION_BYTES_PEAK = 1098,
+    /* What a major collection keeps, at most: the cursors' live data at the
+     * moments majors run. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_SURVIVOR_BYTES_PEAK = 1099,
+    CETTA_RUNTIME_COUNTER_COUNT = 1100
 } CettaRuntimeCounter;
 
 typedef struct {
@@ -1072,6 +1212,10 @@ bool cetta_runtime_stats_is_enabled(void);
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta);
 void cetta_runtime_stats_set(CettaRuntimeCounter counter, uint64_t value);
 void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value);
+/* Change a gauge and raise its peak in one step under the statistics lock,
+ * so the peak is the gauge's exact maximum. */
+void cetta_runtime_stats_gauge_add(CettaRuntimeCounter gauge,
+                                   CettaRuntimeCounter peak, int64_t delta);
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out);
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats);
 void cetta_runtime_stats_populate_space(Space *space, Arena *a,
@@ -1081,7 +1225,8 @@ uint64_t cetta_runtime_stats_survivor_role_total(
 bool cetta_runtime_stats_survivor_role_account_is_exact(
     const CettaRuntimeStats *stats);
 
-#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+#if (CETTA_BUILD_WITH_RUNTIME_STATS && !defined(CETTA_RUNTIME_STATS_NOOP)) || \
+    defined(CETTA_RUNTIME_STATS_IMPL)
 CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(
     CettaSurvivorAllocationRole role);
 void cetta_survivor_allocation_scope_leave(
@@ -1110,18 +1255,19 @@ static inline void cetta_runtime_stats_note_survivor_allocation(
 #if (!CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_NOOP)) && \
     !defined(CETTA_RUNTIME_STATS_IMPL)
 #define cetta_runtime_stats_is_enabled() false
+/* Without runtime statistics a probe is an unevaluated call: the compiler
+ * still checks its arguments against the declarations above, and it emits
+ * no code. */
 #define cetta_runtime_stats_add(counter, delta)                                  \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_add)((counter), (delta)), 0))
 #define cetta_runtime_stats_set(counter, value)                                  \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_set)((counter), (value)), 0))
 #define cetta_runtime_stats_update_max(counter, value)                           \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_update_max)((counter), (value)), 0))
+#define cetta_runtime_stats_gauge_add(gauge, peak, delta)                        \
+    ((void)sizeof((cetta_runtime_stats_gauge_add)((gauge), (peak), (delta)), 0))
 #define cetta_runtime_stats_inc(counter)                                         \
-    do {                                                                         \
-    } while (0)
+    ((void)sizeof((cetta_runtime_stats_add)((counter), 1u), 0))
 #else
 static inline void cetta_runtime_stats_inc(CettaRuntimeCounter counter) {
     cetta_runtime_stats_add(counter, 1);

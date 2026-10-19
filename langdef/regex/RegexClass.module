@@ -1,0 +1,31 @@
+Module RegexClasses {
+  Theory RegexClassAlgebraV1() {
+    Empty
+    Types { ClassScalar = Int; ClassProperty = String; RegexClass; }
+    Terms {
+      "re:class-empty". |- "re:class-empty" : RegexClass;
+      "re:class-universe". |- "re:class-universe" : RegexClass;
+      "re:class-range". low:ClassScalar, high:ClassScalar |- "re:class-range" low high : RegexClass;
+      "re:class-property". name:ClassProperty |- "re:class-property" name : RegexClass;
+      "re:class-union". left:RegexClass, right:RegexClass |- "re:class-union" left right : RegexClass;
+      "re:class-intersection". left:RegexClass, right:RegexClass |- "re:class-intersection" left right : RegexClass;
+      "re:class-difference". left:RegexClass, right:RegexClass |- "re:class-difference" left right : RegexClass;
+      "re:class-complement". body:RegexClass |- "re:class-complement" body : RegexClass;
+      "re:class-fold". body:RegexClass |- "re:class-fold" body : RegexClass;
+    }
+    Equations {
+      "class-union-empty-left". p:RegexClass |- "re:class-union"("re:class-empty"(), p) = p;
+      "class-union-empty-right". p:RegexClass |- "re:class-union"(p, "re:class-empty"()) = p;
+      "class-intersection-empty-left". p:RegexClass |- "re:class-intersection"("re:class-empty"(), p) = "re:class-empty"();
+      "class-intersection-empty-right". p:RegexClass |- "re:class-intersection"(p, "re:class-empty"()) = "re:class-empty"();
+      "class-difference-empty-right". p:RegexClass |- "re:class-difference"(p, "re:class-empty"()) = p;
+      "class-difference-empty-left". p:RegexClass |- "re:class-difference"("re:class-empty"(), p) = "re:class-empty"();
+      "class-complement-empty". p:RegexClass |- "re:class-complement"("re:class-empty"()) = "re:class-universe"();
+      "class-complement-universe". p:RegexClass |- "re:class-complement"("re:class-universe"()) = "re:class-empty"();
+      "class-complement-twice". p:RegexClass |- "re:class-complement"("re:class-complement"(p)) = p;
+      "class-fold-empty". p:RegexClass |- "re:class-fold"("re:class-empty"()) = "re:class-empty"();
+      "class-fold-twice". p:RegexClass |- "re:class-fold"("re:class-fold"(p)) = "re:class-fold"(p);
+    }
+    Rewrites {}
+  }
+}

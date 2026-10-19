@@ -60,9 +60,9 @@
     {
       "source": "fs.metta",
       "output": "fs.metta",
-      "source_sha256": "f7ec0c801a941bdcf14799c9f2e8bf21012aa207fa3dea598cc99d1e790c9c8c",
-      "output_sha256": "6327c059cb063a00fbf0d312e440a7207d536ebddc15cbf1f260dd96cc5501f1",
-      "edits": 18,
+      "source_sha256": "998ff100821bbd2a4a35aba65a69a092c6d9ea8c3d2850283d36d51a037f7e10",
+      "output_sha256": "74052ede023f7d483e774f892de4317cf2b5af04e7792a59ddd1584e4f912752",
+      "edits": 42,
       "code_diagnostics": 0
     },
     {
@@ -76,8 +76,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "642fdd4d5eaa692204b497db24b296641c591aa0064e3ffcc3a90063b5145e4f",
-      "output_sha256": "070d2d8836661426c6baa1c09d44ecacad4428699350dc34a019a425312b0af8",
+      "source_sha256": "02e41fd96aa8b14ec713f060f48fe15d723c913393021a648775b0e0e41b1f8b",
+      "output_sha256": "4482edadf3d1d5072a526366760cce856b00449d4d8144f243ac4dbbef82c08c",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -148,9 +148,9 @@
     {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "daa0f2b701d7c579b2e140d23d3b6836cddf78cec295b2a1ee1d311fc0ef92f0",
-      "output_sha256": "46ded79d0bd41f8204547dc98be0ed248b43ec2275e19d64b2b6ef8bcd5fed2d",
-      "edits": 48,
+      "source_sha256": "dc2703216ca190f9672b47ef47b8c5704157ff5de1a4fb427cc524505b347443",
+      "output_sha256": "91dc8a185f752d6af4f240a54d2d417d855d42fd07e248380d89ea6b562d6e2f",
+      "edits": 71,
       "code_diagnostics": 0
     },
     {
@@ -159,6 +159,14 @@
       "source_sha256": "075b83c78d9548b11b40317cbb03c3dac3a168c7479e62ce76462aa278536c33",
       "output_sha256": "7f01983e779dc109d0ab35f2239ce2961e25e1a18338b9d9f400c94cf2e0c0ca",
       "edits": 64,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_exec.metta",
+      "output": "lib_exec.metta",
+      "source_sha256": "d4aabbaaf68957fe93ab7e94f9be1fdd847efb591ca330b84d0e9355c86f0de7",
+      "output_sha256": "50f27eb4197dff17c90f3e33e034b2852a096c9862d86d47f4a83acc964e7d4a",
+      "edits": 4,
       "code_diagnostics": 0
     },
     {
@@ -175,6 +183,14 @@
       "source_sha256": "284a19813e09aecf8df318fb003fca0b06b4b1c99ef7a57bd072877b307979df",
       "output_sha256": "298ead07e89fbbed5a56d5fbe2a60cfe38f9fbb1e34225ef1f28c8b306cd41f1",
       "edits": 5,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "lib_module.metta",
+      "output": "lib_module.metta",
+      "source_sha256": "5e83191898b324b5341c74bb7d65985554c50ee82d67fafeb8a49407b01a825b",
+      "output_sha256": "34dfb9ec677d1afb9951e2bc82d5be95a7956d8dc85d0bc13a2e8f9e596c5a09",
+      "edits": 17,
       "code_diagnostics": 0
     },
     {
@@ -268,9 +284,9 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "7f696bb6261f957b4060598c053ca14072ddc7b6cf7fabef9381e8944300d7f5",
-      "output_sha256": "b462a772ba799825e0b4b76d10f0325bddafa28963fd41849edb8d81a29a054d",
-      "edits": 39,
+      "source_sha256": "0baabef9752727e87e9d86fd222cb1c53773d4f3d487c6299c6e1aa00953a1da",
+      "output_sha256": "242ab31aaf6124c7b8282672bcaf83e81fa58079c81634c60198f36016263444",
+      "edits": 41,
       "code_diagnostics": 0
     },
     {
@@ -300,8 +316,8 @@
     {
       "source": "llm.metta",
       "output": "llm.metta",
-      "source_sha256": "615715f63a070059abece28187e9503e32e441c81c90680b6337c95b4faa39a3",
-      "output_sha256": "26a6ed6356b1bd1995dfe66a4ca795580bde3bbad5f904011beb050edc6152b2",
+      "source_sha256": "37d709fba376a1bbdee6a9fcfe95f16e130081739d9c3afd46bbeca3b2337ee5",
+      "output_sha256": "91c75d560d724e2bea5e4cb720192b229ecf50d95ee998ab2354677e2f75b4c1",
       "edits": 123,
       "code_diagnostics": 0
     },
@@ -322,6 +338,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "megalodon.metta",
+      "output": "megalodon.metta",
+      "source_sha256": "c4d1bad6e287e641c4fa1eb2fe65a2051afd62681ce05b9afb304d363d20a4bf",
+      "output_sha256": "c6ff86d607aff93744426d57d30a3b7b041e6aa940c6467dbd953846c7a4ae10",
+      "edits": 113,
+      "code_diagnostics": 0
+    },
+    {
       "source": "mork.metta",
       "output": "mork.metta",
       "source_sha256": "535d4932b0d9acc2e2500670c037ba627cd12e2022b86a8c55ad2d62a9dd4072",
@@ -332,9 +356,9 @@
     {
       "source": "native_history.metta",
       "output": "native_history.metta",
-      "source_sha256": "4b848a7e0997191b94148e3c7763f23b9813c3c4ebeb1a9fc5d3882add3fa5a9",
-      "output_sha256": "f1f9c3d357f242f2bd3ab540c0ff111f4789242250c2bf23d195ace095239a13",
-      "edits": 12,
+      "source_sha256": "953c5364eb43d7acd3b040741ac017dd52d213779a4cf8837989898f6345d56c",
+      "output_sha256": "0605a7a403bba87d7943820e9c470af2ac02db81fc83b01a495faa64671b52d7",
+      "edits": 17,
       "code_diagnostics": 0
     },
     {
@@ -364,9 +388,9 @@
     {
       "source": "path.metta",
       "output": "path.metta",
-      "source_sha256": "e07b4f6842008d8a3c9258d4ac5696d83ee08bed1d0f6fe6a05ce131a2a25056",
-      "output_sha256": "e5862262126c13c1a0c34bcd14b77ba71c38cbfd9a23c6d9b5d545f251e9391f",
-      "edits": 1,
+      "source_sha256": "6e7c294de99da9fc15e0b12fcdd3299f2c9a73d23c2843eb8a00e24f76190b6c",
+      "output_sha256": "3c4b75f6686cdde14ed89d4764e5e4d93be0e6906532a1279b4d6cff905aa4c6",
+      "edits": 5,
       "code_diagnostics": 0
     },
     {
@@ -404,9 +428,25 @@
     {
       "source": "proc.metta",
       "output": "proc.metta",
-      "source_sha256": "9621695d0ae5734562a72e336c2919aa00c488a3ad24b26f6f8319d2da13985c",
-      "output_sha256": "0ac4e4015d8d6a03d48bcc0929962a1858811e37787aa1f7fe93abf25f1cef14",
+      "source_sha256": "9bcd10eca78ee2f34bd3e678065605f64cc50f0cad4741c1ecd79de762305a7f",
+      "output_sha256": "4e2319215860a3450623c60ff72471eee92c32dcd0d7bd3ffe6bb6e65cdb1e3a",
       "edits": 2,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "seal.metta",
+      "output": "seal.metta",
+      "source_sha256": "4f97e1044135d8f8ffe5734ae28e38babaff08ffd3ce840481a0614ff6bef52a",
+      "output_sha256": "b3e7e2ce9012c8b6fdd5e7bec7d472d764e453144cfd9679512e001a04c159f0",
+      "edits": 27,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "siwc.metta",
+      "output": "siwc.metta",
+      "source_sha256": "7476b18d45c471aa69d8c6d2eff3fdd770069923765840c4b5a7a9485013ebb1",
+      "output_sha256": "a93bf0c72c7b7ce3bca6fd148093eb896c8b7d057fa7bce4cbdbdbdf8bc5f6a2",
+      "edits": 1,
       "code_diagnostics": 0
     },
     {
@@ -428,25 +468,25 @@
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "67a236590bbd45d3e0b3d7a0b6fac1f92bea6652147aad8e6b17c5c86b5358e0",
-      "output_sha256": "218a50d90625b640aebb8d112cd31d759a3323b268166d4be6197408ccbc1569",
+      "source_sha256": "84d231ee080820283c046d8afa804d42d1496837881ae9425eebc2631ba1d733",
+      "output_sha256": "2c48512ff5254d844152b9fa35da1bb1feedb2a8377fe4765f15ff0cf648be6e",
       "edits": 62,
       "code_diagnostics": 2
     },
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "3779d3ba07f9a7e7c76fec34bce68588451c6b060a4cef03c5d057a6fc073be8",
-      "output_sha256": "cd3222bf8aa20a5a2197174c77ab5b4b66818afd8e9d69c124cad2ea537fb51a",
-      "edits": 33,
+      "source_sha256": "5d2b3f73f072d77c820e6a43c65486fe30e80ed117f1c88eb0207b2804f69405",
+      "output_sha256": "80e7f06e90058449c4c0869e289143d8119f5b446b612e035c1290d0a209f1e8",
+      "edits": 41,
       "code_diagnostics": 0
     },
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "17a33612e3294b9e52b586f26bf475305e812ece3782ed419390edb5257eb149",
-      "output_sha256": "3b161c1ebd464618f75f2418f8215924b669b2b37bab46d650aa284c73f54ece",
-      "edits": 16,
+      "source_sha256": "1725ab7dfbc8792e9bcab35c4c06ea838a15282736c8f539f77230b1eccd919c",
+      "output_sha256": "618a1de582a6f35636854f816c9e4e683f13a15d336f83376e072ba52c486fd9",
+      "edits": 18,
       "code_diagnostics": 0
     },
     {
@@ -556,6 +596,11 @@
       "source_sort_values": "closed-strings"
     },
     {
+      "source": "holkernel.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "30b22ff7f2e1104b3f317d6cb6750395dbfd122afe1b9a37ae4b620db1dd186f"
+    },
+    {
       "source": "json.metta",
       "generator": "library_spelling.py",
       "output_sha256": "c01e96db8827dc2416b778bcf388e530ada715d2eeb40a10086b956c32aeb0bf"
@@ -564,6 +609,16 @@
       "source": "lib_tensor.metta",
       "generator": "library_spelling.py",
       "output_sha256": "36534cb46b69778be9080400b28fa2f4467a88cfa9961fd2681a8c7c44d11c6b"
+    },
+    {
+      "source": "mm0kernel.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "b9108990eb3214f9ddd48152d6a2b46918ea2d0fdfe4a6bd1d288097fde7689a"
+    },
+    {
+      "source": "re.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "049085eb033f7f7875084e69e0ed49e2dc423afb4402982bdb896c8e79dffc26"
     }
   ]
 }

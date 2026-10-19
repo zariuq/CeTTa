@@ -52,10 +52,19 @@
      (case (__cetta_lib_system_exit_with_code $code)
        (($result (return $result))))))
 
+(= (system:write $stream $bytes)
+   (function (case (__cetta_lib_system_write $stream $bytes)
+       (($result (return $result))))))
+
 (= (system:cwd)
    (function
      (case (__cetta_lib_system_cwd ())
        (($result (return $result))))))
+
+; The canonical directory of the top-level entry file, independent of imports.
+(= (system:entry-directory)
+   (function (case (__cetta_lib_system_entry_directory ())
+     (($result (return $result))))))
 
 (= (system:monotonic-ns)
    (function

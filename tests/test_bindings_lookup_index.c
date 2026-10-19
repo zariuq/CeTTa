@@ -33,6 +33,121 @@ static VarId test_id(uint32_t ordinal) {
     return UINT64_C(0x10000000) + (VarId)ordinal * UINT64_C(0x10001);
 }
 
+/* Exercise both logical merge routes without an evaluator linked in. Scope
+ * selection, old receipt data and rollback belong to the common product. */
+static void test_prime_occurrence_product(Arena *arena, unsigned mode, bool live) {
+    Bindings source, destination, before, refused;
+    bindings_init(&source); bindings_init(&destination);
+    bindings_init(&before); bindings_init(&refused);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    PrimeNeedRecording *group = NULL;
+    PrimeNeedRecordingScope outer = {0}, inner = {0};
+    PrimeNeedReceipt receipt = {0}, empty_slice = {0};
+    bool demoted = false;
+#else
+    (void)mode;
+#endif
+    PrimeNeedSnapshot initial = {0}, allocated;
+    uint64_t cell_id = 0u;
+    Atom *origin = atom_int(arena, 7);
+    StateCell *cell = arena_alloc(arena, sizeof(*cell));
+    *cell = (StateCell){.value = atom_int(arena, 11)};
+    PrimeNeedBranchState branch = {0};
+    CettaWeightLedger weights = {0};
+    bool prepared = prime_need_snapshot_begin(&initial) &&
+        prime_need_snapshot_allocate(arena, &initial, origin, &allocated, &cell_id) &&
+        prime_need_branch_state_write(arena, &branch, cell, cell->value,
+            atom_int(arena, 19), &branch) &&
+        cetta_weight_ledger_append(arena, &weights, 201u, 203u,
+            atom_int(arena, 17), &weights) &&
+        bindings_add_id(&destination, test_id(7700u), SYMBOL_ID_NONE, atom_int(arena, 14)) &&
+        bindings_refresh_occurrence_token(&source) &&
+        bindings_refresh_occurrence_token(&destination);
+    CHECK(prepared, "complete occurrence-product merge fixture");
+    if (!prepared) goto done;
+    *bindings_need_mut(&source) = allocated;
+    *bindings_branch_state_mut(&source) = branch;
+    *bindings_weight_mut(&source) = weights;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (mode) {
+        group = prime_need_recording_new((PrimeNeedRecordingLimits){16u, 65536u, 1u, 16u});
+        prepared = group && prime_need_recording_reserve(group, NULL, 16u, 65536u, &receipt) &&
+            prime_need_receipt_observe_cell(arena, &receipt, allocated.session_id,
+                cell_id, origin, &receipt);
+        CHECK(prepared, "recorded source context exists before merge");
+        if (!prepared) goto done;
+        *bindings_receipt_mut(&source) = receipt;
+        if (mode == 1u || mode == 3u) prime_need_recording_enter(&outer, &receipt);
+        if (mode == 3u) prime_need_recording_enter(&inner, &empty_slice);
+        if (mode == 4u) {
+            *bindings_receipt_mut(&destination) = receipt;
+            prime_need_recording_demote(group);
+            demoted = true;
+        }
+    }
+#endif
+    uint64_t left = bindings_occurrence_token(&destination);
+    uint64_t right = bindings_occurrence_token(&source);
+    bool merged = live ? bindings_try_merge_live(&destination, &source)
+                       : bindings_try_merge(&destination, &source);
+    PrimeNeedCellView view;
+    Atom *state_value = NULL;
+    const CettaWeightLedger *actual_weights = bindings_weight_view(&destination);
+    CHECK(merged && prime_need_snapshot_lookup(bindings_need_view(&destination), cell_id, &view) &&
+        view.origin == origin && prime_need_branch_state_value(
+            bindings_branch_state_view(&destination), cell, &state_value) &&
+        atom_eq(state_value, atom_int(arena, 19)) && atom_eq(cell->value, atom_int(arena, 11)) &&
+        actual_weights->length == 1u && actual_weights->last->occurrence == 201u &&
+        atom_eq(actual_weights->last->value, atom_int(arena, 17)) &&
+        bindings_occurrence_token(&destination) != 0u &&
+        bindings_occurrence_token(&destination) != left &&
+        bindings_occurrence_token(&destination) != right,
+        "merge retains Need, shadow state, weights and exact union identity");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    CHECK(prime_need_receipt_present(bindings_receipt_view(&destination)) ==
+        (mode == 1u || mode == 2u),
+        "scope refusal and erasure stay distinct from carried history with recording off");
+    if (mode == 3u) {
+        prime_need_recording_leave(&inner);
+        merged = live ? bindings_try_merge_live(&destination, &source)
+                      : bindings_try_merge(&destination, &source);
+        CHECK(merged && prime_need_receipt_present(bindings_receipt_view(&destination)),
+            "leaving refused inner scope restores the standalone merge operation");
+    }
+#endif
+    prepared = bindings_clone(&before, &destination) &&
+        prime_need_snapshot_begin(bindings_need_mut(&refused));
+    CHECK(prepared, "refused world merge fixture");
+    if (!prepared) goto done;
+    merged = live ? bindings_try_merge_live(&destination, &refused)
+                  : bindings_try_merge(&destination, &refused);
+    CHECK(!merged && bindings_eq(&destination, &before),
+        "world refusal preserves the complete existing occurrence product");
+    bindings_free(&refused); bindings_init(&refused);
+    prepared = bindings_clone(&refused, &source) &&
+        bindings_add_id(&refused, test_id(7700u), SYMBOL_ID_NONE, atom_int(arena, 15));
+    CHECK(prepared, "logical refusal after product merge fixture");
+    if (!prepared) goto done;
+    merged = live ? bindings_try_merge_live(&destination, &refused)
+                  : bindings_try_merge(&destination, &refused);
+    CHECK(!merged && bindings_eq(&destination, &before),
+        "logical refusal rolls back all merged product components");
+done:
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    prime_need_recording_leave(&inner);
+    prime_need_recording_leave(&outer);
+#endif
+    bindings_free(&refused); bindings_free(&before);
+    bindings_free(&destination); bindings_free(&source);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (group) {
+        if (demoted) prime_need_recording_carrier_release(group);
+        else prime_need_recording_release(group);
+    }
+#endif
+}
+
+
 static void test_variable_inventory(Arena *arena) {
     CettaVarMap map = {0};
     Atom *values[512];
@@ -3869,6 +3984,10 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+
+    for (unsigned mode = 0u; mode < (CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS ? 5u : 1u); mode++)
+        for (unsigned route = 0u; route < 2u; route++)
+            test_prime_occurrence_product(&arena, mode, route != 0u);
 
     test_dense_term_instantiation(&arena);
     test_arena_retained_owners();

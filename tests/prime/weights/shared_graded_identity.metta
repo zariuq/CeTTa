@@ -6,6 +6,14 @@
 (= (weigh-by-self $x) $x (where $x))
 (= (paired $x) (Pair $x $x))
 
+; A failed activation spends work but contributes to neither later answer.
+; The equal returned values still have separate source contributions.
+(=w (graded-attempt) (empty) 11)
+(=w (graded-attempt) V 3)
+(=w (graded-attempt) V 5)
+(= (plain-attempt) V)
+(=w (unit-attempt) V 1)
+
 !(weight:read (algebra 0 1 + *) (weigh-by-self (weigh-by-self 7)))
 
 ; The two uses of x share the one selected argument contribution.

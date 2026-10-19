@@ -1,0 +1,57 @@
+Module RegexCore {
+  Theory RegexDerivatives() {
+    Empty
+    Types {
+      Scalar = String;
+      Regex;
+      Word;
+      Bool;
+    }
+    Terms {
+      "rx:zero".  |- "rx:zero" : Regex;
+      "rx:epsilon".  |- "rx:epsilon" : Regex;
+      "rx:literal". a:Scalar |- "rx:literal" a : Regex;
+      "rx:any".  |- "rx:any" : Regex;
+      "rx:union". p:Regex, q:Regex |- "rx:union" p q : Regex;
+      "rx:concat". p:Regex, q:Regex |- "rx:concat" p q : Regex;
+      "rx:star". p:Regex |- "rx:star" p : Regex;
+      "rx:false".  |- "rx:false" : Bool;
+      "rx:true".  |- "rx:true" : Bool;
+      "rx:nil".  |- "rx:nil" : Word;
+      "rx:cons". a:Scalar, rest:Word |- "rx:cons" a rest : Word;
+      "rx:nullable". p:Regex |- "rx:nullable" p : Bool;
+      "rx:derivative". a:Scalar, p:Regex |- "rx:derivative" a p : Regex;
+      "rx:match". p:Regex, input:Word |- "rx:match" p input : Bool;
+      "rx:or". left:Bool, right:Bool |- "rx:or" left right : Bool;
+      "rx:and". left:Bool, right:Bool |- "rx:and" left right : Bool;
+    }
+    Rewrites {
+      "OR-FF".  |- "rx:or"("rx:false"(), "rx:false"()) ~> "rx:false"();
+      "OR-FT".  |- "rx:or"("rx:false"(), "rx:true"()) ~> "rx:true"();
+      "OR-TF".  |- "rx:or"("rx:true"(), "rx:false"()) ~> "rx:true"();
+      "OR-TT".  |- "rx:or"("rx:true"(), "rx:true"()) ~> "rx:true"();
+      "AND-FF".  |- "rx:and"("rx:false"(), "rx:false"()) ~> "rx:false"();
+      "AND-FT".  |- "rx:and"("rx:false"(), "rx:true"()) ~> "rx:false"();
+      "AND-TF".  |- "rx:and"("rx:true"(), "rx:false"()) ~> "rx:false"();
+      "AND-TT".  |- "rx:and"("rx:true"(), "rx:true"()) ~> "rx:true"();
+      "NULL-ZERO".  |- "rx:nullable"("rx:zero"()) ~> "rx:false"();
+      "NULL-EPSILON".  |- "rx:nullable"("rx:epsilon"()) ~> "rx:true"();
+      "NULL-LITERAL". a:Scalar |- "rx:nullable"("rx:literal"(a)) ~> "rx:false"();
+      "NULL-ANY".  |- "rx:nullable"("rx:any"()) ~> "rx:false"();
+      "NULL-UNION". p:Regex, q:Regex, left:Bool, right:Bool, result:Bool | "rx:nullable"(p) ~> left, "rx:nullable"(q) ~> right, "rx:or"(left, right) ~> result |- "rx:nullable"("rx:union"(p, q)) ~> result;
+      "NULL-CONCAT". p:Regex, q:Regex, left:Bool, right:Bool, result:Bool | "rx:nullable"(p) ~> left, "rx:nullable"(q) ~> right, "rx:and"(left, right) ~> result |- "rx:nullable"("rx:concat"(p, q)) ~> result;
+      "NULL-STAR". p:Regex |- "rx:nullable"("rx:star"(p)) ~> "rx:true"();
+      "DERIV-ZERO". a:Scalar |- "rx:derivative"(a, "rx:zero"()) ~> "rx:zero"();
+      "DERIV-EPSILON". a:Scalar |- "rx:derivative"(a, "rx:epsilon"()) ~> "rx:zero"();
+      "DERIV-LITERAL-EQ". a:Scalar, expected:Scalar | "rx:scalar_eq"(expected, a) |- "rx:derivative"(a, "rx:literal"(expected)) ~> "rx:epsilon"();
+      "DERIV-LITERAL-NE". a:Scalar, expected:Scalar | "rx:scalar_ne"(expected, a) |- "rx:derivative"(a, "rx:literal"(expected)) ~> "rx:zero"();
+      "DERIV-ANY". a:Scalar |- "rx:derivative"(a, "rx:any"()) ~> "rx:epsilon"();
+      "DERIV-UNION". a:Scalar, p:Regex, q:Regex, dp:Regex, dq:Regex | "rx:derivative"(a, p) ~> dp, "rx:derivative"(a, q) ~> dq |- "rx:derivative"(a, "rx:union"(p, q)) ~> "rx:union"(dp, dq);
+      "DERIV-CONCAT-NULLABLE". a:Scalar, p:Regex, q:Regex, dp:Regex, dq:Regex | "rx:nullable"(p) ~> "rx:true"(), "rx:derivative"(a, p) ~> dp, "rx:derivative"(a, q) ~> dq |- "rx:derivative"(a, "rx:concat"(p, q)) ~> "rx:union"("rx:concat"(dp, q), dq);
+      "DERIV-CONCAT-NONNULLABLE". a:Scalar, p:Regex, q:Regex, dp:Regex | "rx:nullable"(p) ~> "rx:false"(), "rx:derivative"(a, p) ~> dp |- "rx:derivative"(a, "rx:concat"(p, q)) ~> "rx:concat"(dp, q);
+      "DERIV-STAR". a:Scalar, p:Regex, dp:Regex | "rx:derivative"(a, p) ~> dp |- "rx:derivative"(a, "rx:star"(p)) ~> "rx:concat"(dp, "rx:star"(p));
+      "MATCH-NIL". p:Regex, result:Bool | "rx:nullable"(p) ~> result |- "rx:match"(p, "rx:nil"()) ~> result;
+      "MATCH-CONS". p:Regex, a:Scalar, rest:Word, next:Regex, result:Bool | "rx:derivative"(a, p) ~> next, "rx:match"(next, rest) ~> result |- "rx:match"(p, "rx:cons"(a, rest)) ~> result;
+    }
+  }
+}

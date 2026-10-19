@@ -1,6 +1,11 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#if CETTA_PROVENANCE_ASSERT
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "atom.h"
 #include "symbol.h"
@@ -23,6 +28,39 @@ static void assert_view_summary(Arena *arena, Atom *view) {
     assert(view->structural_facts == folded->structural_facts);
 }
 
+#if CETTA_PROVENANCE_ASSERT
+static void assert_provenance_refusals(Arena *nursery, Atom *young,
+                                       Atom *old, Atom *unrelated) {
+    for (unsigned control = 0u; control < 3u; control++) {
+        pid_t child = fork();
+        assert(child >= 0);
+        if (child == 0) {
+            assert(freopen("/dev/null", "w", stderr));
+            if (control == 0u) {
+                /* Persistent publication must not inherit the copy-only
+                 * licence to borrow either transient generation. */
+                cetta_provenance_assert_not_transient(young, "test.persistent");
+            } else if (control == 1u) {
+                cetta_provenance_assert_not_transient_except(
+                    old, "test.single-owner", nursery);
+            } else {
+                /* A forged generation bit still cannot hide an unrelated
+                 * transient child from the copy diagnostic. */
+                Atom *items[] = {unrelated};
+                Atom *forged = atom_expr(nursery, items, 1u);
+                forged->structural_facts |= ATOM_STRUCTURAL_GENERATION_CLOSED;
+                (void)atom_deep_copy_single(nursery, forged);
+            }
+            _exit(0);
+        }
+        int status = 0;
+        assert(waitpid(child, &status, 0) == child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    }
+    puts("PASS: generation borrowing does not weaken persistent provenance");
+}
+#endif
+
 int main(void) {
     SymbolTable symbols;
     Arena nursery;
@@ -43,6 +81,9 @@ int main(void) {
     arena_set_hashcons(&tenured, NULL);
     arena_set_hashcons(&scratch, NULL);
     arena_set_hashcons(&elsewhere, NULL);
+    arena_set_runtime_kind(&nursery, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_runtime_kind(&tenured, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    arena_set_runtime_kind(&elsewhere, CETTA_ARENA_RUNTIME_KIND_EVAL);
     arena_set_older_generation(&nursery, &tenured);
     assert(nursery.older_identity == tenured.identity);
 
@@ -64,6 +105,19 @@ int main(void) {
     assert(atom_settled_for_arena(&nursery, old_list));
     assert(!atom_settled_for_arena(&tenured, young));
     assert(!atom_settled_for_arena(&elsewhere, old_list));
+
+#if CETTA_PROVENANCE_ASSERT
+    assert_provenance_refusals(
+        &nursery, young, old_list, atom_int(&elsewhere, 11));
+#endif
+
+    assert(atom_deep_copy_single(&nursery, young) == young);
+    assert(atom_deep_copy_single(&nursery, old_list) == old_list);
+    AtomDeepCopySession *session = atom_deep_copy_session_new(&nursery);
+    assert(session);
+    assert(atom_deep_copy_session_copy(session, young) == young);
+    assert(atom_deep_copy_session_copy(session, old_list) == old_list);
+    atom_deep_copy_session_free(session);
 
     /* A copy into the nursery shares what is settled there and copies the
      * rest; the source's arena can then be released. */

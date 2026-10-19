@@ -1,4 +1,4 @@
-; PeTTa's car-atom and cdr-atom are total: anything but a non-empty
+; PeTTa 1.0.6's car-atom and cdr-atom are total: anything but a non-empty
 ; expression gives (), an ordinary value.  Each result is collected, so a
 ; missing answer shows as () rather than (()).
 !(test (collapse (car-atom ())) (()))

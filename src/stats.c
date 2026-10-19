@@ -2,8 +2,14 @@
 #include "stats.h"
 #include "space.h"
 #include "symbol.h"
+#include "registered_symbols.h"
+#include "petta_libpl.h"
 
 #include <limits.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+#include <stdatomic.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -970,6 +976,18 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "owned-execution-fold-step",
     "owned-execution-storage-peak",
     "owned-execution-copy-bytes",
+    "atom-transport-node",
+    "atom-transport-edge-visit",
+    "atom-transport-metadata-alloc-bytes",
+    "atom-transport-metadata-free-bytes",
+    "space-disc-truncated-subtree",
+    "space-private-reset",
+    "space-retired-occurrence-release-bytes",
+    "term-order-pair-visit",
+    "term-order-equal-reuse",
+    "term-order-frontier-peak",
+    "term-order-product-pair",
+    "term-order-product-edge",
     "symbol-owned-count",
     "symbol-data-count",
     "symbol-retired-count",
@@ -985,18 +1003,6 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "managed-symbol-allocated-bytes",
     "hashcons-thread-entries",
     "hashcons-thread-index-bytes",
-    "atom-transport-node",
-    "atom-transport-edge-visit",
-    "atom-transport-metadata-alloc-bytes",
-    "atom-transport-metadata-free-bytes",
-    "space-disc-truncated-subtree",
-    "space-private-reset",
-    "space-retired-occurrence-release-bytes",
-    "term-order-pair-visit",
-    "term-order-equal-reuse",
-    "term-order-frontier-peak",
-    "term-order-product-pair",
-    "term-order-product-edge",
     "term-match-subject-view",
     "term-match-pair-visit",
     "match-path-count-admission",
@@ -1028,6 +1034,99 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-marked-row",
     "space-mark-settle",
     "space-mark-settle-row",
+    "registered-name-count",
+    "registered-name-bytes",
+    "heap-in-use-bytes",
+    "space-tracked-count",
+    "space-shadow-unreached-count",
+    "petta-libpl-eval-state-live",
+    "bindings-frame-storage-bytes",
+    "bindings-frame-storage-bytes-peak",
+    "open-equation-joint-rows-completed",
+    "open-equation-joint-rows-declined",
+    "petta-translation-value-node",
+    "petta-translation-value-reuse",
+    "open-equation-program-compile",
+    "open-equation-program-append-row",
+    "open-equation-program-host-read",
+    "open-equation-program-host-reuse",
+    "open-equation-program-space-reuse",
+    "prepared-map-safety-check",
+    "prepared-map-safety-reuse",
+    "petta-type-inert-guard",
+    "petta-type-inert-defer",
+    "petta-contract-version-compiled",
+    "petta-contract-version-entry",
+    "petta-contract-version-refused",
+    "prepared-pure-list-carrier-cell-read",
+    "petta-equation-activation-plan-declined-no-template",
+    "atom-deep-copy-recorded-in-place",
+    "atom-deep-copy-recorded-in-table",
+    "match-native-exact-occurrences",
+    "space-exact-frontier-certified",
+    "arena-ledger-other-live",
+    "arena-ledger-other-live-peak",
+    "arena-ledger-other-held-bytes",
+    "arena-ledger-other-held-bytes-peak",
+    "arena-ledger-persistent-live",
+    "arena-ledger-persistent-live-peak",
+    "arena-ledger-persistent-held-bytes",
+    "arena-ledger-persistent-held-bytes-peak",
+    "arena-ledger-eval-live",
+    "arena-ledger-eval-live-peak",
+    "arena-ledger-eval-held-bytes",
+    "arena-ledger-eval-held-bytes-peak",
+    "arena-ledger-scratch-live",
+    "arena-ledger-scratch-live-peak",
+    "arena-ledger-scratch-held-bytes",
+    "arena-ledger-scratch-held-bytes-peak",
+    "arena-ledger-survivor-live",
+    "arena-ledger-survivor-live-peak",
+    "arena-ledger-survivor-held-bytes",
+    "arena-ledger-survivor-held-bytes-peak",
+    "arena-ledger-cursor-live",
+    "arena-ledger-cursor-live-peak",
+    "arena-ledger-cursor-held-bytes",
+    "arena-ledger-cursor-held-bytes-peak",
+    "arena-ledger-space-live",
+    "arena-ledger-space-live-peak",
+    "arena-ledger-space-held-bytes",
+    "arena-ledger-space-held-bytes-peak",
+    "arena-stock-bytes",
+    "arena-stock-bytes-peak",
+    "open-equation-cursor-live",
+    "open-equation-cursor-live-peak",
+    "space-live",
+    "space-live-peak",
+    "space-struct-bytes",
+    "space-struct-bytes-peak",
+    "space-init-heap-bytes",
+    "frame-identity-mint",
+    "frame-identity-free",
+    "frame-identity-live",
+    "frame-identity-live-peak",
+    "fresh-var-base-mint",
+    "symbol-table-entries",
+    "petta-choice-depth-peak",
+    "runtime-statistics-recorded",
+    "open-equation-entry-guard-refuted",
+    "petta-libpl-eval-state-live-peak",
+    "petta-libpl-eval-pruned",
+    "petta-choice-heap-collections",
+    "petta-choice-heap-major-collections",
+    "petta-choice-heap-collection-declined",
+    "open-equation-cursor-versions-live",
+    "open-equation-cursor-versions-live-peak",
+    "open-equation-programs-live",
+    "open-equation-programs-live-peak",
+    "open-equation-minor-collections",
+    "open-equation-major-collections",
+    "open-equation-minor-collections-declined",
+    "open-equation-major-collections-declined",
+    "open-equation-promoted-bytes",
+    "open-equation-old-bytes-peak",
+    "open-equation-region-at-collection-bytes-peak",
+    "open-equation-major-survivor-bytes-peak",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -1051,6 +1150,9 @@ void cetta_runtime_stats_reset(void) {
 void cetta_runtime_stats_enable(void) {
     pthread_mutex_lock(&g_runtime_stats_mutex);
     g_runtime_stats_enabled = true;
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    g_runtime_counters[CETTA_RUNTIME_COUNTER_RUNTIME_STATISTICS_RECORDED] = 1u;
+#endif
     pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
@@ -1142,6 +1244,30 @@ void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value)
     pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
+/* A gauge counts only resources its owner charged while statistics were
+ * enabled, and each owner returns exactly its own charges, so a gauge never
+ * falls below zero; the guard keeps a broken charge from wrapping it. */
+void cetta_runtime_stats_gauge_add(CettaRuntimeCounter gauge,
+                                   CettaRuntimeCounter peak, int64_t delta) {
+    if ((uint32_t)gauge >= CETTA_RUNTIME_COUNTER_COUNT ||
+        (uint32_t)peak >= CETTA_RUNTIME_COUNTER_COUNT || delta == 0)
+        return;
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    if (__builtin_expect(!g_runtime_stats_enabled, 1)) {
+        pthread_mutex_unlock(&g_runtime_stats_mutex);
+        return;
+    }
+    uint64_t value = g_runtime_counters[gauge];
+    if (delta > 0)
+        value += (uint64_t)delta;
+    else
+        value = (uint64_t)(-delta) > value ? 0u : value - (uint64_t)(-delta);
+    g_runtime_counters[gauge] = value;
+    if (value > g_runtime_counters[peak])
+        g_runtime_counters[peak] = value;
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
+}
+
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out) return;
     pthread_mutex_lock(&g_runtime_stats_mutex);
@@ -1173,6 +1299,22 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
         g_hashcons ? g_hashcons->used : 0u;
     out->counters[CETTA_RUNTIME_COUNTER_HASHCONS_THREAD_INDEX_BYTES] =
         hashcons_index_reserved_bytes(g_hashcons);
+    registered_symbols_live_totals(
+        &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_COUNT],
+        &out->counters[CETTA_RUNTIME_COUNTER_REGISTERED_NAME_BYTES]);
+    out->counters[CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE] =
+        petta_libpl_eval_states_live();
+#if defined(__GLIBC__) && \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+    /* Live bytes as the allocator sees them, unlike RSS, which keeps pages
+     * that were freed but not yet returned to the system. */
+    struct mallinfo2 heap = mallinfo2();
+    out->counters[CETTA_RUNTIME_COUNTER_HEAP_IN_USE_BYTES] =
+        (uint64_t)heap.uordblks + (uint64_t)heap.hblkhd;
+#endif
+    out->counters[CETTA_RUNTIME_COUNTER_SYMBOL_TABLE_ENTRIES] = g_symbols
+        ? atomic_load_explicit(&g_symbols->entry_len, memory_order_acquire)
+        : 0u;
 }
 
 uint64_t cetta_runtime_stats_survivor_role_total(

@@ -1,0 +1,125 @@
+!(import! &self langdef)
+
+(: module:assemble (-> Atom Atom Atom Atom Atom Atom Atom))
+(: __cetta_lib_module_assemble_v1 (-> Atom Atom Atom Atom Atom Atom Atom))
+(: module:inspect (-> Atom Atom))
+(: module:try-interpret (-> Atom Atom Atom Atom))
+(: __cetta_lib_module_interpret_v1 (-> Atom Atom Atom Atom))
+(: module:core (-> Atom Atom Atom))
+(: __cetta_lib_module_core_v1 (-> Atom Atom Atom))
+(: module:rewrite-rules (-> Atom Atom Atom))
+(: __cetta_lib_module_rewrite_rules_v1 (-> Atom Atom Atom))
+(: module:attach-layer (-> Atom Atom Atom Atom Atom Atom))
+(: __cetta_lib_module_attach_layer_v1 (-> Atom Atom Atom Atom Atom Atom))
+(: module:join-layers (-> Atom Atom Atom))
+(: __cetta_lib_module_join_layers_v1 (-> Atom Atom Atom))
+(: module:join-layers-over (-> Atom Atom Atom Atom))
+(: __cetta_lib_module_join_layers_over_v1 (-> Atom Atom Atom Atom))
+(: module:base-core (-> Atom Atom))
+(: __cetta_lib_module_base_core_v1 (-> Atom Atom))
+(: module:layer-fields (-> Atom Atom Atom))
+(: __cetta_lib_module_layer_fields_v1 (-> Atom Atom Atom))
+(: module:language (-> Atom Atom Atom Atom Atom))
+(: __cetta_lib_module_language_v1 (-> Atom Atom Atom Atom Atom))
+(: module:language-core (-> Atom Atom))
+(: __cetta_lib_module_language_core_v1 (-> Atom Atom))
+(: module:language-syntax (-> Atom Atom))
+(: __cetta_lib_module_language_syntax_v1 (-> Atom Atom))
+
+(= (module:assemble $module $theory $arguments $catalog $policy $instance)
+   (function
+     (chain (eval (__cetta_lib_module_assemble_v1 $module $theory $arguments $catalog $policy $instance))
+       $presentation (return $presentation))))
+
+(: module:document-from-ast (-> Atom Atom Atom))
+(: module:finish-read (-> Atom Atom Atom))
+
+(= (module:document-from-ast $source $ast)
+   (function
+     (chain (eval (__cetta_lib_module_document_v1 $source $ast))
+       $value (return $value))))
+
+(= (module:finish-read $source $result)
+   (function
+     (chain (eval (__cetta_lib_module_finish_v1 $source $result))
+       $value (return $value))))
+
+(= (module:read-text $reader $source $text)
+   (case $reader
+     ((ModulePortableV1 (__cetta_lib_module_read_portable_v1 $source text $text))
+      ($other (let $result (langdef:parser-parse-text $other $text)
+        (module:finish-read $source $result))))))
+
+(= (module:read-file $reader $source $path)
+   (case $reader
+     ((ModulePortableV1 (__cetta_lib_module_read_portable_v1 $source file $path))
+      ($other (let $result (langdef:parser-parse-file $other $path)
+        (module:finish-read $source $result))))))
+
+(= (module:inspect $value) $value)
+
+; Serialization is explicit; ordinary inspection performs no text work.
+(: module:write-text (-> Atom Atom Atom))
+(: __cetta_lib_module_write_portable_v1 (-> Atom Atom))
+(= (module:write-text ModulePortableV1 $value)
+   (function
+     (chain (eval (__cetta_lib_module_write_portable_v1 $value)) $text (return $text))))
+
+(= (module:try-interpret $required $supplied $method)
+   (function
+     (chain (eval (__cetta_lib_module_interpret_v1 $required $supplied $method))
+       $result (return $result))))
+
+(= (module:core $presentation $name)
+   (function
+     (chain (eval (__cetta_lib_module_core_v1 $presentation $name))
+       $value (return $value))))
+
+; Export core rules with their declaration origins. A consumer selects its
+; own search strategy, knowledge base and evidence interpretation.
+(= (module:rewrite-rules $presentation $name)
+   (function
+     (chain (eval (__cetta_lib_module_rewrite_rules_v1 $presentation $name))
+       $value (return $value))))
+
+; A raw declaration layer is authored by its own law-free LanguageDef.
+; Attachment admits the field terms once and leaves the base core unchanged.
+; Layer keys are portable origins, not parser-cache or handle identities.
+(= (module:attach-layer $base $key $schema $category $fields)
+   (function
+     (chain (eval (__cetta_lib_module_attach_layer_v1 $base $key $schema $category $fields))
+       $value (return $value))))
+
+(= (module:join-layers $left $right)
+   (function
+     (chain (eval (__cetta_lib_module_join_layers_v1 $left $right))
+       $value (return $value))))
+
+; Raw fields refer to their own schema, so they can accompany an explicitly
+; assembled target core unchanged. This does not assemble or license that core.
+(= (module:join-layers-over $target $left $right)
+   (function
+     (chain (eval (__cetta_lib_module_join_layers_over_v1 $target $left $right))
+       $value (return $value))))
+
+; Observation only: these operations neither admit terms nor compile parsers.
+(= (module:base-core $value)
+   (function
+     (chain (eval (__cetta_lib_module_base_core_v1 $value)) $core (return $core))))
+
+(= (module:layer-fields $value $key)
+   (function
+     (chain (eval (__cetta_lib_module_layer_fields_v1 $value $key)) $fields (return $fields))))
+
+(= (module:language $presentation $name $start $policy)
+   (function
+     (chain (eval (__cetta_lib_module_language_v1 $presentation $name $start $policy))
+       $value (return $value))))
+
+(= (module:language-core $language)
+   (function
+     (chain (eval (__cetta_lib_module_language_core_v1 $language)) $value (return $value))))
+
+(= (module:language-syntax $language)
+   (function
+     (chain (eval (__cetta_lib_module_language_syntax_v1 $language)) $value (return $value))))

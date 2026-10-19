@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "native/json_runtime_v1.h"
+#include "native/json_direct_v1.h"
 #include "symbol.h"
 
 #include <errno.h>
@@ -112,11 +113,14 @@ int main(int argc, char **argv) {
     }
 
     for (kernel_index = 0u;
-         kernel_index < sizeof(kernels) / sizeof(kernels[0]);
+         kernel_index <= sizeof(kernels) / sizeof(kernels[0]);
          kernel_index++) {
+        bool predictive = kernel_index == sizeof(kernels) / sizeof(kernels[0]);
+        const char *kernel_name = predictive ? "PredictiveDfaV1" :
+            cetta_json_kernel_v1_name(kernels[kernel_index]);
         arena_init(&arena);
         cetta_json_runtime_v1_default_limits(&limits);
-        limits.kernel = kernels[kernel_index];
+        if (!predictive) limits.kernel = kernels[kernel_index];
         parse_start = monotonic_ns();
         for (index = 0u; index < iterations; index++) {
             ArenaMark mark = arena_mark(&arena);
@@ -124,17 +128,21 @@ int main(int argc, char **argv) {
                 CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT;
             Atom *value = NULL;
             error[0] = '\0';
-            if (!cetta_json_runtime_v1_parse(
+            bool accepted = predictive ? cetta_json_direct_v1_parse(
+                    &arena, (const uint8_t *)input, sizeof(input) - 1u,
+                    false, false, 0u, &value, &status, error, sizeof(error)) :
+                cetta_json_runtime_v1_parse(
                     runtime, &arena, (const uint8_t *)input,
                     sizeof(input) - 1u, &limits, &value,
-                    &status, error, sizeof(error)) ||
+                    &status, error, sizeof(error));
+            if (!accepted ||
                 status != CETTA_JSON_RUNTIME_V1_OK || !value ||
                 value->kind != ATOM_EXPR || value->expr.len != 2u ||
                 !atom_is_symbol(value->expr.elems[0], "JsonObjectV1")) {
                 fprintf(
                     stderr,
                     "JSON %s parse failed at iteration %u: %s\n",
-                    cetta_json_kernel_v1_name(limits.kernel), index, error);
+                    kernel_name, index, error);
                 arena_free(&arena);
                 goto done_runtime;
             }
@@ -145,12 +153,12 @@ int main(int argc, char **argv) {
 
         printf("(JsonGsltRuntimeBench %s %u %" PRIu64 " %" PRIu64
                " %" PRIu64 " %u)\n",
-               cetta_json_kernel_v1_name(limits.kernel),
+               kernel_name,
                iterations,
-               preparation_end - preparation_start,
+               predictive ? UINT64_C(0) : preparation_end - preparation_start,
                parse_end - parse_start,
                (parse_end - parse_start) / iterations,
-               cetta_json_runtime_v1_table_build_count(runtime));
+               predictive ? 0u : cetta_json_runtime_v1_table_build_count(runtime));
     }
     exit_code = 0;
 

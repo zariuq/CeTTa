@@ -29,7 +29,7 @@
     (operator langdef:decimal-integer->number 1)
     (operator langdef:decimal-rational->value 1)
     (operator langdef:decimal-real->float 1)
-    (operator str:concat 2) (operator str:set 1) (operator str:set-member? 2)
+    (operator str:concat 2) (operator str:set 1) (operator str:is-set-member 2)
     (operator LangDef:IntegerValue 1)
     (operator LangDef:SameValue 0) (operator LangDef:DifferentValue 0)
     (operator tptp-compact:expression 1) (operator tptp-compact:list-value 1)
@@ -419,7 +419,7 @@
         (LCons (tptp-cert-v1:named ?id ?spelling) ?table)))) (body))
     (rule cert-fresh (head (metta-equation
       (tptp-cert-v1:fresh ?base ?used)
-      (tptp-cert-v1:fresh-at (str:set-member? (str:set ?used) ?base) ?base ?used))) (body))
+      (tptp-cert-v1:fresh-at (str:is-set-member (str:set ?used) ?base) ?base ?used))) (body))
     (rule cert-fresh-free (head (metta-equation
       (tptp-cert-v1:fresh-at False ?base ?used) ?base)) (body))
     ; The numbered search tries base_1, base_2, ...  Every taken candidate is
@@ -431,7 +431,7 @@
     (rule cert-fresh-numbered (head (metta-equation
       (tptp-cert-v1:fresh-numbered ?base ?used ?fuel ?k)
       (tptp-cert-v1:fresh-numbered-at
-        (str:set-member? (str:set ?used)
+        (str:is-set-member (str:set ?used)
           (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))
         ?base ?used ?fuel ?k))) (body))
     (rule cert-fresh-numbered-free (head (metta-equation
@@ -527,7 +527,7 @@
     ; it, that the vocabulary lacks.
     (rule cert-fresh-symbol (head (metta-equation
       (tptp-cert-v1:fresh-symbol ?base (tptp-cert-v1:scope (tptp-cert-v1:known ?set ?texts) ?names))
-      (tptp-cert-v1:fresh-symbol-at (str:set-member? ?set ?base) ?base ?set ?texts))) (body))
+      (tptp-cert-v1:fresh-symbol-at (str:is-set-member ?set ?base) ?base ?set ?texts))) (body))
     (rule cert-fresh-symbol-free (head (metta-equation
       (tptp-cert-v1:fresh-symbol-at False ?base ?set ?texts) ?base)) (body))
     ; As for variable names, the vocabulary's texts outlast the search.
@@ -537,7 +537,7 @@
     (rule cert-fresh-symbol-numbered (head (metta-equation
       (tptp-cert-v1:fresh-symbol-numbered ?base ?set ?fuel ?k)
       (tptp-cert-v1:fresh-symbol-numbered-at
-        (str:set-member? ?set
+        (str:is-set-member ?set
           (str:concat ?base (str:concat "_" (tptp-cert-v1:integer-text ?k))))
         ?base ?set ?fuel ?k))) (body))
     (rule cert-fresh-symbol-numbered-free (head (metta-equation

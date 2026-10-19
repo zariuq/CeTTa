@@ -44,6 +44,70 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static bool transient_plan_is_value(PettaProgram *program, Atom *atom,
+                                    PettaTranslationEnvironment *environment) {
+    const PettaPlanNode *plan = petta_program_plan_transient(program, atom, environment);
+    assert(plan);
+    return plan->role == PETTA_PLAN_VALUE;
+}
+
+static void test_transient_value_plan_lifetime(void) {
+    Arena young, old, syntax;
+    arena_init_detached(&young); arena_init_detached(&old); arena_init_detached(&syntax);
+    const Arena *sources[] = {&young, &old};
+    PettaTranslationEnvironment env = {
+        .source_arenas = sources, .source_arena_count = 2,
+        .host_identity = g_symbols,
+        .symbol_table_instance = symbol_table_instance_id(g_symbols),
+    };
+    PettaProgram *program = petta_program_new(); assert(program);
+    Space space; space_init(&space);
+    assert(petta_program_synchronize_space(program, &space));
+
+    Atom *node = atom_symbol(&young, "node");
+    Atom *plus = atom_symbol(&young, "+");
+    Atom *one = atom_int(&young, 1), *two = atom_int(&young, 2);
+    ArenaMark mark = arena_mark(&young);
+    Atom *before = atom_expr3(&young, node, one, two);
+    assert(transient_plan_is_value(program, before, &env));
+    assert(transient_plan_is_value(program, before, &env));
+    arena_reset(&young, mark);
+    Atom *after = atom_expr3(&young, plus, one, two);
+    assert(before == after);
+    assert(!transient_plan_is_value(program, after, &env));
+
+    Atom *tail = parse_one(&old, "(node 3 (node 2 (node 1 ())))");
+    assert(transient_plan_is_value(program, tail, &env));
+    arena_reset(&young, mark);
+    assert(transient_plan_is_value(program, tail, &env));
+    assert(transient_plan_is_value(program, atom_expr3(&young, node, one, tail), &env));
+
+    Atom *later = parse_one(&old, "(becomes-callable 7)");
+    assert(transient_plan_is_value(program, later, &env));
+    space_add(&space, parse_one(&syntax, "(= (becomes-callable $x) (+ $x 1))"));
+    assert(petta_program_synchronize_space(program, &space));
+    assert(!transient_plan_is_value(program, later, &env));
+    assert(!transient_plan_is_value(program, atom_expr3(&young, node, one, later), &env));
+    assert(!transient_plan_is_value(program, parse_one(&old, "($f 1)"), &env));
+    assert(!transient_plan_is_value(program, parse_one(&old, "(node (size (a b)))"), &env));
+    assert(!transient_plan_is_value(program, parse_one(&old, "(node (eval (quote (+ 1 2))))"), &env));
+
+    /* Recreating an arena at the same address is a distinct owner. */
+    arena_free(&old); arena_init_detached(&old);
+    assert(!transient_plan_is_value(program, parse_one(&old, "(node (+ 1 2))"), &env));
+
+    /* No C recursion in admission, even before any memo is warm. */
+    Atom *deep = atom_expr(&old, NULL, 0);
+    Atom *box = atom_symbol(&old, "opaque-box");
+    for (int i = 0; i < 100000; i++) deep = atom_expr2(&old, box, deep);
+    assert(transient_plan_is_value(program, deep, &env));
+    assert(transient_plan_is_value(program, deep, &env));
+    petta_program_free(program);
+    space_free(&space);
+    arena_free(&syntax); arena_free(&old); arena_free(&young);
+    puts("PASS: translation certificates reject address reuse and changed definitions; two generations and deep values remain valid");
+}
+
 static void test_type_policy_component(Arena *arena) {
     PettaTypeCall call;
     assert(petta_type_call_open(parse_one(arena, "(-> Number Atom Expression)"), 2u, &call));
@@ -3275,6 +3339,28 @@ static Atom *add_compiled_program_equation(
 
 /* Sharing and arena ownership are observable here through native pointers;
  * printing the represented tree would itself require exponential output. */
+static void inspect_open_cursor_storage(CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *program) {
+    CettaOpenEquationStats before,after;
+    cetta_open_equation_cursor_stats(cursor,&before);
+    CettaStorageCensus census={0};
+    cetta_open_equation_cursor_storage_census(cursor,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && !census.overflow && census.retained>0u);
+    bool cursor_found=false,program_found=false;
+    for(size_t i=0u;i<census.capacity;i++) if(census.slots[i].domain==CETTA_STORAGE_BLOCK) {
+        cursor_found|=census.slots[i].identity==cursor;
+        program_found|=census.slots[i].identity==program;
+    }
+    assert(cursor_found && program_found);
+    size_t retained=census.retained,objects=census.length;
+    cetta_open_equation_cursor_storage_census(cursor,&census);
+    cetta_open_equation_program_storage_census(program,&census);cetta_storage_finish(&census);
+    cetta_open_equation_cursor_stats(cursor,&after);
+    assert(!census.incomplete && census.retained==retained && census.length==objects &&
+        census.repeated>0u && !memcmp(&before,&after,sizeof(before)));
+    cetta_storage_census_free(&census);
+}
+
 static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) {
     PettaProgram *program = petta_program_new();
     assert(program);
@@ -3315,11 +3401,13 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
+    inspect_open_cursor_storage(cursor,compiled);
     Atom *result = NULL;
     Atom **values = NULL;
     assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     assert(result && values && values[0] == variable);
+    inspect_open_cursor_storage(cursor,compiled);
     cetta_open_equation_cursor_close(cursor);
     Atom *node = result;
     for (unsigned depth = 0u; depth < 32u; depth++) {
@@ -3577,6 +3665,112 @@ static uint32_t test_compiled_accept_host_value(
         count, true, 0u, &base));
     free(values);
     return base;
+}
+
+
+typedef struct {
+    unsigned calls[8];
+    int changed;
+} TestHostReadContext;
+
+static bool test_host_read_answer(void *opaque, unsigned kind, bool ordinary) {
+    TestHostReadContext *context = opaque;
+    context->calls[kind]++;
+    return context->changed == (int)kind ? !ordinary : ordinary;
+}
+
+#define TEST_HOST_NAMED(NAME, KIND, ANSWER)                               \
+static bool NAME(void *context, Space *space, SymbolId head, uint32_t arity) { \
+    (void)space; (void)head; (void)arity;                                  \
+    return test_host_read_answer(context, KIND, ANSWER);                   \
+}
+TEST_HOST_NAMED(test_host_read_relation, 0, true)
+TEST_HOST_NAMED(test_host_read_protocol, 1, true)
+TEST_HOST_NAMED(test_host_read_body, 2, true)
+TEST_HOST_NAMED(test_host_read_builtin_equations, 5, false)
+#undef TEST_HOST_NAMED
+
+static bool test_host_read_head(void *context, Space *space, Atom *expression) {
+    (void)space;
+    (void)expression;
+    return test_host_read_answer(context, 3, false);
+}
+static bool test_host_read_builtin(void *context, SymbolId head) {
+    (void)head;
+    return test_host_read_answer(context, 4, true);
+}
+static bool test_host_read_delay(void *context, SymbolId head, uint32_t arity) {
+    (void)head;
+    (void)arity;
+    return test_host_read_answer(context, 6, false);
+}
+static bool test_host_read_identity(void *context, SymbolId head) {
+    (void)head;
+    return test_host_read_answer(context, 7, false);
+}
+
+static void test_compiled_host_read_observations(
+    TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &space, arena,
+        "(= (host-read-root (Shape $x)) "
+        "(let $u (+ $x 1) (host-read-child $u)))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (host-read-child $x) (Value $x))");
+    TestHostReadContext context = {.changed = -1};
+    CettaOpenEquationHost host = {
+        .context = &context, .capture_reads = true,
+        .relation_admitted = test_host_read_relation,
+        .call_protocol_admitted = test_host_read_protocol,
+        .body_admitted = test_host_read_body,
+        .head_callable = test_host_read_head,
+        .builtin_allowed = test_host_read_builtin,
+        .builtin_equations = test_host_read_builtin_equations,
+        .may_delay = test_host_read_delay,
+        .retains_variable_identity = test_host_read_identity,
+    };
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "host-read-root"),
+        1u, &host, &reason);
+    if (!compiled)
+        fprintf(stderr, "host read compile: %s\n", reason);
+    assert(compiled);
+    unsigned observed[8];
+    memcpy(observed, context.calls, sizeof(observed));
+    assert(cetta_open_equation_program_host_reads_current(compiled, &host));
+    unsigned positive = 0u, negative = 0u;
+    for (unsigned kind = 0u; kind < 8u; kind++) {
+        context.changed = (int)kind;
+        bool valid = cetta_open_equation_program_host_reads_current(compiled, &host);
+        assert(valid == (observed[kind] == 0u));
+        if (observed[kind]) {
+            if (kind <= 2u || kind == 4u)
+                positive++;
+            else
+                negative++;
+        }
+    }
+    assert(positive > 0u && negative > 0u);
+    context.changed = -1;
+    assert(cetta_open_equation_program_host_reads_current(compiled, &host));
+    host.head_callable = NULL;
+    assert(!cetta_open_equation_program_host_reads_current(compiled, &host));
+    host.head_callable = test_host_read_head;
+    host.capture_reads = false;
+    CettaOpenEquationProgram *uncaptured = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "host-read-root"),
+        1u, &host, NULL);
+    assert(uncaptured);
+    assert(!cetta_open_equation_program_host_reads_current(uncaptured, &host));
+    cetta_open_equation_program_release(uncaptured);
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: compiled host reads retain negative observations and reject changed authority answers");
 }
 
 /* Entry's native and stale paths share a suffix. Thirty-two calls have
@@ -3932,8 +4126,9 @@ typedef struct {
 
 static CettaOpenTypeResult test_compiled_type_guard(
     void *context, Space *space, Arena *arena, Atom *value, Atom *required,
-    Atom ***answers, uint32_t *count) {
+    bool dead, Atom ***answers, uint32_t *count) {
     (void)space;
+    (void)dead;
     TestCompiledTypeGuard *test = context;
     assert(atom_eq(value, atom_int(arena, 6)));
     assert(atom_is_symbol(required, "Number"));
@@ -3948,6 +4143,82 @@ static CettaOpenTypeResult test_compiled_type_guard(
         *count = test->answers;
     }
     return test->result;
+}
+
+/* The stored program is unchanged by disjoint named appends, including
+ * negative head reads, but its invalidation remains sensitive to order and
+ * wildcard declarations. The bookmark advances only after a valid check. */
+static void test_compiled_dependency_appends(TermUniverse *universe, Arena *arena) {
+    const char *mutations[] = {
+        "(= (foot-callee $x) other)",
+        "(= (FootBox $x) new-call)",
+        "(: foot-callee (-> Atom Atom))",
+        "(: $subject (-> Atom Atom))",
+        "(= ($head $x) wildcard)",
+        "(:< A B)",
+        "(= foot-atom value)",
+    };
+    for (unsigned trial = 0u; trial < sizeof(mutations)/sizeof(*mutations) + 3u; trial++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        add_compiled_program_equation(program, &space, arena,
+            "(= (foot-callee $x) (FootBox $x))");
+        add_compiled_program_equation(program, &space, arena,
+            "(= (foot-root $x) (foot-callee $x))");
+        CettaOpenEquationHost host = {
+            .capture_reads = true,
+            .relation_admitted = test_compiled_guard_body_admitted,
+            .call_protocol_admitted = test_compiled_guard_body_admitted,
+            .body_admitted = test_compiled_guard_body_admitted,
+        };
+        CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+            program, &space, symbol_intern_cstr(g_symbols, "foot-root"),
+            1u, &host, NULL);
+        assert(compiled);
+        CettaOpenEquationRead reads = cetta_open_equation_program_read(compiled);
+        assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        for (unsigned i = 0; i < 32; i++) {
+            char declaration[128];
+            snprintf(declaration, sizeof(declaration), "(: independent-%u (-> Number Number))", i);
+            space_add(&space, parse_one(arena, declaration));
+            assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+            assert(reads.row_count == space_length64(&space));
+            snprintf(declaration, sizeof(declaration), "(: (seen %u) Evidence)", i);
+            space_add(&space, parse_one(arena, declaration));
+            assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        }
+        add_compiled_program_equation(program, &space, arena,
+            "(= (different-head $x) (foot-root $x))");
+        assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        CettaOpenEquationRead before = reads;
+        if (trial < sizeof(mutations)/sizeof(*mutations)) {
+            space_add(&space, parse_one(arena, mutations[trial]));
+        } else if (trial == sizeof(mutations)/sizeof(*mutations)) {
+            assert(space_remove(&space, parse_one(arena,
+                "(: independent-0 (-> Number Number))")));
+        } else if (trial == sizeof(mutations)/sizeof(*mutations) + 1u) {
+            /* A data-only prefix rewrite changes no compiled read. */
+            Atom *fact = parse_one(arena, "(foot-data 1)");
+            space_add(&space, fact);
+            assert(space_remove(&space, fact));
+            assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+            space_add(&space, parse_one(arena, "(= (foot-root $x) changed)"));
+            before = reads;
+        } else {
+            /* An address reused for another Space does not revive a stamp. */
+            space_free(&space);
+            space_init_with_universe(&space, universe);
+        }
+        assert(!cetta_open_equation_program_refresh(compiled, &space, &reads));
+        assert(reads.row_count == before.row_count);
+        assert(space_program_token_eq(reads.program_token, before.program_token));
+        cetta_open_equation_program_release(compiled);
+        petta_program_free(program);
+        space_free(&space);
+    }
+    puts("PASS: compiled dependency bookmarks preserve disjoint appends and reject changed reads");
 }
 
 static void test_compiled_type_guard_protocol(TermUniverse *universe, Arena *arena) {
@@ -4336,6 +4607,7 @@ static bool test_unknown_cons_fact_snapshot_lease(
     lease->items = items;
     lease->len = len;
     lease->owned_items = items;
+    lease->owned_capacity = len;
     return true;
 }
 
@@ -6139,6 +6411,43 @@ static void *test_read_retained_projection(void *context) {
     return NULL;
 }
 
+static void test_snapshot_spare_storage(const PettaCandidateSnapshotLease *source) {
+    assert(source->len>=2u);
+    const size_t rows_capacity=17u,entries_capacity=23u;
+    PettaEquationCandidate *rows=calloc(rows_capacity,sizeof(*rows));assert(rows);
+    rows[0]=source->items[0];rows[1]=source->items[1];
+    PettaCandidateSnapshotLease lease={.items=rows,.len=2u,.owned_items=rows,
+        .owned_capacity=rows_capacity};
+    CettaStorageCensus census={0};
+    petta_program_candidate_snapshot_lease_storage_census(&lease,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained==rows_capacity*sizeof(*rows));
+    cetta_storage_census_free(&census);
+    assert(petta_program_candidate_snapshot_lease_pin(&lease));
+    PettaEquationSelectionEntry *entries=calloc(entries_capacity,sizeof(*entries));assert(entries);
+    entries[0]=(PettaEquationSelectionEntry){.index=0u,.rhs_plan=rows[0].rhs_plan};
+    entries[1]=(PettaEquationSelectionEntry){.index=1u,.rhs_plan=rows[1].rhs_plan};
+    assert(!petta_program_equation_projection_take(&lease,entries,1u,0u,2u));
+    assert(lease.items==rows && lease.len==2u);
+    PettaEquationProjection *projection=petta_program_equation_projection_take(
+        &lease,entries,entries_capacity,0u,2u);assert(projection && !lease.items);
+    petta_program_equation_projection_storage_census(projection,&census);cetta_storage_finish(&census);
+    bool saw_rows=false,saw_entries=false;
+    for(size_t i=0u;i<census.capacity;i++) if(census.slots[i].domain==CETTA_STORAGE_BLOCK) {
+        if(census.slots[i].identity==rows) {
+            assert(census.slots[i].retained==rows_capacity*sizeof(*rows));saw_rows=true;
+        }
+        if(census.slots[i].identity==entries) {
+            assert(census.slots[i].retained==entries_capacity*sizeof(*entries));saw_entries=true;
+        }
+    }
+    assert(!census.incomplete && saw_rows && saw_entries &&
+        census.retained==petta_program_equation_projection_retained_bytes(projection));
+    size_t retained=census.retained;
+    petta_program_equation_projection_storage_census(projection,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && census.retained==retained && census.repeated>0u);
+    cetta_storage_census_free(&census);petta_program_equation_projection_release(projection);
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -6219,13 +6528,14 @@ static void test_program_head_occurrence_index(
     assert_candidate_snapshot_receipt_conserves_candidates(
         &stats, second_lease.len);
     assert(first_lease.items == second_lease.items);
+    test_snapshot_spare_storage(&first_lease);
     PettaCandidateSnapshotLease cloned_lease = {0};
     assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &cloned_lease));
     assert(cloned_lease.items == first_lease.items);
     PettaCandidateSnapshotLease projected_lease = {0};
     assert(petta_program_candidate_snapshot_lease_clone(&first_lease, &projected_lease));
     PettaEquationProjection *projection = petta_program_equation_projection_take(
-        &projected_lease, NULL, 2u, 2u);
+        &projected_lease, NULL, 0u, 2u, 2u);
     assert(projection && projected_lease.items == NULL);
     size_t retained_before = petta_program_equation_projection_retained_bytes(projection);
     /* A borrowed host array has no cache retirement callback. Pinning and
@@ -6235,10 +6545,9 @@ static void test_program_head_occurrence_index(
     };
     assert(petta_program_candidate_snapshot_lease_pin(&private_lease));
     PettaEquationProjection *private_projection = petta_program_equation_projection_take(
-        &private_lease, NULL, 2u, 2u);
+        &private_lease, NULL, 0u, 2u, 2u);
     assert(private_projection);
-    assert(petta_program_equation_projection_retained_bytes(private_projection) ==
-           retained_before - 2u * sizeof(PettaEquationCandidate));
+    assert(petta_program_equation_projection_retained_bytes(private_projection) < retained_before);
     assert(atom_eq(petta_program_equation_projection_get(private_projection, 0u).equation, duplicate));
     assert(atom_eq(petta_program_equation_projection_get(private_projection, 1u).equation, duplicate));
     petta_program_equation_projection_release(private_projection);
@@ -6250,7 +6559,7 @@ static void test_program_head_occurrence_index(
     repeated[0] = (PettaEquationSelectionEntry){2u, first_lease.items[2].rhs_plan};
     repeated[1] = repeated[0];
     PettaEquationProjection *repeated_projection = petta_program_equation_projection_take(
-        &projected_lease, repeated, 0u, 2u);
+        &projected_lease, repeated, 2u, 0u, 2u);
     assert(repeated_projection);
     ProjectionReader reader = {projection, duplicate};
     pthread_t readers[2];
@@ -7533,6 +7842,18 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(probe.len == 1u);
     assert(probe.ids[0] == captured->var_id);
     assert(!free_variable_probe_contains(&probe, argument->var_id));
+
+    Atom *deep = atom_expr2(arena, free, captured);
+    Atom *wrapper = atom_symbol(arena, "inert-wrapper");
+    for (unsigned i = 0u; i < 100000u; ++i)
+        deep = atom_expr2(arena, wrapper, deep);
+    Atom *quoted = atom_expr2(arena, atom_symbol(arena, "quote"), deep);
+    probe.len = 0u;
+    assert(eval_visit_lexical_free_variables(
+        quoted, free_variable_probe_visit, &probe));
+    assert(probe.len == 2u && probe.ids[0] == free->var_id &&
+        probe.ids[1] == captured->var_id);
+    assert(!free_variable_probe_contains(&probe, local->var_id));
 }
 
 static void test_machine_query_visible_projection(
@@ -10384,7 +10705,7 @@ static void test_boundary_requirement_calculus(
         "(= (boundary-car-open $items) (car-atom $items))");
     assert(boundary_requirement_for(
                program, &space, "boundary-car-open") ==
-           PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION);
+           PETTA_TYPECHECK_BOUNDARY_NONE);
 
     add_compiled_program_equation(
         program, &space, arena,
@@ -11861,6 +12182,123 @@ static void test_owned_operation_permit(Space *space, Arena *persistent, Arena *
     puts("PASS: denied operation retains goal and choice before fuel, with source authority on resume");
 }
 
+typedef struct {
+    SymbolId head;
+    size_t inspected;
+    bool every_operation;
+} OperationPauseProbe;
+
+static bool pause_before_operation(void *raw, Space *space,
+        PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    (void)space;
+    OperationPauseProbe *probe=raw;
+    probe->inspected++;
+    if (probe->every_operation) return true;
+    Atom *root=NULL;
+    return operation==PETTA_MACHINE_OPERATION_CALL &&
+        petta_machine_operation_view_root(view,&root)==CETTA_GSLT_TERM_VIEW_OK_V1 &&
+        atom_head_symbol_id(root)==probe->head;
+}
+
+static void test_operation_pause_control(Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space,persistent,"(= (pause-operation-row) (Same 7))");
+    add_equation(space,persistent,"(= (pause-operation-row) (Same 7))");
+    OwnedContinuationAuthority authority={.revision=31u,.remaining=1000u,.domain=6u};
+    OperationPauseProbe pause={.every_operation=true};
+    PettaMachineOperationControl control={.authorize=permit_owned_operation,
+        .authority_context=&authority,.stop_before=pause_before_operation,.stop_context=&pause};
+    PettaMachineHost host={.context=&authority,
+        .admit_branch_capture=admit_effect_free_continuation,
+        .admit_branch_transfer=admit_owned_continuation_transfer,
+        .permit_transition=permit_owned_continuation_transition,
+        .permit_operation=petta_machine_operation_control_permit,
+        .permit_operation_context=&control};
+    Atom *query=parse_one(answers,"(pause-operation-row)");
+    PettaMachine machine={0};
+    assert(petta_machine_init(&machine,space,answers,query,NULL,&host));
+    Atom *answer=NULL;Bindings environment;
+    for(size_t i=0u;i<3u;i++) {
+        assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+        assert(control.breakpoint && !answer && authority.remaining==1000u);
+        bindings_free(&environment);
+    }
+    CettaOwnedContinuation image={0};
+    assert(capture_relational_continuation(&machine,&image)==CETTA_CONTINUATION_READY);
+    void *payload=image.payload;
+    /* Equal callback code cannot substitute a different external gate owner. */
+    OwnedContinuationAuthority destination=authority;
+    PettaMachineOperationControl different=control;
+    different.authority_context=&destination;
+    PettaMachineHost other=host;
+    other.context=&destination;other.permit_operation_context=&different;
+    PettaMachine target={0};
+    assert(petta_machine_init(&target,space,answers,query,NULL,&other));
+    assert(petta_machine_transfer_continuation(&target,&machine,&image)!=CETTA_CONTINUATION_READY);
+    assert(image.payload==payload);
+    petta_machine_destroy(&target);
+    authority.revision++;
+    assert(restore_relational_continuation(&machine,&image)==CETTA_CONTINUATION_INVALIDATED);
+    assert(image.payload==payload);
+    authority.revision--;
+    assert(restore_relational_continuation(&machine,&image)==CETTA_CONTINUATION_READY);
+    size_t inspected=pause.inspected;
+    authority.operation_suspended=true;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(!control.breakpoint && pause.inspected==inspected && authority.remaining==1000u);
+    bindings_free(&environment);
+    authority.operation_suspended=false;
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,parse_one(answers,"(Same 7)")));
+    bindings_free(&environment);
+    size_t remaining=authority.remaining;
+    control.stop_before=pause_before_operation;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && authority.remaining==remaining);
+    bindings_free(&environment);
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,parse_one(answers,"(Same 7)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    /* The separate operation context leaves effect and budget callbacks using
+     * their actual host. This linear client grants no multi-shot capture. */
+    ResumeContractProbe execution={.head=symbol_intern_cstr(g_symbols,"pause-operation-effect"),
+        .remaining=1000u};
+    pause=(OperationPauseProbe){.head=execution.head};
+    control.stop_before=pause_before_operation;
+    host=(PettaMachineHost){.context=&execution,
+        .permit_transition=resume_contract_permit,.classify=resume_contract_classify,
+        .evaluate=resume_contract_effect,.permit_operation=petta_machine_operation_control_permit,
+        .permit_operation_context=&control};
+    query=parse_one(answers,
+        "(chain (pause-operation-effect 7) $ignored (pause-operation-effect 11))");
+    assert(petta_machine_init(&machine,space,answers,query,NULL,&host));
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && execution.effect_count==0u);
+    bindings_free(&environment);
+    remaining=execution.remaining;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_SUSPENDED);
+    assert(control.breakpoint && execution.remaining==remaining && execution.effect_count==0u);
+    bindings_free(&environment);
+    control.stop_before=NULL;
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer,atom_int(answers,11)) && execution.effect_count==2u &&
+        execution.effects[0]==7 && execution.effects[1]==11);
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine,&answer,&environment)==PETTA_MACHINE_STEP_EXHAUSTED);
+    assert(execution.effect_count==2u);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    control.authorize=NULL;
+    assert(!petta_machine_operation_control_permit(&control,space,
+        PETTA_MACHINE_OPERATION_LOCAL,NULL) && !control.breakpoint);
+    puts("PASS: native breakpoint retains operation before budget; current authorization, duplicate answers, restored images and one-shot host effects remain distinct");
+}
+
 static void test_owned_continuation_transfer(
         Space *space, Arena *persistent, Arena *answers) {
     add_equation(space, persistent, "(= (owned-transfer-choice) 1)");
@@ -11875,7 +12313,8 @@ static void test_owned_continuation_transfer(
     };
     PettaProgram *program = petta_program_new_with_host_intrinsics(NULL);
     assert(program && petta_program_synchronize_space(program, space));
-    const PettaPlanNode *original = petta_program_plan_transient(program, query);
+    const PettaPlanNode *original =
+        petta_program_plan_transient(program, query, NULL);
     assert(original);
     size_t transfers = 0u;
     for (size_t budget = 0u; budget < 32u; ++budget) {
@@ -12191,6 +12630,125 @@ static CettaContinuationStatus expand_relational_frontier(
     PettaMachine *machine, CettaContinuationBatch *frontier) {
     return cetta_continuation_expand(
         petta_machine_continuation_machine(machine), frontier);
+}
+
+static size_t collect_partition_answers(
+    PettaMachine *machine, OwnedContinuationAuthority *authority,
+    Arena *answers, Atom **out, size_t capacity) {
+    authority->remaining = 10000u;
+    size_t length = 0u;
+    for (;;) {
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(machine, &answer, &environment);
+        if (step == PETTA_MACHINE_STEP_EXHAUSTED) {
+            bindings_free(&environment);
+            return length;
+        }
+        assert(step == PETTA_MACHINE_STEP_ANSWER && length < capacity);
+        out[length++] = atom_deep_copy(answers,
+            bindings_apply_if_vars(&environment, answers, answer));
+        bindings_free(&environment);
+    }
+}
+
+static void test_nested_frontier_partition(
+    Space *space, Arena *persistent, Arena *answers) {
+    const char *equations[] = {
+        "(= (partition-outer) (partition-middle A))",
+        "(= (partition-outer) (partition-middle B))",
+        "(= (partition-middle $x) (partition-inner $x u))",
+        "(= (partition-middle $x) (partition-inner $x v))",
+        "(= (partition-inner $x $y) (triple $x $y 1))",
+        "(= (partition-inner $x $y) (triple $x $y 1))",
+        "(= (partition-inner $x $y) (triple $x $y 2))",
+    };
+    for (size_t i = 0u; i < sizeof(equations) / sizeof(*equations); i++)
+        add_equation(space, persistent, equations[i]);
+    Atom *query = parse_one(answers, "(partition-outer)");
+    Atom *expected[12];
+    size_t length = 0u;
+    for (size_t x = 0u; x < 2u; x++) {
+        for (size_t y = 0u; y < 2u; y++) {
+            for (size_t z = 0u; z < 3u; z++) {
+                char text[64];
+                snprintf(text, sizeof(text), "(triple %s %s %u)",
+                    x ? "B" : "A", y ? "v" : "u", z == 2u ? 2u : 1u);
+                expected[length++] = parse_one(answers, text);
+            }
+        }
+    }
+    bool three_levels = false;
+    size_t partitions = 0u;
+    for (size_t prefix = 0u; prefix <= 7u; prefix++) {
+        PettaMachine machine = {0};
+        OwnedContinuationAuthority authority = {.revision = 71u};
+        PettaMachineHost host = {
+            .context = &authority,
+            .admit_branch_capture = admit_effect_free_continuation,
+            .permit_transition = permit_owned_continuation_transition,
+        };
+        CettaContinuationBatch frontier;
+        cetta_continuation_batch_init(&frontier);
+        bool found = false;
+        for (size_t budget = 1u; budget < 64u; budget++) {
+            authority.remaining = 10000u;
+            assert(petta_machine_init(&machine, space, answers, query, NULL, &host));
+            for (size_t i = 0u; i < prefix; i++) {
+                Atom *answer = NULL;
+                Bindings environment;
+                assert(petta_machine_next(&machine, &answer, &environment) ==
+                    PETTA_MACHINE_STEP_ANSWER);
+                assert(atom_eq(bindings_apply_if_vars(&environment, answers, answer),
+                    expected[i]));
+                bindings_free(&environment);
+            }
+            authority.remaining = budget;
+            Atom *answer = NULL;
+            Bindings environment;
+            PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+            bindings_free(&environment);
+            bool admitted = step == PETTA_MACHINE_STEP_SUSPENDED &&
+                expand_relational_frontier(&machine, &frontier) ==
+                    CETTA_CONTINUATION_READY && frontier.length >= 3u;
+            if (!admitted) {
+                cetta_continuation_batch_destroy(&frontier);
+                petta_machine_destroy(&machine);
+                continue;
+            }
+            found = true;
+            three_levels = three_levels || frontier.length == 4u;
+            partitions++;
+            Atom *source_answers[64];
+            size_t source_length = collect_partition_answers(
+                &machine, &authority, answers, source_answers, 64u);
+            assert(source_length == length - prefix);
+            for (size_t i = 0u; i < source_length; i++)
+                assert(atom_eq(source_answers[i], expected[prefix + i]));
+
+            Atom *partition_answers[64];
+            size_t partition_length = 0u;
+            for (size_t branch = 0u; branch < frontier.length; branch++) {
+                assert(restore_relational_continuation(&machine, &frontier.items[branch]) ==
+                    CETTA_CONTINUATION_READY);
+                size_t added = collect_partition_answers(&machine, &authority, answers,
+                    partition_answers + partition_length, 64u - partition_length);
+                assert(added > 0u);
+                partition_length += added;
+            }
+            assert(partition_length == source_length);
+            for (size_t i = 0u; i < partition_length; i++)
+                assert(atom_eq(partition_answers[i], expected[prefix + i]));
+            cetta_continuation_batch_destroy(&frontier);
+            petta_machine_destroy(&machine);
+        }
+        /* Some prefixes reach the next answer without another nested
+         * choice. The first two retain nested alternatives. */
+        if (prefix <= 1u)
+            assert(found);
+    }
+    assert(three_levels && partitions >= 8u);
+    puts("PASS: nested equation frontiers partition older alternatives once, preserving bindings, duplicates and delivered prefixes");
 }
 
 static void test_relational_frontier_expansion(
@@ -13561,6 +14119,7 @@ static void test_open_cursor_stable_arena_detach(
                 cursor, NULL, base, &answer, NULL);
     }
     assert(arena_accounted_live_bytes(&stable) > 0u);
+    inspect_open_cursor_storage(cursor,compiled);
     assert(cetta_open_equation_cursor_detach(cursor, &stable));
     arena_free(&stable);
     arena_init(&stable);
@@ -13570,10 +14129,108 @@ static void test_open_cursor_stable_arena_detach(
     assert(answer && answer->kind == ATOM_EXPR && answer->expr.len == 2u);
     assert(atom_string_equals_bytes(
         answer->expr.elems[1], "detached-owned-payload", 22u));
+    inspect_open_cursor_storage(cursor,compiled);
     cetta_open_equation_cursor_close(cursor);
     cetta_open_equation_program_release(compiled);
     petta_program_free(program);
     arena_free(&stable);
+}
+
+static void test_sequence_projection_views(Arena *arena) {
+    Atom *a = atom_symbol(arena, "projection-a");
+    Atom *b = atom_var_with_id(arena, "projection-b", fresh_var_id());
+    Atom *items = atom_expr2(arena, a, b);
+    Atom *empty = atom_unit(arena);
+    Atom *scalar = atom_int(arena, 7);
+    assert(a && b && items && empty && scalar);
+    CettaSequenceProjectionCall head = cetta_sequence_projection_call(
+        g_builtin_syms.car_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    CettaSequenceProjectionCall tail = cetta_sequence_projection_call(
+        g_builtin_syms.cdr_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    ArenaMark before = arena_mark(arena);
+    CettaSequenceProjectionView head_view = cetta_sequence_projection_view(
+        head, items, true, items->expr.elems, 2u);
+    CettaSequenceProjectionView tail_view = cetta_sequence_projection_view(
+        tail, items, true, items->expr.elems, 2u);
+    /* Reading the structural view constructs no replacement term. */
+    assert(arena_at_mark(arena, before));
+    assert(head_view.result == CETTA_SEQUENCE_PROJECT_ELEMENT);
+    assert(tail_view.result == CETTA_SEQUENCE_PROJECT_SUFFIX);
+    assert(cetta_sequence_projection_materialize(arena, &head_view) == a);
+    Atom *rest = cetta_sequence_projection_materialize(arena, &tail_view);
+    assert(rest && rest->kind == ATOM_EXPR && rest->expr.len == 1u);
+    assert(rest->expr.elems[0] == b);
+    tail_view.representation = CETTA_SEQUENCE_ORDINARY_EXPRESSION;
+    Atom *ordinary_rest = cetta_sequence_projection_materialize(arena, &tail_view);
+    assert(ordinary_rest && atom_eq(ordinary_rest, rest) && !atom_is_list(ordinary_rest));
+    Atom *list = atom_list(arena, items->expr.elems, 2u);
+    Atom *const *list_elements = NULL;
+    CettaExprLen list_length = 0u;
+    assert(list && atom_sequence_view(list, &list_elements, &list_length));
+    CettaSequenceProjectionView list_tail = cetta_sequence_projection_view(
+        tail, list, true, list_elements, list_length);
+    Atom *list_rest = cetta_sequence_projection_materialize(arena, &list_tail);
+    assert(list_rest && atom_is_list(list_rest));
+    assert(atom_sequence_view(list_rest, &list_elements, &list_length));
+    assert(list_length == 1u && list_elements[0] == b);
+
+    CettaSequenceProjectionView no_sequence = cetta_sequence_projection_view(
+        head, scalar, false, NULL, 0u);
+    CettaSequenceProjectionView empty_tail = cetta_sequence_projection_view(
+        tail, empty, true, NULL, 0u);
+    assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    assert(empty_tail.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    assert(atom_eq(cetta_sequence_projection_materialize(arena, &no_sequence), empty));
+
+    head.policy = CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD;
+    CettaSequenceProjectionView empty_head = cetta_sequence_projection_view(
+        head, empty, true, NULL, 0u);
+    assert(empty_head.result == CETTA_SEQUENCE_PROJECT_RAISE);
+    assert(!cetta_sequence_projection_materialize(arena, &empty_head));
+    no_sequence = cetta_sequence_projection_view(head, scalar, false, NULL, 0u);
+    assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_UNIT);
+    for (unsigned policy = CETTA_SEQUENCE_HE_LIBRARY_VALUE;
+         policy <= CETTA_SEQUENCE_STRICT_VALUE; policy++) {
+        head.policy = (CettaSequenceProjectionPolicy)policy;
+        empty_head = cetta_sequence_projection_view(head, empty, true, NULL, 0u);
+        no_sequence = cetta_sequence_projection_view(head, scalar, false, NULL, 0u);
+        assert(empty_head.result == CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR);
+        assert(no_sequence.result == CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR);
+        assert(!cetta_sequence_projection_materialize(arena, &empty_head));
+    }
+
+    /* Real occurrence plans retain evaluation mode independently of whether
+     * the argument is bound. Computed arguments keep the preparation path. */
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Atom *variable_call = parse_one(arena, "(car-atom $projection-items)");
+    const PettaPlanNode *variable_plan = petta_program_plan_current(program, variable_call);
+    assert(variable_plan);
+    PettaSequenceCallInterpretation variable_interpretation = petta_plan_sequence_call(
+        variable_plan, g_builtin_syms.car_atom, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    assert(variable_call->expr.elems[1]->kind == ATOM_VAR);
+    assert(variable_interpretation.argument == petta_plan_child(variable_plan, 1u));
+    assert(variable_interpretation.source_arguments_are_values);
+    Atom *computed_call = parse_one(arena, "(car-atom (+ 1 2))");
+    const PettaPlanNode *computed_plan = petta_program_plan_current(program, computed_call);
+    assert(computed_plan);
+    assert(!petta_plan_sequence_call(computed_plan, g_builtin_syms.car_atom, 1u,
+               CETTA_SEQUENCE_PETTA_VALUE).source_arguments_are_values);
+    assert(!petta_plan_sequence_call(NULL, g_builtin_syms.car_atom, 1u,
+               CETTA_SEQUENCE_PETTA_VALUE).source_arguments_are_values);
+    petta_program_free(program);
+
+    CettaSequenceProjectionCall wrong_arity = cetta_sequence_projection_call(
+        g_builtin_syms.car_atom, 2u, CETTA_SEQUENCE_PETTA_VALUE);
+    CettaSequenceProjectionCall unrelated = cetta_sequence_projection_call(
+        g_builtin_syms.op_plus, 1u, CETTA_SEQUENCE_PETTA_VALUE);
+    assert(wrong_arity.projection == CETTA_SEQUENCE_PROJECTION_NONE);
+    assert(unrelated.projection == CETTA_SEQUENCE_PROJECTION_NONE);
+    assert(cetta_sequence_projection_view(wrong_arity, items, true,
+               items->expr.elems, 2u).result == CETTA_SEQUENCE_PROJECT_DEFER);
+    assert(cetta_sequence_projection_view(unrelated, items, true,
+               items->expr.elems, 2u).result == CETTA_SEQUENCE_PROJECT_DEFER);
+    puts("PASS: projection views preserve identity, empty-value policy and separate materialization");
 }
 
 int main(int argc, char **argv) {
@@ -13610,6 +14267,7 @@ int main(int argc, char **argv) {
     test_resume_contract(&universe, &answers);
     if (resume_only)
         goto release_owners;
+    test_transient_value_plan_lifetime();
     test_type_policy_component(&answers);
     test_type_bound_rows(&answers);
     test_type_fact_reuse(&answers);
@@ -13629,11 +14287,13 @@ int main(int argc, char **argv) {
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
     test_compiled_borrowed_suffix(&universe, &persistent);
+    test_compiled_dependency_appends(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
     test_compiled_builtin_entry(&universe, &persistent);
     test_compiled_comparison_entry(&universe, &persistent);
     test_compiled_builtin_entry_binders(&universe, &persistent);
     test_compiled_entry_joins(&universe, &persistent);
+    test_compiled_host_read_observations(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
@@ -13645,6 +14305,7 @@ int main(int argc, char **argv) {
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
+    test_sequence_projection_views(&persistent);
     test_boundary_requirement_calculus(&universe, &persistent);
     test_inferred_signature_authority_provenance(
         &universe, &answers);
@@ -13666,9 +14327,11 @@ int main(int argc, char **argv) {
     test_owned_operation_view(&answers);
     test_owned_operation_source_role(&space, &answers);
     test_owned_operation_permit(&space, &persistent, &answers);
+    test_operation_pause_control(&space, &persistent, &answers);
     test_owned_superpose_partition(&space, &answers);
     test_relational_frontier_expansion(
         &space, &persistent, &answers);
+    test_nested_frontier_partition(&space, &persistent, &answers);
     test_fifo_starvation_and_duplicate_canaries(
         &space, &persistent, &answers);
     test_selection_automaton_lane_recurrence();

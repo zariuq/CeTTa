@@ -418,11 +418,80 @@ static void coherent_read_mode(const char *path, bool recover) {
 static void coherent_read(const char *path) { coherent_read_mode(path,false); }
 static void coherent_recover(const char *path) { coherent_read_mode(path,true); }
 
+static void joined_dependencies(const char *path) {
+    CettaDurableStore *s=open_store(path,NULL);
+    CettaDurableOp policy=put(DURABLE_INSERT,"policy","grant","allow"); commit(s,&policy,1);
+    CettaDurableScope dependencies[]={{DURABLE_KEY,"policy","grant"},{DURABLE_PREFIX,"policy","deny/"}};
+    CettaDurableScope output={DURABLE_KEY,"state","result"};
+    CettaDurableObservation *required=observe(s,dependencies,2), *joined=NULL;
+    check(cetta_durable_observe_joined(s,required,&output,1,&joined),DURABLE_OK);
+    assert(!cetta_durable_observation_view(joined,0)->count &&
+        cetta_durable_observation_view(joined,1)->count==1 &&
+        !cetta_durable_observation_view(joined,2)->count && !cetta_durable_observation_view(joined,3));
+    cetta_durable_observation_free(required); /* the joined owner is independent */
+    CettaDurableOp other=put(DURABLE_INSERT,"policy","other","independent"); commit(s,&other,1);
+    CettaDurableOp result=put(DURABLE_INSERT,"state","result","accepted"); int64_t next;
+    check(cetta_durable_commit_observed(s,joined,&result,1,&next),DURABLE_OK);
+    cetta_durable_observation_free(joined);
+
+    required=observe(s,dependencies,2);
+    check(cetta_durable_observe_joined(s,required,NULL,0,&joined),DURABLE_OK);
+    assert(cetta_durable_observation_view(joined,0)->count==1 &&
+        !cetta_durable_observation_view(joined,1)->count);
+    CettaDurableWatch *watch=NULL; check(cetta_durable_watch_new(joined,4096,&watch),DURABLE_OK);
+    cetta_durable_observation_free(joined);
+    policy=put(DURABLE_REPLACE,"policy","grant","deny"); commit(s,&policy,1);
+    joined=(void *)1;
+    check(cetta_durable_observe_joined(s,required,&output,1,&joined),DURABLE_CONFLICT); assert(!joined);
+    check(cetta_durable_watch_current(s,watch),DURABLE_CONFLICT);
+    policy=put(DURABLE_REPLACE,"policy","grant","allow"); commit(s,&policy,1);
+    check(cetta_durable_observe_joined(s,required,&output,1,&joined),DURABLE_CONFLICT); assert(!joined);
+    cetta_durable_watch_free(watch); cetta_durable_observation_free(required);
+
+    required=observe(s,dependencies,2);
+    check(cetta_durable_observe_joined(s,required,&output,1,&joined),DURABLE_OK);
+    CettaDurableOp denied=put(DURABLE_INSERT,"policy","deny/new","revoked"); commit(s,&denied,1);
+    result=put(DURABLE_REPLACE,"state","result","must-not-appear");
+    check(cetta_durable_commit_observed(s,joined,&result,1,&next),DURABLE_CONFLICT); assert(next==-1);
+    CettaDurableSnapshot v=snapshot(s); value(&v,"state","result","accepted"); cetta_durable_snapshot_free(&v);
+    cetta_durable_observation_free(joined); cetta_durable_observation_free(required);
+
+    CettaDurableScope absent={DURABLE_KEY,"policy","absent"}; required=observe(s,&absent,1);
+    char foreign[512]; snprintf(foreign,sizeof(foreign),"%s.foreign",path);
+    CettaDurableStore *different=open_store(foreign,NULL);
+    check(cetta_durable_observe_joined(different,required,&output,1,&joined),DURABLE_CONFLICT); assert(!joined);
+    cetta_durable_close(different); assert(!unlink(foreign));
+    joined=(void *)1;
+    check(cetta_durable_observe_joined(s,NULL,&output,1,&joined),DURABLE_INVALID); assert(!joined);
+    cetta_durable_close(s);
+    CettaDurableLimits limits=cetta_durable_default_limits(); limits.operations=1; s=open_store(path,&limits);
+    check(cetta_durable_observe_joined(s,required,&output,1,&joined),DURABLE_LIMIT); assert(!joined);
+    cetta_durable_observation_free(required); cetta_durable_close(s);
+}
+
+static void coherent_join(const char *path) {
+    CettaDurableStore *s=open_store(path,NULL);
+    CettaDurableScope absent={DURABLE_KEY,"state","one"};
+    CettaDurableObservation *required=observe(s,&absent,1), *joined=NULL;
+    sqlite3 *writer=NULL; assert(sqlite3_open(path,&writer)==SQLITE_OK); concurrent_writer=writer;
+    check(cetta_durable_observe_joined(s,required,&absent,1,&joined),DURABLE_OK);
+    assert(!concurrent_writer);
+    for(size_t i=0;i<2;i++) {
+        const CettaDurableSnapshot *v=cetta_durable_observation_view(joined,i);
+        assert(v && !v->count && v->revision==0);
+    }
+    CettaDurableOp change=put(DURABLE_INSERT,"state","one","later"); int64_t next;
+    check(cetta_durable_commit_observed(s,joined,&change,1,&next),DURABLE_CONFLICT);
+    CettaDurableSnapshot v=snapshot(s); assert(v.revision==1 && v.count==1);
+    cetta_durable_snapshot_free(&v); cetta_durable_observation_free(joined);
+    cetta_durable_observation_free(required); sqlite3_close(writer); cetta_durable_close(s);
+}
+
 int main(void) {
     char dir[]="/tmp/cetta-durable-test-XXXXXX"; assert(mkdtemp(dir));
     char path[256];
-    const char *names[]={"basic","crash","limits","full","version","concurrent","ioerr","degraded","mismatch","reserve","dependencies","coherent","coherent_recover"};
-    void (*tests[])(const char *)={basic,crashes,limits,disk_full,wrong_version,concurrent,commit_ioerr,degraded,recovery_mismatch,removal_reserve,dependencies,coherent_read,coherent_recover};
+    const char *names[]={"basic","crash","limits","full","version","concurrent","ioerr","degraded","mismatch","reserve","dependencies","coherent","coherent_recover","joined","coherent_join"};
+    void (*tests[])(const char *)={basic,crashes,limits,disk_full,wrong_version,concurrent,commit_ioerr,degraded,recovery_mismatch,removal_reserve,dependencies,coherent_read,coherent_recover,joined_dependencies,coherent_join};
     for (size_t i=0;i<sizeof(tests)/sizeof(*tests);++i) {
         snprintf(path,sizeof(path),"%s/%s.db",dir,names[i]); tests[i](path);
         assert(unlink(path)==0);

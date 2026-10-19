@@ -57,7 +57,7 @@ class TypecheckV3IntakeTests(unittest.TestCase):
             if item["name"] == "petta-typecheck-v2-boundary-core-v1"
         )
         self.assertEqual(guard["rule_count"], 116)
-        self.assertEqual(boundary["rule_count"], 60)
+        self.assertEqual(boundary["rule_count"], 59)
         self.assertEqual(
             {(item["relation"], item["arity"])
              for item in guard["provider_requirements"]},

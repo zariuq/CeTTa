@@ -4,9 +4,12 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import platform
 import random
-from test_prime_native_control import Gate, ROOT, bag
+import statistics
+from test_prime_native_control import Gate, ROOT, bag, parse, observations
 
 SUM = '(= (sum $n) (if (== $n 0) 0 (+ $n (sum (- $n 1))))) '
 PATTERN = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))'
@@ -41,7 +44,7 @@ def check_cost(result):
             assert 0 <= span <= work and worker >= 0 and 0 < start <= end and phase in (0, 1)
     return fields
 
-def fixed(gate):
+def ordinary(gate):
     # Keep this ordinary entry isolated: other declarations change preparation.
     source = '(= (co:id $x) $x)\n!(co:id (Pair (superpose (1 2)) (superpose (3 4))))\n'
     expected = [[['Pair', 1, 3], ['Pair', 1, 4], ['Pair', 2, 3], ['Pair', 2, 4]]]
@@ -52,6 +55,150 @@ def fixed(gate):
         assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
         gate.passed_case(f'ordinary retained read service workers={workers}')
 
+    ordinary = [
+        ('recursive scalar', SUM + '!(sum 20)', [[210]]),
+        ('unused divergent argument',
+         '(= (silent) (silent)) (= (keep $ignored) (Box 7)) !(keep (silent))',
+         [[['Box', 7]]]),
+        ('shared argument choice',
+         '(= (coin) 2) (= (coin) 3) (= (pair $x) (Pair $x $x)) !(pair (coin))',
+         [[['Pair', 2, 2], ['Pair', 3, 3]]]),
+        ('duplicate shared choice and independent occurrences',
+         '(= (duplicate) False) (= (duplicate) False) '
+         '(= (twice $x) (Pair $x $x)) '
+         '!(twice (duplicate)) !(Pair (duplicate) (duplicate))',
+         [[['Pair', 'False', 'False']] * 2,
+          [['Pair', 'False', 'False']] * 4]),
+        ('independent service occurrences',
+         '(= (leaf) (superpose (4 6))) (= (pair-sum) (+ (leaf) (leaf))) !(pair-sum)',
+         [[8, 10, 10, 12]]),
+        ('constructor alternatives after recursive field',
+         SUM + ''.join(f'(= (jobs) (Pair (sum {n}) (superpose (A B)))) '
+                       for n in range(20, 24)) + '!(jobs)',
+         [[['Pair', n * (n + 1) // 2, tag]
+           for n in range(20, 24) for tag in ('A', 'B')]]),
+        ('constructor alternatives before recursive field',
+         SUM + '(= (jobs) (Pair (superpose (A B)) (sum 20))) !(jobs)',
+         [[['Pair', 'A', 210], ['Pair', 'B', 210]]]),
+        ('duplicate constructor alternatives',
+         SUM + '(= (jobs) (Pair (sum 20) (superpose (A A B)))) '
+         '(= (jobs) (Pair (sum 20) (superpose (A A B)))) !(jobs)',
+         [[['Pair', 210, tag] for tag in ('A', 'A', 'B', 'A', 'A', 'B')]]),
+        ('empty constructor field has no answer',
+         SUM + '(= (jobs) (Pair (sum 20) (empty))) !(collapse (jobs))',
+         [[[]]]),
+        ('tuple return retains caller refinement outside value support',
+         '(scope:profile mercury-implicit per-call reference) '
+         '(= (refine $x) (let $x s2 (Got ((f x))))) '
+         '!(let $r (refine $y) (Pair $y $r)) '
+         '!(collapse (let $y other (refine $y)))',
+         [[['Pair', 's2', ['Got', [['f', 'x']]]]], [[]]]),
+    ]
+    for name, source, expected in ordinary:
+        for workers in (1, 2, 4):
+            trees, _ = gate.run(f'ordinary {name} workers={workers}', source,
+                                arguments=('--num-threads', str(workers)))
+            assert trees == expected, (name, workers, trees)
+            assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
+            gate.passed_case(f'ordinary {name} workers={workers}')
+
+    source = ('(= (leaf) (Node $local $local)) '
+              '(= (open-result) (Box (leaf))) !(open-result)')
+    for workers in (1, 2, 4):
+        trees, _ = gate.run(f'ordinary captured open result workers={workers}', source,
+                            arguments=('--num-threads', str(workers)))
+        assert len(trees) == 1 and len(trees[0]) == 1, trees
+        value = trees[0][0]
+        assert len(value) == 2 and value[0] == 'Box', value
+        node = value[1]
+        assert len(node) == 3 and node[0] == 'Node', node
+        assert isinstance(node[1], str) and node[1].startswith('$local') and node[1] == node[2], node
+        assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
+        gate.passed_case(f'ordinary captured open result workers={workers}')
+
+    # Reuse the maintained clients: returned suspensions stay inert, and a
+    # computed higher-order head still dispatches its proof-relevant call.
+    for fixture in ('tests/prime/need_native_operands.metta',
+                    'examples/prime/prime_native_mil_list_map_rel.metta'):
+        path = ROOT / fixture
+        expected = path.with_suffix('.expected').read_text()
+        for workers in (1, 2, 4):
+            gate.run_file(f'ordinary {fixture} workers={workers}', path,
+                          arguments=('--num-threads', str(workers)))
+            assert gate.receipts[-1]['stdout'] == expected, gate.receipts[-1]
+            assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
+            gate.passed_case(f'ordinary {fixture} workers={workers}')
+
+
+def measure_ordinary(gate):
+    """Measure complete processes after correctness, retaining answer multiplicity."""
+    args = gate.args
+    directory = args.benchmark_directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    gate.measurement_conditions = {
+        'system': platform.system(), 'machine': platform.machine(),
+        'logical_cpus': os.cpu_count(),
+    }
+    if hasattr(os, 'getloadavg'):
+        gate.measurement_conditions['load_average_start'] = os.getloadavg()
+    if hasattr(os, 'sched_getaffinity'):
+        gate.measurement_conditions['cpu_affinity'] = sorted(os.sched_getaffinity(0))
+    if hasattr(os, 'getpriority'):
+        gate.measurement_conditions['nice'] = os.getpriority(os.PRIO_PROCESS, 0)
+    size = args.benchmark_size
+    cases = [
+        ('balanced', [size + i for i in range(4)], 0),
+        ('small', [max(1, size // 1000) + i for i in range(4)], 0),
+        ('unbalanced', [max(1, size // 20)] * 12 +
+         [size * 3 // 2, max(1, size // 20), max(1, size // 3), max(1, size // 40)], 0),
+        ('background-empty', [max(1, size // 4) + i for i in range(4)], 0),
+        ('background-populated', [max(1, size // 4) + i for i in range(4)],
+         args.benchmark_facts),
+    ]
+    measurements = []
+    for name, inputs, background in cases:
+        source = (SUM + '\n' +
+                  ''.join(f'(background {i})\n' for i in range(background)) +
+                  ''.join(f'(= (jobs) (Pair (sum {n}) (superpose (A B))))\n'
+                          for n in inputs) + '!(jobs)\n')
+        path = directory / f'{name}.metta'
+        path.write_text(source)
+        expected = [['Pair', n * (n + 1) // 2, tag]
+                    for n in inputs for tag in ('A', 'B')]
+        samples = {workers: [] for workers in (1, 2, 4)}
+        for repetition in range(args.benchmark_repetitions):
+            order = (1, 2, 4) if repetition % 2 == 0 else (4, 2, 1)
+            for workers in order:
+                trees, _ = gate.run_file(
+                    f'measure {name} repetition={repetition} workers={workers}', path,
+                    arguments=('--num-threads', str(workers)))
+                assert len(trees) == 1 and bag(trees[0]) == bag(expected), (
+                    name, workers, trees, expected)
+                row = gate.receipts[-1]
+                assert not row['stderr'], row
+                # The workload is retained once in the measurement directory.
+                row.pop('source')
+                samples[workers].append({
+                    'seconds': row['seconds'], 'cpu_seconds': row['cpu_seconds']})
+                gate.passed_case(f'measured {name} repetition={repetition} workers={workers}')
+        elapsed = {workers: statistics.median(s['seconds'] for s in values)
+                   for workers, values in samples.items()}
+        measurement = {
+            'case': name, 'source': str(path), 'source_sha256': sha256(source.encode()).hexdigest(),
+            'background_facts': background, 'inputs': inputs, 'samples': samples,
+            'median_seconds': elapsed,
+            'elapsed_ratio_vs_one_thread': {w: elapsed[1] / t for w, t in elapsed.items()},
+            'elapsed_ratio_two_to_four_threads': elapsed[2] / elapsed[4],
+        }
+        measurements.append(measurement)
+        print(f'MEASURE: {name} median process seconds {elapsed}', flush=True)
+    gate.measurements = measurements
+    if hasattr(os, 'getloadavg'):
+        gate.measurement_conditions['load_average_end'] = os.getloadavg()
+
+
+def fixed(gate):
+    ordinary(gate)
     cases = [
         ('independent', SUM + '(= (p) (sum 20)) (= (p) (sum 21))', '(p)', [210, 231]),
         ('duplicate occurrences', SUM + '(= (p) (sum 15)) (= (p) (sum 15))', '(p)', [120, 120]),
@@ -300,6 +447,100 @@ def fuel_and_advice(gate):
         assert results[-1]['satisfied']=='True', results
         assert bag(trees[-1][0][1]+results[-1]['values'])==bag([78,91]),(trees,results)
         gate.passed_case(f'worker score return stays in its captured generation across regrade at {budget}')
+
+
+def captured_query_publications(gate, history_controls=False):
+    """Own writes keep a captured query; new reads see the reached world."""
+    def source(facts, pattern, body):
+        return ('!(bind! &facts (new-space))\n' +
+                ''.join(f'!(add-atom &facts (Fact {x}))\n' for x in facts) +
+                f'(= (selfwrite) (match &facts {pattern} {body}))\n')
+
+    old = ['A', 'A', 'B']
+    pairs = [['Pair', x, y] for x in old for y in old]
+    cases = [
+        ('append matching rows', source(old, '(Fact $x)',
+            '(chain (add-atom &facts (Fact New)) $ignored $x)'), old, old + ['New'] * 3),
+        ('remove captured rows', source(old, '(Fact $x)',
+            '(chain (remove-atom &facts (Fact $x)) $ignored $x)'), old, []),
+        ('later conjunctive factors', source(old, '(, (Fact $x) (Fact $y))',
+            '(chain (add-atom &facts (Fact New)) $ignored (Pair $x $y))'), pairs, old + ['New'] * 9),
+        ('later alternative factors', source(old, '(| (Fact $x) (Fact $x))',
+            '(chain (add-atom &facts (Fact New)) $ignored $x)'), old * 2, old + ['New'] * 6),
+        ('fresh read after own write', source(['A'], '(Fact $x)',
+            '(chain (add-atom &facts (Fact B)) $ignored (match &facts (Fact $y) (Pair $x $y)))'),
+            [['Pair', 'A', 'A'], ['Pair', 'A', 'B']], ['A', 'B']),
+    ]
+    state = '\n!(collapse (get-atoms &facts))\n'
+    for name, setup, expected, final in cases:
+        expected_world = [['Fact', x] for x in final]
+        trees, _ = gate.run('ordinary ' + name, setup + '!(selfwrite)' + state)
+        assert bag(trees[-2]) == bag(expected) and bag(trees[-1][0]) == bag(expected_world), trees
+        gate.passed_case('ordinary ' + name + ' uses the finite captured bag')
+        for workers in (1, 2, 4):
+            trees, results = gate.run(f'{name} workers={workers}', setup +
+                f'!(select 100 {policy(workers, quantum=3, evidence=False)} (selfwrite))' + state)
+            assert results[-1]['closed'] == 'True' and results[-1]['status'] != 'invalidated', results
+            assert bag(results[-1]['values']) == bag(expected), results
+            assert bag(trees[-1][0]) == bag(expected_world), trees
+            gate.passed_case(f'own {name} preserves answers and exact effects workers={workers}')
+            for cut in ((0, 17, 41) if name == 'append matching rows' else (17,)):
+                trees, results = gate.run(f'{name} cut={cut} workers={workers}', setup +
+                    f'!(let {PATTERN} (select 100 {policy(workers,cut,3,evidence=False)} (selfwrite)) '
+                    f'(Split $v (select 100 {policy(workers,100000,3,evidence=False)} $r)))' + state)
+                values = trees[-2][0][1] + results[-1]['values']
+                assert results[-1]['closed'] == 'True' and bag(values) == bag(expected), (trees, results)
+                assert bag(trees[-1][0]) == bag(expected_world), trees
+                gate.passed_case(f'own {name} survives cut={cut} workers={workers} without replay')
+
+    setup = cases[0][1]
+    for workers in (2, 4):
+        trees, results = gate.run(f'own publication beside worker peer {workers}', setup + SUM +
+            '(= (jobs) (selfwrite)) (= (jobs) (sum 20)) ' +
+            f'!(select 100 {policy(workers,quantum=3)} (jobs))' + state)
+        assert results[-1]['closed'] == 'True' and bag(results[-1]['values']) == bag(old + [210]), results
+        assert bag(trees[-1][0]) == bag([['Fact', x] for x in old + ['New'] * 3]), trees
+        assert results[-1].get('parallel-waves'), results
+        gate.passed_case(f'own query publication composes with an actual worker peer {workers}')
+
+    # Extended host profiles reuse the same captured-query service and their
+    # own evaluation rules. Their default profiles remain separate controls.
+    for language in ('he', 'petta'):
+        for name, setup, expected, final in (cases[0], cases[1], cases[-1]):
+            trees, results = gate.run(f'{language} own {name}', setup +
+                f'!(select 100 {policy(2,quantum=3,evidence=False)} (selfwrite))' + state,
+                language=language, profile='extended')
+            if language == 'petta':
+                trees = parse(gate.receipts[-1]['stdout'])
+                results = list(observations(trees))
+            assert results[-1]['closed'] == 'True' and bag(results[-1]['values']) == bag(expected), results
+            final_world = trees[-1] if language == 'petta' else trees[-1][0]
+            assert bag(final_world) == bag([['Fact', x] for x in final]), trees
+            gate.passed_case(f'{language} extended own {name} retains its captured return')
+
+    if history_controls:
+        recording = '(history (selections 2048) (nodes 4096) (bytes 1048576) (owners 10000))'
+        setup = cases[0][1]
+        for cut in (17, 41):
+            def program(observer, stop=''):
+                captured_pattern = PATTERN[:-1] + ' (history $h))' if observer else PATTERN
+                return (setup + f'!(bind! &before (select 100 {policy(2,cut,3,extra=observer,evidence=False)} (selfwrite)))\n' +
+                    '!(let $report &before $report)\n' + stop + f'!(let {captured_pattern} &before (Split $v '
+                    f'(select 100 {policy(2,100000,3,extra="(history False)",evidence=False)} $r)))' + state)
+            reference_trees, reference = gate.run(f'own publication history reference {cut}', program(''))
+            for forget in (False, True):
+                stop = '!(history:forget &before 100000)\n' if forget else ''
+                trees, results = gate.run(f'own publication history cut={cut} forget={forget}', program(recording, stop))
+                for left, right in zip(reference, results):
+                    assert all(left[key] == right[key] for key in
+                               ('values', 'work', 'satisfied', 'closed', 'status')), (left, right)
+                assert len(reference) == len(results) == 2 and trees[-1] == reference_trees[-1], (trees, results)
+                assert bag(trees[-2][0][1] + results[-1]['values']) == bag(old), (trees, results)
+                if forget:
+                    assert 'history' not in results[-1], results[-1]
+                else:
+                    assert ['recording', 'False'] in results[-1]['history'][1:], results[-1]
+                gate.passed_case(f'own publication record/stop/forget cut={cut} forget={forget} keeps exact work')
 
 
 def effect_barriers(gate):
@@ -620,15 +861,41 @@ def main():
     parser.add_argument('--binary',type=Path,default=ROOT/'cetta')
     parser.add_argument('--timeout',type=int,default=45)
     parser.add_argument('--cases',type=int,default=8)
+    parser.add_argument('--history-controls',action='store_true')
+    parser.add_argument('--ordinary-only', action='store_true',
+                        help='Run ordinary-program controls on production builds without recording')
+    parser.add_argument('--benchmark', action='store_true',
+                        help='Measure ordinary programs after the selected correctness controls')
+    parser.add_argument('--benchmark-size', type=int, default=20000)
+    parser.add_argument('--benchmark-facts', type=int, default=3000)
+    parser.add_argument('--benchmark-repetitions', type=int, default=5)
+    parser.add_argument('--benchmark-directory', type=Path,
+                        default=ROOT/'runtime/prime-native-parallel-benchmark')
     parser.add_argument('--receipt',type=Path)
     args=parser.parse_args();args.binary=args.binary.resolve();gate=Gate(args)
+    if args.benchmark and (args.benchmark_size < 1 or args.benchmark_facts < 0 or
+                           args.benchmark_repetitions < 1):
+        parser.error('benchmark size and repetitions must be positive, and facts nonnegative')
     try:
-        fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
+        if args.ordinary_only:
+            ordinary(gate)
+        else:
+            fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);captured_query_publications(gate,args.history_controls);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
+        if args.benchmark:
+            measure_ordinary(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True,exist_ok=True)
-            args.receipt.write_text(json.dumps({'binary_sha256':sha256(args.binary.read_bytes()).hexdigest(),
-                'passed':gate.passed,'receipts':gate.receipts},indent=2)+'\n')
+            executed_binary = Path(os.environ.get('CETTA_WRAPPED_BIN', str(args.binary))).resolve()
+            args.receipt.write_text(json.dumps({'binary_sha256':sha256(executed_binary.read_bytes()).hexdigest(),
+                'executed_binary':str(executed_binary),
+                'launcher':str(args.binary),'launcher_sha256':sha256(args.binary.read_bytes()).hexdigest(),
+                'passed':gate.passed,'receipts':gate.receipts,
+                'measurements':getattr(gate, 'measurements', []),
+                'measurement_conditions':getattr(gate, 'measurement_conditions', {}),
+                'measurement_scope':'Process startup, source loading, evaluation and output; '
+                    'thread counts may select different execution paths. Ratios do not '
+                    'isolate hardware parallelism.'},indent=2)+'\n')
     print(f'Prime native parallelism: {gate.passed} passed, 0 failed')
 
 if __name__=='__main__':main()

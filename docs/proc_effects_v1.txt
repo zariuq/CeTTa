@@ -1,0 +1,94 @@
+Owned processes and effect observations
+======================================
+
+Import proc, system, str or fs using the normal library import. The native
+process provider is part of the core C build and uses GNU/POSIX process
+primitives. It does not run a shell, Python or Prolog. Build-time parser
+generation may still use Python.
+
+  (proc:spawn ("program" "argument") ((stdin "bytes") (timeout-ms 1000)))
+  (proc:status owner)       non-consuming pending/ready/consumed observation
+  (proc:poll owner)         consume the result if ready; otherwise pending
+  (proc:wait owner 100)     bounded consuming observation, not a child deadline
+  (proc:await owner)        cooperative consuming wait on the same owner
+  (proc:cancel owner)       request cancellation; observe it with wait/poll
+  (proc:close owner)        cancel, join and release; aliases become invalid
+  (proc:run argv options)   await the same owner, then close it
+
+Options are unique (name value) pairs. cwd is relative to the current directory
+unless absolute. env is inherit (the default) or a complete expression of
+("NAME" "value") pairs. PATH lookup uses that environment and cwd. stdin is
+a byte string, including NUL and invalid UTF-8. argv, environment and cwd
+strings cannot contain NUL. timeout-ms bounds execution plus capture drain;
+max-bytes bounds each retained output, not the bytes drained. Zero means no
+explicit bound. Atom strings have a finite representable length.
+The child deadline starts after successful spawn; host preparation and
+process creation are not preempted by that deadline.
+
+  (proc:result termination cause "stdout" "stderr"
+    (proc:capture stdout-kept stdout-observed stderr-kept stderr-observed
+      stdout-end stderr-end (proc:input bytes-written bytes-offered)))
+
+Termination is (proc:exited code), (proc:signaled number),
+(proc:launch-failed errno stage), or proc:not-started. Cause is proc:normal,
+proc:cancelled, proc:timed-out, or (proc:host-failed errno). Stream ends are
+proc:eof or proc:open. Equal kept/observed counts and EOF establish complete
+capture for that stream. Written input is not an acknowledgement that the
+child consumed it. A capture bound never silently certifies complete capture.
+
+An exit code is not a universal success classifier: an aborting mutation can
+be the expected result. Callers check the termination, cause and capture
+required by their operation. Argument, handle and preparation failures return
+(proc:failed kind reason), preserving the reason. A second take returns
+proc:already-consumed. Pending is not empty, failure or producer exhaustion.
+
+The owner drains stdout and stderr concurrently with stdin delivery. Closing
+or releasing its last holder requests cancellation and reaps the child. A
+child PID stays reserved until capture finishes, preventing cancellation from
+targeting a reused PID. Cancellation targets the process group created by the
+provider; a descendant that deliberately leaves it is outside that guarantee.
+Native handle calls and explicit close/context teardown must be serialized.
+
+system:write takes stdout or stderr and bytes, without printing or decoding
+them. --no-results suppresses answer display only. system:exit requests an
+orderly driver exit in the range 0..255; it does not bypass cleanup. The
+explicit command publishes prior answer displays; failed tests retain their
+diagnostic-only exit display. --no-results does not allocate an answer spool.
+Internal process pipes and answer spools do not reuse standard descriptors.
+The exhaustive --run-contract still refuses uncompleted declared queries after an
+early exit. No final receipt is evidence that skipped queries ran.
+
+Retained work observes ordered occurrences. A complete empty frontier differs
+from paused work and from a failure with a reason. Explicit cancellation keeps
+already committed effects. A non-resumable preparation method cannot honor a
+transition budget; it reports WorkBudgetRequiresResumableRoute, not a proof
+that no resumable interpretation exists.
+
+Preparation caching retains invocation-local replay-safety decisions under the
+alpha-equivalent closed body, dialect/profile, active libraries,
+source-program revision and provider capabilities. It
+does not memoize effects or their answers. Temporary/non-root spaces are not
+cached without a lifetime lease. Successful pure-program preparation has its
+own existing ownership and cache contracts.
+
+Examples: tests/effects_v1 contains two positive and one negative control for
+each capacity. Run:
+
+  python3 tests/support/check_effects_v1.py ./cetta
+  ./cetta --lang he --profile extended --no-results \
+    tests/support/check_native_mutation_rejected.metta control mutant assertion
+
+The native mutation gate checks control exit 0 plus PASS:, then the platform's
+abort signal plus the specific assertion in stderr, with complete capture and
+a 180-second child deadline. Its success line matches the Python gate. Failure
+diagnostics are explicit operation reasons rather than Python tracebacks.
+Capture is byte-preserving instead of implicitly decoding with the host locale.
+The repository's pattern, relational, aggregation and occurrence mutation
+targets use this MeTTa gate. The Python gate remains a qualification oracle;
+mutation-source generators may still use Python.
+
+Existing completion and scoped-outcome formal contracts distinguish data,
+raised control, unfinished search and exhaustive zero-answer search. The
+kind-indexed failure model permits class handlers without erasing the original
+kind or cause. These are abstract semantic/protocol results, not a native C
+adequacy proof or a new universal runtime null type.

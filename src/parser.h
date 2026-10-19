@@ -51,6 +51,10 @@ typedef int (*ParserDocumentBytesPrefixIdsBackend)(
     AtomId **out_ids, int *complete_count,
     char *error_buf, size_t error_buf_size);
 
+typedef int (*ParserDocumentTermIdBackend)(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId *out_id, char *error_buf, size_t error_buf_size);
+
 typedef struct {
     void *context;
     ParserDocumentTextIdsBackend parse_text_ids;
@@ -58,6 +62,9 @@ typedef struct {
     /* Optional: retain complete forms when a later form fails to parse. */
     ParserDocumentFilePrefixIdsBackend parse_file_prefix_ids;
     ParserDocumentBytesPrefixIdsBackend parse_bytes_prefix_ids;
+    /* Optional: one term of the reader's form syntax, from text that holds
+     * exactly that term (a dialect's parse). */
+    ParserDocumentTermIdBackend parse_term_bytes_id;
 } ParserDocumentIdsBackend;
 
 /* Parse still fails on invalid source. The caller owns any complete prefix
@@ -81,6 +88,13 @@ void parser_clear_document_ids_backend(void *context);
  * A hosted checker reads its own source this way, whatever reader the
  * program's language installed. */
 bool parser_set_builtin_document_reader(bool builtin);
+
+/* One term read by the session's document reader, when that reader reads
+ * terms: a dialect's parse then reads as its source does.  *handled is false
+ * when the session has no such reader; NULL with *handled true is text that
+ * is not exactly one term. */
+Atom *parser_read_document_term_n(Arena *a, const char *text, size_t text_len,
+                                  bool *handled);
 
 /*
  * Project a neutral, already-recognized S-expression document into CeTTa's

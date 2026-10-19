@@ -335,6 +335,8 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
 Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
                                  Atom *culprit);
 Atom *petta_semantics_syntax_error(Arena *arena, const char *text);
+/* PeTTa 1.1 raises this on car-atom of the empty expression. */
+Atom *petta_semantics_empty_head_error(Arena *arena);
 /* The typecheck errors the reference's guards throw at run time, in context
  * typecheck: literal_type_mismatch(Value, Type) where a value does not have
  * the type a declaration requires, and no_matching_overload(Function) where
@@ -343,6 +345,9 @@ Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
                                           Atom *type);
 Atom *petta_semantics_no_matching_overload_error(Arena *arena,
                                                  Atom *function);
+/* Whether `error` is a call contract's: literal_type_mismatch(Value, Type)
+ * in context typecheck. */
+bool petta_semantics_contract_error(Atom *error);
 /* PeTTa 1.1's error for an import no file answers:
  * existence_error(source_sink, File) in context(import!, File). */
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);
@@ -564,6 +569,109 @@ PeTTaValueRepresentation petta_semantics_value_representation(const Atom *value)
 bool petta_semantics_is_nonlist_carrier(const Atom *value);
 bool petta_semantics_sequence_view(
     const Atom *value, Atom *const **elements, CettaExprLen *length);
+
+
+/* A projection interprets one already-prepared argument. Dispatch authority,
+ * argument effects, type guards and HE completion stay with the enclosing
+ * call protocol. Its structural payload is at most one value; evaluating
+ * that value under HE can produce additional answers or effects. */
+typedef enum {
+    CETTA_SEQUENCE_PROJECTION_NONE = 0,
+    CETTA_SEQUENCE_PROJECTION_HEAD,
+    CETTA_SEQUENCE_PROJECTION_TAIL,
+} CettaSequenceProjection;
+
+typedef enum {
+    CETTA_SEQUENCE_PETTA_VALUE = 0,
+    CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD,
+    CETTA_SEQUENCE_HE_LIBRARY_VALUE,
+    CETTA_SEQUENCE_STRICT_VALUE,
+} CettaSequenceProjectionPolicy;
+
+typedef struct {
+    CettaSequenceProjection projection;
+    CettaSequenceProjectionPolicy policy;
+} CettaSequenceProjectionCall;
+
+static inline CettaSequenceProjectionCall cetta_sequence_projection_call(
+    SymbolId head, CettaExprLen nargs, CettaSequenceProjectionPolicy policy) {
+    return (CettaSequenceProjectionCall){
+        .projection = nargs != 1u ? CETTA_SEQUENCE_PROJECTION_NONE
+            : head == g_builtin_syms.car_atom ? CETTA_SEQUENCE_PROJECTION_HEAD
+            : head == g_builtin_syms.cdr_atom ? CETTA_SEQUENCE_PROJECTION_TAIL
+            : CETTA_SEQUENCE_PROJECTION_NONE,
+        .policy = policy,
+    };
+}
+
+typedef enum {
+    CETTA_SEQUENCE_PROJECT_DEFER = 0,
+    CETTA_SEQUENCE_PROJECT_ELEMENT,
+    CETTA_SEQUENCE_PROJECT_SUFFIX,
+    CETTA_SEQUENCE_PROJECT_UNIT,
+    CETTA_SEQUENCE_PROJECT_RAISE,
+    CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR,
+} CettaSequenceProjectionResult;
+
+typedef enum {
+    CETTA_SEQUENCE_KEEP_SOURCE_REPRESENTATION = 0,
+    CETTA_SEQUENCE_ORDINARY_EXPRESSION,
+} CettaSequenceProjectionRepresentation;
+
+/* Source and elements are borrowed from the caller's decoded value. They
+ * confer neither ownership nor permission to execute a returned expression.
+ * The caller pins their owners for the view and for materialized results
+ * that still reference their atoms. Materialization acquires no owner. */
+typedef struct {
+    CettaSequenceProjectionResult result;
+    CettaSequenceProjectionRepresentation representation;
+    Atom *source;
+    Atom *const *elements;
+    CettaExprLen length;
+} CettaSequenceProjectionView;
+
+static inline CettaSequenceProjectionView cetta_sequence_projection_view(
+    CettaSequenceProjectionCall call, Atom *source, bool sequence,
+    Atom *const *elements, CettaExprLen length) {
+    CettaSequenceProjectionView view = {
+        .result = CETTA_SEQUENCE_PROJECT_DEFER,
+        .representation = CETTA_SEQUENCE_KEEP_SOURCE_REPRESENTATION,
+        .source = source, .elements = elements, .length = length,
+    };
+    if (!source || call.projection == CETTA_SEQUENCE_PROJECTION_NONE)
+        return view;
+    if (sequence && length > 0u) {
+        view.result = call.projection == CETTA_SEQUENCE_PROJECTION_HEAD
+            ? CETTA_SEQUENCE_PROJECT_ELEMENT : CETTA_SEQUENCE_PROJECT_SUFFIX;
+        return view;
+    }
+    bool petta = call.policy == CETTA_SEQUENCE_PETTA_VALUE ||
+        call.policy == CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD;
+    view.result = !petta ? CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR
+        : sequence && call.projection == CETTA_SEQUENCE_PROJECTION_HEAD &&
+          call.policy == CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
+            ? CETTA_SEQUENCE_PROJECT_RAISE : CETTA_SEQUENCE_PROJECT_UNIT;
+    return view;
+}
+
+/* Materialization is distinct from result interpretation. HE's library
+ * answer protocol may evaluate the returned value; PeTTa keeps it as data. */
+static inline Atom *cetta_sequence_projection_materialize(
+    Arena *arena, const CettaSequenceProjectionView *view) {
+    if (!arena || !view)
+        return NULL;
+    if (view->result == CETTA_SEQUENCE_PROJECT_ELEMENT)
+        return view->elements[0];
+    if (view->result == CETTA_SEQUENCE_PROJECT_UNIT)
+        return atom_unit(arena);
+    if (view->result != CETTA_SEQUENCE_PROJECT_SUFFIX)
+        return NULL;
+    return view->representation == CETTA_SEQUENCE_KEEP_SOURCE_REPRESENTATION &&
+           atom_is_list(view->source)
+        ? atom_sequence_like(arena, view->source,
+                             view->elements + 1u, view->length - 1u)
+        : atom_expr_suffix(arena, view->source, 1u);
+}
 
 /* Closed callable carriers are already PeTTa values.  A generated evaluator
  * must not reinterpret their representation as a fresh call. */

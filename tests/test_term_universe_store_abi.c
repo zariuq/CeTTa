@@ -806,6 +806,20 @@ bool space_match_backend_ground_exact_exists_frontier(
     return false;
 }
 
+bool space_match_ground_pattern_matches_by_identity(const Atom *pattern) {
+    (void)pattern;
+    return true;
+}
+
+bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
+                                          CettaIndex **out, CettaIndex *count) {
+    (void)s;
+    (void)pattern;
+    (void)out;
+    (void)count;
+    return false;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     (void)s;
     (void)a;
@@ -1442,12 +1456,16 @@ static void test_source_arena_id_memo_contract(void) {
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_SOURCE_MEMO_HIT) == 0u);
 
-    /* Free is an allocation-invalidating transition just like reset.  The
-       arena remains reusable by its owner, so a free/reuse cycle must move
-       the memo epoch even when the Arena object keeps its identity. */
+    /* Free ends the arena's incarnation and its owner reopens it.  The
+       reopened arena may take back the same identity, but then under a reset
+       epoch above every epoch the ended incarnation used, so a free/reopen
+       cycle can never meet a memo entry of the incarnation that ended. */
+    uint32_t before_free_identity = source.identity;
     uint64_t before_free_epoch = source.reset_epoch;
     arena_free(&source);
-    assert(source.reset_epoch == before_free_epoch + 1u);
+    arena_init(&source);
+    assert(source.identity != before_free_identity ||
+           source.reset_epoch > before_free_epoch + 1u);
     Atom *after_free = atom_expr2(
         &source, atom_symbol(&source, "source-memo-after-free"),
         atom_int(&source, 17));
@@ -2492,7 +2510,9 @@ int main(void) {
     assert(tu_hash32(&universe, seen_id) == atom_hash(seen_atom));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
     assert(lookup_diag.lazy_decode_count == 0);
-    assert(lookup_diag.legacy_hash_recompute_count == seen_atom->expr.len);
+    /* Both leaves are symbols, found by their record header: no legacy
+     * hash is recomputed. */
+    assert(lookup_diag.legacy_hash_recompute_count == 0);
 
     Space admit_space;
     space_init_with_universe(&admit_space, &universe);

@@ -10,7 +10,8 @@ static CettaContinuationStatus capture(void *m, void **p) {(void)m;(void)p;retur
 static CettaContinuationStatus restore(void *m, void **p) {(void)m;(void)p;return CETTA_CONTINUATION_UNSUPPORTED;}
 static void destroy(void *p) {destroyed++;free(p);}
 static bool storage(const void *p,CettaContinuationStorage *s) {(void)p;*s=(CettaContinuationStorage){.exclusive_bytes=sizeof(unsigned)};return true;}
-static const CettaContinuationProvider provider={.representation_name="lease-control",.ownership={capture,restore,destroy,storage}};
+static void storage_census(const void *p,CettaStorageCensus *s) {(void)cetta_storage_object(s,p,sizeof(unsigned),CETTA_STORAGE_BLOCK);}
+static const CettaContinuationProvider provider={.representation_name="lease-control",.ownership={.capture=capture,.restore=restore,.destroy=destroy,.storage=storage,.storage_census=storage_census}};
 static CettaOwnedContinuation occurrence(unsigned n) {unsigned *p=malloc(sizeof(*p));*p=n;return (CettaOwnedContinuation){.payload=p,.provider=&provider};}
 static void init(CettaContinuationHub *h) {CettaSelectionAutomaton a;CettaControlPlan p;CHECK(cetta_selection_automaton_fifo(&a));CHECK(cetta_control_plan_derive((CettaObservationDemand){.completion=CETTA_OBSERVATION_ORDERED_STREAM},CETTA_CONTROL_BRANCH_GENERAL,CETTA_CONTROL_BATCH_SINGLETON_ONLY,&p));CHECK(cetta_continuation_hub_init(h,&a,CETTA_SELECTION_DUTY_RECURRENT_OLDEST,&p));}
 static void test_leases(void) {
@@ -266,7 +267,7 @@ static void shared_destroy(void *raw) {
 }
 static const CettaContinuationProvider shared_provider = {
     .representation_name = "shared-immutable-lease-control",
-    .ownership = {capture, restore, shared_destroy, storage},
+    .ownership = {.capture=capture, .restore=restore, .destroy=shared_destroy, .storage=storage},
 };
 
 static void test_shared_physical_hub_copy(void) {
@@ -336,11 +337,42 @@ static void test_hub_copy_empty_and_exhausted(void) {
     puts("PASS: empty and fully issued hub copies preserve exhausted occurrence and lease counters");
 }
 
+static void test_continuation_census(void) {
+    CettaOwnedContinuation live=occurrence(71),borrowed=live;
+    CettaStorageCensus census={0};
+    size_t prior_destroyed=destroyed;
+    cetta_owned_continuation_storage_census(&live,&census);
+    cetta_owned_continuation_storage_census(&borrowed,&census);
+    cetta_storage_finish(&census);
+    CHECK(!census.incomplete && !census.overflow && !census.invalidated);
+    CHECK(census.bytes==sizeof(unsigned) && census.retained==sizeof(unsigned));
+    CHECK(census.length==1u && census.repeated==1u);
+    CHECK(*(unsigned *)live.payload==71u && destroyed==prior_destroyed);
+    cetta_storage_census_free(&census);
+    CettaContinuationProvider opaque=provider;opaque.ownership.storage_census=NULL;
+    borrowed.provider=&opaque;
+    CettaContinuationStorage advisory={0};
+    CHECK(cetta_owned_continuation_storage(&borrowed,&advisory));
+    cetta_owned_continuation_storage_census(&borrowed,&census);cetta_storage_finish(&census);
+    CHECK(census.incomplete && !strcmp(census.incomplete,"OpaqueContinuationOwner"));
+    CHECK(census.bytes==0u && *(unsigned *)live.payload==71u);
+    cetta_storage_census_free(&census);
+    borrowed.provider=NULL;
+    cetta_owned_continuation_storage_census(&borrowed,&census);cetta_storage_finish(&census);
+    CHECK(census.incomplete && !strcmp(census.incomplete,"InvalidContinuationProvider"));
+    cetta_storage_census_free(&census);
+    cetta_owned_continuation_destroy(&live);
+    cetta_owned_continuation_storage_census(&live,&census);cetta_storage_finish(&census);
+    CHECK(!census.incomplete && census.bytes==0u && census.length==0u);
+    cetta_storage_census_free(&census);
+}
+
 int main(void) {
     test_leases();
     test_prepared_hub_copy();
     test_shared_physical_hub_copy();
     test_hub_copy_empty_and_exhausted();
+    test_continuation_census();
     printf("Owned hub capture and leases: %zu checks passed\n", checks);
     return 0;
 }

@@ -111,3 +111,135 @@
 (= (fs:entries $path)
    (function (case (__cetta_lib_fs_entries $path)
      (($result (return $result))))))
+
+; Entry kind is an enumeration hint. Use metadata for a resolved observation.
+; HE's Atom result contract preserves the observation's constructor fields.
+; Public operands are computed once; the native receives their data intact.
+(: __cetta_lib_fs_metadata (-> Atom Atom Atom))
+(: __cetta_lib_fs_open_directory (-> Atom Atom))
+(: __cetta_lib_fs_next_entry (-> Atom Atom))
+(: __cetta_lib_fs_open_read (-> Atom Atom))
+(: __cetta_lib_fs_read_chunk (-> Atom Atom Atom))
+(: __cetta_lib_fs_close (-> Atom Atom))
+(: fs:metadata (-> %Undefined% %Undefined% Atom))
+(: fs:open-directory (-> %Undefined% Atom))
+(: fs:next-entry (-> %Undefined% Atom))
+(: fs:open-read (-> %Undefined% Atom))
+(: fs:read-chunk (-> %Undefined% %Undefined% Atom))
+(: fs:close (-> %Undefined% Atom))
+(= (fs:metadata $path $links)
+   (function (chain (eval (__cetta_lib_fs_metadata $path $links)) $result
+     (return $result))))
+
+(= (fs:open-directory $path)
+   (function (chain (eval (__cetta_lib_fs_open_directory $path)) $result
+     (return $result))))
+
+(= (fs:next-entry $owner)
+   (function (chain (eval (__cetta_lib_fs_next_entry $owner)) $result
+     (return $result))))
+
+(= (fs:open-read $path)
+   (function (chain (eval (__cetta_lib_fs_open_read $path)) $result
+     (return $result))))
+
+; A zero-size request is an empty chunk, not an end observation. Aliases share
+; position; independently opened owners do not. Faults retain known progress.
+(= (fs:read-chunk $owner $count)
+   (function (chain (eval (__cetta_lib_fs_read_chunk $owner $count)) $result
+     (return $result))))
+
+(= (fs:close $owner)
+   (function (chain (eval (__cetta_lib_fs_close $owner)) $result
+     (return $result))))
+
+; A walker owns every open directory in its traversal. current observes the
+; pending entry without advancing; step applies one explicit descent decision.
+(: __cetta_lib_fs_walk_open (-> Atom Atom))
+(: __cetta_lib_fs_walk_current (-> Atom Atom))
+(: __cetta_lib_fs_walk_step (-> Atom Atom Atom))
+(: __cetta_lib_fs_walk_metadata (-> Atom Atom Atom))
+(: fs:walk-open (-> %Undefined% Atom))
+(: fs:walk-current (-> %Undefined% Atom))
+(: fs:walk-step (-> %Undefined% %Undefined% Atom))
+(: fs:walk-metadata (-> %Undefined% %Undefined% Atom))
+(= (fs:walk-open $path)
+   (function (chain (eval (__cetta_lib_fs_walk_open $path)) $result
+     (return $result))))
+(= (fs:walk-current $owner)
+   (function (chain (eval (__cetta_lib_fs_walk_current $owner)) $result
+     (return $result))))
+(= (fs:walk-step $owner $action)
+   (function (chain (eval (__cetta_lib_fs_walk_step $owner $action)) $result
+     (return $result))))
+(= (fs:walk-metadata $owner $links)
+   (function (chain (eval (__cetta_lib_fs_walk_metadata $owner $links)) $result
+     (return $result))))
+
+; exclusions is a tuple of basenames. Only missing entries are skipped after
+; a metadata/descent race; other faults remain observations for the caller.
+; Structural decomposition keeps callable observation constructors inert.
+(: fs:walk-next (-> %Undefined% %Undefined% Atom %Undefined%))
+(= (fs:walk-next $owner $links $exclusions)
+  (if (or (== $links follow) (== $links no-follow))
+    (let $current (fs:walk-current $owner)
+      (fs:walk-follow-current $owner $links $exclusions $current))
+    (fs:walk-metadata $owner $links)))
+(: fs:walk-excluded (-> Atom Atom %Undefined%))
+(= (fs:walk-excluded $name $exclusions)
+  (case $exclusions
+    ((() False)
+     ($nonempty (let ($first $rest) (decons-atom $nonempty)
+       (if (== $first $name) True (fs:walk-excluded $name $rest)))))))
+(: fs:walk-follow-current (-> Atom Atom Atom Atom %Undefined%))
+(: fs:walk-publish (-> Atom %Undefined%))
+(= (fs:walk-publish $current)
+  (let ($head $fields) (decons-atom $current) (fs:walk-cons $head $fields)))
+(: fs:walk-cons (-> Atom Atom Atom))
+(= (fs:walk-cons $head $fields)
+  (function (chain (eval (cons-atom $head $fields)) $result (return $result))))
+(: fs:walk-advance (-> Atom %Undefined% Atom Atom %Undefined%))
+(= (fs:walk-advance $owner $action $links $exclusions)
+  (let $next (fs:walk-step $owner $action)
+    (fs:walk-selected $owner $links $exclusions $next)))
+(= (fs:walk-follow-current $owner $links $exclusions $current)
+  (if (== $current fs:walk-ready)
+    (fs:walk-advance $owner skip $links $exclusions)
+    (let ($head $fields) (decons-atom $current)
+      (case $head
+        ((fs:walk-entry
+          (let ($path $relative $name $hint $index) $fields
+            (if (fs:walk-excluded $name $exclusions)
+              (fs:walk-advance $owner skip $links $exclusions)
+              (let $info (fs:walk-metadata $owner $links)
+                (let ($kind $details) (decons-atom $info)
+                  (case $kind
+                    ((fs:info
+                      (let ($type $size $identity) $details
+                        (fs:walk-advance $owner
+                            (if (== $type directory)
+                              (if (== $links follow) descend-follow descend) skip)
+                          $links $exclusions)))
+                     (fs:failed
+                      (let ($reason $operation $failed-path $code $progress $message) $details
+                        (if (== $reason fs:missing)
+                          (fs:walk-advance $owner skip $links $exclusions)
+                          (fs:walk-publish $info)))))))))))
+         ($other (fs:walk-publish $current)))))))
+(: fs:walk-selected (-> Atom Atom Atom Atom %Undefined%))
+(= (fs:walk-selected $owner $links $exclusions $current)
+  (let ($head $fields) (decons-atom $current)
+    (case $head
+      ((fs:walk-entry
+        (let ($path $relative $name $hint $index) $fields
+          (if (fs:walk-excluded $name $exclusions)
+            (fs:walk-advance $owner skip $links $exclusions)
+            (fs:walk-publish $current))))
+       (fs:failed
+        (let ($reason $operation $path $code $progress $message) $fields
+          (let ($progress-head $progress-fields) (decons-atom $progress)
+            (let ($observed $position) $progress-fields
+              (if (and (== $reason fs:missing) (== $position known-position))
+                (fs:walk-advance $owner skip $links $exclusions)
+                (fs:walk-publish $current))))))
+       ($other (fs:walk-publish $current))))))

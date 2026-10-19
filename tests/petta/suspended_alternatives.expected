@@ -1,0 +1,25 @@
+noisy-first
+noisy-second
+warm
+cool
+cool
+warm
+cool
+cool
+(a b)
+((pair () a) (pair () b))
+(same same)
+(one two)
+((pair red warm) (pair blue cool) (pair green cool))
+((pair a done) (pair b done))
+((pair red done) (pair blue done) (pair green done))
+(warm cool cool)
+((pair red done) (pair blue done) (pair green done))
+((a (a (a ()))) (b (a (a ()))) (a (b (a ()))) (b (b (a ()))) (a (a (b ()))) (b (a (b ()))) (a (b (b ()))) (b (b (b ()))))
+((red (red ())) (blue (red ())) (green (red ())) (red (blue ())) (blue (blue ())) (green (blue ())) (red (green ())) (blue (green ())) (green (green ())))
+(a)
+(warm)
+(found)
+(blue green)
+(a b)
+(a b c c)

@@ -129,6 +129,20 @@ bool space_match_backend_ground_exact_exists_frontier(
     return false;
 }
 
+bool space_match_ground_pattern_matches_by_identity(const Atom *pattern) {
+    (void)pattern;
+    return true;
+}
+
+bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
+                                          CettaIndex **out, CettaIndex *count) {
+    (void)s;
+    (void)pattern;
+    (void)out;
+    (void)count;
+    return false;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     (void)s;
     (void)a;
@@ -1393,6 +1407,27 @@ int main(int argc, char **argv) {
         Atom *grade_parts[] = {atom_symbol(&equation_scratch, "=w"),
             source_lhs, atom_true(&equation_scratch), atom_int(&equation_scratch, 2)};
         Atom *grade_row = atom_expr(&equation_scratch, grade_parts, 4u);
+        Space rule_filter;
+        space_init_with_universe(&rule_filter, &equation_universe);
+        Atom *guard_parts[] = {atom_symbol(&equation_scratch, "admit"),
+            atom_true(&equation_scratch)};
+        Atom *guard = atom_expr(&equation_scratch, guard_parts, 2u);
+        Atom *guarded_parts[] = {grade_parts[0], source_lhs, grade_parts[2],
+            grade_parts[3], guard};
+        Atom *where_parts[] = {atom_symbol(&equation_scratch, "where"), grade_parts[3]};
+        Atom *where_row[] = {atom_symbol(&equation_scratch, "="), source_lhs,
+            grade_parts[2], atom_expr(&equation_scratch, where_parts, 2u)};
+        space_add(&rule_filter, source_equation);
+        space_add(&rule_filter, grade_row);
+        space_add(&rule_filter, atom_expr(&equation_scratch, guarded_parts, 5u));
+        space_add(&rule_filter, atom_expr(&equation_scratch, where_row, 4u));
+        Atom *data_parts[] = {atom_symbol(&equation_scratch, "NotARule"),
+            source_lhs, grade_parts[2], grade_parts[3]};
+        space_add(&rule_filter, atom_expr(&equation_scratch, data_parts, 4u));
+        for (CettaIndex i = 0u; i < 4u; i++)
+            assert(space_row_may_be_rule(&rule_filter, i));
+        assert(!space_row_may_be_rule(&rule_filter, 4u));
+        space_free(&rule_filter);
         space_add(&grade_overlay, grade_row);
         space_add(&grade_overlay, grade_row);
         assert(space_has_graded_equations(&grade_overlay));
@@ -1762,12 +1797,22 @@ int main(int argc, char **argv) {
             Atom *call = atom_expr(
                 &equation_scratch, call_elems, 2u);
             Atom *result = NULL;
+#if CETTA_BUILD_WITH_GMP
             assert(space_prepared_equation_run_register_recursion(
                        &plan, call, &equation_scratch, 512u, &result) ==
                    SPACE_PREPARED_REGISTER_VALUE);
             assert(result && result->kind == ATOM_GROUNDED &&
                    result->ground.gkind == GV_INT &&
                    result->ground.ival == 55);
+#else
+            /* This exact-register specialization uses GMP cells. A portable
+             * build declines it so callers retain ordinary evaluation; it
+             * must not publish a value or error on behalf of that fallback. */
+            assert(space_prepared_equation_run_register_recursion(
+                       &plan, call, &equation_scratch, 512u, &result) ==
+                   SPACE_PREPARED_REGISTER_NOT_APPLICABLE);
+            assert(result == NULL);
+#endif
 
             Atom *noninteger_elems[2] = {
                 atom_symbol_id(&equation_scratch, recursive_head),

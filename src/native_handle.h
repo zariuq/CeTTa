@@ -7,13 +7,15 @@
 
 typedef void (*CettaNativeHandleFreeFn)(void *resource);
 
+typedef struct CettaNativeHandleRegistry CettaNativeHandleRegistry;
+
 typedef struct {
-    uint64_t id;
-    const char *kind;
-    void *resource;
-    CettaNativeHandleFreeFn free_resource;
-    CettaStorageVisitor storage;
-} CettaNativeHandleSlot;
+    size_t live;
+    size_t slot_capacity;
+    size_t index_capacity;
+    /* Registry metadata only, excluding resource payloads and stale holders. */
+    size_t storage_bytes;
+} CettaNativeHandleStats;
 
 struct CettaLibraryContext;
 
@@ -46,6 +48,9 @@ void *cetta_native_handle_get_owned(struct CettaLibraryContext *ctx,
     const char *kind, Atom *handle);
 bool cetta_native_handle_close(struct CettaLibraryContext *ctx, const char *kind,
                                uint64_t id);
+/* Counts committed live resources, independently of retained stale holders. */
+size_t cetta_native_handle_count(const struct CettaLibraryContext *ctx);
+CettaNativeHandleStats cetta_native_handle_stats(const struct CettaLibraryContext *ctx);
 void cetta_native_handle_cleanup_all(struct CettaLibraryContext *ctx);
 
 /* An acquired use keeps the resource alive after logical close. A lifetime
@@ -79,6 +84,23 @@ bool cetta_native_handle_acquire_owned(struct CettaLibraryContext *ctx,
  * fresh execution authority or protection against a subsequent close. */
 void *cetta_native_handle_use_resource(const CettaNativeHandleUse *use);
 bool cetta_native_handle_use_is_current(const CettaNativeHandleUse *use);
+/* Exchange the payload of this exact owning handle under its current, sole
+ * exclusive use. Equal IDs or payload addresses do not identify an owner.
+ * Owning Atom
+ * aliases retain their owner and ID and subsequently resolve the replacement.
+ * Representation, finalizer and storage visitor stay the same. Any other
+ * acquired use, including a lifetime use, refuses. Borrowed get callers
+ * still require external exclusion, and the context remains live.
+ *
+ * On success, ownership of the previous payload passes to the caller, which
+ * retires it with that representation's finalizer after releasing its pointer
+ * keys. The output is a separate caller-owned pointer. The replacement must
+ * be independently owned and of the same kind;
+ * this operation grants no semantic authority to substitute it. On refusal
+ * the use, owner, replacement and previous output are unchanged. */
+bool cetta_native_handle_use_exchange(struct CettaLibraryContext *ctx,
+    const char *kind, Atom *handle, CettaNativeHandleUse *use,
+    void *replacement, void **previous);
 bool cetta_native_handle_use_move(CettaNativeHandleUse *destination,
     CettaNativeHandleUse *source);
 bool cetta_native_handle_use_release(CettaNativeHandleUse *use);
@@ -98,6 +120,8 @@ bool cetta_native_handle_use_fork_lifetime(CettaNativeHandleUse *destination,
     const CettaNativeHandleUse *source);
 
 #ifdef CETTA_NATIVE_HANDLE_TEST_HOOKS
+/* Fail an owner allocation after n successful owner allocations; -1 disables. */
+void cetta_native_handle_test_fail_owner_after(long n);
 /* Invokes the production reserve arithmetic without forging live owners. */
 bool cetta_native_handle_test_reserve_use_count(size_t *count);
 #endif

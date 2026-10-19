@@ -7,8 +7,18 @@
 
 _Thread_local CettaNativeCostScope *cetta_native_cost_current_scope;
 #define current_scope cetta_native_cost_current_scope
+_Thread_local CettaNativeCostScope *cetta_native_cost_current_account_scope;
+#define account_scope cetta_native_cost_current_account_scope
 static _Atomic uint64_t next_event_identity = 1u;
 static _Atomic uint64_t next_ledger_identity = 1u;
+static _Thread_local bool cost_notifying;
+
+static uint64_t cost_charge_counts(CettaNativeCostKind, uint64_t);
+static uint64_t cost_charge_events(CettaNativeCostKind, uint64_t);
+static uint64_t cost_charge_receipts(CettaNativeCostKind, uint64_t);
+static void cost_select_worker(void);
+static _Thread_local uint64_t (*cost_charge_worker)(CettaNativeCostKind, uint64_t) =
+    cost_charge_counts;
 
 static const char *const names[CETTA_COST_KIND_COUNT] = {
     "quantum", "candidate-row", "index-visit", "match-attempt", "match-node",
@@ -23,9 +33,47 @@ static const char *const names[CETTA_COST_KIND_COUNT] = {
 void cetta_native_cost_init(CettaNativeCostLedger *ledger) {
     if (ledger) {
         memset(ledger, 0, sizeof(*ledger));
+        ledger->native_enabled = true;
         ledger->identity = cetta_identity_try_take(&next_ledger_identity);
         ledger->total.trace_incomplete = !ledger->identity;
     }
+}
+
+void cetta_native_cost_init_compact(CettaNativeCostLedger *ledger) {
+    cetta_native_cost_init(ledger);
+    if (ledger) ledger->compact = true;
+}
+
+void cetta_native_cost_init_equations(CettaNativeCostLedger *ledger) {
+    cetta_native_cost_init_compact(ledger);
+    if (ledger) {
+        ledger->native_enabled = false;
+        ledger->equations.enabled = true;
+    }
+}
+
+bool cetta_native_cost_enable_equations(CettaNativeCostLedger *ledger) {
+    if (!ledger || cost_notifying) return false;
+    if (!ledger->equations.enabled && (ledger->used || ledger->total.work)) return false;
+    for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous)
+        if (scope->ledger == ledger) return false;
+    ledger->equations.enabled = true;
+    return true;
+}
+
+bool cetta_native_cost_equations_requested(void) {
+    return account_scope && account_scope->equations_requested;
+}
+
+bool cetta_native_cost_forget_events(CettaNativeCostLedger *ledger) {
+    if (!ledger || cost_notifying) return false;
+    for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous)
+        if (scope->ledger == ledger) return false;
+    free(ledger->events);
+    ledger->events = NULL;
+    ledger->length = ledger->capacity = 0u;
+    ledger->compact = true;
+    return true;
 }
 
 void cetta_native_cost_free(CettaNativeCostLedger *ledger) {
@@ -47,17 +95,38 @@ static uint64_t add_lower_bound(uint64_t left, uint64_t right, bool *overflow) {
     return left + right;
 }
 
-static void append_event(CettaNativeCostLedger *ledger,
-        CettaNativeCostKind kind, uint64_t units, uint64_t occurrence,
-        uint64_t identity, uint64_t origin) {
-    if (!ledger || (unsigned)kind >= CETTA_COST_KIND_COUNT || units == 0u)
-        return;
+void cetta_native_cost_equations_admitted(uint64_t units) {
+    for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous) {
+        if (!scope->ledger || !scope->ledger->equations.enabled) continue;
+        bool duplicate = false;
+        for (CettaNativeCostScope *inner = account_scope; inner != scope;
+             inner = inner->account_previous)
+            duplicate |= inner->ledger == scope->ledger;
+        if (duplicate) continue;
+        CettaEquationCost *account = &scope->ledger->equations;
+        account->work = add_lower_bound(account->work, units, &account->work_overflow);
+        account->span = add_lower_bound(account->span, units, &account->span_overflow);
+    }
+}
+
+static inline void append_account(CettaNativeCostLedger *ledger,
+        CettaNativeCostKind kind, uint64_t units) {
     ledger->total.counts[kind] = add_lower_bound(
         ledger->total.counts[kind], units, &ledger->total.overflow);
     ledger->total.work = add_lower_bound(
         ledger->total.work, units, &ledger->total.overflow);
     ledger->total.span = add_lower_bound(
         ledger->total.span, units, &ledger->total.overflow);
+}
+
+static void append_event(CettaNativeCostLedger *ledger,
+        CettaNativeCostKind kind, uint64_t units, uint64_t occurrence,
+        uint64_t identity, uint64_t origin) {
+    if (!ledger || (unsigned)kind >= CETTA_COST_KIND_COUNT || units == 0u)
+        return;
+    append_account(ledger, kind, units);
+    if (ledger->compact)
+        return;
     if (!identity)
         ledger->total.trace_incomplete = true;
     if (ledger->total.trace_incomplete)
@@ -96,10 +165,29 @@ static void append_event(CettaNativeCostLedger *ledger,
 
 
 static _Thread_local CettaNativeCostObserver *cost_observer;
-static _Thread_local bool cost_notifying;
+static _Thread_local bool equations_selected;
 static bool cost_observer_suspended_contains(const CettaNativeCostObserver *);
+extern void cetta_native_cost_observation_policy_changed(void) __attribute__((weak));
+
+/* Scope and observer changes choose an operational worker. The numerical
+ * worker does not inspect trace policy, event identities or observers. */
+static void cost_select_worker(void) {
+    cost_charge_worker = cost_observer ? cost_charge_receipts
+        : current_scope && current_scope->events_requested ? cost_charge_events
+        : cost_charge_counts;
+    bool equations = cetta_native_cost_equations_requested();
+    if (equations != equations_selected) {
+        equations_selected = equations;
+        if (cetta_native_cost_observation_policy_changed)
+            cetta_native_cost_observation_policy_changed();
+    }
+}
 
 bool cetta_native_cost_observer_active(void) { return cost_observer != NULL; }
+
+bool cetta_native_cost_events_requested(void) {
+    return cost_observer || (current_scope && current_scope->events_requested);
+}
 
 bool cetta_native_cost_observer_enter(CettaNativeCostObserver *observer,
         CettaNativeCostObserverFn observe, void *context) {
@@ -109,12 +197,14 @@ bool cetta_native_cost_observer_enter(CettaNativeCostObserver *observer,
         if (p == observer) return false;
     *observer = (CettaNativeCostObserver){cost_observer, observe, context};
     cost_observer = observer;
+    cost_select_worker();
     return true;
 }
 
 void cetta_native_cost_observer_leave(CettaNativeCostObserver *observer) {
     assert(observer && cost_observer == observer && !cost_notifying);
     cost_observer = observer->previous;
+    cost_select_worker();
 }
 
 static _Thread_local CettaNativeCostObserverSuspension *cost_suspension;
@@ -135,6 +225,7 @@ bool cetta_native_cost_observer_suspend(CettaNativeCostObserverSuspension *scope
         .observers=cost_observer,.active=true};
     cost_suspension=scope;
     cost_observer=NULL;
+    cost_select_worker();
     return true;
 }
 
@@ -144,6 +235,7 @@ void cetta_native_cost_observer_restore(CettaNativeCostObserverSuspension *scope
     cost_observer=scope->observers;
     cost_suspension=scope->previous;
     *scope=(CettaNativeCostObserverSuspension){0};
+    cost_select_worker();
 }
 
 
@@ -165,7 +257,7 @@ static void cost_observe_destination(CettaNativeCostChargeView *view,
         append_event(ledger, view->event.kind, view->event.units,
             view->event.occurrence, view->event.identity, view->event.origin);
     view->after = ledger ? ledger->total : (CettaNativeCostSnapshot){0};
-    view->retained = ledger && !duplicate && !ledger->total.trace_incomplete;
+    view->retained = ledger && !duplicate && !ledger->compact && !ledger->total.trace_incomplete;
     cost_observe(view);
 }
 
@@ -180,9 +272,10 @@ static void cost_observe_end(CettaNativeCostChargeView *view) {
 
 void cetta_native_cost_append(CettaNativeCostLedger *ledger,
         CettaNativeCostKind kind, uint64_t units, uint64_t occurrence) {
-    if (!ledger || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
+    if (!ledger || !ledger->native_enabled || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
         return;
-    uint64_t identity = cetta_identity_try_take(&next_event_identity);
+    uint64_t identity = !ledger->compact || cost_observer
+        ? cetta_identity_try_take(&next_event_identity) : 0u;
     if (!cost_observer) {
         append_event(ledger, kind, units, occurrence, identity, ledger->identity);
         return;
@@ -201,44 +294,82 @@ void cetta_native_cost_append(CettaNativeCostLedger *ledger,
 void cetta_native_cost_scope_enter(CettaNativeCostScope *scope,
         CettaNativeCostLedger *ledger, uint64_t occurrence) {
     *scope = (CettaNativeCostScope){
-        .previous = current_scope, .ledger = ledger, .occurrence = occurrence,
+        .previous = current_scope, .account_previous = account_scope,
+        .native_head = !ledger || ledger->native_enabled ? scope : current_scope,
+        .ledger = ledger, .occurrence = occurrence,
+        /* A NULL destination is an explicit legacy event-only scope. */
+        .events_requested = (!ledger || (ledger->native_enabled && !ledger->compact)) ||
+            (current_scope && current_scope->events_requested),
+        .equations_requested = (ledger && ledger->equations.enabled) ||
+            (account_scope && account_scope->equations_requested),
     };
-    current_scope = scope;
+    account_scope = scope;
+    current_scope = scope->native_head;
+    if (ledger) ledger->used = true;
+    cost_select_worker();
+}
+
+void cetta_native_cost_scope_enter_source(CettaNativeCostScope *scope,
+        CettaNativeCostLedger *ledger, const uint64_t *occurrence) {
+    assert(occurrence);
+    cetta_native_cost_scope_enter(scope, ledger, 0u);
+    scope->occurrence_source = occurrence;
 }
 
 void cetta_native_cost_scope_leave(CettaNativeCostScope *scope) {
-    assert(current_scope == scope);
+    assert(account_scope == scope);
+    scope->occurrence = cetta_native_cost_scope_occurrence(scope);
+    scope->occurrence_source = NULL;
+    account_scope = scope->account_previous;
     current_scope = scope->previous;
+    cost_select_worker();
 }
 
 CettaNativeCostScope *cetta_native_cost_detach_begin(void) {
-    CettaNativeCostScope *previous = current_scope;
-    current_scope = NULL;
+    CettaNativeCostScope *previous = account_scope;
+    account_scope = current_scope = NULL;
+    cost_select_worker();
     return previous;
 }
 
 void cetta_native_cost_detach_end(CettaNativeCostScope *previous) {
-    assert(current_scope == NULL);
-    current_scope = previous;
+    assert(!account_scope && !current_scope);
+    account_scope = previous;
+    current_scope = previous ? previous->native_head : NULL;
+    cost_select_worker();
 }
 
-uint64_t cetta_native_cost_charge_observed(CettaNativeCostKind kind, uint64_t units) {
-    if (!current_scope || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
-        return 0u;
+static uint64_t cost_charge_counts(CettaNativeCostKind kind, uint64_t units) {
+    for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
+        bool duplicate = false;
+        for (CettaNativeCostScope *inner = current_scope; inner != scope;
+             inner = inner->previous)
+            duplicate = duplicate || inner->ledger == scope->ledger;
+        if (!duplicate)
+            append_account(scope->ledger, kind, units);
+    }
+    return 0u;
+}
+
+static uint64_t cost_charge_events(CettaNativeCostKind kind, uint64_t units) {
     uint64_t identity = cetta_identity_try_take(&next_event_identity);
     uint64_t origin = current_scope->ledger ? current_scope->ledger->identity : 0u;
-    uint64_t occurrence = current_scope->occurrence;
-    if (!cost_observer) {
-        for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
-            bool duplicate = false;
-            for (CettaNativeCostScope *inner = current_scope; inner != scope;
-                 inner = inner->previous)
-                duplicate = duplicate || inner->ledger == scope->ledger;
-            if (!duplicate)
-                append_event(scope->ledger, kind, units, occurrence, identity, origin);
-        }
-        return identity;
+    uint64_t occurrence = cetta_native_cost_scope_occurrence(current_scope);
+    for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
+        bool duplicate = false;
+        for (CettaNativeCostScope *inner = current_scope; inner != scope;
+             inner = inner->previous)
+            duplicate = duplicate || inner->ledger == scope->ledger;
+        if (!duplicate)
+            append_event(scope->ledger, kind, units, occurrence, identity, origin);
     }
+    return identity;
+}
+
+static uint64_t cost_charge_receipts(CettaNativeCostKind kind, uint64_t units) {
+    uint64_t identity = cetta_identity_try_take(&next_event_identity);
+    uint64_t origin = current_scope->ledger ? current_scope->ledger->identity : 0u;
+    uint64_t occurrence = cetta_native_cost_scope_occurrence(current_scope);
     CettaNativeCostChargeView view = {
         .point=CETTA_COST_OBSERVE_BEGIN,
         .event={.identity=identity,.origin=origin,.occurrence=occurrence,
@@ -259,6 +390,46 @@ uint64_t cetta_native_cost_charge_observed(CettaNativeCostKind kind, uint64_t un
     return identity;
 }
 
+uint64_t cetta_native_cost_charge_observed(CettaNativeCostKind kind, uint64_t units) {
+    if (!current_scope || !units || (unsigned)kind >= CETTA_COST_KIND_COUNT)
+        return 0u;
+    return cost_charge_worker(kind, units);
+}
+
+/* Import numerical accounts directly when chronology is not available or
+ * not requested. Scheduling supplies span separately at the join boundary. */
+static void cost_import_account(CettaNativeCostLedger *target,
+        const CettaNativeCostLedger *source) {
+    if (target->equations.enabled) {
+        target->equations.work = add_lower_bound(target->equations.work,
+            source->equations.work, &target->equations.work_overflow);
+        target->equations.work_overflow |= source->equations.work_overflow;
+        target->equations.span_overflow |= source->equations.span_overflow;
+        target->equations.incomplete |= !source->equations.enabled || source->equations.incomplete;
+        target->equations.parallel |= source->equations.parallel;
+    }
+    if (!target->native_enabled) return;
+    if (!source->native_enabled) target->total.trace_incomplete = true;
+    if (target->compact || source->compact || source->total.trace_incomplete) {
+        for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
+            target->total.counts[k] = add_lower_bound(target->total.counts[k],
+                source->total.counts[k], &target->total.overflow);
+        target->total.work = add_lower_bound(target->total.work,
+            source->total.work, &target->total.overflow);
+        if (!target->compact)
+            target->total.trace_incomplete = true;
+    } else {
+        for (size_t j = 0u; j < source->length; j++) {
+            const CettaNativeCostEvent *event = &source->events[j];
+            for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
+                append_event(target, event->kind, event->units, event->occurrence,
+                    event->identity + repetition, event->origin);
+        }
+    }
+    target->total.overflow = target->total.overflow || source->total.overflow;
+    target->total.parallel = target->total.parallel || source->total.parallel;
+}
+
 bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
         const CettaNativeCostPlacement *placement, size_t count) {
     if (count && !children) return false;
@@ -266,16 +437,17 @@ bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
         if (!children[i] || children[i]->imported) return false;
         for (size_t j = 0u; j < i; j++)
             if (children[j] == children[i]) return false;
-        for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous)
+        for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous)
             if (scope->ledger == children[i]) return false;
     }
-    for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
+    for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous) {
         bool duplicate = false;
-        for (CettaNativeCostScope *inner = current_scope; inner != scope; inner = inner->previous)
+        for (CettaNativeCostScope *inner = account_scope; inner != scope; inner = inner->account_previous)
             duplicate = duplicate || inner->ledger == scope->ledger;
         CettaNativeCostLedger *target = scope->ledger;
         if (duplicate || !target) continue;
         uint64_t before_span = target->total.span, schedule_span = 0u;
+        uint64_t before_equations = target->equations.span, equation_span = 0u;
         bool parallel = false;
         for (size_t i = 0u; i < count; i++) {
             uint64_t phase = placement ? placement[i].phase : 0u;
@@ -284,6 +456,7 @@ bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
                 seen_phase |= (placement ? placement[j].phase : 0u) == phase;
             if (seen_phase) continue;
             uint64_t maximum = 0u;
+            uint64_t equation_maximum = 0u;
             size_t workers = 0u;
             for (size_t j = 0u; j < count; j++) {
                 if ((placement ? placement[j].phase : 0u) != phase) continue;
@@ -295,39 +468,38 @@ bool cetta_native_cost_join_scheduled(CettaNativeCostLedger *const *children,
                 if (seen_worker) continue;
                 workers++;
                 uint64_t load = 0u;
+                uint64_t equation_load = 0u;
                 for (size_t k = j; k < count; k++)
                     if ((placement ? placement[k].phase : 0u) == phase &&
-                        (placement ? placement[k].worker : k) == worker)
-                        load = add_lower_bound(load, children[k]->total.span, &target->total.overflow);
+                        (placement ? placement[k].worker : k) == worker) {
+                        if (target->native_enabled)
+                            load = add_lower_bound(load, children[k]->total.span, &target->total.overflow);
+                        if (target->equations.enabled)
+                            equation_load = add_lower_bound(equation_load, children[k]->equations.span,
+                                &target->equations.span_overflow);
+                    }
                 if (load > maximum) maximum = load;
+                if (equation_load > equation_maximum) equation_maximum = equation_load;
             }
-            schedule_span = add_lower_bound(schedule_span, maximum, &target->total.overflow);
+            if (target->native_enabled)
+                schedule_span = add_lower_bound(schedule_span, maximum, &target->total.overflow);
+            if (target->equations.enabled)
+                equation_span = add_lower_bound(equation_span, equation_maximum, &target->equations.span_overflow);
             parallel |= workers > 1u;
         }
         for (size_t i = 0u; i < count; i++) {
             CettaNativeCostLedger *source = children[i];
-            if (source->total.trace_incomplete) {
-                /* Counters still give the declared lower/exact work profile;
-                 * unavailable identities make the event trace incomplete. */
-                for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
-                    target->total.counts[k] = add_lower_bound(target->total.counts[k],
-                        source->total.counts[k], &target->total.overflow);
-                target->total.work = add_lower_bound(target->total.work,
-                    source->total.work, &target->total.overflow);
-                target->total.trace_incomplete = true;
-            } else {
-                for (size_t j = 0u; j < source->length; j++) {
-                    const CettaNativeCostEvent *event = &source->events[j];
-                    for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
-                        append_event(target, event->kind, event->units, event->occurrence,
-                            event->identity + repetition, event->origin);
-                }
-            }
-            target->total.overflow = target->total.overflow || source->total.overflow;
-            target->total.parallel = target->total.parallel || source->total.parallel;
+            cost_import_account(target, source);
         }
-        target->total.span = add_lower_bound(before_span, schedule_span, &target->total.overflow);
-        target->total.parallel = target->total.parallel || parallel;
+        if (target->native_enabled) {
+            target->total.span = add_lower_bound(before_span, schedule_span, &target->total.overflow);
+            target->total.parallel |= parallel;
+        }
+        if (target->equations.enabled) {
+            target->equations.span = add_lower_bound(before_equations, equation_span,
+                &target->equations.span_overflow);
+            target->equations.parallel |= parallel;
+        }
     }
     for (size_t i = 0u; i < count; i++) children[i]->imported = true;
     return true;
@@ -339,11 +511,18 @@ bool cetta_native_cost_join_segments(const CettaNativeCostSegment *segments,
     if (!segments || !workers || count > SIZE_MAX / sizeof(size_t) ||
         count > SIZE_MAX / sizeof(uint64_t)) return false;
     size_t *order = malloc(count * sizeof(*order));
-    uint64_t *finish = calloc(count, sizeof(*finish));
-    if (!order || !finish) { free(order); free(finish); return false; }
+    bool native = cetta_native_cost_active();
+    uint64_t *finish = native ? calloc(count, sizeof(*finish)) : NULL;
+    bool equations = cetta_native_cost_equations_requested();
+    uint64_t *equation_finish = equations ? calloc(count, sizeof(*equation_finish)) : NULL;
+    if (!order || (native && !finish) || (equations && !equation_finish)) {
+        free(order); free(finish); free(equation_finish); return false;
+    }
     for (size_t i = 0u; i < count; i++) order[i] = SIZE_MAX;
     bool valid = true, overflow = false, parallel = false;
     uint64_t span = 0u;
+    uint64_t equation_span = 0u;
+    bool equation_overflow = false;
     for (size_t i = 0u; valid && i < count; i++) {
         const CettaNativeCostSegment *node = &segments[i];
         CettaNativeCostLedger *ledger = node->ledger;
@@ -359,7 +538,7 @@ bool cetta_native_cost_join_segments(const CettaNativeCostSegment *segments,
                 segments[j].ledger->identity != ledger->identity;
             parallel = parallel || segments[j].worker != node->worker;
         }
-        for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous)
+        for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous)
             valid = valid && scope->ledger != ledger;
     }
     for (size_t position = 0u; valid && position < count; position++) {
@@ -367,58 +546,64 @@ bool cetta_native_cost_join_segments(const CettaNativeCostSegment *segments,
         const CettaNativeCostSegment *node = &segments[order[position]];
         uint64_t owner_predecessor = 0u, worker_predecessor = 0u;
         uint64_t owner_finish = 0u, worker_finish = 0u;
+        uint64_t equation_owner_finish = 0u, equation_worker_finish = 0u;
         for (size_t prior = 0u; prior < position; prior++) {
             const CettaNativeCostSegment *previous = &segments[order[prior]];
             if (previous->occurrence == node->occurrence) {
                 owner_predecessor = previous->ledger->identity;
-                owner_finish = finish[prior];
+                if (native) owner_finish = finish[prior];
+                if (equations) equation_owner_finish = equation_finish[prior];
             }
             if (previous->worker == node->worker) {
                 worker_predecessor = previous->ledger->identity;
-                worker_finish = finish[prior];
+                if (native) worker_finish = finish[prior];
+                if (equations) equation_worker_finish = equation_finish[prior];
             }
         }
         if (node->owner_predecessor != owner_predecessor ||
             node->worker_predecessor != worker_predecessor) { valid = false; break; }
-        uint64_t preceding = owner_finish > worker_finish ? owner_finish : worker_finish;
-        finish[position] = add_lower_bound(preceding, node->ledger->total.span, &overflow);
-        if (finish[position] > span) span = finish[position];
+        if (native) {
+            uint64_t preceding = owner_finish > worker_finish ? owner_finish : worker_finish;
+            finish[position] = add_lower_bound(preceding, node->ledger->total.span, &overflow);
+            if (finish[position] > span) span = finish[position];
+        }
+        if (equations) {
+            uint64_t preceding_equations = equation_owner_finish > equation_worker_finish
+                ? equation_owner_finish : equation_worker_finish;
+            equation_finish[position] = add_lower_bound(preceding_equations,
+                node->ledger->equations.span, &equation_overflow);
+            if (equation_finish[position] > equation_span)
+                equation_span = equation_finish[position];
+        }
     }
-    free(order); free(finish);
+    free(order); free(finish); free(equation_finish);
     if (!valid) return false;
     /* Every input and edge is checked before the first destination changes.
      * Trace allocation failure retains numerical work and marks incomplete,
      * exactly as the existing scheduled join does. */
-    for (CettaNativeCostScope *scope = current_scope; scope; scope = scope->previous) {
+    for (CettaNativeCostScope *scope = account_scope; scope; scope = scope->account_previous) {
         bool duplicate = false;
-        for (CettaNativeCostScope *inner = current_scope; inner != scope; inner = inner->previous)
+        for (CettaNativeCostScope *inner = account_scope; inner != scope; inner = inner->account_previous)
             duplicate = duplicate || inner->ledger == scope->ledger;
         CettaNativeCostLedger *target = scope->ledger;
         if (duplicate || !target) continue;
         uint64_t before_span = target->total.span;
+        uint64_t before_equations = target->equations.span;
         for (size_t i = 0u; i < count; i++) {
             CettaNativeCostLedger *source = segments[i].ledger;
-            if (source->total.trace_incomplete) {
-                for (unsigned k = 0u; k < CETTA_COST_KIND_COUNT; k++)
-                    target->total.counts[k] = add_lower_bound(target->total.counts[k],
-                        source->total.counts[k], &target->total.overflow);
-                target->total.work = add_lower_bound(target->total.work,
-                    source->total.work, &target->total.overflow);
-                target->total.trace_incomplete = true;
-            } else {
-                for (size_t j = 0u; j < source->length; j++) {
-                    const CettaNativeCostEvent *event = &source->events[j];
-                    for (uint64_t repetition = 0u; repetition < event->repetitions; repetition++)
-                        append_event(target, event->kind, event->units, event->occurrence,
-                            event->identity + repetition, event->origin);
-                }
-            }
-            target->total.overflow = target->total.overflow || source->total.overflow;
-            target->total.parallel = target->total.parallel || source->total.parallel;
+            cost_import_account(target, source);
         }
-        target->total.overflow = target->total.overflow || overflow;
-        target->total.span = add_lower_bound(before_span, span, &target->total.overflow);
-        target->total.parallel = target->total.parallel || parallel;
+        if (target->native_enabled) {
+            target->total.overflow |= overflow;
+            target->total.span = add_lower_bound(before_span, span, &target->total.overflow);
+            target->total.parallel |= parallel;
+        }
+        if (target->equations.enabled) {
+            target->equations.span_overflow |= equation_overflow;
+            target->equations.span = add_lower_bound(before_equations, equation_span,
+                &target->equations.span_overflow);
+            target->equations.parallel |= parallel;
+        }
     }
     for (size_t i = 0u; i < count; i++) segments[i].ledger->imported = true;
     return true;
@@ -429,8 +614,10 @@ bool cetta_native_cost_join(CettaNativeCostLedger *const *children, size_t count
 }
 
 void cetta_native_cost_occurrence(uint64_t occurrence) {
-    if (current_scope)
+    if (current_scope) {
+        current_scope->occurrence_source = NULL;
         current_scope->occurrence = occurrence;
+    }
 }
 
 CettaNativeCostSnapshot cetta_native_cost_read(CettaNativeCostLedger *ledger,
@@ -522,7 +709,8 @@ void cetta_native_cost_receipts_observe(void *raw,const CettaNativeCostChargeVie
         CettaNativeCostDestinationReceipt *d=&out->destinations[out->destination_count++];
         *d=(CettaNativeCostDestinationReceipt){
             .ledger_identity=v->ledger?v->ledger->identity:0u,
-            .scope_occurrence=v->scoped&&v->scope?v->scope->occurrence:v->event.occurrence,
+            .scope_occurrence=v->scoped&&v->scope
+                ?cetta_native_cost_scope_occurrence(v->scope):v->event.occurrence,
             .present=v->ledger!=NULL,.duplicate=v->duplicate,.retained=v->retained,
             .before=v->before,.after=v->after};
         out->commands[out->active_command].destination_count++;

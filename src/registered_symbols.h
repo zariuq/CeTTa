@@ -54,6 +54,8 @@ bool registered_symbol_borrow_end(RegisteredSymbols *table,
     RegisteredSymbolBorrow *borrow);
 void registered_symbols_stats(RegisteredSymbols *table,
     RegisteredSymbolStats *out);
+/* Entries and payload bytes live in all tables together (relaxed gauge). */
+void registered_symbols_live_totals(uint64_t *entries, uint64_t *payload_bytes);
 struct CettaStorageCensus;
 /* Requested allocation census; the enclosing owner remains quiescent. */
 void registered_symbols_storage_census(RegisteredSymbols *table,

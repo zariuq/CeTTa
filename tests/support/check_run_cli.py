@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('binary', type=Path)
     parser.add_argument('--artifacts', type=Path, default=Path('runtime'))
+    parser.add_argument('--lib-prolog', action='store_true')
     args = parser.parse_args()
     binary = args.binary.resolve()
     args.artifacts.mkdir(parents=True, exist_ok=True)
@@ -21,13 +22,21 @@ def main():
         ('error-shaped-data', '!(Error raw-data context)\n!(+ 40 2)\n', 'petta', 0, 2, 0),
         ('unknown-data', '!(unknown-call 1)\n', 'petta', 0, 1, 0),
         ('no-answers', '!(superpose ())\n', 'petta', 0, 1, 0),
-        ('caught', '!(catch (callPredicate (Predicate (throw boom))))\n!(+ 40 2)\n', 'petta', 0, 2, 0),
-        ('escaped', '!(callPredicate (Predicate (throw boom)))\n!(+ 40 2)\n', 'petta', 2, 2, 1),
+        ('caught', '!(catch (/ 1 0))\n!(+ 40 2)\n', 'petta', 0, 2, 0),
+        ('escaped', '!(/ 1 0)\n!(+ 40 2)\n', 'petta', 2, 2, 1),
         ('failed-test', '!(test 1 2)\n!(+ 40 2)\n', 'petta', 1, 2, 0),
         ('passed-test', '!(test 1 1)\n!(+ 40 2)\n', 'petta', 0, 2, 0),
         ('he-failed-test', '!(assertEqual 1 2)\n', 'he', 1, 1, 0),
         ('he-passed-test', '!(assertEqual 1 1)\n', 'he', 0, 1, 0),
     ]
+    if args.lib_prolog:
+        cases += [
+            ('caught-prolog', '!(catch (callPredicate (Predicate (throw boom))))\n!(+ 40 2)\n', 'petta', 0, 2, 0),
+            ('escaped-prolog', '!(callPredicate (Predicate (throw boom)))\n!(+ 40 2)\n', 'petta', 2, 2, 1),
+        ]
+    else:
+        # A call to an absent provider remains data, not a raised exception.
+        cases += [('unknown-provider', '!(callPredicate (Predicate (throw boom)))\n!(+ 40 2)\n', 'petta', 0, 2, 0)]
     for route in ('0', '1'):
         env = dict(os.environ, CETTA_OPEN_EQUATIONS_REFERENCE=route)
         for name, text, language, status, declared, faults in cases:
@@ -49,7 +58,7 @@ def main():
                 assert document['queries_unsettled'] == 1 and document['queries'][0]['tests'] == 1
             if name == 'no-answers':
                 assert document['queries'][0]['answers'] == 0
-            if name == 'escaped':
+            if name.startswith('escaped'):
                 assert document['queries_unsettled'] == 1
             assert document['report_publication_acknowledged'] is False
         for language in ('he','petta'):
@@ -97,12 +106,13 @@ def main():
                     assert len(d['diagnostics']) == 1
                     assert d['diagnostics'][0]['classification'] == 'resource'
                     assert 'StackOverflow' in d['diagnostics'][0]['message']
-        source=root/f'halt-{route}.metta';source.write_text('!(callPredicate (Predicate (halt 0)))\n!(+ 40 2)\n')
-        report=source.with_suffix('.json')
-        r=subprocess.run([str(binary),'--lang','petta','--run-contract','--run-report',str(report),str(source)],
-                         env=env,capture_output=True,text=True,timeout=30)
-        d=json.loads(report.read_text())
-        assert r.returncode==1 and d['queries_declared']==2 and d['queries_unsettled']==2 and not d['document_framing_ok'],(r.stderr,d)
+        if args.lib_prolog:
+            source=root/f'halt-{route}.metta';source.write_text('!(callPredicate (Predicate (halt 0)))\n!(+ 40 2)\n')
+            report=source.with_suffix('.json')
+            r=subprocess.run([str(binary),'--lang','petta','--run-contract','--run-report',str(report),str(source)],
+                             env=env,capture_output=True,text=True,timeout=30)
+            d=json.loads(report.read_text())
+            assert r.returncode==1 and d['queries_declared']==2 and d['queries_unsettled']==2 and not d['document_framing_ok'],(r.stderr,d)
         source=root/f'workers-{route}.metta'
         source.write_text('!(collapse (hyperpose ((test 1 1) (test 2 2))))\n')
         report=source.with_suffix('.json')
@@ -128,7 +138,7 @@ def main():
             assert r.returncode == 1 and b'publish run report' in r.stderr
         first = root / f'multi-first-{route}.metta'
         second = root / f'multi-second-{route}.metta'
-        first.write_text('!(callPredicate (Predicate (throw boom)))\n')
+        first.write_text('!(/ 1 0)\n')
         second.write_text('!(+ 40 2)\n!(+ 40 3)\n')
         report = root / f'multi-{route}.json'
         r = subprocess.run([str(binary), '--lang', 'petta', '--run-contract', '--run-report', str(report), str(first), str(second)],

@@ -1,0 +1,206 @@
+Owned filesystem observations
+=============================
+
+Import fs for filesystem operations and system for entry-directory discovery.
+These operations use the native C runtime; no Python or Prolog host is required.
+The existing read-text, read-lines, write, append and canonical-path operations
+retain their interfaces. text_stream still denotes an in-memory text cursor.
+
+Operations
+----------
+  fs:metadata path follow|no-follow
+  fs:open-directory path
+  fs:next-entry directory-owner
+  fs:open-read path
+  fs:read-chunk file-owner count
+  fs:close filesystem-owner
+  fs:walk-open directory-path
+  fs:walk-next walker follow|no-follow excluded-basename-tuple
+  system:entry-directory
+
+Paths are strings or symbol spellings without embedded NUL. This is an OS
+path interface: it does not erase '..', resolve environment variables or
+require UTF-8 filenames. metadata follows symbolic links only under follow.
+Opening a reader follows the ordinary OS path resolution rules.
+
+metadata returns (fs:info kind size (fs:identity device inode)). Size is a
+signed integer; device and inode are opaque decimal strings for equality.
+They are not persistent file identities or filesystem snapshot certificates.
+Kinds include regular, directory, symlink, fifo, socket, character-device,
+block-device and unknown.
+
+Open returns an owned (NativeHandle kind id). Independent opens have independent
+positions; aliases share one owner and position. Entries and chunks copy their
+bytes, which remain valid after the native buffer is reused or the owner closes.
+The last arena holder's release, explicit close and context teardown release
+the resource. Explicit close invalidates all aliases. Operations must be
+serialized with close and context teardown. Internal descriptors have close-on-
+exec set and do not occupy standard input/output/error descriptor numbers.
+
+next-entry returns (fs:entry name kind-hint index), excluding '.' and '..'.
+The name preserves OS bytes. The kind is only an enumeration hint; unknown
+is a valid hint, and callers needing a resolved kind use metadata. Directory
+order is unspecified. End is (fs:end count), relative to this finite pass,
+not a claim about future directory changes.
+
+read-chunk returns (fs:chunk bytes offset) or (fs:end offset). The offset counts
+previously returned bytes for this owner, not a general seek operation. Count
+is a nonnegative integer. A zero-size request returns an empty chunk without
+consuming input or establishing end. Short chunks do not establish end. Requests
+larger than the byte-string or syscall representation can return a shorter
+chunk. Chunk processing does not accumulate the whole file, but the caller's
+requested chunk still determines its temporary allocation size.
+
+An end observation is not permanently latched for a file: a later read may
+observe newly appended bytes. Directory end is retained for its current pass;
+a fresh open starts a new pass. Neither form freezes the filesystem.
+
+Faults and control
+------------------
+Operation faults are returned data:
+
+  (fs:failed kind operation path errno
+    (fs:progress observed known-position|unknown-position) message)
+
+Kinds include fs:invalid-argument, fs:invalid-handle, fs:missing, fs:permission,
+fs:capacity and fs:io. The observed count retains the already published byte
+or entry prefix. A failing read/iteration can leave the provider position
+unknown. That cursor retains its fault rather than blindly retrying; close
+and an explicitly chosen fresh operation remain available. Allocation refusal
+before read does not consume input. Invalid-handle diagnostics cannot recover
+the path of an already released owner.
+
+Host interruption is the evaluator's existing interrupted outcome, not an end
+or fs:failed value. There is an interruption check before the syscall; this
+interface does not preempt a blocking syscall or provide an I/O deadline.
+Close retires the owner even when its syscall reports failure and is not
+automatically retried. Cancellation does not undo observations already made.
+
+Paused owners retain their resources across control boundaries. PeTTa's
+retained-work route can pause and resume the tested read between evaluator
+transitions. HE's completed route explicitly refuses a transition budget for
+that effectful source. A supported pure-work pause retains an enclosing file
+owner in both hosts. None of these controls establishes mid-syscall suspension.
+
+Data and host evaluation
+------------------------
+The native publishes completed values. HE wrappers use the existing Atom
+result contract; PeTTa spellings are generated from the shared library source.
+No native observation evaluates equations with the observation's constructor
+names. HE still interprets a caller's bare bound value in a computation
+position according to its ordinary semantics. To publish assembled data
+without that interpretation, use its existing function/return or quoted-data
+boundary. This does not change HE into PeTTa's value-passing dialect.
+
+Reusable walking
+----------------
+walk-open opens one directory-rooted traversal. All directory frames and the
+pending descent decision belong to that owner. Old aliases see its current
+position and close every directory opened later; there is no latest-value-only
+cleanup requirement. Independently opened walkers retain independent positions.
+Directory frames are an explicit heap stack, not recursive C calls.
+
+walk-next is a MeTTa policy over four owned primitives:
+
+  fs:walk-current walker
+  fs:walk-step walker skip|descend|descend-follow
+  fs:walk-metadata walker follow|no-follow
+  fs:close walker
+
+current observes without advancing: fs:walk-ready before the first step,
+(fs:walk-entry path relative name kind-hint index) while a decision is pending,
+or end/fault. step skips that entry or opens its directory before enumerating
+the next occurrence. descend refuses a final symlink component; descend-follow
+allows it. Root opening follows normal path resolution. Metadata uses fstatat
+relative to the still-owned parent, rather than treating the display path as
+a containment or snapshot guarantee. Names and display paths retain OS bytes.
+
+The MeTTa walk-next policy excludes each basename in the supplied tuple,
+including its subtree, and visits selected entries in provider order. It
+descends directories with the chosen link policy, including unknown entry
+hints. no-follow still reports symlinks; clients can resolve file symlinks
+separately without descending directory links. Missing entries after metadata
+or descent races are skipped only with known provider position. Other faults
+remain observations for the caller. Exclusions must be a tuple of basenames.
+
+Opened-directory device/inode equality is checked against ancestors. A cycle
+is fs:cycle, not end. Non-ancestor aliases remain distinct occurrences. A
+failed descent retains its pending entry: the caller may close or explicitly
+skip it. A position-uncertain enumeration/allocation fault is sticky. Reaching
+end closes the exhausted directory frames; explicit close also closes every
+remaining frame, even if one close reports a fault. End's count includes
+enumerated but policy-excluded entries, not only delivered entries.
+
+Walking neither freezes directory contents nor promises traversal containment,
+arbitrary blocking-call preemption or shared-owner concurrent access.
+FilesystemWalking.lean checks a fuelled stack machine against a separately
+recursive specification over fixed finite occurrence forests. Its prefix plus
+unconsumed-work invariant establishes order and multiplicity; completion needs
+an explicit empty-stack observation. This is not C implementation adequacy.
+
+Examples and checks
+--------------------
+tests/filesystem_v1 contains two positive and one negative example for directory
+iteration, byte reads, metadata, ownership and entry-directory discovery.
+Reader/metadata examples receive their input path as the first program argument.
+The inline-entry negative control runs through -e without a file argument.
+For example:
+
+  ./cetta --lang he@0.0.1 --profile extended \
+    tests/filesystem_v1/bytes_zero_positive.metta path/to/input
+  ./cetta --lang petta@1.0.6 --profile extended \
+    tests/filesystem_v1/directory_empty_positive.metta path/to/empty-directory
+
+  make BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-filesystem-v1
+
+For the complete primary-host delivery gate:
+
+  make -j2 test-filesystem-core-v1
+
+This builds an isolated core executable with Python, Prolog, HTTP and GMP
+disabled, then checks native cursors, three-host text preparation, the complete
+HE/PeTTa checker, ownership, effects, module consumers and driver contracts. Independent
+test oracles and build generators may use Python; the executable does not.
+Add ENABLE_SANITIZERS=1 CETTA_PROVENANCE_ASSERT=1 for instrumented checks.
+The gate includes test-text-streaming-v1 for HE, PeTTa and frozen Prime,
+including public structured-state handoff under constructor-named equations.
+This does not establish full make test conformance.
+
+The native gate injects allocation, read and directory-iteration faults and
+checks promotion, alias invalidation, teardown, descriptor hygiene and copied
+entry bytes. The host gate checks the examples, hostile constructor equations,
+read-once sequencing, pause/resume and entry-directory discovery outside the
+repository's working directory. Existing driver/effect gates remain separate.
+
+The abstract Lean FilesystemObservation model relates bounded collection to
+an independent transition judgment, preserves ordered equal occurrences and
+proves resumption over the untouched suffix. Explicit end is required for a
+completed empty observation. These are protocol proofs, not native C adequacy.
+
+Module-authored protocol
+-----------------------
+tests/filesystem_v1/FilesystemProtocol.module supplies a parameterized
+observation vocabulary and an explicitly selected rewrite bundle. Its Payload,
+Fault and Reason sorts are supplied by the caller; Samples is a finite example,
+not a byte-string serialization format or a replacement for native fault kinds.
+
+FsData becomes FsDelivered, including EmptyBytes. Only FsEnded becomes
+FsComplete. Fault, interruption and pause become FsFailed, FsUnfinished and
+FsPending respectively. Reading or assembling the module does not install these
+rewrites as host equations or perform filesystem effects. Loading its core into
+the existing LanguageDef consumer makes the bundle explicitly executable.
+
+The two positive protocol examples cover empty data and explicit end. The
+negative example retains pause/fault/cancellation and rejects a payload used
+in a fault position. These controls run alongside the filesystem examples in
+HE, PeTTa and frozen Prime. The Lean collection model supplies the abstract
+completion distinctions; native and module correspondence are tested rather
+than claimed as a proof of the C implementation.
+
+Incremental UTF-8/line preparation and the complete vocabulary-checker port are
+described in docs/text_preparation_v1.txt, including the frozen-Prime ready-value boundary
+and the complete HE/PeTTa checker workflow. Finite batch completion never
+substitutes for filesystem end; the same owned walker resumes between windows.
+Final wider qualification and remaining measurements are described there.
+The approved 27-stub retirement cleanup is
+complete; its active parser oracles and regression guards remain.

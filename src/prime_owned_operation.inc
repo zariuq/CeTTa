@@ -54,7 +54,7 @@ static bool prime_native_acquired_prepare_row(PrimeNativeAcquiredOperation *oper
 }
 
 /* Publication already precedes this callback in the ordinary controller.
- * The all/pure operation accepts every correctly invoked row without an
+ * The pure operation accepts every correctly invoked row without an
  * allocation. The exact row/value/environment and ordered cursor witness
  * actual callbacks; marked-but-unvisited rows cannot be repaired later.
  * Copying is a separate phase. False retains legacy accept-and-stop; a
@@ -236,6 +236,7 @@ static uint64_t prime_native_acquired_produce(PrimeNativeAcquiredOperation *oper
     operation->remaining = spent < operation->remaining ? operation->remaining - spent : 0u;
     operation->output_limit = control->published;
     operation->producer_complete = prime_native_control_closed(control) ||
+        cetta_control_plan_observation_satisfied(&control->hub.plan,control->delivered_count) ||
         prime_native_control_waiting_verdict(control) || control->failed ||
         control->invalidated || control->registry_read.incomplete ||
         control->driver.capacity_blocked || !operation->remaining;

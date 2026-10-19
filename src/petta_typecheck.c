@@ -1,3 +1,4 @@
+#include "petta_builtin_registry.h"
 #include "term_canon.h"
 #include "petta_typecheck.h"
 
@@ -264,15 +265,29 @@ static void petta_memo_complete(
     entry->verdict = verdict;
 }
 
+/* A rejected declaration may remain in the space as data.  A live typed
+ * program therefore owns the declaration view used by residual judgments;
+ * standalone judgments without that view still read their supplied space. */
+static uint32_t petta_context_declared_types(
+    PettaTypecheckContext *context, Atom *subject, Atom ***types) {
+    PettaProgram *program = context->hooks
+        ? context->hooks->declarations : NULL;
+    if (petta_program_analysis_enabled(program))
+        return petta_program_declared_types(
+            program, subject, context->arena, types);
+    return space_get_declared_types_costed(
+        context->space, context->arena, subject, types,
+        &context->declaration_lookup_cost);
+}
+
 static PettaDeclInfo petta_decl_info(
     PettaTypecheckContext *context, Atom *name) {
     PettaDeclInfo result = {0};
     if (!name || name->kind != ATOM_SYMBOL)
         return result;
     Atom **declared = NULL;
-    uint32_t count = space_get_declared_types_costed(
-        context->space, context->arena, name, &declared,
-        &context->declaration_lookup_cost);
+    uint32_t count = petta_context_declared_types(
+        context, name, &declared);
     for (uint32_t index = 0u; index < count; index++) {
         Atom *decl = declared[index];
         PettaDeclKind kind = PETTA_DECL_NONE;
@@ -360,9 +375,8 @@ static bool petta_required_is_foreign_type(
         return false;
 
     Atom **declared = NULL;
-    uint32_t count = space_get_declared_types_costed(
-        context->space, context->arena, name, &declared,
-        &context->declaration_lookup_cost);
+    uint32_t count = petta_context_declared_types(
+        context, name, &declared);
     bool matched = false;
     for (uint32_t index = 0u; index < count; index++) {
         Atom *declaration = declared[index];
@@ -402,9 +416,8 @@ static PettaTypecheckVerdict petta_check_declared_value_types(
     if (!subject || subject->kind != ATOM_SYMBOL)
         return PETTA_TYPECHECK_UNDETERMINED;
     Atom **declared = NULL;
-    uint32_t count = space_get_declared_types_costed(
-        context->space, context->arena, subject, &declared,
-        &context->declaration_lookup_cost);
+    uint32_t count = petta_context_declared_types(
+        context, subject, &declared);
     PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_REFUTED;
     bool considered = false;
     for (uint32_t index = 0u; index < count; index++) {
@@ -1499,6 +1512,14 @@ static bool petta_block_add_declaration(
         petta_block_declaration_bucket(check, atom_symbol_current_id(subject), true);
     if (!bucket)
         return false;
+    if (petta_program_type_is_exclusive_kind(type)) {
+        for (size_t index = bucket->first; index != PETTA_DECL_INDEX_NONE;
+             index = check->declarations[index].next_same_subject) {
+            if (petta_program_type_is_exclusive_kind(
+                    check->declarations[index].type))
+                return true;
+        }
+    }
     size_t declaration_index = check->declaration_len;
     check->declarations[declaration_index] =
         (PettaBlockDeclaration){
@@ -1696,27 +1717,24 @@ static Atom *petta_block_decl_representation(
          index != PETTA_DECL_INDEX_NONE;
          index = check->declarations[index].next_same_subject) {
         PettaBlockDeclaration *decl = &check->declarations[index];
-        bool exclusive =
-            petta_block_head_is(decl->type, "Alias") ||
-            petta_block_head_is(decl->type, "Newtype") ||
-            petta_block_head_is(decl->type, "SpaceOf") ||
-            petta_block_head_is(decl->type, "Foreign");
+        bool exclusive = petta_program_type_is_exclusive_kind(decl->type);
         if (!exclusive)
             continue;
         return petta_block_head_is(decl->type, kind) &&
                decl->type->expr.len == 2u
             ? decl->type->expr.elems[1] : NULL;
     }
+    /* An admitted catalog is authoritative even when the name has no kind.
+     * In particular, removing its accepted kind must not activate an older
+     * rejected declaration which is still visible as raw space data. */
+    if (petta_program_analysis_enabled(check->program))
+        return NULL;
     Atom **types = NULL;
     uint32_t count = petta_block_declared_types(
         check, name, &types);
     Atom *found = NULL;
     for (uint32_t index = 0u; index < count; index++) {
-        bool exclusive =
-            petta_block_head_is(types[index], "Alias") ||
-            petta_block_head_is(types[index], "Newtype") ||
-            petta_block_head_is(types[index], "SpaceOf") ||
-            petta_block_head_is(types[index], "Foreign");
+        bool exclusive = petta_program_type_is_exclusive_kind(types[index]);
         if (!exclusive)
             continue;
         if (petta_block_head_is(types[index], kind) &&
@@ -3417,45 +3435,16 @@ static bool petta_block_builtin_signature(
         *result_out = output_list;
         return true;
     }
-    const char *argument_type = NULL;
-    const char *result_type = NULL;
-    if ((strcmp(head, "+") == 0 || strcmp(head, "-") == 0 ||
-         strcmp(head, "*") == 0 || strcmp(head, "/") == 0 ||
-         strcmp(head, "mod") == 0 || strcmp(head, "pow-math") == 0) &&
-        arity >= 1u) {
-        argument_type = "Number";
-        result_type = "Number";
-    } else if ((strcmp(head, "<") == 0 || strcmp(head, "<=") == 0 ||
-                strcmp(head, ">") == 0 || strcmp(head, ">=") == 0) &&
-               arity == 2u) {
-        argument_type = "Number";
-        result_type = "Bool";
-    } else if ((strcmp(head, "and-then") == 0 ||
-                strcmp(head, "or-else") == 0) && arity == 2u) {
-        argument_type = "Bool";
-        result_type = "Bool";
-    } else if (strcmp(head, "not") == 0 && arity == 1u) {
-        argument_type = "Bool";
-        result_type = "Bool";
-    } else if (strcmp(head, "assert") == 0 && arity == 1u) {
-        argument_type = "%Undefined%";
-        result_type = "Bool";
-    } else if ((strcmp(head, "is-var") == 0 ||
-                strcmp(head, "is-ground") == 0 ||
-                strcmp(head, "is-expr") == 0 ||
-                strcmp(head, "is-space") == 0) && arity == 1u) {
-        argument_type = "%Undefined%";
-        result_type = "Bool";
-    } else {
+    const PettaBuiltinSpec *spec = arity <= UINT16_MAX
+        ? petta_builtin_spec_find(head, (uint16_t)arity) : NULL;
+    Atom *signature = petta_builtin_signature(&check->scratch, spec);
+    if (!signature)
         return false;
-    }
-    Atom **arguments = arity
-        ? cetta_malloc(sizeof(*arguments) * (size_t)arity)
-        : NULL;
+    Atom **arguments = arity ? cetta_malloc(sizeof(*arguments) * arity) : NULL;
     for (CettaExprIndex index = 0u; index < arity; index++)
-        arguments[index] = atom_symbol(&check->scratch, argument_type);
+        arguments[index] = signature->expr.elems[index + 1u];
     *arguments_out = arguments;
-    *result_out = atom_symbol(&check->scratch, result_type);
+    *result_out = signature->expr.elems[arity + 1u];
     return true;
 }
 
@@ -9912,15 +9901,8 @@ petta_typecheck_expression_boundary_requirement_with_facts(
     }
 
     if (head) {
-        if ((strcmp(head, "car-atom") == 0 ||
-             strcmp(head, "cdr-atom") == 0) &&
-            expression->expr.len == 2u &&
-            petta_typecheck_boundary_is_variable(
-                expression->expr.elems[1], variable) &&
-            !petta_analysis_boundary_facts_satisfy(
-                facts, PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION)) {
-            requirement = PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION;
-        }
+        /* Head/tail return one value or raise a catchable error. Nonempty
+         * input is useful result-shape evidence, not a call precondition. */
         static const char *const boolean_consumers[] = {
             "and", "or", "not", "xor", "implies",
         };
@@ -10056,10 +10038,7 @@ bool petta_typecheck_call_boundary_plan(
 
     if (!committed) {
         for (size_t index = 0u; index < requirement_count; index++) {
-            if (requirements[index] !=
-                PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION) {
-                requirements[index] = PETTA_TYPECHECK_BOUNDARY_NONE;
-            }
+            requirements[index] = PETTA_TYPECHECK_BOUNDARY_NONE;
         }
     }
     return true;
@@ -10089,7 +10068,7 @@ bool petta_typecheck_call_boundary_requirement(
  * denote `target_space`.  When one definitely refutes it, `row_type_out`
  * receives that schema's row type, copied into `detail_arena`. */
 static bool petta_typecheck_validate_target_row_detail(
-    Space *program_space, Registry *registry,
+    PettaProgram *program, Space *program_space, Registry *registry,
     Space *target_space, Atom *row,
     Arena *detail_arena, Atom **row_type_out,
     PettaTypecheckBlockResult *result) {
@@ -10106,8 +10085,12 @@ static bool petta_typecheck_validate_target_row_detail(
         if (!space_name || resolve_space(registry, space_name) != target_space)
             continue;
         Atom **types = NULL;
-        uint32_t type_count = space_get_declared_types(
-            program_space, &scratch, space_name, &types);
+        PettaTypecheckHooks hooks = {.declarations = program};
+        PettaTypecheckContext context = {
+            .space = program_space, .arena = &scratch, .hooks = &hooks,
+        };
+        uint32_t type_count = petta_context_declared_types(
+            &context, space_name, &types);
         for (uint32_t type_index = 0u;
              type_index < type_count; type_index++) {
             Atom *type = types[type_index];
@@ -10117,7 +10100,7 @@ static bool petta_typecheck_validate_target_row_detail(
             PettaTypecheckResult row_result;
             if (!petta_typecheck_value(
                     program_space, &scratch, row,
-                    type->expr.elems[1], NULL, &row_result)) {
+                    type->expr.elems[1], &hooks, &row_result)) {
                 free(types);
                 result->fault = row_result.fault;
                 snprintf(
@@ -10148,15 +10131,16 @@ static bool petta_typecheck_validate_target_row_detail(
 }
 
 static bool petta_typecheck_validate_target_row(
-    Space *program_space, Registry *registry,
+    PettaProgram *program, Space *program_space, Registry *registry,
     Space *target_space, Atom *row,
     PettaTypecheckBlockResult *result) {
     return petta_typecheck_validate_target_row_detail(
-        program_space, registry, target_space, row, NULL, NULL, result);
+        program, program_space, registry, target_space, row, NULL, NULL, result);
 }
 
 Atom *petta_typecheck_refuted_row_type(
-    Space *program_space, Registry *registry, Space *target_space,
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space,
     Atom *row, Arena *arena) {
     if (!program_space || !target_space || !row || !arena)
         return NULL;
@@ -10166,7 +10150,7 @@ Atom *petta_typecheck_refuted_row_type(
     };
     Atom *row_type = NULL;
     if (!petta_typecheck_validate_target_row_detail(
-            program_space, registry, target_space, row,
+            program, program_space, registry, target_space, row,
             arena, &row_type, &result) ||
         result.verdict != PETTA_TYPECHECK_REFUTED)
         return NULL;
@@ -10238,22 +10222,37 @@ static bool petta_typecheck_program_mutation_internal(
                 "hypothetical PeTTa program is too large");
             return false;
         }
-        Atom **forms = atom_count
-            ? cetta_malloc(sizeof(*forms) * (size_t)atom_count)
-            : NULL;
-        size_t form_count = 0u;
-        for (CettaIndex index = 0u; index < atom_count; index++) {
-            Atom *form = space_get_at64(remaining, index);
-            if (petta_program_is_equation(form) ||
-                (petta_block_head_is(form, ":") &&
-                 form->expr.len == 3u)) {
-                forms[form_count++] = form;
-            }
+        /* Revalidate the admitted declaration view, not a fresh admission of
+         * every raw annotation. Replaying rejected declarations would give
+         * them authority simply because a different declaration was removed.
+         * The trial program owns any inferred facts, so refusal leaves the
+         * live program's catalog unchanged. */
+        PettaProgram *trial = petta_program_new();
+        Atom **annotations = NULL;
+        size_t annotation_count = 0u;
+        bool prepared = trial && petta_program_enable_analysis(trial) &&
+            petta_program_type_annotation_snapshot(
+                program, &annotations, &annotation_count);
+        for (size_t index = 0u; prepared && index < annotation_count; index++) {
+            if (!atom_eq(annotations[index], proposed))
+                prepared = petta_program_note_add(
+                    trial, remaining, annotations[index], NULL);
         }
-        bool judged = petta_typecheck_declaration_block_internal(
-            authority, NULL, remaining, registry,
-            forms, form_count, policy, false, result);
-        free(forms);
+        free(annotations);
+        for (CettaIndex index = 0u; prepared && index < atom_count; index++) {
+            Atom *form = space_get_at64(remaining, index);
+            if (petta_program_is_equation(form))
+                prepared = petta_program_note_add(trial, remaining, form, NULL);
+        }
+        bool judged = prepared && petta_typecheck_declaration_block_internal(
+            authority, trial, remaining, registry,
+            NULL, 0u, policy, true, result);
+        if (!prepared) {
+            result->fault = PETTA_TYPECHECK_FAULT_ALLOCATION;
+            snprintf(result->diagnostic, sizeof(result->diagnostic),
+                     "could not prepare PeTTa declaration removal");
+        }
+        petta_program_free(trial);
         space_free(remaining);
         free(remaining);
         return judged;
@@ -10262,7 +10261,7 @@ static bool petta_typecheck_program_mutation_internal(
         !(petta_block_head_is(proposed, ":") &&
           proposed->expr.len == 3u)) {
         return petta_typecheck_validate_target_row(
-            program_space, registry, target_space,
+            program, program_space, registry, target_space,
             proposed, result);
     }
     Atom *forms[1] = {proposed};

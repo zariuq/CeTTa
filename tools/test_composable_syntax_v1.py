@@ -157,10 +157,16 @@ def program():
         'policy-mismatch')))
     add('unsupported-policy', refusal('unsupported-policy', operand('OtherPolicy', [x],
         policy='(SyntaxLexicalPolicyV1 MaximalMunchV1)'), 'unsupported-policy'))
+    forged = form('SyntaxGSLTAdmittedV1', form('SyntaxGSLTV1',
+        *parts('Missing', [rule('Missing', '', [('a', 'Undeclared')],
+            [form('SyntaxNonTerminal', text('a'))])])))
+    add('forged-observation', check_case('forged-observation',
+        form('langdef:inspect-syntax-gslt', forged),
+        '(SyntaxGSLTInspectionV1 $language $profile $policy $origins)'))
     add('forged-admission', refusal('forged-admission',
-        form('langdef:inspect-syntax-gslt', form('SyntaxGSLTAdmittedV1',
-             form('SyntaxGSLTV1', *parts('Missing', [rule('Missing', '', [('a', 'Undeclared')],
-                  [form('SyntaxNonTerminal', text('a'))])])))), 'grammar-admission'))
+        form('langdef:inspect-syntax-gslt-checked', forged), 'grammar-admission'))
+    add('forged-compilation', refusal('forged-compilation',
+        form('langdef:load-syntax-gslt-parser', forged), 'grammar-admission'))
     # A failed join must not disturb an already compiled parser.
     add('atomic-refusal', lets(inputs + [
         ('$parser', form('langdef:load-syntax-gslt-parser', '$joined')),

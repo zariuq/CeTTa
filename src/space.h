@@ -114,7 +114,9 @@ typedef struct {
 } EqHeadSet;
 
 typedef struct {
-    EqBucket buckets[EQ_INDEX_BUCKETS];
+    /* EQ_INDEX_BUCKETS buckets, allocated when the first headed equation is
+     * filed; until then every bucket reads as empty. */
+    EqBucket *buckets;
     EqBucket wildcard; /* equations with variable/structured LHS head */
     /* Each exact head's equations.  Bucket collisions in the pattern index
      * must not turn a head-scoped question into a scan of colliding rows. */
@@ -138,15 +140,42 @@ typedef struct {
     bool has_non_symbol_subjects;
 } TypeAnnIndex;
 
-#define EXACT_INDEX_BUCKETS 4096
+/* One exact row: its AtomId and its position, in 32 bits each while every
+ * id and row fits there (UINT32_MAX marks an empty narrow slot), in 64 bits
+ * otherwise (CETTA_ATOM_ID_NONE marks an empty wide slot).  A row occurring
+ * several times holds one slot per occurrence. */
+typedef struct {
+    uint32_t id;
+    uint32_t row;
+} ExactAtomNarrowSlot;
 
 typedef struct {
-    CettaIndex *indices;
-    CettaIndex len, cap;
-} ExactAtomBucket;
+    AtomId id;
+    CettaIndex row;
+} ExactAtomSlot;
 
+/* How many non-exact rows (rows with variables, among others) one head
+ * symbol leads. */
 typedef struct {
-    ExactAtomBucket buckets[EXACT_INDEX_BUCKETS];
+    SymbolId head;      /* SYMBOL_ID_NONE marks an empty slot */
+    CettaCount rows;
+} ExactIndexInexactHead;
+
+/* Exact rows by AtomId, in a table that grows with the space (linear
+ * probing, a row per slot), built by its first reader.  The rows the index
+ * cannot hold, the non-exact ones, are counted by head symbol instead, and
+ * apart when they have none: a ground pattern whose head counts none, while
+ * no non-exact row lacks a head, can match only an exact row, and only by
+ * being it. */
+typedef struct {
+    void *slots;                    /* NULL until the first exact row */
+    size_t mask;                    /* slot count - 1 */
+    size_t used;
+    bool wide;                      /* ExactAtomSlot, else ExactAtomNarrowSlot */
+    ExactIndexInexactHead *inexact_heads;
+    size_t inexact_head_mask;
+    size_t inexact_head_used;
+    CettaCount inexact_unheaded;
 } ExactAtomIndex;
 
 typedef enum {
@@ -279,6 +308,8 @@ typedef struct Space {
     /* Unique stamp of changes read through the live module handles.
        Dependency appends change this, but preserve the storage prefix. */
     uint64_t module_dependency_epoch;
+    /* Charged to the resource ledger's space gauges at initialization. */
+    bool ledger_counted;
 } Space;
 
 /* NativeFlatWorldV1. Source headers, their TermUniverse generation and the
@@ -313,6 +344,18 @@ bool space_checkpoint_native_copy(const Space *source, Space *destination,
     bool *destination_ready, SpaceCheckpointBudget *);
 bool space_checkpoint_native_compare(const Space *, const Space *,
     CettaCheckpointCompare *, SpaceCheckpointBudget *);
+
+#ifdef CETTA_TEST_HOOKS
+/* The exact-membership index, observed by its sizing tests: its slot count
+ * (0 while no reader has built it), the rows it files, whether it is
+ * current, how many tables were built to resize one, and how many of the
+ * next table allocations fail as an exhausted allocator would. */
+size_t space_exact_index_test_slots(const Space *s);
+size_t space_exact_index_test_used(const Space *s);
+bool space_exact_index_test_current(const Space *s);
+size_t space_exact_index_test_resizes(void);
+void space_exact_index_test_refuse(size_t allocations);
+#endif
 
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
@@ -478,6 +521,12 @@ typedef void (*SpaceContentsMovedHook)(uint64_t from_instance,
                                        uint64_t to_instance);
 void space_set_contents_moved_hook(SpaceContentsMovedHook hook);
 SpaceContentsMovedHook space_contents_moved_hook(void);
+/* Retiring a logical instance is distinct from replacing its storage. A
+ * move first publishes its old source identity to the contents subscriber,
+ * then retires that identity. The destination identity survives. Calls are
+ * serialized with the space's other lifetime operations; one subscriber. */
+typedef void (*SpaceInstanceRetiredHook)(uint64_t instance);
+void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 bool space_is_ordered(const Space *s);
@@ -840,6 +889,15 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
 bool space_atom_is_exact_indexable(Atom *atom);
+/* Whether every row that could match the ground expression `pattern` is an
+ * exact row, read from the exact index's count of the other rows by head
+ * symbol.  False when the index cannot answer: an overlay, a backend-primary
+ * space, or a stale index it may not rebuild here (inside a deferral window,
+ * or while rows are marked). */
+bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* The rows holding a ground pattern, ascending, read from a current exact
+ * index without settling marks: physical rows while rows are marked. */
+CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
 void space_begin_secondary_index_deferral(Space *s);
 void space_end_secondary_index_deferral(Space *s);
 
@@ -1041,6 +1099,12 @@ typedef enum {
 
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity);
+/* Whether a call of `head` with `arity` arguments takes the untyped call
+ * policy: every argument evaluated, its result evaluated without an
+ * expected type, nothing type-checked.  HE types every call of a head that
+ * declares any type, so a call at an arity no arrow declares is HE's
+ * IncorrectNumberOfArguments; PeTTa's typing reads arrows per arity. */
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity);
 /* Whether any type annotation names the head, whatever its type or arity.
  * A dialect that type-checks calls does so for such a head even at an arity
  * no signature covers. */
@@ -1182,6 +1246,14 @@ bool space_remove_occurrence_mask_stable(
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
+/* Native candidate selection through borrowed expression coordinates. Reads
+ * finish before return; only candidate coordinates escape. False leaves the
+ * caller on its ordinary query route. Order and duplicate row occurrences
+ * remain those of space_match_candidates64. */
+bool space_match_candidates_expression_coordinates64(
+    Space *s, Atom **coordinates, CettaExprLen length,
+    CettaIndex **out, CettaIndex *count);
+
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
 Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
 /* Native flat-match aggregations; false leaves the caller on ordinary search.
@@ -1273,6 +1345,9 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
 bool space_query_is_connective(const Atom *pattern);
+/* Whether a match pattern may be flattened into one leg of a chain: not a
+ * connective, and neither a variable nor headed by one. */
+bool space_query_can_flatten(const Atom *pattern);
 bool space_query_bindings(Space *space, Arena *arena, Atom *pattern,
                           const Bindings *seed, BindingSet *out);
 
@@ -1288,8 +1363,9 @@ typedef enum {
 
 /* The caller retains the Space and its overlay bases, query syntax and result arena. The cursor
  * owns its traversal, seed bindings and native occurrence pins. One native
- * step advances a connective or checks up to 32 canonical matcher nodes of
- * one physical candidate. Equality/occurs-check/binding primitives have
+ * step advances a connective or checks up to 32 canonical matcher actions
+ * (structural nodes and alias retries) of one physical candidate.
+ * Equality/occurs-check/binding primitives have
  * separate byte and CPU complexity; a node grant is not a CPU bound.
  * Backends without this capability retain their canonical atomic query and
  * an owned result cursor. Such fallback preparation is not incremental.
@@ -1300,6 +1376,15 @@ typedef enum {
  * representation growth. Neither permits END or discarding the cursor. */
 SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
                                          Atom *pattern, const Bindings *seed);
+/* Capture the query's original ordered bag. Native flat bags share one
+ * pinned occurrence view, including across later copy-on-write removals;
+ * each factor reads that same bounded view. Other spaces retain canonical
+ * atomic preparation and its complete/unknown result contract. Read tokens
+ * and witnesses remain those originally observed. This grants no permission
+ * to advance under changed dependencies: the controller owns that policy.
+ * Spaces/universes and the result arena retain the lifetime above. */
+SpaceQueryCursor *space_query_cursor_new_captured(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed);
 /* Clone a quiescent query's exact continuation, captured reads, last row
  * witnesses and prepared matcher/fallback state without querying or matching.
  * The original is unchanged on refusal. Mutable cursor metadata is independent;
@@ -1361,9 +1446,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
 
 /*
- * Return only explicit `(: subject type)` declarations, in logical space
- * order.  The returned pointer array is caller-owned; its atoms live in the
- * supplied arena and are freshened per occurrence.
+ * Return explicit `(: subject type)` declarations: own declarations before
+ * imported ones, preserving occurrence order within each part. The returned
+ * pointer array is caller-owned; its atoms live in the supplied arena and
+ * are freshened per occurrence.
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);

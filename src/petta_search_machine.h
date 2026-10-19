@@ -247,6 +247,30 @@ typedef struct {
 CettaGsltTermViewStatusV1 petta_machine_operation_view_root(
     const PettaMachineOperationView *view, Atom **root_out);
 
+typedef bool (*PettaMachineOperationPermit)(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view);
+
+/* An optional host debugger composes current authorization with a pure
+ * stop-before test. Neither callback may advance the machine or force the
+ * borrowed operand. Permission refusal does not run the stop test; a missing
+ * authorization callback refuses. A guard hit retains the pending operation
+ * before transition budgeting. Disabling the stop test does not grant rights.
+ *
+ * This object and both callback contexts must outlive the machine and its
+ * retained images, just like the host context. They are not captured stack
+ * scopes or execution capabilities. `breakpoint` describes the most recent
+ * permission callback; interpret it with the returned machine status. */
+typedef struct {
+    PettaMachineOperationPermit authorize;
+    void *authority_context;
+    PettaMachineOperationPermit stop_before;
+    void *stop_context;
+    bool breakpoint;
+} PettaMachineOperationControl;
+
+bool petta_machine_operation_control_permit(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view);
+
 /* An external identity is either pinned by an actual retained owner, or
  * borrowed from a host scope which outlives every machine/image using it.
  * Scope shutdown must destroy those images before releasing its resources.
@@ -373,6 +397,13 @@ typedef struct {
     /* Explicit dependent domains belong to the active language profile,
      * not to the shared declaration cache or residual-type analysis. */
     bool dependent_type_domains;
+    /* The 1.1 PeTTa law: car-atom of () raises; earlier versions return (). */
+    bool raises_empty_car;
+    /* petta@1.1.c's call contracts: a typed call checks a position whose
+     * declared type is not a variable, its check commits to its first
+     * answer and raises the language's type error when it has none, and no
+     * run-time dispatch recovers that error. */
+    bool call_contracts;
     /* HE gives `if` equations only for True and False, so a condition that
      * is neither leaves the call itself, branches unevaluated, as its value.
      * PeTTa takes any other condition value as false. */
@@ -383,6 +414,11 @@ typedef struct {
      * reads a collected value so. */
     bool (*collected_value_reducible)(void *context, Space *space,
                                       Atom *value);
+    /* The aggregate of a call of one of HE's library collection functions
+     * whose library equation is in force (`unique` and the like), or
+     * SYMBOL_ID_NONE: the machine runs the call as that definition, with
+     * the arguments in place. */
+    SymbolId (*he_library_stream)(void *context, Space *space, Atom *call);
     /* No computation of this run has an effect, so a completed producer may
      * hand its successes on as they arrive and hold back only its errors:
      * the completed answers, normalized, are the same. */
@@ -396,8 +432,13 @@ typedef struct {
     /* Checked before transition budgeting and before consuming the goal or
      * alternative. False retains that exact operation for a later executor.
      * The borrowed operand view is descriptive, not a forced value. */
-    bool (*permit_operation)(void *context, Space *space,
-        PettaMachineOperation operation, const PettaMachineOperationView *view);
+    PettaMachineOperationPermit permit_operation;
+    /* NULL uses the host context. A separate borrowed context lets a debugger
+     * compose the permission callback without replacing every host service.
+     * It shares the host's lifetime contract and is fixed across an image;
+     * distinct external contexts do not acquire transfer equivalence merely
+     * by using equal callback pointers. */
+    void *permit_operation_context;
     /* True only when compiled, bounded pure instructions do not consume a
      * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */
@@ -537,7 +578,8 @@ typedef struct {
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
     const PettaPlanNode *(*translate_source)(
-        void *context, Space *space, Atom *expression);
+        void *context, Space *space, Atom *expression,
+        const Arena *const *source_arenas, size_t source_arena_count);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
@@ -806,6 +848,21 @@ typedef struct {
         void *context, void *transaction);
     void (*transaction_rollback)(
         void *context, void *transaction);
+    /*
+     * A begun transaction's working state may hold atoms of the machine heap
+     * (the registry values and state cells it works on).  A heap collection
+     * copies them through its own session into staged storage, then
+     * publishes the copies when the collection commits or drops them when it
+     * fails, so a transaction never blocks collection.  A host without these
+     * hooks leaves the heap uncollected while a transaction is open.
+     */
+    bool (*transaction_relocate)(
+        void *context, void *transaction, AtomDeepCopySession *session,
+        void **staged);
+    void (*transaction_relocate_commit)(
+        void *context, void *transaction, void *staged);
+    void (*transaction_relocate_discard)(
+        void *context, void *staged);
     bool (*mutex_acquire)(
         void *context, Arena *arena, Atom *name,
         void **mutex);
@@ -931,6 +988,11 @@ bool petta_machine_init(
 /* Its driver takes every answer of this machine before anything consumes
  * them, as a collection or a completed evaluation does. */
 void petta_machine_set_answers_collected_whole(PettaMachine *machine);
+/* Change capture admission only at a suspended work boundary. Existing
+ * producers still have to satisfy the provider capture contract. */
+void petta_machine_set_branch_capture(
+    PettaMachine *machine,
+    CettaBranchAdmission (*admit)(void *context, Space *space));
 bool petta_machine_init_with_plan(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
@@ -1010,6 +1072,13 @@ bool petta_machine_answer_delayed(PettaMachine *machine, Atom *answer,
                                   Atom **payload);
 
 void petta_machine_destroy(PettaMachine *machine);
+/* The caller keeps the machine and borrowed host/source services quiescent.
+ * Counts native owned storage by allocation identity without executing it.
+ * Unsupported foreign/cursor owners remain explicit incomplete observations. */
+void petta_machine_storage_census(
+    const PettaMachine *machine, CettaStorageCensus *census);
+/* The bytes the machine holds now: its heap and its tenured store. */
+size_t petta_machine_retained_bytes(const PettaMachine *machine);
 /* Whether CETTA_PETTA_QUERY_TRACE asks to see each query of `head`: the
  * head it names, or every head for `*`. */
 bool petta_machine_query_traced(SymbolId head);

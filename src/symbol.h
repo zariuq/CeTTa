@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <pthread.h>
+#include "scalar_trie.h"
 
 #ifndef CETTA_SYMBOL_READ_COVERAGE
 #define CETTA_SYMBOL_READ_COVERAGE 0
@@ -34,6 +35,9 @@ typedef struct {
      * then, otherwise the policy's position plus one (position zero: none).
      * Read and written only through the accessors below. */
     uint32_t builtin_policy;
+    /* The symbol's canonical atom, owned by the table rather than an arena:
+     * made on first request (atom_symbol_canonical), freed with the table. */
+    _Atomic(void *) canonical_atom;
 } SymbolEntry;
 
 /* Payload bytes include the terminating NUL. Metadata includes reserved
@@ -74,6 +78,10 @@ typedef struct {
     _Atomic uint32_t entry_len;
     pthread_mutex_t write_mutex;
     SymbolTableStats stats;
+    /* Lazily populated spelling index, protected by write_mutex. Entries are
+     * immutable scalar sequences; opaque non-UTF-8 spellings are counted. */
+    CettaScalarTrie *name_trie;
+    uint32_t name_trie_count, name_trie_invalid;
 } SymbolTable;
 
 /* Non-destructive marker substrate. Unmarked bytes are diagnostics, never
@@ -128,6 +136,22 @@ typedef struct {
     const char *bytes;
     uint32_t len;
 } SymbolSpelling;
+
+typedef struct {
+    SymbolId *ids;
+    size_t len;
+    /* Exclusive upper bound on the captured table: IDs 1..count-1. */
+    uint32_t snapshot_count, invalid_utf8_count;
+    CettaTrieWalkStats stats;
+} SymbolNameQueryResult;
+/* NULL automaton obtains the valid-text snapshot for an independently
+ * interpreted fallback. Product callbacks must not intern into this table.
+ * IDs are returned once each in interning order. Invalid UTF-8 names remain
+ * in the symbol table and are reported, not interpreted as absent matches.
+ * Replacement is atomic; initialize result to zero before first use. */
+bool symbol_table_query_names(SymbolTable *, const CettaTrieAutomaton *,
+                             const void *initial, SymbolNameQueryResult *);
+void symbol_name_query_free(SymbolNameQueryResult *);
 
 /* One publication check for both parts of a spelling. Interned bytes and
  * lengths never change; the bytes remain borrowed from the table until it
@@ -418,12 +442,22 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_system_getenv_or_default, "__cetta_lib_system_getenv_or_default") \
     X(lib_system_is_flag_arg, "__cetta_lib_system_is_flag_arg") \
     X(lib_system_exit_with_code, "__cetta_lib_system_exit_with_code") \
+    X(lib_system_write, "__cetta_lib_system_write") \
     X(lib_system_cwd, "__cetta_lib_system_cwd") \
+    X(lib_system_entry_directory, "__cetta_lib_system_entry_directory") \
     X(lib_system_monotonic_ns, "__cetta_lib_system_monotonic_ns") \
     X(lib_system_host, "__cetta_lib_system_host") \
     X(lib_system_read_line, "__cetta_lib_system_read_line") \
     X(lib_fs_tail_text, "__cetta_lib_fs_tail_text") \
     X(lib_fs_entries, "__cetta_lib_fs_entries") \
+    X(lib_proc_spawn, "__cetta_lib_proc_spawn") \
+    X(lib_proc_poll, "__cetta_lib_proc_poll") \
+    X(lib_proc_wait, "__cetta_lib_proc_wait") \
+    X(lib_proc_status, "__cetta_lib_proc_status") \
+    X(lib_proc_cancel, "__cetta_lib_proc_cancel") \
+    X(lib_proc_close, "__cetta_lib_proc_close") \
+    X(lib_proc_abort_signal, "__cetta_lib_proc_abort_signal") \
+    X(lib_proc_await, "__cetta_lib_proc_await") \
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
@@ -442,6 +476,16 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
     X(lib_fs_read_lines_between, "__cetta_lib_fs_read_lines_between") \
+    X(lib_fs_metadata, "__cetta_lib_fs_metadata") \
+    X(lib_fs_walk_open, "__cetta_lib_fs_walk_open") \
+    X(lib_fs_walk_current, "__cetta_lib_fs_walk_current") \
+    X(lib_fs_walk_step, "__cetta_lib_fs_walk_step") \
+    X(lib_fs_walk_metadata, "__cetta_lib_fs_walk_metadata") \
+    X(lib_fs_open_directory, "__cetta_lib_fs_open_directory") \
+    X(lib_fs_next_entry, "__cetta_lib_fs_next_entry") \
+    X(lib_fs_open_read, "__cetta_lib_fs_open_read") \
+    X(lib_fs_read_chunk, "__cetta_lib_fs_read_chunk") \
+    X(lib_fs_close, "__cetta_lib_fs_close") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
     X(lib_durable_open, "__cetta_lib_durable_open") \
     X(lib_durable_read, "__cetta_lib_durable_read") \
@@ -471,6 +515,8 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_get_last_v1, "__cetta_lib_json_get_last_v1") \
     X(lib_json_object_get, "__cetta_lib_json_object_get") \
     X(lib_str, "__cetta_lib_str") \
+    X(lib_str_value, "__cetta_lib_str_value") \
+    X(lib_re, "__cetta_lib_re") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \
@@ -708,7 +754,15 @@ static inline SymbolSpelling symbol_spelling(
     X(pat_case_forward, "pat:case%") \
     X(pat_is_instance, "pat:is-instance") \
     X(pat_is_variant, "pat:is-variant") \
-    X(subtype, ":<")
+    X(subtype, ":<") \
+    X(work_new, "work-new") \
+    X(work_take, "work-take") \
+    X(work_budget, "work-budget") \
+    X(work_cancel, "work-cancel") \
+    X(work_record, "work-record") \
+    X(work_route, "work-route") \
+    X(work_count, "work-count") \
+    X(work_exists, "work-exists")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -1024,6 +1078,12 @@ uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
 uint32_t symbol_builtin_policy(const SymbolTable *st, SymbolId id);
 /* The value depends only on the name, so concurrent callers record the same. */
 void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value);
+/* The symbol's canonical atom, or NULL until one is published. */
+void *symbol_canonical_atom(const SymbolTable *st, SymbolId id);
+/* Publish `atom` as the symbol's canonical atom unless one is already:
+ * the published atom, which is `atom` only when it won; NULL for an id the
+ * table does not hold.  The table frees the published atom. */
+void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
 

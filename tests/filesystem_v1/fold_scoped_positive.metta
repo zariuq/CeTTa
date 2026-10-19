@@ -1,0 +1,6 @@
+(= (fold-example:sum $items)
+  (let $space (context-space)
+    (case (_minimal-foldl-llist $items 0 $acc $item (+ $acc $item) $space)
+      (((return $result) (FoldScoped $result))
+       ($fault (FoldRefused $fault))))))
+!(fold-example:sum (LCons 1 (LCons 2 LNil)))

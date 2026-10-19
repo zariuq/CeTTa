@@ -1,0 +1,18 @@
+empty
+(head 1)
+(other (Foo bar))
+(other 7)
+(running 1)
+(done 2)
+()
+()
+fallback
+(equal a)
+(differ a b)
+(warm any)
+(any cold)
+(any)
+(pair (+ 1 2) (kind LNil))
+(LCons 1 (LCons 2 (LCons 3 LNil)))
+(1 (S 1))
+((pair 1 a) (pair 1 b))

@@ -1,0 +1,10 @@
+is ((pair a b)), should ((pair a b)). ✅ 
+is ((pair c d)), should ((pair c d)). ✅ 
+()
+()
+true
+()
+()
+true
+(Error (remove-atom 7 (item 1)) remove-atom expects a space as the first argument)
+(Error (add-atom-nodup 7 (item 1)) add-atom-nodup expects a space as the first argument)

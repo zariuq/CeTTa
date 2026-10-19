@@ -314,6 +314,21 @@ static bool petta_repra_render(
                 petta_repra_append_string(output, atom->ground.sval,
                                           atom->ground.slen);
                 break;
+            case GV_SEAL: {
+                /* The public observer, (Sealed NICK): never authority. */
+                char text[256];
+                size_t length = atom_seal_display_text(atom, text,
+                                                       sizeof(text));
+                if (length < sizeof(text)) {
+                    sb_append(output, text);
+                } else {
+                    char *long_text = cetta_malloc(length + 1u);
+                    atom_seal_display_text(atom, long_text, length + 1u);
+                    sb_append(output, long_text);
+                    free(long_text);
+                }
+                break;
+            }
             case GV_SPACE:
             case GV_STATE:
             case GV_CAPTURE:
@@ -2613,15 +2628,22 @@ static Atom *grounded_petta_sread(Arena *a, Atom *argument) {
     }
     if (!text)
         return NULL;
-    bool old_rational_literals = parser_set_rational_literals_enabled(true);
-    Atom *parsed = NULL;
-    size_t pos = 0;
-    if (parser_text_well_formed_n(text, text_len)) {
-        parsed = parse_data_sexpr_n(a, text, text_len, &pos);
-        if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
-            parsed = NULL;
+    /* The session's PeTTa reader reads the term as it reads source forms:
+     * $_ is fresh at each occurrence, True and False are the booleans and
+     * 2/3 is a word. */
+    bool session_reader = false;
+    Atom *parsed = parser_read_document_term_n(a, text, text_len,
+                                               &session_reader);
+    if (!session_reader) {
+        bool old_rational_literals = parser_set_rational_literals_enabled(true);
+        size_t pos = 0;
+        if (parser_text_well_formed_n(text, text_len)) {
+            parsed = parse_data_sexpr_n(a, text, text_len, &pos);
+            if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
+                parsed = NULL;
+        }
+        parser_set_rational_literals_enabled(old_rational_literals);
     }
-    parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed) {
         g_grounded_raised = true;
         parsed = petta_semantics_syntax_error(a, text);
@@ -3649,11 +3671,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             ? petta_semantics_sequence_view(argument, &elems, &len)
             : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
-         * tail, and anything but a non-empty list gives (). */
+         * tail, and anything but a non-empty list gives ().  PeTTa's typed
+         * line raises on car-atom of the empty sequence. */
         if (grounded_current_language_is_petta()) {
             if (petta_semantics_is_cons_constraint(argument))
                 return argument->expr.elems[
                     head_id == g_builtin_syms.car_atom ? 1u : 2u];
+            CettaSequenceProjectionView view = cetta_sequence_projection_view(
+                cetta_sequence_projection_call(head_id, nargs,
+                    eval_current_petta_typed_line &&
+                            eval_current_petta_typed_line()
+                        ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
+                        : CETTA_SEQUENCE_PETTA_VALUE),
+                argument, sequence, elems, len);
+            if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
+                g_grounded_raised = true;
+                return petta_semantics_empty_head_error(a);
+            }
             if (!sequence || len == 0u)
                 return atom_unit(a);
         }

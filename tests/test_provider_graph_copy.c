@@ -57,10 +57,39 @@ static bool provider_graph_case(size_t cut,bool distinct,bool provider_first,boo
     Atom *answer=NULL;Bindings environment;
     PettaMachineStep step=petta_machine_next(&machine,&answer,&environment);
     assert(step==PETTA_MACHINE_STEP_SUSPENDED || step==PETTA_MACHINE_STEP_ANSWER);bindings_free(&environment);
+    CettaStorageCensus live_census={0};
+    PettaMachineStats before_inspection=machine.impl->stats;
+    petta_machine_storage_census(&machine,&live_census);cetta_storage_finish(&live_census);
+    if(live_census.incomplete)fprintf(stderr,"live census cut %zu: %s\n",cut,live_census.incomplete);
+    assert(!live_census.incomplete && !live_census.invalidated && !live_census.overflow &&
+        live_census.retained>=sizeof(*machine.impl));
+    size_t live_retained=live_census.retained,live_objects=live_census.length;
+    petta_machine_storage_census(&machine,&live_census);cetta_storage_finish(&live_census);
+    assert(live_census.retained==live_retained && live_census.length==live_objects &&
+        !memcmp(&machine.impl->stats,&before_inspection,sizeof(before_inspection)));
+    cetta_storage_census_free(&live_census);
+    PettaPullFrame active_pull={0};machine.impl->pull_frame=&active_pull;
+    petta_machine_storage_census(&machine,&live_census);cetta_storage_finish(&live_census);
+    assert(live_census.incomplete && !strcmp(live_census.incomplete,"ActiveMachinePull"));
+    machine.impl->pull_frame=NULL;cetta_storage_census_free(&live_census);
     CettaOwnedContinuation image={0};
     assert(cetta_continuation_capture(petta_machine_continuation_machine(&machine),&image)==CETTA_CONTINUATION_READY);
     const PettaOwnedContinuationImpl *source=image.payload;
     const Bindings *source_bindings=&source->bindings.bindings.current;
+    CettaStorageCensus census={0};
+    size_t references=atomic_load_explicit(&source->terms.pool->references,memory_order_relaxed);
+    PettaContinuationAuthorityComponent saved_authority=source->authority;
+    PettaMachineStats saved_stats=((PettaMachineImpl *)machine.impl)->stats;
+    cetta_owned_continuation_storage_census(&image,&census);cetta_storage_finish(&census);
+    assert(!census.incomplete && !census.invalidated && !census.overflow &&
+        census.retained>=sizeof(*source)+sizeof(*source->terms.pool));
+    size_t retained=census.retained,objects=census.length;
+    cetta_owned_continuation_storage_census(&image,&census);cetta_storage_finish(&census);
+    assert(census.retained==retained && census.length==objects && census.repeated>0u &&
+        atomic_load_explicit(&source->terms.pool->references,memory_order_relaxed)==references &&
+        memcmp(&source->authority,&saved_authority,sizeof(saved_authority))==0 &&
+        memcmp(&((PettaMachineImpl *)machine.impl)->stats,&saved_stats,sizeof(saved_stats))==0);
+    cetta_storage_census_free(&census);
     PrimeNeedCellView source_cell;assert(prime_need_snapshot_lookup(bindings_need_view(source_bindings),cell,&source_cell));
     Bindings outside;bindings_init(&outside);assert(bindings_clone(&outside,source_bindings));
     assert(bindings_lookup_value_id(&outside,visible).skeleton==source_cell.origin && source_cell.origin==source_cell.cached);
@@ -547,9 +576,9 @@ static void provider_match_copy_control(bool match_first) {
     assert(bindings_need_view(&choice.as.match.binding_snapshot.items[0])->top==bindings_need_view(&outside)->top);
     AtomDeepCopySession *atoms=atom_deep_copy_session_new(&destination);
     AtomDeepCopyArenaPair pair={&source,&destination};assert(atom_deep_copy_session_set_arena_map(atoms,&pair,1u));
-    if(match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,NULL,true));
+    if(match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,&source,NULL,NULL,true));
     assert(bindings_copy_owned_atoms_with_session(&outside,&destination,atoms));
-    if(!match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,NULL,true));
+    if(!match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,&source,NULL,NULL,true));
     assert(bindings_need_view(&choice.as.match.binding_snapshot.items[0])->top==bindings_need_view(&outside)->top);
     atom_deep_copy_session_free(atoms);bindings_free(&seed);arena_free(&source);
     PrimeNeedCellView view;assert(prime_need_snapshot_lookup(

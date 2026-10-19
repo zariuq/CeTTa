@@ -1,11 +1,42 @@
 # CeTTa
 
-CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
-build runs the base HE-style evaluator (`--lang he`) with no named profile
-selected. The same source tree also has PeTTa and Prime language modes and
-optional host interfaces for I/O, durable state, and services. Use
-`--profile extended` when you want the labeled CeTTa extension interface.
+CeTTa is a C runtime for the MeTTa family of languages. One binary reads and
+runs several MeTTa dialects over one shared substrate (atoms, spaces,
+matching, indexing and memory management), and it hosts native proof kernels
+for HOL Light, MM0 and Megalodon.
 
+PeTTa is the default language. CeTTa runs the PeTTa language of release
+1.0.6, the most widely used MeTTa dialect, so PeTTa programs run directly.
+Hyperon Experimental MeTTa and the other languages are selected with `--lang`.
+
+```bash
+make
+./cetta program.metta              # PeTTa
+./cetta --lang he program.metta    # Hyperon Experimental MeTTa
+```
+
+## Languages
+
+Each dialect is a language of its own, with its own reference
+implementation, and a program is written for one of them.
+
+| `--lang` | Language | Profiles (`--profile`) |
+|---|---|---|
+| `petta` (default) | PeTTa, as released in version 1.0.6 | `extended` adds CeTTa's labeled extensions; `contract` is the typed line with call contracts; `typecheck-v2` and `typecheck-v3` add native type checking |
+| `he` | Hyperon Experimental MeTTa, in CeTTa's HE contract | `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search; `he-compat` follows the Rust implementation 0.2.10 |
+| `prime` | the MeTTa-Prime 0.0.1 draft | |
+| `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
+| `rhocalc` | the reflective higher-order rho-calculus | `strict-core`, `cost`, `rhometta` |
+| `mm2` | MM2 programs, lowered directly and run on MORK | `gslt` |
+
+`--lang <name>@<version>` selects a released contract: `petta@1.0.6`,
+`petta@1.1` (typed PeTTa), `he@0.0.1`, `he@0.2.10` (the Rust compatibility
+lane) and `prime@0.0.1`. See `docs/language_versions.txt`.
+
+`./cetta --list-languages` lists every language of the binary, including the
+experimental generated ones (`zero`, `subzero`, `zerouv`, `gslt-il`,
+`metta-interact`), and `./cetta --lang <name> --list-profiles` lists a
+language's profiles.
 This branch also carries a working draft of **MeTTa Prime** (`--lang prime`),
 a higher-order MeTTa in which code is a value, programs can be checked by a
 native dependent type kernel, and proofs are terms that the kernel checks.
@@ -25,7 +56,7 @@ The integration adds no automatic tool admission rule or model budget.
 
 For the default build:
 
-- `gcc`, `make` and `pkg-config`
+- `gcc` or `clang`, `make` and `pkg-config`
 - Python 3 development headers and a working `python3-config --embed`
 - GMP development headers for exact big integers; build with
   `make ENABLE_GMP=0` to leave them out
@@ -41,57 +72,32 @@ Optional:
 - SWI-Prolog: when `pkg-config` finds `swipl`, the build links the Prolog
   interoperation library automatically (`ENABLE_LIB_PROLOG=auto`)
 - libcurl: `make ENABLE_HTTP=1` enables the HTTP operations
+- Native Sign in with ChatGPT: `ENABLE_HTTP=1 ENABLE_SIWC=1` with cJOSE,
+  Jansson and OpenSSL; see [native sign-in](docs/siwc/README.md)
+- Rust/Cargo and `MORK` and `PathMap` checkouts, for the bridge builds below
 
-For the optional bridge builds:
-
-- Rust/Cargo
-- local `MORK` and `PathMap` checkouts; sibling layout works by default, and
-  `PATHMAP_REPO_DIR` / `MORK_REPO_DIR` overrides are supported below
-
-## Quick Build
-
-From the repository root:
+## Build
 
 ```bash
-make
+make                # ./cetta, with Python support
+make BUILD=core     # a smaller binary without Python
 ```
 
-That bootstraps the stdlib in two stages and produces `./cetta`.
-
-Run a small file:
-
-```bash
-./cetta tests/test_map_filter_atom.metta
-```
-
-For the full CLI interface, run `./cetta --help`.
-
-Run `./cetta -v` (or `./cetta --version`) to see the exact version and active
-build mode of the binary currently sitting at `./cetta`.
-
-If you want the smaller no-Python binary instead:
-
-```bash
-make BUILD=core
-```
-
-## Build Modes
-
-Default modes:
+The build bootstraps the stdlib in two stages. `./cetta --version` prints the
+version and build mode of the binary, and `./cetta --help` the full command
+line.
 
 | Mode | Includes | Python |
 |------|----------|--------|
-| `BUILD=python` or plain `make` | default HE-style evaluator | yes |
+| `BUILD=python` or plain `make` | the default build | yes |
 | `BUILD=core` | small standalone binary | no |
+| `BUILD=main` | the default build plus the MORK/MM2 bridge and `(new-space pathmap)` | yes |
+| `BUILD=mork` | the bridge build without Python | no |
 
-Bridge-capable modes:
+`BUILD=full` and `BUILD=pathmap` remain accepted spellings of `BUILD=main` and
+`BUILD=mork`.
 
-| Mode | Includes | Python | When to use |
-|------|----------|--------|-------------|
-| `BUILD=main` | `lib_mork` / MM2 bridge + generic `(new-space pathmap)` | yes | recommended bridge daily-driver |
-| `BUILD=full` | compatibility alias of `BUILD=main` | yes | accepted old spelling for the same bridge build |
-| `BUILD=mork` | same bridge interface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
-| `BUILD=pathmap` | compatibility alias of `BUILD=mork` | no | accepted old spelling for the same no-Python bridge build |
+## First runs
 
 ## Optional Host Interfaces
 
@@ -101,6 +107,7 @@ CeTTa checkout or a different source branch.
 | Interface | Build selection | Guide |
 | --- | --- | --- |
 | Native HTTP and asynchronous I/O | `ENABLE_HTTP=1` (libcurl) | [I/O boundary](docs/io/README.md) |
+| Native Sign in with ChatGPT | `ENABLE_HTTP=1 ENABLE_SIWC=1` (cJOSE/Jansson/OpenSSL) | [Sign-in, sessions and qualification](docs/siwc/README.md) |
 | Buffered LLM protocol library | `lib/llm.metta`; native HTTP for submission | [Requests, ordered results and ownership](verification/llm/README.md) |
 | Durable named spaces and host transactions | `ENABLE_DURABLE=1` (SQLite) | [Durable host](docs/durable/README.md) |
 | Process helper library | `lib/proc.metta` | [Process module](lib/proc.metta) |
@@ -163,12 +170,126 @@ accepts `--bench FILE`, `--check FILE`, `--corpus DIRECTORY` and
 separately in corpus checks; complete-file agreement requires every row.
 
 ## Bridge Setup
+A PeTTa program, here backward chaining over a small graph; each answer is a
+proof:
 
-The bridge-enabled modes build `rust/cetta-space-bridge` and link it
-statically into CeTTa. They are optional; you do not need them for the default
-HE-style build above.
+```bash
+./cetta examples/chaining/tutorial/01-backward.metta
+```
 
-Default checkout layout:
+```
+()
+()
+((proof (step ((proof ab (edge alice bob)) (proof (step ((proof bc (edge bob carol)) (proof (direct ((proof cd (edge carol dana)))) (reachable carol dana)))) (reachable bob dana)))) (reachable alice dana)))
+()
+((proof (direct ((proof ab (edge alice bob)))) (reachable alice bob)))
+()
+```
+
+The same chainer in HE, and the HE stdlib's higher-order operations:
+
+```bash
+./cetta --lang he examples/chaining/tutorial/01-backward.metta
+./cetta --lang he tests/test_map_filter_atom.metta
+```
+
+```
+[(2 3 4 5)]
+[(3 4)]
+```
+
+A dependent result type in Prime:
+
+```bash
+./cetta --lang prime examples/prime/dependent_telescope.metta
+```
+
+A HOL Light proof stream, checked by the native kernel. The standard profile
+admits only HOL Light's standard axioms, so a stream that adds an axiom is
+refused there and accepted under `open`:
+
+```bash
+./cetta --lang hol-light tests/hol_light/fixtures/d1-minimal.hrs
+./cetta --lang hol-light tests/hol_light/fixtures/dag-new-axiom.hrs
+./cetta --lang hol-light --profile open tests/hol_light/fixtures/dag-new-axiom.hrs
+```
+
+```
+(thm () (A (A (c "=" ...
+(hol:accepted 27 1)
+(hol:refused "POLICY" "axiom policy" 137)
+(hol:accepted 138 0)
+```
+
+A funded reaction in the rho-calculus:
+
+```bash
+./cetta --lang rhocalc --profile cost examples/rho/cost/vending_machine.rho
+```
+
+`docs/chaining-tutorial.pdf` builds forward and backward chainers in PeTTa and
+HE and introduces the directional matching of the extended profiles
+(`make test-chaining-tutorial`); `docs/rhocalc.md` is the guided tour of the
+rho-calculus.
+
+## Libraries
+
+Import a library with `(import! &self <name>)`. The names below load under
+the same name in PeTTa, HE and Prime.
+
+| Library | Provides |
+|---|---|
+| `re` | regular expressions with a module-authored syntax: compiled and reusable patterns, ordered captures, look-around, Unicode classes, and scalar tries for literal search (`examples/regex_*.metta`) |
+| `fs`, `io` | owned files and directories, streaming text input and output (`docs/filesystem_observations_v1.txt`, `docs/text_preparation_v1.txt`) |
+| `json` | JSON reading and writing |
+| `holkernel` | the native HOL Light kernel (`docs/hol_light.txt`) |
+| `mm0kernel` | the native MM0 verifier for MM0 specifications and MMB proofs (`docs/mm0_native.txt`) |
+| `megalodon` | native Megalodon (Mathdata) proof checking |
+| `lib_pln`, `lib_wmpln` | Probabilistic Logic Networks |
+| `mork` | the MORK and MM2 interface (bridge builds) |
+
+## Proof kernels
+
+The HOL Light, MM0 and Megalodon kernels are written in C and share CeTTa's
+substrate. A program reaches them through their libraries, and the HOL Light
+kernel also reads proof streams directly:
+
+```bash
+./cetta --lang hol-light proof.holr
+```
+
+Kernel sessions, theories and theorems are sealed values. They print as
+`(Sealed ...)`, and no printed text, number or data rebuilds one: only the
+kernel's checks create a theorem. The documents under `docs/` state what each
+kernel checks and what it leaves to the dialect.
+
+## Tests
+
+| Lane | Use | Command |
+|---|---|---|
+| Regular development | fast feedback after ordinary changes | `make test-correctness test-profiles bench-light` |
+| Full correctness | before review or merge | `make test-correctness-all test-profiles` |
+| Routine readiness | correctness, sanitizers, capacity and performance regressions | `make main-readiness-routine` |
+| Main readiness | before merging to main or releasing | `make main-readiness-exhaustive` |
+
+`make test` runs the checked suite of the current build configuration; on the
+bridge builds it includes the bridge regressions. It does not switch `BUILD=`
+or start a second build: run `make ENABLE_RUNTIME_STATS=1 test-runtime-stats`
+for the runtime-stats lane. Sanitizer lanes use the same build selection:
+
+```bash
+make BUILD=core test-asan
+make BUILD=python test-tsan
+make test-asan-main
+```
+
+`make test-petta-release-reference` checks that the default PeTTa semantics
+and libraries are those of release 1.0.6.
+
+## Bridge builds (MORK and PathMap)
+
+`BUILD=main` and `BUILD=mork` link `rust/cetta-space-bridge` statically. They
+expect `MORK` and `PathMap` checkouts next to CeTTa:
 
 ```text
 <parent>/
@@ -201,10 +322,11 @@ name different feature sets.
 
 If your `MORK` and `PathMap` checkouts already live as siblings next to
 `CeTTa`, the standard bridge commands should work without extra flags:
+Checkouts elsewhere are named directly:
 
 ```bash
-make BUILD=main
-make BUILD=mork
+make doctor-bridge PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
+make BUILD=main    PATHMAP_REPO_DIR=/path/to/PathMap MORK_REPO_DIR=/path/to/MORK
 ```
 
 If your checkouts live elsewhere, you do not need symlinks. Pass the repo
@@ -554,6 +676,37 @@ The bridge code includes two thin compatibility adapters:
   meaning.
 - **Contexts** are persistent lazy environments; see
   `examples/prime/context_tutorial/`.
+- **Owned execution control.** `select` retains unfinished computation across
+  bounded runs. FIFO, priority/age selection, resource agendas and worker
+  policies use the same owned evaluator. A scheduling priority does not grant
+  permission to duplicate a shared producer or consume an unavailable resource.
+  See [competing resource worlds](tests/prime/native_resources/competing_worlds.metta)
+  [self-budgeted search](tests/prime/native_cost/self_budgeted_search.metta),
+  and the [unrecorded monitor](examples/prime/native_control/responsive_monitor.metta).
+  The monitor returns after each native-work allowance and resumes its retained
+  counter; an allowance is not a wall-clock response guarantee.
+- **Optional history and debugging.** A requested `history` policy records
+  bounded occurrences and dependency graphs. `history:explain` distinguishes
+  rejected, pending and unexamined work; `history:dependencies` exposes retained
+  graph packets. Stopping recording and physically forgetting an owned diary
+  are separate operations. Forgetting preserves live continuations and other
+  readers; recording again starts a suffix. Missing history cannot certify an
+  empty search. See [admission explanations](tests/prime/need_admission_history.metta)
+  and [retained replay](examples/prime/native_control/retained_replay.metta).
+  An owned sequential Prime Transaction can also stop before live publication
+  with `(breakpoint pattern)`. The [publication client](examples/prime/native_control/controlled_publication.metta)
+  lets a competing consumer use the permit, then resumes the retained proposal
+  against the current world. This control does not require history recording.
+
+The optional [resource-history reader](tools/native_resource_history.py)
+checks recorded ground `read`/`take`/`+` words from supplied initial rows.
+Its causal view forgets independent firing order while retaining consuming
+conflicts. `--resource-cost` requests firing work and dependency depth;
+`--resource-checker` additionally invokes an external source checker for actions,
+ordered premises, output identities and final rows. These checks run only when
+requested. They authenticate neither the starting state nor execution rights,
+and do not establish that a supplied word is a complete execution. Dependency
+depth is distinct from measured worker span.
 
 **Example programs** (all in `examples/prime/`, each with its expected output):
 - **Learning:**
@@ -613,57 +766,95 @@ test commands above for the checkout and feature set you intend to use.
 - Explicit bridge lanes passed for `BUILD=mork`, `BUILD=main`,
   and their compatibility aliases `BUILD=pathmap` and `BUILD=full`
 - Explicit runtime-stats lane bodies also passed for the checked bridge builds
+The expected upstreams are
+[Adam-Vandervorst/PathMap](https://github.com/Adam-Vandervorst/PathMap)
+`master` and [trueagi-io/MORK](https://github.com/trueagi-io/MORK) `main`. The
+bridge builds give `(new-space pathmap)` counted-key storage: keys are
+`atom_bytes || count_bytes`, which keeps multiset semantics under PathMap's
+structural matching (`specs/pathmap_counted_space_design.txt`). The first
+bridge build compiles the Rust crates and can take a few minutes.
 
 ## Examples
 
-### Higher-order stdlib
+### Regular expressions (PeTTa)
 
 ```metta
-!(map-atom (1 2 3 4) $v (eval (+ $v 1)))
-!(filter-atom (1 2 3 4) $v (eval (> $v 2)))
+!(import! &self re)
+!(let* (($pattern (re:compile "(?<greek>λ)"))
+        ($match (re:find $pattern "aλb"))
+        ($text (re:group-text $match "aλb" "greek"))
+        ($span (re:group-span $match 1)))
+   (function (return (RegexCaptureTextV1 $text $span))))
 ```
 
 ```
-$ ./cetta tests/test_map_filter_atom.metta
-[(2 3 4 5)]
-[(3 4)]
+$ ./cetta examples/regex_capture_access_v1.metta
+true
+(RegexCaptureTextV1 "λ" (re:span 1 3))
+...
 ```
 
-### Proof-carrying backward chaining
+Names and numeric identities address the same UTF-8 byte spans. The other
+`examples/regex_*.metta` files cover flags, classes, look-around,
+backreferences, Unicode and relations over matches.
 
-Nil Geisweiller's typed backward chainer produces machine-checkable proof
-terms:
+### Proof-carrying backward chaining (HE)
+
+A typed backward chainer whose answers are proof terms:
 
 ```metta
-(: r-mortal (-> (: $r (researcher $x))
-                (: $c (curious $x))
-                (mortal $x)))
-
+!(add-atom &kb (: r-mortal (-> (: $r (researcher $x))
+                               (: $c (curious $x))
+                               (mortal $x))))
 !(bc &kb (fromNumber 1) (: $prf (mortal $x)))
 ```
 
 ```
-$ ./cetta --lang he tests/bench_backchain_heavy_nilbc.metta | tail -1
+$ ./cetta --lang he benchmarks/bench_backchain_heavy_nilbc.metta | tail -1
 [(: (r-mortal r01 r01c) (mortal r01)), (: (r-mortal r02 r02c) (mortal r02)), ...]
 ```
 
-Each result is a proof term: `(: (r-mortal r01 r01c) (mortal r01))` reads
-"r01 is mortal, proved by rule r-mortal applied to evidence r01c."
+`(: (r-mortal r01 r01c) (mortal r01))` reads: r01 is mortal, by the rule
+r-mortal applied to the evidence r01c.
 
-### Large genomic benchmark preview (1.4M atoms)
+### Breadth-first search over 181,440 states (HE)
 
-```bash
+```
+$ ./cetta --lang he --profile extended benchmarks/test_tilepuzzle.metta
+8-puzzle BFS: reachable states from solved position (including the start state)...
+[()]
+[()]
+[(tilepuzzle-reachable-state-count including-start 181440)]
+```
+
+A queue space holds the frontier and a hash space the visited states. This
+run takes about half a minute and several gigabytes of memory.
+
+### A 1.4M-atom genomic workload (HE)
+
+```
 $ timeout 15 ./cetta --lang he benchmarks/bench_bio_1M.metta 2>/dev/null | head -3
 === Phase 1: Direct targets of rs10000544 (depth 1, 1.4M atoms) ===
 === Phase 2: Diseases from rs10000544 (depth 2) ===
 === Phase 3: TF regulatory targets of rs10000544 (depth 2) ===
 ```
 
-This preview uses a tracked workload in `benchmarks/`. A full run on a
-development workstation produces approximately 1,411,430 hypotheses in 3m 22s
-across 17 query phases.
+## Repository map
 
-### Structured spaces (queue, hash, stack)
+- `src/`: the runtime: atoms and symbols (`atom.c`, `symbol.c`), matching and
+  bindings (`match.c`, `binding/`), spaces (`space.c`), the evaluators
+  (`eval.c` for HE and Prime, `petta_*.c` for PeTTa), grounded operations
+  (`grounded.c`), readers (`parser.c` and the compiled dialect readers), the
+  term universe (`term_universe.c`) and the CLI (`main.c`)
+- `native/`: the native modules, among them the HOL Light, MM0 and Megalodon
+  kernels
+- `lib/`: the libraries named above, the stdlib (`stdlib.metta`) and the
+  per-dialect overlays (`lib/he`, `lib/petta`, `lib/prime`)
+- `langdef/`: language definitions compiled into readers and checkers
+- `rust/`: the MORK/PathMap bridge crates
+- `docs/`, `specs/`: kernel contracts, language versions and designs
+- `examples/`, `tests/`, `benchmarks/`: runnable programs, the checked suite
+  and workloads
 
 ```metta
 !(bind! &q (new-space queue))
@@ -856,24 +1047,21 @@ Useful workloads:
 ## CLI
 
 ```text
-./cetta [options] <file.metta>
-
-Options:
-  --lang <name>                    Set language mode
-  --profile <name>                 Set evaluation profile
-  --fuel <n>                       Set evaluation fuel budget
-  --count-only                     Print result counts instead of atoms
-  --space-engine <name>            Select space engine
-  --compile <file>                 Emit LLVM IR to stdout
-  --list-profiles                  Show available profiles
-  --list-space-engines             Show available space engines
-  --list-languages                 Show supported languages
+./cetta [--lang <name>[@<version>]] [--profile <name>] <file>
+./cetta -e '<expr>'                  inline expressions
+./cetta --translate --lang A --lang B <file>
+./cetta --lang <name> --list-profiles
+./cetta --list-languages
+./cetta --count-only <file>          result counts only
+./cetta --quiet <file>               hide [()] success results
+./cetta --fuel <-1|n> <file>         evaluation budget, -1 unlimited
+./cetta --num-threads <n> <file>     OS threads for parallel-capable execution
+./cetta --space-engine <name> <file> select the space engine
+./cetta --compile <file.metta>       emit LLVM IR
+./cetta --run-report <path> <file>   query report as JSON
 ```
 
-## Notes
-
-- This repository contains the working runtime snapshot, not a polished
-  release branch.
-- The fast suites are intentionally strict and cheap.
-- Benchmark and probe files that do not yet have `.expected` transcripts may
-  still be useful, but they are not counted as golden regressions yet.
+Without `--lang`, `cetta` runs `petta`. `--lang petta` reads consecutive
+`.metta` files in order; the other languages run one file and pass the
+remaining arguments to the program (`system:args`). `./cetta --help` lists
+every option.

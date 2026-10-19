@@ -3,14 +3,19 @@
 #include "prime_scoped_judgments.h"
 #include "prime_semantics.h"
 #include "space.h"
+#include "stats.h"
 #include "symbol.h"
 #include "term_universe.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static unsigned failures;
 static unsigned checks;
+
+static void retain_identifier(void *raw) { (*(unsigned *)raw)++; }
+static void release_identifier(void *raw) { (*(unsigned *)raw)--; }
 
 static Atom *parse_one(Arena *arena, const char *text) {
     Atom **forms = NULL;
@@ -18,6 +23,407 @@ static Atom *parse_one(Arena *arena, const char *text) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static Atom *admission_record(Arena *arena, const char *name, Atom *payload) {
+    return atom_expr(arena, (Atom *[]){atom_symbol(arena, "type:rule"),
+        atom_symbol(arena, name), atom_int(arena, 0), atom_unit(arena), payload}, 5u);
+}
+
+static void expect_admission(Arena *arena, Space *space, Atom *record,
+                              bool expected, const char *label) {
+    checks++;
+    if (prime_scoped_judgment_admitted(arena, space, record) != expected) {
+        failures++;
+        fprintf(stderr, "FAIL: %s\n", label);
+    }
+}
+
+static size_t authority_storage_bytes(void) {
+    CettaStorageCensus census = {0};
+    prime_scoped_judgment_storage_census(&census);
+    prime_semantics_theorem_storage_census(&census);
+    cetta_storage_finish(&census);
+    checks++;
+    if (census.incomplete || census.invalidated || census.overflow) {
+        failures++;
+        fprintf(stderr, "FAIL: authority storage census is incomplete\n");
+    }
+    size_t bytes = census.bytes;
+    cetta_storage_census_free(&census);
+    return bytes;
+}
+
+static void expect_instance_authority(uint64_t instance, bool admitted,
+                                       bool theorems, const char *label) {
+    size_t visited = 0u;
+    bool empty = false;
+    checks++;
+    if (!prime_scoped_judgment_instance_empty(instance, SIZE_MAX, &visited, &empty) ||
+        empty == admitted) {
+        failures++;
+        fprintf(stderr, "FAIL: %s (admissions)\n", label);
+    }
+    checks++;
+    if (!prime_semantics_theorem_instance_empty(instance, SIZE_MAX, &visited, &empty) ||
+        empty == theorems) {
+        failures++;
+        fprintf(stderr, "FAIL: %s (theorems)\n", label);
+    }
+}
+
+static void check_exact_admission(Arena *arena, TermUniverse *universe) {
+    Space source, destination;
+    space_init_with_universe(&source, universe);
+    space_init_with_universe(&destination, universe);
+    Atom *original = admission_record(arena, "exactAdmission",
+                                       atom_symbol(arena, "True"));
+    Atom *forged = admission_record(arena, "exactAdmission", atom_bool(arena, true));
+    checks++;
+    if (strcmp(atom_to_string(arena, original), atom_to_string(arena, forged)) != 0) {
+        failures++;
+        fprintf(stderr, "FAIL: admission collision control must have identical printed forms\n");
+    }
+    space_add(&source, original);
+    prime_scoped_judgment_admit(arena, &source, original);
+    expect_admission(arena, &source, original, true, "the published exact record is admitted");
+    expect_admission(arena, &source, atom_deep_copy(arena, original), true,
+                     "an independent exact copy retains admission");
+    size_t request_bytes = arena->live_bytes;
+    for (unsigned i = 0u; i < 100u; i++)
+        expect_admission(arena, &source, original, true,
+                         "repeated admission reads retain exact membership");
+    checks++;
+    if (arena->live_bytes != request_bytes) {
+        failures++;
+        fprintf(stderr, "FAIL: admission lookup allocates printed records in the request arena\n");
+    }
+    expect_admission(arena, &source, forged, false,
+                     "identical printed forms do not confer admission");
+    expect_admission(arena, &destination, original, false,
+                     "a record copied into another authority space is not admitted there");
+
+    /* The index uses the head and name, so all these records deliberately
+     * collide; payload equality remains the membership decision. */
+    for (unsigned i = 0u; i < 200u; i++) {
+        Atom *record = admission_record(arena, "collidingAdmission", atom_int(arena, i));
+        space_add(&source, record);
+        prime_scoped_judgment_admit(arena, &source, record);
+    }
+    for (unsigned i = 0u; i < 200u; i++)
+        expect_admission(arena, &source,
+            admission_record(arena, "collidingAdmission", atom_int(arena, i)), true,
+            "table growth preserves distinct colliding exact records");
+    expect_admission(arena, &source,
+        admission_record(arena, "collidingAdmission", atom_int(arena, 200)), false,
+        "an unadmitted payload in a populated collision bucket remains refused");
+
+    Arena request;
+    arena_init_detached(&request);
+    Atom *temporary = admission_record(&request, "requestAdmission", atom_int(&request, 17));
+    space_add(&source, temporary);
+    prime_scoped_judgment_admit(&request, &source, temporary);
+    temporary->expr.elems[4] = atom_int(&request, 18);
+    expect_admission(arena, &source,
+        admission_record(arena, "requestAdmission", atom_int(arena, 17)), true,
+        "admission owns the original key rather than a mutable request alias");
+    expect_admission(arena, &source, temporary, false,
+        "mutating the request record does not mutate its admitted key");
+    arena_free(&request);
+    expect_admission(arena, &source,
+        admission_record(arena, "requestAdmission", atom_int(arena, 17)), true,
+        "admitted keys outlive the request arena");
+
+    Atom *handle = admission_record(arena, "opaqueAdmission", atom_space(arena, &source));
+    prime_scoped_judgment_admit(arena, &source, handle);
+    expect_admission(arena, &source, handle, false,
+                     "runtime handles cannot become immutable admission keys");
+    unsigned identifier_holds = 0u;
+    arena_init_detached(&request);
+    Atom *identifier = atom_native_handle_identifier(&request, 19,
+        &identifier_holds, retain_identifier, release_identifier);
+    Atom *owned_integer = admission_record(&request, "ownedIntegerAdmission", identifier);
+    prime_scoped_judgment_admit(&request, &source, owned_integer);
+    expect_admission(arena, &source, owned_integer, false,
+                     "integer-shaped native holders cannot become admission keys");
+    expect_admission(arena, &source,
+        admission_record(arena, "ownedIntegerAdmission", atom_int(arena, 19)), false,
+        "an ordinary integer cannot impersonate an owned native identifier");
+    arena_free(&request);
+    checks++;
+    if (identifier_holds != 0u) {
+        failures++;
+        fprintf(stderr, "FAIL: rejected admission retained a native identifier owner\n");
+    }
+    Atom *cycle = admission_record(arena, "cyclicAdmission", atom_unit(arena));
+    cycle->expr.elems[4] = cycle;
+    prime_scoped_judgment_admit(arena, &source, cycle);
+    expect_admission(arena, &source, cycle, false,
+                     "cyclic data cannot become an admission key");
+    space_replace_contents(&destination, &source);
+    expect_admission(arena, &destination, original, true,
+                     "admission follows the actual space-contents transfer");
+    expect_admission(arena, &destination, forged, false,
+                     "contents transfer preserves exact admission distinctions");
+    expect_admission(arena, &destination,
+        admission_record(arena, "requestAdmission", atom_int(arena, 17)), true,
+        "contents transfer keeps owned request-independent keys");
+    space_free(&destination);
+    space_free(&source);
+}
+
+static void check_admission_revocation(Arena *arena, TermUniverse *universe) {
+    Space withdrawn;
+    space_init_with_universe(&withdrawn, universe);
+    Atom *digest_verdict = prime_scoped_judgment_judge(arena, &withdrawn,
+        parse_one(arena, "(set:signature-digest)"), false, 0u);
+    Atom *signature = digest_verdict->expr.elems[3]->expr.elems[1];
+    Atom *record = atom_expr(arena, (Atom *[]){atom_symbol(arena, "set:known"),
+        atom_symbol(arena, "withdrawnAdmission"), atom_symbol(arena, "MissingAdmissionProposition"),
+        atom_symbol(arena, "axiom"), atom_unit(arena), atom_unit(arena),
+        atom_int(arena, 0), signature}, 8u);
+    space_add(&withdrawn, record);
+    prime_scoped_judgment_admit(arena, &withdrawn, record);
+    expect_admission(arena, &withdrawn, record, true,
+                     "revocation control starts with an admitted exact artifact");
+    Space *working = space_heap_clone_shallow(&withdrawn);
+    checks++;
+    if (!working) {
+        failures++;
+        fprintf(stderr, "FAIL: could not clone the admitted source for revocation\n");
+        space_free(&withdrawn);
+        return;
+    }
+    expect_admission(arena, working, record, true,
+                     "the actual working-space clone receives admission");
+    (void)prime_scoped_judgment_judge(arena, working,
+        parse_one(arena, "(set:recheck withdrawnAdmission)"), false, 0u);
+    expect_admission(arena, working, record, false,
+                     "failed rechecking withdraws that exact artifact");
+    expect_admission(arena, &withdrawn, record, true,
+                     "an uncommitted working-space withdrawal does not change its parent");
+    space_replace_contents(&withdrawn, working);
+    space_free(working);
+    free(working);
+    expect_admission(arena, &withdrawn, record, false,
+                     "committing a withdrawn source key replaces the parent's older admission");
+    size_t before_growth = authority_storage_bytes(), grown = 0u;
+    bool empty = false;
+    /* These distinct colliding keys grow this instance's own table, including
+     * the withdrawn entry, rather than an unrelated instance's table. */
+    for (size_t i = 0u; i < 200u; i++) {
+        Atom *item = admission_record(arena, "admissionGrowth", atom_int(arena, (int64_t)i));
+        space_add(&withdrawn, item);
+        prime_scoped_judgment_admit(arena, &withdrawn, item);
+    }
+    size_t after_growth = authority_storage_bytes();
+    checks++;
+    if (after_growth <= before_growth) {
+        failures++;
+        fprintf(stderr, "FAIL: revocation control did not actually grow the admission table\n");
+    }
+    expect_admission(arena, &withdrawn, record, false,
+                     "table growth cannot restore withdrawn admission");
+    checks++;
+    if (!prime_scoped_judgment_instance_empty(space_instance_id(&withdrawn), SIZE_MAX,
+            &grown, &empty) || empty) {
+        failures++;
+        fprintf(stderr, "FAIL: growth discarded retained revoked-authority storage\n");
+    }
+    prime_scoped_judgment_admit(arena, &withdrawn, record);
+    expect_admission(arena, &withdrawn, record, true,
+                     "fresh publication can explicitly restore the exact withdrawn artifact");
+    space_free(&withdrawn);
+}
+
+static void publish_lifetime_records(Arena *arena, Space *space, Atom *record) {
+    space_add(space, record);
+    prime_scoped_judgment_admit(arena, space, record);
+    Atom *name = atom_symbol(arena, "lifetimeTheorem");
+    Atom *type = atom_symbol(arena, "lifetimeProposition");
+    Atom *context = parse_one(arena, "(PrimeTheoremContextV1)");
+    /* Exercise the trusted publication storage API, not a new proof of the
+     * deliberately uninterpreted proposition above. */
+    prime_semantics_theorem_record(space, name, type, &context, 1u);
+}
+
+static void check_admission_lifetimes(Arena *arena, TermUniverse *universe) {
+    size_t baseline = authority_storage_bytes();
+    Space source;
+    space_init_with_universe(&source, universe);
+    uint64_t original_instance = space_instance_id(&source);
+    Atom *key = admission_record(arena, "lifetimeAdmission", atom_int(arena, 23));
+    publish_lifetime_records(arena, &source, key);
+    Space *left = space_heap_clone_shallow(&source);
+    Space *right = space_heap_clone_shallow(&source);
+    checks++;
+    if (!left || !right) {
+        failures++;
+        fprintf(stderr, "FAIL: lifetime control could not clone its source\n");
+        if (left) { space_free(left); free(left); }
+        if (right) { space_free(right); free(right); }
+        space_free(&source);
+        return;
+    }
+    size_t visited = 0u;
+    bool empty = true;
+    checks++;
+    if (prime_scoped_judgment_instance_empty(original_instance, 0u, &visited, &empty) ||
+        visited || empty) {
+        failures++;
+        fprintf(stderr, "FAIL: a zero-budget authority probe completed a populated bucket\n");
+    }
+    space_free(&source);
+    expect_instance_authority(original_instance, false, false,
+        "freeing the source retires both of its authority ledgers");
+    expect_admission(arena, left, key, true, "left clone keeps the retired source's immutable key");
+    expect_admission(arena, right, key, true, "right clone keeps an independent admission");
+    expect_instance_authority(space_instance_id(right), true, true,
+        "clones retain their own theorem context storage");
+    uint64_t left_instance = space_instance_id(left);
+    space_free(left);
+    free(left);
+    expect_instance_authority(left_instance, false, false,
+        "cancelling one clone retires only that clone's ledgers");
+    expect_admission(arena, right, key, true, "cancelling a peer preserves the remaining key");
+    expect_instance_authority(space_instance_id(right), true, true,
+        "cancelling a peer preserves the remaining theorem contexts");
+    space_free(right);
+    free(right);
+    size_t released = authority_storage_bytes();
+    checks++;
+    if (released != baseline) {
+        failures++;
+        fprintf(stderr, "FAIL: last clone retained authority storage (%zu != %zu)\n", released, baseline);
+    }
+
+    /* A replacement preserves destination history even when the source has
+     * no such key. The moved-from old instance ends at the actual move. */
+    Space destination, replacement;
+    space_init_with_universe(&destination, universe);
+    space_init_with_universe(&replacement, universe);
+    uint64_t destination_instance = space_instance_id(&destination);
+    uint64_t replacement_instance = space_instance_id(&replacement);
+    Atom *other = admission_record(arena, "otherLifetimeAdmission", atom_int(arena, 31));
+    publish_lifetime_records(arena, &destination, key);
+    publish_lifetime_records(arena, &replacement, other);
+    space_replace_contents(&destination, &replacement);
+    checks++;
+    if (space_instance_id(&destination) != destination_instance ||
+        space_instance_id(&replacement) == replacement_instance) {
+        failures++;
+        fprintf(stderr, "FAIL: storage replacement changed the destination or retained the old source identity\n");
+    }
+    expect_instance_authority(replacement_instance, false, false,
+        "a moved-from old instance is retired immediately");
+    expect_instance_authority(space_instance_id(&replacement), false, false,
+        "a moved-from fresh instance starts without authority");
+    expect_admission(arena, &destination, key, true,
+        "unmentioned destination admission survives storage replacement");
+    expect_admission(arena, &destination, other, true,
+        "moved source key is retained before source retirement");
+    expect_instance_authority(destination_instance, true, true,
+        "destination retains the moved theorem contexts");
+    space_free(&replacement);
+    /* Import the accumulated keys back through a separate logical instance.
+     * Entries retain syntax collections, never the other instance itself. */
+    Space peer;
+    space_init_with_universe(&peer, universe);
+    publish_lifetime_records(arena, &peer, other);
+    Space *copy = space_heap_clone_shallow(&destination);
+    bool copied_both = false;
+    checks++;
+    if (copy) {
+        space_replace_contents(&peer, copy);
+        space_free(copy);
+        free(copy);
+        copy = space_heap_clone_shallow(&peer);
+        if (copy) {
+            copied_both = true;
+            space_replace_contents(&destination, copy);
+            space_free(copy);
+            free(copy);
+        }
+    }
+    if (!copied_both) {
+        failures++;
+        fprintf(stderr, "FAIL: mutual-import lifetime control could not clone its peer\n");
+    }
+    space_free(&destination);
+    expect_admission(arena, &peer, key, true, "mutual imports retain a surviving peer's first key");
+    expect_admission(arena, &peer, other, true, "mutual imports retain a surviving peer's second key");
+    space_free(&peer);
+    released = authority_storage_bytes();
+    checks++;
+    if (released != baseline) {
+        failures++;
+        fprintf(stderr, "FAIL: mutual imports retained an authority owner cycle\n");
+    }
+
+    /* Repeated completed agent scopes cannot accumulate retired identities,
+     * immutable key arenas, theorem contexts or lookup capacity. */
+    for (unsigned i = 0u; i < 128u; i++) {
+        Space turn;
+        space_init_with_universe(&turn, universe);
+        uint64_t turn_instance = space_instance_id(&turn);
+        publish_lifetime_records(arena, &turn, key);
+        space_free(&turn);
+        expect_instance_authority(turn_instance, false, false,
+            "completed agent scopes leave no authority for retired identities");
+        released = authority_storage_bytes();
+        checks++;
+        if (released != baseline) {
+            failures++;
+            fprintf(stderr, "FAIL: completed agent turn %u retained authority storage\n", i);
+        }
+    }
+    Space cohort[96];
+    for (size_t i = 0u; i < 96u; i++) {
+        space_init_with_universe(&cohort[i], universe);
+        publish_lifetime_records(arena, &cohort[i], key);
+    }
+    for (size_t i = 0u; i < 96u; i += 2u) space_free(&cohort[i]);
+    for (size_t i = 1u; i < 96u; i += 2u)
+        expect_admission(arena, &cohort[i], key, true,
+            "retirement and directory rehash preserve surviving instances");
+    for (size_t i = 1u; i < 96u; i += 2u) space_free(&cohort[i]);
+    released = authority_storage_bytes();
+    checks++;
+    if (released != baseline) {
+        failures++;
+        fprintf(stderr, "FAIL: directory growth and retirement retained authority capacity\n");
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool was_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    CettaRuntimeStats before, moved, retired;
+    cetta_runtime_stats_snapshot(&before);
+    Space counted_destination, counted_source;
+    space_init_with_universe(&counted_destination, universe);
+    space_init_with_universe(&counted_source, universe);
+    space_replace_contents(&counted_destination, &counted_source);
+    cetta_runtime_stats_snapshot(&moved);
+    checks++;
+    if (moved.counters[CETTA_RUNTIME_COUNTER_SPACE_LIVE] !=
+            before.counters[CETTA_RUNTIME_COUNTER_SPACE_LIVE] + 2u ||
+        moved.counters[CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES] !=
+            before.counters[CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES] + 2u * sizeof(Space)) {
+        failures++;
+        fprintf(stderr, "FAIL: replacing storage retired a still-live space from the resource gauge\n");
+    }
+    space_free(&counted_source);
+    space_free(&counted_destination);
+    cetta_runtime_stats_snapshot(&retired);
+    checks++;
+    if (retired.counters[CETTA_RUNTIME_COUNTER_SPACE_LIVE] !=
+            before.counters[CETTA_RUNTIME_COUNTER_SPACE_LIVE] ||
+        retired.counters[CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES] !=
+            before.counters[CETTA_RUNTIME_COUNTER_SPACE_STRUCT_BYTES]) {
+        failures++;
+        fprintf(stderr, "FAIL: true space retirement did not balance the resource gauge\n");
+    }
+    if (!was_enabled) cetta_runtime_stats_disable();
+#endif
 }
 
 static void expect_judgment_status(Arena *arena, Space *space, Atom *query,
@@ -407,9 +813,13 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
 
+    check_exact_admission(&arena, &universe);
+
     /* Fresh spaces interpret the shared core, without guest constants. */
     expect_status(&arena, &space, "(set:known-proposition corePairing)",
                   false, 0u, "Established");
+    check_admission_revocation(&arena, &universe);
+    check_admission_lifetimes(&arena, &universe);
     expect_status(&arena, &space, "(set:of Empty)",
                   false, 0u, "Undetermined");
 

@@ -4,3 +4,12 @@
 
 (= (proc:run $argv $cwd $env $timeout $max) (__cetta_lib_proc_run $argv $cwd $env $timeout $max))
 (= (proc:run $argv $cwd $env $timeout $max $options) (__cetta_lib_proc_run $argv $cwd $env $timeout $max $options))
+(= (proc:spawn $argv $options) (__cetta_lib_proc_spawn $argv $options))
+(= (proc:poll $owner) (__cetta_lib_proc_poll $owner))
+(= (proc:wait $owner $milliseconds) (__cetta_lib_proc_wait $owner $milliseconds))
+(= (proc:status $owner) (__cetta_lib_proc_status $owner))
+(= (proc:cancel $owner) (__cetta_lib_proc_cancel $owner))
+(= (proc:close $owner) (__cetta_lib_proc_close $owner))
+(= (proc:abort-signal) (__cetta_lib_proc_abort_signal ()))
+(= (proc:await $owner) (__cetta_lib_proc_await $owner))
+(= (proc:run $argv $options) (__cetta_lib_proc_run $argv $options))
