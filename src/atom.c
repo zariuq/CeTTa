@@ -23,30 +23,41 @@
 #include <xlocale.h>
 #endif
 
+/* Optional providers are imports in this translation unit. Mach-O needs
+ * weak_import for an absent provider to have a NULL address. */
+#if defined(__APPLE__)
+#define CETTA_ATOM_OPTIONAL_IMPORT __attribute__((weak_import))
+#else
+#define CETTA_ATOM_OPTIONAL_IMPORT __attribute__((weak))
+#endif
+
+const char *space_module_display_name(const void *space)
+    CETTA_ATOM_OPTIONAL_IMPORT;
+
 /* The rational-term module (term_graph.c).  A link unit without it builds
  * no graph, so no GV_TERM_GRAPH atom reaches its code. */
 const CettaTermGraphRef *term_graph_ref(const CettaTermGraph *graph,
-                                        uint32_t node) __attribute__((weak));
-void term_graph_retain(void *graph) __attribute__((weak));
-void term_graph_release(void *graph) __attribute__((weak));
+                                        uint32_t node) CETTA_ATOM_OPTIONAL_IMPORT;
+void term_graph_retain(void *graph) CETTA_ATOM_OPTIONAL_IMPORT;
+void term_graph_release(void *graph) CETTA_ATOM_OPTIONAL_IMPORT;
 bool term_graph_value_eq(Atom *left, Atom *right,
-                         bool (*leaf_eq)(Atom *, Atom *)) __attribute__((weak));
+                         bool (*leaf_eq)(Atom *, Atom *)) CETTA_ATOM_OPTIONAL_IMPORT;
 uint32_t term_graph_view_hash(Atom *atom,
                               uint32_t (*leaf_hash)(Atom *))
-    __attribute__((weak));
+    CETTA_ATOM_OPTIONAL_IMPORT;
 void term_graph_print(const CettaTermGraphRef *ref, FILE *out,
-                      bool petta) __attribute__((weak));
-Atom *term_graph_open_value(Arena *arena, Atom *atom) __attribute__((weak));
+                      bool petta) CETTA_ATOM_OPTIONAL_IMPORT;
+Atom *term_graph_open_value(Arena *arena, Atom *atom) CETTA_ATOM_OPTIONAL_IMPORT;
 
 /* Standalone atom tests need not link the optional tensor operations. They
  * cannot construct a tensor without its payload implementation. */
-void cetta_tensor_retain(void *tensor) __attribute__((weak));
-void cetta_tensor_release(void *tensor) __attribute__((weak));
-size_t cetta_tensor_retained_bytes(const CettaTensor *tensor) __attribute__((weak));
+void cetta_tensor_retain(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+void cetta_tensor_release(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+size_t cetta_tensor_retained_bytes(const CettaTensor *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
 bool cetta_tensor_equal(const CettaTensor *left, const CettaTensor *right)
-    __attribute__((weak));
-uint32_t cetta_tensor_hash(const CettaTensor *tensor) __attribute__((weak));
-void cetta_tensor_print(const CettaTensor *tensor, FILE *out) __attribute__((weak));
+    CETTA_ATOM_OPTIONAL_IMPORT;
+uint32_t cetta_tensor_hash(const CettaTensor *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+void cetta_tensor_print(const CettaTensor *tensor, FILE *out) CETTA_ATOM_OPTIONAL_IMPORT;
 
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
@@ -6619,8 +6630,8 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
-CettaLanguageId eval_current_language_id(void) __attribute__((weak));
-bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
+CettaLanguageId eval_current_language_id(void) CETTA_ATOM_OPTIONAL_IMPORT;
+bool eval_current_uses_rust_he_compat_semantics(void) CETTA_ATOM_OPTIONAL_IMPORT;
 
 /* The HE lane outside he-compat, where numbers compare by exact value. */
 static bool atom_he_exact_semantics(void) {
