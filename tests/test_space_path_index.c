@@ -474,7 +474,11 @@ static void test_unrecorded_string_paths(Arena *arena) {
         Atom *children[]={head,atom_string(arena,key),atom_int(arena,index)};
         assert(space_admit_atom(&space,&persistent,atom_expr(arena,children,3u)));
     }
+#if CETTA_MANAGED_SYMBOLS
+    /* With managed symbols this fixture exercises unrecorded spelled heads.
+     * The same query checks also apply to the recorded representation. */
     assert(!tu_hdr(&universe,space_get_atom_id_at64(&space,0u)));
+#endif
     Atom *children[]={head,atom_string(arena,"id-17"),atom_var(arena,"value")};
     Atom *pattern=atom_expr(arena,children,3u);
     space.match_backend.native.cold_flat_scans=4u;
