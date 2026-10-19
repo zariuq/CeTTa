@@ -8,7 +8,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ("tests/test_tensor.c", "src/tensor.c", "src/atom.c", "src/symbol.c",
-           "src/binding/frame_identity.c", "src/atom_wire.c", "src/durable_value.c")
+           "src/scalar_trie.c", "src/binding/frame_identity.c", "src/atom_wire.c",
+           "src/durable_value.c")
 
 
 def main():
