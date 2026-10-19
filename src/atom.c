@@ -3523,7 +3523,11 @@ static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
     if (temp->kind == ATOM_GROUNDED &&
         atom_grounded_default_arena_owned(temp->ground.gkind))
         return NULL;
-    return hashcons_intern_admitted(a->hashcons, (Atom *)temp);
+    /* A saturated table may return its input unchanged. Constructors pass
+     * temporary headers here; only a separately owned representative can
+     * escape. Treat that fallback as a miss and allocate in the arena. */
+    Atom *shared = hashcons_intern_admitted(a->hashcons, (Atom *)temp);
+    return shared == temp ? NULL : shared;
 }
 
 static uint32_t atom_hash_flags_for_eligible_leaf(void) {

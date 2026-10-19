@@ -44,6 +44,39 @@ static void check_leaf(Atom *atom, Arena *a, const char *what) {
     check(atom && atom->arena_id == a->identity, text);
 }
 
+static void check_full_hashcons_fallback(Arena *arena) {
+    HashConsTable hc;
+    hashcons_init_compact(&hc);
+    /* Force the defensive full-table path without allocating enough entries
+     * to trigger automatic growth. These borrowed fixtures are removed before
+     * freeing the table. */
+    Atom occupied;
+    atom_scalar_leaf_bool(&occupied, true);
+    for (uint32_t i = 0; i < hc.size; ++i)
+        hc.table[i] = &occupied;
+    hc.used = hc.size;
+    arena_set_hashcons(arena, &hc);
+    Atom *fallback = atom_bool(arena, false);
+    bool owned = arena_owns_ptr(arena, fallback);
+    check(owned, "a full hashcons table falls back to an arena-owned atom");
+    if (owned) {
+        check(fallback->arena_id == arena->identity && fallback->name_key == NULL,
+              "the fallback keeps its arena identity and leaf fields");
+        check(fallback->kind == ATOM_GROUNDED &&
+                  fallback->ground.gkind == GV_BOOL && !fallback->ground.bval,
+              "the fallback preserves the requested value");
+    }
+    for (uint32_t i = 0; i < hc.size; ++i)
+        hc.table[i] = NULL;
+    hc.used = 0;
+    /* Successful interning still shares its published representative. */
+    Atom *published = atom_bool(arena, false);
+    check(published && atom_bool(arena, false) == published,
+          "successful hashconsing preserves the published representative");
+    arena_set_hashcons(arena, NULL);
+    hashcons_free(&hc);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -106,6 +139,8 @@ int main(void) {
     Atom *variable = atom_var_with_name_key(&arena, key, 7u);
     check(variable && variable->name_key == key,
           "a variable keeps its name key");
+
+    check_full_hashcons_fallback(&arena);
 
     arena_free(&arena);
     g_symbols = NULL;

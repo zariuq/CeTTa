@@ -1,3 +1,7 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "petta_program.h"
 #include "open_equation_machine.h"
 #include "petta_search_machine.h"

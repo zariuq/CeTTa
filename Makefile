@@ -1620,6 +1620,7 @@ PARSER_PACK_CURSOR_GENERIC_V1_LINK_OBJ = \
 	experiments/gslt2parse_foundation/native/regular_span_dfa_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	experiments/gslt2parse_foundation/native/regular_span_nfa_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	$(LANGDEF_PARSER_V1_OBJ) \
+	$(PARSER_TERM_SUPPORT_V1_OBJ) \
 	$(FINITE_HORN_ANSWER_STREAM_V1_OBJ) \
 	$(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) \
 	$(PARSER_PACK_GUARD_RELATION_V1_OBJ) \
@@ -2214,7 +2215,7 @@ GSLT_METADATA_DECODERS_V1_TEST_BIN = runtime/test-gslt-metadata-decoders-v1-$(GS
 GSLT_METADATA_NATIVE_V1_SRC = src/gslt_language_manifest_v1.c \
 	src/gslt_provider_runtime.c src/parser.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) \
 	src/name_key.c src/native_sha256.c native/gslt_composition_v1.c
-GSLT_METADATA_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(GSLT_METADATA_NATIVE_V1_SRC))
+GSLT_METADATA_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(GSLT_METADATA_NATIVE_V1_SRC)) $(PARSER_TERM_SUPPORT_V1_OBJ)
 GSLT_METADATA_STATS_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/src/stats.$(GSLT_METADATA_V1_OBJ_TAG).o
 GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tools/gslt_provider_catalog_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
 GSLT_METADATA_DECODERS_V1_TEST_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_metadata_decoders_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
@@ -2260,6 +2261,10 @@ LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ = runtime/bootstrap/langdef_gslt_petta_direct_v
 LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ = runtime/bootstrap/langdef_gslt_rhometta_direct_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_ARTIFACT_V1_OBJ = runtime/bootstrap/langdef_artifact_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 LANGDEF_PARSER_V1_OBJ = runtime/bootstrap/langdef_parser_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+# Parser bootstrap clients need both atom and term-ID parsing dependencies.
+# Do not rely on compiler-specific dead-code elimination to remove either path.
+PARSER_TERM_SUPPORT_V1_SRC = src/term_universe.c src/term_canon.c src/match.c
+PARSER_TERM_SUPPORT_V1_OBJ = $(patsubst %.c,runtime/bootstrap/parser_support/%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(PARSER_TERM_SUPPORT_V1_SRC))
 LANGDEF_STATS_V1_OBJ = $(RUNTIME_STATS_SECTIONED_OBJ)
 LANGDEF_COMPILER_V1_LINK_OBJ = \
 	native/operational_language_def_v1.$(BUILD_OBJ_TAG).o \
@@ -2277,6 +2282,7 @@ LANGDEF_COMPILER_V1_LINK_OBJ = \
 	$(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_OBJ) \
 	$(LANGDEF_STATS_V1_OBJ) \
 	$(LANGDEF_PARSER_V1_OBJ) \
+	$(PARSER_TERM_SUPPORT_V1_OBJ) \
 	$(LANGDEF_ARTIFACT_V1_OBJ)
 GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_term_projection_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_TERM_PROJECTION_V1_STREAM_BIN = runtime/parser_term_projection_v1_stream-$(BUILD_OBJ_TAG)
@@ -8789,6 +8795,10 @@ $(LANGDEF_ARTIFACT_V1_OBJ): native/langdef_module.c \
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -DCETTA_LANGDEF_ARTIFACT_ONLY=1 $(DEPFLAGS))
 
 $(LANGDEF_PARSER_V1_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
+
+runtime/bootstrap/parser_support/%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o: %.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections $(DEPFLAGS))
 
