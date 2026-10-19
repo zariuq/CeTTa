@@ -19,6 +19,9 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <string.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 
 /* The rational-term module (term_graph.c).  A link unit without it builds
  * no graph, so no GV_TERM_GRAPH atom reaches its code. */
