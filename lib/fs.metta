@@ -8,6 +8,16 @@
      (case (__cetta_lib_fs_write $path $text)
        (($result (return $result))))))
 
+; POSIX rename changes directory entries, not an open reader's inode. Within
+; one filesystem, replacing a name publishes the complete new file at once.
+; Cross-filesystem moves fail; there is no copy/delete fallback. The source's
+; metadata moves with it. This is visibility atomicity, not crash durability.
+(: __cetta_lib_fs_rename (-> Atom Atom Atom))
+(: fs:rename (-> %Undefined% %Undefined% Atom))
+(= (fs:rename $source $target)
+   (function (chain (eval (__cetta_lib_fs_rename $source $target)) $result
+     (return $result))))
+
 (= (fs:append-text $path $text)
    (function
      (case (__cetta_lib_fs_append_text $path $text)

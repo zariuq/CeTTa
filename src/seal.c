@@ -611,6 +611,6 @@ static bool seal_atom_not_portable(const Atom *atom, void *context) {
 CettaSealStatus cetta_seal_check_portable(const Atom *atom) {
     if (!atom)
         return CETTA_SEAL_INVALID;
-    return atom_tree_any(atom, seal_atom_not_portable, NULL)
+    return atom_graph_any(atom, seal_atom_not_portable, NULL)
         ? CETTA_SEAL_NOT_PORTABLE : CETTA_SEAL_OK;
 }

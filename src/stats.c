@@ -193,7 +193,6 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "match-chain-eval-bytes-after-query-peak",
     "match-chain-eval-bytes-after-project-peak",
     "match-result-direct-stream-count",
-    "match-result-snapshot-count",
     "match-result-direct-generated-outcome-count",
     "match-result-direct-generated-outcome-peak",
     "match-chain-grounded-delta-bytes-peak",
@@ -1084,6 +1083,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "open-equation-old-bytes-peak",
     "open-equation-region-at-collection-bytes-peak",
     "open-equation-major-survivor-bytes-peak",
+    "he-completed-value-certified",
+    "he-completed-value-delivered",
+    "he-completed-value-shared",
+    "bindings-frame-id-set-lookup",
+    "bindings-frame-id-set-probe",
+    "petta-identity-pressure-collection",
 };
 
 static int64_t clamp_counter(uint64_t value) {

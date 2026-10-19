@@ -5852,6 +5852,114 @@ bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
     return false;
 }
 
+static size_t atom_visit_slot(const Atom *atom, size_t cap) {
+    uintptr_t key = (uintptr_t)atom;
+    key ^= key >> 33u;
+    key *= (uintptr_t)UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault) {
+    if ((set->len + 1u) * 2u > set->cap) {
+        size_t cap = set->cap ? set->cap * 2u : 64u;
+        const Atom **slots = calloc(cap, sizeof(*slots));
+        if (!slots) {
+            *fault = true;
+            return false;
+        }
+        for (size_t i = 0u; i < set->cap; i++) {
+            if (!set->slots[i])
+                continue;
+            size_t slot = atom_visit_slot(set->slots[i], cap);
+            while (slots[slot])
+                slot = (slot + 1u) & (cap - 1u);
+            slots[slot] = set->slots[i];
+        }
+        free((void *)set->slots);
+        set->slots = slots;
+        set->cap = cap;
+    }
+    size_t slot = atom_visit_slot(atom, set->cap);
+    while (set->slots[slot]) {
+        if (set->slots[slot] == atom)
+            return false;
+        slot = (slot + 1u) & (set->cap - 1u);
+    }
+    set->slots[slot] = atom;
+    set->len++;
+    return true;
+}
+
+void atom_visit_set_free(AtomVisitSet *set) {
+    free((void *)set->slots);
+    *set = (AtomVisitSet){0};
+}
+
+bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
+                    void *context) {
+    enum { INLINE_CAPACITY = 64 };
+    const Atom *inline_stack[INLINE_CAPACITY];
+    const Atom **stack = inline_stack;
+    size_t capacity = INLINE_CAPACITY;
+    size_t length = 0u;
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool found = false;
+
+    if (!root || !predicate)
+        return false;
+    stack[length++] = root;
+    while (length > 0u && !found) {
+        const Atom *node = stack[--length];
+        if (!node)
+            continue;
+        /* A subexpression met again was answered where it was first met;
+         * where the set cannot grow the walk goes on as a tree walk. */
+        if (node != root && node->kind == ATOM_EXPR && node->expr.len &&
+            !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
+            continue;
+        if (predicate(node, context)) {
+            found = true;
+            break;
+        }
+        if (node->kind != ATOM_EXPR || node->expr.len == 0u)
+            continue;
+        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
+            cetta_oom(SIZE_MAX);
+        size_t needed = length + (size_t)node->expr.len;
+        if (needed > capacity) {
+            size_t next_capacity = capacity;
+            while (next_capacity < needed) {
+                if (next_capacity > SIZE_MAX / 2u) {
+                    next_capacity = needed;
+                    break;
+                }
+                next_capacity *= 2u;
+            }
+            if (next_capacity > SIZE_MAX / sizeof(*stack))
+                cetta_oom(SIZE_MAX);
+            if (stack == inline_stack) {
+                const Atom **grown = cetta_malloc(
+                    next_capacity * sizeof(*grown));
+                memcpy((void *)grown, inline_stack,
+                       length * sizeof(*grown));
+                stack = grown;
+            } else {
+                stack = cetta_realloc(
+                    (void *)stack, next_capacity * sizeof(*stack));
+            }
+            capacity = next_capacity;
+        }
+        for (CettaExprIndex i = node->expr.len; i > 0u; i--)
+            stack[length++] = node->expr.elems[i - 1u];
+    }
+    if (stack != inline_stack)
+        free((void *)stack);
+    atom_visit_set_free(&seen);
+    return found;
+}
+
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));

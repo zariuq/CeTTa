@@ -381,8 +381,9 @@ void petta_program_free(PettaProgram *program);
  * SpaceProgramToken. Data-only changes preserve them; equation, declaration,
  * overlay and lifetime changes invalidate them. This caches declarations,
  * never answers to a type query. The returned array is caller-owned; its
- * fresh signatures and literal modes belong to arena. NULL program performs
- * the same compilation without retaining facts. */
+ * fresh signatures and literal modes belong to arena. Full source predicate
+ * calls select exact-arity arrows; underapplications retain compatible longer
+ * arrows. NULL program performs the same compilation without retaining facts. */
 bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
                               CettaExprLen supplied, Arena *arena,
                               PettaTypeCall **calls, uint32_t *count,
