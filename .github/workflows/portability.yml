@@ -61,10 +61,8 @@ jobs:
       - run: brew install gmp pkgconf
       - name: Probe native atom ownership support
         run: |
-          export CPATH="$(brew --prefix gmp)/include${CPATH:+:$CPATH}"
-          export LIBRARY_PATH="$(brew --prefix gmp)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-          make -j1 CC=clang BUILD=core ENABLE_LIB_PROLOG=0 \
-            ENABLE_JSON_GSLT=0 LDFLAGS='-lm -pthread -lgmp' test-atom-constructor-fields
+          export PKG_CONFIG_PATH="$(brew --prefix gmp)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          CC=clang sh tools/ci_atom_ownership_probe.sh
   windows-core-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.native_probes
     runs-on: windows-2025
@@ -84,5 +82,4 @@ jobs:
       - name: Probe native atom ownership support
         shell: msys2 {0}
         run: |
-          make -j1 BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_JSON_GSLT=0 \
-            LDFLAGS='-lm -pthread -lgmp' test-atom-constructor-fields
+          CC=gcc sh tools/ci_atom_ownership_probe.sh
