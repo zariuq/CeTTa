@@ -7,6 +7,9 @@ on:
       - 'lib/**'
       - 'Makefile'
       - 'tests/test_atom_constructor_fields.c'
+      - 'tests/test_proc_child.c'
+      - 'tests/support/check_effects_v1.py'
+      - 'tests/support/proc_fixture_v1.c'
       - 'tests/test_space_service.py'
       - 'tests/test_agent_mailbox_recovery.py'
       - 'tools/ci_linux_portability.sh'
@@ -37,7 +40,7 @@ jobs:
           - image: registry.fedoraproject.org/fedora:44
             experimental: false
           - image: alpine:3.24
-            experimental: true
+            experimental: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

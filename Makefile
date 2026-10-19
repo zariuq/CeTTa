@@ -46390,6 +46390,22 @@ test-exact-arithmetic-to-external-call-v1: \
 
 # Portable asynchronous I/O qualification.  HTTP is an explicit build
 # capability; no network provider or test fixture is activated by default.
+PROC_CHILD_TEST_BIN = runtime/test-proc-child
+PROC_CHILD_FALLBACK_TEST_BIN = runtime/test-proc-child-fallback
+$(PROC_CHILD_TEST_BIN): tests/test_proc_child.c src/proc_child.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -o $@ $<
+
+$(PROC_CHILD_FALLBACK_TEST_BIN): tests/test_proc_child.c src/proc_child.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -DCETTA_PROC_NO_CLOSE_RANGE=1 \
+		-DCETTA_PROC_TEST_DENIAL=1 -Wl,--wrap=open -o $@ $<
+
+.PHONY: test-proc-child
+test-proc-child: $(PROC_CHILD_TEST_BIN) $(PROC_CHILD_FALLBACK_TEST_BIN)
+	@$(PROC_CHILD_TEST_BIN)
+	@$(PROC_CHILD_FALLBACK_TEST_BIN)
+
 IO_RUNTIME_TEST_SRC = tests/test_io_runtime.c
 IO_RUNTIME_TEST_OBJ = runtime/bootstrap/test_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)

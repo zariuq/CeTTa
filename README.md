@@ -287,12 +287,15 @@ make test-asan-main
 and libraries are those of release 1.0.6.
 
 The `Runtime portability` workflow builds clean source archives in Ubuntu
-24.04/26.04 and Fedora, with an experimental Alpine/musl probe. It exercises the Python/HTTP/SQLite
-build, native space-service tests and mailbox crash/replay in PeTTa and Prime;
-optional Prolog and subscription sign-in are disabled in this matrix.
-Alpine currently stops at the asynchronous process module's glibc-only
-`posix_spawn_file_actions_addclosefrom_np`. Its probe is nonblocking until a
-musl adapter preserves the same child-descriptor isolation contract.
+24.04/26.04, Fedora and Alpine/musl. All four Linux entries are required.
+It exercises the Python/HTTP/SQLite build, process ownership and descriptor
+isolation, native space-service tests and mailbox crash/replay in PeTTa and
+Prime; optional Prolog and subscription sign-in are disabled in this matrix.
+The musl process adapter shares fork/exec child setup with the I/O provider;
+glibc retains its spawn implementation. When the kernel's descriptor-range
+operation is unavailable, the child inspects its own descriptor table and
+refuses execution if isolation cannot be established. `make test-proc-child`
+checks both paths, including descriptors beyond a lowered file limit.
 `tools/ci_linux_portability.sh` holds the shared container check. A manual workflow
 run with `native_probes=true` selects experimental macOS and Windows/MSYS2 core
 ownership probes, without repeating the Linux matrix already run on pushes.

@@ -2,6 +2,7 @@
 #include "library_proc_run.h"
 #include "eval.h"
 #include "symbol.h"
+#include "proc_child.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -23,15 +24,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifndef CLOSE_RANGE_CLOEXEC
-#define CLOSE_RANGE_CLOEXEC (1U << 2)
-#endif
-
-enum { PROC_FD_SWEEP = 65536 };
 extern char **environ;
 
 /* Where a child that could not become the program stopped. */
-enum { START_STDIO = 1, START_CWD = 2, START_EXEC = 3 };
+enum { START_CWD = CETTA_PROC_CHILD_CWD, START_EXEC = CETTA_PROC_CHILD_EXEC };
 
 static const char *text(Atom *a) {
     if (a && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_STRING)
@@ -322,36 +318,9 @@ static char *resolve_program(const char *program, const char *path_env, const ch
     }
 }
 
-/* In the child, between fork and exec, only async-signal-safe calls. */
-static void child_stop(int fd, int stage, int error) {
-    int report[2] = {stage, error};
-    ssize_t ignored;
-    do { ignored = write(fd, report, sizeof(report)); } while (ignored < 0 && errno == EINTR);
-    (void)ignored;
-    _exit(127);
-}
-
 static void child_start(const char *program, char **argv, char **envp, const char *cwd,
                         int out, int err, int report) {
-    setpgid(0, 0);
-    struct sigaction standard;
-    memset(&standard, 0, sizeof(standard));
-    standard.sa_handler = SIG_DFL;
-    sigemptyset(&standard.sa_mask);
-    for (int sig = 1; sig < NSIG; ++sig)
-        if (sig != SIGKILL && sig != SIGSTOP) sigaction(sig, &standard, NULL);
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    int in = open("/dev/null", O_RDONLY | O_CLOEXEC);
-    if (in < 0 || dup2(in, 0) < 0 || dup2(out, 1) < 0 || dup2(err, 2) < 0)
-        child_stop(report, START_STDIO, errno);
-    /* Nothing of this process but the three streams reaches the program. */
-    if (syscall(SYS_close_range, 3u, ~0u, CLOSE_RANGE_CLOEXEC) != 0)
-        for (int fd = 3; fd < PROC_FD_SWEEP; ++fd) fcntl(fd, F_SETFD, FD_CLOEXEC);
-    if (chdir(cwd) != 0) child_stop(report, START_CWD, errno);
-    execve(program, argv, envp);
-    child_stop(report, START_EXEC, errno);
+    cetta_proc_child_exec(program, argv, envp, cwd, -1, out, err, report);
 }
 
 struct CettaProcChild {
@@ -604,8 +573,14 @@ static Atom *proc_run(Arena *arena, Atom **args, uint32_t nargs) {
         result = failed_errno(arena, "pipe", errno);
         goto done;
     }
+    sigset_t blocked, previous;
+    sigfillset(&blocked);
+    int mask_error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
+    if (mask_error) { result = failed_errno(arena, "signals", mask_error); goto done; }
     pid_t pid = fork();
-    if (pid < 0) { result = failed_errno(arena, "fork", errno); goto done; }
+    int fork_error = errno;
+    if (pid != 0) (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (pid < 0) { result = failed_errno(arena, "fork", fork_error); goto done; }
     if (pid == 0) child_start(program, argv, inherit ? environ : envp, cwd,
                               out[1], merged ? out[1] : err[1], report[1]);
     setpgid(pid, pid);
