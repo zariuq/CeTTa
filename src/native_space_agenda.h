@@ -10,6 +10,8 @@
  * matcher node grant, sink, validation or publication obligation. */
 typedef struct CettaSpaceAgenda CettaSpaceAgenda;
 typedef struct CettaSpaceAgendaMatch CettaSpaceAgendaMatch;
+typedef struct CettaSpaceAgendaDiscovery CettaSpaceAgendaDiscovery;
+typedef struct CettaSpaceAgendaSelection CettaSpaceAgendaSelection;
 
 typedef struct {
     bool set_support;
@@ -44,7 +46,20 @@ bool cetta_space_agenda_control(CettaSpaceAgenda *agenda,
     const CettaSelectionAutomaton *schedule,CettaSpaceAgendaAdvise advise,
     CettaSpaceAgendaBefore before,void *context);
 bool cetta_space_agenda_has_advice(const CettaSpaceAgenda *agenda,const void *advice);
+/* Ordinary flat native Transactions match against the caller-held source
+ * without building private read copies. Every matching grant checks its
+ * captured read; a changed source restarts that matching operation. The
+ * complete replacement is still built privately and published atomically.
+ * Other storage profiles retain the copied read contract. */
 CettaSpaceAgendaStep cetta_space_agenda_step(CettaSpaceAgenda *agenda);
+/* Prepare one physical source occurrence under the provider's contract.
+ * A Transaction enters its existing matching phases. Raw MM2 retains only
+ * the activation, before directive removal or input matching. Choosing that
+ * occurrence is explicit strategy control; ordinary MM2 keeps least-key
+ * selection. The provider must be fresh and the supplied read current.
+ * Snapshot-world preparation is separate. No live mutation is performed. */
+CettaSpaceAgendaStep cetta_space_agenda_prepare_source(CettaSpaceAgenda *agenda,
+    SpaceReadToken source, CettaIndex index);
 /* Capture only the ready matching operation, including the physical row and
  * its candidate environment. The provider retains the operation through
  * refusal or suspension. A run advances only the canonical inner matcher,
@@ -66,12 +81,145 @@ bool cetta_space_agenda_accept_child(CettaSpaceAgenda *agenda,
 void *cetta_space_agenda_advice(const CettaSpaceAgenda *agenda);
 bool cetta_space_agenda_current(const CettaSpaceAgenda *agenda);
 bool cetta_space_agenda_ready(const CettaSpaceAgenda *agenda);
+/* Borrow the selected source of a current prepared Transaction publication,
+ * in its live or private snapshot world. The originating snapshot must remain
+ * current. The caller keeps the provider quiescent and holds the shared
+ * transition guard through inspection. NULL is not an exhaustion judgment or
+ * permission to publish. Reading this source advances no provider phase. */
+Atom *cetta_space_agenda_publication_source(const CettaSpaceAgenda *agenda);
+/* Optional control before a raw MM2 directive leaves the live store. A
+ * refused gate retains the chosen directive and exact source read. Turning
+ * the gate off resumes that choice only while the read is still current.
+ * No diary is installed. Ordinary operations do not test this scope. */
+typedef bool (*CettaSpaceAgendaActivationPermit)(void *, CettaSpaceAgenda *);
+typedef struct CettaSpaceAgendaActivationScope {
+    CettaSpaceAgenda *agenda;
+    CettaSpaceAgendaActivationPermit permit;
+    void *context;
+    struct CettaSpaceAgendaActivationScope *previous;
+    bool entered, notifying;
+} CettaSpaceAgendaActivationScope;
+bool cetta_space_agenda_activation_enter(CettaSpaceAgendaActivationScope *,
+    CettaSpaceAgenda *, CettaSpaceAgendaActivationPermit, void *);
+void cetta_space_agenda_activation_leave(CettaSpaceAgendaActivationScope *);
+/* A borrowed inspection view, not permission to remove the directive. */
+Atom *cetta_space_agenda_activation_source(const CettaSpaceAgenda *);
 void cetta_space_agenda_resume(CettaSpaceAgenda *agenda);
 /* The returned syntax is owned by the enclosing evaluator arena. */
 Atom *cetta_space_agenda_receipt(CettaSpaceAgenda *agenda);
 Atom *cetta_space_agenda_pending(CettaSpaceAgenda *agenda);
 void cetta_space_agenda_storage(const CettaSpaceAgenda *agenda,
                                CettaStorageCensus *census);
+
+/* Requested discovery over one captured live source. Each grant
+ * scans one physical occurrence or advances one existing preparation phase;
+ * a matcher grant retains its ordinary node bound. Initialization performs
+ * no scan. A zero-grant request must not call step. This is not a wall-time
+ * bound on copying, equality or other individual native primitives.
+ *
+ * Unchanged ordinary native atom spaces supply borrowed reads during
+ * discovery, avoiding per-candidate world copies. Other admitted spaces keep
+ * copied preparation. Source currency is checked before and after each grant.
+ * Taking a Transaction choice ends the borrow; execution uses ordinary
+ * revalidation. Prepared alternatives retain their validated proposal and
+ * release temporary read copies. Raw MM2 alternatives retain a current
+ * activation only, with no computed outputs or matching dependencies. Their
+ * exact source read is required before removal, and existing MM2 set support
+ * applies to execution. Discovery never mutates live storage. Equal executable
+ * atoms have distinct physical selectors. Exhaustion belongs to the captured
+ * source; any source revision change invalidates further enumeration.
+ * The caller holds the source Space and arena until discovery and every
+ * transferred selection are freed. */
+typedef enum {
+    CETTA_SPACE_CHOICE_TRANSACTION_COMMIT,
+    CETTA_SPACE_CHOICE_MM2_ACTIVATION,
+    CETTA_SPACE_CHOICE_TRANSACTION_MATCH,
+    CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH,
+} CettaSpaceAgendaChoiceKind;
+typedef struct {
+    CettaSpaceAgendaChoiceKind kind;
+    uint64_t ticket;
+    CettaIndex source_index;
+    Atom *source, *outputs, *dependencies;
+    bool current;
+} CettaSpaceAgendaChoice;
+typedef enum {
+    CETTA_SPACE_DISCOVERY_PROGRESS,
+    CETTA_SPACE_DISCOVERY_CHOICE,
+    CETTA_SPACE_DISCOVERY_EXHAUSTED,
+    CETTA_SPACE_DISCOVERY_INCOMPLETE,
+    CETTA_SPACE_DISCOVERY_INVALIDATED,
+} CettaSpaceAgendaDiscoveryStep;
+CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new(Space *, Arena *,
+    const Bindings *);
+/* Capture the input environment into owned storage. The caller's environment
+ * and its arena can retire after construction. Each proposal has independent
+ * storage and promoted captures. A taken
+ * selection remains alive after discovery and its capture arena retire.
+ * Views and receipts borrow the proposal owner; copy them before freeing it.
+ * The source Space and its runtime services must still remain alive. */
+CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new_owned(Space *,
+    const Bindings *);
+/* Select this discovery contract once. Transaction match discovery retains
+ * the existing join cursor and offers every complete physical input binding
+ * separately. Each prepared row owns its captures independently; taking it
+ * revalidates that exact row, never a replacement binding. Ordinary
+ * construction above retains the first-binding Transaction contract.
+ * World-match discovery offers the same exact tuples. Taking one requires
+ * its original source read throughout execution, revalidates that tuple,
+ * and publishes only into an owned private world. The live source is never
+ * consumed; the existing world provider continues the selected program.
+ * Unsupported kinds refuse without scanning. */
+CettaSpaceAgendaDiscovery *cetta_space_agenda_discovery_new_owned_kind(Space *,
+    const Bindings *, CettaSpaceAgendaChoiceKind);
+/* Borrow the original captured context while discovery remains held. This
+ * neither recaptures a later caller nor grants execution authority. */
+const Bindings *cetta_space_agenda_discovery_captured(const CettaSpaceAgendaDiscovery *);
+void cetta_space_agenda_discovery_free(CettaSpaceAgendaDiscovery *);
+CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
+    CettaSpaceAgendaDiscovery *, CettaSpaceAgendaChoice *);
+bool cetta_space_agenda_discovery_current(const CettaSpaceAgendaDiscovery *);
+const char *cetta_space_agenda_discovery_pending(const CettaSpaceAgendaDiscovery *);
+/* Views borrow data from the quiescent owner. A ticket is only a local
+ * selector. Taking it transfers its provider exactly once; it neither grants
+ * authority nor bypasses ordinary validation/publication. The recipient must
+ * use that retained provider under its current invocation permissions. */
+bool cetta_space_agenda_discovery_choice(const CettaSpaceAgendaDiscovery *,
+    uint64_t ticket, CettaSpaceAgendaChoice *);
+CettaSpaceAgendaSelection *cetta_space_agenda_discovery_take(CettaSpaceAgendaDiscovery *,
+    uint64_t ticket);
+void cetta_space_agenda_discovery_storage(const CettaSpaceAgendaDiscovery *,
+    CettaStorageCensus *);
+/* A selected Transaction proposal publishes at most once. Revalidation may retain the
+ * same proposal after an unrelated change; a changed binding or dependency
+ * refuses this selection instead of silently selecting another interaction.
+ * A raw MM2 selection activates at most once under its exact captured read;
+ * matching and publication remain subsequent ordinary provider operations.
+ * A world-match selection publishes its first step privately, then continues
+ * through the existing world provider. Separate worlds do not grant two
+ * consumes against the live source. Parent edits invalidate their source.
+ * Current invocation authority remains the native caller's prerequisite. */
+CettaSpaceAgendaStep cetta_space_agenda_selection_step(CettaSpaceAgendaSelection *);
+const char *cetta_space_agenda_selection_pending(const CettaSpaceAgendaSelection *);
+Atom *cetta_space_agenda_selection_receipt(CettaSpaceAgendaSelection *);
+void cetta_space_agenda_selection_free(CettaSpaceAgendaSelection *);
+void cetta_space_agenda_selection_storage(const CettaSpaceAgendaSelection *,
+    CettaStorageCensus *);
+/* Execute the selected interaction through the ordinary provider interface,
+ * then continue its remaining program. The scope borrows the owner for one
+ * synchronous evaluator run and composes with requested observation. A second
+ * use cannot acquire the same selection while this borrow is active. */
+typedef struct CettaSpaceAgendaSelectionScope {
+    CettaSpaceAgendaSelection *selection;
+    struct CettaSpaceAgendaSelectionScope *previous;
+    bool entered;
+} CettaSpaceAgendaSelectionScope;
+bool cetta_space_agenda_selection_enter(CettaSpaceAgendaSelectionScope *,
+    CettaSpaceAgendaSelection *);
+void cetta_space_agenda_selection_leave(CettaSpaceAgendaSelectionScope *);
+/* Borrowed while the selection owner remains held. Advancing through this
+ * pointer requires its execution scope and the caller's current authority. */
+CettaSpaceAgenda *cetta_space_agenda_selection_provider(CettaSpaceAgendaSelection *);
 
 /* TransactionBoundaryRequestsV1 images use the ordinary agenda destructor
  * and census. A source target is either independently held and borrowed, or

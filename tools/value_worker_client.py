@@ -18,12 +18,22 @@ class WorkerUnavailable(RuntimeError):
 
 
 class Worker:
-    def __init__(self, binary, module, entry, timeout=30, profile=False):
+    def __init__(self, binary, module, entry, timeout=30, profile=False,
+                 *, language=None, num_threads=None):
+        if language is not None and language not in ("petta", "prime"):
+            raise ValueError("invalid worker language")
+        if num_threads is not None and (type(num_threads) is not int or not 0 <= num_threads <= 1024):
+            raise ValueError("invalid worker thread count")
         self.timeout = timeout
         self.profile = profile
         self.last_metrics = None
         self.lock = threading.Lock()
-        self.command = [str(binary), str(module), entry]
+        self.command = [str(binary)]
+        if language is not None:
+            self.command += ["--lang", language]
+        if num_threads is not None:
+            self.command += ["--num-threads", str(num_threads)]
+        self.command += [str(module), entry]
         self.closed = False
         self.process = None
         self._start()

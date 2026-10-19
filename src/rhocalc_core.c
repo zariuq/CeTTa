@@ -1162,6 +1162,14 @@ static bool rho_atom_text_key_direct_emit(
                 ok = rho_atom_text_sink_appendf(
                     sink, "<foreign %p>", atom->ground.ptr);
                 break;
+            case GV_SEAL: {
+                char text[256];
+                size_t length = atom_seal_display_text(atom, text,
+                                                       sizeof(text));
+                ok = length < sizeof(text) &&
+                     rho_atom_text_sink_append(sink, text);
+                break;
+            }
             case GV_TERM_GRAPH:
                 ok = rho_atom_text_sink_appendf(
                     sink, "<term-graph %p>", atom->ground.ptr);
@@ -1285,6 +1293,7 @@ static bool rho_atom_text_structural_hash_admitted(
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_RATIONAL:
         case GV_PRIME_NEED_CAPABILITY:

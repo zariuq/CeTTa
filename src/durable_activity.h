@@ -13,10 +13,16 @@ typedef struct {
     uid_t worker_uid;
     int fuel;
     size_t ready_capacity;
+    /* Zero quantum selects the synchronous HE extended policy. A positive
+     * finite quantum selects a self-contained Prime default policy and its
+     * retained host planner. Work purse/preparation/results have explicit
+     * limits; fuel applies only to the synchronous policy. */
+    CettaHostPlanLimits planning;
 } CettaActivityConfig;
 typedef struct {
     uint64_t steps, accepted, published, blocked, timer_events, worker_requests;
     uint64_t max_step_us;
+    uint64_t plan_polls, plan_work;
     size_t ready, watch_bytes;
 } CettaActivityStats;
 
@@ -39,6 +45,10 @@ CettaDurableStatus cetta_activity_new(CettaDurableStore *store,
 /* Pump IPC without waiting, admit one timer occurrence, publish one accepted
  * worker request and visit 1..64 input candidates in persistent FIFO rotation.
  * A blocked/foreign occurrence cannot consume another activity's completion.
+ * Prime planning polls its retained task once per candidate visit. Captured
+ * snapshots may finish stale; acceptance alone checks current observations.
+ * Exhausted total work parks the task until its observations change or the
+ * runtime is retired, without refilling its purse on an unchanged snapshot.
  * Queue capacity is backpressure: excess work remains durable. Storage faults
  * latch. Whole-step duration is measured; fuel/visits are NOT a wall-time cap.
  * The embedding event loop owns sleeping/wakes, not an activity's await. */
@@ -59,7 +69,9 @@ void cetta_activity_free(CettaActivityRuntime *runtime);
 /* Exposed for embedding/testing the existing host acceptance boundary.
  * Routing derives solely from native envelopes and immutable worker origins.
  * A selected COMPLETE transition still needs cetta_host_accept. No matching
- * transition means keep the input. Worker payloads remain string data. */
+ * transition means keep the input. With retained planning the ticket is
+ * admitted but not evaluated; callers service its borrowed host task first.
+ * Worker payloads remain string data. */
 CettaDurableStatus cetta_activity_decide(CettaDurableStore *store,
     const CettaActivityConfig *config, const char *input_key, CettaHostDecision **out);
 #endif

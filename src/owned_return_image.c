@@ -77,8 +77,15 @@ static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
     }
     if (leaf->kind != ATOM_GROUNDED)
         return NULL;
+    /* A seal object owns itself: the image's arena holds the same identity,
+     * independently of the producing evaluation. */
+    if (leaf->ground.gkind == GV_SEAL)
+        return atom_seal(arena, leaf->ground.ptr);
     switch (leaf->ground.gkind) {
-    case GV_INT: return atom_int_copy(arena, leaf);
+    case GV_INT:
+        if (!(leaf->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
+            return atom_int(arena, leaf->ground.ival);
+        break;
     case GV_FLOAT: return atom_float(arena, leaf->ground.fval);
     case GV_BOOL: return atom_bool(arena, leaf->ground.bval);
     case GV_STRING: return atom_string_n(arena, leaf->ground.sval, leaf->ground.slen);
@@ -109,14 +116,42 @@ static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
         owned->ground.gkind == leaf->ground.gkind ? owned : NULL;
 }
 
+/* Bounded history already owns immutable payloads independently of semantic
+ * arenas. RETAIN obtains a reader; FORGET drops that observation. Neither
+ * duplicates its event payloads while copying the operational environment. */
+static bool capture_return_environment(ReturnCopy *copy,const Bindings *environment) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (environment->prime_ext && environment->prime_ext->receipt.recording) {
+        PrimeOccurrence operational=*environment->prime_ext;
+        prime_need_receipt_init(&operational.receipt);
+        Bindings view=*environment;
+        view.prime_ext=&operational;
+        return bindings_payloads_satisfy(&view,capture_return_root,
+            refuse_unqualified_state_cell,copy);
+    }
+#endif
+    return bindings_payloads_satisfy(environment,capture_return_root,
+        refuse_unqualified_state_cell,copy);
+}
+
 CettaOwnedReturnImage *cetta_owned_return_image_capture(
     const CettaOwnedReturn *returned,
     const CettaOwnedReturnImagePolicy *policy) {
     if (!returned)
         return NULL;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if (returned->environment && bindings_receipt_view(returned->environment)->recording)
-        return NULL;
+    const PrimeNeedReceipt *receipt=returned->environment
+        ?bindings_receipt_view(returned->environment):NULL;
+    bool bounded=receipt && receipt->recording;
+    CettaReturnHistoryPolicy history=CETTA_RETURN_HISTORY_REFUSE;
+    if (bounded) {
+        history=policy?policy->bounded_history:CETTA_RETURN_HISTORY_REFUSE;
+        if (history<CETTA_RETURN_HISTORY_REFUSE || history>CETTA_RETURN_HISTORY_FORGET ||
+            history==CETTA_RETURN_HISTORY_REFUSE ||
+            (!prime_need_recording_readable(receipt) &&
+             (history!=CETTA_RETURN_HISTORY_FORGET || !prime_need_recording_erased(receipt))))
+            return NULL;
+    }
 #endif
     CettaOwnedReturnImage *image = calloc(1u, sizeof(*image));
     if (!image)
@@ -130,6 +165,10 @@ CettaOwnedReturnImage *cetta_owned_return_image_capture(
         &image->syntax, capture_return_leaf, &copy);
     copy.session = session;
     bool ok = session != NULL;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (ok && bounded && history==CETTA_RETURN_HISTORY_FORGET)
+        ok=prime_need_recording_copy_forget(session);
+#endif
     if (ok && returned->outcome.term) {
         image->returned.outcome.term = atom_deep_copy_session_copy(
             session, returned->outcome.term);
@@ -141,11 +180,17 @@ CettaOwnedReturnImage *cetta_owned_return_image_capture(
         ok = image->returned.outcome.delayed != NULL;
     }
     if (ok && returned->environment) {
-        ok = bindings_payloads_satisfy(returned->environment,
-                 capture_return_root, refuse_unqualified_state_cell, &copy) &&
-             bindings_copy(&image->environment, returned->environment) &&
-             bindings_copy_owned_atoms_with_session(
-                 &image->environment, &image->syntax, session);
+        ok = capture_return_environment(&copy,returned->environment) &&
+             bindings_copy(&image->environment, returned->environment);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (ok && bounded && history==CETTA_RETURN_HISTORY_RETAIN) {
+            PrimeNeedReceipt *reader=bindings_receipt_mut(&image->environment);
+            ok=reader && prime_need_recording_promote(&image->syntax,reader) &&
+                reader->recording && prime_need_recording_readable(reader);
+        }
+#endif
+        if (ok) ok=bindings_copy_owned_atoms_with_session(
+            &image->environment,&image->syntax,session);
         image->returned.environment = &image->environment;
     }
     for (size_t index = 0u; ok && index < copy.key_count; ++index) {

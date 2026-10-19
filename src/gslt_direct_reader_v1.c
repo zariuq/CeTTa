@@ -3719,3 +3719,50 @@ done:
     free(ids);
     return result;
 }
+
+int gslt_direct_petta_reader_v1_parse_term_bytes_id(
+    const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
+    size_t input_len, const GSLTDirectPeTTaProjectionV1 *projection,
+    AtomId *out_id, char *error_buf, size_t error_buf_size) {
+    uint32_t tokens = 0u;
+    uint32_t shifts = 0u;
+    uint32_t reductions = 0u;
+    AtomId projected[2] = {CETTA_ATOM_ID_NONE, CETTA_ATOM_ID_NONE};
+    uint32_t projected_len = 0u;
+    AtomId value;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (out_id)
+        *out_id = CETTA_ATOM_ID_NONE;
+    if (!plan || !projection || !projection->context ||
+        !projection->begin_form || !projection->token_bytes ||
+        !projection->variable_bytes || !projection->string_bytes ||
+        !projection->dollar_symbol || !projection->expression ||
+        !projection->finish_form ||
+        (plan->list_open != 0u && !projection->list) ||
+        !out_id || input_len > UINT32_MAX ||
+        (input_len > 0u && !input)) {
+        gslt_direct_reader_v1_error(
+            error_buf, error_buf_size,
+            "invalid direct PeTTa term reader invocation");
+        return -1;
+    }
+    if (!projection->begin_form(projection->context))
+        return -1;
+    value = gslt_direct_petta_parse_form(
+        plan, input, input_len, projection, &tokens, &shifts, &reductions,
+        error_buf, error_buf_size);
+    if (value == CETTA_ATOM_ID_NONE ||
+        !projection->finish_form(
+            projection->context, false, value, projected, &projected_len) ||
+        projected_len != 1u || projected[0] == CETTA_ATOM_ID_NONE) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0')
+            gslt_direct_reader_v1_error(
+                error_buf, error_buf_size,
+                "term is outside the compiled PeTTa form LanguageDef");
+        return -1;
+    }
+    *out_id = projected[0];
+    return 0;
+}

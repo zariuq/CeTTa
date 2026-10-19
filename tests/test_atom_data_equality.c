@@ -7,6 +7,9 @@ static unsigned checks, failures;
 #define CHECK(c, label) do { checks++; if (!(c)) { \
     fprintf(stderr, "FAIL: %s\n", label); failures++; } } while (0)
 
+static void retain_identifier(void *raw) { (*(unsigned *)raw)++; }
+static void release_identifier(void *raw) { (*(unsigned *)raw)--; }
+
 static Atom *shared(Arena *arena, Atom *leaf, unsigned depth) {
     Atom *head = atom_symbol(arena, "Pair");
     for (unsigned i = 0; i < depth; ++i)
@@ -93,9 +96,53 @@ int main(void) {
     changeable->expr.elems[1] = leaves[1];
     CHECK(!atom_data_equal(changeable, before), "results are not cached between calls");
 
-    printf("(AtomDataEqualitySummary checks=%u failures=%u)\n", checks, failures);
+    CHECK(atom_data_identical(left, right) && !atom_data_identical(left, wrong),
+          "exact keys use the shared finite DAG walker without tree unfolding");
+    CHECK(atom_data_identical(small, unshared),
+          "exact keys preserve data while ignoring expression sharing");
+    CHECK(!atom_data_identical(atom_int(&arena, 1), atom_float(&arena, 1.0)),
+          "exact keys distinguish numeric kinds");
+    CHECK(!atom_data_identical(atom_float(&arena, -0.0), atom_float(&arena, 0.0)),
+          "exact keys distinguish the two float zeros");
+    CHECK(atom_data_identical(nan_left, nan_right),
+          "identical NaN representations are data keys independent of value equality");
+    CHECK(!atom_data_identical(atom_symbol(&arena, "True"), atom_bool(&arena, true)),
+          "an ambiguous printed spelling is not an exact key");
+    Atom *variable = atom_var(&arena, "exactVariable");
+    CHECK(atom_data_identical(variable, atom_deep_copy(&arena, variable)),
+          "copying an exact variable key preserves identity and spelling");
+    CHECK(!atom_data_identical(variable,
+              atom_var_with_id(&arena, "anotherSpelling", variable->var_id)),
+          "exact variable keys retain their spelling");
+    CHECK(!atom_data_identical(variable,
+              atom_var_with_id(&arena, "exactVariable", variable->var_id + 1u)),
+          "equal printed variables do not erase variable identity");
+    Atom *named = atom_var_with_name_key(&arena, small, variable->var_id);
+    CHECK(atom_data_identical(named, atom_deep_copy(&arena, named)),
+          "structural variable names compare as finite data rather than pointers");
+    CHECK(!atom_data_identical(named,
+              atom_var_with_name_key(&arena, leaves[0], variable->var_id)),
+          "different structural variable names remain distinct");
+    CHECK(!atom_data_identical(cycle, cycle) &&
+              !atom_data_identical(handle, handle) &&
+              !atom_data_identical(with_handle, with_handle),
+          "exact key validation rejects cycles and runtime handles");
+    CHECK(!atom_data_identical(changeable, before),
+          "exact key comparison does not cache a mutable input's old verdict");
+    unsigned identifier_holds = 0u;
+    Atom *identifier = atom_native_handle_identifier(&arena, 19,
+        &identifier_holds, retain_identifier, release_identifier);
+    CHECK(identifier_holds == 1u &&
+              !atom_data_identical(identifier, atom_int(&arena, 19)) &&
+              !atom_data_identical(identifier, identifier) &&
+              !atom_data_identical(atom_expr2(&arena, leaves[0], identifier),
+                                   atom_expr2(&arena, leaves[0], atom_int(&arena, 19))),
+          "integer-shaped native holders and their enclosing expressions are not data keys");
+
     arena_free(&arena);
+    CHECK(identifier_holds == 0u, "exact key inspection does not retain a native holder");
     symbol_table_free(&symbols);
     g_symbols = NULL;
+    printf("(AtomDataEqualitySummary checks=%u failures=%u)\n", checks, failures);
     return failures ? 1 : 0;
 }

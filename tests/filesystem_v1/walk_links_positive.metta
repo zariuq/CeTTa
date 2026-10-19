@@ -1,0 +1,7 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:walk-open (system:arg 0))
+  (let $one (fs:walk-next $owner follow ())
+    (let $two (fs:walk-next $owner follow ())
+      (let $end (fs:walk-next $owner follow ())
+        (let $closed (fs:close $owner) (WalkLinks $one $two $end $closed))))))

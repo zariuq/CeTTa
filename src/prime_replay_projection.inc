@@ -205,7 +205,7 @@ static bool prime_replay_projection_step(PrimeReplayProjection *p,PrimeReplayPro
     const char *head=NULL;size_t arity=0u;
     switch(n.kind) {
     case PRIME_REPLAY_OBSERVATION:head="Observation";break;
-    case PRIME_REPLAY_HISTORY:head="History";arity=13u;break;
+    case PRIME_REPLAY_HISTORY:head="History";arity=PRIME_NATIVE_HISTORY_ARITY;break;
     case PRIME_REPLAY_SELECTION:head="Selection";arity=8u;break;
     case PRIME_REPLAY_GRAPH:head="NeedGraph";arity=5u;break;
     case PRIME_REPLAY_NODE:head="NeedNode";arity=5u;break;
@@ -237,11 +237,14 @@ static bool prime_replay_projection_step(PrimeReplayProjection *p,PrimeReplayPro
     if(n.kind==PRIME_REPLAY_HISTORY) {
         if(!prime_replay_projection_fields(p,a,b,1u))return false;
         static const char *labels[]={"status","start-work","earlier","source-correspondence",
+            "recording","end-work",
             "omitted-selections","omitted-nodes","overflow","RetainedCharges","limits","nodes","reservations","selections"};
-        for(CettaExprIndex i=1u;i<13u;i++) {
+        _Static_assert(sizeof(labels) / sizeof(*labels) + 1u == PRIME_NATIVE_HISTORY_ARITY,
+            "history replay labels must cover the producer schema");
+        for(CettaExprIndex i=1u;i<PRIME_NATIVE_HISTORY_ARITY;i++) {
             const Atom *x=a->expr.elems[i],*y=b->expr.elems[i];
             if(!atom_is_symbol(x->expr.elems[0],labels[i-1u]))return false;
-            if(i==12u) {
+            if(i+1u==PRIME_NATIVE_HISTORY_ARITY) {
                 if(x->expr.len!=2u||!prime_replay_projection_push(p,x->expr.elems[1],y->expr.elems[1],PRIME_REPLAY_SELECTIONS,0))return false;
             } else if(!prime_replay_projection_push(p,x,y,PRIME_REPLAY_META,0))return false;
         }

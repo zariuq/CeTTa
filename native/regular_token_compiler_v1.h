@@ -13,6 +13,12 @@ typedef struct CettaRegularTokenCompilerV1 CettaRegularTokenCompilerV1;
 bool cetta_regular_token_compiler_v1_load(
     const PPABIV1Pack *classes, uint32_t work_limit,
     CettaRegularTokenCompilerV1 **out, char *error, size_t error_size);
+bool cetta_regular_token_compiler_v1_restore(
+    const PPABIV1Pack *classes, uint32_t work_limit, const uint8_t *bytes,
+    size_t length, bool audit, CettaRegularTokenCompilerV1 **out,
+    char *error, size_t error_size);
+bool cetta_regular_token_compiler_v1_store(const CettaRegularTokenCompilerV1 *,
+    uint8_t **bytes, size_t *length, char *error, size_t error_size);
 void cetta_regular_token_compiler_v1_free(CettaRegularTokenCompilerV1 *compiler);
 bool cetta_regular_token_compiler_v1_answers(
     CettaRegularTokenCompilerV1 *compiler, Arena *arena,

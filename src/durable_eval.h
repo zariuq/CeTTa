@@ -9,6 +9,9 @@ typedef struct {
     Space space;
     Registry registry;
     EvalOutcome outcome;
+    CettaHostPlanLimits limits;
+    CettaDurableStatus plan_refusal;
+    bool retained, cancelled;
 } CettaHostEvaluation;
 CettaDurableStatus cetta_host_eval_create(const CettaHostProgram *program,
                                          CettaHostEvaluation **out);

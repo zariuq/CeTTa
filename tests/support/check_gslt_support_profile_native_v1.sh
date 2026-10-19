@@ -16,7 +16,7 @@ profile_reference=$(realpath "${3:-src/generated}")
 profile_manifest=langdef/mm2/gslt_profile_v1.metta
 profile_fixture=tests/support/gslt_support_profile_native_v1
 profile_sources=(src/gslt_support_profile_v1.c native/operational_language_def_v1.c
-    src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c src/atom.c src/binding/frame_identity.c src/symbol.c
+    src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c src/atom.c src/binding/frame_identity.c src/symbol.c src/scalar_trie.c
     src/name_key.c src/native_sha256.c src/parser.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c
     src/gslt_support_transform_runtime.c src/gslt_pure_provider_v1.c src/mm2_lower.c
     src/prime_need.c src/native_cost.c src/weight_ledger.c src/variant_shape.c)

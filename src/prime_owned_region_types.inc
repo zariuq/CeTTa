@@ -15,7 +15,22 @@ struct PrimeNativeOwnedRegion {
     size_t prepared_bytes;
     uint64_t symbols;
     CettaNativeCostLedger preparation;
+    bool private_data;
+    Space *program;
+    SpaceReadToken data_read;
+    SpaceProgramToken program_read;
 };
+
+static __thread PrimeNativeOwnedRegion *g_prime_owned_region;
+
+static Space *prime_native_region_program(PrimeNativeOwnedRegion *region) {
+    return region->program ? region->program : &region->world;
+}
+
+static PrimeNativeOwnedRegion *prime_native_episode_region(PrimeNativeTopEpisode *episode) {
+    if (episode && episode->source_episode) episode=episode->source_episode;
+    return episode ? episode->owned_region : NULL;
+}
 
 typedef struct {
     atomic_size_t references;
@@ -65,4 +80,4 @@ static bool prime_native_acquired_receiver_admitted(const PrimeNativeAcquiredOpe
     const struct PrimeNativeControl *control);
 static bool prime_native_acquired_resume_nested(struct PrimeEvalStackFrame *frame);
 static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
-    Atom *call);
+    Atom *call, bool private_data);

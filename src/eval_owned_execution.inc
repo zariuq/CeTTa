@@ -13,7 +13,13 @@ typedef struct {
     SymbolId head;
     CettaExprLen arity;
     EvalOwnedShape shape;
+    uint64_t numeric_arguments, boolean_arguments;
 } EvalOwnedHead;
+
+typedef struct {
+    VarId variable;
+    EvalOwnedShape shape;
+} EvalOwnedParameter;
 
 typedef struct {
     Space *space;
@@ -27,13 +33,70 @@ static bool eval_owned_is_number(const Atom *value) {
         (value->ground.gkind == GV_INT || value->ground.gkind == GV_FLOAT);
 }
 
-/* A conservative first-order demand check for the direct consumers. All
- * callable inputs are numbers; every arithmetic operand is numeric and all
- * guards are Boolean. Division, foreign calls, effects, free variables and
+/* A conservative first-order demand check for the direct consumers. Each
+ * parameter retains its admitted argument shape; arithmetic operands must be
+ * numeric and guards Boolean. Division, foreign calls, effects, free variables and
  * typed calls keep the ordinary dialect boundary before delivery starts.
  * Recursive components preserve these shapes; they need not terminate. */
 static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
-    const VarId *variables, size_t variable_count, EvalOwnedShape shape,
+    const EvalOwnedParameter *variables, size_t variable_count, EvalOwnedShape shape,
+    unsigned depth);
+
+/* Failed probes must not leave recursive admission assumptions available to
+ * a weaker probe. Numeric producers retain their single-probe path. */
+static bool eval_owned_argument_shape(EvalOwnedAdmission *admission, Atom *term,
+    const EvalOwnedParameter *variables, size_t variable_count,
+    EvalOwnedShape *shape, unsigned depth) {
+    static const EvalOwnedShape candidates[] = {
+        EVAL_OWNED_NUMBER, EVAL_OWNED_BOOLEAN, EVAL_OWNED_DATA,
+    };
+    size_t checkpoint = admission->len;
+    for (size_t i = 0u; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (eval_owned_shape(admission, term, variables, variable_count,
+                             candidates[i], depth)) {
+            *shape = candidates[i];
+            return true;
+        }
+        admission->len = checkpoint;
+    }
+    return false;
+}
+
+/* A successful pattern match refines repeated variables. Constructor fields
+ * have the data shape unless another occurrence establishes a narrower one. */
+static bool eval_owned_pattern_parameters(Atom *pattern, EvalOwnedShape shape,
+    EvalOwnedParameter *parameters, size_t *count, unsigned depth) {
+    if (!pattern || depth > 256u)
+        return false;
+    if (pattern->kind == ATOM_VAR) {
+        for (size_t i = 0u; i < *count; i++) {
+            if (parameters[i].variable != pattern->var_id)
+                continue;
+            if (parameters[i].shape == EVAL_OWNED_DATA)
+                parameters[i].shape = shape;
+            return shape == EVAL_OWNED_DATA || parameters[i].shape == shape;
+        }
+        if (*count == 64u)
+            return false;
+        parameters[(*count)++] = (EvalOwnedParameter){pattern->var_id, shape};
+        return true;
+    }
+    if (pattern->kind == ATOM_SYMBOL || eval_owned_is_number(pattern) ||
+        (pattern->kind == ATOM_GROUNDED && pattern->ground.gkind == GV_BOOL))
+        return true;
+    if (pattern->kind != ATOM_EXPR)
+        return false;
+    if (pattern->expr.len && pattern->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    for (CettaExprIndex i = 1u; i < pattern->expr.len; i++)
+        if (!eval_owned_pattern_parameters(pattern->expr.elems[i], EVAL_OWNED_DATA,
+                                            parameters, count, depth + 1u))
+            return false;
+    return true;
+}
+
+static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
+    const EvalOwnedParameter *variables, size_t variable_count, EvalOwnedShape shape,
     unsigned depth) {
     if (!term || depth > 256u)
         return false;
@@ -41,8 +104,8 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
         return shape != EVAL_OWNED_BOOLEAN;
     if (term->kind == ATOM_VAR) {
         for (size_t i = 0u; i < variable_count; i++)
-            if (variables[i] == term->var_id)
-                return shape != EVAL_OWNED_BOOLEAN;
+            if (variables[i].variable == term->var_id)
+                return shape == EVAL_OWNED_DATA || variables[i].shape == shape;
         return false;
     }
     if (term->kind == ATOM_GROUNDED && term->ground.gkind == GV_BOOL)
@@ -103,14 +166,23 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
     }
     if (arity > 64u || space_head_declares_type(admission->space, head))
         return false;
-    for (CettaExprIndex i = 1u; i < term->expr.len; i++)
-        if (!eval_owned_shape(admission, term->expr.elems[i], variables,
-                             variable_count, EVAL_OWNED_NUMBER, depth + 1u))
+    EvalOwnedShape argument_shapes[64];
+    uint64_t numeric_arguments = 0u, boolean_arguments = 0u;
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
+        if (!eval_owned_argument_shape(admission, term->expr.elems[i], variables,
+                variable_count, &argument_shapes[i - 1u], depth + 1u))
             return false;
+        if (argument_shapes[i - 1u] == EVAL_OWNED_NUMBER)
+            numeric_arguments |= UINT64_C(1) << (i - 1u);
+        else if (argument_shapes[i - 1u] == EVAL_OWNED_BOOLEAN)
+            boolean_arguments |= UINT64_C(1) << (i - 1u);
+    }
     for (size_t i = 0u; i < admission->len; i++)
         if (admission->heads[i].head == head &&
             admission->heads[i].arity == arity &&
-            admission->heads[i].shape == shape)
+            admission->heads[i].shape == shape &&
+            admission->heads[i].numeric_arguments == numeric_arguments &&
+            admission->heads[i].boolean_arguments == boolean_arguments)
             return true;
     if (admission->len == admission->cap) {
         size_t cap = admission->cap ? admission->cap * 2u : 16u;
@@ -120,7 +192,8 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
                                          cap * sizeof(*admission->heads));
         admission->cap = cap;
     }
-    admission->heads[admission->len++] = (EvalOwnedHead){head, arity, shape};
+    admission->heads[admission->len++] = (EvalOwnedHead){
+        head, arity, shape, numeric_arguments, boolean_arguments};
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(admission->space, head, &cursor))
         return false;
@@ -137,13 +210,11 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
             atom_head_symbol_id(occurrence.lhs) != head ||
             expr_nargs(occurrence.lhs) != arity)
             return false;
-        VarId parameters[64];
+        EvalOwnedParameter parameters[64];
         size_t parameter_count = 0u;
         for (CettaExprIndex i = 1u; i < occurrence.lhs->expr.len; i++) {
-            Atom *parameter = occurrence.lhs->expr.elems[i];
-            if (parameter->kind == ATOM_VAR)
-                parameters[parameter_count++] = parameter->var_id;
-            else if (!eval_owned_is_number(parameter))
+            if (!eval_owned_pattern_parameters(occurrence.lhs->expr.elems[i],
+                    argument_shapes[i - 1u], parameters, &parameter_count, 0u))
                 return false;
         }
         if (!eval_owned_shape(admission, occurrence.rhs, parameters,
@@ -171,6 +242,10 @@ typedef struct {
     CettaPreparedPurePatternViewFn pattern_view;
     CettaPreparedPureExpressionViewFn expression_view;
 } EvalOwnedDemandAdapter;
+
+static CettaPreparedPureProgram *eval_owned_answer_program(
+    Space *space, Atom *call, const EvalOwnedDemandAdapter *adapter,
+    const CettaPreparedPureSourceView *source_view);
 
 static EvalOwnedDemandAdapter eval_owned_demand_adapter(void) {
     CettaLanguageId language = eval_current_language_id();
@@ -200,7 +275,7 @@ typedef struct {
     CettaLibPrologReadToken foreign;
     uint64_t admission_revision;
     uint64_t foreign_capability_revision;
-    uint32_t active_mask;
+    CettaLibraryMask active_mask;
     EvalOwnedDemandAdapter adapter;
     bool captures_ready;
 } EvalOwnedAnswers;
@@ -261,14 +336,19 @@ static void eval_owned_answers_close(EvalOwnedAnswers *answers) {
     memset(answers, 0, sizeof(*answers));
 }
 
-static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
+static bool eval_owned_answers_open(
+    EvalOwnedAnswers *answers,
     Space *space, Atom *producer, const Bindings *environment, int fuel,
-    EvalOwnedShape shape) {
+    EvalOwnedShape shape);
+static inline __attribute__((always_inline)) bool eval_owned_answers_open_kernel(
+    EvalOwnedAnswers *answers,
+    Space *space, Atom *producer, const Bindings *environment, int fuel,
+    EvalOwnedShape shape, bool observe_boundaries) {
     memset(answers, 0, sizeof(*answers));
     CettaLanguageId language = eval_current_language_id();
     if (!space || !producer || fuel >= 0 ||
         (language != CETTA_LANGUAGE_HE && language != CETTA_LANGUAGE_PETTA) ||
-        g_eval_payload_transactional || gslt_match_chain_trace_active() ||
+        g_eval_payload_transactional || observe_boundaries ||
         g_active_search_controller_requested || g_active_search_controller_auto ||
         petta_eval_machine_diagnostic_transition_limit() != 0u ||
         active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
@@ -300,14 +380,7 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
     EvalOwnedDemandAdapter *adapter = &answers->adapter;
     CettaPreparedPureSourceView source_view =
         prepared_pure_source_view_for_language(language, closed);
-    answers->program = cetta_prepared_pure_program_compile_closed_answers(
-        space, closed, CETTA_GSLT_PURE_CALL_EAGER,
-        adapter->boolean_value, adapter->construct_value,
-        adapter->constructs_expression, adapter->opaque_value,
-        adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        &source_view, true,
-        active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
+    answers->program = eval_owned_answer_program(space, closed, adapter, &source_view);
     if (!answers->program)
         goto declined;
     size_t scratch_budget = prepared_pure_nursery_budget_bytes();
@@ -330,6 +403,7 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
     };
     CettaPreparedPureAnswerCursor *cursor =
         cetta_prepared_pure_answer_cursor_open(answers->program, &options);
+    cetta_prepared_pure_program_clear_closed_entry_call(answers->program);
     if (!cursor)
         goto declined;
     answers->cursor = cursor;
@@ -344,14 +418,20 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
     cetta_owned_execution_init(&answers->execution, answers,
                               eval_owned_answers_next, eval_owned_answers_release);
     answers->execution.final_is_current = eval_owned_answers_final_is_current;
-    if (!cetta_prepared_pure_answer_cursor_detach(cursor))
-        goto declined;
+    /* Entry values already live in captures until after the cursor closes.
+     * Its frontier can borrow them without copying the whole input again. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OWNED_EXECUTION_ADMISSION);
     return true;
 declined:
     eval_owned_answers_close(answers);
     return false;
 }
+
+CETTA_PREPARED_ENTRY(bool, eval_owned_answers_open,
+    (EvalOwnedAnswers *answers,
+    Space *space, Atom *producer, const Bindings *environment, int fuel,
+    EvalOwnedShape shape),
+    (answers, space, producer, environment, fuel, shape))
 
 typedef struct {
     EvalOwnedAnswers *answers;
@@ -666,7 +746,10 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
         ? bindings_apply_if_vars(environment, arena, initial) : initial;
     Atom *closed_body = environment
         ? bindings_apply_if_vars(environment, arena, body) : body;
-    VarId variables[2] = {accumulator_binder->var_id, item_binder->var_id};
+    EvalOwnedParameter variables[2] = {
+        {accumulator_binder->var_id, EVAL_OWNED_NUMBER},
+        {item_binder->var_id, EVAL_OWNED_NUMBER},
+    };
     EvalOwnedAdmission admission = {.space = space, .read = space_read_token(space)};
     bool safe = eval_owned_is_number(closed_initial) &&
         eval_owned_shape(&admission, closed_body, variables, 2u,
@@ -686,7 +769,7 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
     CettaPreparedPureSourceView source_view =
         prepared_pure_source_view_for_language(adapter->language, body);
     CettaPreparedPureProgram *step = cetta_prepared_pure_program_compile(
-        space, closed_body, variables[0], variables[1], mode,
+        space, closed_body, variables[0].variable, variables[1].variable, mode,
         adapter->boolean_value, adapter->construct_value,
         adapter->constructs_expression, adapter->opaque_value,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,

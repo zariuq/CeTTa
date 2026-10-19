@@ -5,20 +5,31 @@
 #include <string.h>
 
 bool cetta_cost_graph_init(CettaCostGraphAnalysis *analysis, size_t nodes, size_t root) {
+    return cetta_cost_graph_init_metric(analysis, nodes, root,
+        CETTA_COST_GRAPH_UNFOLDING_WORK);
+}
+
+bool cetta_cost_graph_init_metric(CettaCostGraphAnalysis *analysis,
+        size_t nodes, size_t root, CettaCostGraphMetric metric) {
     if (!analysis || root >= nodes ||
+        (unsigned)metric > CETTA_COST_GRAPH_WORK_DEPTH ||
         nodes > SIZE_MAX / sizeof(*analysis->stack) ||
         nodes > SIZE_MAX / sizeof(*analysis->bounds))
         return false;
     memset(analysis, 0, sizeof(*analysis));
     analysis->colors = calloc(nodes, sizeof(*analysis->colors));
     analysis->bounds = calloc(nodes, sizeof(*analysis->bounds));
+    if (metric == CETTA_COST_GRAPH_WORK_DEPTH)
+        analysis->depth_bounds = calloc(nodes, sizeof(*analysis->depth_bounds));
     analysis->stack = calloc(nodes, sizeof(*analysis->stack));
-    if (!analysis->colors || !analysis->bounds || !analysis->stack) {
+    if (!analysis->colors || !analysis->bounds || !analysis->stack ||
+        (metric == CETTA_COST_GRAPH_WORK_DEPTH && !analysis->depth_bounds)) {
         cetta_cost_graph_free(analysis);
         return false;
     }
     analysis->capacity = nodes;
     analysis->root = root;
+    analysis->metric = metric;
     analysis->colors[root] = 1u;
     analysis->stack[0].node = root;
     analysis->depth = 1u;
@@ -31,6 +42,7 @@ void cetta_cost_graph_free(CettaCostGraphAnalysis *analysis) {
         return;
     free(analysis->colors);
     free(analysis->bounds);
+    free(analysis->depth_bounds);
     free(analysis->stack);
     memset(analysis, 0, sizeof(*analysis));
 }
@@ -39,6 +51,8 @@ void cetta_cost_graph_step(const CettaCostGraph *graph, CettaCostGraphAnalysis *
     if (!analysis || analysis->status != CETTA_COST_GRAPH_PENDING)
         return;
     if (!graph || !graph->nodes || graph->length != analysis->capacity ||
+        (unsigned)analysis->metric > CETTA_COST_GRAPH_WORK_DEPTH ||
+        (analysis->metric == CETTA_COST_GRAPH_WORK_DEPTH && !analysis->depth_bounds) ||
         !analysis->depth || analysis->ticks == UINT64_MAX) {
         analysis->status = CETTA_COST_GRAPH_INVALID;
         return;
@@ -93,11 +107,25 @@ void cetta_cost_graph_step(const CettaCostGraph *graph, CettaCostGraphAnalysis *
         }
         contribution += analysis->bounds[row->successor];
     }
-    if (contribution > UINT64_MAX - frame->total) {
+    if (analysis->metric == CETTA_COST_GRAPH_DEPENDENCY_DEPTH) {
+        if (contribution > frame->total) frame->total = contribution;
+    } else if (contribution > UINT64_MAX - frame->total) {
         analysis->status = CETTA_COST_GRAPH_OVERFLOW;
         return;
+    } else {
+        frame->total += contribution;
     }
-    frame->total += contribution;
+    if (analysis->metric == CETTA_COST_GRAPH_WORK_DEPTH) {
+        uint64_t depth = row->successor == SIZE_MAX ? 0u
+            : analysis->depth_bounds[row->successor];
+        if (depth == UINT64_MAX) {
+            analysis->status = CETTA_COST_GRAPH_OVERFLOW;
+            return;
+        }
+        depth++;
+        if (depth > analysis->depth_bounds[frame->node])
+            analysis->depth_bounds[frame->node] = depth;
+    }
     frame->row++;
 }
 
@@ -113,5 +141,14 @@ bool cetta_cost_graph_bound(const CettaCostGraphAnalysis *analysis, uint64_t *bo
     if (!analysis || !bound || analysis->status != CETTA_COST_GRAPH_BOUND)
         return false;
     *bound = analysis->bounds[analysis->root];
+    return true;
+}
+
+bool cetta_cost_graph_depth_bound(const CettaCostGraphAnalysis *analysis, uint64_t *bound) {
+    if (!analysis || !bound || analysis->status != CETTA_COST_GRAPH_BOUND ||
+        analysis->metric == CETTA_COST_GRAPH_UNFOLDING_WORK)
+        return false;
+    *bound = analysis->metric == CETTA_COST_GRAPH_DEPENDENCY_DEPTH
+        ? analysis->bounds[analysis->root] : analysis->depth_bounds[analysis->root];
     return true;
 }

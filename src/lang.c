@@ -13,6 +13,14 @@ static bool path_has_suffix(const char *path, const char *suffix) {
 }
 
 static const CettaLanguageSpec CETTA_LANGUAGES[] = {
+    {CETTA_LANGUAGE_HOL_LIGHT, "hol-light", "hol-light", true,
+     "Native HOL Light kernel; checked HOLR proof streams",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+     CETTA_PORTABLE_RELATIONAL_NONE},
+    {CETTA_LANGUAGE_HOL_LIGHT, "hol", "hol-light", true,
+     "Alias for the native HOL Light kernel",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
+     CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_HE, "he", "he", true, "Current direct MeTTa/HE evaluator",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1},
@@ -60,7 +68,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
-     "WIP compiled PeTTa reader with shared-subset CeTTa execution",
+     "PeTTa, the default language (petta@1.0.6; petta@1.1 is typed)",
      CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_AMBIENT, "ambient", "ambient", false,
@@ -147,12 +155,18 @@ const char *cetta_syntax_name(CettaSyntaxId syntax) {
         return "mrho";
     case CETTA_SYNTAX_RHO:
         return "rho";
+    case CETTA_SYNTAX_HOLR:
+        return "holr";
     }
     return "unknown-syntax";
 }
 
 bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax) {
     if (!name) return false;
+    if (ascii_ieq(name, "holr")) {
+        if (out_syntax) *out_syntax = CETTA_SYNTAX_HOLR;
+        return true;
+    }
     if (ascii_ieq(name, "auto")) {
         if (out_syntax) *out_syntax = CETTA_SYNTAX_AUTO;
         return true;
@@ -173,6 +187,7 @@ bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax) {
 }
 
 CettaSyntaxId cetta_syntax_default_for_language(CettaLanguageId id) {
+    if (id == CETTA_LANGUAGE_HOL_LIGHT) return CETTA_SYNTAX_HOLR;
     return id == CETTA_LANGUAGE_RHOCALC ? CETTA_SYNTAX_MRHO
                                         : CETTA_SYNTAX_METTA;
 }
@@ -189,6 +204,7 @@ CettaSyntaxId cetta_syntax_infer_for_path(CettaLanguageId id, const char *path) 
 
 bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax) {
     if (syntax == CETTA_SYNTAX_AUTO) return true;
+    if (id == CETTA_LANGUAGE_HOL_LIGHT) return syntax == CETTA_SYNTAX_HOLR;
     if (id == CETTA_LANGUAGE_RHOCALC) {
         return syntax == CETTA_SYNTAX_MRHO ||
                syntax == CETTA_SYNTAX_RHO ||

@@ -8,9 +8,12 @@
 
 struct CettaLibraryContext;
 
+/* Authored and native imports share one catalog without aliasing bits. */
+typedef uint64_t CettaLibraryMask;
+
 typedef struct {
     const char *name;
-    uint32_t import_bit;
+    CettaLibraryMask import_bit;
     Atom *(*dispatch)(struct CettaLibraryContext *ctx, Space *space, Arena *a,
                       Atom *head, Atom **args, uint32_t nargs);
     const char *head_prefix; /* NULL keeps the module's ordinary dispatch policy. */
@@ -22,6 +25,6 @@ const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name);
 bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                     uint32_t active_mask, CettaCallOutcome *out);
+                                     CettaLibraryMask active_mask, CettaCallOutcome *out);
 
 #endif /* CETTA_NATIVE_MODULES_H */

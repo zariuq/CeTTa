@@ -19,10 +19,7 @@ static unsigned probes;
 static unsigned opened_in_probe;
 
 static unsigned live_handles(const CettaLibraryContext *context) {
-    unsigned count = 0;
-    for (uint32_t i = 0; context && i < context->native_handle_len; ++i)
-        if (context->native_handles[i].resource) ++count;
-    return count;
+    return (unsigned)cetta_native_handle_count(context);
 }
 
 static bool has_head(const Atom *term, const char *head) {

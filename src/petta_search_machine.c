@@ -974,6 +974,9 @@ typedef struct {
             void *handle;
             Space *previous_space;
             bool active;
+            /* A collection's staged copy of the working state, published
+             * when the collection commits. */
+            void *relocated;
         } transaction;
         struct {
             void *handle;
@@ -5899,6 +5902,32 @@ static size_t petta_machine_total_heap_live(
         : 0u;
 }
 
+/* The nursery floor and the major window in force.  A test sets
+ * CETTA_PETTA_COLLECT_STRESS to collect, minor and major, after every few
+ * kilobytes, so that collections meet every state the machine makes
+ * between them; the values then are the stress sizes. */
+typedef struct {
+    size_t nursery_floor;
+    size_t major_window;
+} PettaMachineCollectSizes;
+
+static const PettaMachineCollectSizes *petta_machine_collect_sizes(void) {
+    static PettaMachineCollectSizes sizes;
+    static bool ready;
+    if (!ready) {
+        const char *stress = getenv("CETTA_PETTA_COLLECT_STRESS");
+        sizes = stress && stress[0] && strcmp(stress, "0") != 0
+            ? (PettaMachineCollectSizes){
+                  .nursery_floor = 16u * 1024u,
+                  .major_window = 64u * 1024u}
+            : (PettaMachineCollectSizes){
+                  .nursery_floor = PETTA_MACHINE_NURSERY_FLOOR_BYTES,
+                  .major_window = PETTA_MACHINE_HEAP_WINDOW_BYTES};
+        ready = true;
+    }
+    return &sizes;
+}
+
 /*
  * Let the nursery grow with the live old generation, but cap it at half the
  * old generation so collection memory stays bounded.  The geometric window
@@ -5919,14 +5948,14 @@ static size_t petta_machine_nursery_window(
         : 0u;
     if (copied > window)
         window = copied;
-    return window > PETTA_MACHINE_NURSERY_FLOOR_BYTES
-        ? window : PETTA_MACHINE_NURSERY_FLOOR_BYTES;
+    size_t floor = petta_machine_collect_sizes()->nursery_floor;
+    return window > floor ? window : floor;
 }
 
 static size_t petta_machine_next_major_threshold(
     size_t tenured_live) {
-    size_t growth = tenured_live > PETTA_MACHINE_HEAP_WINDOW_BYTES
-        ? tenured_live : PETTA_MACHINE_HEAP_WINDOW_BYTES;
+    size_t window = petta_machine_collect_sizes()->major_window;
+    size_t growth = tenured_live > window ? tenured_live : window;
     return petta_size_add_saturating(tenured_live, growth);
 }
 
@@ -6814,12 +6843,17 @@ static bool petta_choice_heap_evacuation_supported(
             choice->as.match.snapshot_len == 0u &&
             choice->as.match.binding_snapshot.len == 0u &&
             !choice->as.match.binding_snapshot_mode;
+        /* A transaction's host relocates its working state. */
+        bool transaction = choice->kind == PETTA_CHOICE_TRANSACTION &&
+            machine->host.transaction_relocate &&
+            machine->host.transaction_relocate_commit &&
+            machine->host.transaction_relocate_discard;
         if ((choice->retain_heap_across_resume && !completion) ||
             (choice->kind != PETTA_CHOICE_EQUATION &&
              choice->kind != PETTA_CHOICE_ANSWERS &&
              choice->kind != PETTA_CHOICE_ONCE &&
              choice->kind != PETTA_CHOICE_SUPERPOSE &&
-             !occurrence_query && !completion)) {
+             !occurrence_query && !completion && !transaction)) {
             return false;
         }
         /* A prepared producer can hold continuation locals that its detach
@@ -6889,11 +6923,14 @@ static bool petta_copy_goal_atoms(
     return ok;
 }
 
-/* `released` is the arena whose atoms the copy is about to release; a
- * producer that borrows from it takes its own copies first. */
+/* `released` is the arena whose atoms the copy is about to release, and
+ * `released_old` the old generation a major collection releases with it; a
+ * producer that borrows from them takes its own copies first, and a host
+ * transaction stages copies of its working state (`host`). */
 static bool petta_copy_supported_choice_atoms(
     AtomDeepCopySession *session, Arena *destination, PettaChoice *choice,
-    const Arena *released, bool owned_copy) {
+    const Arena *released, const Arena *released_old,
+    const PettaMachineHost *host, bool owned_copy) {
     if (!atom_deep_copy_session_targets(session, destination) || !choice)
         return false;
     if (!atom_deep_copy_session_retain_frame(
@@ -6976,8 +7013,11 @@ static bool petta_copy_supported_choice_atoms(
             /* Its owner, below it, moves the shared variables. */
         } else if (choice->as.answers.open) {
             const PettaOpenAnswers *open = choice->as.answers.open;
-            if (released &&
-                !cetta_open_equation_cursor_detach(open->cursor, released))
+            if ((released &&
+                 !cetta_open_equation_cursor_detach(open->cursor, released)) ||
+                (released_old &&
+                 !cetta_open_equation_cursor_detach(open->cursor,
+                                                    released_old)))
                 return false;
             Atom **moved = calloc(open->var_count ? open->var_count : 1u,
                                   sizeof(*moved));
@@ -7009,8 +7049,35 @@ static bool petta_copy_supported_choice_atoms(
                 session, call->source_refinement, &ok);
         }
         return ok;
+    case PETTA_CHOICE_TRANSACTION:
+        /* Only a heap evacuation, whose commit publishes the staged copy,
+         * relocates a transaction's working state. */
+        if (!released || !host || !host->transaction_relocate)
+            return false;
+        return !choice->as.transaction.active ||
+            host->transaction_relocate(
+                host->context, choice->as.transaction.handle, session,
+                &choice->as.transaction.relocated);
     default:
         return false;
+    }
+}
+
+/* Staged transaction relocations of an evacuation that did not commit. */
+static void petta_choice_transaction_relocations_discard(
+        const PettaMachineHost *host, PettaChoice *choices,
+        size_t choice_len) {
+    if (!choices)
+        return;
+    for (size_t i = 0u; i < choice_len; i++) {
+        PettaChoice *choice = &choices[i];
+        if (choice->kind != PETTA_CHOICE_TRANSACTION ||
+            !choice->as.transaction.relocated)
+            continue;
+        if (host && host->transaction_relocate_discard)
+            host->transaction_relocate_discard(
+                host->context, choice->as.transaction.relocated);
+        choice->as.transaction.relocated = NULL;
     }
 }
 
@@ -7247,7 +7314,8 @@ static bool petta_machine_collect_choice_heap(
             break;
         }
         ok = petta_copy_supported_choice_atoms(
-            session, destination, &next_choices[i], &machine->heap, false);
+            session, destination, &next_choices[i], &machine->heap,
+            major ? &machine->tenured : NULL, &machine->host, false);
     }
     if (ok)
         ok = petta_copy_binding_atoms(
@@ -7269,6 +7337,8 @@ static bool petta_machine_collect_choice_heap(
         petta_choice_query_value_vectors_free(
             next_choices, machine->choice_len);
         petta_choice_open_moved_vars_free(next_choices, machine->choice_len);
+        petta_choice_transaction_relocations_discard(
+            &machine->host, next_choices, machine->choice_len);
         free(next_choices);
         free(next_visible);
         free(next_type_obligations);
@@ -7320,6 +7390,14 @@ static bool petta_machine_collect_choice_heap(
                 choice->as.outcomes.moved_outcomes = NULL;
                 outcome_set_set_owner(choice->as.outcomes.outcomes, &machine->tenured);
             }
+            if (choice->kind == PETTA_CHOICE_TRANSACTION &&
+                choice->as.transaction.relocated) {
+                machine->host.transaction_relocate_commit(
+                    machine->host.context, choice->as.transaction.handle,
+                    choice->as.transaction.relocated);
+                choice->as.transaction.relocated = NULL;
+                continue;
+            }
             if (choice->kind != PETTA_CHOICE_ANSWERS ||
                 !choice->as.answers.open_moved_vars)
                 continue;
@@ -7354,6 +7432,9 @@ static bool petta_machine_collect_choice_heap(
     free(next_type_obligations);
 
     machine->heap_promoted_last = promoted_bytes;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTIONS);
+    if (major)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_MAJOR_COLLECTIONS);
     size_t before_bytes = before_nursery_bytes;
     if (major) {
         before_bytes = before_tenured_bytes > SIZE_MAX - before_bytes
@@ -8061,7 +8142,8 @@ static bool petta_owned_continuation_copy_atoms_with_session(
     for (size_t i = 0u;
          ok && i < continuation->control.choice_len; i++) {
         ok = petta_copy_supported_choice_atoms(
-            session, destination, &continuation->control.choices[i], NULL, owned_copy);
+            session, destination, &continuation->control.choices[i], NULL,
+            NULL, NULL, owned_copy);
     }
     if (ok) {
         /* Current bindings, undo entries and all captured worlds belong to
@@ -9961,6 +10043,11 @@ static bool petta_transfer_hosts_equal(
     if (left->dependent_type_domains != right->dependent_type_domains) return false;
     if (left->permit_transition != right->permit_transition) return false;
     if (left->permit_operation != right->permit_operation) return false;
+    if (left->permit_operation &&
+        (left->permit_operation_context == left->context
+            ? NULL : left->permit_operation_context) !=
+        (right->permit_operation_context == right->context
+            ? NULL : right->permit_operation_context)) return false;
     if (left->unlimited_transition_budget != right->unlimited_transition_budget) return false;
     if (left->classify != right->classify) return false;
     if (left->builtin_allowed != right->builtin_allowed) return false;
@@ -10656,12 +10743,13 @@ static bool petta_machine_maybe_collect(
     if (binding_count > machine->stats.maximum_binding_entries)
         machine->stats.maximum_binding_entries = binding_count;
     if (machine->choice_len != 0u) {
-        if ((nursery_live >= machine->heap_collect_after ||
-             (tenured_live >= machine->tenured_major_after &&
-              petta_choice_major_heap_supported(machine))) &&
-            petta_choice_heap_evacuation_supported(machine) &&
-            !petta_machine_collect_choice_heap(machine)) {
-            return false;
+        if (nursery_live >= machine->heap_collect_after ||
+            (tenured_live >= machine->tenured_major_after &&
+             petta_choice_major_heap_supported(machine))) {
+            if (!petta_choice_heap_evacuation_supported(machine))
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
+            else if (!petta_machine_collect_choice_heap(machine))
+                return false;
         }
         if (builder->growth_count <
             machine->binding_growth_collect_after) {
@@ -20375,7 +20463,7 @@ static bool petta_machine_permit_choice(PettaMachineImpl *machine) {
         choice->kind == PETTA_CHOICE_TYPED_CALL ||
         choice->kind == PETTA_CHOICE_ONCE
             ? PETTA_MACHINE_OPERATION_LOCAL : PETTA_MACHINE_OPERATION_HOST;
-    return machine->host.permit_operation(machine->host.context,
+    return machine->host.permit_operation(machine->host.permit_operation_context,
         machine->space, operation, NULL);
 }
 
@@ -30457,7 +30545,11 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
-    return petta_open_answer_unify(machine, open, values);
+    /* The answer is the machine's now; the cursor waits for a backtrack. */
+    if (!petta_open_answer_unify(machine, open, values))
+        return false;
+    cetta_open_equation_cursor_suspend(open->cursor);
+    return true;
 }
 
 /* A once in a cursor committed through host goals whose choices remain:
@@ -30586,6 +30678,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    cetta_open_equation_cursor_suspend(open->cursor);
     return true;
 }
 
@@ -30764,6 +30857,7 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
     }
     if (!petta_open_answer_unify(machine, open, values))
         return false;
+    cetta_open_equation_cursor_suspend(open->cursor);
     if (last)
         petta_choice_retire_exhausted(machine);
     return true;
@@ -30806,6 +30900,8 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
              * restarted and the rest of the enumeration is not dropped. */
             Atom *value = petta_semantics_materialize_value(
                 &machine->heap, answer);
+            if (value)
+                cetta_prepared_pure_answer_cursor_suspend(cursor);
             if (!value || !petta_push_solve(
                     machine, value, choice->as.answers.expected,
                     choice->barrier)) {
@@ -30820,7 +30916,11 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
         return petta_machine_answer_handoff(machine, failure);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_ANSWER);
+    /* The machine keeps its own copy of the answer; the cursor stays only
+     * for its alternatives. */
     Atom *value = petta_semantics_materialize_value(&machine->heap, answer);
+    if (value)
+        cetta_prepared_pure_answer_cursor_suspend(cursor);
     if (!value || !petta_push_unify(
             machine, value, choice->as.answers.expected, choice->barrier)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -30927,6 +31027,7 @@ static __attribute__((noinline)) bool petta_machine_start_answer_producer(
         machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    cetta_prepared_pure_answer_cursor_suspend(choice.as.answers.cursor);
     return petta_machine_unify(machine, value, expected);
 }
 
@@ -38065,6 +38166,10 @@ static bool petta_machine_init_internal(
     impl->table_generator = table_generator;
     if (host)
         impl->host = *host;
+    /* Resolve the default once. Operation checks retain their ordinary call
+     * shape and do not test whether an optional debugger was installed. */
+    if (!impl->host.permit_operation_context)
+        impl->host.permit_operation_context = impl->host.context;
     impl->observation_algebra =
         host && host->observation_contract
             ? host->observation_contract->algebra
@@ -38091,9 +38196,9 @@ static bool petta_machine_init_internal(
     arena_init(&impl->plan_arena);
     impl->equation_template_c0_enabled = petta_equation_template_c0_enabled();
     impl->heap_collect_after =
-        PETTA_MACHINE_NURSERY_FLOOR_BYTES;
+        petta_machine_collect_sizes()->nursery_floor;
     impl->tenured_major_after =
-        PETTA_MACHINE_HEAP_WINDOW_BYTES;
+        petta_machine_collect_sizes()->major_window;
     impl->binding_growth_collect_after =
         (uint64_t)petta_deterministic_binding_window(impl, 0u);
     if (!search_context_init_bindings_only(
@@ -38345,6 +38450,22 @@ CettaGsltTermViewStatusV1 petta_machine_operation_view_root(
         (void *)view->environment, view->expression, root_out);
 }
 
+bool petta_machine_operation_control_permit(void *context, Space *space,
+    PettaMachineOperation operation, const PettaMachineOperationView *view) {
+    PettaMachineOperationControl *control = context;
+    if (!control) return false;
+    control->breakpoint = false;
+    if (!control->authorize ||
+        !control->authorize(control->authority_context, space, operation, view))
+        return false;
+    if (control->stop_before &&
+        control->stop_before(control->stop_context, space, operation, view)) {
+        control->breakpoint = true;
+        return false;
+    }
+    return true;
+}
+
 static bool petta_machine_permit_goal(PettaMachineImpl *machine) {
     if (!machine->host.permit_operation || machine->goal_len == 0u)
         return true;
@@ -38399,7 +38520,7 @@ static bool petta_machine_permit_goal(PettaMachineImpl *machine) {
             PETTA_ACTIVATION_SOURCE_FIRST) ? goal->activation_epoch : 0u,
         .activation_first_entry = goal->activation_first_entry,
     };
-    return machine->host.permit_operation(machine->host.context,
+    return machine->host.permit_operation(machine->host.permit_operation_context,
         machine->space, operation, &view);
 }
 

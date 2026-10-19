@@ -18,16 +18,16 @@ sys.path.insert(0, str(ROOT / "tools"))
 import prime_scope_migration as migration
 
 
-def run(binary, path, ownership, route):
+def run(binary, path, ownership, route, argv0=None):
     env = dict(os.environ, CETTA_PRIME_SCOPE_DEFAULT=ownership)
     env.pop("CETTA_PRIME_SCOPE_CENSUS", None)
     env.pop("CETTA_PRIME_RELATIONAL_PLAN_REFERENCE", None)
     if route == "reference":
         env["CETTA_PRIME_RELATIONAL_PLAN_REFERENCE"] = "1"
-    argv = [str(binary), "--lang", "prime"]
+    argv = [str(argv0 or binary), "--lang", "prime"]
     if route == "fuel":
         argv += ["--fuel", "1000000"]
-    result = subprocess.run(argv + [str(path)], env=env, cwd=ROOT,
+    result = subprocess.run(argv + [str(path)], executable=str(binary), env=env, cwd=ROOT,
                             capture_output=True, text=True, timeout=60)
     if result.returncode:
         raise AssertionError(f"run failed: {path.name}, {route}: {result.stderr}")
@@ -81,6 +81,23 @@ def main():
                 checks += 1
             else:
                 raise AssertionError("accepted a plan with a wrong source shape")
+    # Executables outside a library installation use the working-directory
+    # fallback. The imported Prime spelling must retain lexical crossings.
+    source = args.workdir / "library-spelling.source.metta"
+    source.write_text(
+        f"!(import! &self {ROOT / 'lib/ilp/prime_native_mil.metta'})\n"
+        "(: chosen (Vocabulary A B))\n"
+        "(: unrelated (OtherVocabulary X Y))\n"
+        "!(hyp:primitive-declaration &self Vocabulary)\n")
+    expected = "[()]\n[(hyp:declaration A B chosen)]\n"
+    # Only argv[0] changes; both runs execute the same binary. This existing
+    # path has neither a sibling lib/ directory nor one in its parent.
+    relocated_argv0 = Path(__file__).resolve()
+    for route in ("default", "reference", "fuel"):
+        for argv0 in (binary, relocated_argv0):
+            observed = run(binary, source, "lexical-fresh", route, argv0)
+            assert observed == expected, ("library spelling", route, argv0, observed)
+            checks += 1
     # The same authored weight clients are also run by HE and PeTTa.
     # Their Prime companions must remain exact native-plan translations.
     for target in sorted((ROOT / "tests/prime/weights").glob("*.lexical.metta")):

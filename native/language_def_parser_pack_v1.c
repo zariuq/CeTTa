@@ -660,6 +660,8 @@ extern const uint8_t cetta_ldpp_compiler_v1_source[];
 extern const size_t cetta_ldpp_compiler_v1_source_len;
 extern const uint8_t cetta_ldpt_compiler_v1_source[];
 extern const size_t cetta_ldpt_compiler_v1_source_len;
+extern const uint8_t cetta_ldpp_compiler_v1_program[], cetta_ldpt_compiler_v1_program[];
+extern const size_t cetta_ldpp_compiler_v1_program_len, cetta_ldpt_compiler_v1_program_len;
 
 static Atom *ldpp_name(Arena *arena, const CettaLdTextV1 *text,
     CettaLdParserPackV1Status *status, char *error, size_t error_size) {
@@ -716,7 +718,7 @@ static bool ldpp_rule_fragment_valid(
     uint32_t expected_param = 0u;
     if (!rule || rule->label.len == 0u || rule->category.len == 0u ||
         !ldpp_type_find(language, &rule->category) ||
-        rule->eval_policy.present) {
+        rule->eval_policy.present || rule->algebra.present) {
         if (status) *status = CETTA_LD_PARSER_PACK_V1_OUTSIDE_FRAGMENT;
         return ldpp_error(error, error_size,
                           "grammar row is outside the first-order parser fragment");
@@ -1291,9 +1293,18 @@ bool cetta_language_def_parser_pack_v1_compile_source(
         if (status) *status = CETTA_LD_PARSER_PACK_V1_MALFORMED_PROFILE;
         goto done;
     }
-    if (!cetta_deterministic_equation_plan_v1_load_inputs(
+    bool loaded;
+    if (compiler_source == cetta_ldpp_compiler_v1_source && compiler_source_len == cetta_ldpp_compiler_v1_source_len)
+        loaded = cetta_deterministic_equation_plan_v1_restore(
+            profile->tokens ? cetta_ldpt_compiler_v1_program : cetta_ldpp_compiler_v1_program,
+            profile->tokens ? cetta_ldpt_compiler_v1_program_len : cetta_ldpp_compiler_v1_program_len,
+            "parser-compiler-v1", &ldpp_vocabulary, false, &plan, error_buf, error_buf_size);
+    else loaded = cetta_deterministic_equation_plan_v1_load_inputs(
             source_inputs, profile->tokens ? 2u : 1u, &ldpp_vocabulary, &plan, &plan_status,
-            error_buf, error_buf_size)) {
+            error_buf, error_buf_size);
+    if (!loaded) {
+        /* Restoring a built-in image has no source admission status. */
+        if (compiler_source == cetta_ldpp_compiler_v1_source) plan_status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
         if (status) *status = plan_status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
             ? CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT
             : CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;

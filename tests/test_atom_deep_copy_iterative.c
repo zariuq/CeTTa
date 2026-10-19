@@ -741,6 +741,57 @@ static void check_map(Arena *source, Arena *destination) {
 #endif
 }
 
+typedef struct {
+    unsigned releases;
+} SessionInventoryProbe;
+
+static void release_session_inventory(void *value) {
+    SessionInventoryProbe *probe = value;
+    assert(probe->releases == 0u);
+    probe->releases++;
+}
+
+static void check_session_companion_cleanup(Arena *destination) {
+    static const int first_kind = 1, second_kind = 2;
+    for (unsigned fail = 0u; fail < 2u; ++fail) {
+        Arena nursery;
+        arena_init(&nursery);
+        Atom *retained = atom_int(&nursery, 11);
+        ArenaMark mark = arena_mark(&nursery);
+        Atom *young = atom_expr2(&nursery, retained, atom_int(&nursery, 23));
+        SessionInventoryProbe first = {0}, second = {0}, rejected = {0};
+        AtomDeepCopySession *session = atom_deep_copy_session_new(destination);
+        assert(session != NULL);
+        assert(atom_deep_copy_session_forward_region(session, &nursery, mark));
+        assert(!atom_deep_copy_session_forward_region(session, &nursery, mark));
+        assert(atom_deep_copy_session_install_inventory(session, &first_kind,
+            &first, release_session_inventory, NULL));
+        assert(atom_deep_copy_session_install_inventory(session, &second_kind,
+            &second, release_session_inventory, NULL));
+        assert(!atom_deep_copy_session_install_inventory(session, &first_kind,
+            &rejected, release_session_inventory, NULL));
+        assert(atom_deep_copy_session_inventory(session, &first_kind) == &first);
+        if (fail) {
+            assert(atom_deep_copy_session_copy(session, NULL) == NULL);
+            assert(atom_deep_copy_session_failed(session));
+        } else {
+            Atom *copy = atom_deep_copy_session_copy(session, young);
+            assert(copy && atom_eq(copy->expr.elems[0], retained));
+            assert(copy->expr.elems[1]->kind == ATOM_GROUNDED);
+            assert(copy->expr.elems[1]->ground.gkind == GV_INT);
+            assert(copy->expr.elems[1]->ground.ival == 23);
+        }
+        atom_deep_copy_session_free(session);
+        assert(first.releases == 1u && second.releases == 1u);
+        assert(rejected.releases == 0u);
+        arena_reset(&nursery, mark);
+        assert(retained->kind == ATOM_GROUNDED &&
+               retained->ground.gkind == GV_INT && retained->ground.ival == 11);
+        arena_free(&nursery);
+    }
+    atom_deep_copy_session_free(NULL);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -768,6 +819,7 @@ int main(void) {
     check_copy_retained_owner();
     check_copy_arena_map();
     check_map(&source, &destination);
+    check_session_companion_cleanup(&destination);
 
     /* A name in a reusable buffer is read by its spelling, not its address
      * (atom_is_symbol_named); atom_is_symbol is for static names. */
@@ -800,6 +852,15 @@ int main(void) {
                                    colliding_names[(i + 1u) % 3u]));
         }
     }
+    /* A generic symbol predicate also accepts mutable names. Unlike a
+       literal constructor, it must not cache the buffer's address. */
+    char mutable_name[64];
+    strcpy(mutable_name, colliding_names[0]);
+    assert(atom_is_symbol(colliding_symbols[0], mutable_name));
+    strcpy(mutable_name, colliding_names[1]);
+    assert(atom_is_symbol(colliding_symbols[1], mutable_name));
+    assert(!atom_is_symbol(colliding_symbols[0], mutable_name));
+    assert(!atom_is_symbol(atom_int(&source, 1), mutable_name));
     SymbolTable other_symbols;
     symbol_table_init(&other_symbols);
     (void)symbol_intern_cstr(&other_symbols, "different-table-prefix");

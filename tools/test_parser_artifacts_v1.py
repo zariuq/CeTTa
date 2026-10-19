@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOST_ENDPOINTS = {
     "he": ("he@0.0.1", "extended"),
     "petta": ("petta@1.0.6", "extended"),
+    "petta-1.1": ("petta@1.1", None),
     "prime": ("prime@0.0.1", None),
 }
 

@@ -98,6 +98,14 @@ struct BindingsFrameIndex {
 
 bool bindings_frame_index_entry_detach(
         BindingsFrameIndexEntry *entry);
+/* Retained immutable relocation images. Replacing only the backing payload
+ * leaves each view's epoch, counts, activation boundary and schema flags intact.
+ * The caller establishes equal slot inventories and unchanged logical values. */
+void bindings_frame_index_entry_hold(BindingsFrameIndexEntry *image,
+                                     const BindingsFrameIndexEntry *source);
+void bindings_frame_index_entry_drop(BindingsFrameIndexEntry *image);
+void bindings_frame_index_entry_share_payload(BindingsFrameIndexEntry *view,
+                                              const BindingsFrameIndexEntry *image);
 
 void bindings_frame_index_retain(BindingsFrameIndex *index);
 

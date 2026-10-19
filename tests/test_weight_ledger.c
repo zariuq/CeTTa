@@ -1,4 +1,5 @@
 #include "weight_ledger.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,11 +10,71 @@ static unsigned checks, failures;
     if (!(test)) { fprintf(stderr, "FAIL: %s\n", message); failures++; } \
 } while (0)
 
+static void fresh_read_storage(void) {
+    Arena producer, consumer;
+    arena_init(&producer);
+    arena_init(&consumer);
+    CettaWeightLedger empty = {0}, produced = {0};
+    const uint64_t count = 128u;
+    for (uint64_t i = 0u; i < count; i++)
+        CHECK(cetta_weight_ledger_append(&producer, &produced, i + 1u, i + 1000u,
+            atom_expr2(&producer, atom_symbol(&producer, "Coefficient"),
+                atom_int(&producer, (int64_t)(i % 3u))), &produced),
+            "fresh source factors include repeated and zero coefficient payloads");
+
+    CettaWeightLedger world = {0}, selected = {0};
+    CHECK(cetta_weight_ledger_handle(&producer, &produced, &empty, 400u,
+        &world, &selected) && world.claim_count == count && selected.length == count,
+        "one read claims the entire previously unclaimed production");
+    CHECK(selected.last == produced.last && selected.last == world.last &&
+        !selected.claims && !selected.claim_count && !produced.claims,
+        "whole-source read shares owned immutable factors with separate claim maps");
+    const CettaWeightClaim *claim = world.claims;
+    for (uint64_t i = count; i > 0u; i--) {
+        CHECK(claim && claim->occurrence == i && claim->handler == 400u,
+            "fresh claims preserve the existing ordered map construction");
+        claim = claim ? claim->previous : NULL;
+    }
+    CHECK(!claim, "fresh read introduces exactly one claim for every factor");
+    CHECK(!cetta_weight_ledger_claims_conflict(&world, &world),
+        "the same immutable claim map cannot conflict with itself");
+    CettaWeightLedger extended = {0};
+    CHECK(cetta_weight_ledger_append(&producer, &world, count + 1u, 2000u,
+        atom_int(&producer, 7), &extended) && extended.claims == world.claims &&
+        !cetta_weight_ledger_claims_conflict(&world, &extended) &&
+        !cetta_weight_ledger_claims_conflict(&extended, &world),
+        "fresh production preserves compatibility of its inherited shared claim map");
+    CettaWeightLedger later = {0}, unit = {0};
+    CHECK(cetta_weight_ledger_handle(&producer, &world, &empty, 500u, &later, &unit) &&
+        !unit.length && cetta_weight_ledger_equal(&later, &world),
+        "later observations cannot select any already claimed factor");
+
+    CettaWeightLedger promoted = {0}, detached = {0};
+    CHECK(cetta_weight_ledger_handle(&consumer, &produced, &empty, 600u,
+        &promoted, &detached) && promoted.claim_count == count && detached.length == count,
+        "a cross-arena fresh read promotes the complete factor payload once");
+    CHECK(promoted.last != produced.last && promoted.last == detached.last &&
+        detached.owner == &consumer && !detached.claims,
+        "shared read image uses its destination arena rather than borrowing source storage");
+    arena_free(&producer);
+    const CettaWeightFactor **ordered = cetta_weight_ledger_ordered(&detached);
+    CHECK(ordered != NULL, "detached whole-source factors outlive the producer arena");
+    for (uint64_t i = 0u; ordered && i < count; i++)
+        CHECK(ordered[i]->occurrence == i + 1u && ordered[i]->dependency == i + 1000u &&
+            ordered[i]->value->kind == ATOM_EXPR && ordered[i]->value->expr.len == 2u &&
+            ordered[i]->value->expr.elems[1]->ground.ival == (int64_t)(i % 3u) &&
+            cetta_weight_ledger_handler(&promoted, i + 1u) == 600u,
+            "promotion preserves every ordered factor, duplicate payload and actual handler");
+    free(ordered);
+    arena_free(&consumer);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
+    fresh_read_storage();
     Arena source, survivor;
     arena_init(&source);
     arena_init(&survivor);

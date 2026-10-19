@@ -23,6 +23,8 @@ typedef struct {
 } PrimeReplayResourceWord;
 typedef struct {
     Arena storage;
+    /* Arena names can be reused; freshness is relative to this incarnation. */
+    uint64_t storage_initial_epoch;
     PrimeNativeOwnedTopRequest top;
     OutcomeSet pending;
     ResultSet results;
@@ -266,7 +268,7 @@ static bool prime_replay_request_policy(Space *space,Arena *arena,Atom *request,
     CettaSearchPolicySpec policy={.native_control=true,.age_share=8u,
         .work_budget=UINT64_MAX,.retain=true,.costs=true,.all=true};
     if(parse_search_policy_atom(arena,expr_arg(request,0u),&policy,NULL)!=CETTA_SEARCH_POLICY_PARSE_OK||
-        !policy.native_control||policy.work_budget!=0u||policy.cost_compact)return false;
+        !policy.native_control||policy.work_budget!=0u||policy.cost_compact||policy.cost_equations)return false;
     policy.costs=policy.retain=policy.all=true;
     if(prime_native_transaction_policy(&policy)) {
         *transaction=true;
@@ -356,7 +358,9 @@ static bool prime_replay_capsule_capture(PrimeReplayCapsule *capsule,Space *spac
         if(!prime_replay_request_policy(space,&capsule->storage,request,&capsule->transaction)) {
             capsule->refusal="ZeroInitialOwnedPolicy";return false;
         }
-        if(!prime_replay_sources_capture(&capsule->sources,space,capsule->node_limit))return false;
+        if(!prime_replay_sources_capture(&capsule->sources,space,capsule->node_limit)) {
+            capsule->refusal="SourceView";return false;
+        }
         if(capsule->transaction) {
             Space *target=resolve_space(g_registry,expr_arg(request,1u));
             if(!target||target==space){capsule->refusal="TargetAliasesImmutableSource";return false;}

@@ -212,6 +212,9 @@ typedef struct {
 #endif
 } PrimeOccurrence;
 
+/* Scope entry refreshes the linked evaluator and binding operations. */
+void prime_need_observation_policy_changed(void);
+
 typedef struct {
     PrimeNeedReceiptEventKind kind;
     uint64_t event_id;
@@ -358,6 +361,18 @@ bool prime_need_snapshot_allocate_source_argument_closure(
 bool prime_need_snapshot_allocate_persisted_closure(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#endif
+/* A cell born resolved to a ready value: the Need cell of sequencing
+ * (`return value`), allocated and demanded at once, so its origin and its
+ * cached value are the value itself. */
+bool prime_need_snapshot_allocate_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+bool prime_need_snapshot_allocate_ready_value_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 #endif
@@ -521,9 +536,26 @@ typedef struct {
  * Payload capacity covers conservative allocation/block charges; metadata
  * and destination-owner links have separate explicit bounds. */
 PrimeNeedRecording *prime_need_recording_new(PrimeNeedRecordingLimits limits);
+/* After its writers have joined, end this observer's write authority.
+ * Existing roots remain readable; borrowed carriers cannot extend the diary.
+ * New recording requires a new group. This does not reclaim shared storage. */
+void prime_need_recording_seal(PrimeNeedRecording *recording);
+/* End the recorder's observation. Borrowed carriers become absent; explicit
+ * readers retain their own readable payload until their arena retires. The
+ * caller owns the quiescent recorder and releases its reference separately. */
+void prime_need_recording_forget(PrimeNeedRecording *recording);
 void prime_need_recording_retain(void *recording);
 void prime_need_recording_release(void *recording);
+void prime_need_recording_carrier_retain(void *recording);
+void prime_need_recording_carrier_release(void *recording);
+/* Consume one payload owner and return one carrier owner, preserving the
+ * control block for existing borrowed handles. Adoption transfers that
+ * carrier owner into a newly prepared recorder's predecessor chain. */
+void prime_need_recording_demote(PrimeNeedRecording *recording);
+void prime_need_recording_adopt_previous(PrimeNeedRecording *recording,
+    PrimeNeedRecording *previous);
 void prime_need_recording_storage(const void *recording, CettaStorageCensus *census);
+void prime_need_recording_carrier_storage(const void *recording, CettaStorageCensus *census);
 PrimeNeedRecordingStatus prime_need_recording_status(const PrimeNeedRecording *recording);
 /* A failed reservation leaves both the captured receipt and output intact.
  * Only a seed from this owner is accepted; earlier external histories need
@@ -536,7 +568,16 @@ bool prime_need_recording_reserve(PrimeNeedRecording *recording,
 bool prime_need_recording_reserve_growing(PrimeNeedRecording *recording,
     const PrimeNeedReceipt *seed, size_t node_quantum, size_t byte_quantum,
     PrimeNeedReceipt *out);
+/* A reader sets receipt.owner to its retaining arena. A borrowed carrier's
+ * owner remains its slice arena. Carrying never weakens an acquired reader;
+ * neither operation can restore a revoked reader or erased borrowed view. */
 bool prime_need_recording_promote(Arena *dst, PrimeNeedReceipt *receipt);
+bool prime_need_recording_promote_carrier(Arena *dst, PrimeNeedReceipt *receipt);
+bool prime_need_recording_readable(const PrimeNeedReceipt *receipt);
+bool prime_need_recording_erased(const PrimeNeedReceipt *receipt);
+bool prime_need_recording_audit_receipt(PrimeNeedArenaAudit *audit,
+    const PrimeNeedReceipt *receipt);
+bool prime_need_recording_excludes_arena(const PrimeNeedReceipt *receipt, const Arena *forbidden);
 bool prime_need_recording_merge(PrimeNeedReceipt *dst, const PrimeNeedReceipt *src);
 /* Dynamic allocation authority is separate from immutable captured roots.
  * A present scope with an empty slice silences recording after refusal;
@@ -546,6 +587,9 @@ typedef struct {
     const PrimeNeedReceipt *previous;
     bool entered;
 } PrimeNeedRecordingScope;
+/* An optional host hook may cache its execution policy after a scope change.
+ * The host must not reenter or mutate the scope service from this hook.
+ * Ordinary execution sends no notifications; standalone Need has no host. */
 void prime_need_recording_enter(PrimeNeedRecordingScope *scope,
     const PrimeNeedReceipt *slice);
 void prime_need_recording_leave(PrimeNeedRecordingScope *scope);
@@ -638,6 +682,8 @@ bool prime_need_recording_copy_enclosing_owner(PrimeNeedRecordingCopy *copy,
     const Arena *source, Arena *image);
 bool prime_need_recording_copy_with_session(Arena *dst,
     AtomDeepCopySession *session, PrimeNeedReceipt *receipt);
+bool prime_need_recording_copy_carrier_with_session(Arena *dst,
+    AtomDeepCopySession *session, PrimeNeedReceipt *receipt);
 
 static inline void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
     prime_need_branch_state_init(receipt);
@@ -645,16 +691,20 @@ static inline void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
 bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt);
 static inline bool prime_need_receipt_present(
     const PrimeNeedReceipt *receipt) {
-    return prime_need_branch_state_present(receipt);
+    return prime_need_branch_state_present(receipt) &&
+        (!receipt->recording || prime_need_recording_readable(receipt));
 }
 static inline bool prime_need_receipt_has_events(
     const PrimeNeedReceipt *receipt) {
-    return prime_need_branch_state_has_events(receipt);
+    return prime_need_branch_state_has_events(receipt) &&
+        (!receipt->recording || prime_need_recording_readable(receipt));
 }
 static inline bool prime_need_receipt_is_ancestor(
     const PrimeNeedReceipt *ancestor,
     const PrimeNeedReceipt *descendant) {
-    return prime_need_branch_state_is_ancestor(ancestor, descendant);
+    if (!prime_need_receipt_has_events(ancestor)) return true;
+    return prime_need_receipt_has_events(descendant) &&
+        prime_need_branch_state_is_ancestor(ancestor, descendant);
 }
 static inline bool prime_need_receipt_compatible(
     const PrimeNeedReceipt *left, const PrimeNeedReceipt *right) {
@@ -662,13 +712,14 @@ static inline bool prime_need_receipt_compatible(
         return true;
     return prime_need_branch_state_compatible(left, right);
 }
+/* Scope entry selects the actual merge operation. The ordinary operation
+ * still preserves recording data carried by either value, without consulting
+ * the current recorder. An empty scoped reservation keeps its refusal policy. */
+typedef bool (*PrimeNeedReceiptMerge)(PrimeNeedReceipt *, const PrimeNeedReceipt *);
+extern _Thread_local PrimeNeedReceiptMerge prime_need_receipt_merge_operation;
 static inline bool prime_need_receipt_merge(
     PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
-    if (g_prime_need_recording_scope)
-        return prime_need_recording_merge_scoped(dst, src);
-    if ((dst && dst->recording) || (src && src->recording))
-        return prime_need_recording_merge(dst, src);
-    return prime_need_branch_state_merge(dst, src);
+    return prime_need_receipt_merge_operation(dst, src);
 }
 static inline bool prime_need_receipt_promote(
     Arena *dst, PrimeNeedReceipt *receipt) {
@@ -711,16 +762,47 @@ static inline bool prime_need_receipt_promote_suffix_with_session(
     return prime_need_branch_state_promote_suffix_with_session(
         dst, forbidden, copy_session, receipt);
 }
+/* Internal execution carries handles, rather than owning an observer's
+ * notes. A previously acquired reader keeps that role through transport. */
+static inline bool prime_need_receipt_carry_with_session(Arena *dst,
+    AtomDeepCopySession *session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(session, dst)) return false;
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote_carrier(dst, receipt);
+    return prime_need_branch_state_promote_with_session(dst, session, receipt);
+}
+static inline bool prime_need_receipt_copy_carrier_with_session(Arena *dst,
+    AtomDeepCopySession *session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(session, dst)) return false;
+    if (receipt && receipt->recording)
+        return prime_need_recording_copy_carrier_with_session(dst, session, receipt);
+    return prime_need_branch_state_copy_with_session(dst, session, receipt);
+}
+static inline bool prime_need_receipt_carry_suffix_with_session(Arena *dst,
+    const Arena *forbidden, AtomDeepCopySession *session, PrimeNeedReceipt *receipt) {
+    if (!atom_deep_copy_session_targets(session, dst)) return false;
+    if (receipt && receipt->recording)
+        return prime_need_recording_promote_carrier(dst, receipt);
+    return prime_need_branch_state_promote_suffix_with_session(dst, forbidden, session, receipt);
+}
 static inline bool prime_need_receipt_excludes_arena(
     const PrimeNeedReceipt *receipt, const Arena *forbidden) {
+    if (!prime_need_branch_state_has_events(receipt)) return true;
+    if (receipt->recording)
+        return prime_need_recording_excludes_arena(receipt, forbidden);
     return prime_need_branch_state_excludes_arena(receipt, forbidden);
 }
 static inline bool prime_need_arena_audit_receipt(
     PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt) {
+    if (!prime_need_branch_state_has_events(receipt)) return true;
+    if (receipt->recording) return prime_need_recording_audit_receipt(audit, receipt);
     return prime_need_arena_audit_branch_state(audit, receipt);
 }
 static inline bool prime_need_receipt_equal(
     const PrimeNeedReceipt *left, const PrimeNeedReceipt *right) {
+    bool has_left = prime_need_receipt_has_events(left);
+    bool has_right = prime_need_receipt_has_events(right);
+    if (!has_left || !has_right) return !has_left && !has_right;
     return prime_need_branch_state_equal(left, right);
 }
 bool prime_need_receipt_observe_cell(

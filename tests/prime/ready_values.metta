@@ -1,3 +1,5 @@
+!(import! &self str)
+
 ; Ready values.  `return` hands back its datum unevaluated, a native
 ; operation reports a completed value, and an observation (collapse,
 ; collect, select, once, fold, fold-by-key) publishes the answers it
@@ -52,6 +54,21 @@
    (let ((k $s)) ($g) (consume $s)))
 !(let $r (foldl-atom (1 2) 0 $acc $x (mk $x)) (consume $r))
 !(foldl-atom (1 2) (mk 5) $acc $x (let $v (consume $acc) (mk $v)))
+; Positive: native results are ready data, through the public wrappers.
+(= (Utf8DecoderV1 $policy $tail $seen) (Hostile $policy))
+!(let $decoder (str:utf8-new strict)
+   (let $decoded (str:utf8-feed $decoder "ok" True)
+     (Decoded $decoded)))
+!(case (str:utf8-feed (str:utf8-new strict) "ab" False)
+   (((Utf8DecodedV1 $text $state)
+     (let $rest (str:utf8-feed $state "c" True) (Rest $text $rest)))))
+(= (feed-rest (Utf8DecodedV1 $text $state)) (str:utf8-feed $state "c" True))
+!(feed-rest (str:utf8-feed (str:utf8-new strict) "ab" False))
+!(let $decoded (str:utf8-feed (str:utf8-new strict) "ab" False)
+   (unify $decoded (Utf8DecodedV1 $text $state)
+     (str:utf8-feed $state "c" True)
+     no-match))
+
 
 ; Explicit evaluation runs a ready value as code; a lazy parameter's own
 ; computation runs once.
@@ -109,3 +126,35 @@
 !(let $s (mk 14) (ignore-second $s (ready-values:bump)))
 !(let $s (mk 15) (keep-syntax (ready-values:bump)))
 !(get-state &ready-values:count)
+
+; Equality of fields observes ready data without running its constructor.
+(= (ready-pair-same) (function (return (ReadyDuo (Box 51 1) (Box 51 1)))))
+(= (ready-pair-other) (function (return (ReadyDuo (Box 51 1) (Box 52 1)))))
+(= (ready-pair-check (ReadyDuo $x $x)) same)
+(= (ready-pair-check (ReadyDuo $x $y)) different)
+!(ready-pair-check (ready-pair-same))
+!(ready-pair-check (ready-pair-other))
+
+; Logical refinement can finish an open source field. The same syntax
+; explicitly returned as data keeps its completed role after refinement.
+(= (ready-field (ReadyField $x)) $x)
+(= (ready-refine $x) (unify $x 5 ok no))
+!(let $p (ReadyField (+ $y 1))
+   (let $r (ready-refine $y) (ready-field $p)))
+!(let $p (function (return (ReadyField (+ $y 1))))
+   (let $r (ready-refine $y) (ready-field $p)))
+
+; A completed syntax field keeps its binder and body visible to patterns;
+; observing the field does not execute its body.
+(= (ready-lambda-fields (: (lam $v (ReadyAnd $f $g)) (-> $a Bool)))
+   (LambdaFields $a))
+!(ready-lambda-fields (: (lam $x (ReadyAnd (F $x) (G $x))) (-> UInt Bool)))
+!(ready-lambda-fields
+   (function (return (: (lam $x (ReadyAnd (F $x) (G $x))) (-> UInt Bool)))))
+
+; Extracting an open field before refining its variables preserves the
+; distinction between a returned datum and an ordinary computation.
+!(let $p (function (return (ReadyField (+ $y 1))))
+   (let $v (ready-field $p) (let $r (ready-refine $y) $v)))
+!(let $p (ReadyField (+ $y 1))
+   (let $v (ready-field $p) (let $r (ready-refine $y) $v)))

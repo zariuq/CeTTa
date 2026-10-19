@@ -1,0 +1,122 @@
+Native MM0 in CeTTa
+==================
+
+Import mm0kernel in HE or PeTTa. The native verifier implements the supplied
+MM0 specification, its explicit conversion witnesses, and the MMB proof
+format. It does not search for proofs or infer the truth of input axioms.
+
+Authority and lifetime
+----------------------
+
+mm0:theory returns an opaque native seal. Holding it grants admission rights:
+the holder may declare sorts, constructors, definitions and axioms, and submit
+theorem proofs. A theorem capsule retains that theory but exposes no operation
+that recovers its admission capability. Give clients theorem capsules when
+they should inspect or cite established results without extending the theory.
+
+The private MM0 brand and payload-kind tags are never MeTTa data. Values print
+as (Sealed mm0). An ordinary expression with that spelling or a public seal
+with that nickname has no MM0 authority. Equality, matching and space removal
+use capsule identity. Two lookups of one declaration create distinct capsules;
+mm0:same-declaration compares their checked origin and declaration index.
+
+Copying a capsule retains its owner. The final theorem release can free its
+theory after the original theory capsule has gone away. Operations on one
+theory are serialized, and input arenas must remain live during a call.
+Serialization refuses capsules, including capsules nested in other data.
+Private brand creation caches only success: a temporary allocation failure
+can be retried without changing any successfully established brand identity.
+
+Shared seals may wrap a live space or a theorem. A key-locked service checks
+its current grant on each service use; it does not revoke authority already
+returned to an owner. A delegated snapshot reader returns only portable data
+and refuses nested theorem capsules or live references.
+
+Public operations
+-----------------
+
+  (mm0:theory)
+  (mm0:load-mmb THEORY MMB-PATH SPECIFICATION-PATH)
+  (mm0:check-mmb MMB-PATH SPECIFICATION-PATH)
+  (mm0:declare THEORY DECLARATION)
+  (mm0:prove THEORY STATEMENT DUMMIES ROWS ROOT)
+  (mm0:theorem THEORY NAME)
+  (mm0:statement THEOREM)
+  (mm0:same-declaration THEOREM THEOREM)
+  (mm0:stats THEORY)
+  (mm0:budget THEORY STEPS)
+  (mm0:live)
+
+check-mmb returns a verdict and declaration counts as data. load-mmb installs
+the verified declarations into an empty theory. These paths check the .mmb
+against its .mm0 specification; an MMB without that specification is not an
+accepted theory. statement returns ordinary declaration data, not authority.
+
+Use explicit let bindings for computed values before passing them to held
+data arguments. The common library has generated PeTTa and Prime spellings;
+the HE and PeTTa integration suites exercise the public operations.
+
+Representative declaration data
+--------------------------------
+
+  (sort object (strict))
+  (sort wff (strict provable))
+  (term equal ((var x object) (var y object)) (wff ()))
+  (axiom equality-reflexivity ((var x object)) () (equal x x))
+
+The general forms also include (bound x SORT), (var P SORT (x ...)),
+(dummy d SORT), and (def NAME BINDERS (SORT DEPENDENCIES) DUMMIES BODY).
+A theorem statement is (theorem NAME BINDERS HYPOTHESES CONCLUSION).
+
+A proof graph consists of (Mm0Row ADDRESS REQUEST (PARENT ...)) rows.
+Requests include (hyp INDEX), (thm NAME (ARGUMENT ...)), and explicit
+conversion. Parents are ordered and may repeat. The checker validates the
+actual instantiated premises and the claimed conclusion. Changing a claim
+does not change what a retained proof establishes.
+
+Checked conversion values in the C API are builder-issued references. Their
+endpoints are obtained through accessors; a caller cannot supply arbitrary
+endpoint fields as a conversion proof. The builder rejects foreign expression
+owners and unknown conversion references. MMB allocation identity remains
+separate from semantic expression interning: merging equal MMB allocations
+can change Save/Ref and conversion verdicts.
+
+Failure and publication
+-----------------------
+
+Calls return mm0:refused or mm0:error with an explicit status and reason.
+REFUSED denotes a completed failed check. MALFORMED, NOMEM, CAPACITY, LIMIT,
+INTERRUPTED and unsupported operations remain distinguishable. None of these
+resource or format outcomes is a theorem of logical negation.
+
+The default budget is unlimited. A configured step budget charges expression
+work, proof rows, conversion witnesses and admission traversal; interruption
+is polled during long runs. The semantic C builder supports resumption after
+LIMIT or INTERRUPTED. Public MeTTa calls are atomic and currently expose no
+retained cursor or incremental MMB session.
+
+The adapter reserves the result capsule before admitting a theorem or axiom.
+On failure the reservation is inert, its owner reference is released, and no
+declaration is published. Commit has no remaining allocation step.
+
+Qualification and boundaries
+----------------------------
+
+  make test-native-mm0-core test-native-mm0-host test-native-mm0-bridge
+  make test-native-mm0-sanitized test-native-mm0-publication
+  make test-native-mm0-bridge-sanitized
+
+Controls cover non-injective dummy matching, declaration dependencies,
+conversion ownership, budget accounting, atomic admission, failed publication,
+retained owners, concurrent callers, and rejection of fabricated authority.
+The TPTP integration example in tests/megalodon/integration checks one equality
+interpretation independently in HOL, MM0 and Megalodon. Its MM0 rule package
+explicitly includes equality reflexivity; parsing adds no axioms.
+
+The Lean semantic kernel, graph checker and seal policy retain their own
+source contracts. They are not a refinement proof of the C implementation.
+The bundled upstream hol.mm0 presentation is not itself a checked translation
+to a native HOL Light theorem. That crossing requires a declaration and proof
+interpretation, with its source assumptions preserved. Native .mg parsing,
+general cross-kernel proof transport, retained MM0 stepping, and MMB export
+are separate integration work.

@@ -35,7 +35,8 @@ static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Res
 #endif
         }
     }
-    PrimeNeedActiveGuard active=prime_need_active_enter_captured(&caller),sealed={0};
+    PrimeNeedActiveGuard active,sealed={0};
+    prime_need_active_enter_captured(&active,&caller);
     PrimeNeedSnapshot caller_need=g_prime_need_active;
     PrimeNeedBranchState caller_branch=g_prime_need_branch_state_active;
     CettaWeightLedger caller_weights=g_prime_weight_active;
@@ -43,7 +44,8 @@ static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Res
     PrimeNeedReceipt caller_receipt=g_prime_need_receipt_active;
 #endif
     /* Ordinary clients still overlay only present components. */
-    PrimeNeedActiveGuard overlay=prime_need_active_enter(&empty);
+    PrimeNeedActiveGuard overlay;
+    prime_need_active_enter(&overlay,&empty);
     assert(!memcmp(&caller_need,&g_prime_need_active,sizeof(caller_need)));
     assert(!memcmp(&caller_branch,&g_prime_need_branch_state_active,sizeof(caller_branch)));
     assert(!memcmp(&caller_weights,&g_prime_weight_active,sizeof(caller_weights)));
@@ -52,7 +54,7 @@ static void checkpoint_scope_run(PrimeNativeControl *control,uint64_t budget,Res
 #endif
     assert(g_prime_need_logical_env==&empty);
     prime_need_active_leave(&overlay);
-    if(mode==3u)sealed=prime_need_active_enter_captured(&empty);
+    if(mode==3u)prime_need_active_enter_captured(&sealed,&empty);
     PrimeEvalStackDriver caller_driver={.arena=caller_arena,.nested=true};
     PrimeEvalStackDriver *old_driver=g_prime_eval_stack_driver;
     PrimePrefixDemand old_prefix=g_prime_prefix_demand;
@@ -215,7 +217,8 @@ static void checkpoint_captured_scope_cases(void) {
     *bindings_weight_mut(&inherited)=ledger;
    }
   }
-  PrimeNeedActiveGuard initial=prime_need_active_enter_captured(&inherited);
+  PrimeNeedActiveGuard initial;
+  prime_need_active_enter_captured(&initial,&inherited);
   PrimeNativeControl *control=malloc(sizeof(*control));assert(control);
   CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u,.work_budget=UINT64_MAX,.costs=true};
   assert(prime_native_control_init(control,&space,&syntax,parse(&syntax,"(Pair 4 4)"),-1,true,

@@ -275,6 +275,17 @@ static bool premise_is_map(const CettaLdPremiseV1 *mapped,
                        &source->as.for_all.parameter) &&
             premise_is_map(mapped->as.for_all.body,
                            source->as.for_all.body, prefix);
+    case CETTA_LD_PREMISE_SCOPED_STEP_V1:
+        if (mapped->as.scoped_step.binder_len != source->as.scoped_step.binder_len ||
+            !type_expr_is_map(&mapped->as.scoped_step.result_type,
+                &source->as.scoped_step.result_type, prefix) ||
+            !pattern_is_map(&mapped->as.scoped_step.source, &source->as.scoped_step.source, prefix) ||
+            !pattern_is_map(&mapped->as.scoped_step.target, &source->as.scoped_step.target, prefix))
+            return false;
+        for (index = 0u; index < source->as.scoped_step.binder_len; ++index)
+            if (!type_expr_is_map(&mapped->as.scoped_step.binders[index],
+                    &source->as.scoped_step.binders[index], prefix)) return false;
+        return true;
     }
     return false;
 }
@@ -393,8 +404,31 @@ static bool load_language(const char *path,
             core, wire, 800000u, &core_status, error, error_size);
 }
 
+static void scoped_comparison_gate(TestCounts *counts) {
+    CettaLdTypeExprV1 sort = {.kind = CETTA_LD_TYPE_BASE_V1,
+        .as.base = {(uint8_t *)"T", 1u}};
+    CettaLdTypeExprV1 renamed = {.kind = CETTA_LD_TYPE_BASE_V1,
+        .as.base = {(uint8_t *)"L.T", 3u}};
+    CettaLdPremiseV1 source = {.kind = CETTA_LD_PREMISE_SCOPED_STEP_V1,
+        .as.scoped_step = {.result_type = sort,
+            .source = {.kind = CETTA_LD_PATTERN_FVAR_V1, .as.fvar = {(uint8_t *)"x", 1u}},
+            .target = {.kind = CETTA_LD_PATTERN_FVAR_V1, .as.fvar = {(uint8_t *)"y", 1u}}}};
+    CettaLdPremiseV1 mapped = source;
+    mapped.as.scoped_step.result_type = renamed;
+    (void)expect(counts, premise_is_map(&mapped, &source, "L."),
+        "scoped comparison transports the result sort without renaming variables");
+    source.as.scoped_step.binders = &sort; source.as.scoped_step.binder_len = 1u;
+    mapped.as.scoped_step.binders = &renamed; mapped.as.scoped_step.binder_len = 1u;
+    (void)expect(counts, premise_is_map(&mapped, &source, "L."),
+        "scoped comparison transports bound sorts");
+    mapped.as.scoped_step.binder_len = 0u;
+    (void)expect(counts, !premise_is_map(&mapped, &source, "L."),
+        "scoped comparison refuses erased binding structure");
+}
+
 int main(void) {
     TestCounts counts = {0};
+    scoped_comparison_gate(&counts);
     CettaOperationalLanguageDefV1 external_wire;
     CettaOperationalLanguageDefV1 radix_wire;
     CettaOperationalLanguageDefV1 joint_wire;

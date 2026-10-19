@@ -2247,6 +2247,10 @@ def owned_alternatives(gate):
 
 def authored_programs(gate):
     """Complete authored files cross equation, match and observer boundaries."""
+    def weighted_rows(trees):
+        return [value for tree in trees for value in tree
+                if isinstance(value,list) and value and value[0]=='Weighted']
+
     for file,expected in (
         ('weighted_routes.metta',[[['Route','a','b','d'],6,[2,3]],
             [['Route','a','b','d'],6,[2,3]],[['Route','a','c','d'],15,[5,3]]]),
@@ -2254,8 +2258,7 @@ def authored_programs(gate):
             [['Pair',2,2],6,[3,2]],[['Pair',5,5],35,[7,5]]]),
     ):
         trees,obs=gate.run_file(file,authored_fixture(gate, file))
-        ordinary=[v for tree in trees for v in tree
-                  if isinstance(v,list) and v and v[0]=='Weighted']
+        ordinary=weighted_rows(trees)
         if file=='shared_graded_identity.metta':
             assert contribution(ordinary[0])==[7,49,[7,7]],ordinary
             ordinary=ordinary[1:]
@@ -2268,6 +2271,34 @@ def authored_programs(gate):
         gate.passed_case(file+' preserves whole authored ordinary and controlled contributions')
 
     pattern='(Observation $p (satisfied $s) (closed $c) (residual $r) (work $w) (status $t))'
+    source=authored_fixture(gate,'shared_graded_identity.metta').read_text()
+    body=read('(paired (graded-attempt))')
+    expected=[[['Pair','V','V'],3,[3]],[['Pair','V','V'],5,[5]]]
+    trees,_=gate.run('failed graded alternative before equal shared answers',source+'!'+body)
+    actual=weighted_rows(trees)[-len(expected):]
+    assert bag([contribution(value) for value in actual])==bag(expected),actual
+    for name,factors in (('plain-attempt',[]),('unit-attempt',[1])):
+        trees,_=gate.run(name+' source annotation identity',source+'!'+read(f'({name})'))
+        actual=weighted_rows(trees)[-1:]
+        assert [contribution(value) for value in actual]==[['V',1,factors]],actual
+    gate.passed_case('an absent annotation differs from an explicit unit factor')
+    for width in (1,2):
+        extra=f'(workers {width})'
+        _,whole=gate.run(f'failed graded alternative whole/{width}',source+
+            f'!(select 7 {control(2000,extra=extra)} {body})')
+        final=whole[-1]
+        assert final['closed']=='True' and bag([contribution(value) for value in final['values']])==bag(expected),final
+        assert len({value[3][1][0][1] for value in final['values']})==2,final
+        for cut in (0,1,7,19,71):
+            trees,parts=gate.run(f'failed graded alternative cut{cut}/{width}',source+
+                f'!(let {pattern} (select 7 {control(cut,extra=extra)} {body}) '
+                f'(Split $p (select 7 {control(2000-cut,extra=extra)} $r)))')
+            values=trees[-1][0][1]+parts[-1]['values']
+            assert provenance_packet(values)==provenance_packet(final['values']),(width,cut,values,final)
+            for field in ('work','closed','satisfied','status'):
+                assert parts[-1][field]==final[field],(width,cut,field,parts[-1],final)
+        gate.passed_case(f'failed production stays out of equal shared answer grades through five cuts/{width}')
+
     for style in ('equals-w','trailing-where'):
         def row(lhs,rhs,grade):
             return (f'(=w {lhs} {rhs} {grade}) ' if style=='equals-w'

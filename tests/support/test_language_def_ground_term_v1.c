@@ -223,6 +223,23 @@ static void typed_pattern_codec_gates(
         "typed Pattern codec preflight checks the reachable type graph");
     if (string_type)
         string_type->carrier = saved_string_carrier;
+    {
+        const char bytes[] = {'a', '\0', 'b'};
+        CettaLdPatternV1 string_pattern;
+        cetta_ld_pattern_v1_init(&string_pattern);
+        Atom *value = atom_string_n(&source_pool.arena, bytes, sizeof(bytes));
+        bool encoded_exact = cetta_language_def_ground_term_v1_to_pattern(
+            language, "String", value, &string_pattern, 16u, 20000u,
+            &status, error, sizeof(error)) && string_pattern.as.apply.head.len == sizeof(bytes) &&
+            !memcmp(string_pattern.as.apply.head.bytes, bytes, sizeof(bytes));
+        (void)expect(counts, encoded_exact, "counted string Pattern encoding retains embedded NUL");
+        Atom *decoded = encoded_exact ? cetta_language_def_ground_term_v1_from_pattern(
+            &result_pool.arena, language, "String", &string_pattern, 16u, 20000u,
+            &status, error, sizeof(error)) : NULL;
+        (void)expect(counts, decoded && atom_string_len(decoded) == sizeof(bytes) && atom_eq(value, decoded),
+            "counted string Pattern decoding retains the complete original value");
+        cetta_ld_pattern_v1_free(&string_pattern);
+    }
     error[0] = '\0';
     (void)expect(
         counts,
@@ -955,6 +972,16 @@ static void mixed_profile_gates(TestCounts *counts) {
     }
     (void)expect(counts, budget_ok && saw_success && saw_incomplete,
         "mixed-profile admission budgets never turn an unrelated capability into rejection");
+    types[0].carrier = CETTA_LD_CARRIER_BUILTIN_STRING_V1;
+    (void)expect(counts, MIX_ADMIT("Nat", s, 10000u),
+        "builtin carrier retains recursive declared constructor terms");
+    (void)expect(counts, MIX_ADMIT("Nat", pool_string(&input, "Z"), 10000u),
+        "builtin carrier also admits its grounded leaves");
+    (void)expect(counts, !MIX_ADMIT("Nat", pool_int(&input, 0), 10000u) &&
+        status == CETTA_LD_GROUND_TERM_V1_TYPE_MISMATCH,
+        "builtin carrier does not silently coerce integer payloads");
+    (void)expect(counts, !MIX_CODEC("Nat") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "admission does not imply a reversible untagged builtin-plus-constructor codec");
     cetta_ld_pattern_v1_free(&pattern);
     pool_free(&input); pool_free(&output);
 #undef MIX_PROJECT

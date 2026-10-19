@@ -127,75 +127,35 @@ static void prime_replay_sources_free(PrimeReplaySources *sources) {
     free(sources->spaces);free(sources->reads);*sources=(PrimeReplaySources){0};
 }
 
-/* Forgetting transports an owned packet without executing a source step.
- * It needs the same runtime-owner domain as checkpoint transport, not pure
- * source admission or a complete replay recording. The limit bounds owner
- * and global-domain inspection; it is not a byte or elapsed-time budget. */
+/* Release this observer without copying its computation. Real ownership of
+ * the handle and quiescent writer state authorize the transition. Incidental
+ * receipt handles keep only their control blocks; independent readers keep
+ * their own payload leases. The positive limit admits one observer transition,
+ * not a traversal of executable worlds or a replay check. */
 static CettaContinuationStatus prime_checkpoint_forget_recording(
     Atom *holder, size_t limit, const char **refusal) {
-    CettaContinuationStatus status=CETTA_CONTINUATION_UNSUPPORTED;
-    PrimeReplaySources sources={0};
-    CettaNativeHandleUse use={0};
-    CettaPrimeCheckpointCopy *copy=NULL;
-    AtomDeepCopySession *atoms=NULL;
-    AtomDeepCopyArenaPair *pairs=NULL;
-    *refusal="InspectionLimit";
-    if(!limit||limit>SIZE_MAX/sizeof(*pairs))goto done;
-    *refusal="SourceOwner";
-    if(!cetta_native_handle_acquire_owned(g_library_context,"prime-search",holder,
-            CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) {
-        status=CETTA_CONTINUATION_DEFERRED;goto done;
+    *refusal = "InspectionLimit";
+    if (!limit) return CETTA_CONTINUATION_UNSUPPORTED;
+    CettaNativeHandleUse use = {0};
+    *refusal = "SourceOwner";
+    if (!cetta_native_handle_acquire_owned(g_library_context, "prime-search", holder,
+            CETTA_NATIVE_HANDLE_USE_EXCLUSIVE, &use))
+        return CETTA_CONTINUATION_DEFERRED;
+    PrimeNativeControl *source = cetta_native_handle_use_resource(&use);
+    CettaContinuationStatus status = CETTA_CONTINUATION_UNSUPPORTED;
+    if (!source || !source->owned_arena) {
+        *refusal = "SourceOwner";
+    } else if (!prime_native_history_quiescent(source)) {
+        *refusal = "ActiveWriter";
+        status = CETTA_CONTINUATION_DEFERRED;
+    } else {
+        bool forgotten=prime_native_history_forget_control(source);
+        assert(forgotten);(void)forgotten;
+        *refusal = NULL;
+        status = CETTA_CONTINUATION_READY;
     }
-    PrimeNativeControl *source=cetta_native_handle_use_resource(&use);
-    *refusal="SourceView";
-    if(!prime_replay_sources_capture(&sources,source->space,limit))goto done;
-    copy=cetta_prime_checkpoint_copy_new_reserved(g_library_context,holder,&status);
-    if(!copy){*refusal="CheckpointAdmission";goto done;}
-    size_t count=cetta_prime_checkpoint_copy_arena_pair_count(copy);
-    *refusal="ArenaExtent";
-    if(!count||count>=limit||count==SIZE_MAX)goto done;
-    size_t capacity=count+1u;
-    pairs=calloc(capacity,sizeof(*pairs));
-    if(!pairs){status=CETTA_CONTINUATION_CAPACITY;*refusal="Allocation";goto done;}
-    for(size_t i=0u;i<count;i++)
-        if(!cetta_prime_checkpoint_copy_arena_pair_at(copy,i,&pairs[i]))goto done;
-    Arena *persistent=sources.persistent;
-    *refusal="PersistentOwner";
-    if(source->owned_top_episode&&source->owned_top_episode->persistent!=persistent)goto done;
-    bool present=false;
-    for(size_t i=0u;i<count;i++) {
-        if(pairs[i].source!=persistent)continue;
-        if(pairs[i].destination!=persistent)goto done;
-        present=true;
-    }
-    if(!present)pairs[count++]=(AtomDeepCopyArenaPair){persistent,persistent};
-    atoms=atom_deep_copy_session_new(&copy->image->storage);
-    AtomDeepCopyGlobalInspection inspection={0};
-    *refusal="GlobalOwnerDomain";
-    if(!atoms||!atom_deep_copy_session_restrict_globals(atoms,sources.globals,limit,&inspection))goto done;
-    *refusal="ArenaMap";
-    if(!atom_deep_copy_session_set_runtime_arena_map(atoms,pairs,count))goto done;
-    *refusal="RecordingMode";
-    if(!prime_need_recording_copy_forget(atoms))goto done;
-    status=cetta_prime_checkpoint_copy_prepare(copy,atoms);
-    if(status!=CETTA_CONTINUATION_READY) {
-        *refusal=cetta_prime_checkpoint_copy_refusal(copy);goto done;
-    }
-    /* Pointer keys end before exchange can retire their source storage. */
-    atom_deep_copy_session_free(atoms);atoms=NULL;
-    *refusal="ChangedSource";
-    if(!prime_replay_sources_current(&sources)) {
-        status=CETTA_CONTINUATION_INVALIDATED;goto done;
-    }
-    status=cetta_prime_checkpoint_copy_replace(copy,&use);
-    *refusal=status==CETTA_CONTINUATION_READY?NULL:"SourceUse";
-done:
-    atom_deep_copy_session_free(atoms);
-    free(pairs);
-    cetta_prime_checkpoint_copy_free(copy);
-    prime_replay_sources_free(&sources);
-    if(use.self)(void)cetta_native_handle_use_release(&use);
-    if(*refusal&&status==CETTA_CONTINUATION_READY)status=CETTA_CONTINUATION_UNSUPPORTED;
+    bool released = cetta_native_handle_use_release(&use);
+    assert(released); (void)released;
     return status;
 }
 
@@ -213,7 +173,8 @@ static bool prime_replay_checkpoint_current(const PrimeNativeControl *control,Ar
 
 static bool prime_replay_checkpoint_complete(const PrimeNativeControl *control,
     const PrimeReplaySourceScan *scan) {
-    if(!control->cost_enabled||!control->event_cost.identity||
+    if(!control->cost_enabled||control->event_cost.equations.enabled||!control->event_cost.native_enabled||
+        !control->event_cost.identity||
         control->event_cost.identity==UINT64_MAX||control->event_cost.compact||control->event_cost.total.overflow||
         control->event_cost.total.trace_incomplete||!control->history.spec.enabled||
         !control->history.group||control->history.omitted||control->history.overflow)

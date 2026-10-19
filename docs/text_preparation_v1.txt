@@ -1,0 +1,232 @@
+Incremental text preparation
+===========================
+
+Import str for pure UTF-8 decoding, Unicode line collection and literal search.
+These operations use the existing native string table in the core C build.
+Their states are ordinary immutable values, not resource handles. The file
+reader's ownership and actual end observation remain separate responsibilities.
+
+UTF-8 decoding
+---------------
+  str:utf8-new strict|ignore
+  str:utf8-feed decoder bytes final
+
+The initial value is (Utf8DecoderV1 policy pending-prefix seen-byte-count).
+Feeding returns (Utf8DecodedV1 valid-text next-decoder). Only an incomplete
+scalar prefix, at most three bytes, survives between chunks. NUL is valid text.
+The byte count includes every supplied byte, including explicitly ignored ones.
+
+strict returns (StrRefusedV1 call (StrMalformedUtf8V1 offset)) at the first
+malformed sequence. The offset is absolute within this decoder's input pass,
+including a sequence begun in a previous chunk. ignore explicitly discards
+invalid bytes while preserving valid neighbours. It is appropriate only when
+the caller chooses that loss; do not apply it to OS filenames.
+
+final=True requests a flush of the pending prefix. It is not evidence of file
+EOF. The filesystem provider must establish end separately. An empty chunk
+with final=False retains a pending prefix and does not complete input. The
+pure decoder can be reused after a flush; it has no artificial closed state.
+
+Unicode lines
+-------------
+  str:line-new
+  str:line-segments valid-text preceding-cr
+  str:collect-lines buffer segments final
+  str:feed-lines buffer valid-text final
+  str:advance-lines buffer valid-text final
+
+line-new returns (LineBufferV1 reverse-fragments next-line preceding-cr), with
+next-line initially 1. A deliberately constructed buffer may instead start at
+any representable nonnegative line number. line-segments returns
+(LineSegmentsV1 parts next-cr), where each part is (LinePartV1 bytes complete).
+collect-lines returns (LinesCollectedV1 rows next-buffer), with each row
+(LineV1 number bytes). Lists use LNil and LCons.
+
+feed-lines fuses segmentation and collection, returning that same result.
+advance-lines executes the state-only view: it returns the next LineBufferV1
+without constructing completed line values. On valid buffers the two views
+have identical counters, CR state and unfinished prefixes. State-only
+observation intentionally omits prior completed lines; it is not evidence
+that no lines existed. It retains the unfinished line so a later value view
+can publish that line in full.
+
+The boundaries are LF, CR, CRLF, VT, FF, U+001C, U+001D, U+001E, U+0085,
+U+2028 and U+2029. CRLF contributes one boundary even across an empty chunk.
+Interior empty lines are retained; an empty input or terminal boundary creates
+no extra final line. Segment offsets on malformed text are local to that call;
+feed a strict/ignore decoder first when byte chunks may divide a scalar.
+
+Use the preceding-cr field from the current buffer for each segmentation call.
+Incomplete line fragments remain in a persistent reverse list and are joined
+once when a line completes. Ordinary collection does not rescan a growing
+prefix. Traversed cyclic fragment/part lists are refused. Forged buffered
+fragments are checked when traversed, not audited again on every feed.
+
+final=True flushes a nonempty pending line; it still does not certify OS EOF.
+Faults or interruptions need their own handling, not an invented end boundary.
+Exact full-line output requires memory proportional to the longest line, plus
+chunk output and evaluator retention. This API does not promise constant total
+memory or a filesystem snapshot.
+
+Literal matching
+----------------
+  str:find-ascii-uncased byte-text ascii-literal
+
+This returns the first matching byte offset, or (TextNotFound literal).
+The empty literal matches at zero. The pattern is literal, not regex syntax.
+Non-ASCII patterns are refused with StrAsciiLiteralRequiredV1 and a byte offset.
+
+ASCII letters match their upper/lower forms and the corresponding Unicode
+special cases U+0130, U+0131, U+017F and U+212A. This is not general Unicode
+case folding, locale-dependent matching or multi-character expansion.
+Invalid text bytes remain opaque units rather than disappearing and joining
+neighbours. Thus filename matching remains lossless. Matching uses linear
+KMP preparation/execution with storage proportional to the pattern length.
+
+Results and host boundaries
+---------------------------
+New operations report refusal as (StrRefusedV1 call detail) data. Existing
+str operations keep their historical Error interface. A refusal is not EOF,
+an empty match or an exception automatically raised by these new operations.
+
+HE and PeTTa extended pass the independent streaming and hostile-constructor
+data-handoff controls. Compute helper operands with explicit let bindings.
+The new native ABI receives an inert argument tuple and publishes completed
+values. HE wrappers use its Atom input/result declarations; PeTTa wrappers
+are mechanically generated from the same source.
+
+Ordinary host interpretation remains dialect-specific. In particular, PeTTa
+can compute function-headed patterns, and HE can interpret data placed in a
+computation position. A hostile-constructor data-handoff test does not license
+arbitrary callable patterns or observers as inert data readers.
+
+Frozen Prime passes codec/line/literal/file controls and public state handoff
+under hostile constructor equations. Completed native values and explicit
+returns retain the runtime's ready-value role across the tested calls and
+patterns; pending fields remain demands. Explicit eval and chain can run ready
+data as code. tests/prime/ready_values.metta also checks laziness, multiplicity,
+ordinary source evaluation, collapse and fold boundaries.
+
+This is bounded compatibility, not complete ready-value coverage for every
+Prime consumer. superpose can still re-evaluate elements of a returned tuple;
+collect, select, once, fold-by-key and prepared-fold publication have not been
+converted throughout. Space matching retains its existing syntax behavior.
+The inert-value shortcut uses the rules present at production; adding a
+constructor-named equation later is outside these compatibility guarantees.
+The compiled Need-heap index remains opt-in through
+CETTA_PRIME_NEED_HEAP_INDEX=1; return-heavy loops can cost more without it.
+
+Examples and qualification
+--------------------------
+tests/filesystem_v1 contains two positive and one negative example each for
+UTF-8 chunks, Unicode lines, literal search and text preparation from an owned
+file. The latter receive the file path as their first program argument.
+
+  ./cetta --lang he --profile extended \
+    tests/filesystem_v1/utf8_chunks_positive.metta
+  ./cetta --lang petta --profile extended \
+    tests/filesystem_v1/lines_crlf_positive.metta
+
+The host oracle compares with Python's incremental UTF-8 codec, splitlines and
+escaped ASCII literal re.IGNORECASE searches. Python is qualification tooling,
+not a dependency of these operations. Run the qualified HE/PeTTa host controls:
+
+  python3 tests/support/check_text_streaming_v1.py ./cetta \
+    --language he --language petta
+
+The default test-text-streaming-v1 target checks all three hosts, including
+the frozen-Prime public wrapper controls. Native controls separately
+exercise all two-byte ignore inputs at every split, Unicode boundary scalars,
+cyclic lists, a long fragmented line and arena promotion.
+
+The Lean TextLineObservation model relates scalar scanning to independently
+defined transitions and proves exact ordered chunk-composition, line counting,
+state-only/value-view agreement, idempotent final flush and separation of end,
+fault and interruption. LiteralChunkFilter proves that a crossing occurrence
+survives in a pattern-length suffix over decoded, normalized units. It does
+not prove native decoding, the C implementation or MeTTa wrappers adequate.
+
+Repository checker
+------------------
+scripts/check_precise_vocabulary.metta uses owned cursors, explicit ignore
+decoding, a chunk-seam literal filter and line observation only when needed.
+It discovers the repository from its entry file, not the current directory.
+For example:
+
+  ./cetta --no-results --lang petta --profile extended \
+    scripts/check_precise_vocabulary.metta
+
+The no-results option suppresses interpreter answer display, not the script's
+explicit stdout/stderr. Absent roots and vanished inputs are skipped. Generated
+suffixes exclude files, not directories; symbolic links to files are read,
+while directory links are not traversed. Intended unreadable files/directories
+produce a non-clean verdict rather than a silent PASS. Operational failures
+are introduced as an inability to complete checking, not as a vocabulary
+violation. The ordinary test-precise-vocabulary gate now uses the MeTTa tool
+under PeTTa extended. Python remains the independent oracle through
+test-precise-vocabulary-differential, including the deliberate directory-error
+difference.
+
+Whole-tool fixture qualification passes in HE and PeTTa, including chunk seams,
+pending matches, file/directory links, suffix directories, permission failures,
+opaque filename bytes and invocation outside the repository directory. The
+complete checker also finishes real-tree scans in both primary hosts. Directory
+processing uses finite windows through the existing linked-list fold, retaining
+the same walker between windows. A window finishing is not filesystem end: only
+the walker's end observation completes that pass. A reported traversal fault
+stops further window reads rather than becoming an empty completed scan.
+
+The fold's PeTTa callback uses the same owned-evaluator admission boundary as
+other host aggregates. Independent branches may use the ordinary machine;
+recursively wrapping the aggregate's own host leaf remains forbidden. This
+avoids forcing a large callback into the recursive compatibility evaluator.
+The batch examples check occurrence counts, latched end, and a fault delivered
+once without any claimed end. A larger-file control crosses many read chunks.
+The initial accumulator follows the fold's declared Atom input contract, like
+its item list and step syntax. Compute an initializer explicitly before this
+data handoff. A step is still a computation, not an automatically inert data
+observer; declare data-taking helper parameters as Atom when consuming guest
+constructors. The data-accumulator examples cover direct and computed values
+and a hostile constructor equation at those declared data boundaries.
+
+Binding-frame promotion now retains source-to-image sharing within one copy
+episode. Independent views retain their identities, versions and boundaries;
+a later write still detaches its payload. The episode retains both source keys
+and images and releases them on success or failure. Equal-valued independent
+frames are not merged. This repairs one source of copying without discarding
+continuation environments. Large immutable string buffers also share retained
+byte ownership across publication arenas without changing equality or Atom's
+layout. Equal-valued independent buffers are not merged. Each arena counts a
+retained buffer once for conservative allocation pressure and releases its
+hold on the corresponding rollback or teardown; small strings retain their
+existing representation.
+
+The FilesystemWalking model now executes finite windows by folding resume over
+the retained report. Its sum law proves exact prefix, residual and completion
+agreement with unbatched traversal, including repeated equal occurrences and
+zero-work incomplete controls. These fixed-input protocol results are not a
+proof of native syscall or evaluator adequacy.
+
+tests/support/benchmark_filesystem_v1.py separates startup, enumeration, reading,
+UTF-8 decoding, state-only line advancement, literal matching and the complete
+tool on fixed inputs. Operation clocks exclude prior input preparation where
+applicable; process RSS includes it. Baseline failures are retained as failed
+measurements rather than credited as fast execution. Use --long-line for a
+single unfinished line instead of many short lines.
+
+The module-authored observation protocol and its runnable controls are in
+tests/filesystem_v1/FilesystemProtocol.module. Run
+make -j2 test-filesystem-core-v1 for the complete delivery gate
+with Python, Prolog, HTTP and GMP disabled in its isolated core executable.
+Independent test oracles and build generation may still use Python.
+ENABLE_SANITIZERS=1 CETTA_PROVENANCE_ASSERT=1 selects instrumented qualification.
+The gate includes three-host text preparation. The broader make test
+compatibility corpus has optional-provider expectations and remains separate.
+External LBNF and heavy corpus families are separate qualifications.
+The approved batch of 27 retirement-only Python stubs has been removed;
+active oracles and build generators remain.
+
+References:
+  https://docs.python.org/3.13/library/codecs.html#codecs.IncrementalDecoder
+  https://docs.python.org/3.13/library/stdtypes.html#str.splitlines
+  https://docs.python.org/3.13/library/re.html#re.IGNORECASE

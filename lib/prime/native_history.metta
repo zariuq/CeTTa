@@ -8,6 +8,16 @@
 (: history:empty (-> Atom Bool))
 (= (history:empty $data) (unify $data () True False))
 
+; Apply one record view and omit its empty projections. Each supplied reader
+; has an explicit function signature, including when used through PeTTa.
+(: history:project-records (-> (-> Atom %Undefined%) Atom %Undefined%))
+(= (history:project-records $view $records)
+   (if (history:empty $records) ()
+     (let ($head $tail) (decons-atom $records)
+       (let $value ($view $head)
+         (let $rest (history:project-records $view $tail)
+           (if (history:empty $value) $rest (cons-atom $value $rest))){$rest}){$value}){$head $tail}))
+
 ; Rendered reports hold their fields, including quoted coefficient/verdict data.
 (: Verdict (-> Atom Atom Atom Atom Atom Atom))
 (: RecordedRoot (-> Atom Atom Atom Atom Atom))
@@ -42,11 +52,7 @@
        ()))
 
 (= (history:node-admissions $nodes)
-   (if (history:empty $nodes) ()
-       (let ($node $tail) (decons-atom $nodes)
-         (let $verdict (history:node-admission $node)
-           (if (history:empty $verdict) (history:node-admissions $tail)
-               (let $remaining (history:node-admissions $tail) (cons-atom $verdict $remaining)){$remaining})){$verdict}){$node $tail}))
+   (history:project-records history:node-admission $nodes))
 
 (= (history:graph-admissions (NeedGraph $session $root $complete $nodes))
    (let $verdicts (history:node-admissions $nodes)
@@ -56,12 +62,7 @@
 (= (history:forest-admissions $graphs)
    (if (== (get-metatype $graphs) Symbol)
        (if (== $graphs None) () (cons-atom $graphs ()))
-       (if (history:empty $graphs) ()
-           (let ($graph $tail) (decons-atom $graphs)
-             (let $view (history:graph-admissions $graph)
-               (if (history:empty $view) (history:forest-admissions $tail)
-                   (let $remaining (history:forest-admissions $tail)
-                     (cons-atom $view $remaining)){$remaining})){$view}){$graph $tail})))
+       (history:project-records history:graph-admissions $graphs)))
 
 (= (history:selection-admissions
       (Selection $position $occurrence $protocol $ticks $placement
@@ -73,17 +74,14 @@
              (preparation $before) (operation $after))))))
 
 (= (history:selections-admissions $selections)
-   (if (history:empty $selections) ()
-       (let ($selection $tail) (decons-atom $selections)
-         (let $view (history:selection-admissions $selection)
-           (if (history:empty $view) (history:selections-admissions $tail)
-               (let $remaining (history:selections-admissions $tail) (cons-atom $view $remaining)){$remaining})){$view}){$selection $tail}))
+   (history:project-records history:selection-admissions $selections))
 
 (= (history:explain
       (Observation $values (satisfied $satisfied) (closed $closed)
         (residual $residual) (work $work) (status $status)
         (history (History (status $capture) (start-work $start) (earlier $earlier)
           (source-correspondence $correspondence)
+          (recording $recording) (end-work $end)
           (omitted-selections $omitted) (omitted-nodes $missing) (overflow $overflow)
           $charges $limits (nodes $nodes) (reservations $reservations)
           (selections $selections)))))
@@ -94,7 +92,8 @@
          (Explained (values $quoted-values) (satisfied $satisfied) (closed $closed)
      (residual $residual) (work $work) (status $status)
      (activity $activity)
-     (recording $capture $correspondence $start $earlier $omitted $missing $overflow)
+     (recording $capture $correspondence $start $earlier $omitted $missing $overflow
+       (enabled $recording) (end-work $end))
      $charges $limits (nodes $nodes) (reservations $reservations)
      (admissions $admissions)))))))
 
@@ -141,3 +140,52 @@
                            (history:field-scan $fields $label 0 ()))){$values $fields})
                  (history:field-scan $rows $label 0 ()))){$tag $rows})
        (HistoryField Missing $label ())))
+
+
+; Query a node through the same unique-field reader as other returned data.
+; The original node remains quoted, including both parent slots and producer
+; metadata. Missing and duplicate identities stay explicit. Coverage belongs
+; to the supplied graph; it does not authenticate that graph or its root.
+(: GraphNode (-> Atom Atom Atom Atom Atom))
+(: SelectionGraphs (-> Atom Atom Atom Atom Atom Atom Atom Atom))
+(: HistoryDependencies (-> Atom Atom Atom))
+(: history:node-row (-> Atom %Undefined%))
+(: history:node (-> Atom Atom %Undefined%))
+(: history:selection-graphs (-> Atom %Undefined%))
+(: history:dependencies (-> Atom %Undefined%))
+
+(= (history:node-row $node)
+   (unify $node (NeedNode $id $left $right $payload)
+     (let $tail (cons-atom $node ()) (cons-atom $id $tail)){$tail}
+     ()))
+
+(= (history:node (NeedGraph $session $root $coverage $nodes) $wanted)
+   (let $rows (history:project-records history:node-row $nodes)
+     (let $record (cons-atom GraphNodes $rows)
+       (let $answer (history:field $record $wanted)
+         (GraphNode $session $root $coverage $answer)))))
+
+; Preparation and operation stay separate. A scheduler selection need not
+; carry a graph, and a retained earlier graph need not explain a later answer.
+(= (history:selection-graphs $selection)
+   (let (Selection $position $occurrence $protocol $ticks $placement
+           (preparation $before) (operation $after)) $selection
+     (let $prepared (history:field $selection preparation)
+       (let $operated (history:field $selection operation)
+         (SelectionGraphs $position $occurrence $protocol $ticks $placement $prepared $operated)))))
+
+; Keep the existing explanation's values, residual, status and recording
+; limits beside the selected graph packets. Field readers quote those packets.
+; A missing or duplicate history remains its lookup result, not an explanation
+; of program failure. This observation grants no new execution authority.
+(= (history:dependencies $observation)
+   (let $history (history:field $observation history)
+     (unify $history (HistoryField Found history (quote $record))
+       (let $selections (history:field $record selections)
+         (unify $selections (HistoryField Found selections (quote $rows))
+           (let $explanation (history:explain $observation)
+             (let $views (history:project-records history:selection-graphs $rows)
+               (HistoryDependencies $explanation $views)){$views}){$explanation}
+           (let $explanation (history:explain $observation)
+             (HistoryDependencies $explanation $selections)){$explanation})){$selections}
+       (HistoryDependencies $history ()))))

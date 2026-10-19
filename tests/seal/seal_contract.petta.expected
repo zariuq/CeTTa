@@ -1,0 +1,58 @@
+true
+true
+true
+(Sealer demo)
+(Unsealer demo)
+(Sealer Unsealer true false)
+((Sealed demo) (foo $V0 bar))
+true
+false
+true
+()
+()
+()
+(fault (SealFault missing-right))
+(fault (SealFault missing-right))
+(fault (SealFault missing-right))
+(fault (SealFault wrong-facet))
+((SealFacet demo) (fault (SealFault missing-right)))
+closed
+"(Sealed demo)"
+Data
+true
+true
+true
+true
+true
+true
+true
+true
+true
+2
+(same)
+true
+true
+(0 0)
+1
+(portable (data (nested (Sealed demo))))
+(fault (SealFault not-portable))
+(fault (SealFault not-portable))
+(fault (SealFault not-portable))
+true
+(1 2)
+true
+true
+true
+true
+(fault (SealFault denied))
+()
+(fault (SealFault denied))
+(opened (secret 42))
+(fault (SealFault denied))
+()
+(opened (secret 42))
+()
+(fault (SealFault denied))
+(fault (SealFault wrong-facet))
+((forged))
+Data

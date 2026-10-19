@@ -446,6 +446,12 @@ bool      bindings_project_reachable(const Bindings *src,
                                      Atom *const *roots,
                                      size_t root_count,
                                      Bindings *dst);
+/* The same logical closure, constraints and frame authority, without copying
+ * Prime occurrence state. The caller supplies its new execution context. */
+bool      bindings_project_reachable_logical(const Bindings *src,
+                                             Atom *const *roots,
+                                             size_t root_count,
+                                             Bindings *dst);
 /* As above, while translating each entry-prefix boundary through the
  * projection.  A mark names the number of logical binding entries preceding
  * a live activation frame; it is updated to the corresponding prefix length
@@ -1169,8 +1175,11 @@ typedef enum {
 } CettaMatchCursorStep;
 /* The cursor retains the canonical epoch matcher, including its binding
  * trail, path set and copy transport. Syntax and result arena are borrowed.
- * A zero grant performs no matching. A grant counts worklist nodes, not the
- * bytes/CPU needed by equality, occurs checking or a binding primitive.
+ * A zero grant performs no matching. A grant counts worklist nodes and alias
+ * resolution retries and retained graph-query actions. Occurs queries use an
+ * acyclic private binding image; finite-occurrence audits check the atom graph. Equality, hash growth, frame admission, transport and binding
+ * publication still need their own byte/work bounds. A pair's match-node debit
+ * is paid once, including when a nested operation spans several grants.
  * INCOMPLETE retains an undecided primitive; it is not a rigid refutation.
  * CAPACITY retains a refused identity reservation. */
 CettaMatchCursor *match_atoms_cursor_new(Atom *left, Atom *right,

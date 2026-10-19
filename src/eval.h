@@ -75,7 +75,8 @@ void outcome_set_set_owner(OutcomeSet *os, Arena *owner);
 void outcome_set_add(OutcomeSet *os, Atom *atom, const Bindings *env);
 /* The newest answer holds only while `delayed` holds (CETTA_CALL_SUSPENDED). */
 void outcome_set_delay_last(OutcomeSet *os, Atom *delayed);
-void outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
+/* True only after both the value and its active context are retained. */
+bool outcome_set_add_move(OutcomeSet *os, Atom *atom, Bindings *env);
 void outcome_set_free(OutcomeSet *os);
 /* Owned arrays, bindings, variants and payload arenas of a quiescent bag.
  * The enclosing OutcomeSet header belongs to its caller. */
@@ -163,8 +164,9 @@ void cetta_prime_checkpoint_copy_free(CettaPrimeCheckpointCopy *copy);
 bool outcome_set_relocate_clone(OutcomeSet *dst, const OutcomeSet *src,
                                Arena *owner, AtomDeepCopySession *session);
 
-/* A retained execution of the existing HE canonical frames. Structural
- * input and logical bindings are copied; source spaces, registry, library
+/* A retained execution of the existing HE canonical frames. Input syntax,
+ * complete bindings and captured Need/branch/weight/history carriers are
+ * promoted into its storage; source spaces, registry, library
  * context, namespace overrides, cancellation flags, observer hooks and their
  * contexts, and identity-bearing foreign resources are borrowed and must
  * remain live until destruction. This requirement is a
@@ -298,7 +300,9 @@ CettaContinuationStatus eval_outcome_resume_observation(
 typedef enum {
     CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1 = 1
 } CettaPrimeOwnedRegionProfile;
-/* Explicit private snapshot semantics; ordinary evaluation is unchanged.
+/* Explicit private snapshot semantics for retained native select/once and
+ * cost:run. Finite demand keeps the complete residual; cost observation is
+ * optional for select/once. Ordinary evaluation is unchanged.
  * Source roots/services remain held and quiescent through capture and the
  * synchronous original-registry enrollment/acquisition. The result arena
  * must be detached from hashcons/older generations and stays externally
@@ -382,6 +386,8 @@ void eval_set_default_fuel(int fuel);
  * library's).  In Prime an `Atom` position of such a declaration holds its
  * argument, as in HE; elsewhere in Prime `Atom` is the top type. */
 void eval_prime_set_he_signature_heads(const SymbolId *heads, size_t count);
+/* Register the HE-authored declarations of a just-loaded library space. */
+void eval_prime_set_he_signature_space(Space *library);
 /* Heads the Prime evaluator owns for the relational plan (eval.c), and
  * among them `lift`, which the relational machine hands to the evaluator. */
 bool cetta_prime_host_intrinsic_head(SymbolId head);
@@ -402,8 +408,16 @@ SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
+/* The error a minimal instruction answers for arguments outside `expected`:
+ * (Error <call> "expected: <expected>, found: <call>"). */
+Atom *cetta_call_signature_error(Arena *a, Atom *call, const char *expected);
 /* Whether the running PeTTa version is of the typed line (1.1, 1.1.c). */
 bool eval_current_petta_typed_line(void) __attribute__((weak));
+/* Whether the program extends a classifier PeTTa's typed-call guard
+ * evaluates (get-type, get-metatype) with an equation at its one-input arity
+ * that can run; a protected default-program definition cannot. */
+bool eval_petta_classifier_extended(Space *space, SymbolId classifier)
+    __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,

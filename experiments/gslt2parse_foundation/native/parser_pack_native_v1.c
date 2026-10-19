@@ -84,6 +84,14 @@ typedef enum {
     PPNATIVE_V1_REPLAY_CYCLE = 4
 } PPNativeV1ReplayStatus;
 
+/* The action vocabulary's symbols, looked up once per replay. A spelling
+ * that was never interned is SYMBOL_ID_NONE and matches no atom, exactly as
+ * a spelling comparison would. */
+typedef struct {
+    SymbolId pa_slot, pa_const, pa_primitive, pa_apply, pa_cons, pa_nil;
+    SymbolId q_zero, q_succ, cst_rule, source_span_action;
+} PPNativeV1ReplaySymbols;
+
 typedef struct {
     const PPABIV1Pack *pack;
     const CettaLpNativeUtf8Forest *forest;
@@ -92,8 +100,35 @@ typedef struct {
     PPNativeV1ReplayMemo *memo;
     uint32_t result_limit;
     bool occurrences;
+    const PPNativeV1FamilySelection *selection;
+    AtomDeepCopySession *copies;
     PPNativeV1ReplayStatus status;
+    PPNativeV1ReplaySymbols symbols;
 } PPNativeV1ReplayContext;
+
+static PPNativeV1ReplaySymbols ppnative_v1_replay_symbols(void) {
+    return (PPNativeV1ReplaySymbols){
+        .pa_slot = symbol_lookup_cstr(g_symbols, "pa-slot"),
+        .pa_const = symbol_lookup_cstr(g_symbols, "pa-const"),
+        .pa_primitive = symbol_lookup_cstr(g_symbols, "pa-primitive"),
+        .pa_apply = symbol_lookup_cstr(g_symbols, "pa-apply"),
+        .pa_cons = symbol_lookup_cstr(g_symbols, "pa-cons"),
+        .pa_nil = symbol_lookup_cstr(g_symbols, "pa-nil"),
+        .q_zero = symbol_lookup_cstr(g_symbols, "q-zero"),
+        .q_succ = symbol_lookup_cstr(g_symbols, "q-succ"),
+        .cst_rule = symbol_lookup_cstr(g_symbols, "CstRuleV1"),
+        .source_span_action = symbol_lookup_cstr(g_symbols, "SourceSpanActionV1"),
+    };
+}
+
+static bool ppnative_v1_symbol_is(const Atom *atom, SymbolId id) {
+    return id != SYMBOL_ID_NONE && atom && atom->kind == ATOM_SYMBOL && atom_symbol_current_id(atom) == id;
+}
+
+static bool ppnative_v1_head_is(const Atom *atom, SymbolId head, CettaExprLen argument_len) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == argument_len + 1u &&
+        ppnative_v1_symbol_is(atom->expr.elems[0], head);
+}
 
 static bool ppnative_v1_extension_valid(
     const PPABIV1Pack *pack,
@@ -1986,11 +2021,33 @@ static bool ppnative_v1_qindex(Atom *term, uint32_t *out) {
     return true;
 }
 
+static bool ppnative_v1_replay_qindex(const PPNativeV1ReplaySymbols *symbols,
+                                      Atom *term, uint32_t *out) {
+    uint32_t value = 0u;
+    while (!ppnative_v1_symbol_is(term, symbols->q_zero)) {
+        if (!ppnative_v1_head_is(term, symbols->q_succ, 1u) ||
+            value == UINT32_MAX)
+            return false;
+        value++;
+        term = term->expr.elems[1];
+    }
+    *out = value;
+    return true;
+}
+
 static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
                                    Atom *action,
                                    Atom **values,
                                    uint32_t value_len,
                                    unsigned depth);
+
+/* Immutable action constants may be used by many distinct derivations. Copy
+ * their storage once per replay; the result vector still records every use. */
+static Atom *ppnative_v1_replay_copy(PPNativeV1ReplayContext *context, Atom *value) {
+    if (!context->copies)
+        context->copies = atom_deep_copy_session_new(context->arena);
+    return context->copies ? atom_deep_copy_session_copy(context->copies, value) : NULL;
+}
 
 static bool ppnative_v1_apply_action_list(PPNativeV1ReplayContext *context,
                                        Atom *list,
@@ -1998,10 +2055,10 @@ static bool ppnative_v1_apply_action_list(PPNativeV1ReplayContext *context,
                                        uint32_t value_len,
                                        unsigned depth,
                                        PPNativeV1AtomVec *out) {
-    while (!atom_is_symbol(list, "pa-nil")) {
+    while (!ppnative_v1_symbol_is(list, context->symbols.pa_nil)) {
         Atom *value;
         if (depth > PPNATIVE_V1_MAX_TERM_DEPTH ||
-            !ppnative_v1_expr_head(list, "pa-cons", 2u)) {
+            !ppnative_v1_head_is(list, context->symbols.pa_cons, 2u)) {
             context->status = PPNATIVE_V1_REPLAY_MALFORMED;
             return false;
         }
@@ -2026,13 +2083,14 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
         context->status = PPNATIVE_V1_REPLAY_DEPTH_HIT;
         return NULL;
     }
-    if (ppnative_v1_expr_head(action, "pa-slot", 1u) &&
-        ppnative_v1_qindex(action->expr.elems[1], &slot) && slot < value_len) {
+    if (ppnative_v1_head_is(action, context->symbols.pa_slot, 1u) &&
+        ppnative_v1_replay_qindex(&context->symbols, action->expr.elems[1], &slot) &&
+        slot < value_len) {
         return values[slot];
     }
-    if (ppnative_v1_expr_head(action, "pa-const", 1u))
-        return ppnative_v1_copy(context->arena, action->expr.elems[1]);
-    if (ppnative_v1_expr_head(action, "pa-primitive", 2u)) {
+    if (ppnative_v1_head_is(action, context->symbols.pa_const, 1u))
+        return ppnative_v1_replay_copy(context, action->expr.elems[1]);
+    if (ppnative_v1_head_is(action, context->symbols.pa_primitive, 2u)) {
         PPNativeV1AtomVec arguments = {0};
         Atom *result = NULL;
         PPActionPrimitiveV1Status status;
@@ -2057,7 +2115,7 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
         }
         return result;
     }
-    if (ppnative_v1_expr_head(action, "pa-apply", 2u) &&
+    if (ppnative_v1_head_is(action, context->symbols.pa_apply, 2u) &&
         action->expr.elems[1]->kind == ATOM_SYMBOL) {
         PPNativeV1AtomVec arguments = {0};
         Atom *head;
@@ -2070,7 +2128,8 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
             free(arguments.data);
             return NULL;
         }
-        head = ppnative_v1_copy(context->arena, action->expr.elems[1]);
+        head = ppnative_v1_replay_copy(context, action->expr.elems[1]);
+        if (!head) { free(arguments.data); return NULL; }
         items = arena_alloc(
             context->arena,
             sizeof(*items) * ((size_t)arguments.len + 1u));
@@ -2106,10 +2165,10 @@ static Atom *ppnative_v1_materialize_cst_span(
         value->expr.len < 2u) {
         return value;
     }
-    source_span_action = atom_is_symbol(
-        value->expr.elems[0], "SourceSpanActionV1");
+    source_span_action = ppnative_v1_symbol_is(
+        value->expr.elems[0], context->symbols.source_span_action);
     if (!source_span_action &&
-        !atom_is_symbol(value->expr.elems[0], "CstRuleV1"))
+        !ppnative_v1_symbol_is(value->expr.elems[0], context->symbols.cst_rule))
         return value;
     if (node->scalar_left > node->scalar_right) {
         context->status = PPNATIVE_V1_REPLAY_MALFORMED;
@@ -2140,6 +2199,7 @@ bool ppnative_v1_apply_action_term(Arena *arena,
     PPNativeV1ReplayContext context = {
         .arena = arena,
         .status = PPNATIVE_V1_REPLAY_OK,
+        .symbols = ppnative_v1_replay_symbols(),
     };
     Atom *result;
 
@@ -2155,6 +2215,7 @@ bool ppnative_v1_apply_action_term(Arena *arena,
     }
     result = ppnative_v1_apply_action(
         &context, action, (Atom **)values, value_len, 0u);
+    atom_deep_copy_session_free(context.copies);
     if (!result || context.status != PPNATIVE_V1_REPLAY_OK) {
         ppnative_v1_set_error(
             error_buf, error_buf_size,
@@ -2188,8 +2249,8 @@ static Atom *ppnative_v1_terminal_value(PPNativeV1ReplayContext *context,
             context->status = PPNATIVE_V1_REPLAY_MALFORMED;
             return NULL;
         }
-        return ppnative_v1_copy(
-            context->arena,
+        return ppnative_v1_replay_copy(
+            context,
             context->extension->witness_values[
                 node->terminal_witness_id]);
     }
@@ -2283,6 +2344,10 @@ static bool ppnative_v1_symbol_dependencies(
             context->status = PPNATIVE_V1_REPLAY_MALFORMED;
             return false;
         }
+        if (context->selection && !context->selection->accepts(
+                context->selection->context, context->pack, context->forest,
+                node_index, choice->production_index))
+            continue;
         if (production.item_len == 0u)
             continue;
         if (!ppnative_v1_expand_choice(
@@ -2396,7 +2461,7 @@ static bool ppnative_v1_eval_sequence_ready(
            the child production's source span.  Re-materializing that child as
            though it were constructed by the parent would duplicate the span
            fields of CstRuleV1 and SourceSpanNodeV1 values. */
-        if (!ppnative_v1_expr_head(production->action, "pa-slot", 1u))
+        if (!ppnative_v1_head_is(production->action, context->symbols.pa_slot, 1u))
             value = ppnative_v1_materialize_cst_span(context, parent, value);
         if (!value || !ppnative_v1_canonical_atomvec_push_unique(
                 out, value, context->result_limit, &context->status)) {
@@ -2456,6 +2521,10 @@ static bool ppnative_v1_eval_symbol_ready(
             context->status = PPNATIVE_V1_REPLAY_MALFORMED;
             return false;
         }
+        if (context->selection && !context->selection->accepts(
+                context->selection->context, context->pack, context->forest,
+                node_index, choice->production_index))
+            continue;
         if (production.item_len == 0u) {
             Atom *value = ppnative_v1_apply_action(
                 context, production.action, NULL, 0u, 0u);
@@ -2616,6 +2685,7 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
                             uint32_t replay_depth,
                             uint32_t result_limit,
                             bool occurrences,
+                            const PPNativeV1FamilySelection *selection,
                             char *error_buf,
                             size_t error_buf_size) {
     PPNativeV1ReplayContext context;
@@ -2625,6 +2695,7 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
     bool ok = false;
 
     memset(&context, 0, sizeof(context));
+    context.symbols = ppnative_v1_replay_symbols();
     /* Finishing a new forest replaces, rather than appends to, an older
      * replay result. The arena keeps returned atoms alive until teardown. */
     free(result->semantic_results);
@@ -2636,6 +2707,7 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
     context.arena = &result->arena;
     context.result_limit = result_limit;
     context.occurrences = occurrences;
+    context.selection = selection;
     results.occurrences = occurrences;
     context.status = PPNATIVE_V1_REPLAY_OK;
     context.memo = calloc(result->forest.node_len ? result->forest.node_len : 1u,
@@ -2714,6 +2786,7 @@ done:
         }
     }
     free(context.memo);
+    atom_deep_copy_session_free(context.copies);
     ppnative_v1_canonical_atomvec_free(&results);
     return ok;
 }
@@ -3601,7 +3674,7 @@ static bool ppnative_v1_finish_validated(
                error_buf, error_buf_size) &&
         ppnative_v1_replay(
                result, pack, extension, replay_depth, result_limit,
-               false, error_buf, error_buf_size);
+               false, NULL, error_buf, error_buf_size);
 }
 
 bool ppnative_v1_finish_values(
@@ -3612,15 +3685,165 @@ bool ppnative_v1_finish_values(
     uint32_t result_limit,
     char *error_buf,
     size_t error_buf_size) {
+    return ppnative_v1_finish_values_selected(result, pack, extension,
+        replay_depth, result_limit, NULL, error_buf, error_buf_size);
+}
+
+bool ppnative_v1_finish_values_selected(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth,
+    uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    char *error_buf,
+    size_t error_buf_size) {
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!result || !pack || replay_depth == 0u || result_limit == 0u) {
+    if (!result || !pack || replay_depth == 0u || result_limit == 0u ||
+        (selection && !selection->accepts)) {
         ppnative_v1_set_error(error_buf, error_buf_size,
                               "bad ParserPack values arguments");
         return false;
     }
     return ppnative_v1_replay(result, pack, extension, replay_depth,
-                             result_limit, true, error_buf, error_buf_size);
+                             result_limit, true, selection,
+                             error_buf, error_buf_size);
+}
+
+bool ppnative_v1_finish_values_trace(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const CettaLpNativeLrTrace *trace, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    char *error_buf, size_t error_buf_size) {
+    PPNativeV1ReplayContext context;
+    PPNativeV1CanonicalAtomVec results = {0};
+    Atom **stack = NULL;
+    uint32_t height = 0u, capacity = 0u;
+    bool ok = false;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!result || !pack || !trace || replay_depth != UINT32_MAX || result_limit == 0u ||
+        (selection && !selection->accepts)) {
+        ppnative_v1_set_error(error_buf, error_buf_size,
+                              "bad ParserPack trace values arguments");
+        return false;
+    }
+    memset(&context, 0, sizeof(context));
+    context.symbols = ppnative_v1_replay_symbols();
+    free(result->semantic_results);
+    result->semantic_results = NULL;
+    result->semantic_result_len = 0u;
+    context.pack = pack;
+    context.forest = &result->forest;
+    context.arena = &result->arena;
+    context.result_limit = result_limit;
+    context.occurrences = true;
+    context.selection = selection;
+    context.status = PPNATIVE_V1_REPLAY_OK;
+    results.occurrences = true;
+    /* The admitted boundary-local observer can read the production, scalar
+     * boundaries and input. It does not observe general forest topology. */
+    CettaLpNativeUtf8ForestNode view_node = {.kind = CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL};
+    CettaLpNativeUtf8Forest view = result->forest;
+    view.nodes = &view_node;
+    view.node_len = 1u;
+    for (uint32_t index = 0u; index < trace->len; index++) {
+        const CettaLpNativeLrTraceStep *step = &trace->steps[index];
+        Atom *value = NULL;
+        if (step->left > step->right || step->right > result->forest.scalar_len)
+            goto malformed;
+        if (step->production == UINT32_MAX) {
+            if (step->value_kind == CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF) {
+                value = atom_symbol(context.arena, "eof");
+            } else if (step->value_kind == CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_SCALAR) {
+                Atom *argument = atom_int(context.arena, step->value);
+                value = ppnative_v1_expr(context.arena, "cp", &argument, 1u);
+            } else {
+                goto malformed;
+            }
+        } else {
+            PPNativeV1ReplayProduction production;
+            if (step->rhs_len > height ||
+                !ppnative_v1_replay_production(&context, step->production, &production) ||
+                production.item_len != step->rhs_len)
+                goto malformed;
+            Atom **children = &stack[height - step->rhs_len];
+            view_node.scalar_left = step->left;
+            view_node.scalar_right = step->right;
+            view_node.production_index = step->production;
+            bool selected = !selection || selection->accepts(
+                selection->context, pack, &view, 0u, step->production);
+            bool complete = true;
+            for (uint32_t child = 0u; child < step->rhs_len; child++)
+                if (!children[child]) complete = false;
+            if (selected && complete) {
+                value = ppnative_v1_apply_action(&context, production.action,
+                    step->rhs_len ? children : NULL, step->rhs_len, 0u);
+                if (!step->rhs_len ||
+                    !ppnative_v1_head_is(production.action, context.symbols.pa_slot, 1u))
+                    value = ppnative_v1_materialize_cst_span(&context, &view_node, value);
+                if (!value)
+                    goto resource_or_malformed;
+            }
+            height -= step->rhs_len;
+        }
+        if (height == capacity) {
+            uint32_t next = capacity ? capacity * 2u : 256u;
+            if (next <= capacity)
+                goto malformed;
+            Atom **grown = realloc(stack, (size_t)next * sizeof(*stack));
+            if (!grown)
+                goto done;
+            stack = grown;
+            capacity = next;
+        }
+        stack[height++] = value;
+    }
+    if (height != 1u)
+        goto malformed;
+    if (stack[0]) {
+        const CettaLpNativeLrTraceStep *root = &trace->steps[trace->len - 1u];
+        Atom *arguments[2];
+        arguments[0] = stack[0];
+        arguments[1] = ppnative_v1_input_suffix(&result->arena, &result->forest, root->right);
+        if (!arguments[1])
+            goto malformed;
+        if (!ppnative_v1_canonical_atomvec_push_unique(
+                &results, ppnative_v1_expr(&result->arena, "result", arguments, 2u),
+                result_limit, &context.status))
+            goto resource_or_malformed;
+    }
+    if (!ppnative_v1_results_sort(result, &results))
+        goto done;
+    result->outcome = PPNATIVE_V1_COMPLETED;
+    ok = true;
+    goto done;
+
+resource_or_malformed:
+    if (context.status == PPNATIVE_V1_REPLAY_DEPTH_HIT) {
+        result->outcome = PPNATIVE_V1_REPLAY_DEPTH;
+        (void)snprintf(result->detail, sizeof(result->detail),
+                       "semantic replay depth %u", replay_depth);
+        ok = true;
+        goto done;
+    }
+    if (context.status == PPNATIVE_V1_REPLAY_RESULT_HIT) {
+        result->outcome = PPNATIVE_V1_RESULT_LIMIT;
+        (void)snprintf(result->detail, sizeof(result->detail),
+                       "semantic result limit %u", result_limit);
+        ok = true;
+        goto done;
+    }
+malformed:
+    ppnative_v1_set_error(error_buf, error_buf_size,
+                       "deterministic derivation trace could not be replayed");
+done:
+    free(stack);
+    atom_deep_copy_session_free(context.copies);
+    ppnative_v1_canonical_atomvec_free(&results);
+    return ok;
 }
 
 bool ppnative_v1_finish_in_scope(

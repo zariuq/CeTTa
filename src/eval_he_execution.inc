@@ -749,6 +749,16 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
     return aggregate;
 }
 
+/* Current machine coverage, not a restriction on HE. A head rejected here
+ * retains the canonical interpreter. Keep the root precheck and the full
+ * admission walk on the same predicate, including the library exception. */
+static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
+    bool intrinsic, bool collection, bool library_stream) {
+    return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
+        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+                           space_head_declares_type(space, head));
+}
+
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                                          Atom *source) {
     if (!he_execution_push(admission, source))
@@ -797,6 +807,11 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             continue;
         }
         if (!term || he_execution_term_holds_resource(term))
+            return false;
+        /* NotReducible is HE's call-return marker: a body that is
+         * NotReducible leaves its own call unreduced, at that call's
+         * boundary, which the canonical owner keeps. */
+        if (atom_is_symbol_id(term, g_builtin_syms.not_reducible))
             return false;
         /* A superpose's argument is a tuple of alternatives, each walked as
          * a term of its own; the tuple itself is no call. */
@@ -911,10 +926,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
-        if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            !library_stream &&
-            (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-             space_head_declares_type(admission->space, head)))
+        if (he_execution_head_requires_canonical(admission->space, head,
+                intrinsic, collection, library_stream))
             return false;
         /* A streamed call of a relation must always meet an equation. */
         if (admission->stream && expression && !intrinsic &&
@@ -1960,8 +1973,8 @@ typedef struct {
 
 /* The checks that need no read window: the language, the switches, the
  * evaluation's context, and the source's head. */
-static bool he_shared_execution_candidate(Space *space, Atom *source,
-                                          Atom *type, int fuel) {
+static inline __attribute__((always_inline)) bool he_shared_execution_candidate(
+    Space *space, Atom *source, Atom *type, int fuel, bool observe_boundaries) {
     if (eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
     /* A completed scalar is interpreted by HE's value/cast boundary. Only
@@ -1975,7 +1988,7 @@ static bool he_shared_execution_candidate(Space *space, Atom *source,
          * and the machine's queries read a space's own rows. */
         space->overlay_base ||
         space_has_dependencies(space) || g_active_search_controller_requested ||
-        g_active_search_controller_auto || gslt_match_chain_trace_active() ||
+        g_active_search_controller_auto || observe_boundaries ||
         petta_eval_machine_diagnostic_transition_limit())
         return false;
     /* Intrinsic controls retain the canonical demand adapter; their ordinary
@@ -1990,6 +2003,15 @@ static bool he_shared_execution_candidate(Space *space, Atom *source,
         (is_grounded_op(source_head) || symbol_id_is_builtin(source_head)) &&
         source_head != g_builtin_syms.match &&
         !he_execution_collection(source_head))
+        return false;
+    /* Typed ordinary heads are refused by full admission before their
+     * closure is visited. Do not first walk their argument/flow trees just
+     * to rediscover that refusal. This is an uncached fallback selection;
+     * the canonical call still observes the current declarations and body. */
+    if (source_head != g_builtin_syms.match &&
+        he_execution_head_requires_canonical(space, source_head, false,
+            he_execution_collection(source_head),
+            he_library_stream_aggregate(space, source) != SYMBOL_ID_NONE))
         return false;
     /* Such a root gains on the machine only when something in it computes;
      * a match that only builds data is the canonical frame's single query. */
@@ -2076,8 +2098,13 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
 
 static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
-    OutcomeSet *outcomes) {
-    if (!he_shared_execution_candidate(space, source, type, fuel))
+    OutcomeSet *outcomes);
+static inline __attribute__((always_inline)) bool he_shared_execution_try_kernel(
+    Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes, bool observe_boundaries) {
+    if (!he_shared_execution_candidate(space, source, type, fuel,
+                                        observe_boundaries))
         return false;
     /* The source qualification and the program observation form one read
      * window. A suspended program owner alone cannot establish currency.
@@ -2105,11 +2132,13 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         bindings_init(&empty);
         const Bindings *outer = environment ? environment : &empty;
         PreparedPureProgramCache *cache = eval_execution_prepared_cache();
-        Atom *single = prepared_pure_closed_call_try(
-            space, arena, source, fuel, false, false, cache);
-        if (single) {
-            outcome_set_add_prefixed(arena, outcomes, single, &empty, outer,
-                preserve_bindings);
+        CettaCallOutcome result;
+        if (prepared_pure_closed_result_try(
+                space, arena, source, fuel, false, false, cache,
+                PREPARED_PURE_PROGRAM_OPTIONAL_VALUE, &result)) {
+            if (result.kind == CETTA_CALL_VALUE)
+                outcome_set_add_prefixed(arena, outcomes, result.term, &empty,
+                    outer, preserve_bindings);
             return true;
         }
         if (eval_unwinding() || eval_cancel_check())
@@ -2137,3 +2166,9 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
     g_he_shared_execution = false;
     return complete;
 }
+
+CETTA_PREPARED_ENTRY(bool, he_shared_execution_try,
+    (Space *space, Arena *arena, Atom *source,
+    Atom *type, int fuel, const Bindings *environment, bool preserve_bindings,
+    OutcomeSet *outcomes),
+    (space, arena, source, type, fuel, environment, preserve_bindings, outcomes))

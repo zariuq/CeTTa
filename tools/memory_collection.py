@@ -147,7 +147,9 @@ class NativeCollection:
 
     def _refresh_once(self):
         current = self.space.describe()[6]
-        if self.worker and self.worker.process.poll() is None and self.revision == current and self.churn < 128:
+        if (self.worker and self.worker.process is not None and
+                self.worker.process.poll() is None and
+                self.revision == current and self.churn < 128):
             return
         self._discard_worker()
         # The server snapshot captures all fields, including embeddings, at one

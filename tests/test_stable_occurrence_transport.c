@@ -2193,6 +2193,328 @@ static void test_retained_match_cold_thread(Arena *arena) {
     puts("PASS: cold-thread matcher resume preserves its captured cache profile, binding trail and rigid-refutation boundary");
 }
 
+static void test_retained_alias_match(void) {
+    enum { LENGTH = 257 };
+    const uint64_t grants[]={1u,7u,UINT64_MAX};
+    const CettaMatchCursorStep expected[]={CETTA_MATCH_CURSOR_MATCHED,
+        CETTA_MATCH_CURSOR_REFUTED,CETTA_MATCH_CURSOR_INCOMPLETE};
+    const CettaMatchCompletion canonical[]={CETTA_MATCH_MATCHED,
+        CETTA_MATCH_REFUTED,CETTA_MATCH_INCOMPLETE};
+    for (unsigned outcome=0u;outcome<3u;outcome++) {
+    for (unsigned run=0u;run<3u;run++) {
+        Arena source,destination;arena_init(&source);arena_init(&destination);
+        Atom *variables[LENGTH],*seven=atom_int(&source,7);
+        SymbolId name=symbol_intern_cstr(g_symbols,"retained-alias");
+        for (unsigned i=0u;i<LENGTH;i++)
+            variables[i]=atom_var_with_spelling(&source,name,UINT64_C(83000)+i);
+        Bindings seed;bindings_init(&seed);
+        for (unsigned i=0u;i<LENGTH;i++) assert(bindings_add_var(&seed,variables[i],seven));
+        assert(bindings_prepare_logical_write(&seed) && seed.len==LENGTH);
+        for (unsigned i=0u;i<LENGTH;i++)
+            seed.entries[i].value=binding_value_from_atom(i+1u<LENGTH?variables[i+1u]:
+                outcome==2u?variables[0]:seven);
+        assert(bindings_invalidate_after_key_rewrite(&seed));
+        Atom *target=atom_int(&source,outcome==1u?8:7);
+        BindingsBuilder reference;assert(bindings_builder_init(&reference,&seed));
+        assert(match_atoms_epoch_builder_checked(variables[0],target,
+            &reference,&source,0u,UINT64_MAX)==canonical[outcome]);
+        bindings_builder_free(&reference);
+        CettaNativeCostLedger cost;CettaNativeCostScope scope;
+        cetta_native_cost_init(&cost);cetta_native_cost_scope_enter(&scope,&cost,1u);
+        CettaMatchCursor *cursor=match_atoms_cursor_new(variables[0],target,&seed,&source);
+        assert(cursor && match_atoms_cursor_step(cursor,0u)==CETTA_MATCH_CURSOR_PROGRESS);
+        assert(!cost.total.counts[CETTA_COST_MATCH_NODE] && !match_atoms_cursor_epoch(cursor));
+        assert(match_atoms_cursor_step(cursor,1u)==CETTA_MATCH_CURSOR_PROGRESS);
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE]==1u &&
+            cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==1u);
+        uint32_t epoch=match_atoms_cursor_epoch(cursor);assert(epoch);
+        if (run) {
+            CettaMatchCursor *copy;
+            if (run==1u) copy=match_atoms_cursor_clone(cursor);
+            else {
+                AtomDeepCopySession *session=atom_deep_copy_session_new(&destination);
+                AtomDeepCopyArenaPair pair={&source,&destination};
+                assert(session && atom_deep_copy_session_set_arena_map(session,&pair,1u));
+                copy=match_atoms_cursor_copy_to_arena(cursor,&destination,session);
+                atom_deep_copy_session_free(session);
+            }
+            assert(copy && match_atoms_cursor_epoch(copy)==epoch);
+            match_atoms_cursor_free(cursor);cursor=copy;
+        }
+        assert(seed.len==LENGTH && seed.entries[0].value.skeleton==variables[1]);
+        if (run==2u) {
+            bindings_free(&seed);arena_free(&source);
+        }
+        CettaMatchCursorStep step=CETTA_MATCH_CURSOR_PROGRESS;
+        unsigned polls=0u;
+        for (;polls<4u*LENGTH+16u && step==CETTA_MATCH_CURSOR_PROGRESS;polls++) {
+            assert(match_atoms_cursor_step(cursor,0u)==CETTA_MATCH_CURSOR_PROGRESS);
+            step=match_atoms_cursor_step(cursor,grants[run]);
+        }
+        assert(step==expected[outcome] && match_atoms_cursor_epoch(cursor)==epoch);
+        if (!run) assert(polls>=LENGTH-1u);
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE]==1u &&
+            cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==1u);
+        Bindings answer;bindings_init(&answer);
+        assert(match_atoms_cursor_take(cursor,&answer)==(outcome==0u));
+        if (outcome==0u) {
+            Arena *result=run==2u?&destination:&source;
+            Atom *root=atom_var_with_spelling(result,name,UINT64_C(83000));
+            assert(answer.len==LENGTH && atom_eq(bindings_apply(&answer,result,root),atom_int(result,7)));
+        } else assert(!answer.len);
+        if (run!=2u) assert(seed.len==LENGTH && seed.entries[0].value.skeleton==variables[1]);
+        bindings_free(&answer);match_atoms_cursor_free(cursor);
+        cetta_native_cost_scope_leave(&scope);cetta_native_cost_free(&cost);
+        if (run!=2u) {bindings_free(&seed);arena_free(&source);}
+        arena_free(&destination);
+    }
+    }
+    puts("PASS: alias grants retain paid pair work, clone/relocate exact chain position and preserve cycle refusal");
+}
+
+static void test_retained_occurs_match(void) {
+    const uint64_t grants[] = {1u, 7u, UINT64_MAX};
+    for (unsigned shape = 0u; shape < 5u; ++shape)
+    for (unsigned cyclic = 0u; cyclic < (shape == 3u ? 1u : 2u); ++cyclic)
+    for (unsigned run = 0u; run < 3u; ++run) {
+        Arena source, destination;
+        arena_init(&source); arena_init(&destination);
+        Atom *x = atom_var(&source, "occurs-result");
+        Atom *y = atom_var(&source, "occurs-first");
+        Atom *z = atom_var(&source, "occurs-second");
+        Atom *seven = atom_int(&source, 7);
+        Bindings seed; bindings_init(&seed);
+        CettaFrameIdentityScope contexts = {0};
+        Atom *deep = y;
+        SymbolId head = symbol_intern_cstr(g_symbols, "occurs-layer");
+        if (shape == 0u) {
+            for (unsigned i = 0u; i < 65u; ++i) deep = binary(&source, head, deep, z);
+        } else if (shape == 1u) {
+            Atom *items[258];
+            items[0] = atom_symbol_id(&source, head);
+            for (unsigned i = 1u; i < 258u; ++i) items[i] = i % 2u ? y : z;
+            deep = atom_expr(&source, items, 258u);
+        } else if (shape == 2u) {
+            deep = binary(&source, head, y, z);
+            for (unsigned i = 0u; i < 18u; ++i) deep = binary(&source, head, deep, deep);
+        } else if (shape == 3u) {
+            Atom *variables[257];
+            for (unsigned i = 0u; i < 257u; ++i)
+                variables[i] = atom_var_with_spelling(&source,
+                    symbol_intern_cstr(g_symbols, "occurs-alias"), UINT64_C(87000) + i);
+            for (unsigned i = 257u; i > 0u; --i)
+                assert(bindings_add_var(&seed, variables[i - 1u], i == 257u ? seven : variables[i]));
+            deep = binary(&source, head, variables[0], z);
+        } else {
+            CettaFrameIdentity first = 0u, second = 0u, distinct = 0u;
+            assert(cetta_frame_identity_scope_try(&contexts, &first));
+            assert(cetta_frame_identity_scope_try(&contexts, &second));
+            assert(cetta_frame_identity_scope_try(&contexts, &distinct));
+            Atom *shared = binary(&source, head, y, z);
+            for (unsigned i = 0u; i < 7u; ++i)
+                shared = binary(&source, head, shared, shared);
+            Atom *u = atom_var(&source, "occurs-context-first");
+            Atom *v = atom_var(&source, "occurs-context-second");
+            assert(bindings_add_var(&seed, u, seven) && bindings_add_var(&seed, v, seven));
+            assert(bindings_rewrite_value_id(&seed, u->var_id,
+                binding_value_from_context(shared, first)));
+            assert(bindings_rewrite_value_id(&seed, v->var_id,
+                binding_value_from_context(shared, second)));
+            assert(!bindings_has_loop(&seed));
+            x = atom_var_with_spelling(&source, atom_symbol_current_id(x),
+                var_epoch_id(y->var_id, cyclic ? second : distinct));
+            deep = binary(&source, head, u, v);
+        }
+        SymbolId pair = symbol_intern_cstr(g_symbols, "occurs-pair");
+        Atom *left = shape == 3u ? deep : binary(&source, pair, x, cyclic ? x : seven);
+        Atom *right = shape == 3u ? x : binary(&source, pair, deep, cyclic ? y : seven);
+        if (shape == 4u) {
+            Atom *captured = atom_var(&source, "occurs-context-captured");
+            left = binary(&source, pair, deep, x);
+            right = binary(&source, pair, captured, captured);
+        }
+        CettaFrameIdentityScope reference_scope = {0};
+        CettaFrameIdentity reference_epoch = 0u;
+        assert(cetta_frame_identity_scope_try(&reference_scope, &reference_epoch));
+        BindingsBuilder reference; assert(bindings_builder_init(&reference, &seed));
+        CettaMatchCompletion expected = match_atoms_epoch_builder_checked(
+            left, right, &reference, &source, reference_epoch, UINT64_MAX);
+        assert(expected == (cyclic ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_MATCHED));
+        bindings_builder_free(&reference);
+        cetta_frame_identity_scope_clear(&reference_scope);
+        CettaNativeCostLedger cost; CettaNativeCostScope scope;
+        cetta_native_cost_init(&cost); cetta_native_cost_scope_enter(&scope, &cost, 1u);
+        CettaMatchCursor *cursor = match_atoms_cursor_new(left, right, &seed, &source);
+        assert(cursor && match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
+        assert(!match_atoms_cursor_epoch(cursor) && !cost.total.counts[CETTA_COST_MATCH_NODE]);
+        assert(match_atoms_cursor_step(cursor, 8u) == CETTA_MATCH_CURSOR_PROGRESS);
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE] == (shape == 3u ? 1u : 3u));
+        uint32_t epoch = match_atoms_cursor_epoch(cursor); assert(epoch);
+        VarId result_id = shape == 3u ? var_epoch_id(x->var_id, epoch) : x->var_id;
+        SymbolId result_name = atom_symbol_current_id(x);
+        Atom *expected_value = shape == 3u
+            ? binary(&destination, head, atom_int(&destination, 7),
+                atom_var_with_spelling(&destination, atom_symbol_current_id(z), z->var_id))
+            : shape == 4u ? atom_deep_copy(&destination, bindings_apply(&seed, &source, deep))
+            : atom_deep_copy(&destination, deep);
+        assert(expected_value);
+        if (run) {
+            CettaMatchCursor *copy;
+            if (run == 1u) {
+                copy = match_atoms_cursor_clone(cursor);
+                assert(copy);
+                CettaMatchCursor *witness = match_atoms_cursor_clone(cursor);
+                assert(witness);
+                CettaNativeCostLedger comparison_cost;
+                CettaNativeCostScope comparison_scope;
+                cetta_native_cost_init(&comparison_cost);
+                cetta_native_cost_scope_leave(&scope);
+                cetta_native_cost_scope_enter(&comparison_scope, &comparison_cost, 1u);
+                CettaMatchCursorStep original_step = CETTA_MATCH_CURSOR_PROGRESS;
+                CettaMatchCursorStep cloned_step = CETTA_MATCH_CURSOR_PROGRESS;
+                unsigned remaining = 0u;
+                for (; remaining < 10000u && original_step == CETTA_MATCH_CURSOR_PROGRESS;
+                     ++remaining) {
+                    original_step = match_atoms_cursor_step(cursor, 1u);
+                    cloned_step = match_atoms_cursor_step(witness, 1u);
+                    assert(original_step == cloned_step);
+                }
+                assert(original_step != CETTA_MATCH_CURSOR_PROGRESS && remaining);
+                match_atoms_cursor_free(witness);
+                cetta_native_cost_scope_leave(&comparison_scope);
+                cetta_native_cost_free(&comparison_cost);
+                cetta_native_cost_scope_enter(&scope, &cost, 1u);
+            } else {
+                AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+                AtomDeepCopyArenaPair arenas = {&source, &destination};
+                assert(session && atom_deep_copy_session_set_arena_map(session, &arenas, 1u));
+                copy = match_atoms_cursor_copy_to_arena(cursor, &destination, session);
+                atom_deep_copy_session_free(session);
+            }
+            assert(copy && match_atoms_cursor_epoch(copy) == epoch);
+            match_atoms_cursor_free(cursor); cursor = copy;
+        }
+        if (run == 2u) { bindings_free(&seed); arena_free(&source); }
+        CettaMatchCursorStep step = CETTA_MATCH_CURSOR_PROGRESS;
+        unsigned polls = 0u;
+        for (; polls < 10000u && step == CETTA_MATCH_CURSOR_PROGRESS; ++polls) {
+            assert(match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
+            step = match_atoms_cursor_step(cursor, grants[run]);
+        }
+        assert(step == (cyclic ? CETTA_MATCH_CURSOR_INCOMPLETE : CETTA_MATCH_CURSOR_MATCHED));
+        assert(polls && (run || polls > 100u));
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE] == (shape == 3u ? 1u : 4u));
+        assert(cost.total.counts[CETTA_COST_MATCH_ATTEMPT] == 1u);
+        Bindings answer; bindings_init(&answer);
+        assert(match_atoms_cursor_take(cursor, &answer) == !cyclic);
+        if (!cyclic) {
+            Arena *result_arena = run == 2u ? &destination : &source;
+            Atom *probe = atom_var_with_spelling(result_arena, result_name, result_id);
+            Atom *actual = bindings_apply(&answer, result_arena, probe);
+            assert(actual && atom_alpha_eq(actual, expected_value));
+        }
+        bindings_free(&answer); match_atoms_cursor_free(cursor);
+        cetta_native_cost_scope_leave(&scope); cetta_native_cost_free(&cost);
+        if (run != 2u) { bindings_free(&seed); arena_free(&source); }
+        arena_free(&destination);
+        cetta_frame_identity_scope_clear(&contexts);
+    }
+    puts("PASS: retained occurs queries yield through deep, wide, shared, aliased and lexically distinct graphs without replaying pair work");
+}
+
+static void test_retained_identity_audit(void) {
+    const uint64_t grants[] = {1u, 7u, UINT64_MAX};
+    for (unsigned shape = 0u; shape < 4u; ++shape)
+    for (unsigned run = 0u; run < 3u; ++run) {
+        Arena source, destination;
+        arena_init(&source); arena_init(&destination);
+        SymbolId head = symbol_intern_cstr(g_symbols, "identity-audit-layer");
+        Atom *root = atom_int(&source, 7);
+        if (shape == 0u) {
+            for (unsigned n = 0u; n < 65u; ++n)
+                root = binary(&source, head, root, atom_int(&source, 9));
+        } else if (shape == 1u) {
+            Atom *items[258]; items[0] = atom_symbol_id(&source, head);
+            for (unsigned n = 1u; n < 258u; ++n) items[n] = atom_int(&source, n);
+            root = atom_expr(&source, items, 258u);
+        } else if (shape == 2u) {
+            for (unsigned n = 0u; n < 14u; ++n) root = binary(&source, head, root, root);
+        } else {
+            root = binary(&source, head, root, atom_int(&source, 9));
+            root->expr.elems[1] = root;
+        }
+        Bindings oracle; bindings_init(&oracle);
+        CettaFrameIdentityScope reference = {0}; CettaFrameIdentity reference_epoch = 0u;
+        assert(cetta_frame_identity_scope_try(&reference, &reference_epoch));
+        assert(match_atoms_epoch(root, root, &oracle, &source, reference_epoch) == (shape != 3u));
+        bindings_free(&oracle); cetta_frame_identity_scope_clear(&reference);
+        CettaNativeCostLedger cost; CettaNativeCostScope scope;
+        cetta_native_cost_init(&cost); cetta_native_cost_scope_enter(&scope, &cost, 1u);
+        CettaMatchCursor *cursor = match_atoms_cursor_new(root, root, NULL, &source);
+        uint64_t admitted = cost.total.work;
+        assert(cursor && match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
+        assert(!match_atoms_cursor_epoch(cursor) && cost.total.work == admitted);
+        assert(match_atoms_cursor_step(cursor, 1u) == CETTA_MATCH_CURSOR_PROGRESS);
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE] == 1u);
+        uint32_t epoch = match_atoms_cursor_epoch(cursor); assert(epoch);
+        if (run) {
+            assert(match_atoms_cursor_step(cursor, shape == 3u ? 2u : 70u) ==
+                CETTA_MATCH_CURSOR_PROGRESS);
+            CettaMatchCursor *copy;
+            if (run == 1u) {
+                copy = match_atoms_cursor_clone(cursor);
+                CettaMatchCursor *witness = match_atoms_cursor_clone(cursor);
+                assert(copy && witness);
+                CettaNativeCostLedger comparison_cost;
+                CettaNativeCostScope comparison_scope;
+                cetta_native_cost_init(&comparison_cost);
+                cetta_native_cost_scope_leave(&scope);
+                cetta_native_cost_scope_enter(&comparison_scope, &comparison_cost, 1u);
+                CettaMatchCursorStep original = CETTA_MATCH_CURSOR_PROGRESS;
+                CettaMatchCursorStep cloned = CETTA_MATCH_CURSOR_PROGRESS;
+                unsigned remaining = 0u;
+                for (; remaining < 3000u && original == CETTA_MATCH_CURSOR_PROGRESS; ++remaining) {
+                    original = match_atoms_cursor_step(cursor, 1u);
+                    cloned = match_atoms_cursor_step(witness, 1u);
+                    assert(original == cloned);
+                }
+                assert(remaining && original != CETTA_MATCH_CURSOR_PROGRESS);
+                match_atoms_cursor_free(witness);
+                cetta_native_cost_scope_leave(&comparison_scope);
+                cetta_native_cost_free(&comparison_cost);
+                cetta_native_cost_scope_enter(&scope, &cost, 1u);
+            } else {
+                AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+                AtomDeepCopyArenaPair arenas = {&source, &destination};
+                assert(session && atom_deep_copy_session_set_arena_map(session, &arenas, 1u));
+                copy = match_atoms_cursor_copy_to_arena(cursor, &destination, session);
+                atom_deep_copy_session_free(session);
+            }
+            assert(copy && match_atoms_cursor_epoch(copy) == epoch);
+            match_atoms_cursor_free(cursor); cursor = copy;
+        }
+        if (run == 2u) arena_free(&source);
+        CettaMatchCursorStep step = CETTA_MATCH_CURSOR_PROGRESS;
+        unsigned polls = 0u;
+        for (; polls < 3000u && step == CETTA_MATCH_CURSOR_PROGRESS; ++polls) {
+            uint64_t work = cost.total.work;
+            assert(match_atoms_cursor_step(cursor, 0u) == step && cost.total.work == work);
+            step = match_atoms_cursor_step(cursor, grants[run]);
+        }
+        assert(step == (shape == 3u ? CETTA_MATCH_CURSOR_INCOMPLETE : CETTA_MATCH_CURSOR_MATCHED));
+        assert(polls && (run || shape == 3u || polls > 50u));
+        assert(cost.total.counts[CETTA_COST_MATCH_NODE] == 1u);
+        assert(cost.total.counts[CETTA_COST_MATCH_ATTEMPT] == 1u);
+        Bindings answer; bindings_init(&answer);
+        assert(match_atoms_cursor_take(cursor, &answer) == (shape != 3u));
+        bindings_free(&answer); match_atoms_cursor_free(cursor);
+        cetta_native_cost_scope_leave(&scope); cetta_native_cost_free(&cost);
+        if (run != 2u) arena_free(&source);
+        arena_free(&destination);
+    }
+    puts("PASS: shared identity audits yield over deep, wide and shared DAGs, retain one paid pair and refuse raw cycles");
+}
+
 static void test_retained_match_clone(Arena *arena) {
     Atom *head=atom_symbol(arena,"cursor-clone");
     Atom *left=atom_int(arena,7), *right=atom_int(arena,7);
@@ -2617,7 +2939,10 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
     assert(bindings_has_loop(&bad));
     cursor=match_atoms_cursor_new(x,atom_int(scratch,11),&bad,scratch);
     assert(cursor);
-    assert(match_atoms_cursor_step(cursor,1u)==CETTA_MATCH_CURSOR_INCOMPLETE);
+    step=CETTA_MATCH_CURSOR_PROGRESS;
+    for (uint64_t poll=0u;poll<2u*bad.len+4u && step==CETTA_MATCH_CURSOR_PROGRESS;poll++)
+        step=match_atoms_cursor_step(cursor,1u);
+    assert(step==CETTA_MATCH_CURSOR_INCOMPLETE);
     CettaMatchCursor *parked=match_atoms_cursor_clone(cursor);
     assert(parked);
     match_atoms_cursor_free(cursor);
@@ -2750,7 +3075,8 @@ static void test_owned_need_graph(void) {
     if (independent.heap_index) {
         Arena failed_prefix, failed_suffix;
         arena_init_detached(&failed_prefix); arena_init_detached(&failed_suffix);
-        arena_set_older_generation(&failed_suffix, &failed_prefix);
+        /* These sources are standalone. Keep their images standalone too,
+         * so the missing index owner is the dependency that refuses copy. */
         session = atom_deep_copy_session_new(&failed_suffix);
         AtomDeepCopyArenaPair incomplete[] = {{&source, &failed_prefix}, {&extension, &failed_suffix}};
         assert(session && atom_deep_copy_session_set_arena_map(session, incomplete, 2u));
@@ -3507,8 +3833,15 @@ static void assert_declarations_match_rows(Space *space, Arena *scratch,
                                            Atom **subjects, size_t subject_count) {
     Space rebuilt;
     space_init_with_universe(&rebuilt, space->native.universe);
-    for (CettaIndex i = 0u; i < space_length64(space); i++)
-        space_add_atom_id(&rebuilt, space_get_atom_id_at64(space, i));
+    CettaIndex imported = space_imported_length(space);
+    for (CettaIndex i = 0u; i < space_length64(space); i++) {
+        if (space->overlay_base)
+            space_add(&rebuilt, space_get_at64(space, i));
+        else
+            space_add_atom_id(&rebuilt, space_get_atom_id_at64(space, i));
+        if (imported && i + 1u == imported)
+            assert(space_mark_imported_prefix(&rebuilt));
+    }
     space_mark_derived_state_dirty(&rebuilt);
     for (size_t subject = 0u; subject < subject_count; subject++) {
         Atom **types = NULL, **reference = NULL;
@@ -3517,7 +3850,9 @@ static void assert_declarations_match_rows(Space *space, Arena *scratch,
             &rebuilt, scratch, subjects[subject], &reference);
         uint32_t found = 0u;
         /* Independently scan the authored declarations in current row order. */
-        for (CettaIndex i = 0u; i < space_length64(space); i++) {
+        for (unsigned pass = 0u; pass < (imported ? 2u : 1u); pass++)
+        for (CettaIndex i = pass ? 0u : imported;
+             i < (pass ? imported : space_length64(space)); i++) {
             Atom *row = space_get_at64(space, i);
             if (!row_has_form(row, g_builtin_syms.colon) ||
                 !atom_eq(row->expr.elems[1], subjects[subject]))
@@ -3525,11 +3860,26 @@ static void assert_declarations_match_rows(Space *space, Arena *scratch,
             assert(found < count && found < rebuilt_count);
             assert(atom_alpha_eq(types[found], row->expr.elems[2]));
             assert(atom_alpha_eq(types[found], reference[found]));
+            if (atom_has_vars(row->expr.elems[2])) {
+                /* Each lookup instantiates its own type variables while
+                 * preserving repeated-variable correlations within a row. */
+                assert(!atom_eq(types[found], row->expr.elems[2]));
+                assert(!atom_eq(types[found], reference[found]));
+                for (uint32_t previous = 0u; previous < found; previous++)
+                    if (atom_alpha_eq(types[previous], types[found]))
+                        assert(!atom_eq(types[previous], types[found]));
+            }
             found++;
         }
         assert(found == count && count == rebuilt_count);
         free(reference);
         free(types);
+    }
+    /* A local index belongs to local storage. The view's independent scan
+     * above, rather than a flattened index, specifies inherited answers. */
+    if (space->overlay_base) {
+        space_free(&rebuilt);
+        return;
     }
     assert(space->native.ty_idx.has_open_rows == rebuilt.native.ty_idx.has_open_rows);
     assert(space->native.ty_idx.has_non_symbol_subjects == rebuilt.native.ty_idx.has_non_symbol_subjects);
@@ -3653,6 +4003,137 @@ static void test_declaration_retention(void) {
     puts("PASS: 648 declaration-index removals preserve ordered types, duplicate declarations, coordinates and open-row certificates against independent scans");
 }
 
+static void test_declaration_views(void) {
+    const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_STACK, SPACE_KIND_QUEUE};
+    for (unsigned variant = 0u; variant < 24u; variant++) {
+        Arena persistent, scratch;
+        arena_init(&persistent); arena_init(&scratch);
+        TermUniverse universe;
+        assert(term_universe_init_with_store_format(&universe, variant % 2u
+            ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1 : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Space base, layers[3], own;
+        space_init_with_universe(&base, &universe);
+        base.kind = kinds[variant / 4u % 3u];
+        assert(space_match_backend_try_set(&base, variant / 2u % 2u
+            ? SPACE_ENGINE_NATIVE_CANDIDATE_EXACT : SPACE_ENGINE_NATIVE));
+        Atom *subject = atom_symbol(&scratch, "view-type-subject");
+        Atom *compound = binary(&scratch, symbol_intern_cstr(g_symbols, "view-type-box"),
+                                atom_int(&scratch, 7), atom_int(&scratch, 8));
+        Atom *subjects[] = {subject, compound, atom_symbol(&scratch, "view-type-missing"),
+                            atom_symbol(&scratch, "view-type-local-only")};
+        Atom *declaration = binary(&scratch, g_builtin_syms.colon, subject,
+                                  atom_symbol(&scratch, "ViewTypeBase"));
+        for (unsigned i = 0u; i < 64u; i++) {
+            Atom *row = i % 2u ? declaration : atom_int(&scratch, i);
+            if (i == 11u || i == 13u) {
+                Atom *variable = atom_var(&scratch, "view-type-parameter");
+                row = binary(&scratch, g_builtin_syms.colon, subject,
+                    binary(&scratch, symbol_intern_cstr(g_symbols, "ViewTypeParam"), variable, variable));
+            }
+            if (i == 29u)
+                row = binary(&scratch, g_builtin_syms.colon, compound,
+                             atom_symbol(&scratch, "ViewTypeCompound"));
+            space_add(&base, row);
+            if (i == 15u && variant / 12u && base.kind == SPACE_KIND_ATOM)
+                assert(space_mark_imported_prefix(&base));
+        }
+        Space *parent = &base;
+        for (unsigned depth = 0u; depth < 3u; depth++) {
+            Space *view = &layers[depth];
+            space_init_overlay(view, parent);
+            space_add(view, atom_int(&scratch, 1000u + depth));
+            space_add(view, binary(&scratch, g_builtin_syms.colon, subjects[3],
+                                  atom_int(&scratch, 2000u + depth)));
+            space_add(view, declaration);
+            for (unsigned phase = 0u; phase < 3u; phase++) {
+                if (phase == 1u) assert(space_remove(view, declaration));
+                if (phase == 2u) {
+                    space_add(view, declaration);
+                    space_mark_derived_state_dirty(view);
+                }
+                assert_declarations_match_rows(view, &scratch, subjects, 4u);
+                SpaceDeclaredTypeLookupCost cost = {0};
+                Atom **types = NULL;
+                uint32_t count = space_get_declared_types_costed(
+                    view, &scratch, subject, &types, &cost);
+                assert(count && cost.indexed_lookups && !cost.full_space_rows_examined);
+                free(types);
+                uint32_t checked_count = 0u;
+                assert(space_get_declared_types_checked(
+                    view, &scratch, subject, &types, &checked_count));
+                assert(checked_count == count);
+                free(types);
+                CettaTypeInferenceBudget budget = {.complete = true,
+                    .steps_limited = true, .steps_remaining = 19u};
+                uint32_t observed = get_atom_types_budgeted(
+                    view, &scratch, subject, &types, &budget);
+                assert(observed == count && budget.complete &&
+                    budget.work_steps_observed == space_length64(view) + 1u &&
+                    budget.steps_remaining == 19u && !budget.steps_spent);
+                free(types);
+                budget = (CettaTypeInferenceBudget){.complete = true, .type_capacity = 1u};
+                observed = get_atom_types_budgeted(view, &scratch, subject, &types, &budget);
+                assert(observed == 1u && !budget.complete && budget.type_capacity_exhausted);
+                free(types);
+            }
+            char late_name[64];
+            snprintf(late_name, sizeof(late_name), "view-type-late-%u", depth);
+            Atom *late = atom_symbol(&scratch, late_name);
+            space_add(parent, binary(&scratch, g_builtin_syms.colon, late,
+                                     atom_symbol(&scratch, "ViewLate")));
+            Atom **types = NULL;
+            assert(!space_get_declared_types(view, &scratch, late, &types));
+            free(types);
+            parent = view;
+        }
+        assert(space_init_module_own_view(&own, &base));
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        assert(space_module_own_view_select(&own, &layers[2]));
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        assert(space_module_own_view_select(&own, &base));
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        TermUniverse alternate_universe;
+        assert(term_universe_init_with_store_format(&alternate_universe,
+            TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+        term_universe_set_persistent_arena(&alternate_universe, &persistent);
+        Space alternate, importing;
+        space_init_with_universe(&alternate, &alternate_universe);
+        for (unsigned i = 0u; i < 17u; i++) space_add(&alternate, atom_int(&scratch, 7000u + i));
+        Atom *cross_type = atom_symbol(&scratch, "ViewCrossUniverse");
+        space_add(&alternate, binary(&scratch, g_builtin_syms.colon, subject, cross_type));
+        Atom *arrow = atom_expr(&scratch, (Atom *[]){atom_symbol_id(&scratch, g_builtin_syms.arrow),
+            cross_type, cross_type, cross_type}, 4u);
+        Atom *arrow_row = binary(&scratch, g_builtin_syms.colon, subject, arrow);
+        space_add(&alternate, arrow_row);
+        assert(space_module_own_view_select(&own, &alternate));
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        assert(space_head_has_arrow_signature(&own, atom_symbol_current_id(subject), 2u));
+        assert(!space_head_has_arrow_signature(&own, atom_symbol_current_id(subject), 1u));
+        space_init_with_universe(&importing, &universe);
+        Atom *importer_type = atom_symbol(&scratch, "ViewImporterType");
+        space_add(&importing, binary(&scratch, g_builtin_syms.colon, subject, importer_type));
+        assert(space_add_dependency(&importing, &own));
+        Atom **composed = NULL;
+        assert(space_get_declared_types(&importing, &scratch, subject, &composed) == 3u);
+        assert(atom_eq(composed[0], importer_type) && atom_eq(composed[1], cross_type) &&
+               atom_eq(composed[2], arrow));
+        free(composed);
+        assert(space_remove(&alternate, arrow_row));
+        assert(!space_head_has_arrow_signature(&own, atom_symbol_current_id(subject), 2u));
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        space_free(&importing);
+        assert(space_module_own_view_select(&own, &base));
+        space_free(&alternate); term_universe_free(&alternate_universe);
+        assert_declarations_match_rows(&own, &scratch, subjects, 4u);
+        space_free(&own);
+        for (unsigned depth = 3u; depth > 0u; depth--) space_free(&layers[depth - 1u]);
+        space_free(&base); term_universe_free(&universe);
+        arena_free(&scratch); arena_free(&persistent);
+    }
+    puts("PASS: indexed declaration views preserve nested masks, local offsets, prefix ceilings, imports, duplicate rows and live module selection");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -3698,6 +4179,9 @@ int main(void) {
     test_retained_query_invalidation(&universe, &scratch);
     test_retained_match_worklist(&universe, &scratch);
     test_retained_match_cold_thread(&scratch);
+    test_retained_alias_match();
+    test_retained_occurs_match();
+    test_retained_identity_audit();
     test_retained_match_clone(&scratch);
     test_retained_match_relocation();
     test_owned_need_graph();
@@ -3712,6 +4196,7 @@ int main(void) {
     test_equation_coordinate_retention();
     test_single_erasure_equation_retention();
     test_declaration_retention();
+    test_declaration_views();
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;

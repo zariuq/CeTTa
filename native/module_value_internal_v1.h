@@ -27,6 +27,9 @@ Atom *module_text_v1(ModuleWorkV1 *, Atom *);
 Atom *module_category_name_v1(ModuleWorkV1 *, Atom *);
 Atom *module_site_v1(ModuleWorkV1 *, Atom *, Atom *);
 Atom *module_core_v1(ModuleWorkV1 *, Atom *, Atom *);
+Atom *cetta_module_portable_v1_core(ModuleWorkV1 *, Atom *, Atom *);
+bool cetta_module_portable_v1_read(Arena *, Atom *, Atom *, uint32_t, Atom **, Atom **);
+bool cetta_module_portable_v1_write(Arena *, Atom *, uint32_t, Atom **, Atom **);
 Atom *module_interpret_v1(ModuleWorkV1 *, Atom *, Atom *, Atom *);
 
 #endif

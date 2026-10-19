@@ -1,0 +1,379 @@
+Native HOL Light service
+=======================
+
+Status and reference
+--------------------
+
+This is an experimental native kernel and checked proof-stream frontend.
+The logical reference is HOL Light fusion.ml at revision
+924faf0c3471a04174ffdeb8576ce7cabcb92d64, byte-identical to fusion.ml at
+233b83c3202370e03c54de2bd090e4d34f677e91. Its SHA-256 is
+29544be92d9cc1e6b3b59ba5b210604b9a748366a68b3bcdc2619717d68fd98a.
+The imported source inventory is in docs/hol_light_origin.txt.
+
+The kernel provides the ten primitive inference rules, checked term/type
+construction, conservative definition operations, immutable theory histories,
+axiom dependencies, reference ownership and incremental HOLR replay. It does
+not implement OCaml, HOL Light tactics, or the HOL Light .ml source language.
+It does not replace HE or PeTTa's type relation. Overload search, gradual
+consistency, variable bindings, evaluation demand and answer multiplicity
+remain the dialect's responsibility.
+
+There is no mechanized refinement proof of this C implementation. Differential
+tests against the pinned OCaml reference and native checks are evidence, not
+such a proof. An independent proof exporter/checker must authenticate the
+conclusion it reports, not just replay rules and print an unchecked claim.
+No Candle certification or .module evidence admission is provided here.
+
+Observable compatibility
+------------------------
+
+Named types and terms use HOL Light's constructors and inference side
+conditions. The primitive BETA rule accepts only (lambda v. body) v. General
+beta conversion requires a derivation; the primitive does not silently expand
+its acceptance.
+
+Two API differences from the pinned OCaml implementation are intentional and
+must not be hidden by an alpha-equivalence comparison:
+
+* Identity substitutions may retain a binder that OCaml renames because of
+  physical equality. For example, INST_TYPE [B/A] followed by
+  INST [(x:B,x:B); (z:B,x:B)] on REFL (lambda z:A. f x z) retains z natively
+  where OCaml can choose z'. The resulting theorems are alpha-equivalent.
+  Extracting the abstraction, applying it to z:B, and asking primitive BETA
+  distinguishes the APIs. Programs that inspect and reconstruct named terms
+  cannot assume identical later acceptance just from alpha-equivalent output.
+  tests/hol_light/test_boundaries.c retains this contextual example.
+* A basic type definition with identical abstraction/representation names is
+  refused atomically. The pinned OCaml function can leave a declaration behind
+  on this error. No partially published definition is exposed here.
+
+Kernel identity, declaration ancestry, exact structural comparison and
+alpha-equivalence have different roles. Hash collisions never substitute for
+any of these checks. Distinct proof events and delivery occurrences remain
+distinct even when their immutable theorem payload is shared.
+
+Command-line proof replay
+-------------------------
+
+  cetta --lang hol-light proof.holr
+  cetta --lang hol proof.holr
+  cetta --lang hol-light --profile sealed --count-only proof.holr
+
+hol is an alias of hol-light. The syntax name is holr; the stream carries the
+reference digest and format version. docs/hol_light_stream.txt specifies the
+wire format. The default profile is standard. Profiles are:
+
+  open      explicit user axioms may be introduced
+  standard  only recognized standard HOL axiom schemas may be introduced
+  sealed    no new axioms may be introduced
+
+These policies govern axiom introduction. They do not assert that a theorem
+has no hypotheses, prove an imported assertion, or provide a sealed MeTTa
+space. A bare environment declares bool, fun and equality. The individual
+type, choice constant, definitions and standard axioms must be introduced by
+checked theory-extension operations; this frontend does not assert them
+automatically.
+
+Each EMIT is printed once in stream order. Equal emissions are not deduplicated.
+The final line is (hol:accepted RECORDS EMISSIONS). --count-only reports the
+number of emissions; --no-results suppresses output. --emit-runtime-stats
+reports replay counts and kernel allocation statistics. --fuel sets the
+per-kernel-operation work allowance; -1 disables that limit. The default is
+unmetered. Interruption polling remains active with or without a work quota.
+Input is fed incrementally, and the host polls interruption between batches.
+The native replay API additionally exposes budgeted suspension and cloning.
+
+Exit status is 0 for accepted proofs, 1 for logical/policy refusal, 2 for
+malformed input, 3 for a resource/interruption failure, and 4 for file/output
+errors. A probe stream containing refused records is not accepted as a proof.
+Inline MeTTa expressions and evaluator-specific flags are not HOLR inputs.
+
+MeTTa library
+-------------
+
+Import holkernel, then retain the returned handles in ordinary bindings:
+
+  !(import! &self holkernel)
+  !(let $k (hol:kernel)
+      (hol:sequent (hol:refl $k (v "x" (V "A")))))
+
+Sessions default to check mode: inference checks and axiom dependencies are
+maintained, while derivation journals are omitted. Use
+(hol:kernel standard record) when later certificate export needs derivations.
+The optional mode is check or record, independent of the axiom policy. The
+current MeTTa interface does not yet expose certificate export; the native
+export API requires recording before the derivation is produced.
+
+Immutable nodes do not imply permanent retention. Released references stop
+rooting unused nodes, and collection reclaims unreachable objects. In record
+mode, live derivations retain their premise events and argument terms; a live
+conclusion can therefore keep a long proof even when its sequent is small.
+Collection drops unrelated proof events and shrinks an oversized journal;
+retiring all proof roots releases its event array. Merely checking a supplied
+HOLR stream does not create another derivation journal. Replay reference tables,
+emission roots and labels still retain their explicitly live objects.
+
+Canonical data uses these constructors:
+
+  (V "a")                  type variable
+  (T "bool")               declared type operator, with following arguments
+  (T "fun" DOMAIN RANGE)    function type
+  (v "x" TYPE)             variable
+  (c "=" TYPE)             declared constant at a checked type instance
+  (A FUNCTION ARGUMENT)     application
+  (L VARIABLE BODY)         abstraction
+
+HOL variables use names inside v/V nodes. MeTTa variables are not treated as
+HOL metavariables. Raw terms are held by the HE/PeTTa library declarations.
+In Prime, use the explicit (quote DATA) envelope when authored equations might
+interpret a constructor, for example (hol:refl $k (quote (v "x" (V "A")))).
+The host adapter accepts that envelope and still checks every HOL constructor.
+Returned syntax is completed data, not a request to evaluate matching MeTTa
+equations. A term's printable shape is never accepted as a theorem.
+
+Resident values avoid repeated conversion:
+
+  !(let* (($k (hol:kernel))
+          ($t (hol:term $k (v "x" (V "A"))))
+      (hol:same-payload (hol:refl $k $t) (hol:refl $k $t)))
+
+hol:term and hol:type prepare checked resident values. hol:term-data and
+hol:type-data materialize them; hol:conclusion returns a resident term from a
+theorem. Input/output conversion memoizes shared nodes within each operation.
+Structural output shares Atom nodes; a later tree printer may still expand
+them, so use resident handles for large repeated work.
+
+Session operations:
+
+  (hol:kernel [POLICY [check|record]])
+  (hol:stats K)
+  (hol:check-dag K ROWS ROOT-ID)
+  (hol:budget K WORK-ALLOWANCE)
+  (hol:checkpoint K) / (hol:restore K ENV)
+  (hol:policy K POLICY) / (hol:admits K THEOREM)
+  (hol:replay K PATH [POLICY]) / (hol:theorem K LABEL)
+  (hol:term K DATA) / (hol:type K DATA)
+  (hol:aconv K LEFT RIGHT) / (hol:type-of K TERM)
+  (hol:new-type K NAME ARITY) / (hol:new-constant K NAME TYPE)
+  (hol:new-axiom K BOOLEAN-TERM) / (hol:new-definition K EQUATION)
+  (hol:new-type-definition K TYPE-NAME ABS-NAME REP-NAME WITNESS)
+
+A work allowance is a positive integer; -1 restores unmetered execution.
+
+Primitive rules:
+
+  (hol:refl K TERM) / (hol:beta K TERM) / (hol:assume K BOOLEAN-TERM)
+  (hol:trans H1 H2) / (hol:mk-comb H1 H2)
+  (hol:abs K VARIABLE H) / (hol:eq-mp H1 H2)
+  (hol:deduct-antisym H1 H2)
+  (hol:inst H ((NEW OLD) ...)) / (hol:inst-type H ((NEW OLD) ...))
+
+Observations:
+
+  (hol:sequent H) / (hol:text H) / (hol:axioms H) / (hol:standard H)
+  (hol:event H) / (hol:same-payload H1 H2) / (hol:conclusion H)
+
+hol:stats returns (HolStats CORE-BYTES JOURNAL-BYTES JOURNAL-EVENTS
+LIVE-TERMS LIVE-THEOREMS LIVE-REFERENCES). Core bytes count the kernel's tracked
+allocations and traversal memo. Journal bytes count its reserved event array
+and argument vectors separately; neither is a complete process/host memory
+census. Counts do not trigger collection or alter a theorem's meaning.
+
+Substitution pairs are ordered replacement/original pairs. Basic definitions
+must meet the kernel's closure and type-variable conditions. A basic type
+definition returns two theorem handles only after both can be published.
+
+Refusals return (hol:refused STATUS REASON); malformed inputs and resource
+failures return (hol:error STATUS REASON). In particular,
+(hol:assume K (v "x" (V "A"))) refuses because the term is not Boolean.
+(hol:term K (A (v "x" (V "A")) (v "x" (V "A")))) refuses because its
+function is not function-typed. Neither failure manufactures a theorem.
+
+Borrowed proof graphs
+---------------------
+
+hol:check-dag reads an existing MeTTa expression containing chronological rows:
+
+  (HolNode SOURCE-ID REQUEST (PARENT-ID ...) (thm (HYPOTHESIS ...) CONCLUSION))
+
+The final sequent claim is optional. Omitting it removes a redundant
+cross-check; the inference and every premise are still checked. A producer
+can claim only the root or selected checkpoints.
+
+Source IDs are nonnegative integers, independent of row positions. A parent
+must already have been checked. Duplicate edges are retained in order; a source
+ID may be defined only once. Every row is checked, including rows after the
+requested root. The accepted root is published only after the complete batch
+passes. A forged theorem-shaped claim supplies no authority.
+
+Requests are (REFL TERM), (TRANS), (MK_COMB), (ABS VARIABLE), (BETA TERM),
+(ASSUME TERM), (EQ_MP), (DEDUCT_ANTISYM_RULE), (INST_TYPE PAIRS), or (INST PAIRS).
+Their premise counts are respectively 0, 2, 2, 1, 0, 0, 2, 2, 1, and 1.
+The same checked primitive implementation as the direct API computes each
+sequent. A supplied claim must have the same hypothesis set and conclusion
+up to alpha-equivalence. Hypothesis order and repeated alpha-equivalent
+hypotheses do not change that set. Correctly ordered claims use a direct
+comparison; other orders use an exact membership check. ASSUME retains its
+proposition as a hypothesis. This
+format has no unchecked axiom, definition or theory-extension instruction.
+
+For example, a stored bundle can be checked and its genuine result stored back:
+
+  !(let* (($kb (new-space)) ($k (hol:kernel))
+          ($_ (add-atom $kb
+                (HolBundle demo
+                  ((HolNode 7 (REFL (v "p" (T "bool"))) ()
+                     (thm () (A (A (c "=" (T "fun" (T "bool")
+                                               (T "fun" (T "bool") (T "bool"))))
+                                   (v "p" (T "bool"))) (v "p" (T "bool")))))))))
+          ($h (match $kb (HolBundle demo $rows) (hol:check-dag $k $rows 7)))
+          ($_2 (add-atom $kb (Checked demo $h))))
+      (match $kb (Checked demo $proof) (hol:sequent $proof)))
+
+The synchronous adapter borrows source rows and child pointers. Its exact
+source-ID hash table and checked theorem references occupy linear auxiliary
+storage; proof dependencies are never expanded into trees. Raw term/type data
+is still converted into the kernel's private checked representation, with
+per-operation sharing. Resident term handles avoid that conversion. Only the
+returned root consumes a host theorem-handle slot. The source batch may be
+released afterward without invalidating the returned theorem.
+
+The input must remain live and unchanged for this thread-confined call. There
+is no retained MeTTa DAG cursor, direct trie/AtomId reader, or native revision
+validation for resuming this operation yet. A store query can supply an existing
+ground expression, but query materialization costs remain those of its backend.
+Checking a selected expression does not establish end-to-end zero-copy access
+to every storage engine.
+
+The Lean BorrowedProofCursor model proves exact correspondence to chronological
+HOL replay, returned-root derivability, ordered repeated edges, prefix/suffix
+resumption and read-stability/refusal laws. Its source reader supplies typed
+rule witnesses. Raw request decoding, the native index, term canonicalization
+and C ownership/representation correspondence remain separate obligations.
+
+A resolution or superposition certificate must first be reconstructed into
+these checked HOL steps. Loading TPTP formulas or trusting an inference label
+does not justify a theorem. Clausification, Skolemization, substitutions and
+the problem assumptions need their own checked translation; the public controls
+currently reconstruct equality rewriting under a function context and verify
+that its hypotheses cannot be silently dropped.
+
+Ownership, worlds and authority
+------------------------------
+
+A session and its values use CeTTa's opaque seal value kind. The HOL issuing
+brand and payload kinds are private to the native adapter. Copying a value
+retains its owner; matching cannot expose its brand identity or payload.
+The printed form (Sealed hol) is display data and cannot be read back as
+authority. An ordinary seal with the same nickname cannot open a HOL value.
+Kernel operations reject foreign sessions and incompatible declaration
+branches. Session operations and root release share a recursive mutex;
+different threads may use retained values while their input arenas remain
+live. This does not authorize concurrent destruction of an input arena.
+
+Each native operation holds temporary references in a generation-tagged
+owner. Publication transfers only returned values/current environment to a
+surviving owner. Released owner slots are reused under fresh generations;
+generation exhaustion retires a slot instead of reviving an old token.
+
+Native seal payloads retain the session and their returned kernel roots.
+Releasing the last copy releases those roots and, eventually, the session.
+Equality follows capsule identity throughout matching and storage operations.
+Allocation failure publishes no partial HOL result. Large proof streams use
+the kernel's own reference tables; only returned values need host capsules.
+Private brand creation caches only a successful result. A temporary allocation
+failure can be retried, while a successfully created brand keeps its identity.
+
+Session policy can only tighten. Restoring an older environment or replaying
+another stream cannot loosen the policy. A completed replay replaces the
+session's environment and label table together; failed replay leaves both
+unchanged. Replay starts from the bare theory, not from the current session's
+declarations. Saved theorem handles remain valid objects after restore, but
+hol:admits checks whether the current environment admits their dependencies.
+
+The kernel uses recoverable allocation/fuel outcomes. Host conversion uses
+growable postorder frames, preserves input/output DAG sharing and has no
+separate depth ceiling. Its optional work allowance defaults to unmetered.
+The kernel's recursive logical operations still have a configurable term
+height guard (default 8192); replacing those traversals remains necessary
+before unrestricted logical-term depth is supported. CeTTa's arena allocation
+and process memory policy remain host responsibilities; this service is not
+a process-wide memory sandbox. Retained names, declaration history and live
+proofs also need capacity measurements on long-running workloads.
+
+Qualification and remaining integration
+---------------------------------------
+
+  make test-hol-light-kernel test-hol-light-host
+  make bench-hol-light-lifetimes
+
+The kernel tests exercise the inference side conditions, substitutions,
+declaration branches, allocation failures and collisions. Stream tests check
+chronology, arbitrary input/budget splits, retries, cancellation boundaries,
+duplicate delivery, malformed streams and dropped/stale IDs. Host tests use
+an independent HOLR encoder and the actual CeTTa executable in each dialect.
+
+The next consumers must preserve the existing dialect elaboration and
+execution contracts. A .module realization needs a qualified mapping from its
+presentation and dependencies to these operations; arbitrary rewrite rules
+must never become implicit HOL axioms. Fresh checking, prepared reuse,
+conversion, dispatch and retirement need separate performance measurements.
+
+Shared runtime refinement
+-------------------------
+
+The C test harnesses and the CeTTa service execute the same inference-rule
+implementation; a separate standalone prover is not an integration deliverable.
+The current kernel retains its own typed immutable nodes,
+intern tables, proof journal and collector. The adapter already uses CeTTa's
+arena ownership, authenticated seals, interruption and completed-value
+protocol. A second storage backend is not implemented by this checkpoint.
+
+Further sharing belongs below the logical API, behind explicit representation
+invariants. Candidate common services and their required observations are:
+
+  Owned references: stable identities, exact retain/release, stale-reference
+  refusal and failure-atomic publication. Growing a registry must not move
+  slots while owners still point to them. Teardown invalidates live access
+  without leaving surviving owners pointing into a destroyed context.
+
+  Immutable term storage: collision-safe interning and borrowed structural
+  views, with constructor identity and child ownership preserved. HOL's exact
+  type equality and alpha-equivalence remain separate from dialect matching,
+  numerical equality and gradual consistency. Equal payloads do not identify
+  proof events or delivery occurrences.
+
+  Binding operations: renaming and capture-avoiding substitution, with explicit
+  context maps. A shared traversal algorithm is eligible only when its binding
+  interpretation satisfies the consumer's laws; a MeTTa variable is not
+  automatically a HOL variable.
+
+  Retained execution: ordered publication, budgeted suspension, refusal,
+  cancellation and resumption without replaying committed work. A proof replay
+  and a nondeterministic search may use the same continuation ownership while
+  retaining different transition and completion rules.
+
+  Dependency validation: exact declaration ancestry and authority checks.
+  Sharing the checking mechanism does not identify HOL theory extension with
+  arbitrary mutable-space updates.
+
+For each adopted implementation, an abstraction map must relate concrete
+states to the reference states, and each operation must preserve that relation,
+including failures, unfinished work and visible occurrences. This is a data
+refinement obligation. Two builds can exercise a simple reference service and
+an optimized shared service without duplicating HOL's logical rules. Sharing
+code alone supplies no refinement proof, and additional dispatch on every
+term operation requires performance evidence rather than an assumed benefit.
+
+A generated GSLT/.module worker needs a checked source-to-worker correspondence
+and a qualified implementation of its runtime primitives. Source generation
+alone does not establish correctness of emitted C, memory management or the
+compiler. The first useful target is an isolated operation such as typed
+substitution or reference lifetime, with HOL and a MeTTa consumer exercising
+the same implementation and its positive and negative controls.
+
+Candle remains an independent replay target. Certification of a claimed result
+must compare its actual kernel-controlled theorem output and logical context;
+ordinary diagnostic output is insufficient. Replay checks exported derivations,
+not all behavior of CeTTa's shared runtime.

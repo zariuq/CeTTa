@@ -108,7 +108,7 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if(!prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&before) ||
-            !prime_need_branch_state_payloads_satisfy(&frame->producer_receipt,
+            !prime_need_branch_state_payloads_satisfy(&frame->before_receipt,
                 prime_ordinary_support_atom,prime_ordinary_support_cell,&evaluating))return false;
 #endif
         const PrimeNeedEquationContinuation *equation=frame->equation_search;
@@ -154,6 +154,7 @@ static const char *prime_share_grounded_refusal(GroundedKind kind) {
     case GV_BINDINGS: return "immutable-bindings";
     case GV_TERM_GRAPH: return "immutable-term-graph";
     case GV_TENSOR: return "immutable-tensor";
+    case GV_SEAL: return "immutable-seal";
     }
     return "immutable-grounded";
 }
@@ -401,8 +402,10 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     PrimeNativeControl *control=calloc(1u,sizeof(*control));
     if(!control)goto decline;
     int64_t prepared_quantum=eval_option_int_or_default("prepared-node-quantum",1);
+    /* Full-bag work amortizes worker handoff across a bounded batch.
+     * Authored control policies retain their explicitly requested quantum. */
     CettaSearchPolicySpec policy={.native_control=true,.all=true,.workers=workers,
-        .work_budget=UINT64_MAX,.worker_quantum=64u,
+        .work_budget=UINT64_MAX,.worker_quantum=4096u,
         .prepared_node_quantum=prepared_quantum>0?(uint64_t)prepared_quantum:1u};
 #ifdef CETTA_PRIME_ORDINARY_TEST_OBSERVER
     policy.worker_quantum=prime_ordinary_test_quantum();
@@ -482,9 +485,7 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         CettaPrimeObservationReturn *owned=g_prime_ordinary_return;
         assert(owned->ordinary && !owned->ordinary_control &&
             source->frame_depth==0u && owned->output!=control->driver.arena);
-        control->owned_top_episode=owned->top.episode;
-        owned->ordinary_control=control;
-        owned->top.owned.initialized=true;
+        prime_ordinary_return_take_control(owned,control);
         free(frames);
         return true;
     }

@@ -104,6 +104,33 @@ static void bindings_frame_index_entry_retain(
     assert(previous > 0u && previous < UINT32_MAX);
 }
 
+void bindings_frame_index_entry_hold(BindingsFrameIndexEntry *image,
+                                     const BindingsFrameIndexEntry *source) {
+    assert(image && source && source->storage_references);
+    *image = *source;
+    bindings_frame_index_entry_retain(image);
+}
+
+void bindings_frame_index_entry_drop(BindingsFrameIndexEntry *image) {
+    bindings_frame_index_entry_free(image);
+}
+
+void bindings_frame_index_entry_share_payload(BindingsFrameIndexEntry *view,
+                                              const BindingsFrameIndexEntry *image) {
+    assert(view && image && image->storage_references && view->slot_len == image->slot_len);
+    BindingsFrameIndexEntry retained = *image;
+    retained.owns_identity = false;
+    bindings_frame_index_entry_retain(&retained);
+    BindingsFrameIndexEntry old = *view;
+    old.owns_identity = false;
+    view->schema = retained.schema;
+    view->storage_references = retained.storage_references;
+    view->values = retained.values;
+    view->write_version = retained.write_version;
+    view->cap = retained.cap;
+    bindings_frame_index_entry_free(&old);
+}
+
 bool bindings_frame_index_entry_detach(
         BindingsFrameIndexEntry *entry) {
     if (!entry || !entry->storage_references)

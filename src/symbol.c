@@ -246,6 +246,9 @@ void symbol_table_init(SymbolTable *st) {
     st->slot_cap = 0;
     st->slot_used = 0;
     st->stats = (SymbolTableStats){0};
+    st->name_trie = NULL;
+    st->name_trie_count = 1u;
+    st->name_trie_invalid = 0u;
     st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
     symbol_table_note_metadata(
         st, (uint64_t)SYMBOL_ENTRY_CHUNK_COUNT * sizeof(SymbolEntry *));
@@ -268,6 +271,10 @@ void symbol_table_free(SymbolTable *st) {
         if (!entry) continue;
         free((void *)entry->bytes);
         entry->bytes = NULL;
+        free(atomic_load_explicit(&entry->canonical_atom,
+                                  memory_order_relaxed));
+        atomic_store_explicit(&entry->canonical_atom, NULL,
+                              memory_order_relaxed);
     }
     if (st->entry_chunks) {
         for (uint32_t i = 0; i < SYMBOL_ENTRY_CHUNK_COUNT; i++) {
@@ -276,6 +283,9 @@ void symbol_table_free(SymbolTable *st) {
         free(st->entry_chunks);
     }
     free(st->slots);
+    cetta_scalar_trie_free(st->name_trie);
+    st->name_trie = NULL;
+    st->name_trie_count = st->name_trie_invalid = 0u;
     pthread_mutex_destroy(&st->write_mutex);
     st->entry_chunks = NULL;
     st->slots = NULL;
@@ -327,6 +337,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             atomic_init(&sym->flags,
                         runtime_data ? CETTA_SYMBOL_FLAG_RUNTIME_DATA : 0u);
             sym->builtin_policy = 0;
+            atomic_init(&sym->canonical_atom, NULL);
 
             uint64_t allocated = (uint64_t)len + 1u;
             if (runtime_data) {
@@ -345,6 +356,18 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
             entry->len = len;
             entry->id = id;
             st->slot_used++;
+            if (st->name_trie) {
+                if (!cetta_scalar_trie_valid_utf8((const uint8_t *)copy, len)) {
+                    ++st->name_trie_invalid;
+                } else if (!cetta_scalar_trie_insert_utf8(st->name_trie,
+                            (const uint8_t *)copy, len, id)) {
+                    /* A failed optional index never prevents interning. Its
+                     * next query will reconstruct from the authoritative rows. */
+                    cetta_scalar_trie_free(st->name_trie); st->name_trie = NULL;
+                    st->name_trie_count = 1u; st->name_trie_invalid = 0u;
+                }
+                if (st->name_trie) st->name_trie_count = id + 1u;
+            }
             atomic_store_explicit(&st->entry_len, id + 1, memory_order_release);
             return id;
         }
@@ -368,6 +391,70 @@ SymbolId symbol_intern_span_hashed(SymbolTable *st, const uint8_t *bytes,
     id = symbol_intern_span_hashed_unlocked(st, bytes, len, hash, false);
     pthread_mutex_unlock(&st->write_mutex);
     return id;
+}
+
+typedef struct { SymbolNameQueryResult *result; size_t capacity; } NameCollector;
+static bool symbol_name_collect(void *context, uint64_t payload) {
+    NameCollector *c = context;
+    if (!payload || payload >= c->result->snapshot_count) return false;
+    if (c->result->len == c->capacity) {
+        size_t cap = c->capacity ? c->capacity * 2u : 32u;
+        if (cap < c->capacity || cap > SIZE_MAX / sizeof(SymbolId)) return false;
+        SymbolId *ids = realloc(c->result->ids, cap * sizeof(*ids));
+        if (!ids) return false;
+        c->result->ids = ids; c->capacity = cap;
+    }
+    c->result->ids[c->result->len++] = (SymbolId)payload; return true;
+}
+static int symbol_id_compare(const void *a, const void *b) {
+    SymbolId x = *(const SymbolId *)a, y = *(const SymbolId *)b;
+    return x < y ? -1 : x > y;
+}
+void symbol_name_query_free(SymbolNameQueryResult *r) {
+    if (!r) return;
+    free(r->ids); memset(r, 0, sizeof(*r));
+}
+bool symbol_table_query_names(SymbolTable *st, const CettaTrieAutomaton *automaton,
+                             const void *initial, SymbolNameQueryResult *out) {
+    if (!st || !out || (automaton && !initial)) return false;
+    SymbolNameQueryResult result = {0}; NameCollector collector = {&result, 0u};
+    bool ok = false;
+    pthread_mutex_lock(&st->write_mutex);
+    result.snapshot_count = atomic_load_explicit(&st->entry_len, memory_order_acquire);
+    if (!automaton) {
+        for (SymbolId id = 1u; id < result.snapshot_count; ++id) {
+            const SymbolEntry *e = symbol_table_entry_ref(st, id);
+            if (!cetta_scalar_trie_valid_utf8((const uint8_t *)e->bytes, e->len)) {
+                ++result.invalid_utf8_count; continue;
+            }
+            if (!symbol_name_collect(&collector, id)) goto done;
+        }
+        ok = true; goto done;
+    }
+    if (!st->name_trie) {
+        st->name_trie = cetta_scalar_trie_new();
+        st->name_trie_count = 1u; st->name_trie_invalid = 0u;
+        if (!st->name_trie) goto done;
+    }
+    for (SymbolId id = st->name_trie_count; id < result.snapshot_count; ++id) {
+        const SymbolEntry *e = symbol_table_entry_ref(st, id);
+        if (!cetta_scalar_trie_valid_utf8((const uint8_t *)e->bytes, e->len)) {
+            ++st->name_trie_invalid;
+        } else if (!cetta_scalar_trie_insert_utf8(st->name_trie,
+                    (const uint8_t *)e->bytes, e->len, id)) {
+            cetta_scalar_trie_free(st->name_trie); st->name_trie = NULL;
+            st->name_trie_count = 1u; st->name_trie_invalid = 0u; goto done;
+        }
+        st->name_trie_count = id + 1u;
+    }
+    result.invalid_utf8_count = st->name_trie_invalid;
+    ok = cetta_scalar_trie_walk(st->name_trie, automaton, initial,
+                              symbol_name_collect, &collector, &result.stats);
+    if (ok && result.len > 1u) qsort(result.ids, result.len, sizeof(*result.ids), symbol_id_compare);
+done:
+    pthread_mutex_unlock(&st->write_mutex);
+    if (!ok) { symbol_name_query_free(&result); return false; }
+    symbol_name_query_free(out); *out = result; return true;
 }
 
 SymbolId symbol_intern_bytes(SymbolTable *st, const uint8_t *bytes, uint32_t len) {
@@ -629,6 +716,33 @@ void symbol_set_builtin_policy(SymbolTable *st, SymbolId id, uint32_t value) {
     SymbolEntry *entry = symbol_table_entry_mut(st, id);
     if (entry)
         __atomic_store_n(&entry->builtin_policy, value, __ATOMIC_RELAXED);
+}
+
+void *symbol_canonical_atom(const SymbolTable *st, SymbolId id) {
+    if (!st || id == SYMBOL_ID_NONE ||
+        id >= atomic_load_explicit(&st->entry_len, memory_order_acquire))
+        return NULL;
+    SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    return chunk
+        ? atomic_load_explicit(
+              &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom,
+              memory_order_acquire)
+        : NULL;
+}
+
+void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom) {
+    if (!st || !atom || id == SYMBOL_ID_NONE ||
+        id >= atomic_load_explicit(&st->entry_len, memory_order_acquire))
+        return NULL;
+    SymbolEntry *chunk = symbol_table_entry_chunk(st, id);
+    if (!chunk)
+        return NULL;
+    void *published = NULL;
+    if (atomic_compare_exchange_strong_explicit(
+            &chunk[id & SYMBOL_ENTRY_CHUNK_MASK].canonical_atom, &published,
+            atom, memory_order_acq_rel, memory_order_acquire))
+        return atom;
+    return published;
 }
 
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text) {

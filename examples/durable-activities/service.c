@@ -5,6 +5,7 @@
 #include "he_type_policy.h"
 #include "telegram_he_setup.h"
 #include "library.h"
+#include "parser.h"
 #include "symbol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -41,6 +42,25 @@ static CettaDurableStatus flush_output(Output *out) {
 static bool number(const char *text, int64_t *value) {
     char *end; errno=0; *value=strtoll(text,&end,10);
     return !errno && *text && !*end;
+}
+/* Trusted, self-contained policy source is read and parsed once at startup.
+ * Declarations are data here; startup directives and imports are not run. */
+static bool load_prime_policy(const char *path,Space *space,Arena *arena) {
+    const size_t limit=4u*1024u*1024u;
+    FILE *file=fopen(path,"rb");if(!file)return false;
+    char *text=malloc(limit+2u);if(!text){fclose(file);return false;}
+    size_t length=fread(text,1,limit+1u,file);
+    bool okay=!ferror(file) && length<=limit && !memchr(text,0,length);
+    fclose(file);text[length]=0;
+    Atom **forms=NULL;int count=okay?parse_metta_text(text,arena,&forms):-1;
+    free(text);okay=count>0;
+    for(int i=0;i<count && okay;i++) {
+        Atom *form=forms[i];
+        okay=form && form->kind==ATOM_EXPR && form->expr.len==3 &&
+            (atom_is_symbol(form->expr.elems[0],"=") || atom_is_symbol(form->expr.elems[0],":"));
+        if(okay)space_add(space,form);
+    }
+    free(forms);return okay;
 }
 static bool record(CettaDurableStore *store, char *line, Output *out) {
     if (!strcmp(line,"quit")) { stopped=1; return true; }
@@ -92,7 +112,13 @@ static CettaDurableStatus results(CettaDurableStore *store, Cursor *cursor, Outp
     arena_free(&arena); cetta_durable_snapshot_free(&values); return s;
 }
 int main(int argc, char **argv) {
-    if (argc!=5) { fprintf(stderr,"usage: activity-service JOURNAL LISTENER WORKER READY-CAPACITY\n"); return 64; }
+    if (argc<5 || argc>8) {
+        fprintf(stderr,"usage: activity-service JOURNAL LISTENER WORKER READY-CAPACITY [PRIME-POLICY [QUANTUM [WORK-LIMIT]]]\n");
+        return 64;
+    }
+    bool prime=argc>=6;int64_t quantum=32,work=2000000;
+    if ((argc>=7 && (!number(argv[6],&quantum) || quantum<=0)) ||
+        (argc>=8 && (!number(argv[7],&work) || work<0))) return 64;
     struct sigaction action={0}; action.sa_handler=stop; sigemptyset(&action.sa_mask);
     sigaction(SIGTERM,&action,NULL); sigaction(SIGINT,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
@@ -101,13 +127,18 @@ int main(int argc, char **argv) {
     Arena persistent,scratch; arena_init(&persistent); arena_init(&scratch);
     Space program; space_init(&program); Registry registry; registry_init(&registry);
     registry_bind(&registry,"&self",atom_space(&persistent,&program));
-    CettaLibraryContext context; cetta_library_context_init(&context); cetta_library_context_set_exec_path(&context,argv[0]);
-    cetta_eval_session_init_he_extended(&context.session); eval_set_library_context(&context);
-    bool loaded=he_library_tables_init();
-    stdlib_load(&program,&persistent);
-    loaded=loaded && telegram_he_prepare_library(&program,&persistent,true) && space_mark_imported_prefix(&program);
+    CettaLibraryContext context;
+    if(prime)cetta_library_context_init_for_language_profile(&context,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+    else {cetta_library_context_init(&context);cetta_eval_session_init_he_extended(&context.session);}
+    cetta_library_context_set_exec_path(&context,argv[0]);eval_set_library_context(&context);
     Atom *error=NULL;
-    loaded=loaded && cetta_library_import_module(&context,"durable:activity",&program,false,&scratch,&persistent,&registry,1000000,NULL,&error);
+    bool loaded;
+    if(prime)loaded=load_prime_policy(argv[5],&program,&persistent);
+    else {
+        loaded=he_library_tables_init();stdlib_load(&program,&persistent);
+        loaded=loaded && telegram_he_prepare_library(&program,&persistent,true) && space_mark_imported_prefix(&program);
+        loaded=loaded && cetta_library_import_module(&context,"durable:activity",&program,false,&scratch,&persistent,&registry,1000000,NULL,&error);
+    }
     if (!loaded) {
         fprintf(stderr,"activity-service: library loading failed\n");
         if (error) { atom_print(error,stderr); fputc('\n',stderr); }
@@ -117,6 +148,8 @@ int main(int argc, char **argv) {
     CettaDurableStatus s=cetta_durable_open(argv[1],NULL,&store);
     CettaHostProgram trusted={"activity/1",&program,&context};
     CettaActivityConfig config={&trusted,argv[3],atoi(argv[2]),getuid(),2000000,(size_t)atoi(argv[4])};
+    if(prime)config.planning=(CettaHostPlanLimits){.quantum=(uint64_t)quantum,.work_limit=(uint64_t)work,
+        .preparation_inspections=1000000,.preparation_bytes=64u*1024u*1024u,.results=2};
     CettaActivityRuntime *runtime=NULL;
     if (s==DURABLE_OK) s=cetta_activity_new(store,&config,&runtime);
     if (s!=DURABLE_OK) { fprintf(stderr,"activity-service: %s\n",cetta_durable_status_name(s)); return 78; }
@@ -166,9 +199,10 @@ int main(int argc, char **argv) {
     struct rusage resources; getrusage(RUSAGE_SELF,&resources);
     dprintf(STDOUT_FILENO,"stats {\"steps\":%" PRIu64 ",\"accepted\":%" PRIu64 ",\"published\":%" PRIu64
         ",\"blocked\":%" PRIu64 ",\"timer_events\":%" PRIu64 ",\"max_step_us\":%" PRIu64 ",\"max_loop_us\":%" PRIu64
-        ",\"ready\":%zu,\"watch_bytes\":%zu,\"live_bytes\":%" PRId64 ",\"peak_rss_kib\":%ld}\n",
+        ",\"ready\":%zu,\"watch_bytes\":%zu,\"plan_polls\":%" PRIu64 ",\"plan_work\":%" PRIu64
+        ",\"live_bytes\":%" PRId64 ",\"peak_rss_kib\":%ld}\n",
         stats.steps,stats.accepted,stats.published,stats.blocked,stats.timer_events,stats.max_step_us,max_loop_us,
-        stats.ready,stats.watch_bytes,usage.live_bytes,resources.ru_maxrss);
+        stats.ready,stats.watch_bytes,stats.plan_polls,stats.plan_work,usage.live_bytes,resources.ru_maxrss);
     cetta_activity_free(runtime); cetta_durable_close(store);
     cetta_library_context_free(&context); eval_set_library_context(NULL);
     registry_free(&registry); space_free(&program); arena_free(&scratch); arena_free(&persistent);

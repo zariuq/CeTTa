@@ -85,18 +85,6 @@ typedef struct {
     uint32_t witness_len;
 } PPNativeV1ForestExtension;
 
-/*
- * One replay scope validates a shared forest extension before replaying a
- * batch. The pack, extension, their arrays, and all referenced atoms are
- * borrowed and must remain alive and immutable until the scope is freed.
- * This scope is local to that batch; it is not a cache across source inputs.
- * Failed preparation leaves the previous binding intact. Each finish checks
- * the borrowed metadata and validates the individual forest as usual.
- */
-typedef struct {
-    void *implementation;
-} PPNativeV1ReplayScope;
-
 typedef struct {
     const Atom *state;
     const Atom *tag;
@@ -132,6 +120,29 @@ bool ppnative_v1_token_binding_plan_build(
     const PPABIV1Pack *pack, const Atom *start,
     const PPNativeV1TokenBindingInput *inputs, uint32_t input_len,
     PPNativeV1TokenBindingPlan *out, char *error_buf, size_t error_buf_size);
+
+/*
+ * One replay scope validates a shared forest extension before replaying a
+ * batch. The pack, extension, their arrays, and all referenced atoms are
+ * borrowed and must remain alive and immutable until the scope is freed.
+ * This scope is local to that batch; it is not a cache across source inputs.
+ * Failed preparation leaves the previous binding intact. Each finish checks
+ * the borrowed metadata and validates the individual forest as usual.
+ */
+typedef struct {
+    void *implementation;
+} PPNativeV1ReplayScope;
+
+/* A pure, input-local observation on one symbol/production family. Rejected
+ * families contribute no selected derivations. Recognition, source positions
+ * and every record of the original forest remain unchanged. The callback and
+ * its context are borrowed only until the selected replay returns. */
+typedef struct {
+    bool (*accepts)(void *context, const PPABIV1Pack *pack,
+                    const CettaLpNativeUtf8Forest *forest,
+                    uint32_t symbol_node, uint32_t production_index);
+    void *context;
+} PPNativeV1FamilySelection;
 
 typedef struct {
     Arena arena;
@@ -263,6 +274,32 @@ bool ppnative_v1_finish_values(
     PPNativeV1Result *result, const PPABIV1Pack *pack,
     const PPNativeV1ForestExtension *extension,
     uint32_t replay_depth, uint32_t result_limit,
+    char *error_buf, size_t error_buf_size);
+
+/* Apply the declared family observation before child-product expansion. The
+ * returned values retain derivation order and multiplicity. A NULL selection
+ * is the ordinary unrestricted replay. An accepted raw forest may have no
+ * selected values; this is not a recognizer rejection. */
+bool ppnative_v1_finish_values_selected(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const PPNativeV1ForestExtension *extension,
+    uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
+    char *error_buf, size_t error_buf_size);
+
+/* The values of a deterministic corridor's postfix derivation trace. Each
+ * step is replayed exactly as the forest replay replays the corresponding
+ * node of a tree-shaped forest: terminal values, production actions and
+ * span materialization. This route requires replay_depth == UINT32_MAX;
+ * bounded replay uses the forest route. Selection, if supplied, must depend
+ * only on the production, input scalars and the current node's scalar
+ * boundaries. Its one-node view does not expose forest topology or original
+ * node identities. Other observers use ppnative_v1_finish_values_selected.
+ * result->forest carries the parsed input; result->accepted is the caller's. */
+bool ppnative_v1_finish_values_trace(
+    PPNativeV1Result *result, const PPABIV1Pack *pack,
+    const CettaLpNativeLrTrace *trace, uint32_t replay_depth, uint32_t result_limit,
+    const PPNativeV1FamilySelection *selection,
     char *error_buf, size_t error_buf_size);
 
 bool ppnative_v1_finish_extended(

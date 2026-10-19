@@ -31,6 +31,14 @@ typedef enum {
     CETTA_COST_GRAPH_OVERFLOW
 } CettaCostGraphStatus;
 
+/* Equation edges contribute one. Work adds alternative occurrences; depth
+ * takes their maximum. Depth describes the source graph, not its schedule. */
+typedef enum {
+    CETTA_COST_GRAPH_UNFOLDING_WORK,
+    CETTA_COST_GRAPH_DEPENDENCY_DEPTH,
+    CETTA_COST_GRAPH_WORK_DEPTH
+} CettaCostGraphMetric;
+
 typedef struct {
     size_t node;
     size_t row;
@@ -40,15 +48,20 @@ typedef struct {
 typedef struct {
     unsigned char *colors;
     uint64_t *bounds;
+    /* Allocated only for the jointly requested work/depth interpretation. */
+    uint64_t *depth_bounds;
     CettaCostGraphFrame *stack;
     size_t capacity;
     size_t depth;
     size_t root;
     uint64_t ticks;
     CettaCostGraphStatus status;
+    CettaCostGraphMetric metric;
 } CettaCostGraphAnalysis;
 
 bool cetta_cost_graph_init(CettaCostGraphAnalysis *analysis, size_t nodes, size_t root);
+bool cetta_cost_graph_init_metric(CettaCostGraphAnalysis *analysis,
+    size_t nodes, size_t root, CettaCostGraphMetric metric);
 void cetta_cost_graph_free(CettaCostGraphAnalysis *analysis);
 /* One graph-row or completed-node operation, with the entire DFS cursor and
  * memo retained. Cycle/invalid/overflow are unknown bounds, not source closure. */
@@ -56,5 +69,6 @@ void cetta_cost_graph_step(const CettaCostGraph *graph, CettaCostGraphAnalysis *
 void cetta_cost_graph_run(const CettaCostGraph *graph,
     CettaCostGraphAnalysis *analysis, uint64_t budget);
 bool cetta_cost_graph_bound(const CettaCostGraphAnalysis *analysis, uint64_t *bound);
+bool cetta_cost_graph_depth_bound(const CettaCostGraphAnalysis *analysis, uint64_t *bound);
 
 #endif

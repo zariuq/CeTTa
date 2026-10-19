@@ -33,7 +33,7 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
     CettaLibraryContext *authority=g_library_context;
     CettaContinuationStatus status=CETTA_CONTINUATION_UNSUPPORTED;
     PrimeNativeOwnedRegion *region=prime_native_owned_region_capture(source,registry,
-        expression,inspection_limit,byte_limit,&status);
+        expression,expr_arg(expression,expr_nargs(expression)-1u),inspection_limit,byte_limit,false,&status);
     if (!region) return status;
     CettaPrimeObservationReturn *owned=calloc(1u,sizeof(*owned));
     PrimeNativeTopEpisode *episode=calloc(1u,sizeof(*episode));
@@ -69,8 +69,8 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
      * then the explicit authority parameter issues the original public slot,
      * copies its token and acquires EXCLUSIVE before the first producer poll.
      * The private registry is never an enrollment or residual authority. */
-    assert(region->library->native_handle_len==0u);
+    assert(region->library->native_handle_registry==NULL);
     prime_native_registry_observation_enter(outcome);
-    assert(!top->owned.origin_authority && region->library->native_handle_len==0u);
+    assert(!top->owned.origin_authority && region->library->native_handle_registry==NULL);
     return top->owned.status;
 }

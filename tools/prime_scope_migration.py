@@ -270,7 +270,7 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
         if check:
             if not output.exists() or output.read_text() != generated:
                 raise ValueError(f"generated scope spelling is stale: {output}")
-        else:
+        elif not output.exists() or output.read_text() != generated:
             pending.append((output, generated))
         libraries.append({"source": name, "output": name,
                           "source_sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -288,7 +288,9 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
         for output, generated in pending:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(generated)
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        rendered_manifest = json.dumps(manifest, indent=2) + "\n"
+        if not manifest_path.exists() or manifest_path.read_text() != rendered_manifest:
+            manifest_path.write_text(rendered_manifest)
     return manifest
 
 

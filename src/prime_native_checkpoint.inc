@@ -344,7 +344,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
         memset(&image->cell,0,sizeof(image->cell));
         prime_need_snapshot_init(&image->before);prime_need_snapshot_init(&image->evaluating);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        image->before_receipt=(PrimeNeedReceipt){0};image->producer_receipt=(PrimeNeedReceipt){0};
+        image->before_receipt=(PrimeNeedReceipt){0};
 #endif
         return true;
     }
@@ -382,8 +382,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     if(!prime_need_snapshot_copy_with_session(&copy->image->storage,copy->atoms,&image->before)||
         !prime_need_snapshot_copy_with_session(&copy->image->storage,copy->atoms,&image->evaluating))return parent_copy_refuse(copy,"FrameNeedOwner");
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if(!prime_need_receipt_copy_with_session(&copy->image->storage,copy->atoms,&image->before_receipt)||
-       !prime_need_receipt_copy_with_session(&copy->image->storage,copy->atoms,&image->producer_receipt))return parent_copy_refuse(copy,"FrameReceiptOwner");
+    if(!prime_need_receipt_copy_with_session(&copy->image->storage,copy->atoms,&image->before_receipt))return parent_copy_refuse(copy,"FrameReceiptOwner");
 #endif
     if(source->kind==PRIME_EVAL_STACK_FRAME_FORCE) {
         PrimeNeedCellView expected;
@@ -453,6 +452,10 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         if (refusal) *refusal = "QuiescentOwnerProfile";
         return false;
     }
+    if (source->interaction_selection || source->resume_choice) {
+        if (refusal) *refusal = "SelectedInteractionOwner";
+        return false;
+    }
     /* These retained protocols have not supplied an injective transport
      * of their producer owners. A shallow copy would alias arrays
      * and copy a live mutex. Refuse before creating an image. */
@@ -471,8 +474,8 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
     if(source->history.active || source->history.count > source->history.spec.selections ||
         source->history.reservations > source->history.spec.selections ||
         (!source->history.entries && source->history.count) ||
-        (!source->history.spec.enabled && (source->history.entries || source->history.reservations)) ||
-        (source->history.group && !source->history.spec.enabled))
+        (!source->history.spec.enabled && !source->history.stopped && !source->history.forgotten &&
+         (source->history.entries || source->history.reservations || source->history.group)))
         {if(refusal)*refusal="RecordingOwner";return false;}
 #endif
     return true;
@@ -543,6 +546,7 @@ static bool parent_copy_episode_admitted(const PrimeNativeControl *control) {
 static void parent_copy_episode_arena(Arena *image, const Arena *source) {
     arena_init_detached(image);
     arena_set_block_capacity(image, source->block_capacity);
+    image->block_growth = source->block_growth;
     arena_set_runtime_kind(image, source->runtime_kind);
     arena_set_scalar_cache(image, source->scalar_cache);
 }
@@ -610,14 +614,18 @@ static bool parent_copy_episode_capture(const PrimeNativeTopEpisode *source,
             &parent_copy_episode_shell_kind, source, image, sizeof(*source)))
         return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    bool has_recording = source->branch.recording || source->receipt.recording;
+    const PrimeNeedReceipt *source_receipt = prime_need_saved_context_receipt(&source->context);
+    bool has_recording = source->context.value.previous_branch_state.recording ||
+        source_receipt->recording;
     bool erase_recording = has_recording && prime_need_recording_copy_erases(atoms);
     if (has_recording && !erase_recording && !prime_need_recording_copy_enable(atoms))
         return false;
-    const PrimeNeedReceipt *receipts[] = {&source->branch, &source->receipt};
+    const PrimeNeedReceipt *receipts[] = {
+        &source->context.value.previous_branch_state, source_receipt};
     for (size_t i = 0u; i < sizeof(receipts) / sizeof(*receipts); i++) {
         PrimeNeedRecording *group = prime_need_receipt_recording_owner(receipts[i]);
         if (!group || erase_recording) continue;
+        if (prime_need_recording_erased(receipts[i])) continue;
         PrimeNeedRecordingCopy *copy = prime_need_recording_copy_lookup(atoms, group);
         /* This episode owns groups through real arena links, not a direct
          * control-style ownership field. Never manufacture that premise. */
@@ -632,19 +640,34 @@ static bool parent_copy_episode_capture(const PrimeNativeTopEpisode *source,
     bool ok = image->request_expression != NULL;
     if (!atom_deep_copy_destination_leave(&scope)) return false;
     if (!ok || !atom_deep_copy_destination_enter(atoms, &image->arena, &scope)) return false;
-    image->need = source->need;
-    image->branch = source->branch;
-    image->weights = source->weights;
+    image->context.value.previous = source->context.value.previous;
+    image->context.value.previous_branch_state = source->context.value.previous_branch_state;
+    image->context.value.previous_weights = source->context.value.previous_weights;
+    assert(!source->context.value.previous_logical_env);
+    image->context.value.previous_logical_env = NULL;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    image->receipt = source->receipt;
+    image->context.value.operations = &g_prime_need_saved_plain_ops;
+    if (source_receipt->session_id) {
+        image->context.value.previous_receipt = *source_receipt;
+        image->context.value.operations = &g_prime_need_carried_origin_ops;
+    }
 #endif
-    ok = prime_need_snapshot_copy_with_session(&image->arena, atoms, &image->need) &&
-        cetta_weight_ledger_copy_with_session(&image->arena, atoms, &image->weights);
+    ok = prime_need_snapshot_copy_with_session(&image->arena, atoms,
+            &image->context.value.previous) &&
+        cetta_weight_ledger_copy_with_session(&image->arena, atoms,
+            &image->context.value.previous_weights);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    ok = ok && prime_need_receipt_copy_with_session(&image->arena, atoms, &image->branch) &&
-        prime_need_receipt_copy_with_session(&image->arena, atoms, &image->receipt);
+    ok = ok && prime_need_receipt_copy_with_session(&image->arena, atoms,
+        &image->context.value.previous_branch_state);
+    if (ok && source_receipt->session_id) {
+        ok = prime_need_receipt_copy_with_session(&image->arena, atoms,
+            &image->context.value.previous_receipt);
+        if (ok && !image->context.value.previous_receipt.session_id)
+            image->context.value.operations = &g_prime_need_saved_plain_ops;
+    }
 #else
-    ok = ok && prime_need_branch_state_copy_with_session(&image->arena, atoms, &image->branch);
+    ok = ok && prime_need_branch_state_copy_with_session(&image->arena, atoms,
+        &image->context.value.previous_branch_state);
 #endif
     if (!atom_deep_copy_destination_leave(&scope)) return false;
     return ok && atom_deep_copy_session_object_record(atoms,
@@ -879,11 +902,11 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
         return false;
     }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    bool erase_recording = source->history.spec.enabled &&
+    bool erase_recording = (source->history.spec.enabled || source->history.stopped) &&
         prime_need_recording_copy_erases(atoms);
-    PrimeNeedRecordingCopy *recording = !erase_recording && source->history.group
+    PrimeNeedRecordingCopy *recording = !erase_recording && !source->history.forgotten && source->history.group
         ? prime_need_recording_copy_lookup(atoms, source->history.group) : NULL;
-    if (source->history.group && !erase_recording && !recording)
+    if (source->history.group && !source->history.forgotten && !erase_recording && !recording)
         {if(refusal)*refusal="RecordingOwner";return false;}
 #endif
     PrimeNativeTopEpisode *episode_image = NULL;
@@ -903,6 +926,8 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     memset(&image->need_claim_mu,0,sizeof(image->need_claim_mu));
     image->owned_arena=true;image->handle_id=0u;image->leased=false;
     image->owned_top_episode=NULL;image->space_agenda=NULL;
+    image->interaction_selection=NULL;
+    image->resume_choice=NULL;
     memset(&image->hub,0,sizeof(image->hub));image->frames=NULL;image->retired_frames=NULL;
     image->changed_frames=NULL;image->frame_index=NULL;image->advice_cells=NULL;image->weight_analyses=NULL;image->weight_analysis=NULL;
     image->parked=NULL;image->parked_count=0;image->parallel_inflight=NULL;
@@ -911,7 +936,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->receipt_intervals=NULL;image->query_reads=NULL;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     image->history.group=NULL;image->history.entries=NULL;image->history.active=NULL;
-    if (erase_recording) {
+    if (erase_recording || source->history.forgotten) {
         image->history=(PrimeNativeHistory){0};
         image->policy.history=(PrimeNativeHistorySpec){0};
     }
@@ -936,7 +961,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
             &image->space_agenda,transaction)))
         ok=parent_copy_refuse(copy,transaction&&transaction->refusal?transaction->refusal:"TransactionImage");
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if(ok && !erase_recording && source->history.spec.enabled &&
+    if(ok && !erase_recording && (source->history.spec.enabled || source->history.stopped) &&
         !prime_need_recording_copy_enable(atoms))
         ok=parent_copy_refuse(copy,"RecordingMode");
     /* The actual control owns history.group directly. Its carrier borrows
@@ -1007,6 +1032,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     PA(weight_coefficient_variable);PA(weight_factor_variable);PA(weight_refusal);PA(weight_frontier_bound);PA(weight_selected_bound);
     PA(policy.policy_atom);PA(policy.key_pattern);PA(policy.key_expression);PA(policy.goal_pattern);PA(policy.goal_expression);
     PA(policy.bound_pattern);PA(policy.bound_expression);
+    PA(policy.breakpoint_pattern);
 #undef PA
 #define PE(f,k) if(ok)ok=parent_copy_edge(copy,&k,source->f,sizeof(*source->f),(void **)&image->f)
     PE(active_advice,parent_copy_advice_kind);PE(weight_analysis,parent_copy_licence_kind);PE(weight_read_frame,parent_copy_frame_kind);PE(weight_descriptor_frame,parent_copy_frame_kind);

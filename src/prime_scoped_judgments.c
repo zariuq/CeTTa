@@ -1,6 +1,8 @@
 #include "prime_scoped_judgments.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
 #include "prime_arith_oracle.h"
+#include "answer_storage.h"
+#include "shared_transition.h"
 
 #include "lang.h"
 #include "native_sha256.h"
@@ -13,7 +15,6 @@
 #include "stats.h"
 #include "native_cost.h"
 
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -507,59 +508,136 @@ static Atom *sj_record_dependencies(Arena *a, Atom *record) {
     return prime_public_operand_syntax(a, record->expr.elems[SJ_KNOWN_DEPENDS]);
 }
 
-/* Admitted-object boundary.  Publication through `set:axiom`/`set:theorem`
- * admits a record: its content digest is registered for the publishing
- * space.  A record found in a space by lookup alone, whatever its tag or
- * digest, is untrusted syntax until it is admitted: reuse abstains, and
- * `set:recheck` may admit it by checking it in this space.  The registry is
- * a small open-addressed set of (space instance, digest) entries; it never
- * replays proofs. */
+/* Admitted-object boundary. Publication retains an owned exact data key in
+ * the publishing space. A record found by lookup alone is untrusted syntax
+ * until admission checks it. Hashing the head and declaration name selects
+ * a bucket; only comparison of the complete key establishes membership.
+ * Printed forms and digests confer no authority. The registry never replays
+ * proofs or retains the request arena. */
 typedef struct {
-    uint64_t instance;
-    char digest[65];
+    uint64_t hash;
+    Atom *record;
+    CettaAnswerStorage *owner;
     bool revoked;        /* a failed recheck withdrew this admission */
 } SjAdmitted;
 
-static SjAdmitted *g_admitted;
-static size_t g_admitted_count;
-static size_t g_admitted_cap;
+typedef struct SjAdmissionSpace {
+    uint64_t instance;
+    SjAdmitted *records;
+    size_t count, capacity;
+    CettaAnswerStorage *builder;
+    bool has_theorems;
+    struct SjAdmissionSpace *next;
+} SjAdmissionSpace;
 
-static void sj_record_digest(Arena *a, Atom *record, char out[65]) {
-    char *shown = atom_to_string(a, record);
-    cetta_native_sha256_hex((const uint8_t *)(shown ? shown : ""),
-                            shown ? strlen(shown) : 0u, out);
+static SjAdmissionSpace **g_admission_spaces;
+static size_t g_admission_space_count, g_admission_space_capacity;
+static CettaAnswerStorageAccount *g_admission_storage;
+
+static size_t sj_admission_space_slot(uint64_t instance, size_t capacity) {
+    uint64_t h = instance;
+    h = (h ^ (h >> 30u)) * UINT64_C(0xbf58476d1ce4e5b9);
+    h = (h ^ (h >> 27u)) * UINT64_C(0x94d049bb133111eb);
+    return (size_t)(h ^ (h >> 31u)) & (capacity - 1u);
 }
 
-static size_t sj_admitted_slot(uint64_t instance, const char *digest) {
-    uint64_t h = instance * 1469598103934665603ull;
-    for (const char *c = digest; *c; c++) h = (h ^ (uint64_t)(unsigned char)*c) * 1099511628211ull;
-    return (size_t)(h % g_admitted_cap);
+static SjAdmissionSpace *sj_admission_space(uint64_t instance) {
+    if (!g_admission_space_capacity) return NULL;
+    size_t slot = sj_admission_space_slot(instance, g_admission_space_capacity);
+    for (SjAdmissionSpace *space = g_admission_spaces[slot]; space;
+         space = space->next)
+        if (space->instance == instance) return space;
+    return NULL;
 }
 
-static bool sj_admitted_contains(uint64_t instance, const char *digest) {
-    if (!g_admitted_cap) return false;
-    size_t slot = sj_admitted_slot(instance, digest);
-    for (size_t probe = 0u; probe < g_admitted_cap; probe++) {
-        SjAdmitted *entry = &g_admitted[(slot + probe) % g_admitted_cap];
-        if (entry->digest[0] == '\0') return false;
-        if (entry->instance == instance && strcmp(entry->digest, digest) == 0)
-            return !entry->revoked;
+static void sj_admission_spaces_resize(size_t capacity) {
+    if (capacity > SIZE_MAX / sizeof(*g_admission_spaces)) cetta_oom(SIZE_MAX);
+    SjAdmissionSpace **buckets = capacity
+        ? cetta_malloc(capacity * sizeof(*buckets)) : NULL;
+    if (capacity) memset(buckets, 0, capacity * sizeof(*buckets));
+    for (size_t i = 0u; i < g_admission_space_capacity; i++) {
+        SjAdmissionSpace *space = g_admission_spaces[i];
+        while (space) {
+            SjAdmissionSpace *next = space->next;
+            size_t slot = sj_admission_space_slot(space->instance, capacity);
+            space->next = buckets[slot];
+            buckets[slot] = space;
+            space = next;
+        }
     }
-    return false;
+    free(g_admission_spaces);
+    g_admission_spaces = buckets;
+    g_admission_space_capacity = capacity;
 }
 
-static void sj_admitted_insert(uint64_t instance, const char *digest);
+static SjAdmissionSpace *sj_admission_space_ensure(uint64_t instance) {
+    SjAdmissionSpace *space = sj_admission_space(instance);
+    if (space) return space;
+    if (g_admission_space_count >= g_admission_space_capacity / 2u) {
+        if (g_admission_space_capacity > SIZE_MAX / 2u)
+            cetta_oom(SIZE_MAX);
+        sj_admission_spaces_resize(g_admission_space_capacity
+            ? g_admission_space_capacity * 2u : 16u);
+    }
+    space = cetta_malloc(sizeof(*space));
+    *space = (SjAdmissionSpace){.instance = instance};
+    size_t slot = sj_admission_space_slot(instance, g_admission_space_capacity);
+    space->next = g_admission_spaces[slot];
+    g_admission_spaces[slot] = space;
+    g_admission_space_count++;
+    return space;
+}
 
-static void sj_admitted_grow(void) {
-    size_t old_cap = g_admitted_cap;
-    SjAdmitted *old = g_admitted;
-    g_admitted_cap = old_cap ? old_cap * 2u : 64u;
-    g_admitted = cetta_malloc(sizeof(SjAdmitted) * g_admitted_cap);
-    memset(g_admitted, 0, sizeof(SjAdmitted) * g_admitted_cap);
-    g_admitted_count = 0u;
-    for (size_t i = 0u; i < old_cap; i++)
-        if (old[i].digest[0] != '\0' && !old[i].revoked)
-            sj_admitted_insert(old[i].instance, old[i].digest);
+static uint64_t sj_record_index_hash(Atom *record) {
+    uint64_t h = UINT64_C(1469598103934665603);
+    if (!record || record->kind != ATOM_EXPR)
+        return h;
+    h ^= record->expr.len;
+    for (CettaExprIndex i = 0u; i < record->expr.len && i < 2u; i++) {
+        Atom *word = record->expr.elems[i];
+        h = (h ^ (word && word->kind == ATOM_SYMBOL
+                      ? atom_symbol_spelling_hash(word) : 0u)) *
+            UINT64_C(1099511628211);
+    }
+    return h;
+}
+
+static SjAdmitted *sj_admitted_find(SjAdmissionSpace *space, uint64_t hash,
+                                    Atom *record) {
+    if (!space || !space->capacity) return NULL;
+    size_t slot = (size_t)hash & (space->capacity - 1u);
+    for (size_t probe = 0u; probe < space->capacity; probe++) {
+        SjAdmitted *entry = &space->records[(slot + probe) & (space->capacity - 1u)];
+        if (!entry->record) return entry;
+        if (entry->hash == hash &&
+            atom_data_identical(entry->record, record))
+            return entry;
+    }
+    return NULL;
+}
+
+static bool sj_admitted_contains(uint64_t instance, Atom *record) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    SjAdmitted *entry = sj_admitted_find(
+        sj_admission_space(instance), sj_record_index_hash(record), record);
+    return entry && entry->record && !entry->revoked;
+}
+
+static void sj_admitted_grow(SjAdmissionSpace *space) {
+    size_t old_cap = space->capacity;
+    SjAdmitted *old = space->records;
+    if (old_cap > SIZE_MAX / 2u / sizeof(*old))
+        cetta_oom(SIZE_MAX);
+    space->capacity = old_cap ? old_cap * 2u : 16u;
+    space->records = cetta_malloc(space->capacity * sizeof(*space->records));
+    memset(space->records, 0, space->capacity * sizeof(*space->records));
+    for (size_t i = 0u; i < old_cap; i++) {
+        if (!old[i].record) continue;
+        size_t slot = (size_t)old[i].hash & (space->capacity - 1u);
+        while (space->records[slot].record)
+            slot = (slot + 1u) & (space->capacity - 1u);
+        space->records[slot] = old[i];
+    }
     free(old);
 }
 
@@ -572,90 +650,153 @@ uint64_t prime_scoped_judgment_admission_epoch(void) {
     return g_admission_epoch;
 }
 
-static void sj_admitted_insert(uint64_t instance, const char *digest) {
+/* A key's collection owns only syntax. Each installed entry retains that
+ * collection directly; mutually importing spaces cannot form owner cycles. */
+static void sj_admitted_install(SjAdmissionSpace *space, Atom *record,
+                                 CettaAnswerStorage *owner, bool revoked) {
     g_admission_epoch++;
-    if (g_admitted_count * 2u >= g_admitted_cap) sj_admitted_grow();
-    size_t slot = sj_admitted_slot(instance, digest);
-    for (size_t probe = 0u; probe < g_admitted_cap; probe++) {
-        SjAdmitted *entry = &g_admitted[(slot + probe) % g_admitted_cap];
-        if (entry->digest[0] == '\0') {
-            entry->instance = instance;
-            snprintf(entry->digest, sizeof entry->digest, "%s", digest);
-            g_admitted_count++;
-            return;
-        }
-        if (entry->instance == instance && strcmp(entry->digest, digest) == 0) {
-            entry->revoked = false;
-            return;
-        }
+    if (space->count >= space->capacity / 2u) sj_admitted_grow(space);
+    uint64_t hash = sj_record_index_hash(record);
+    SjAdmitted *entry = sj_admitted_find(space, hash, record);
+    if (!entry) return;
+    if (!entry->record) {
+        if (owner->shares == SIZE_MAX) cetta_oom(SIZE_MAX);
+        cetta_answer_storage_retain(owner);
+        *entry = (SjAdmitted){.hash = hash, .record = record,
+                              .owner = owner, .revoked = revoked};
+        space->count++;
+    } else
+        entry->revoked = revoked;
+}
+
+static void sj_admitted_insert(uint64_t instance, Atom *record) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    if (!instance || instance == UINT64_MAX) return;
+    SjAdmissionSpace *space = sj_admission_space(instance);
+    SjAdmitted *entry = sj_admitted_find(
+        space, sj_record_index_hash(record), record);
+    if (entry && entry->record) {
+        g_admission_epoch++;
+        entry->revoked = false;
+        return;
     }
+    /* Validation excludes cycles and runtime handles before copying. */
+    if (!atom_data_identical(record, record)) return;
+    if (!space) space = sj_admission_space_ensure(instance);
+    if (!space->builder) {
+        space->builder = cetta_answer_storage_new(&g_admission_storage);
+        if (!space->builder) cetta_oom(SIZE_MAX);
+    }
+    cetta_answer_storage_prepare(space->builder);
+    Atom *copy = atom_deep_copy(&space->builder->arena, record);
+    if (copy) sj_admitted_install(space, copy, space->builder, false);
 }
 
 /* Withdraw an admission: the record stays in its space as syntax, and is
  * reusable again only once admitted again. */
-static void sj_admitted_revoke(uint64_t instance, const char *digest) {
+static void sj_admitted_revoke(uint64_t instance, Atom *record) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
     g_admission_epoch++;
-    if (!g_admitted_cap) return;
-    size_t slot = sj_admitted_slot(instance, digest);
-    for (size_t probe = 0u; probe < g_admitted_cap; probe++) {
-        SjAdmitted *entry = &g_admitted[(slot + probe) % g_admitted_cap];
-        if (entry->digest[0] == '\0') return;
-        if (entry->instance == instance && strcmp(entry->digest, digest) == 0) {
-            entry->revoked = true;
-            return;
-        }
-    }
+    SjAdmitted *entry = sj_admitted_find(
+        sj_admission_space(instance), sj_record_index_hash(record), record);
+    if (entry && entry->record) entry->revoked = true;
 }
 
 void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record);
 
 /* A space that takes over another's contents, as an import commits its
  * working copy, takes over what admission published there, and the records
- * of the theorems published there. */
+ * of the theorems published there. Explicit source withdrawals override a
+ * destination's older admission of that key. Unmentioned destination keys
+ * retain their history; absence from this registry is not a withdrawal. */
 static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
-    prime_semantics_theorem_ledger_follow(from, to);
-    size_t count = 0u;
-    for (size_t i = 0u; i < g_admitted_cap; i++)
-        if (g_admitted[i].digest[0] != '\0' && !g_admitted[i].revoked &&
-            g_admitted[i].instance == from)
-            count++;
-    if (count == 0u) return;
-    char (*digests)[65] = cetta_malloc(sizeof(*digests) * count);
-    size_t n = 0u;
-    for (size_t i = 0u; i < g_admitted_cap; i++)
-        if (g_admitted[i].digest[0] != '\0' && !g_admitted[i].revoked &&
-            g_admitted[i].instance == from)
-            memcpy(digests[n++], g_admitted[i].digest, sizeof digests[0]);
-    for (size_t i = 0u; i < n; i++) sj_admitted_insert(to, digests[i]);
-    free(digests);
+    CETTA_SCOPED_SHARED_TRANSITION(transfer);
+    if (!from || !to || from == to) return;
+    SjAdmissionSpace *source = sj_admission_space(from);
+    if (!source) return;
+    if (source->has_theorems) prime_semantics_theorem_ledger_follow(from, to);
+    if (!source->count) return;
+    SjAdmissionSpace *target = sj_admission_space_ensure(to);
+    /* Target growth cannot move a source's independent table. */
+    for (size_t i = 0u; i < source->capacity; i++) {
+        SjAdmitted *entry = &source->records[i];
+        if (entry->record)
+            sj_admitted_install(target, entry->record, entry->owner, entry->revoked);
+    }
+}
+
+static void sj_admission_retires_instance(uint64_t instance) {
+    CETTA_SCOPED_SHARED_TRANSITION(retirement);
+    if (!g_admission_space_capacity) return;
+    size_t slot = sj_admission_space_slot(instance, g_admission_space_capacity);
+    SjAdmissionSpace **link = &g_admission_spaces[slot];
+    while (*link && (*link)->instance != instance) link = &(*link)->next;
+    SjAdmissionSpace *space = *link;
+    if (!space) return;
+    *link = space->next;
+    g_admission_space_count--;
+    g_admission_epoch++;
+    if (space->has_theorems) prime_semantics_theorem_ledger_retire(instance);
+    for (size_t i = 0u; i < space->capacity; i++)
+        if (space->records[i].record)
+            cetta_answer_storage_release(space->records[i].owner);
+    if (space->builder) cetta_answer_storage_release(space->builder);
+    free(space->records);
+    free(space);
+    if (!g_admission_space_count) {
+        sj_admission_spaces_resize(0u);
+        cetta_answer_storage_account_release(g_admission_storage);
+        g_admission_storage = NULL;
+    } else if (g_admission_space_capacity > 16u &&
+               g_admission_space_count < g_admission_space_capacity / 4u)
+        sj_admission_spaces_resize(g_admission_space_capacity / 2u);
+}
+
+void prime_scoped_judgment_storage_census(CettaStorageCensus *census) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    cetta_storage_array(census, g_admission_spaces, g_admission_space_capacity,
+                        sizeof(*g_admission_spaces), 0u);
+    for (size_t i = 0u; i < g_admission_space_capacity; i++)
+        for (const SjAdmissionSpace *space = g_admission_spaces[i]; space;
+             space = space->next) {
+            (void)cetta_storage_object(census, space, sizeof(*space), CETTA_STORAGE_BLOCK);
+            cetta_storage_array(census, space->records, space->capacity,
+                                sizeof(*space->records), 0u);
+        }
+    cetta_answer_storage_account_census(g_admission_storage, census);
 }
 
 void prime_scoped_judgment_follow_space_contents(void) {
     static bool follows_contents = false;
     if (!follows_contents) {
         space_set_contents_moved_hook(sj_admission_follows_contents);
+        space_set_instance_retired_hook(sj_admission_retires_instance);
         follows_contents = true;
     }
 }
 
+void prime_scoped_judgment_note_theorem_instance(uint64_t instance) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    if (!instance || instance == UINT64_MAX) return;
+    prime_scoped_judgment_follow_space_contents();
+    sj_admission_space_ensure(instance)->has_theorems = true;
+}
+
 static void sj_admit(Arena *a, Space *space, Atom *record) {
+    (void)a;
     prime_scoped_judgment_follow_space_contents();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SCOPED_PUBLICATION);
-    char digest[65];
-    sj_record_digest(a, record, digest);
-    sj_admitted_insert(space_instance_id(space), digest);
+    sj_admitted_insert(space_instance_id(space), record);
 }
 
 static bool sj_record_admitted(Arena *a, Space *space, Atom *record) {
-    char digest[65];
-    sj_record_digest(a, record, digest);
-    return sj_admitted_contains(space_instance_id(space), digest);
+    (void)a;
+    return sj_admitted_contains(space_instance_id(space), record);
 }
 
 static void sj_withdraw(Arena *a, Space *space, Atom *record) {
-    char digest[65];
-    sj_record_digest(a, record, digest);
-    sj_admitted_revoke(space_instance_id(space), digest);
+    (void)a;
+    sj_admitted_revoke(space_instance_id(space), record);
 }
 
 static bool sj_record_signature_current(Atom *record) {
@@ -967,10 +1108,8 @@ static bool sj_env_check_definitions(SjSetEnv *env) {
                 sj_env_classify_declaration(env, item);
                 continue;
             }
-            char digest[65];
-            sj_record_digest(a, item, digest);
             space_add(&env->theory, item);
-            sj_admitted_insert(theory, digest);
+            sj_admitted_insert(theory, item);
             if (sj_is_expr(item, SJ_S("set:known"), SJ_KNOWN_LEN))
                 env->own_records[env->own_record_count++] = item;
             else if (sj_is_expr(item, "type:rule", 5u))
@@ -993,9 +1132,9 @@ static bool sj_env_check_definitions(SjSetEnv *env) {
 static bool sj_signature_owns(const SjSetEnv *env, Atom *atom) {
     if (!env->theory_ready || !atom) return false;
     for (size_t i = 0u; i < env->own_record_count; i++)
-        if (atom_eq(env->own_records[i], atom)) return true;
+        if (atom_data_identical(env->own_records[i], atom)) return true;
     for (size_t i = 0u; i < env->own_rule_count; i++)
-        if (atom_eq(env->own_rules[i], atom)) return true;
+        if (atom_data_identical(env->own_rules[i], atom)) return true;
     return false;
 }
 
@@ -2087,9 +2226,7 @@ static void sj_env_load_stored(SjSetEnv *env, Space *space) {
                                   patterns, functor->arguments[i][position]};
                 Atom *rule = atom_expr(a, items, 5u);
                 sj_stored_add(env, rule, &atom_cap);
-                char digest[65];
-                sj_record_digest(a, rule, digest);
-                sj_admitted_insert(space_instance_id(space), digest);
+                sj_admitted_insert(space_instance_id(space), rule);
                 Atom *kernel_rule = atom_expr(
                     a, (Atom *[]){sj_sym(a, "PrimeRule"), map, atom_int(a, 1),
                                   patterns, functor->arguments[i][position]}, 5u);
@@ -13399,96 +13536,6 @@ void prime_scoped_judgment_admit(Arena *a, Space *space, Atom *record) {
     sj_admit(a, space, record);
 }
 
-/* The digests of computation rules, remembered per thread.  Every covered
- * call reads the space's rules and asks of each whether admission published
- * it, and a digest prints the rule and hashes the text; computed once per
- * rule instead, the cost of a call no longer grows with the number of rules
- * times their size.  An entry is used only for the atom it was computed for
- * and only while that atom is still structurally equal to the copy kept with
- * the digest, so a reused address or a changed atom is digested afresh.  The
- * admitted set itself is not remembered: membership is looked up each time,
- * so admissions and revocations take effect at once. */
-typedef struct {
-    const Atom *rule;
-    Atom *copy;
-    char digest[65];
-} SjRuleDigest;
-
-typedef struct {
-    SjRuleDigest *slots;
-    Arena copies;
-} SjRuleDigests;
-
-enum { SJ_RULE_DIGEST_SLOTS = 4096u, SJ_RULE_DIGEST_PROBES = 8u };
-static _Thread_local SjRuleDigests *t_rule_digests;
-static pthread_key_t g_rule_digests_key;
-static pthread_once_t g_rule_digests_key_once = PTHREAD_ONCE_INIT;
-static bool g_rule_digests_key_ready = false;
-
-static void sj_rule_digests_destroy(void *raw) {
-    SjRuleDigests *digests = raw;
-    if (!digests) return;
-    free(digests->slots);
-    arena_free(&digests->copies);
-    free(digests);
-}
-
-static void sj_rule_digests_make_key(void) {
-    g_rule_digests_key_ready =
-        pthread_key_create(&g_rule_digests_key, sj_rule_digests_destroy) == 0;
-}
-
-static SjRuleDigests *sj_rule_digests_get(void) {
-    if (t_rule_digests) return t_rule_digests;
-    pthread_once(&g_rule_digests_key_once, sj_rule_digests_make_key);
-    if (!g_rule_digests_key_ready) return NULL;
-    SjRuleDigests *digests = calloc(1u, sizeof *digests);
-    if (!digests) return NULL;
-    digests->slots = calloc(SJ_RULE_DIGEST_SLOTS, sizeof *digests->slots);
-    arena_init_detached(&digests->copies);
-    if (!digests->slots || pthread_setspecific(g_rule_digests_key, digests) != 0) {
-        sj_rule_digests_destroy(digests);
-        return NULL;
-    }
-    t_rule_digests = digests;
-    return digests;
-}
-
-static bool sj_is_rule_atom(Atom *atom) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 5u &&
-           atom_is_symbol(atom->expr.elems[0], "type:rule");
-}
-
-static void sj_rule_digest(Arena *a, Atom *rule, char out[65]) {
-    SjRuleDigests *digests = sj_rule_digests_get();
-    if (!digests) {
-        sj_record_digest(a, rule, out);
-        return;
-    }
-    size_t home = (size_t)(((uintptr_t)rule >> 4) * 11400714819323198485ull) %
-                  SJ_RULE_DIGEST_SLOTS;
-    size_t empty = SJ_RULE_DIGEST_SLOTS;
-    for (size_t probe = 0u; probe < SJ_RULE_DIGEST_PROBES; probe++) {
-        SjRuleDigest *entry = &digests->slots[(home + probe) % SJ_RULE_DIGEST_SLOTS];
-        if (!entry->rule) {
-            if (empty == SJ_RULE_DIGEST_SLOTS) empty = (home + probe) % SJ_RULE_DIGEST_SLOTS;
-            continue;
-        }
-        if (entry->rule == rule && atom_eq(entry->copy, rule)) {
-            memcpy(out, entry->digest, sizeof entry->digest);
-            return;
-        }
-    }
-    sj_record_digest(a, rule, out);
-    if (empty == SJ_RULE_DIGEST_SLOTS) return;
-    Atom *copy = atom_deep_copy(&digests->copies, rule);
-    if (!copy) return;
-    SjRuleDigest *entry = &digests->slots[empty];
-    entry->rule = rule;
-    entry->copy = copy;
-    memcpy(entry->digest, out, sizeof entry->digest);
-}
-
 bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record) {
     if (!a || !space || !record) return false;
     /* What the signature's definitions published is admitted wherever the
@@ -13496,12 +13543,7 @@ bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record) {
     if (sj_signature_owns(&g_set_env, record)) return true;
     const Space *root = space;
     while (root->overlay_base) root = root->overlay_base;
-    char digest[65];
-    if (sj_is_rule_atom(record) && !atom_has_vars(record))
-        sj_rule_digest(a, record, digest);
-    else
-        sj_record_digest(a, record, digest);
-    return sj_admitted_contains(space_instance_id(root), digest);
+    return sj_admitted_contains(space_instance_id(root), record);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -14830,16 +14872,22 @@ const char *prime_scoped_judgment_refutation_without_completeness(
 
 bool prime_scoped_judgment_instance_empty(uint64_t instance, size_t limit,
         size_t *visited, bool *empty) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
     if (visited) *visited=0u;
     if (empty) *empty=false;
     if (!visited || !empty || !instance || instance==UINT64_MAX) return false;
-    for (size_t i=0u;i<g_admitted_cap;i++) {
+    if (!g_admission_space_capacity) { *empty=true; return true; }
+    size_t slot=sj_admission_space_slot(instance,g_admission_space_capacity);
+    for (const SjAdmissionSpace *space=g_admission_spaces[slot];space;
+         space=space->next) {
         if (*visited==limit) return false;
         (*visited)++;
         cetta_native_cost_charge(CETTA_COST_STORAGE_PROBE,1u);
         /* Revoked records are retained history, not empty authority storage. */
-        if (g_admitted[i].digest[0] && g_admitted[i].instance==instance)
+        if (space->instance==instance) {
+            *empty=space->count==0u;
             return true;
+        }
     }
     *empty=true;
     return true;

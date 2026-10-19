@@ -23,6 +23,8 @@
 #include "library_cwp.h"
 #include "library_space_service.h"
 #include "library_proc.h"
+#include "library_fs.h"
+#include "library_re.h"
 #include "library_proc_run.h"
 #include "library_sqlite.h"
 #include "library_durable.h"
@@ -148,6 +150,7 @@ enum {
     CETTA_LIBRARY_MAILBOX = 1u << 19,
     CETTA_LIBRARY_SQLITE = 1u << 20,
     CETTA_LIBRARY_SIWC = 1u << 21,
+    CETTA_LIBRARY_RE = 1u << 22,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -160,7 +163,7 @@ static bool library_prime_host_intrinsic(SymbolId head) {
 
 typedef struct {
     const char *name;
-    uint32_t bit;
+    CettaLibraryMask bit;
     const char *he_words;
 } CettaLibrarySpec;
 
@@ -168,6 +171,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"system", CETTA_LIBRARY_SYSTEM, NULL},
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
+    {"re", CETTA_LIBRARY_RE, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -504,8 +508,7 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->retired_modules = NULL;
     ctx->retired_module_len = 0u;
     ctx->retired_module_cap = 0u;
-    memset(ctx->native_handles, 0, sizeof(ctx->native_handles));
-    ctx->native_handle_len = 0;
+    ctx->native_handle_registry = NULL;
     ctx->native_handle_next_id = 1;
     ctx->petta_translator_rules = NULL;
     ctx->petta_translator_rule_len = 0u;
@@ -1484,10 +1487,10 @@ bool cetta_library_root_for_exec_path(const char *argv0,
     *slash = '\0';
     if (!library_root_has_lib_dir(resolved)) {
         copy_parent_dir(parent, sizeof(parent), resolved);
-        if (strcmp(parent, resolved) != 0 &&
-            library_root_has_lib_dir(parent)) {
-            snprintf(resolved, sizeof(resolved), "%s", parent);
-        }
+        if (strcmp(parent, resolved) == 0 ||
+            !library_root_has_lib_dir(parent))
+            return false;
+        snprintf(resolved, sizeof(resolved), "%s", parent);
     }
     if (strlen(resolved) >= output_size)
         return false;
@@ -4635,6 +4638,12 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
     if (head_id == g_builtin_syms.lib_system_cwd) {
         return system_cwd(a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_system_entry_directory) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:entry-directory)");
+        return ctx->script_dir[0] ? atom_string(a, ctx->script_dir)
+            : library_signature_error(a, head, args, nargs, "entry directory is not established");
+    }
     if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
         return system_monotonic_ns(a, head, args, nargs);
     }
@@ -5710,32 +5719,52 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
  * A refusal is (Error (str:name args...) (Reason offset)); a call outside an
  * operation's signature is (Error (str:name args...) expectation). */
 
+static Atom *str_operation_refusal(Arena *a, Atom *call, Atom *detail, bool data) {
+    return data ? atom_expr3(a, atom_symbol(a, "StrRefusedV1"), call, detail)
+                : atom_error(a, call, detail);
+}
+
 static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
-                                        Atom **args, uint32_t nargs) {
-    if (head->kind != ATOM_SYMBOL || atom_symbol_current_id(head) != g_builtin_syms.lib_str)
+                                        Atom **args, uint32_t nargs,
+                                        CettaCallResultForm *result_form) {
+    if (head->kind != ATOM_SYMBOL || (atom_symbol_current_id(head) != g_builtin_syms.lib_str &&
+        atom_symbol_current_id(head) != g_builtin_syms.lib_str_value))
         return NULL;
+    bool values = atom_symbol_current_id(head) == g_builtin_syms.lib_str_value;
+    if (values) *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
     const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
         ? atom_name_cstr(args[0]) : NULL;
     const CettaStrNative *native = cetta_str_native(name);
     if (!native)
-        return library_signature_error(a, head, args, nargs,
-                                       "unknown string operation");
+        return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                                     atom_symbol(a, "unknown string operation"), values);
+    Atom **operands = args + 1u;
+    uint32_t count = nargs - 1u;
+    if (values) {
+        if (nargs != 2u || !args[1] || args[1]->kind != ATOM_EXPR)
+            return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                atom_symbol(a, "expected string operation and inert argument tuple"), values);
+        if (args[1]->expr.len > UINT32_MAX)
+            return str_operation_refusal(a, library_call_expr(a, head, args, nargs),
+                atom_symbol(a, "argument tuple exceeds native arity"), values);
+        operands = args[1]->expr.elems;
+        count = (uint32_t)args[1]->expr.len;
+    }
+    CettaStrRefusal refusal = {0};
+    Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
+    if (result)
+        return result;
     size_t public_len = strlen(name) + 5u;
     char *public_name = arena_alloc(a, public_len);
     snprintf(public_name, public_len, "str:%s", name);
-    Atom *call = library_call_expr(a, atom_symbol(a, public_name), args + 1,
-                                   nargs - 1u);
-    if (nargs - 1u != native->arity)
-        return atom_error(a, call, atom_symbol(a, "wrong number of arguments"));
-    CettaStrRefusal refusal = {0};
-    Atom *result = native->fn(a, args + 1, &refusal);
-    if (result)
-        return result;
+    Atom *call = library_call_expr(a, atom_symbol(a, public_name), operands, count);
+    if (count != native->arity)
+        return str_operation_refusal(a, call, atom_symbol(a, "wrong number of arguments"), values);
     if (refusal.reason)
-        return atom_error(a, call,
+        return str_operation_refusal(a, call,
                           atom_expr2(a, atom_symbol(a, refusal.reason),
-                                     atom_int(a, (int64_t)refusal.offset)));
-    return atom_error(a, call, atom_symbol(a, refusal.expected));
+                                     atom_int(a, (int64_t)refusal.offset)), values);
+    return str_operation_refusal(a, call, atom_symbol(a, refusal.expected), values);
 }
 
 static CettaMorkSpaceResource *library_mork_space_resource(CettaLibraryContext *ctx,
@@ -11235,7 +11264,7 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     const CettaNativeBuiltinModule *native_spec = spec ? NULL : cetta_native_module_lookup(name);
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
-    uint32_t import_bit;
+    CettaLibraryMask import_bit;
     const char *import_name;
 
     if (!spec && !native_spec) {
@@ -11246,7 +11275,7 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     import_name = spec ? spec->name : native_spec->name;
     /* These vocabulary libraries publish their words into each importing
        reader. File inventory still prevents replay within that reader. */
-    const uint32_t naming_interfaces = CETTA_LIBRARY_RHO;
+    const CettaLibraryMask naming_interfaces = CETTA_LIBRARY_RHO;
     if ((ctx->active_mask & import_bit) && !(import_bit & naming_interfaces))
         return true;
 
@@ -12053,7 +12082,7 @@ static Atom *cetta_library_dispatch_native_value(
          * to dynamically registered modules or a foreign runtime. */
         Atom *result=NULL;
         if (ctx->active_mask & CETTA_LIBRARY_STR)
-            result=cetta_library_dispatch_str(a,head,args,nargs);
+            result=cetta_library_dispatch_str(a,head,args,nargs,result_form);
         if (result) return result;
 #if CETTA_BUILD_WITH_JSON_GSLT
         if (ctx->active_mask & CETTA_LIBRARY_JSON)
@@ -12138,7 +12167,7 @@ static Atom *cetta_library_dispatch_native_value(
     }
 #endif
     if (ctx->active_mask & CETTA_LIBRARY_STR) {
-        Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
+        Atom *result = cetta_library_dispatch_str(a, head, args, nargs, result_form);
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) {
@@ -12152,6 +12181,10 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
+        cetta_re_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&
+        cetta_fs_call(ctx, a, head, args, nargs, out)) return true;
     /* lib/proc offers two families: owned process jobs (spawn, poll, wait,
      * status, cancel, close, await, and run with argv and options), and the
      * capturing runner proc:run with cwd, environment, timeout and capture
@@ -12193,7 +12226,7 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
         ctx->petta_trusted_library_import_depth || ctx->import_space_alias_len ||
         ctx->cmdline_arg_len || ctx->loaded_module_len || ctx->module_token_scope ||
         ctx->top_module_space || ctx->retired_modules || ctx->retired_module_len || ctx->retired_module_cap ||
-        ctx->native_handle_len || ctx->native_handle_next_id != 1u ||
+        ctx->native_handle_registry || ctx->native_handle_next_id != 1u ||
         ctx->petta_translator_rules || ctx->petta_translator_rule_len || ctx->petta_translator_rule_cap ||
         ctx->petta_tabled_relations || ctx->petta_tabled_relation_len || ctx->petta_tabled_relation_cap ||
         ctx->petta_memo.all_arities || ctx->petta_memo.all_arity_len || ctx->petta_memo.all_arity_cap ||

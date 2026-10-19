@@ -3,6 +3,8 @@
 #include "parser.h"
 #include "prepared_pure_machine.h"
 #include "term_canon.h"
+#include "library.h"
+#include "native_handle.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -280,6 +282,158 @@ static bool describe_owner(void *context, const Atom *leaf,
     return false;
 }
 
+typedef struct {
+    CettaLibraryContext context;
+    size_t references, retained, released, destroyed, finalized;
+    int payload;
+} NativeResource;
+
+static void retain_native_resource(void *raw) {
+    NativeResource *resource = raw;
+    assert(resource->references);
+    ++resource->references;
+    ++resource->retained;
+}
+
+static void release_native_resource(void *raw) {
+    NativeResource *resource = raw;
+    assert(resource->references);
+    ++resource->released;
+    if (--resource->references)
+        return;
+    cetta_native_handle_cleanup_all(&resource->context);
+    ++resource->destroyed;
+}
+
+static void finalize_native_resource(void *raw) {
+    NativeResource *resource = raw;
+    ++resource->finalized;
+}
+
+typedef struct {
+    NativeResource *resource;
+    const Atom *identifier;
+    bool shareable;
+    size_t calls;
+} NativeResourcePolicy;
+
+static bool describe_native_resource(void *raw, const Atom *leaf,
+                                    CettaReturnLeafOwner *out) {
+    NativeResourcePolicy *policy = raw;
+    ++policy->calls;
+    if (!policy->shareable || leaf != policy->identifier)
+        return false;
+    *out = (CettaReturnLeafOwner){
+        .owner = policy->resource,
+        .retain = retain_native_resource,
+        .release = release_native_resource,
+    };
+    return true;
+}
+
+static void test_native_identifier_resources(void) {
+    NativeResource *resource = calloc(1u, sizeof(*resource));
+    assert(resource);
+    resource->references = 1u;
+    resource->payload = 47;
+    resource->context.native_handle_next_id = 1u;
+    uint64_t id = 0u;
+    assert(cetta_native_handle_alloc(&resource->context, "ReturnImage", resource,
+                                    finalize_native_resource, &id));
+    Arena source;
+    arena_init_detached(&source);
+    Atom *handle = cetta_native_handle_owned_atom(
+        &resource->context, &source, "ReturnImage", id);
+    assert(handle && cetta_native_handle_get_owned(
+        &resource->context, "ReturnImage", handle) == resource);
+    Atom *identifier = handle->expr.elems[2];
+    assert(identifier->ground.gkind == GV_INT &&
+        (identifier->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID));
+    Atom *ordinary = atom_int(&source, identifier->ground.ival);
+    CettaOwnedReturn plain = {.outcome = cetta_call_value(ordinary)};
+    CettaOwnedReturnImage *plain_image = cetta_owned_return_image_capture(&plain, NULL);
+    assert(plain_image && !resource->retained);
+    cetta_owned_return_image_release(plain_image);
+
+    Atom *hidden = atom_var_with_id(&source, "hidden-native-resource", fresh_var_id());
+    Bindings bindings;
+    bindings_init(&bindings);
+    assert(bindings_add_var(&bindings, hidden, identifier));
+    Atom *named = atom_var_with_id(&source, "native-resource-name", fresh_var_id());
+    named->name_key = identifier;
+    CettaOwnedReturn returns[] = {
+        {.outcome = cetta_call_value(identifier)},
+        {.outcome = cetta_call_value(handle)},
+        {.outcome = cetta_call_suspended(ordinary, identifier)},
+        {.outcome = cetta_call_value(ordinary), .environment = &bindings},
+        {.outcome = cetta_call_value(named)},
+    };
+    NativeResourcePolicy descriptor = {.resource = resource, .identifier = identifier};
+    CettaOwnedReturnImagePolicy policy = {
+        .describe_leaf_owner = describe_native_resource, .context = &descriptor,
+    };
+    for (size_t i = 0u; i < sizeof(returns) / sizeof(returns[0]); ++i) {
+        assert(!cetta_owned_return_image_capture(&returns[i], NULL));
+        assert(!cetta_owned_return_image_capture(&returns[i], &policy));
+        assert(resource->references == 1u && !resource->retained && !resource->finalized);
+    }
+    assert(descriptor.calls == 5u);
+    descriptor.shareable = true;
+
+    /* Failure after retaining the first root releases both temporary holds;
+     * the source's live holder keeps its original registry slot. */
+    StateCell state = {.value = ordinary};
+    CettaOwnedReturn partial = {
+        .outcome = cetta_call_suspended(handle, atom_state(&source, &state)),
+    };
+    assert(!cetta_owned_return_image_capture(&partial, &policy));
+    assert(resource->references == 1u && resource->retained == 1u &&
+           resource->released == 1u && !resource->finalized &&
+           cetta_native_handle_get_owned(&resource->context, "ReturnImage", handle) == resource);
+
+    CettaOwnedReturn shared = {
+        .outcome = cetta_call_suspended(handle, identifier), .environment = &bindings,
+    };
+    CettaOwnedReturnImage *first = cetta_owned_return_image_capture(&shared, &policy);
+    CettaOwnedReturnImage *second = cetta_owned_return_image_capture(&shared, &policy);
+    assert(first && second && resource->references == 3u && resource->retained == 3u);
+    const CettaOwnedReturn *a = cetta_owned_return_image_view(first);
+    const CettaOwnedReturn *b = cetta_owned_return_image_view(second);
+    assert(a->outcome.term->expr.elems[2] == a->outcome.delayed &&
+           b->outcome.term->expr.elems[2] == b->outcome.delayed);
+    assert(bindings_lookup_value_id((Bindings *)a->environment,
+                                   hidden->var_id).skeleton == a->outcome.delayed);
+    Atom *forged = cetta_native_handle_atom(&source, "ReturnImage", id);
+    assert(!cetta_native_handle_get_owned(&resource->context, "ReturnImage", forged));
+    bindings_free(&bindings);
+    arena_free(&source);
+    release_native_resource(resource);
+    assert(resource->references == 2u && !resource->destroyed && !resource->finalized);
+    assert(cetta_native_handle_get_owned(&resource->context, "ReturnImage",
+                                        a->outcome.term) == resource);
+    assert(cetta_native_handle_get_owned(&resource->context, "ReturnImage",
+                                        b->outcome.term) == resource);
+    CettaNativeHandleUse exclusive = {0}, conflict = {0};
+    assert(cetta_native_handle_acquire_owned(&resource->context, "ReturnImage",
+        a->outcome.term, CETTA_NATIVE_HANDLE_USE_EXCLUSIVE, &exclusive));
+    assert(!cetta_native_handle_acquire_owned(&resource->context, "ReturnImage",
+        b->outcome.term, CETTA_NATIVE_HANDLE_USE_EXCLUSIVE, &conflict));
+    assert(!conflict.owner && cetta_native_handle_use_is_current(&exclusive));
+    cetta_owned_return_image_release(second);
+    assert(resource->references == 1u && !resource->destroyed &&
+           cetta_native_handle_use_resource(&exclusive) == resource);
+    assert(cetta_native_handle_close(&resource->context, "ReturnImage", id));
+    assert(!cetta_native_handle_use_is_current(&exclusive) &&
+           !cetta_native_handle_get_owned(&resource->context, "ReturnImage", a->outcome.term) &&
+           cetta_native_handle_use_resource(&exclusive) == resource && !resource->finalized);
+    assert(cetta_native_handle_use_release(&exclusive) && resource->finalized == 1u);
+    cetta_owned_return_image_release(first);
+    assert(!resource->references && resource->destroyed == 1u &&
+           resource->released == 4u && resource->finalized == 1u);
+    free(resource);
+    puts("PASS: owning integer identifiers require explicit resource qualification through every return root; lifetime sharing preserves revocation and exclusive use");
+}
+
 static void test_name_keys_and_resources(void) {
     Resources *resources = calloc(1u, sizeof(*resources));
     assert(resources);
@@ -512,10 +666,23 @@ static void test_recording_requires_its_own_transport(void) {
         (PrimeNeedRecordingLimits){2u, 8192u, 2u, 1u});
     assert(group && prime_need_recording_reserve(group, NULL, 1u, 8192u,
         bindings_receipt_mut(&recorded)));
+    Atom *value = atom_int(&source, 9);
+    CettaWeightLedger factor;
+    assert(cetta_weight_ledger_append(&source, bindings_weight_view(&recorded),
+        41u, 71u, value, &factor));
+    *bindings_weight_mut(&recorded) = factor;
+    value = factor.last->value;
+    assert(prime_need_receipt_observe_cell(&source, bindings_receipt_view(&recorded),
+        71u, 1u, value, bindings_receipt_mut(&recorded)));
+    PrimeNeedSnapshot root = {0}, allocated = {0};
+    uint64_t thunk = 0u;
+    assert(prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(&source, &root, value, &allocated, &thunk));
+    *bindings_need_mut(&recorded) = allocated;
     PrimeNeedRecordingStatus before = prime_need_recording_status(group);
     PrimeNeedReceipt receipt = *bindings_receipt_view(&recorded);
     CettaOwnedReturn returned = {
-        .outcome = cetta_call_completed_value(atom_int(&source, 9)),
+        .outcome = cetta_call_completed_value(value),
         .environment = &recorded,
     };
     assert(!cetta_owned_return_image_capture(&returned, NULL));
@@ -528,10 +695,44 @@ static void test_recording_requires_its_own_transport(void) {
         before.metadata_bound == after.metadata_bound &&
         before.retained_bound == after.retained_bound &&
         before.incomplete == after.incomplete && before.overflow == after.overflow);
+    CettaOwnedReturnImagePolicy retain = {.bounded_history=CETTA_RETURN_HISTORY_RETAIN};
+    CettaOwnedReturnImage *kept = cetta_owned_return_image_capture(&returned, &retain);
+    assert(kept && prime_need_recording_status(group).owner_links == 1u);
+    const PrimeNeedReceipt *reader = bindings_receipt_view(
+        cetta_owned_return_image_view(kept)->environment);
+    assert(reader->top == receipt.top && prime_need_recording_readable(reader));
+    assert(!cetta_owned_return_image_capture(&returned, &retain));
+    assert(bindings_receipt_view(&recorded)->top == receipt.top &&
+        prime_need_recording_status(group).owner_links == 1u &&
+        prime_need_recording_status(group).omitted > before.omitted);
+    CettaOwnedReturnImagePolicy forget = {.bounded_history=CETTA_RETURN_HISTORY_FORGET};
+    CettaOwnedReturnImage *erased = cetta_owned_return_image_capture(&returned, &forget);
+    assert(erased && !bindings_receipt_view(
+        cetta_owned_return_image_view(erased)->environment)->recording);
+    assert(prime_need_recording_readable(bindings_receipt_view(&recorded)));
+    prime_need_recording_forget(group);
+    assert(!prime_need_recording_readable(bindings_receipt_view(&recorded)) &&
+        prime_need_recording_readable(reader));
     bindings_free(&recorded);
     arena_free(&source);
     prime_need_recording_release(group);
-    puts("PASS: recorded returns refuse generic image capture without retaining, truncating or changing their recording owner");
+    CettaOwnedReturnImage *images[] = {kept, erased};
+    for (size_t i=0u; i<2u; i++) {
+        const CettaOwnedReturn *view = cetta_owned_return_image_view(images[i]);
+        assert_int(view->outcome.term, 9);
+        PrimeNeedCellView pending;
+        assert(prime_need_snapshot_lookup(bindings_need_view(view->environment), thunk, &pending));
+        assert(pending.origin == view->outcome.term && pending.cache_state == PRIME_NEED_CACHE_EMPTY);
+        assert(bindings_weight_view(view->environment)->length == 1u &&
+            bindings_weight_view(view->environment)->last->value == view->outcome.term);
+    }
+    PrimeNeedReceiptGraph graph = {0};
+    assert(prime_need_receipt_graph_collect(reader, &graph) == PRIME_NEED_RECEIPT_GRAPH_INCOMPLETE);
+    assert(graph.length == 1u && graph.nodes[0].event.after->ground.ival == 9);
+    prime_need_receipt_graph_free(&graph);
+    cetta_owned_return_image_release(kept);
+    cetta_owned_return_image_release(erased);
+    puts("PASS: explicit history retention and forgetting preserve operational worlds; quota refusal keeps the loan and retained readers survive source retirement");
 }
 #endif
 
@@ -609,6 +810,69 @@ static void release_answers(Recipient *recipient) {
     recipient->count = 0u;
 }
 
+static void test_native_resource_shared_return(void) {
+    NativeResource *resource = calloc(1u, sizeof(*resource));
+    Computation *computation = calloc(1u, sizeof(*computation));
+    assert(resource && computation);
+    resource->references = 1u;
+    resource->context.native_handle_next_id = 1u;
+    uint64_t id = 0u;
+    assert(cetta_native_handle_alloc(&resource->context, "SharedReturn", resource,
+                                    finalize_native_resource, &id));
+    ProducerAccount account = {0};
+    computation->account = &account;
+    arena_init_detached(&computation->syntax);
+    Atom *handle = cetta_native_handle_owned_atom(
+        &resource->context, &computation->syntax, "SharedReturn", id);
+    assert(handle);
+    NativeResourcePolicy descriptor = {
+        .resource = resource, .identifier = handle->expr.elems[2],
+    };
+    account.policy = (CettaOwnedReturnImagePolicy){
+        .describe_leaf_owner = describe_native_resource, .context = &descriptor,
+    };
+    for (size_t i = 0u; i < 2u; ++i) {
+        bindings_init(&computation->bindings[i]);
+        computation->returns[i] = (CettaOwnedReturn){
+            .outcome = cetta_call_completed_value(handle),
+            .environment = &computation->bindings[i],
+        };
+    }
+    CettaOwnedExecution execution = {0};
+    cetta_owned_execution_init(&execution, computation, next_return, release_computation);
+    execution.relocatable = true;
+    CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
+        &execution, 2u, 1u, cetta_shared_return_capture_image, always_compatible, &account);
+    assert(producer && !execution.computation);
+    assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_CAPTURE_REFUSED);
+    assert(account.effects == 1u && account.next_calls == 1u &&
+           cetta_shared_return_producer_execution(producer)->has_pending &&
+           !resource->retained);
+    descriptor.shareable = true;
+    assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_PAUSED);
+    assert(account.effects == 1u && account.next_calls == 1u && resource->retained == 1u);
+    Recipient a = {0}, b = {.refuse = true};
+    assert(cetta_shared_return_producer_take(producer, 0u, retain_answer, &a).kind ==
+           CETTA_SHARED_DELIVERY_ANSWER);
+    assert(cetta_shared_return_producer_take(producer, 1u, retain_answer, &b).kind ==
+           CETTA_SHARED_DELIVERY_PUBLICATION_REFUSED);
+    assert(cetta_shared_return_producer_cancel(producer, 1u));
+    assert(cetta_shared_return_producer_trim(producer) == 1u);
+    assert(a.count == 1u && !b.count && resource->references == 2u);
+    cetta_shared_return_producer_free(producer);
+    assert(account.released == 1u && account.effects == 1u && !resource->finalized);
+    release_native_resource(resource);
+    const CettaOwnedReturn *returned = cetta_owned_return_image_view(a.answers[0]);
+    assert(returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+           cetta_native_handle_get_owned(&resource->context, "SharedReturn",
+                                        returned->outcome.term) == resource &&
+           resource->references == 1u && !resource->destroyed);
+    release_answers(&a);
+    assert(!resource->references && resource->destroyed == 1u && resource->finalized == 1u);
+    free(resource);
+    puts("PASS: native resource qualification refusal keeps the paid source loan; retry, independent cancellation and producer retirement preserve the retained value");
+}
+
 static void test_saved_environment_and_consumers(void) {
     ProducerAccount account = {0};
     account.policy = (CettaOwnedReturnImagePolicy){
@@ -636,8 +900,9 @@ static void test_saved_environment_and_consumers(void) {
                                            atom_expr2(&computation->syntax, atom_symbol(&computation->syntax, "check"), y)),
             .environment = &computation->bindings[i],
         };
-    CettaOwnedExecution execution;
+    CettaOwnedExecution execution = {0};
     cetta_owned_execution_init(&execution, computation, next_return, release_computation);
+    execution.relocatable = true;
     CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
         &execution, 2u, 2u, cetta_shared_return_capture_image, always_compatible, &account);
     assert(producer && !execution.computation);
@@ -742,8 +1007,8 @@ static void test_prepared_search_returns(bool change_during_publication) {
         .space = &space, .token = cetta_prepared_pure_answer_cursor_program_token(cursor),
     };
     ProgramChange change = {.space = &space, .source = &source};
-    CettaOwnedExecution execution;
-    cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor);
+    CettaOwnedExecution execution = {0};
+    assert(cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor));
     CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
         &execution, 2u, 2u, cetta_shared_return_capture_image, program_compatible, &context);
     assert(producer);
@@ -811,6 +1076,7 @@ int main(void) {
     test_provenance_and_scalars();
     test_unregistered_symbol_image();
     test_explicit_contextual_carrier();
+    test_native_identifier_resources();
     test_name_keys_and_resources();
     test_frame_schema_resource_root();
     test_deep_name_keys_and_refusal();
@@ -819,6 +1085,7 @@ int main(void) {
     test_recording_requires_its_own_transport();
 #endif
     test_saved_environment_and_consumers();
+    test_native_resource_shared_return();
     test_prepared_search_returns(false);
     test_prepared_search_returns(true);
     symbol_table_free(&symbols);

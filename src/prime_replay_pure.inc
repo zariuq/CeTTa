@@ -21,6 +21,10 @@ static bool prime_replay_source_recording(PrimeReplaySourceScan *scan,PrimeNeedR
 }
 
 static bool prime_replay_source_receipt(PrimeReplaySourceScan *scan,const PrimeNeedReceipt *receipt) {
+    if(receipt && receipt->recording && !prime_need_recording_readable(receipt)) {
+        if(prime_need_recording_erased(receipt))return true;
+        scan->refusal="RecordingOwner";return false;
+    }
     return prime_replay_source_recording(scan,prime_need_receipt_recording_owner(receipt));
 }
 
@@ -163,11 +167,11 @@ static bool prime_replay_source_roots(PrimeReplaySourceScan *scan,const PrimeNat
        (c->base_environment_initialized&&!prime_replay_source_environment(scan,&c->base_environment))||
        !prime_replay_source_outcomes(scan,&c->output))return false;
     const PrimeNativeTopEpisode *episode=c->owned_top_episode;
-    if(!episode||!prime_replay_source_snapshot(scan,&episode->need)||
-        !prime_replay_source_receipt(scan,&episode->branch))return false;
+    if(!episode||!prime_replay_source_snapshot(scan,&episode->context.value.previous)||
+        !prime_replay_source_receipt(scan,&episode->context.value.previous_branch_state))return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if(!prime_replay_source_receipt(scan,&episode->receipt)||
-        !prime_replay_source_recording(scan,c->history.group))return false;
+    if(!prime_replay_source_receipt(scan,prime_need_saved_context_receipt(&episode->context))||
+       (!c->history.forgotten && !prime_replay_source_recording(scan,c->history.group)))return false;
     for(size_t i=0u;i<c->history.count;i++)
         if(!prime_replay_source_receipt(scan,&c->history.entries[i].operation)||
             !prime_replay_source_receipt(scan,&c->history.entries[i].prepared))return false;
@@ -223,8 +227,7 @@ static bool prime_replay_source_roots(PrimeReplaySourceScan *scan,const PrimeNat
             !prime_replay_source_snapshot(scan,&f->before)||
            !prime_replay_source_snapshot(scan,&f->evaluating))return false;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if(!prime_replay_source_receipt(scan,&f->before_receipt)||
-            !prime_replay_source_receipt(scan,&f->producer_receipt))return false;
+        if(!prime_replay_source_receipt(scan,&f->before_receipt))return false;
 #endif
         if(f->equation_search) {
             const PrimeNeedEquationContinuation *e=f->equation_search;

@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 642fdd4d5eaa692204b497db24b296641c591aa0064e3ffcc3a90063b5145e4f
+ * Source SHA-256: 02e41fd96aa8b14ec713f060f48fe15d723c913393021a648775b0e0e41b1f8b
  */
 
 #include <stdbool.h>
@@ -44,6 +44,29 @@ static inline bool cetta_gslt_query_effect_children_opaque(
            (head == builtins->quote ||
            head == builtins->colon ||
            head == builtins->arrow);
+}
+
+/* Operands a head compares with a pattern and never evaluates, in the
+ * language each row names. */
+#define CETTA_GSLT_MATCHED_OPERAND_ROWS(X)     X(unify, 4u, 0u, he) \
+    X(unify, 4u, 1u, he) \
+    X(decons_atom, 1u, 0u, he) \
+    X(cons_atom, 2u, 0u, he) \
+    X(cons_atom, 2u, 1u, he) \
+    X(error, 2u, 0u, he) \
+    X(error, 2u, 1u, he)
+
+static inline bool cetta_gslt_query_effect_operand_matched(
+    SymbolId head, uint32_t arity, uint32_t operand_index,
+    bool he_language, const BuiltinSyms *builtins) {
+    return builtins &&
+           ((he_language && head == builtins->unify && arity == 4u && operand_index == 0u) ||
+           (he_language && head == builtins->unify && arity == 4u && operand_index == 1u) ||
+           (he_language && head == builtins->decons_atom && arity == 1u && operand_index == 0u) ||
+           (he_language && head == builtins->cons_atom && arity == 2u && operand_index == 0u) ||
+           (he_language && head == builtins->cons_atom && arity == 2u && operand_index == 1u) ||
+           (he_language && head == builtins->error && arity == 2u && operand_index == 0u) ||
+           (he_language && head == builtins->error && arity == 2u && operand_index == 1u));
 }
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X)     X(op_plus, 2u) \
@@ -938,10 +961,11 @@ static inline bool cetta_gslt_prepared_equation_plan_admitted(
     return (evidence & required) == required;
 }
 
-/* Shared accelerator admission for call-policy preservation.  The current
- * implementation is conservative: declared arrow signatures fall back to
- * canonical dispatch until an accelerator implements their policy. */
-#define CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(space, head, arity)     (!space_head_has_arrow_signature((space), (head), (arity)))
+/* Shared accelerator admission for call-policy preservation: a call of a
+ * head the dialect types falls back to canonical dispatch unless the
+ * accelerator implements the head's policy itself, as the prepared machine
+ * does for HE's value-class signatures. */
+#define CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(space, head, arity)     (space_head_call_untyped((space), (head), (arity)))
 
 static inline bool cetta_gslt_prepared_equation_call_admitted(
     uint32_t evidence) {

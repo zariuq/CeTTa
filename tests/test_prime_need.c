@@ -1187,6 +1187,70 @@ done:
     if (input_alive) arena_free(&input);
 }
 
+static void check_recording_carrier_copy(void) {
+    Arena input, holder, image_holder;
+    arena_init_detached(&input);
+    arena_init_detached(&holder);
+    arena_init_detached(&image_holder);
+    PrimeNeedRecording *group = prime_need_recording_new(
+        (PrimeNeedRecordingLimits){1u, 65536u, 1u, 1u});
+    PrimeNeedRecordingCopy *copy = NULL;
+    PrimeNeedRecording *image = NULL;
+    AtomDeepCopySession *session = NULL;
+    PrimeNeedReceipt root = {0}, carried = {0}, mapped = {0};
+    PrimeNeedReceiptGraph graph = {0};
+    bool demoted = false;
+    bool ready = group && prime_need_recording_reserve(group, NULL, 1u, 65536u, &root) &&
+        prime_need_receipt_observe_cell(&input, &root, 71u, 1u, atom_int(&input, 7), &root);
+    CHECK(ready, "carrier-copy control records one actual event");
+    if (!ready) goto done;
+    carried = root;
+    CHECK(prime_need_recording_promote_carrier(&holder, &carried) &&
+        arena_retains_owner(&holder, group, prime_need_recording_carrier_release) &&
+        !arena_retains_owner(&holder, group, prime_need_recording_release),
+        "execution carrier owns metadata without a reader lease");
+    copy = prime_need_recording_copy_new(group);
+    session = atom_deep_copy_session_new(&image_holder);
+    AtomDeepCopyArenaPair pairs[2] = {{&holder, &image_holder}, {0}};
+    ready = copy && session && prime_need_recording_copy_pair(copy, 0u, &pairs[1]) &&
+        atom_deep_copy_session_set_arena_map(session, pairs, 2u) &&
+        prime_need_recording_copy_enable(session) &&
+        prime_need_recording_copy_prepare(copy, session);
+    CHECK(ready, "carrier copy prepares one physical recording image");
+    if (!ready) goto done;
+    CHECK(prime_need_recording_copy_restore_holder(copy, &holder, &image_holder),
+        "the actual carrier holder restores through the common owner map");
+    mapped = carried;
+    CHECK(prime_need_receipt_copy_carrier_with_session(&image_holder, session, &mapped),
+        "a restored metadata holder admits the copied carrier");
+    image = prime_need_recording_copy_take(copy);
+    CHECK(image && arena_retains_owner(&image_holder, image, prime_need_recording_carrier_release) &&
+        !arena_retains_owner(&image_holder, image, prime_need_recording_release) &&
+        prime_need_recording_status(image).owner_links == 1u &&
+        prime_need_receipt_graph_collect(&mapped, &graph) == PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.length == 1u,
+        "copy preserves the carrier role, its paid owner link and recorded occurrence");
+    prime_need_receipt_graph_free(&graph);
+    if (!image) goto done;
+    prime_need_recording_demote(image);
+    demoted = true;
+    CHECK(!prime_need_receipt_present(&mapped) && prime_need_receipt_present(&root) &&
+        !prime_need_recording_status(image).payload_charge,
+        "forgetting the copy releases its payload without revoking the original recorder");
+    CHECK(prime_need_recording_promote(&image_holder, &mapped) && !mapped.recording,
+        "a copied carrier cannot resurrect forgotten payload");
+done:
+    prime_need_receipt_graph_free(&graph);
+    atom_deep_copy_session_free(session);
+    prime_need_recording_copy_free(copy);
+    arena_free(&image_holder);
+    if (demoted) prime_need_recording_carrier_release(image);
+    else prime_need_recording_release(image);
+    arena_free(&holder);
+    prime_need_recording_release(group);
+    arena_free(&input);
+}
+
 static void check_recording_copy_mode(void) {
     Arena input, destination, holder, image_holder, other, other_image, external;
     Arena *arenas[] = {&input, &destination, &holder, &image_holder,
@@ -1624,6 +1688,11 @@ static void check_recording_scopes(void) {
         "slice forest preserves branch roots in allocation order without joining worlds");
     PrimeNeedReceipt missing = {0}, omitted = left;
     prime_need_recording_enter(&inner, &missing);
+    PrimeNeedReceipt suppressed_merge = left;
+    CHECK(prime_need_receipt_merge(&suppressed_merge, &right) &&
+            !suppressed_merge.top && !suppressed_merge.recording &&
+            prime_need_recording_status(group).nodes == 3u,
+        "a refused nested observer suppresses merging without spending its parent's quota");
     CHECK(prime_need_receipt_observe_cell(&arena, &left, 41u, 3u,
             atom_int(&arena, 4), &omitted) && !omitted.top && !omitted.recording &&
             prime_need_recording_status(group).nodes == 3u,
@@ -1642,6 +1711,12 @@ static void check_recording_scopes(void) {
     prime_need_recording_leave(&outer);
     CHECK(!g_prime_need_recording_scope,
         "recording scope restoration is idempotent after normal or early exit");
+    PrimeNeedReceipt retained = left;
+    size_t nodes = prime_need_recording_status(group).nodes;
+    CHECK(prime_need_receipt_merge(&retained, &parent) &&
+            retained.top == left.top && retained.recording == left.recording &&
+            prime_need_recording_status(group).nodes == nodes,
+        "ordinary merging preserves a carried recorded ancestor after observer exit");
 done:
     prime_need_recording_release(group);
     arena_free(&arena);
@@ -1714,9 +1789,10 @@ static void check_recording_refusal_boundaries(void) {
               prime_need_recording_status(group).owner_links == 1u,
           "nested reuse of one arena owns exactly one recording link");
     arena_reset(&destination, mark);
-    CHECK(prime_need_receipt_promote(&destination, &held) &&
+    CHECK(!prime_need_receipt_promote(&destination, &held) &&
+              (held = first, prime_need_receipt_promote(&destination, &held)) &&
               prime_need_recording_status(group).owner_links == 2u,
-          "rollback retires a link and readmission uses its separate reserved metadata");
+          "rollback revokes the reader and fresh borrowing readmits a reserved owner link");
     CHECK(prime_need_recording_new((PrimeNeedRecordingLimits){0u, SIZE_MAX, 1u, 0u}) == NULL &&
               prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, SIZE_MAX, 0u}) == NULL &&
               prime_need_recording_new((PrimeNeedRecordingLimits){0u, 0u, 1u, SIZE_MAX}) == NULL,
@@ -2619,6 +2695,69 @@ int main(void) {
                   source_occurrence &&
               source_argument_cell.source_argument_index == 2u,
           "a source argument cell retains application and position identity");
+    CHECK(source_argument_cell.value_role ==
+                  PRIME_NEED_VALUE_DEMAND_RESULT &&
+              source_argument_cell.cache_state == PRIME_NEED_CACHE_EMPTY,
+          "a source argument cell is a delayed computation");
+
+    Atom *ready_value = atom_expr2(
+        &arena, atom_symbol(&arena, "Box"), atom_int(&arena, 7));
+    PrimeNeedSnapshot ready;
+    uint64_t ready_id = 0u;
+    PrimeNeedCellView ready_cell;
+    CHECK(prime_need_snapshot_allocate_ready_value(
+              &arena, &source_argument, ready_value,
+              &ready, &ready_id) &&
+              prime_need_snapshot_lookup(
+                  &ready, ready_id, &ready_cell) &&
+              ready_cell.value_role == PRIME_NEED_VALUE_READY &&
+              ready_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+              ready_cell.origin == ready_value &&
+              ready_cell.cached == ready_value &&
+              prime_need_snapshot_is_ancestor(&source_argument, &ready),
+          "a ready value is a cell born resolved to itself");
+    PrimeNeedSnapshot ready_restarted;
+    CHECK(!prime_need_snapshot_start_evaluation(
+              &arena, &ready, ready_id, 17u, &ready_restarted),
+          "a ready value cannot be demanded into evaluation again");
+    PrimeNeedSnapshot ready_promoted = ready;
+    PrimeNeedCellView ready_promoted_cell;
+    CHECK(prime_need_snapshot_promote(&promoted_arena, &ready_promoted) &&
+              prime_need_snapshot_lookup(
+                  &ready_promoted, ready_id,
+                  &ready_promoted_cell) &&
+              ready_promoted_cell.value_role ==
+                  PRIME_NEED_VALUE_READY &&
+              ready_promoted_cell.cache_state ==
+                  PRIME_NEED_CACHE_VALUE &&
+              atom_eq(ready_promoted_cell.cached, ready_value),
+          "promotion keeps a ready value ready");
+    PrimeNeedSnapshot answering;
+    PrimeNeedSnapshot answered;
+    PrimeNeedCellView answered_cell;
+    CHECK(prime_need_snapshot_start_evaluation(
+              &arena, &source_argument, source_argument_id, 19u,
+              &answering) &&
+              prime_need_snapshot_resolve_ready_value(
+                  &arena, &answering, source_argument_id, 19u,
+                  ready_value, &answered) &&
+              prime_need_snapshot_lookup(
+                  &answered, source_argument_id, &answered_cell) &&
+              answered_cell.value_role == PRIME_NEED_VALUE_READY &&
+              answered_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+              answered_cell.cached == ready_value &&
+              answered_cell.origin == term,
+          "a computation answered by a ready value becomes ready");
+    PrimeNeedSnapshot answered_ordinary;
+    PrimeNeedCellView ordinary_cell;
+    CHECK(prime_need_snapshot_resolve_value(
+              &arena, &answering, source_argument_id, 19u,
+              ready_value, &answered_ordinary) &&
+              prime_need_snapshot_lookup(
+                  &answered_ordinary, source_argument_id, &ordinary_cell) &&
+              ordinary_cell.value_role ==
+                  PRIME_NEED_VALUE_DEMAND_RESULT,
+          "an ordinary answer leaves its cell a computation");
 
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     VarId capture_ids[] = {202u, 101u, 202u};
@@ -2786,6 +2925,7 @@ int main(void) {
               atom_symbol(&arena, "wrong-owner"), &invalid),
           "a different evaluator cannot resolve the demand");
 
+    {
     /* Equal syntax can have distinct demand/value roles. Neither a role nor
      * a copied cache grants a different evaluator permission to complete. */
     Atom *ready_value = atom_expr3(&arena, atom_symbol(&arena, "+"),
@@ -2845,6 +2985,8 @@ int main(void) {
           atom_eq(ready_cell.cached, ready_value),
           "the promoted ready cache remains usable after source-region teardown");
     arena_free(&role_image);
+
+    }
 
     PrimeNeedSnapshot faulted;
     Atom *fault_value = atom_symbol(&arena, "fault");
@@ -2992,6 +3134,7 @@ int main(void) {
     check_growing_recording_grants();
     check_recording_copy_owner_domain();
     check_recording_copy_mode();
+    check_recording_carrier_copy();
     check_recording_copy_forgetting();
     check_recording_copy_mode_invalidation(false);
     check_recording_copy_mode_invalidation(true);

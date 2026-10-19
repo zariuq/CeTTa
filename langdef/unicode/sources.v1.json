@@ -1,0 +1,110 @@
+{
+  "format": "cetta-unicode-sources-v1",
+  "license": "Unicode-3.0",
+  "license_path": "LICENSE.txt",
+  "sources": [
+    {
+      "bytes": 1995,
+      "path": "LICENSE.txt",
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+      "url": "https://www.unicode.org/license.txt"
+    },
+    {
+      "bytes": 693,
+      "path": "ucd/16.0.0/ReadMe.txt",
+      "sha256": "14cafa23788d3a20dd21d6b0cdcb8d6dab520781fcd9ad9392f3b88ea607e633",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/ReadMe.txt"
+    },
+    {
+      "bytes": 2175362,
+      "path": "ucd/16.0.0/UnicodeData.txt",
+      "sha256": "ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/UnicodeData.txt"
+    },
+    {
+      "bytes": 9389,
+      "path": "ucd/16.0.0/PropertyAliases.txt",
+      "sha256": "33a9f2266ad6b8e8de05c0ea3dfac411ac62cf8839ff1c94057471e4c5f6a2b3",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/PropertyAliases.txt"
+    },
+    {
+      "bytes": 80773,
+      "path": "ucd/16.0.0/PropertyValueAliases.txt",
+      "sha256": "440fd3e5460b9bfe31da67b6f923992e1989d31fe2ed91e091c4b8f8e2620bf9",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/PropertyValueAliases.txt"
+    },
+    {
+      "bytes": 189588,
+      "path": "ucd/16.0.0/Scripts.txt",
+      "sha256": "9e88f0a677df47311106340be8ede2ecdacd9c1c931831218d2be6d5508e0039",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/Scripts.txt"
+    },
+    {
+      "bytes": 20576,
+      "path": "ucd/16.0.0/ScriptExtensions.txt",
+      "sha256": "049117ce26b9769fe2749b06eef51a50a89faef4a97764dd2d81daa715980700",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/ScriptExtensions.txt"
+    },
+    {
+      "bytes": 144253,
+      "path": "ucd/16.0.0/PropList.txt",
+      "sha256": "53d614508e2a0b2305a8aa21cd60d993de9326cdf65993660dfcce4503548583",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/PropList.txt"
+    },
+    {
+      "bytes": 1115959,
+      "path": "ucd/16.0.0/DerivedCoreProperties.txt",
+      "sha256": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt"
+    },
+    {
+      "bytes": 134680,
+      "path": "ucd/16.0.0/DerivedAge.txt",
+      "sha256": "60caa81b99a4dfb0bc5d38440d323073e3f356f46f9ca7869da848cd0715408b",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedAge.txt"
+    },
+    {
+      "bytes": 86092,
+      "path": "ucd/16.0.0/CaseFolding.txt",
+      "sha256": "6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/CaseFolding.txt"
+    },
+    {
+      "bytes": 274423,
+      "path": "ucd/16.0.0/extracted/DerivedGeneralCategory.txt",
+      "sha256": "7676ab755a41ef82108460238569e60ad65c191ddafe61b36c6765ec1353f293",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/extracted/DerivedGeneralCategory.txt"
+    },
+    {
+      "bytes": 17476,
+      "path": "ucd/16.0.0/extracted/DerivedBinaryProperties.txt",
+      "sha256": "1ed4d4791c0e34fcad4dfcb5dd4c4122e16428241b75452f05d780ffa661f89d",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/extracted/DerivedBinaryProperties.txt"
+    },
+    {
+      "bytes": 98751,
+      "path": "ucd/16.0.0/auxiliary/GraphemeBreakProperty.txt",
+      "sha256": "c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/GraphemeBreakProperty.txt"
+    },
+    {
+      "bytes": 112730,
+      "path": "ucd/16.0.0/auxiliary/WordBreakProperty.txt",
+      "sha256": "476464e71a4b7b779b8ba7c5671f4338fea77da8e6b6b05fb82b3fdd14603779",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/WordBreakProperty.txt"
+    },
+    {
+      "bytes": 218895,
+      "path": "ucd/16.0.0/auxiliary/SentenceBreakProperty.txt",
+      "sha256": "20aab5eca3842c7a27cc6756d74488a4a5f744c8dca2948ec1128f26a60d1f79",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/auxiliary/SentenceBreakProperty.txt"
+    },
+    {
+      "bytes": 113024,
+      "path": "ucd/16.0.0/emoji/emoji-data.txt",
+      "sha256": "f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a",
+      "url": "https://www.unicode.org/Public/16.0.0/ucd/emoji/emoji-data.txt"
+    }
+  ],
+  "unicode_version": "16.0.0"
+}

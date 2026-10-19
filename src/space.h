@@ -521,6 +521,12 @@ typedef void (*SpaceContentsMovedHook)(uint64_t from_instance,
                                        uint64_t to_instance);
 void space_set_contents_moved_hook(SpaceContentsMovedHook hook);
 SpaceContentsMovedHook space_contents_moved_hook(void);
+/* Retiring a logical instance is distinct from replacing its storage. A
+ * move first publishes its old source identity to the contents subscriber,
+ * then retires that identity. The destination identity survives. Calls are
+ * serialized with the space's other lifetime operations; one subscriber. */
+typedef void (*SpaceInstanceRetiredHook)(uint64_t instance);
+void space_set_instance_retired_hook(SpaceInstanceRetiredHook hook);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 bool space_is_ordered(const Space *s);
@@ -1093,6 +1099,12 @@ typedef enum {
 
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity);
+/* Whether a call of `head` with `arity` arguments takes the untyped call
+ * policy: every argument evaluated, its result evaluated without an
+ * expected type, nothing type-checked.  HE types every call of a head that
+ * declares any type, so a call at an arity no arrow declares is HE's
+ * IncorrectNumberOfArguments; PeTTa's typing reads arrows per arity. */
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity);
 /* Whether any type annotation names the head, whatever its type or arity.
  * A dialect that type-checks calls does so for such a head even at an arity
  * no signature covers. */
@@ -1351,8 +1363,9 @@ typedef enum {
 
 /* The caller retains the Space and its overlay bases, query syntax and result arena. The cursor
  * owns its traversal, seed bindings and native occurrence pins. One native
- * step advances a connective or checks up to 32 canonical matcher nodes of
- * one physical candidate. Equality/occurs-check/binding primitives have
+ * step advances a connective or checks up to 32 canonical matcher actions
+ * (structural nodes and alias retries) of one physical candidate.
+ * Equality/occurs-check/binding primitives have
  * separate byte and CPU complexity; a node grant is not a CPU bound.
  * Backends without this capability retain their canonical atomic query and
  * an owned result cursor. Such fallback preparation is not incremental.
@@ -1363,6 +1376,15 @@ typedef enum {
  * representation growth. Neither permits END or discarding the cursor. */
 SpaceQueryCursor *space_query_cursor_new(Space *space, Arena *arena,
                                          Atom *pattern, const Bindings *seed);
+/* Capture the query's original ordered bag. Native flat bags share one
+ * pinned occurrence view, including across later copy-on-write removals;
+ * each factor reads that same bounded view. Other spaces retain canonical
+ * atomic preparation and its complete/unknown result contract. Read tokens
+ * and witnesses remain those originally observed. This grants no permission
+ * to advance under changed dependencies: the controller owns that policy.
+ * Spaces/universes and the result arena retain the lifetime above. */
+SpaceQueryCursor *space_query_cursor_new_captured(Space *space, Arena *arena,
+    Atom *pattern, const Bindings *seed);
 /* Clone a quiescent query's exact continuation, captured reads, last row
  * witnesses and prepared matcher/fallback state without querying or matching.
  * The original is unchanged on refusal. Mutable cursor metadata is independent;
@@ -1424,9 +1446,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
 
 /*
- * Return only explicit `(: subject type)` declarations, in logical space
- * order.  The returned pointer array is caller-owned; its atoms live in the
- * supplied arena and are freshened per occurrence.
+ * Return explicit `(: subject type)` declarations: own declarations before
+ * imported ones, preserving occurrence order within each part. The returned
+ * pointer array is caller-owned; its atoms live in the supplied arena and
+ * are freshened per occurrence.
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);

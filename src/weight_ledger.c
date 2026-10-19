@@ -46,6 +46,10 @@ bool cetta_weight_ledger_claims_conflict(const CettaWeightLedger *left,
                                          const CettaWeightLedger *right) {
     if (!left || !right || !left->claims || !right->claims)
         return false;
+    /* Immutable shared claims denote the same ownership map, even when
+     * either production path has gained fresh, still-unclaimed factors. */
+    if (left->claims == right->claims)
+        return false;
     for (const CettaWeightClaim *claim = left->claims; claim; claim = claim->previous) {
         uint64_t handler = cetta_weight_ledger_handler(right, claim->occurrence);
         if (handler && handler != claim->handler)
@@ -138,11 +142,8 @@ static bool append_owned(CettaWeightLedger *ledger, Arena *owner,
                                       value, NULL);
 }
 
-static bool claim_owned(CettaWeightLedger *ledger, Arena *owner,
-                         uint64_t occurrence, uint64_t handler) {
-    uint64_t known = cetta_weight_ledger_handler(ledger, occurrence);
-    if (known)
-        return known == handler;
+static bool claim_fresh(CettaWeightLedger *ledger, Arena *owner,
+                        uint64_t occurrence, uint64_t handler) {
     if (!occurrence || !handler || ledger->claim_count == SIZE_MAX)
         return false;
     CettaWeightClaim *claim = arena_alloc(owner, sizeof(*claim));
@@ -151,6 +152,12 @@ static bool claim_owned(CettaWeightLedger *ledger, Arena *owner,
     ledger->claim_count++;
     ledger->owner = owner;
     return true;
+}
+
+static bool claim_owned(CettaWeightLedger *ledger, Arena *owner,
+                         uint64_t occurrence, uint64_t handler) {
+    uint64_t known = cetta_weight_ledger_handler(ledger, occurrence);
+    return known ? known == handler : claim_fresh(ledger, owner, occurrence, handler);
 }
 
 bool cetta_weight_ledger_promote(Arena *owner, CettaWeightLedger *ledger) {
@@ -323,13 +330,25 @@ bool cetta_weight_ledger_handle(Arena *owner, const CettaWeightLedger *base,
     CettaWeightLedger world = *base, factors = {0};
     if (ok)
         ok = cetta_weight_ledger_promote(owner, &world);
-    for (size_t i = prefix->length; ok && i < base->length; i++) {
-        const CettaWeightFactor *factor = items[i];
-        if (cetta_weight_ledger_handler(&world, factor->occurrence))
-            continue;
-        ok = append_owned(&factors, owner, factor->occurrence,
-                          factor->dependency, factor->value) &&
-            claim_owned(&world, owner, factor->occurrence, handler);
+    if (!prefix->length && !base->claims && !base->claim_count) {
+        /* Every admitted factor is selected once, in source order. The
+         * immutable path is already owned here after promotion; the read
+         * view shares it without sharing the world's new claim map. Its
+         * unique occurrence IDs need no search through claims just added. */
+        factors = (CettaWeightLedger){
+            .last = world.last, .length = world.length, .owner = world.owner,
+        };
+        for (size_t i = 0u; ok && i < base->length; i++)
+            ok = claim_fresh(&world, owner, items[i]->occurrence, handler);
+    } else {
+        for (size_t i = prefix->length; ok && i < base->length; i++) {
+            const CettaWeightFactor *factor = items[i];
+            if (cetta_weight_ledger_handler(&world, factor->occurrence))
+                continue;
+            ok = append_owned(&factors, owner, factor->occurrence,
+                              factor->dependency, factor->value) &&
+                claim_owned(&world, owner, factor->occurrence, handler);
+        }
     }
     free(items);
     free(before);

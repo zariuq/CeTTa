@@ -249,7 +249,8 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     bool he = work->language == CETTA_LANGUAGE_HE;
     if (he) {
         if (!he_shared_execution_candidate(space, source, NULL,
-                                           work->fuel))
+                                           work->fuel,
+                                           g_prime_need_rule_use_observed))
             return false;
         CETTA_SCOPED_SHARED_TRANSITION(work_admission);
         if (!he_shared_execution_admit(space, scratch, source, false,
@@ -1050,8 +1051,13 @@ static Atom *eval_work_new(Space *space, Arena *a, Atom *source, int fuel) {
         eval_work_free(work);
         return NULL;
     }
+    Atom *handle = eval_work_handle(a, work);
+    if (!handle) {
+        cetta_native_handle_close(g_library_context, eval_work_kind, work->id);
+        return NULL;
+    }
     (void)eval_work_start_general(work, a, EVAL_WORK_DEPTH_FIRST);
-    return eval_work_handle(a, work);
+    return handle;
 }
 
 static Atom *eval_work_route_refused(Arena *a, Atom *call, const char *law) {

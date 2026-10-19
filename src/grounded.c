@@ -314,6 +314,21 @@ static bool petta_repra_render(
                 petta_repra_append_string(output, atom->ground.sval,
                                           atom->ground.slen);
                 break;
+            case GV_SEAL: {
+                /* The public observer, (Sealed NICK): never authority. */
+                char text[256];
+                size_t length = atom_seal_display_text(atom, text,
+                                                       sizeof(text));
+                if (length < sizeof(text)) {
+                    sb_append(output, text);
+                } else {
+                    char *long_text = cetta_malloc(length + 1u);
+                    atom_seal_display_text(atom, long_text, length + 1u);
+                    sb_append(output, long_text);
+                    free(long_text);
+                }
+                break;
+            }
             case GV_SPACE:
             case GV_STATE:
             case GV_CAPTURE:
@@ -2613,15 +2628,22 @@ static Atom *grounded_petta_sread(Arena *a, Atom *argument) {
     }
     if (!text)
         return NULL;
-    bool old_rational_literals = parser_set_rational_literals_enabled(true);
-    Atom *parsed = NULL;
-    size_t pos = 0;
-    if (parser_text_well_formed_n(text, text_len)) {
-        parsed = parse_data_sexpr_n(a, text, text_len, &pos);
-        if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
-            parsed = NULL;
+    /* The session's PeTTa reader reads the term as it reads source forms:
+     * $_ is fresh at each occurrence, True and False are the booleans and
+     * 2/3 is a word. */
+    bool session_reader = false;
+    Atom *parsed = parser_read_document_term_n(a, text, text_len,
+                                               &session_reader);
+    if (!session_reader) {
+        bool old_rational_literals = parser_set_rational_literals_enabled(true);
+        size_t pos = 0;
+        if (parser_text_well_formed_n(text, text_len)) {
+            parsed = parse_data_sexpr_n(a, text, text_len, &pos);
+            if (parsed && !parser_rest_is_delimiters_n(text, text_len, &pos))
+                parsed = NULL;
+        }
+        parser_set_rational_literals_enabled(old_rational_literals);
     }
-    parser_set_rational_literals_enabled(old_rational_literals);
     if (!parsed) {
         g_grounded_raised = true;
         parsed = petta_semantics_syntax_error(a, text);

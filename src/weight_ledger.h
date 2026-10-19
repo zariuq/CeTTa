@@ -76,6 +76,8 @@ bool cetta_weight_ledger_claims_conflict(const CettaWeightLedger *left,
  * The returned world retains every production and claims that suffix before
  * any interpretation callback runs. `selected` contains exactly the ordered
  * factors to interpret. Later callback factors are outside this snapshot.
+ * Its immutable factor path may share storage with the returned world;
+ * both outputs use the supplied arena lifetime, with independent claim maps.
  * Refusal leaves both outputs unchanged. Handler IDs must be fresh within
  * the same occurrence namespace; sharing a value is not sharing an owner. */
 bool cetta_weight_ledger_handle(Arena *owner, const CettaWeightLedger *base,

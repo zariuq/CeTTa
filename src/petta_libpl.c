@@ -682,9 +682,15 @@ static foreign_t petta_libpl_standard_not_equal(
         arguments + 2u, equal ? "false" : "true");
 }
 
+/* The answers of one Prolog `eval` call that SWI may still retry.  It lives
+ * from the first call to whichever terminal transition comes first: the last
+ * answer, failure, an exception raised to Prolog, or a prune when the caller
+ * cuts the remaining answers.  Each of these disposes it exactly once. */
 typedef struct {
     ResultSet results;
     CettaCount next;
+    /* Charged to the resource ledger when created (statistics were on). */
+    bool ledger_counted;
 } PettaLibplEvalState;
 
 /* eval/2 states allocated and not yet freed: a state lives from the first
@@ -702,6 +708,11 @@ static PettaLibplEvalState *petta_libpl_eval_state_new(void) {
     memset(state, 0, sizeof(*state));
     atomic_fetch_add_explicit(&g_petta_libpl_eval_states_live, 1u,
                               memory_order_relaxed);
+    state->ledger_counted = cetta_runtime_stats_is_enabled();
+    if (state->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE,
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK, 1);
     return state;
 }
 
@@ -710,6 +721,10 @@ static PettaLibplEvalState *petta_libpl_eval_state_new(void) {
 static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
     if (!state)
         return;
+    if (state->ledger_counted)
+        cetta_runtime_stats_gauge_add(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE,
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK, -1);
     result_set_free(&state->results);
     free(state);
     atomic_fetch_sub_explicit(&g_petta_libpl_eval_states_live, 1u,
@@ -725,6 +740,7 @@ static foreign_t petta_libpl_standard_eval(
     /* SWI prunes with no argument vector, only the context: the state must
      * be released before the arguments are examined. */
     if (phase == PL_PRUNED) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED);
         petta_libpl_eval_state_free(
             PL_foreign_context_address(control));
         return true;
@@ -2808,6 +2824,7 @@ static bool petta_libpl_to_term(
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_SEAL:
         return false;
     }
     return false;

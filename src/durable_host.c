@@ -3,6 +3,7 @@
 #include "durable_eval.h"
 #include "durable_value.h"
 #include "library.h"
+#include "prime_ordinary_owner.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ struct CettaHostDecision {
     size_t space_count, channel_count;
     bool spent;
     CettaHostEvaluation *evaluation;
+    CettaOwnedTask planner;
 };
 
 void cetta_host_eval_free(CettaHostEvaluation *e) {
@@ -34,6 +36,7 @@ void cetta_host_eval_free(CettaHostEvaluation *e) {
     free(e);
 }
 static void clear_evaluation(CettaHostDecision *d) {
+    cetta_host_plan_cancel(d);
     cetta_host_eval_free(d->evaluation); d->evaluation=NULL;
 }
 
@@ -73,8 +76,8 @@ const CettaDurableSnapshot *cetta_host_view(const CettaHostDecision *d, size_t i
     return d && i<2+d->space_count ? cetta_durable_observation_view(d->observation,i) : NULL;
 }
 const char *cetta_host_decision_key(const CettaHostDecision *d) { return d ? d->nonce : NULL; }
-CettaDurableStatus cetta_host_begin(CettaDurableStore *store,
-    const CettaHostDecisionSpec *s, CettaHostDecision **out) {
+static CettaDurableStatus host_begin(CettaDurableStore *store,
+    const CettaHostDecisionSpec *s, const CettaDurableObservation *required, CettaHostDecision **out) {
     if (!out) return DURABLE_INVALID;
     *out=NULL;
     if (!store || !s || !name(s->input_key) || !name(s->actor_key) || !name(s->program_version) ||
@@ -118,7 +121,8 @@ CettaDurableStatus cetta_host_begin(CettaDurableStore *store,
     snprintf(d->prefix,sizeof(d->prefix),"%s/",d->nonce);
     scopes[2+s->space_count]=(CettaDurableScope){DURABLE_KEY,"host.commits",d->nonce};
     scopes[3+s->space_count]=(CettaDurableScope){DURABLE_PREFIX,"host.outbox",d->prefix};
-    status=cetta_durable_observe(store,scopes,4+s->space_count,&d->observation);
+    status=required?cetta_durable_observe_joined(store,required,scopes,4+s->space_count,&d->observation):
+        cetta_durable_observe(store,scopes,4+s->space_count,&d->observation);
     if (status!=DURABLE_OK) goto fail;
     if (!cetta_host_view(d,0)->count) { status=DURABLE_PRECONDITION; goto fail; }
     if (cetta_durable_observation_view(d->observation,2+s->space_count)->count ||
@@ -128,6 +132,17 @@ CettaDurableStatus cetta_host_begin(CettaDurableStore *store,
     *out=d; return DURABLE_OK;
 fail:
     cetta_host_decision_free(d); return status;
+}
+
+CettaDurableStatus cetta_host_begin(CettaDurableStore *store,
+    const CettaHostDecisionSpec *s, CettaHostDecision **out) {
+    return host_begin(store,s,NULL,out);
+}
+
+CettaDurableStatus cetta_host_begin_with_dependencies(CettaDurableStore *store,
+    const CettaHostDecisionSpec *s, const CettaDurableObservation *required, CettaHostDecision **out) {
+    if (!required) { if (out) *out=NULL; return DURABLE_INVALID; }
+    return host_begin(store,s,required,out);
 }
 
 static bool form(const Atom *a, const char *head, size_t count) {
@@ -156,7 +171,29 @@ static CettaDurableStatus encoded(CettaDurableOp *op, const Atom *value) {
     return status;
 }
 const EvalOutcome *cetta_host_outcome(const CettaHostDecision *d) {
-    return d && d->evaluation ? &d->evaluation->outcome : NULL;
+    if (!d || !d->evaluation) return NULL;
+    CettaHostEvaluation *e=d->evaluation;
+    if (e->retained && !e->cancelled) {
+        uint64_t work;
+        if (!eval_prime_source_execution_work(&d->planner.execution,&work))
+            e->outcome.completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        else {
+            e->outcome.steps_spent=work;
+            e->outcome.budget_remaining=work<e->limits.work_limit?e->limits.work_limit-work:0u;
+            const CettaOwnedExecution *execution=&d->planner.execution;
+            e->outcome.completion=execution->terminal?execution->completion:
+                !e->outcome.budget_remaining?CETTA_EVAL_INCOMPLETE_FUEL:
+                execution->completion==CETTA_EVAL_COMPLETE?CETTA_EVAL_INCOMPLETE_FUEL:
+                execution->completion;
+            if (e->plan_refusal!=DURABLE_OK)
+                e->outcome.completion=e->plan_refusal==DURABLE_INVALID?
+                    CETTA_EVAL_INCOMPLETE_HOST_FAILURE:CETTA_EVAL_INCOMPLETE_CAPACITY;
+            if (execution->terminal && execution->stop!=CETTA_OWNED_EXECUTION_COMPLETE &&
+                e->outcome.completion==CETTA_EVAL_COMPLETE)
+                e->outcome.completion=CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        }
+    }
+    return &e->outcome;
 }
 CettaDurableStatus cetta_host_watch(const CettaHostDecision *d, size_t limit, CettaDurableWatch **out) {
     return cetta_durable_watch_new(d?d->observation:NULL,limit,out);
@@ -203,14 +240,7 @@ CettaDurableStatus cetta_host_eval_run(CettaHostEvaluation *e,
         copy,fuel,&e->outcome);
     return DURABLE_OK;
 }
-CettaDurableStatus cetta_host_evaluate(CettaHostDecision *d,
-    const CettaHostProgram *program, Atom *expression, int fuel) {
-    if (!d) return DURABLE_INVALID;
-    if (d->spent) return DURABLE_CONFLICT;
-    clear_evaluation(d);
-    if (!program || !program->space || !program->context || !name(program->version) ||
-        !expression || fuel<=0 || (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED)) return DURABLE_INVALID;
-    if (strcmp(d->program,program->version)) return DURABLE_VERSION;
+static CettaDurableStatus host_projection(CettaHostDecision *d,const CettaHostProgram *program) {
     CettaDurableStatus status=cetta_host_eval_create(program,&d->evaluation);
     if (status!=DURABLE_OK) return status;
     CettaHostEvaluation *e=d->evaluation;
@@ -229,10 +259,100 @@ CettaDurableStatus cetta_host_evaluate(CettaHostDecision *d,
             space_add(&e->space,atom_expr(&e->persistent,meta,5));
         }
     }
-    status=cetta_host_eval_run(e,program,expression,fuel);
-    if (status==DURABLE_OK) return status;
+    return DURABLE_OK;
 fail:
     clear_evaluation(d); return status;
+}
+CettaDurableStatus cetta_host_evaluate(CettaHostDecision *d,
+    const CettaHostProgram *program, Atom *expression, int fuel) {
+    if (!d) return DURABLE_INVALID;
+    if (d->spent) return DURABLE_CONFLICT;
+    clear_evaluation(d);
+    if (!program || !program->space || !program->context || !name(program->version) ||
+        !expression || fuel<=0 || (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED)) return DURABLE_INVALID;
+    if (strcmp(d->program,program->version)) return DURABLE_VERSION;
+    CettaDurableStatus status=host_projection(d,program);
+    if (status==DURABLE_OK) status=cetta_host_eval_run(d->evaluation,program,expression,fuel);
+    if (status!=DURABLE_OK) clear_evaluation(d);
+    return status;
+}
+
+static bool host_plan_compatible(void *raw) {
+    CettaHostDecision *d=raw;
+    CettaHostEvaluation *e=d->evaluation;
+    uint64_t work;
+    if (d->spent || !e || !e->retained || e->cancelled ||
+        !eval_prime_source_execution_work(&d->planner.execution,&work) ||
+        !eval_prime_source_execution_is_current(&d->planner.execution)) return false;
+    uint64_t remaining=work<e->limits.work_limit?e->limits.work_limit-work:0u;
+    return eval_prime_source_execution_set_quantum(&d->planner.execution,
+        remaining<e->limits.quantum?remaining:e->limits.quantum);
+}
+static bool host_plan_collect(void *raw,const CettaOwnedReturn *returned) {
+    CettaHostDecision *d=raw;
+    CettaHostEvaluation *e=d->evaluation;
+    e->plan_refusal=DURABLE_INVALID;
+    Atom *term=returned->outcome.term;
+    if (returned->outcome.kind!=CETTA_CALL_VALUE || returned->outcome.delayed ||
+        returned->outcome.result_form!=CETTA_CALL_RESULT_COMPLETED_VALUE || !term ||
+        (term->flags&(ATOM_FLAG_HAS_VARS|ATOM_FLAG_HAS_IDENTITY_GROUNDED))) return false;
+    if (e->outcome.results.len>=e->limits.results) { e->plan_refusal=DURABLE_LIMIT;return false; }
+    CettaCount slot=e->outcome.results.len;
+    result_set_add(&e->outcome.results,NULL);
+    if (e->outcome.results.len==slot) { e->plan_refusal=DURABLE_NOMEM;return false; }
+    Atom *copy=atom_deep_copy(&e->scratch,term);
+    if (!copy) {
+        e->outcome.results.len=slot;e->plan_refusal=DURABLE_NOMEM;return false;
+    }
+    e->outcome.results.items[slot]=copy;e->plan_refusal=DURABLE_OK;
+    return true;
+}
+CettaDurableStatus cetta_host_plan_open(CettaHostDecision *d,
+    const CettaHostProgram *program,Atom *expression,const CettaHostPlanLimits *limits) {
+    if (!d) return DURABLE_INVALID;
+    if (d->spent) return DURABLE_CONFLICT;
+    clear_evaluation(d);
+    if (!program || !program->space || !program->context || !name(program->version) ||
+        !expression || (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED) ||
+        !limits || !limits->quantum || limits->quantum==UINT64_MAX ||
+        limits->work_limit==UINT64_MAX) return DURABLE_INVALID;
+    if (strcmp(d->program,program->version)) return DURABLE_VERSION;
+    CettaDurableStatus status=host_projection(d,program);
+    if (status!=DURABLE_OK) return status;
+    CettaHostEvaluation *e=d->evaluation;
+    CettaPrimeSourceOwner *source=NULL;
+    CettaOwnedExecution execution={0};
+    CettaContinuationStatus captured=eval_prime_source_owner_capture_context(program->context,
+        &e->space,&e->registry,expression,CETTA_PRIME_SOURCE_PRIVATE_DATA_WORLD,
+        limits->preparation_inspections,limits->preparation_bytes,&source);
+    if (captured==CETTA_CONTINUATION_READY)
+        captured=eval_prime_source_execution_open(source,limits->quantum,&execution);
+    eval_prime_source_owner_release(source);
+    if (captured!=CETTA_CONTINUATION_READY) {
+        status=captured==CETTA_CONTINUATION_CAPACITY?DURABLE_LIMIT:DURABLE_PRECONDITION;
+        goto fail;
+    }
+    e->limits=*limits;e->retained=true;
+    e->outcome.budget_limited=true;e->outcome.budget_initial=limits->work_limit;
+    e->outcome.budget_remaining=limits->work_limit;
+    e->outcome.completion=CETTA_EVAL_INCOMPLETE_FUEL;
+    if (!cetta_owned_task_init(&d->planner,&execution,host_plan_compatible,host_plan_collect,d)) {
+        status=DURABLE_PRECONDITION;goto fail;
+    }
+    return DURABLE_OK;
+fail:
+    cetta_owned_execution_cancel(&execution);clear_evaluation(d);return status;
+}
+CettaOwnedTask *cetta_host_plan_task(CettaHostDecision *d) {
+    return d && d->evaluation && d->evaluation->retained && !d->evaluation->cancelled?
+        &d->planner:NULL;
+}
+void cetta_host_plan_cancel(CettaHostDecision *d) {
+    if (!d || !d->evaluation || !d->evaluation->retained || d->evaluation->cancelled) return;
+    (void)cetta_host_outcome(d);
+    cetta_owned_task_cancel(&d->planner);
+    d->evaluation->cancelled=true;
+    d->evaluation->outcome.completion=CETTA_EVAL_INCOMPLETE_CANCELLED;
 }
 CettaDurableStatus cetta_host_accept(CettaHostDecision *d,
     size_t selected, CettaHostCommit *commit) {
