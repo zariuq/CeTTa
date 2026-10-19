@@ -293,9 +293,10 @@ optional Prolog and subscription sign-in are disabled in this matrix.
 Alpine currently stops at the asynchronous process module's glibc-only
 `posix_spawn_file_actions_addclosefrom_np`. Its probe is nonblocking until a
 musl adapter preserves the same child-descriptor isolation contract.
-`tools/ci_linux_portability.sh` holds the shared container check. Manual workflow
-runs can also enable experimental native macOS and Windows/MSYS2 core ownership
-probes. Those probes do not establish full agent or service support on either OS.
+`tools/ci_linux_portability.sh` holds the shared container check. A manual workflow
+run with `native_probes=true` selects experimental macOS and Windows/MSYS2 core
+ownership probes, without repeating the Linux matrix already run on pushes.
+Those probes do not establish full agent or service support on either OS.
 
 ## Bridge builds (MORK and PathMap)
 

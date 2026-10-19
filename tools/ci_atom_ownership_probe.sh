@@ -14,5 +14,5 @@ set -- $(pkg-config --cflags --libs gmp)
     -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 \
     tests/test_atom_constructor_fields.c src/symbol.c src/scalar_trie.c \
     src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c \
-    src/term_canon.c "$@" -lm -o "$probe"
+    src/term_canon.c src/tensor.c "$@" -lm -o "$probe"
 "$probe"

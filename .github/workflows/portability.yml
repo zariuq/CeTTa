@@ -15,13 +15,14 @@ on:
   workflow_dispatch:
     inputs:
       native_probes:
-        description: Also run experimental native macOS and Windows core probes
+        description: Run native macOS and Windows core probes instead of the Linux matrix
         type: boolean
         default: false
 permissions:
   contents: read
 jobs:
   linux-services:
+    if: github.event_name != 'workflow_dispatch' || !inputs.native_probes
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     continue-on-error: ${{ matrix.experimental }}
