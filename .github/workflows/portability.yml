@@ -9,6 +9,8 @@ on:
       - 'tests/test_atom_constructor_fields.c'
       - 'tests/test_proc_child.c'
       - 'tests/test_io_runtime.c'
+      - 'tests/test_linux_stack_bounds.c'
+      - 'tools/parser_artifact_build_v1.py'
       - 'tests/support/check_effects_v1.py'
       - 'tests/support/proc_fixture_v1.c'
       - 'tests/test_space_service.py'

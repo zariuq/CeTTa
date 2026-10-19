@@ -296,6 +296,9 @@ glibc retains its spawn implementation. When the kernel's descriptor-range
 operation is unavailable, the child inspects its own descriptor table and
 refuses execution if isolation cannot be established. `make test-proc-child`
 checks both paths, including descriptors beyond a lowered file limit.
+Main-thread stack bounds account for Linux's growable stack mapping; fixed
+pthread stacks retain their allocation bounds. Evaluation keeps its stack guard
+and service reserve on both glibc and musl.
 `tools/ci_linux_portability.sh` holds the shared container check. A manual workflow
 run with `native_probes=true` selects experimental macOS and Windows/MSYS2 core
 ownership probes, without repeating the Linux matrix already run on pushes.

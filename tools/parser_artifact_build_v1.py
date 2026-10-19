@@ -269,7 +269,10 @@ def run_compiler(binary, directory, name, program, timeout):
     (directory / f"{name}.stdout").write_text(result.stdout, encoding="utf-8")
     (directory / f"{name}.stderr").write_text(result.stderr, encoding="utf-8")
     if result.returncode:
-        raise ValueError(f"parser compiler failed for {name}: exit {result.returncode}")
+        # The temporary directory is removed on failure; retain the compiler's
+        # diagnostic in the exception rather than losing the actual cause.
+        raise ValueError(f"parser compiler failed for {name}: exit {result.returncode}\n"
+                         f"{result.stderr[-4000:]}")
     values = []
     for line in result.stdout.splitlines():
         if line.strip() and line != "true":

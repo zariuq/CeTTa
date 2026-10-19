@@ -46406,6 +46406,14 @@ test-proc-child: $(PROC_CHILD_TEST_BIN) $(PROC_CHILD_FALLBACK_TEST_BIN)
 	@$(PROC_CHILD_TEST_BIN)
 	@$(PROC_CHILD_FALLBACK_TEST_BIN)
 
+runtime/test-linux-stack-bounds: tests/test_linux_stack_bounds.c src/linux_stack_bounds.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -pthread -o $@ $<
+
+.PHONY: test-linux-stack-bounds
+test-linux-stack-bounds: runtime/test-linux-stack-bounds
+	@runtime/test-linux-stack-bounds
+
 IO_RUNTIME_TEST_SRC = tests/test_io_runtime.c
 IO_RUNTIME_TEST_OBJ = runtime/bootstrap/test_io_runtime.$(BUILD_OBJ_TAG).o
 IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)

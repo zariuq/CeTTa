@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "resource_wave.h"
+#include "linux_stack_bounds.h"
 #include "petta_program.h"
 #include "term_universe.h"
 #include "var_index.h"
@@ -3154,8 +3155,16 @@ static bool eval_thread_stack_remaining_bytes(
     if (!bounds->attempted) {
         bounds->attempted = true;
 #if defined(__linux__)
+        bounds->grows_down = eval_c_stack_grows_down_from(here);
+        /* Some libcs report only the currently mapped initial stack. Linux
+         * can grow that stack; its mapping, limit and preceding VMA define
+         * the available extent. Keep pthread attributes for fixed stacks. */
+        if (bounds->grows_down && cetta_linux_initial_stack_bounds(here,
+                CETTA_MAX_EVAL_C_STACK_BUDGET_BYTES, &bounds->low, &bounds->high)) {
+            bounds->known = true;
+        }
         pthread_attr_t attributes;
-        if (pthread_getattr_np(pthread_self(), &attributes) == 0) {
+        if (!bounds->known && pthread_getattr_np(pthread_self(), &attributes) == 0) {
             void *address = NULL;
             size_t size = 0u;
             if (pthread_attr_getstack(&attributes, &address, &size) == 0 &&
