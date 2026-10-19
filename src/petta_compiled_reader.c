@@ -25,6 +25,7 @@ typedef struct {
     uint32_t variable_cap;
     CettaVarIndex variable_index;
     bool form_active;
+    bool data_symbols;
 } PeTTaProjectionContextV1;
 
 struct PeTTaCompiledReaderV1 {
@@ -78,6 +79,16 @@ static AtomId petta_projection_token_bytes(
         return number;
     if (len > UINT32_MAX)
         return CETTA_ATOM_ID_NONE;
+    /* Reading a runtime term has the source grammar, but not source lifetime.
+     * Keep fresh data spellings in the term owner; globally interning them
+     * makes every distinct sread word live until session teardown. */
+    if (context->data_symbols) {
+        Arena *owner = context->universe->persistent_arena;
+        if (!owner)
+            return CETTA_ATOM_ID_NONE;
+        return term_universe_store_atom_id(context->universe, owner,
+            atom_symbol_data_n(owner, (const char *)bytes, len));
+    }
     return tu_intern_symbol(
         context->universe,
         symbol_intern_bytes(g_symbols, bytes, (uint32_t)len));
@@ -162,12 +173,46 @@ static AtomId petta_projection_dollar_symbol(void *raw) {
     return petta_projection_token_bytes(raw, dollar, sizeof(dollar));
 }
 
+/* A term containing an owned spelling uses the universe's existing Atom
+ * fallback. The pointer-free constructors require numbered symbols. */
+static AtomId petta_projection_owned_sequence(
+    PeTTaProjectionContextV1 *context, const AtomId *ids, size_t len,
+    bool list, AtomId rest) {
+    TermUniverse *universe = context->universe;
+    Arena *owner = universe->persistent_arena;
+    if (!owner || len > SIZE_MAX / sizeof(Atom *))
+        return CETTA_ATOM_ID_NONE;
+    Atom **children = len ? cetta_malloc(len * sizeof(*children)) : NULL;
+    for (size_t i = 0u; i < len; i++) {
+        children[i] = term_universe_get_atom(universe, ids[i]);
+        if (!children[i]) {
+            free(children);
+            return CETTA_ATOM_ID_NONE;
+        }
+    }
+    Atom *tail = rest == CETTA_ATOM_ID_NONE ? NULL
+        : term_universe_get_atom(universe, rest);
+    Atom *value = !list ? atom_expr(owner, children, (CettaExprLen)len)
+        : rest == CETTA_ATOM_ID_NONE
+            ? atom_list(owner, children, (CettaExprLen)len)
+            : tail ? atom_list_with_rest(owner, children, (CettaExprLen)len, tail)
+                   : NULL;
+    free(children);
+    return value ? term_universe_store_atom_id(universe, owner, value)
+                 : CETTA_ATOM_ID_NONE;
+}
+
 static AtomId petta_projection_expression(
     void *raw, const AtomId *children, size_t len) {
     PeTTaProjectionContextV1 *context = raw;
     if (!context || !context->form_active || !context->universe ||
         len > UINT16_MAX || (len > 0u && !children))
         return CETTA_ATOM_ID_NONE;
+    if (context->data_symbols)
+        for (size_t i = 0u; i < len; i++)
+            if (!tu_hdr(context->universe, children[i]))
+                return petta_projection_owned_sequence(
+                    context, children, len, false, CETTA_ATOM_ID_NONE);
     return tu_expr_from_ids(
         context->universe, children, (CettaExprLen)len);
 }
@@ -178,6 +223,13 @@ static AtomId petta_projection_list(
     if (!context || !context->form_active || !context->universe ||
         (len > 0u && !elems))
         return CETTA_ATOM_ID_NONE;
+    if (context->data_symbols) {
+        if (rest != CETTA_ATOM_ID_NONE && !tu_hdr(context->universe, rest))
+            return petta_projection_owned_sequence(context, elems, len, true, rest);
+        for (size_t i = 0u; i < len; i++)
+            if (!tu_hdr(context->universe, elems[i]))
+                return petta_projection_owned_sequence(context, elems, len, true, rest);
+    }
     return tu_list_from_ids(context->universe, elems, (CettaExprLen)len, rest);
 }
 
@@ -377,6 +429,7 @@ int petta_compiled_reader_v1_parse_term_bytes_id(
         return -1;
     }
     context.universe = universe;
+    context.data_symbols = true;
     projection = (GSLTDirectPeTTaProjectionV1){
         .context = &context,
         .begin_form = petta_projection_begin_form,

@@ -49,7 +49,8 @@ int petta_compiled_reader_v1_parse_text_ids(
     size_t error_buf_size);
 
 /* PeTTa's term reader, for parse and sread: the form LanguageDef of the
- * source reader applied to text that holds exactly one term. */
+ * source reader applied to text that holds exactly one term. Fresh symbol
+ * spellings belong to the supplied universe, not the session symbol table. */
 int petta_compiled_reader_v1_parse_term_bytes_id(
     PeTTaCompiledReaderV1 *reader, const uint8_t *input,
     size_t input_len, TermUniverse *universe, AtomId *out_id,

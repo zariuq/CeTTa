@@ -32741,10 +32741,13 @@ test-he-stdlib-builtin-definitions: $(BIN) \
 .PHONY: test-petta-parse-term-reader
 test: test-petta-parse-term-reader
 test-petta-parse-term-reader: $(BIN) tests/petta/parse_term_reader.metta \
-		tests/petta/parse_term_reader.expected
+		tests/petta/parse_term_reader.expected tests/petta/parse_term_ownership.metta \
+		tests/petta/parse_term_ownership.expected
 	@set -eu -o pipefail; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/parse_term_reader.metta \
 		| diff -u tests/petta/parse_term_reader.expected -; \
+	$(CETTA_BIN_INVOKE) --profile extended --lang petta tests/petta/parse_term_ownership.metta \
+		| diff -u tests/petta/parse_term_ownership.expected -; \
 	echo 'PASS: PeTTa parse and sread read a term as source forms are read'
 
 # A ground pattern over a space past the trie threshold is answered from the
