@@ -1,0 +1,36 @@
+Module TPTPSZS {
+  Theory SZSOutputProtocolV1() {
+    Empty
+    Types { SZSWord = String; SZSText = String; SZSEvent; SZSLines; SZSStatuses; SZSBlocks; SZSState; }
+    Terms {
+      "szs:line". text:SZSText |- "szs:line" text : SZSEvent;
+      "szs:status". word:SZSWord, raw:SZSText |- "szs:status" word raw : SZSEvent;
+      "szs:start". form:SZSWord |- "szs:start" form : SZSEvent;
+      "szs:end". form:SZSWord |- "szs:end" form : SZSEvent;
+      "szs:lines-nil". |- "szs:lines-nil" : SZSLines;
+      "szs:lines-cons". text:SZSText, tail:SZSLines |- "szs:lines-cons" text tail : SZSLines;
+      "szs:statuses-nil". |- "szs:statuses-nil" : SZSStatuses;
+      "szs:statuses-cons". word:SZSWord, raw:SZSText, tail:SZSStatuses |- "szs:statuses-cons" word raw tail : SZSStatuses;
+      "szs:blocks-nil". |- "szs:blocks-nil" : SZSBlocks;
+      "szs:blocks-cons". form:SZSWord, lines:SZSLines, tail:SZSBlocks |- "szs:blocks-cons" form lines tail : SZSBlocks;
+      "szs:outside". statuses:SZSStatuses, blocks:SZSBlocks |- "szs:outside" statuses blocks : SZSState;
+      "szs:inside". statuses:SZSStatuses, blocks:SZSBlocks, form:SZSWord, lines:SZSLines |- "szs:inside" statuses blocks form lines : SZSState;
+      "szs:step". event:SZSEvent, state:SZSState |- "szs:step" event state : SZSState;
+    }
+    Equations {
+      "outside-line". text:SZSText, ss:SZSStatuses, bs:SZSBlocks |-
+        "szs:step"("szs:line"(text), "szs:outside"(ss, bs)) = "szs:outside"(ss, bs);
+      "outside-status". word:SZSWord, raw:SZSText, ss:SZSStatuses, bs:SZSBlocks |-
+        "szs:step"("szs:status"(word, raw), "szs:outside"(ss, bs)) = "szs:outside"("szs:statuses-cons"(word, raw, ss), bs);
+      "inside-status". word:SZSWord, raw:SZSText, ss:SZSStatuses, bs:SZSBlocks, form:SZSWord, lines:SZSLines |-
+        "szs:step"("szs:status"(word, raw), "szs:inside"(ss, bs, form, lines)) = "szs:inside"("szs:statuses-cons"(word, raw, ss), bs, form, lines);
+      "start". form:SZSWord, ss:SZSStatuses, bs:SZSBlocks |-
+        "szs:step"("szs:start"(form), "szs:outside"(ss, bs)) = "szs:inside"(ss, bs, form, "szs:lines-nil"());
+      "inside-line". text:SZSText, ss:SZSStatuses, bs:SZSBlocks, form:SZSWord, lines:SZSLines |-
+        "szs:step"("szs:line"(text), "szs:inside"(ss, bs, form, lines)) = "szs:inside"(ss, bs, form, "szs:lines-cons"(text, lines));
+      "end". form:SZSWord, ss:SZSStatuses, bs:SZSBlocks, lines:SZSLines |-
+        "szs:step"("szs:end"(form), "szs:inside"(ss, bs, form, lines)) = "szs:outside"(ss, "szs:blocks-cons"(form, lines, bs));
+    }
+    Rewrites {}
+  }
+}

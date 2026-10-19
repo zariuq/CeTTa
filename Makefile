@@ -21516,6 +21516,8 @@ else
 endif
 .PHONY: test-lib-prolog-runtime-stats
 
+PETTA_ARGV_NATIVE_EXPECTED := tests/petta/search_machine_argv_native$(if $(filter 0,$(ENABLE_GMP)),.nogmp,).expected
+
 test-petta-libpl-runtime-stats: test-lib-prolog-runtime-stats $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 ifeq ($(LIB_PROLOG_ENABLED),1)
@@ -21559,7 +21561,7 @@ ifeq ($(LIB_PROLOG_ENABLED),1)
 		1_000 1r2 .5 "16'ff" "0'a" +1r2 \
 		1.0Inf -1.0Inf 1.5NaN -1.5NaN +1.5NaN 1r0 \
 		>"$$argv_out" 2>"$$argv_stats"; \
-	if ! diff -u tests/petta/search_machine_argv_native.expected \
+	if ! diff -u $(PETTA_ARGV_NATIVE_EXPECTED) \
 			"$$argv_out"; then \
 		echo "FAIL: PeTTa native argv result under runtime stats"; \
 		exit 1; \
@@ -25339,20 +25341,25 @@ test-petta-memoization: $(BIN)
 			memo_direct_foreign_inert memo_inert memo_library \
 			memo_nested_replay; do \
 		actual=runtime/test-petta-search-machine-$$stem.out; \
+		expected=tests/petta/search_machine_$$stem.expected; \
+		if [ "$(LIB_PROLOG_ENABLED)" != 1 ] && \
+			[ -f tests/petta/search_machine_$$stem.disabled.expected ]; then \
+			expected=tests/petta/search_machine_$$stem.disabled.expected; \
+		fi; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			tests/petta/search_machine_$$stem.metta \
 			>"$$actual" 2>&1; \
 		if [ "$$stem" = memo_nested_replay ]; then \
 			contract_ok=1; \
 			diff -u \
-				<(head -n 3 tests/petta/search_machine_$$stem.expected) \
+				<(head -n 3 "$$expected") \
 				<(head -n 3 "$$actual") || contract_ok=0; \
 			diff -u \
-				<(tail -n +4 tests/petta/search_machine_$$stem.expected | LC_ALL=C sort) \
+				<(tail -n +4 "$$expected" | LC_ALL=C sort) \
 				<(tail -n +4 "$$actual" | LC_ALL=C sort) || contract_ok=0; \
 		else \
 			contract_ok=1; \
-			diff -u tests/petta/search_machine_$$stem.expected \
+			diff -u "$$expected" \
 				"$$actual" || contract_ok=0; \
 		fi; \
 		if [ "$$contract_ok" -ne 1 ]; then \
@@ -25611,7 +25618,7 @@ test-petta-argv-native: $(BIN)
 		0 007 3.5 1e5 0x1a '' ' 7' +5 abc -0x1a 0b101 0o17 \
 		1_000 1r2 .5 "16'ff" "0'a" +1r2 \
 		1.0Inf -1.0Inf 1.5NaN -1.5NaN +1.5NaN 1r0); \
-	expected=$$(cat tests/petta/search_machine_argv_native.expected); \
+	expected=$$(cat $(PETTA_ARGV_NATIVE_EXPECTED)); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "FAIL: native PeTTa argv values"; \
 		diff <(printf '%s\n' "$$expected") \
@@ -26518,7 +26525,7 @@ test-petta-type-policy: $(BIN)
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		for profile in "" "--profile extended"; do \
-			for fixture in type_policy_reference type_policy_guard_reference \
+			for fixture in type_declaration_arity type_policy_reference type_policy_guard_reference \
 				type_policy_compound_reference type_policy_dedup_history \
 				type_policy_revision_reference type_policy_mixed_codomain \
 				type_policy_partial_codomain type_policy_held_guard \
@@ -32105,7 +32112,7 @@ FILESYSTEM_NATIVE_TEST_V1 = runtime/test-filesystem-observations-v1-$(BUILD_OBJ_
 FILESYSTEM_STANDALONE_STATS_SRC_V1 = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),src/stats.c)
 $(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c src/library_fs.c src/library_fs.h src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename
 
 .PHONY: test-filesystem-v1
 test: test-filesystem-v1
@@ -45472,3 +45479,13 @@ test-regex-cache-v1: $(REGEX_CACHE_V1_TEST_BIN)
 	@$(REGEX_CACHE_V1_TEST_BIN)
 test-regex-v1: test-regex-cache-v1
 test: test-regex-cache-v1
+
+.PHONY: test-tptp-resources-v1
+test-tptp-resources-v1: $(BIN) tests/support/check_tptp_resources_v1.py
+	@python3 tests/support/check_tptp_resources_v1.py --cetta "$(BIN)"
+test: test-tptp-resources-v1
+
+.PHONY: test-langdef-equation-defaults-v1
+test-langdef-equation-defaults-v1: $(BIN) tools/test_deterministic_equation_defaults_v1.py
+	@python3 tools/test_deterministic_equation_defaults_v1.py --cetta "$(BIN)"
+test: test-langdef-equation-defaults-v1
