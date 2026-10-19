@@ -78,7 +78,7 @@ def main():
                 ], '(function (return $summary))') + '\n', encoding="utf-8")
                 before = resource.getrusage(resource.RUSAGE_CHILDREN)
                 started = time.monotonic_ns()
-                result = subprocess.run([str(args.cetta.resolve()), "--lang", "he@0.0.1", "--profile", "extended", str(source)],
+                result = subprocess.run([str(args.cetta.resolve()), "--lang", "he", "--profile", "extended", str(source)],
                                         cwd=ROOT, text=True, capture_output=True, timeout=300)
                 elapsed = time.monotonic_ns() - started
                 after = resource.getrusage(resource.RUSAGE_CHILDREN)

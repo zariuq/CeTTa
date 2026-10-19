@@ -7,24 +7,24 @@ static const CettaProfile CETTA_PROFILE_HE_FORMAL_VALUE = {
     .id = CETTA_PROFILE_HE_FORMAL,
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he",
-    .note = "Formal/spec-faithful HE base for OSLF/NTT/DTT work.",
+    .note = "Hyperon Experimental 0.2.10 with CeTTa's deliberate differences; the default.",
     .he_compatible_builtin = true,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .id = CETTA_PROFILE_HE_COMPAT,
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he-compat",
-    .note = "Rust Hyperon Experimental HE 0.2.10 compatibility lane.",
+    .note = "Rust Hyperon Experimental 0.2.10's behavior, also where he differs.",
     .he_compatible_builtin = true,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = true,
-    .version = CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
@@ -36,7 +36,7 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
@@ -48,7 +48,7 @@ static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_0_1,
+    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
 };
 
 static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
@@ -75,11 +75,11 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .version = CETTA_LANGUAGE_VERSION_PETTA_1_0_6,
 };
 
-static const CettaProfile CETTA_PROFILE_PETTA_CONTRACT_VALUE = {
-    .id = CETTA_PROFILE_PETTA_CONTRACT,
+static const CettaProfile CETTA_PROFILE_PETTA_1_1_C_VALUE = {
+    .id = CETTA_PROFILE_PETTA_1_1_C,
     .language_id = CETTA_LANGUAGE_PETTA,
-    .name = "contract",
-    .note = "PeTTa's typed line with call contracts: a failed check raises on every route.",
+    .name = "petta@1.1.c",
+    .note = "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.",
     .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
@@ -399,8 +399,8 @@ bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
 #endif
 }
 
-bool cetta_profile_petta_contracts(const CettaProfile *profile) {
-    return profile && profile->id == CETTA_PROFILE_PETTA_CONTRACT;
+bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile) {
+    return profile && profile->id == CETTA_PROFILE_PETTA_1_1_C;
 }
 
 bool cetta_language_version_petta_typed_line(
@@ -422,14 +422,12 @@ static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
      "typecheck-v2", "typecheck", "PeTTa's typed language",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "1.1.c",
-     "contract", NULL, "CeTTa's contract version of PeTTa's typed line",
+     "petta@1.1.c", NULL, "PeTTa's typed line with declarations as call contracts",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
-    {CETTA_LANGUAGE_VERSION_HE_0_0_1, CETTA_LANGUAGE_HE, "0.0.1",
-     NULL, NULL, "CeTTa HE contract; formal/default and explicit extensions",
+    {CETTA_LANGUAGE_VERSION_HE_0_2_10, CETTA_LANGUAGE_HE, "0.2.10",
+     NULL, NULL,
+     "Hyperon Experimental 0.2.10, CeTTa's fork: profiles he (default), he-compat, extended, he-prime",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
-    {CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10, CETTA_LANGUAGE_HE, "0.2.10",
-     "he-compat", NULL, "Rust Hyperon Experimental HE 0.2.10 compatibility lane",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = false},
     {CETTA_LANGUAGE_VERSION_PRIME_0_0_1, CETTA_LANGUAGE_PRIME, "0.0.1",
      NULL, NULL, "Frozen CeTTa Prime draft; not the evolving Prime runtime",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
@@ -542,8 +540,8 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
         }
         if (cetta_profile_name_matches(
-                name, &CETTA_PROFILE_PETTA_CONTRACT_VALUE)) {
-            return &CETTA_PROFILE_PETTA_CONTRACT_VALUE;
+                name, &CETTA_PROFILE_PETTA_1_1_C_VALUE)) {
+            return &CETTA_PROFILE_PETTA_1_1_C_VALUE;
         }
     }
     if (language_id == CETTA_LANGUAGE_ZERO &&
@@ -599,7 +597,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
 #endif
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
-    case CETTA_PROFILE_PETTA_CONTRACT:
+    case CETTA_PROFILE_PETTA_1_1_C:
         return CETTA_PROFILE_MASK_PETTA_BASE;
     }
     return 0;
@@ -660,8 +658,8 @@ void cetta_profile_print_inventory_for_language(FILE *out,
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.name,
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.note);
         fprintf(out, "%s\t%s\n",
-                CETTA_PROFILE_PETTA_CONTRACT_VALUE.name,
-                CETTA_PROFILE_PETTA_CONTRACT_VALUE.note);
+                CETTA_PROFILE_PETTA_1_1_C_VALUE.name,
+                CETTA_PROFILE_PETTA_1_1_C_VALUE.note);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,

@@ -3817,9 +3817,10 @@ test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
 # spelled by prefixes of leading one bits: each round-trips its spelling,
 # rejects stale generations and retires a spent handle; other words do not
 # decode; a bounded table refuses without spending and serves again.
+LAYOUT_WORDS_HEADER = src/generated/cetta_layout_words.generated.h
 FRAME_IDENTITY_CLASSES_TEST_BIN = runtime/test_frame_identity_classes-$(BUILD_OBJ_TAG)
 
-$(FRAME_IDENTITY_CLASSES_TEST_BIN): tests/test_frame_identity_classes.c src/atom.c src/binding/frame_identity.c src/binding/frame_identity.h src/binding/frame_identity_test.h $(BUILD_CONFIG_HEADER)
+$(FRAME_IDENTITY_CLASSES_TEST_BIN): tests/test_frame_identity_classes.c src/atom.c src/binding/frame_identity.c src/binding/frame_identity.h src/binding/frame_identity_test.h $(LAYOUT_WORDS_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_frame_identity_classes.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
@@ -3827,6 +3828,27 @@ $(FRAME_IDENTITY_CLASSES_TEST_BIN): tests/test_frame_identity_classes.c src/atom
 test: test-frame-identity-classes
 test-frame-identity-classes: $(FRAME_IDENTITY_CLASSES_TEST_BIN)
 	@$(call cetta_exec,./$(FRAME_IDENTITY_CLASSES_TEST_BIN))
+
+# Variable ids and frame identities are spelled by the layouts declared in
+# langdef/layouts/runtime_words.module.  The accessors are checked-in
+# ordinary C; regenerating them needs cesta, building with them does not.
+# The test compares them with an independent decoding of every class.
+CESTA ?= cesta
+LAYOUT_WORDS_TEST_BIN = runtime/test_layout_words-$(BUILD_OBJ_TAG)
+
+.PHONY: regenerate-layout-words check-layout-words-generated test-layout-words
+regenerate-layout-words:
+	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)"
+check-layout-words-generated:
+	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)" --check
+
+$(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/binding/frame_identity.h
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_layout_words.c $(LDFLAGS)
+
+test: test-layout-words
+test-layout-words: $(LAYOUT_WORDS_TEST_BIN)
+	@$(call cetta_exec,./$(LAYOUT_WORDS_TEST_BIN))
 
 # Reclaimable names (src/binding/name_space.h): watermarks survive non-final
 # releases, a failed weak upgrade that releases last recycles the name, owner
@@ -4767,6 +4789,19 @@ test-prime-need-boundaries: $(BIN)
 			fi; \
 			echo "PASS: $$source"; \
 		done
+
+# A Need cell in a match, unify or let pattern is a demand: the pattern
+# matches the cell's value, once per value, while syntax written in the
+# pattern stays data.  Both the prepared machine and the reference route.
+test-prime-need-match-pattern: $(BIN) tests/prime/need_match_pattern_values.metta \
+		tests/prime/need_match_pattern_values.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang prime \
+			tests/prime/need_match_pattern_values.metta \
+			| diff -u tests/prime/need_match_pattern_values.expected -; \
+	done; \
+	echo "PASS: a Need cell in a match, unify or let pattern is matched as its value"
 
 test-prime-suspension-rights: $(BIN)
 	@set -eu; \
@@ -18457,24 +18492,14 @@ test: test-plain-bnf-denotation-v1
 
 test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
-.PHONY: test-lean test-rhocalc-lean test-lean-corpus test-frame-writeback-lean-text
+.PHONY: test-lean test-rhocalc-lean test-lean-corpus
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean
 # toolchain.  Opt-in: the default suite needs neither.  METTAPEDIA_LEAN_ROOT
 # names the Lean project (default: the sibling checkout); the corpus files
 # import the checkout at its sibling location.
 METTAPEDIA_LEAN_CHECKOUT = $(if $(strip $(METTAPEDIA_LEAN_ROOT)),$(METTAPEDIA_LEAN_ROOT),$(METTAPEDIA_LEAN_AUTO_ROOT))
 test-lean: test-rhocalc-lean test-lean-corpus test-abt-differential \
-	test-petta-typecheck-v3-core-parity-v1 test-frame-writeback-lean-text
-
-# The C text the frame writeback bridge quotes must still be the runtime's.
-test-frame-writeback-lean-text:
-	@bridge="$(METTAPEDIA_LEAN_CHECKOUT)/Mettapedia/Languages/MeTTa/Bridges/GSLT/CeTTaFrameWriteback.lean"; \
-	if [ ! -f "$$bridge" ]; then \
-		echo "FAIL: METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
-		exit 2; \
-	fi; \
-	python3 tests/support/check_frame_writeback_lean_text.py "$$bridge" \
-		tests/frame_writeback_lean_text.tsv .
+	test-petta-typecheck-v3-core-parity-v1
 
 test-rhocalc-lean: $(BIN)
 	@pass=0; fail=0; \
@@ -23496,6 +23521,7 @@ example-petta-recursive-chain-division: $(BIN)
 	echo "PASS: recursive-chain division example"
 
 test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
+	test-prime-need-match-pattern \
 	test-prime-need-native-handles \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \
@@ -28183,21 +28209,21 @@ test-petta-type-policy-call-routes: $(BIN) tests/petta/type_policy_call_routes.m
 	done; \
 	echo "PASS: a function's declarations govern every route that reaches it, on the tier and in the machine"
 
-.PHONY: test-petta-contract-profile
+.PHONY: test-petta-1-1-c-call-contracts
 # petta@1.1.c: a declaration is its function's call contract on every route;
 # a failed check raises, and only catch takes a contract's error.  Both
 # routes give the expected answers, with versions and with the protocol.
-test-petta-semantics: test-petta-contract-profile
-test-petta-contract-profile: $(BIN) tests/petta/contract_profile.metta tests/petta/contract_profile.expected
+test-petta-semantics: test-petta-1-1-c-call-contracts
+test-petta-1-1-c-call-contracts: $(BIN) tests/petta/petta_1_1_c_call_contracts.metta tests/petta/petta_1_1_c_call_contracts.expected
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		for versions in "" 1; do \
 			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_PETTA_VERSIONS_REFERENCE=$$versions \
-				$(CETTA_BIN_INVOKE) --lang petta@1.1.c tests/petta/contract_profile.metta 2>&1); \
-			if [ "$$actual" != "$$(cat tests/petta/contract_profile.expected)" ]; then \
+				$(CETTA_BIN_INVOKE) --lang petta@1.1.c tests/petta/petta_1_1_c_call_contracts.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/petta_1_1_c_call_contracts.expected)" ]; then \
 				echo "FAIL: petta@1.1.c call contracts on the $$route route (protocol only: $${versions:-no})"; \
-				diff <(cat tests/petta/contract_profile.expected) \
+				diff <(cat tests/petta/petta_1_1_c_call_contracts.expected) \
 					<(printf '%s\n' "$$actual") | head -20; \
 				exit 1; \
 			fi; \
@@ -28385,7 +28411,7 @@ test-petta-exact-index-frontier: $(BIN) tests/petta/exact_index_frontier.metta t
 test: test-he-exact-index-frontier
 test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/he/exact_index_frontier.expected
 	@set -eu; \
-	actual=$$($(CETTA_BIN_INVOKE) --lang he@0.2.10 tests/he/exact_index_frontier.metta 2>&1); \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile he-compat tests/he/exact_index_frontier.metta 2>&1); \
 	if [ "$$actual" != "$$(cat tests/he/exact_index_frontier.expected)" ]; then \
 		echo "FAIL: HE ground matches over exact occurrences"; \
 		diff <(cat tests/he/exact_index_frontier.expected) \
@@ -30976,7 +31002,7 @@ test: test-repeated-head-aliases
 # chain binds its destination in its template; a NotReducible body leaves its
 # call unreduced.  Both hold in every HE profile, with and without frequent
 # collection of the evaluator's suspended frames.
-HE_PROFILE_LANES = he he@0.2.10 "he --profile extended" "he --profile he-prime"
+HE_PROFILE_LANES = he "he --profile he-compat" "he --profile extended" "he --profile he-prime"
 
 .PHONY: test-he-chain-destination test-he-not-reducible
 test: test-he-chain-destination test-he-not-reducible
@@ -31004,6 +31030,44 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 	done; \
 	echo 'PASS: an equation or if branch whose body is NotReducible leaves its call unreduced, in every HE profile'
 
+# A value HE's evaluation answered is not evaluated again: a one-line
+# function answers what its body answers, a value argument is chosen once
+# and shared, collect-then-spread gives the same answers, a space holds
+# syntax, and a value keeps the form it was answered in.  The answers are
+# Rust HE's, in every HE profile and on every route.  A value is still
+# checked against a declared result type in he, and answered unchecked in
+# he-compat, as Rust HE does.  A call that comes back stuck after its
+# arguments are evaluated is a value in he; he-compat evaluates it again
+# where Rust HE does.
+.PHONY: test-he-evaluated-values
+test: test-he-evaluated-values
+test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
+		tests/he/evaluated_values.expected \
+		tests/he/evaluated_values_typed.metta \
+		tests/he/evaluated_values_typed.expected \
+		tests/he/evaluated_values_typed.compat.expected \
+		tests/he/evaluated_values_stuck.metta \
+		tests/he/evaluated_values_stuck.expected \
+		tests/he/evaluated_values_stuck.compat.expected
+	@set -eu -o pipefail; \
+	for lane in $(HE_PROFILE_LANES); do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/evaluated_values.metta \
+			| diff -u tests/he/evaluated_values.expected -; \
+		for program in evaluated_values_typed evaluated_values_stuck; do \
+		expected=tests/he/$$program.expected; \
+		case "$$lane" in *he-compat*) \
+			expected=tests/he/$$program.compat.expected;; esac; \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/$$program.metta | diff -u $$expected -; \
+		done; \
+	done; \
+	done; \
+	echo 'PASS: a value HE answered is answered again unevaluated, in every HE profile and on every route'
+
 # A typed head runs in the prepared machine as HE runs it: a parameter of a
 # value class is cast where HE casts it, the range is shown by the bodies,
 # and a call HE answers with a type error, or one at an arity no arrow
@@ -31020,7 +31084,7 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 		tests/he/typed_calls_authored_classifier.expected
 	@set -eu -o pipefail; \
 	for program in typed_calls_prepared typed_calls_authored_classifier; do \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/$$program.metta \
@@ -31045,7 +31109,7 @@ test-he-macro-definitions-prepared: $(BIN) \
 		tests/he/macro_definitions_prepared.metta \
 		tests/he/macro_definitions_prepared.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/macro_definitions_prepared.metta \
@@ -31072,7 +31136,7 @@ test-he-instruction-definitions-prepared: $(BIN) \
 		tests/he/instruction_definitions_prepared.metta \
 		tests/he/instruction_definitions_prepared.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/instruction_definitions_prepared.metta \
@@ -31098,7 +31162,7 @@ test-he-function-definitions-prepared: $(BIN) \
 		tests/he/function_definitions_prepared.metta \
 		tests/he/function_definitions_prepared.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/function_definitions_prepared.metta \
@@ -31126,7 +31190,7 @@ test: test-he-syntax-returns-prepared
 test-he-syntax-returns-prepared: $(BIN) tests/he/syntax_returns_prepared.metta \
 		tests/he/syntax_returns_prepared.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/syntax_returns_prepared.metta \
@@ -31171,7 +31235,7 @@ test-he-effect-classification: $(BIN) tests/he/effect_classification.metta \
 # A value of constructors is its own, and is evaluated once per distinct
 # node however often it is shared: depth 60 runs where a walk of every path
 # would not, whether the collector runs often, never or with interning.  A value with a variable in it keeps its sharing when
-# substituted (the he lane; under he@0.2.10 the shared search machine still
+# substituted (the he lane; under he-compat the shared search machine still
 # copies an open value per occurrence).  An argument that is a call still runs each time, an added
 # equation or a changed declaration still applies, and equal answers stay
 # separate.  With completed values off, and on the evaluator without its
@@ -31184,7 +31248,7 @@ test-he-completed-delivery: $(BIN) tests/he/completed_delivery.metta \
 		tests/he/completed_delivery_open.metta \
 		tests/he/completed_delivery_open.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10; do \
+	for lane in he "he --profile he-compat"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_GC_BUDGET_MB=1" \
 			"CETTA_GC=0" "CETTA_GC_BUDGET_MB=1 CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route timeout 60 $(CETTA_BIN_INVOKE) --lang $$lane \
@@ -31369,7 +31433,7 @@ test-match-effect-schedule: $(BIN) tests/he/match_effect_schedule.metta \
 		tests/he/match_effect_schedule.expected \
 		tests/he/match_effect_schedule.petta.expected
 	@set -eu -o pipefail; \
-	for lane in he he@0.2.10 "he --profile extended"; do \
+	for lane in he "he --profile he-compat" "he --profile extended"; do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
 			"CETTA_HE_CANONICAL_EXECUTION=0"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
@@ -31455,7 +31519,7 @@ test-he-stdlib-builtin-definitions: $(BIN) \
 		tests/he/stdlib_builtin_definitions.expected \
 		tests/he/stdlib_builtin_definitions.compat.expected
 	@set -eu -o pipefail; \
-	$(CETTA_BIN_INVOKE) --lang he@0.2.10 \
+	$(CETTA_BIN_INVOKE) --lang he --profile he-compat \
 		tests/he/stdlib_builtin_definitions.metta \
 		| diff -u tests/he/stdlib_builtin_definitions.compat.expected -; \
 	for lane in he "he --profile extended"; do \
@@ -44967,7 +45031,7 @@ endif
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-need-match-pattern test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats

@@ -3,7 +3,9 @@
 n + 1 distinct nodes and 2^(n+1) - 1 paths; evaluating it, typing it and
 comparing it must cost the same at each further level, so every work counter
 read here grows by the same amount from depth n to n + 1 as from n + 1 to
-n + 2, with the machine on and off."""
+n + 2, with the machine on and off.  A typed DAG built by evaluation is made
+of values HE already answered, so its parts are answered as they are and
+its sources are published as their own values; no certificate is needed."""
 
 import os
 import subprocess
@@ -13,8 +15,7 @@ import tempfile
 DEPTHS = (20, 21, 22)
 ROUTES = (("machine on", {}),
           ("machine off", {"CETTA_PREPARED_PURE_REFERENCE": "1"}))
-TYPED_WORK = ("query-equations", "he-completed-value-certified",
-              "he-completed-value-delivered")
+TYPED_WORK = ("query-equations", "he-completed-value-shared")
 TYPED = """(: Tree Type)
 (: leaf (-> Number Tree))
 (: node (-> Tree Tree Tree))

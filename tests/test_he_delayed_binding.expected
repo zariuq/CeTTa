@@ -22,5 +22,5 @@
 [(quote (+ 1))]
 [((Error (+ "s" 1) (BadArgType 1 Number String)))]
 [((Error (+ "s" 1) (BadArgType 1 Number String)))]
-[3]
-[(w 4)]
+[(foo)]
+[(w (bar))]

@@ -5578,10 +5578,22 @@ void space_free(Space *s) {
     s->payload_export_owner_epoch = 0;
 }
 
+/* A space stores syntax: copies made to store an atom drop HE's evaluated
+ * marks (atom_deep_copy_strip_he_marks_enter). */
+static void space_store_scope_leave(bool *entered) {
+    if (*entered)
+        atom_deep_copy_strip_he_marks_leave();
+}
+
+#define SPACE_STORE_SCOPE() \
+    __attribute__((cleanup(space_store_scope_leave))) bool space_store_scope = \
+        (atom_deep_copy_strip_he_marks_enter(), true)
+
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
+    SPACE_STORE_SCOPE();
     return term_universe_store_atom(s ? s->native.universe : NULL, fallback, atom);
 }
 
@@ -7080,8 +7092,10 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
     bool defer_secondary =
         space_defer_incremental_secondary_indices(s);
-    if (backend_needs_atom && space_tracks_atom_ids(s) &&
-        atom_id != CETTA_ATOM_ID_NONE) {
+    /* The stored atom, which holds no evaluated mark, stands for one that
+     * may: the space keeps syntax, also in its equation index. */
+    if ((backend_needs_atom || atom_may_hold_he_mark(backend_atom)) &&
+        space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE) {
         Atom *stored_backend_atom =
             term_universe_get_atom(s->native.universe, atom_id);
         if (stored_backend_atom) {
@@ -7308,6 +7322,7 @@ void space_add(Space *s, Atom *atom) {
     s = space_mutation_target(s);
     if (!s)
         return;
+    SPACE_STORE_SCOPE();
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
     if (space_store_atom_via_backend_primary(
@@ -7345,6 +7360,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
     bool transition_failed = false;
     if (!s || !atom)
         return false;
+    SPACE_STORE_SCOPE();
 
     if (space_store_atom_via_backend_primary(
             s, atom, &transition_failed))

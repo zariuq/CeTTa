@@ -41,7 +41,9 @@
 !(let $h (Hold (tock)) (let $v $h (let $w $h $w)))
 !(collapse (match &self tock tock))
 
-; An equation added after a value was computed applies to it.
+; An equation added after a value was answered does not apply to that value:
+; it keeps the form it was answered in.  The call written again is
+; evaluated against the changed program.
 (: Pt (-> Number Number Point))
 !(let $p (Pt 1 2) (let $u (add-atom &self (= (Pt 1 2) reduced)) $p))
 !(Pt 1 2)
@@ -50,7 +52,7 @@
 !(add-atom &self (= (later-node a a) reduced))
 !(mk-later)
 
-; So does a declaration that no longer admits its arguments.
+; Nor does a declaration changed after the value was answered.
 (: Q (-> Number Q))
 !(collapse (let $q (Q 1) (let $u (remove-atom &self (: Q (-> Number Q))) (let $v (add-atom &self (: Q (-> String Q))) $q))))
 
@@ -67,6 +69,8 @@
 (= (Fr $x) NotReducible)
 (= (Fr $x) NotReducible)
 !(collapse (Fr 1))
+; A let that answers its bound value answers each of that value's answers
+; once: (let $f e $f) answers what e answers.  Rust HE answers each twice.
 !(collapse (let $f (Fr 1) $f))
 
 ; A value under an expected type other than its own is checked.

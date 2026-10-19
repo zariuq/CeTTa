@@ -1815,9 +1815,8 @@ static void print_usage(FILE *out) {
     fputs("       note: without --lang, cetta runs petta (petta@1.0.6)\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
-    fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
-    fputs("       cetta --lang he@0.0.1 [--profile extended] <file.metta> # default CeTTa HE contract\n", out);
-    fputs("       cetta --lang he@0.2.10 <file.metta> # Rust-HE compatibility profile\n", out);
+    fputs("       cetta [--lang he[@0.2.10] --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
+    fputs("       note: HE is CeTTa's fork of Hyperon Experimental 0.2.10; he-compat keeps Rust's behavior where he differs\n", out);
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
