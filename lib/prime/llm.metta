@@ -71,15 +71,14 @@
       ((JsonFailureV1 $other-phase $other-status $other-call $other-diagnostic)
        (llm:v1:failure invalid-or-ambiguous-json))
       ($converted $converted))))
+; A model response is parsed straight to a legacy value whose objects repeat
+; no key; a repeated key fails like any other ambiguous response.
+(: llm:v1:unique-legacy (-> Atom Atom))
+(= (llm:v1:unique-legacy $text)
+   (function (chain (eval (__cetta_lib_json_parse $text JsonUniqueKeysV1)) $result
+     (return $result)){$result}))
 (= (llm:v1:parse $text)
-   (let $value (json:parse $text)
-     (case $value
-       (((JsonFailureV1 $phase $status $call $diagnostic) (llm:v1:parsed $value))
-        ($canonical
-          (let $unique (llm:v1:unique? $canonical)
-            (if $unique
-              (let $converted (llm:v1:historical $canonical) (llm:v1:parsed $converted)){$converted}
-              (llm:v1:failure invalid-or-ambiguous-json))){$unique})))))
+   (let $value (llm:v1:unique-legacy $text) (llm:v1:parsed $value)))
 (= (llm:v1:object? $value)
    (case $value (((JsonObject $pairs) True) ($other False))))
 (= (llm:v1:array $value)

@@ -80,6 +80,15 @@ bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);
 
+/*
+ * Emit a legacy value directly: the same bytes and failures as converting it
+ * with cetta_json_value_v1_from_legacy and emitting the result, without the
+ * per-character conversion. No work or depth limit, like legacy stringify.
+ */
+bool cetta_json_value_v1_emit_legacy(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, size_t byte_limit, uint8_t **bytes_out, size_t *byte_len_out,
+    CettaJsonValueV1Status *status, char *error_buf, size_t error_buf_size);
+
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status);
 
 #endif /* CETTA_JSON_VALUE_V1_H */

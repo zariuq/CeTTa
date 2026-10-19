@@ -826,6 +826,236 @@ bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
+/* Direct emission of a legacy value. It accepts what
+ * cetta_json_value_v1_from_legacy accepts and writes what emitting the
+ * converted value writes, with the same failures in the same order, but it
+ * builds no scalar atoms: text goes from its UTF-8 bytes to escaped output.
+ * Conversion failures win over emission failures, as in convert-then-emit;
+ * the first emission failure in output order is kept until the walk ends. */
+typedef struct { Atom *items; CettaExprIndex index; bool object; } JsonLegacyEmitFrameV1;
+
+typedef struct {
+    CettaJsonValueV1Status status;
+    char message[256];
+} JsonDeferredFailureV1;
+
+static bool json_legacy_emit_text(JsonValueCtxV1 *ctx, Atom *atom, JsonBytesV1 *out) {
+    static const uint8_t hex[] = "0123456789abcdef";
+    const char *text = json_text(atom);
+    CettaLpNativeUtf8ScalarBuffer scalars;
+    char error[256] = {0};
+    bool ok = false;
+    uint32_t index, start;
+    cetta_lp_native_utf8_scalar_buffer_init(&scalars);
+    if (!cetta_lp_native_utf8_scalar_buffer_decode(
+            &scalars, (const uint8_t *)text, json_text_len(atom, text), error, sizeof(error))) {
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_INVALID_UTF8,
+                         "%s", error[0] ? error : "invalid UTF-8 string");
+        goto done;
+    }
+    if (!json_bytes_char(out, '"')) goto done;
+    for (index = 0u, start = 0u; index < scalars.view.scalar_len; index++) {
+        uint32_t scalar = cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, index);
+        uint8_t escape[6] = {'\\', 'u', '0', '0', 0, 0};
+        const char *pair = NULL;
+        if (scalar >= 0x20u && scalar < 0x80u && scalar != '"' && scalar != '\\') continue;
+        if (start < index && scalars.view.ascii_bytes &&
+            !json_bytes_append(out, scalars.view.ascii_bytes + start, index - start)) goto done;
+        if (start < index && !scalars.view.ascii_bytes) {
+            for (uint32_t plain = start; plain < index; plain++)
+                if (!json_bytes_char(out, (uint8_t)cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, plain))) goto done;
+        }
+        start = index + 1u;
+        switch (scalar) {
+        case '"': pair = "\\\""; break;
+        case '\\': pair = "\\\\"; break;
+        case '\b': pair = "\\b"; break;
+        case '\f': pair = "\\f"; break;
+        case '\n': pair = "\\n"; break;
+        case '\r': pair = "\\r"; break;
+        case '\t': pair = "\\t"; break;
+        default: break;
+        }
+        if (pair) {
+            if (!json_bytes_append(out, pair, 2u)) goto done;
+        } else if (scalar < 0x20u) {
+            escape[4] = hex[(scalar >> 4u) & 0xfu];
+            escape[5] = hex[scalar & 0xfu];
+            if (!json_bytes_append(out, escape, sizeof(escape))) goto done;
+        } else if (!json_utf8_append_scalar(out, scalar)) {
+            goto done;
+        }
+    }
+    if (start < index && scalars.view.ascii_bytes &&
+        !json_bytes_append(out, scalars.view.ascii_bytes + start, index - start)) goto done;
+    if (start < index && !scalars.view.ascii_bytes) {
+        for (uint32_t plain = start; plain < index; plain++)
+            if (!json_bytes_char(out, (uint8_t)cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, plain))) goto done;
+    }
+    ok = json_bytes_char(out, '"');
+done:
+    cetta_lp_native_utf8_scalar_buffer_free(&scalars);
+    return ok;
+}
+
+/* An emission failure is remembered, and the walk continues to find any
+ * later conversion failure, which would have come first. */
+static bool json_legacy_defer(JsonValueCtxV1 *ctx, JsonDeferredFailureV1 *deferred) {
+    if (deferred->status == CETTA_JSON_VALUE_V1_OK) {
+        deferred->status = ctx->status;
+        (void)snprintf(deferred->message, sizeof(deferred->message), "%s",
+                       ctx->error && ctx->error[0] ? ctx->error : "JSON emission failure");
+    }
+    ctx->status = CETTA_JSON_VALUE_V1_OK;
+    if (ctx->error && ctx->error_size > 0u) ctx->error[0] = '\0';
+    return true;
+}
+
+static bool json_legacy_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
+                                    JsonDeferredFailureV1 *deferred) {
+    if (atom_is_symbol(value, "JsonNull"))
+        return json_bytes_append(out, "null", 4u) || json_legacy_defer(ctx, deferred);
+    if (json_expr_is(value, "JsonBool", 2u)) {
+        bool boolean_value;
+        if (!json_bool_view(value->expr.elems[1], &boolean_value))
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                    "JsonBool expects True or False");
+        return (boolean_value ? json_bytes_append(out, "true", 4u)
+                              : json_bytes_append(out, "false", 5u)) || json_legacy_defer(ctx, deferred);
+    }
+    if (json_expr_is(value, "JsonString", 2u)) {
+        if (!json_text(value->expr.elems[1]))
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                    "JsonString expects text");
+        if (json_legacy_emit_text(ctx, value->expr.elems[1], out)) return true;
+        return ctx->status == CETTA_JSON_VALUE_V1_INVALID_UTF8 ? false : json_legacy_defer(ctx, deferred);
+    }
+    if (json_expr_is(value, "JsonNumber", 2u)) {
+        Atom *number = value->expr.elems[1];
+        const char *text = json_text(number);
+        size_t len;
+        if (!text)
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                    "JsonNumber expects an exact text lexeme");
+        len = json_text_len(number, text);
+        if (ctx->number_validator && !ctx->number_validator((const uint8_t *)text, len)) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
+                             "JSON syntax rejected by authored grammar");
+            return json_legacy_defer(ctx, deferred);
+        }
+        return json_bytes_append(out, text, len) || json_legacy_defer(ctx, deferred);
+    }
+    return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                            "malformed legacy JSON value");
+}
+
+static Atom *json_legacy_emit_child(JsonValueCtxV1 *ctx, JsonLegacyEmitFrameV1 *frame,
+                                    JsonBytesV1 *out, JsonDeferredFailureV1 *deferred) {
+    Atom *child = frame->items->expr.elems[frame->index];
+    if (frame->index && !json_bytes_char(out, ',')) json_legacy_defer(ctx, deferred);
+    if (!frame->object) return child;
+    if (json_expr_is(child, "JsonPair", 3u) && json_text(child->expr.elems[1])) {
+        if (!json_legacy_emit_text(ctx, child->expr.elems[1], out)) {
+            if (ctx->status == CETTA_JSON_VALUE_V1_INVALID_UTF8) return NULL;
+            json_legacy_defer(ctx, deferred);
+        }
+        if (!json_bytes_char(out, ':')) json_legacy_defer(ctx, deferred);
+        return child->expr.elems[2];
+    }
+    json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON object member");
+    return NULL;
+}
+
+static bool json_legacy_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
+                                   JsonDeferredFailureV1 *deferred) {
+    JsonLegacyEmitFrameV1 *frames = NULL;
+    size_t len = 0u, cap = 0u;
+    Atom *current = value;
+    for (;;) {
+        if (!current) {
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "missing JSON value");
+            goto failed;
+        }
+        bool object = json_expr_is(current, "JsonObject", 2u);
+        if (object || json_expr_is(current, "JsonArray", 2u)) {
+            Atom *items = current->expr.elems[1];
+            if (!items || items->kind != ATOM_EXPR) {
+                json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON container");
+                goto failed;
+            }
+            if (len == cap) {
+                size_t next = cap ? cap * 2u : 16u;
+                if (next < cap || next > SIZE_MAX / sizeof(*frames)) goto allocation;
+                JsonLegacyEmitFrameV1 *grown = realloc(frames, next * sizeof(*frames));
+                if (!grown) goto allocation;
+                frames = grown; cap = next;
+            }
+            if (!json_bytes_char(out, object ? '{' : '[')) json_legacy_defer(ctx, deferred);
+            frames[len++] = (JsonLegacyEmitFrameV1){.items = items, .object = object};
+            if (!items->expr.len) goto closed;
+            current = json_legacy_emit_child(ctx, &frames[len-1u], out, deferred);
+            if (!current) goto failed;
+            continue;
+        }
+        if (!json_legacy_emit_scalar(ctx, current, out, deferred)) goto failed;
+        while (len) {
+            JsonLegacyEmitFrameV1 *frame = &frames[len-1u];
+            if (++frame->index < frame->items->expr.len) {
+                current = json_legacy_emit_child(ctx, frame, out, deferred);
+                if (!current) goto failed;
+                break;
+            }
+closed:
+            frame = &frames[len-1u];
+            if (!json_bytes_char(out, frame->object ? '}' : ']')) json_legacy_defer(ctx, deferred);
+            len--;
+        }
+        if (!len) { free(frames); return true; }
+    }
+allocation:
+    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory converting JSON value");
+failed:
+    free(frames); return false;
+}
+
+bool cetta_json_value_v1_emit_legacy(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, size_t byte_limit, uint8_t **bytes_out, size_t *byte_len_out,
+    CettaJsonValueV1Status *status, char *error_buf, size_t error_buf_size) {
+    JsonValueCtxV1 ctx;
+    JsonBytesV1 bytes;
+    JsonDeferredFailureV1 deferred = {.status = CETTA_JSON_VALUE_V1_OK};
+    if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
+    if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
+    if (!number_validator || !value || !bytes_out || !byte_len_out) {
+        if (error_buf && error_buf_size > 0u)
+            (void)snprintf(error_buf, error_buf_size, "bad JSON stringify arguments");
+        return false;
+    }
+    ctx = (JsonValueCtxV1){
+        .number_validator = number_validator,
+        .status = CETTA_JSON_VALUE_V1_OK,
+        .error = error_buf,
+        .error_size = error_buf_size,
+    };
+    bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
+    if (!json_legacy_emit_value(&ctx, value, &bytes, &deferred)) {
+        if (status) *status = ctx.status;
+        free(bytes.bytes);
+        return false;
+    }
+    if (deferred.status != CETTA_JSON_VALUE_V1_OK) {
+        if (status) *status = deferred.status;
+        if (error_buf && error_buf_size > 0u)
+            (void)snprintf(error_buf, error_buf_size, "%s", deferred.message);
+        free(bytes.bytes);
+        return false;
+    }
+    *bytes_out = bytes.bytes ? bytes.bytes : (uint8_t *)calloc(1u, 1u);
+    *byte_len_out = bytes.len;
+    if (status) *status = CETTA_JSON_VALUE_V1_OK;
+    return *bytes_out != NULL;
+}
+
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status) {
     switch (status) {
     case CETTA_JSON_VALUE_V1_OK: return "ok";

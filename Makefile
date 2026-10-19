@@ -46650,7 +46650,8 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 		tests/test_json_gslt_hostile_constructors.prime.expected \
 		tests/test_json_gslt_byte_lengths.metta \
 		tests/test_json_gslt_byte_lengths.expected \
-		tests/test_json_gslt_byte_lengths.petta.expected
+		tests/test_json_gslt_byte_lengths.petta.expected \
+		tests/test_json_direct_codec_v1.py
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-gslt-library.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
@@ -46672,6 +46673,7 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 		$(BIN) --lang petta $$profile tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
 		diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
 	done; \
+	python3 tests/test_json_direct_codec_v1.py "$(BIN)"; \
 	$(BIN) --lang prime tests/test_json_gslt_library.metta > "$$actual"; \
 	diff -u tests/test_json_gslt_library.expected "$$actual"; \
 	$(BIN) --lang prime tests/test_json_gslt_hostile_constructors.metta > "$$actual"; \
