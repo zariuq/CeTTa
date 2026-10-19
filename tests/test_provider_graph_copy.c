@@ -576,9 +576,9 @@ static void provider_match_copy_control(bool match_first) {
     assert(bindings_need_view(&choice.as.match.binding_snapshot.items[0])->top==bindings_need_view(&outside)->top);
     AtomDeepCopySession *atoms=atom_deep_copy_session_new(&destination);
     AtomDeepCopyArenaPair pair={&source,&destination};assert(atom_deep_copy_session_set_arena_map(atoms,&pair,1u));
-    if(match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,NULL,true));
+    if(match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,&source,NULL,NULL,true));
     assert(bindings_copy_owned_atoms_with_session(&outside,&destination,atoms));
-    if(!match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,NULL,true));
+    if(!match_first)assert(petta_copy_supported_choice_atoms(atoms,&destination,&choice,&source,NULL,NULL,true));
     assert(bindings_need_view(&choice.as.match.binding_snapshot.items[0])->top==bindings_need_view(&outside)->top);
     atom_deep_copy_session_free(atoms);bindings_free(&seed);arena_free(&source);
     PrimeNeedCellView view;assert(prime_need_snapshot_lookup(

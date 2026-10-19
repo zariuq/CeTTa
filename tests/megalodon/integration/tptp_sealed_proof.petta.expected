@@ -1,0 +1,23 @@
+true
+true
+true
+true
+true
+(Megalodon.declared "p")
+(Megalodon.declared "q")
+(Megalodon.declared "p")
+(Megalodon.declared "q")
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "p") (Tm.named "p")))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "p") (Tm.named "p")))
+(wrong-claim-refused (MegalodonRefused "proof does not prove the stated proposition"))
+(axiom-not-admitted (MegalodonMalformed "theorem name, claim or proof"))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "p") (Tm.named "p")))
+(cross-profile-refused (MegalodonRefused "evidence of another profile"))
+true
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "p") (Tm.named "p")))
+true
+true
+true
+()
+(seal:snapshot (statement (Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "p") (Tm.named "p")))))
+(nested-theorem-refused (SealFault not-portable))

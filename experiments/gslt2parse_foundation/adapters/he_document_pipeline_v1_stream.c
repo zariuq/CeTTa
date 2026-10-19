@@ -145,8 +145,8 @@ static bool write_atom_json(Atom *atom,
         return false;
     switch (atom->kind) {
     case ATOM_SYMBOL:
-        name = (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id);
-        name_len = symbol_len(g_symbols, atom->sym_id);
+        name = (const uint8_t *)atom_symbol_bytes(atom);
+        name_len = atom_symbol_length(atom);
         (void)printf("{\"kind\":\"sym\",\"hex\":\"");
         write_hex(name, name_len);
         (void)printf("\"}");
@@ -154,8 +154,8 @@ static bool write_atom_json(Atom *atom,
     case ATOM_VAR:
         if (!variable_ordinal(variables, atom->var_id, &ordinal))
             return false;
-        name = (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id);
-        name_len = symbol_len(g_symbols, atom->sym_id);
+        name = (const uint8_t *)atom_symbol_bytes(atom);
+        name_len = atom_symbol_length(atom);
         (void)printf("{\"kind\":\"var\",\"ordinal\":%u,\"hex\":\"",
                      ordinal);
         write_hex(name, name_len);
@@ -221,17 +221,17 @@ static bool atoms_equal(Atom *left,
         return false;
     switch (left->kind) {
     case ATOM_SYMBOL:
-        left_len = symbol_len(g_symbols, left->sym_id);
-        right_len = symbol_len(g_symbols, right->sym_id);
+        left_len = atom_symbol_length(left);
+        right_len = atom_symbol_length(right);
         return left_len == right_len &&
-            memcmp(symbol_bytes(g_symbols, left->sym_id),
-                   symbol_bytes(g_symbols, right->sym_id), left_len) == 0;
+            memcmp(atom_symbol_bytes(left),
+                   atom_symbol_bytes(right), left_len) == 0;
     case ATOM_VAR:
-        left_len = symbol_len(g_symbols, left->sym_id);
-        right_len = symbol_len(g_symbols, right->sym_id);
+        left_len = atom_symbol_length(left);
+        right_len = atom_symbol_length(right);
         return left_len == right_len &&
-            memcmp(symbol_bytes(g_symbols, left->sym_id),
-                   symbol_bytes(g_symbols, right->sym_id), left_len) == 0 &&
+            memcmp(atom_symbol_bytes(left),
+                   atom_symbol_bytes(right), left_len) == 0 &&
             variable_pair(pairs, left->var_id, right->var_id);
     case ATOM_EXPR:
         if (left->expr.len != right->expr.len)

@@ -19,10 +19,12 @@ def main():
         result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=60)
         return result.returncode, result.stdout, result.stderr
 
-    # Unversioned spelling remains the default; compatibility is a distinct
-    # contract, not a change to ordinary HE's profile or import policy.
+    # Without --lang, cetta runs petta@1.0.6.  An unversioned spelling is its
+    # language's default contract; compatibility is a distinct contract, not
+    # a change to ordinary HE's profile or import policy.
     pairs = [
-        ([], ["--lang", "he@0.0.1"]),
+        ([], ["--lang", "petta@1.0.6"]),
+        (["--lang", "he"], ["--lang", "he@0.0.1"]),
         (["--lang", "he"], ["--lang", "mettahe@0.0.1"]),
         (["--lang", "he", "--profile", "he"],
          ["--lang", "he@0.0.1", "--profile", "he"]),

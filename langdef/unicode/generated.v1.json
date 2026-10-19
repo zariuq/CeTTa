@@ -1,0 +1,36 @@
+{
+  "compiler_sources": {
+    "gslt2parse_schema_v1.py": "952db1f6dac7b64265a345120fafe693208b05107eb2b95e2c8076e694959074",
+    "unicode_presentation_v1.py": "82423d5d360891b18765a40e9c46dff140f2778902e37e62f57a9f6d65f06d68"
+  },
+  "format": "cetta-unicode-generated-v1",
+  "generator": "tools/compile_unicode_data_v1.py",
+  "generator_sha256": "8bcdf6bade92dbf445d24bb570870fbac9da75a8b96045b2ea57b033aa219630",
+  "lexical_input": "lexical_classes_v1.metta",
+  "native_input": "unicode_codepoint_classes16_v1.metta",
+  "outputs": [
+    {
+      "bytes": 1827,
+      "path": "generated/unicode_ucd16_v1.generated.h",
+      "sha256": "d50664c810b6a7eaa783473eb400c1118a8c53b3af662b2e9177053e9f94b0a3"
+    },
+    {
+      "bytes": 1274076,
+      "path": "generated/unicode_ucd16_v1.generated.c",
+      "sha256": "3d3d894afc818f0ef7484e2e09a3b6020e2094a9a394be24bc74df2961a09463"
+    },
+    {
+      "bytes": 509807,
+      "path": "unicode_codepoint_classes16_v1.metta",
+      "sha256": "7139c7a63ce5a29e3376ebbb5069fbc67785f4f22a35ffa77679b867b163894a"
+    },
+    {
+      "authored": true,
+      "bytes": 2579,
+      "path": "lexical_classes_v1.metta",
+      "sha256": "0e846f2ac89b0bb40ef948dc9c7024d60c51af32ddfa234f480d1b7785e21d54"
+    }
+  ],
+  "sources_sha256": "a04fbc0ebc736334728ff883d63969254f14696ba794029b4f5f24eadff22df8",
+  "unicode_version": "16.0.0"
+}

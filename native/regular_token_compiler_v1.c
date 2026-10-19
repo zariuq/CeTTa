@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern const uint8_t cetta_regular_token_compiler_v1_source[];
-extern const size_t cetta_regular_token_compiler_v1_source_len;
+extern const uint8_t cetta_regular_token_compiler_v1_prepared[];
+extern const size_t cetta_regular_token_compiler_v1_prepared_len;
 
 struct CettaRegularTokenCompilerV1 {
     const PPABIV1Pack *classes;
@@ -112,19 +112,30 @@ done:
 bool cetta_regular_token_compiler_v1_load(
     const PPABIV1Pack *classes, uint32_t work_limit,
     CettaRegularTokenCompilerV1 **out, char *error, size_t error_size) {
+    return cetta_regular_token_compiler_v1_restore(classes, work_limit,
+        cetta_regular_token_compiler_v1_prepared, cetta_regular_token_compiler_v1_prepared_len,
+        false, out, error, error_size);
+}
+
+bool cetta_regular_token_compiler_v1_store(const CettaRegularTokenCompilerV1 *compiler,
+    uint8_t **bytes, size_t *length, char *error, size_t error_size) {
+    return compiler && cetta_deterministic_equation_plan_v1_store(compiler->equations,
+        "regular-token-v1", bytes, length, error, error_size);
+}
+
+bool cetta_regular_token_compiler_v1_restore(
+    const PPABIV1Pack *classes, uint32_t work_limit, const uint8_t *bytes,
+    size_t length, bool audit, CettaRegularTokenCompilerV1 **out, char *error, size_t error_size) {
     if (!classes || !work_limit || !out)
         return error_message(error, error_size, "bad regular-token compiler arguments");
     CettaRegularTokenCompilerV1 *compiler = calloc(1u, sizeof(*compiler));
     if (!compiler) return error_message(error, error_size, "regular-token compiler allocation failed");
     compiler->classes = classes;
     compiler->work_limit = work_limit;
-    CettaDeterministicEquationInputV1 input = {
-        cetta_regular_token_compiler_v1_source, cetta_regular_token_compiler_v1_source_len,
-        "RegularTokenValueCompilerV1"};
     CettaDeterministicVocabularyV1 vocabulary = {primitive, classify, compiler};
-    CettaDeterministicEquationStatusV1 status;
-    if (!cetta_deterministic_equation_plan_v1_load_inputs(&input, 1u, &vocabulary,
-            &compiler->equations, &status, error, error_size)) {
+    if (!cetta_deterministic_equation_plan_v1_restore(bytes,
+            length, "regular-token-v1", &vocabulary, audit,
+            &compiler->equations, error, error_size)) {
         cetta_regular_token_compiler_v1_free(compiler); return false;
     }
     cetta_regular_token_compiler_v1_free(*out);

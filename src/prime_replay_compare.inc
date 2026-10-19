@@ -371,7 +371,7 @@ static bool prime_replay_compare_arena(const Arena *a,const Arena *b,
     RC_S("arena.scalar_cache",a->scalar_cache,b->scalar_cache);
 #define AP(f) RC_F("arena."#f,a->f,b->f)
     AP(persistent_bytes);AP(live_bytes);AP(external_bytes);AP(reserved_bytes);AP(spare_bytes);
-    AP(block_count);AP(spare_block_count);AP(block_capacity);AP(reset_epoch);
+    AP(block_count);AP(spare_block_count);AP(block_capacity);AP(block_growth);AP(reset_epoch);
 #undef AP
     RC_F("arena.blocks",(uintptr_t)a->head,(uintptr_t)b->head);
     RC_F("arena.spares",(uintptr_t)a->spare,(uintptr_t)b->spare);

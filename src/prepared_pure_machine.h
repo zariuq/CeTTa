@@ -133,6 +133,12 @@ bool cetta_prepared_pure_closed_own_execution(
     CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
     const void *owner, uint64_t quantum);
 
+/* Whether the prepared machine can call `head` with `arity` arguments: the
+ * dialect leaves the head untyped, or it is an HE head whose one signature
+ * has that arity and value-class parameters and range (Number, String, Bool
+ * or %Undefined%), which the machine checks where HE casts them. */
+bool cetta_prepared_pure_call_policy_supported(
+    Space *space, SymbolId head, CettaExprLen arity);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -177,14 +183,19 @@ typedef enum {
     CETTA_PREPARED_PURE_PROJECT_APPLICATION,
     /* Interpret the entire projected term in the current program. */
     CETTA_PREPARED_PURE_PROJECT_CODE,
+    /* The same, where each variable of the term holds a value in place of
+     * which the term is read: a value that is an expression would run as
+     * code, so the machine declines it where it runs. */
+    CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES,
 } CettaPreparedPureProjectionMode;
 typedef struct {
     Atom *projected;
     CettaPreparedPureProjectionMode projection_mode;
     CettaPreparedPureValueObservation observation;
 } CettaPreparedPureExpressionView;
-/* Classify dialect-owned atoms before the generic value/constructor
- * fallback.  A projection names the source child which is the form's value;
+/* Classify dialect-owned expression forms before the generic constructor
+ * fallback, and the symbols a dialect reserves for its own evaluator (only
+ * canonical-only is read for a symbol).  A projection names the source child which is the form's value;
  * an observation names a pure outer-value discriminator whose operand is
  * data rather than an evaluation position.  Decline prevents an unhandled
  * form from falling through as inert syntax after shared prepared
@@ -636,6 +647,13 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
  * before the step that produced it.  A consumer calls this when the answer
  * needs a treatment the producer does not own. */
 bool cetta_prepared_pure_answer_cursor_unyield(
+    CettaPreparedPureAnswerCursor *cursor);
+
+/* The consumer has taken the answer just produced for good and keeps the
+ * cursor only for its remaining alternatives: the answer can no longer be
+ * withdrawn, its storage is released now rather than at the next step, and
+ * the blocks the frontier does not use go back to the allocator. */
+void cetta_prepared_pure_answer_cursor_suspend(
     CettaPreparedPureAnswerCursor *cursor);
 
 CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(

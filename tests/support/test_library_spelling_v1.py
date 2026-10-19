@@ -25,6 +25,30 @@ def declarations(source, dialect="petta"):
 
 
 class HandoffDeclarations(unittest.TestCase):
+    def test_administrative_bindings_preserve_computation_and_data_parameters(self):
+        body = "(function (let $p (prepare $x) (chain (eval (N $p $y)) $r (return $r))))"
+        source = "(: F (-> %Undefined% Atom Atom))\n(: N (-> Atom Atom Atom))\n(= (F $x $y) " + body + ")"
+        for dialect in ("petta", "prime"):
+            self.assertEqual(declarations(source, dialect), ["(: F (-> %Undefined% Atom %Undefined%))"])
+        self.assertEqual(spell(body), "(let $p (prepare $x) (N $p $y))")
+        self.assertEqual(spell(body, "prime"),
+                         "(let $p (prepare $x) (function (case (N $p $y) (($result (return $result))))))")
+
+    def test_nested_administrative_bindings_keep_dependency_order(self):
+        source = "(function (let $a (f $x) (let $b (g $a) (chain (eval (N $b)) $r (return $r)))))"
+        self.assertEqual(spell(source), "(let $a (f $x) (let $b (g $a) (N $b)))")
+
+    def test_nontransparent_binding_tails_do_not_erase_function_control(self):
+        source = "(function (let $p (prepare $x) (chain (eval (N $p)) $r (return changed))))"
+        self.assertIn("(function", spell(source))
+        self.assertEqual(declarations("(: F (-> Number Atom))\n(= (F $x) " + source + ")"),
+                         ["(: F (-> Number Atom))"])
+
+    def test_early_return_in_binding_is_not_an_administrative_handoff(self):
+        source = "(function (let $p (return stop) (chain (eval (N $p)) $r (return $r))))"
+        self.assertIn("(function", spell(source))
+        self.assertIn("(return stop)", spell(source))
+
     def test_native_case_handoff_retains_data_parameters_not_he_result_type(self):
         for dialect in ("petta", "prime"):
             source = ("(: F (-> Number Atom Atom))\n"

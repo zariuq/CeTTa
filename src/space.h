@@ -1099,6 +1099,12 @@ typedef enum {
 
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity);
+/* Whether a call of `head` with `arity` arguments takes the untyped call
+ * policy: every argument evaluated, its result evaluated without an
+ * expected type, nothing type-checked.  HE types every call of a head that
+ * declares any type, so a call at an arity no arrow declares is HE's
+ * IncorrectNumberOfArguments; PeTTa's typing reads arrows per arity. */
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity);
 /* Whether any type annotation names the head, whatever its type or arity.
  * A dialect that type-checks calls does so for such a head even at an arity
  * no signature covers. */
@@ -1357,8 +1363,9 @@ typedef enum {
 
 /* The caller retains the Space and its overlay bases, query syntax and result arena. The cursor
  * owns its traversal, seed bindings and native occurrence pins. One native
- * step advances a connective or checks up to 32 canonical matcher nodes of
- * one physical candidate. Equality/occurs-check/binding primitives have
+ * step advances a connective or checks up to 32 canonical matcher actions
+ * (structural nodes and alias retries) of one physical candidate.
+ * Equality/occurs-check/binding primitives have
  * separate byte and CPU complexity; a node grant is not a CPU bound.
  * Backends without this capability retain their canonical atomic query and
  * an owned result cursor. Such fallback preparation is not incremental.
@@ -1439,9 +1446,10 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
                         Atom ***out_types);
 
 /*
- * Return only explicit `(: subject type)` declarations, in logical space
- * order.  The returned pointer array is caller-owned; its atoms live in the
- * supplied arena and are freshened per occurrence.
+ * Return explicit `(: subject type)` declarations: own declarations before
+ * imported ones, preserving occurrence order within each part. The returned
+ * pointer array is caller-owned; its atoms live in the supplied arena and
+ * are freshened per occurrence.
  */
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);

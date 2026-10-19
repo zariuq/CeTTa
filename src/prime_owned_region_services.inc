@@ -107,7 +107,7 @@ static void prime_native_owned_region_free(PrimeNativeOwnedRegion *region) {
     assert(g_prime_owned_region != region);
     PrimeNativeRegionScope scope={0};
     if (region->library_ready) {
-        assert(region->arenas_ready && !region->library->native_handle_len);
+        assert(region->arenas_ready && !region->library->native_handle_registry);
         if (region->services && region->services->effects) {
             bool selected=prime_native_region_scope_select(region,&scope);
             assert(selected); (void)selected;

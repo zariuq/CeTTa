@@ -727,11 +727,11 @@ static PrimeNativeControl *owned_region_test_capture(CettaLibraryContext *contex
     memcpy(parts,invocation->expr.elems,invocation->expr.len*sizeof(*parts));
     parts[invocation->expr.len-1u]=expr_arg(invocation,expr_nargs(invocation)-2u);
     Atom *aliased=atom_expr(&source,parts,invocation->expr.len);
-    size_t handles=context->native_handle_len;
+    size_t handles=cetta_native_handle_count(context);
     CHECK(eval_prime_owned_region_outcome(&original,&receiver,&source,&original_registry,
         aliased,CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1,100000u,16u*1024u*1024u,
         &outcome)==CETTA_CONTINUATION_UNSUPPORTED);
-    CHECK(context->native_handle_len==handles && !outcome.prime_observation && !outcome.results.len);
+    CHECK(cetta_native_handle_count(context)==handles && !outcome.prime_observation && !outcome.results.len);
     CettaContinuationStatus status=eval_prime_owned_region_outcome(&original,&receiver,
         &source,&original_registry,invocation,
         CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1,100000u,16u*1024u*1024u,&outcome);
@@ -745,7 +745,7 @@ static PrimeNativeControl *owned_region_test_capture(CettaLibraryContext *contex
     if(observation) *observation=atom_deep_copy(surviving,state.projected);
     PrimeNativeControl *child=cetta_native_handle_get_owned(context,"prime-search",*holder);
     assert(child && child->owned_top_episode && child->owned_top_episode->owned_region);
-    CHECK(!child->leased && child->owned_top_episode->owned_region->library->native_handle_len==0u);
+    CHECK(!child->leased && child->owned_top_episode->owned_region->library->native_handle_registry==NULL);
     eval_outcome_free(&outcome);
     registry_free(&original_registry); space_free(&original); g_registry=NULL;
     term_universe_set_persistent_arena(&context->term_universe,surviving);
@@ -786,7 +786,7 @@ static void owned_region_resume_case(unsigned mode, bool recording) {
     assert(owner && owner->resume_frontier && owner->resume_position==1u);
     registry_bind(&registry,"&region-cursor",cursor);
     CHECK(child->leased && child->steps==paid && !child->resume_choice);
-    CHECK(region->library->native_handle_len==0u && g_library_context==&context && g_registry==&registry);
+    CHECK(region->library->native_handle_registry==NULL && g_library_context==&context && g_registry==&registry);
     struct CettaNativeHandleOwner *issued=owner->resume_use.owner;
     Atom *take=parse_one(&arena,mode==1u
         ? "(interaction:perform &region-cursor 1 0)"
@@ -871,7 +871,7 @@ static void owned_region_resume_case(unsigned mode, bool recording) {
                 CHECK(prime_native_control_closed(child) && child->steps>paid);
                 CHECK(child->resume_choice && !child->resume_choice->occurrence);
             }
-            CHECK(region->library->native_handle_len==0u && g_library_context==&context && g_registry==&registry);
+            CHECK(region->library->native_handle_registry==NULL && g_library_context==&context && g_registry==&registry);
             release_stack_control(&parent);
         }
     }
@@ -1007,7 +1007,7 @@ static void owned_region_demand_case(unsigned entry, bool recording) {
     CHECK(is_false_atom(expr_arg(expr_arg(shortfall,1u),0u)) &&
         is_true_atom(expr_arg(expr_arg(shortfall,2u),0u)));
     CHECK(!child->cost_enabled && child->event_cost.identity==0u);
-    CHECK(child->owned_top_episode->owned_region->library->native_handle_len==0u &&
+    CHECK(child->owned_top_episode->owned_region->library->native_handle_registry==NULL &&
         g_library_context==&context && g_registry==&registry);
     bindings_free(&env);
     eval_set_library_context(NULL); cetta_library_context_free(&context);
@@ -1907,8 +1907,16 @@ static void native_capture_observer_contract_case(
     CHECK(native.status==CETTA_BRANCH_ADMISSION_AVAILABLE);
     CHECK(ordinary.capacity==CETTA_BRANCH_CAPTURE_MULTI_SHOT &&
           native.capacity==CETTA_BRANCH_CAPTURE_MULTI_SHOT);
-    CHECK(library->lib_prolog && ordinary.authority.words[4]!=0u &&
-          ordinary.authority.words[5]!=0u);
+    const CettaLibPrologReadToken admitted_foreign =
+        cetta_lib_prolog_read_token(library->lib_prolog);
+    CHECK(library->lib_prolog &&
+          ordinary.authority.words[4]==admitted_foreign.instance_id &&
+          ordinary.authority.words[5]==admitted_foreign.revision);
+#if CETTA_BUILD_WITH_LIB_PROLOG
+    CHECK(admitted_foreign.instance_id!=0u && admitted_foreign.revision!=0u);
+#else
+    CHECK(admitted_foreign.instance_id==0u && admitted_foreign.revision==0u);
+#endif
     CettaLibraryContext *library_before=malloc(sizeof(*library_before));assert(library_before);
     memcpy(library_before,library,sizeof(*library));
     PettaEvalMachineContext context_before=owner->context;
@@ -7541,10 +7549,14 @@ static uint64_t ordinary_source_task_case(uint64_t quantum,uint32_t workers,bool
     CHECK(cetta_ready_admit(&ready,&tasks[1].ready)==READY_ADMITTED);
     CHECK(cetta_ready_admit(&ready,&tasks[0].ready)==READY_PRESENT && ready.count==2u);
     CHECK(cetta_ready_admit(&other,&tasks[0].ready)==READY_FOREIGN && !other.count);
-    CettaOwnedVisit zero=cetta_owned_task_visit(&ready,false);
+    CettaOwnedTaskAccount zero_account;
+    CettaOwnedVisit zero=cetta_owned_task_visit_accounted(&ready,false,&zero_account);
     CHECK(zero.task==&tasks[0] && zero.step==CETTA_OWNED_EXECUTION_PAUSED &&
         !zero.context_refused && !contexts[0].entrances && !owned[0]->ordinary_control->steps);
     CHECK(ready.first==&tasks[1].ready && ready.count==2u);
+    CHECK(zero_account.rotations==1u && !zero_account.compatibility &&
+        !zero_account.producer && !zero_account.consumer &&
+        !zero_account.final_is_current && !zero_account.retirements);
     CettaOwnedReturn held={0};
     CettaOwnedReturnImage *earned=NULL;
     uint64_t held_work=0u;
@@ -7556,8 +7568,21 @@ static uint64_t ordinary_source_task_case(uint64_t quantum,uint32_t workers,bool
         assert(selected<3u);
         uint64_t before[3];
         for(unsigned i=0u;i<3u;i++)before[i]=owned[i]?owned[i]->ordinary_control->steps:0u;
-        CettaOwnedVisit visit=cetta_owned_task_visit(&ready,true);
+        unsigned entrances=contexts[selected].entrances,deliveries=contexts[selected].deliveries;
+        bool held_before=expected->execution.has_pending;
+        CettaOwnedTaskAccount account;
+        CettaOwnedVisit visit=slot%2u?cetta_owned_task_visit(&ready,true):
+            cetta_owned_task_visit_accounted(&ready,true,&account);
         CHECK(visit.task==expected);
+        if(!(slot%2u)) {
+            CHECK(account.rotations==1u && account.compatibility<=2u &&
+                account.producer<=1u && account.consumer<=1u &&
+                account.final_is_current<=1u && account.retirements<=1u);
+            CHECK(account.compatibility==contexts[selected].entrances-entrances);
+            CHECK(account.consumer==contexts[selected].deliveries-deliveries);
+            CHECK(!held_before || !account.producer);
+            CHECK(account.retirements==(expected->ready.owner?0u:1u));
+        }
         CHECK(!last[selected] || slot-last[selected]<=3u);
         last[selected]=slot;visits[selected]++;
         for(unsigned i=0u;i<3u;i++)if(owned[i]) {

@@ -654,6 +654,11 @@ void cetta_open_equation_cursor_set_budget(CettaOpenEquationCursor *cursor,
 void cetta_open_equation_cursor_note_authority_change(
     CettaOpenEquationCursor *cursor);
 
+/* The host has taken the answer just produced and keeps the cursor only for
+ * its remaining alternatives: the blocks its arenas no longer use go back to
+ * the allocator, and its stacks keep about what they hold. */
+void cetta_open_equation_cursor_suspend(CettaOpenEquationCursor *cursor);
+
 void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor);
 /* Quiescent owned arrays, arenas and retained program versions. Borrowed
  * answer arenas and runtime services retain their enclosing host lifetime. */

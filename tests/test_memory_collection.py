@@ -165,6 +165,8 @@ def main():
             competitor.close()
             collection.worker.process.kill();collection.worker.process.wait()
             check('dead-query-worker-rebuilt',collection.get(ids=['r0010'])['ids']==['r0010'])
+            collection.worker.close()
+            check('closed-query-worker-rebuilt',collection.get(ids=['r0010'])['ids']==['r0010'])
             server.kill();server.wait();server=start()
             check('connected-client-recovers-owner-restart',collection.get(ids=['r0010'])['ids']==['r0010'])
             check('restart-retains-count',collection.count()==len(rows))

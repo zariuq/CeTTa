@@ -1139,7 +1139,38 @@ typedef enum {
     /* Untried equations selection refuted because their bodies begin by
      * destructuring a value decons-atom has no answer for. */
     CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ENTRY_GUARD_REFUTED = 1082,
-    CETTA_RUNTIME_COUNTER_COUNT = 1083
+    /* States of Prolog `eval` calls that may still be retried: created at the
+     * first call, disposed by its last answer, its failure or its prune. */
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_STATE_LIVE_PEAK = 1083,
+    CETTA_RUNTIME_COUNTER_PETTA_LIBPL_EVAL_PRUNED = 1084,
+    /* Collections of the search machine's heap while choices are pending,
+     * the major ones among them, and those due but declined because a
+     * pending choice cannot move its atoms. */
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTIONS = 1085,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_MAJOR_COLLECTIONS = 1086,
+    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED = 1087,
+    /* The program versions open-equation cursors keep, one per program a
+     * cursor entered, and the open tier's compiled programs alive. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_VERSIONS_LIVE = 1088,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_CURSOR_VERSIONS_LIVE_PEAK = 1089,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE = 1090,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAMS_LIVE_PEAK = 1091,
+    /* The open-equation cursors' collections: minor and major ones that
+     * copied, those declined for finding most of their generation reached,
+     * the bytes minor collections promoted, the old generation's largest
+     * size after a collection, and the region's largest size when one was
+     * tried. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS = 1092,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS = 1093,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MINOR_COLLECTIONS_DECLINED = 1094,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_COLLECTIONS_DECLINED = 1095,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROMOTED_BYTES = 1096,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_OLD_BYTES_PEAK = 1097,
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_REGION_AT_COLLECTION_BYTES_PEAK = 1098,
+    /* What a major collection keeps, at most: the cursors' live data at the
+     * moments majors run. */
+    CETTA_RUNTIME_COUNTER_OPEN_EQUATION_MAJOR_SURVIVOR_BYTES_PEAK = 1099,
+    CETTA_RUNTIME_COUNTER_COUNT = 1100
 } CettaRuntimeCounter;
 
 typedef struct {

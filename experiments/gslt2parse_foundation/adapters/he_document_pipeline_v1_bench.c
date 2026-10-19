@@ -167,18 +167,18 @@ static bool fingerprint_atoms(Atom *const *atoms,
         switch (atom->kind) {
         case ATOM_SYMBOL:
             fingerprint_byte(out, (uint8_t)'S');
-            name_len = symbol_len(g_symbols, atom->sym_id);
+            name_len = atom_symbol_length(atom);
             fingerprint_bytes(
                 out,
-                (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id),
+                (const uint8_t *)atom_symbol_bytes(atom),
                 name_len);
             break;
         case ATOM_VAR:
             fingerprint_byte(out, (uint8_t)'V');
-            name_len = symbol_len(g_symbols, atom->sym_id);
+            name_len = atom_symbol_length(atom);
             fingerprint_bytes(
                 out,
-                (const uint8_t *)symbol_bytes(g_symbols, atom->sym_id),
+                (const uint8_t *)atom_symbol_bytes(atom),
                 name_len);
             break;
         case ATOM_EXPR:

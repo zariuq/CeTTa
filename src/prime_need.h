@@ -364,6 +364,18 @@ bool prime_need_snapshot_allocate_persisted_closure(
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 #endif
+/* A cell born resolved to a ready value: the Need cell of sequencing
+ * (`return value`), allocated and demanded at once, so its origin and its
+ * cached value are the value itself. */
+bool prime_need_snapshot_allocate_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+bool prime_need_snapshot_allocate_ready_value_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
+#endif
 bool prime_need_snapshot_start_evaluation(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
     uint64_t evaluator_id, PrimeNeedSnapshot *out);

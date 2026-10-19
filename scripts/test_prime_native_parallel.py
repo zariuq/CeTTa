@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import platform
 import random
+import statistics
 from test_prime_native_control import Gate, ROOT, bag, parse, observations
 
 SUM = '(= (sum $n) (if (== $n 0) 0 (+ $n (sum (- $n 1))))) '
@@ -41,7 +44,7 @@ def check_cost(result):
             assert 0 <= span <= work and worker >= 0 and 0 < start <= end and phase in (0, 1)
     return fields
 
-def fixed(gate):
+def ordinary(gate):
     # Keep this ordinary entry isolated: other declarations change preparation.
     source = '(= (co:id $x) $x)\n!(co:id (Pair (superpose (1 2)) (superpose (3 4))))\n'
     expected = [[['Pair', 1, 3], ['Pair', 1, 4], ['Pair', 2, 3], ['Pair', 2, 4]]]
@@ -60,9 +63,36 @@ def fixed(gate):
         ('shared argument choice',
          '(= (coin) 2) (= (coin) 3) (= (pair $x) (Pair $x $x)) !(pair (coin))',
          [[['Pair', 2, 2], ['Pair', 3, 3]]]),
+        ('duplicate shared choice and independent occurrences',
+         '(= (duplicate) False) (= (duplicate) False) '
+         '(= (twice $x) (Pair $x $x)) '
+         '!(twice (duplicate)) !(Pair (duplicate) (duplicate))',
+         [[['Pair', 'False', 'False']] * 2,
+          [['Pair', 'False', 'False']] * 4]),
         ('independent service occurrences',
          '(= (leaf) (superpose (4 6))) (= (pair-sum) (+ (leaf) (leaf))) !(pair-sum)',
          [[8, 10, 10, 12]]),
+        ('constructor alternatives after recursive field',
+         SUM + ''.join(f'(= (jobs) (Pair (sum {n}) (superpose (A B)))) '
+                       for n in range(20, 24)) + '!(jobs)',
+         [[['Pair', n * (n + 1) // 2, tag]
+           for n in range(20, 24) for tag in ('A', 'B')]]),
+        ('constructor alternatives before recursive field',
+         SUM + '(= (jobs) (Pair (superpose (A B)) (sum 20))) !(jobs)',
+         [[['Pair', 'A', 210], ['Pair', 'B', 210]]]),
+        ('duplicate constructor alternatives',
+         SUM + '(= (jobs) (Pair (sum 20) (superpose (A A B)))) '
+         '(= (jobs) (Pair (sum 20) (superpose (A A B)))) !(jobs)',
+         [[['Pair', 210, tag] for tag in ('A', 'A', 'B', 'A', 'A', 'B')]]),
+        ('empty constructor field has no answer',
+         SUM + '(= (jobs) (Pair (sum 20) (empty))) !(collapse (jobs))',
+         [[[]]]),
+        ('tuple return retains caller refinement outside value support',
+         '(scope:profile mercury-implicit per-call reference) '
+         '(= (refine $x) (let $x s2 (Got ((f x))))) '
+         '!(let $r (refine $y) (Pair $y $r)) '
+         '!(collapse (let $y other (refine $y)))',
+         [[['Pair', 's2', ['Got', [['f', 'x']]]]], [[]]]),
     ]
     for name, source, expected in ordinary:
         for workers in (1, 2, 4):
@@ -86,6 +116,89 @@ def fixed(gate):
         assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
         gate.passed_case(f'ordinary captured open result workers={workers}')
 
+    # Reuse the maintained clients: returned suspensions stay inert, and a
+    # computed higher-order head still dispatches its proof-relevant call.
+    for fixture in ('tests/prime/need_native_operands.metta',
+                    'examples/prime/prime_native_mil_list_map_rel.metta'):
+        path = ROOT / fixture
+        expected = path.with_suffix('.expected').read_text()
+        for workers in (1, 2, 4):
+            gate.run_file(f'ordinary {fixture} workers={workers}', path,
+                          arguments=('--num-threads', str(workers)))
+            assert gate.receipts[-1]['stdout'] == expected, gate.receipts[-1]
+            assert not gate.receipts[-1]['stderr'], gate.receipts[-1]
+            gate.passed_case(f'ordinary {fixture} workers={workers}')
+
+
+def measure_ordinary(gate):
+    """Measure complete processes after correctness, retaining answer multiplicity."""
+    args = gate.args
+    directory = args.benchmark_directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    gate.measurement_conditions = {
+        'system': platform.system(), 'machine': platform.machine(),
+        'logical_cpus': os.cpu_count(),
+    }
+    if hasattr(os, 'getloadavg'):
+        gate.measurement_conditions['load_average_start'] = os.getloadavg()
+    if hasattr(os, 'sched_getaffinity'):
+        gate.measurement_conditions['cpu_affinity'] = sorted(os.sched_getaffinity(0))
+    if hasattr(os, 'getpriority'):
+        gate.measurement_conditions['nice'] = os.getpriority(os.PRIO_PROCESS, 0)
+    size = args.benchmark_size
+    cases = [
+        ('balanced', [size + i for i in range(4)], 0),
+        ('small', [max(1, size // 1000) + i for i in range(4)], 0),
+        ('unbalanced', [max(1, size // 20)] * 12 +
+         [size * 3 // 2, max(1, size // 20), max(1, size // 3), max(1, size // 40)], 0),
+        ('background-empty', [max(1, size // 4) + i for i in range(4)], 0),
+        ('background-populated', [max(1, size // 4) + i for i in range(4)],
+         args.benchmark_facts),
+    ]
+    measurements = []
+    for name, inputs, background in cases:
+        source = (SUM + '\n' +
+                  ''.join(f'(background {i})\n' for i in range(background)) +
+                  ''.join(f'(= (jobs) (Pair (sum {n}) (superpose (A B))))\n'
+                          for n in inputs) + '!(jobs)\n')
+        path = directory / f'{name}.metta'
+        path.write_text(source)
+        expected = [['Pair', n * (n + 1) // 2, tag]
+                    for n in inputs for tag in ('A', 'B')]
+        samples = {workers: [] for workers in (1, 2, 4)}
+        for repetition in range(args.benchmark_repetitions):
+            order = (1, 2, 4) if repetition % 2 == 0 else (4, 2, 1)
+            for workers in order:
+                trees, _ = gate.run_file(
+                    f'measure {name} repetition={repetition} workers={workers}', path,
+                    arguments=('--num-threads', str(workers)))
+                assert len(trees) == 1 and bag(trees[0]) == bag(expected), (
+                    name, workers, trees, expected)
+                row = gate.receipts[-1]
+                assert not row['stderr'], row
+                # The workload is retained once in the measurement directory.
+                row.pop('source')
+                samples[workers].append({
+                    'seconds': row['seconds'], 'cpu_seconds': row['cpu_seconds']})
+                gate.passed_case(f'measured {name} repetition={repetition} workers={workers}')
+        elapsed = {workers: statistics.median(s['seconds'] for s in values)
+                   for workers, values in samples.items()}
+        measurement = {
+            'case': name, 'source': str(path), 'source_sha256': sha256(source.encode()).hexdigest(),
+            'background_facts': background, 'inputs': inputs, 'samples': samples,
+            'median_seconds': elapsed,
+            'elapsed_ratio_vs_one_thread': {w: elapsed[1] / t for w, t in elapsed.items()},
+            'elapsed_ratio_two_to_four_threads': elapsed[2] / elapsed[4],
+        }
+        measurements.append(measurement)
+        print(f'MEASURE: {name} median process seconds {elapsed}', flush=True)
+    gate.measurements = measurements
+    if hasattr(os, 'getloadavg'):
+        gate.measurement_conditions['load_average_end'] = os.getloadavg()
+
+
+def fixed(gate):
+    ordinary(gate)
     cases = [
         ('independent', SUM + '(= (p) (sum 20)) (= (p) (sum 21))', '(p)', [210, 231]),
         ('duplicate occurrences', SUM + '(= (p) (sum 15)) (= (p) (sum 15))', '(p)', [120, 120]),
@@ -749,15 +862,40 @@ def main():
     parser.add_argument('--timeout',type=int,default=45)
     parser.add_argument('--cases',type=int,default=8)
     parser.add_argument('--history-controls',action='store_true')
+    parser.add_argument('--ordinary-only', action='store_true',
+                        help='Run ordinary-program controls on production builds without recording')
+    parser.add_argument('--benchmark', action='store_true',
+                        help='Measure ordinary programs after the selected correctness controls')
+    parser.add_argument('--benchmark-size', type=int, default=20000)
+    parser.add_argument('--benchmark-facts', type=int, default=3000)
+    parser.add_argument('--benchmark-repetitions', type=int, default=5)
+    parser.add_argument('--benchmark-directory', type=Path,
+                        default=ROOT/'runtime/prime-native-parallel-benchmark')
     parser.add_argument('--receipt',type=Path)
     args=parser.parse_args();args.binary=args.binary.resolve();gate=Gate(args)
+    if args.benchmark and (args.benchmark_size < 1 or args.benchmark_facts < 0 or
+                           args.benchmark_repetitions < 1):
+        parser.error('benchmark size and repetitions must be positive, and facts nonnegative')
     try:
-        fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);captured_query_publications(gate,args.history_controls);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
+        if args.ordinary_only:
+            ordinary(gate)
+        else:
+            fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);captured_query_publications(gate,args.history_controls);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
+        if args.benchmark:
+            measure_ordinary(gate)
     finally:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True,exist_ok=True)
-            args.receipt.write_text(json.dumps({'binary_sha256':sha256(args.binary.read_bytes()).hexdigest(),
-                'passed':gate.passed,'receipts':gate.receipts},indent=2)+'\n')
+            executed_binary = Path(os.environ.get('CETTA_WRAPPED_BIN', str(args.binary))).resolve()
+            args.receipt.write_text(json.dumps({'binary_sha256':sha256(executed_binary.read_bytes()).hexdigest(),
+                'executed_binary':str(executed_binary),
+                'launcher':str(args.binary),'launcher_sha256':sha256(args.binary.read_bytes()).hexdigest(),
+                'passed':gate.passed,'receipts':gate.receipts,
+                'measurements':getattr(gate, 'measurements', []),
+                'measurement_conditions':getattr(gate, 'measurement_conditions', {}),
+                'measurement_scope':'Process startup, source loading, evaluation and output; '
+                    'thread counts may select different execution paths. Ratios do not '
+                    'isolate hardware parallelism.'},indent=2)+'\n')
     print(f'Prime native parallelism: {gate.passed} passed, 0 failed')
 
 if __name__=='__main__':main()

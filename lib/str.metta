@@ -93,42 +93,42 @@
 ; (alnum or _) and ascii.  A codepoint beyond ASCII is in none of them.
 ; Whether every codepoint of a text is in a class (the empty text is), and
 ; whether its first codepoint is (the empty text has none).
-(= (str:all-in? $class $text)
+(= (str:is-all-in $class $text)
    (function
-     (case (__cetta_lib_str all-in? $class $text)
+     (case (__cetta_lib_str is-all-in $class $text)
        (($result (return $result))))))
 
-(= (str:initial-in? $class $text)
+(= (str:is-initial-in $class $text)
    (function
-     (case (__cetta_lib_str initial-in? $class $text)
+     (case (__cetta_lib_str is-initial-in $class $text)
        (($result (return $result))))))
 
 ; Spelling tests: letters and digits only; a lower-case or an upper-case
 ; initial; and a lower word or an upper word, such an initial followed by word
 ; characters.
-(= (str:alphanumeric? $text)
+(= (str:is-alphanumeric $text)
    (function
-     (case (__cetta_lib_str alphanumeric? $text)
+     (case (__cetta_lib_str is-alphanumeric $text)
        (($result (return $result))))))
 
-(= (str:lower-initial? $text)
+(= (str:is-lower-initial $text)
    (function
-     (case (__cetta_lib_str lower-initial? $text)
+     (case (__cetta_lib_str is-lower-initial $text)
        (($result (return $result))))))
 
-(= (str:upper-initial? $text)
+(= (str:is-upper-initial $text)
    (function
-     (case (__cetta_lib_str upper-initial? $text)
+     (case (__cetta_lib_str is-upper-initial $text)
        (($result (return $result))))))
 
-(= (str:lower-word? $text)
+(= (str:is-lower-word $text)
    (function
-     (case (__cetta_lib_str lower-word? $text)
+     (case (__cetta_lib_str is-lower-word $text)
        (($result (return $result))))))
 
-(= (str:upper-word? $text)
+(= (str:is-upper-word $text)
    (function
-     (case (__cetta_lib_str upper-word? $text)
+     (case (__cetta_lib_str is-upper-word $text)
        (($result (return $result))))))
 
 ; A symbol from a string: nonempty UTF-8 without NUL.
@@ -162,9 +162,9 @@
      (case (__cetta_lib_str set $strings)
        (($result (return $result))))))
 
-(= (str:set-member? $set $text)
+(= (str:is-set-member $set $text)
    (function
-     (case (__cetta_lib_str set-member? $set $text)
+     (case (__cetta_lib_str is-set-member $set $text)
        (($result (return $result))))))
 
 ; The quoting schemes are metta, json, tptp-single and tptp-double: the body
@@ -198,3 +198,59 @@
    (function
      (case (__cetta_lib_str char-slice $text $start $end)
        (($result (return $result))))))
+
+; Pure streaming states are ordinary data. Compute helpers in explicit let
+; bindings before handing their state to another operation. The native uses
+; the same operator table as compiled consumers, with an inert operand tuple.
+; Refusals are (StrRefusedV1 call detail) data, not raised host control.
+(: __cetta_lib_str_value (-> Atom Atom Atom))
+(: str:utf8-new (-> %Undefined% Atom))
+(: str:utf8-feed (-> Atom %Undefined% %Undefined% Atom))
+(: str:line-new (-> Atom))
+(: str:line-segments (-> %Undefined% %Undefined% Atom))
+(: str:collect-lines (-> Atom Atom %Undefined% Atom))
+(: str:feed-lines (-> Atom %Undefined% %Undefined% Atom))
+(: str:advance-lines (-> Atom %Undefined% %Undefined% Atom))
+(: str:find-ascii-uncased (-> %Undefined% %Undefined% Atom))
+
+(= (str:utf8-new $policy)
+   (function (chain (eval (__cetta_lib_str_value utf8-new ($policy))) $result
+     (return $result))))
+
+; final requests a pending-scalar flush; it does not certify OS EOF. An empty chunk
+; with final=False is not end. strict refuses malformed input; ignore erases
+; malformed bytes explicitly. Returned text is valid UTF-8, NUL included.
+(= (str:utf8-feed $state $bytes $final)
+   (function (chain (eval (__cetta_lib_str_value utf8-feed ($state $bytes $final))) $result
+     (return $result))))
+
+(= (str:line-new)
+   (function (chain (eval (__cetta_lib_str_value line-new ())) $result
+     (return $result))))
+
+; Unicode line boundaries include CRLF as one boundary, even across chunks.
+(= (str:line-segments $text $preceding-cr)
+   (function (chain (eval (__cetta_lib_str_value line-segments ($text $preceding-cr))) $result
+     (return $result))))
+
+; Keep reversed fragments until each line completes, then copy it once.
+(= (str:collect-lines $buffer $segments $final)
+   (function (chain (eval (__cetta_lib_str_value collect-lines ($buffer $segments $final))) $result
+     (return $result))))
+
+; Fused text preparation. feed-lines publishes completed lines; advance-lines
+; updates the same counter/CR/pending-prefix state without assembling those
+; lines. Both retain the unfinished line for later value observation.
+(= (str:feed-lines $buffer $text $final)
+   (function (chain (eval (__cetta_lib_str_value feed-lines ($buffer $text $final))) $result
+     (return $result))))
+(= (str:advance-lines $buffer $text $final)
+   (function (chain (eval (__cetta_lib_str_value advance-lines ($buffer $text $final))) $result
+     (return $result))))
+
+; Literal ASCII patterns with Unicode-uncased ASCII equivalence. The text may
+; hold arbitrary bytes; malformed bytes are opaque, never silently erased.
+; Returns a byte offset or TextNotFound. This is not a regex operation.
+(= (str:find-ascii-uncased $text $needle)
+   (function (chain (eval (__cetta_lib_str_value find-ascii-uncased ($text $needle))) $result
+     (return $result))))

@@ -176,6 +176,23 @@ def main() -> int:
             raise SystemExit("invalid serialization input accepted")
     passed = 0
 
+    deep = schema.Symbol("LNil")
+    for number in range(20000):
+        deep = (schema.Symbol("LCons"), number, deep)
+    serialized = schema.render(deep)
+    recovered = schema.parse_sexprs(serialized)[0]
+    if schema.render(recovered) != serialized:
+        raise GateFailure("deep iterative serialization changed the term")
+    if schema.render((schema.Variable("x"), schema.StringLiteral('λ\n"'), -3, ())) != '(?x "λ\\n\\\"" -3 ())':
+        raise GateFailure("canonical leaf or tuple serialization changed")
+    try:
+        schema.render((deep, schema.Variable("_")))
+    except schema.SchemaError:
+        pass
+    else:
+        raise GateFailure("deep serialization accepted an invalid variable")
+    passed += 3
+
     admitted = schema.admit([CORE, TOY])
     digest = schema.package_digest(admitted)
     if digest != EXPECTED_PACKAGE_DIGEST:
@@ -547,7 +564,7 @@ def main() -> int:
             raise GateFailure(f"guest-language name in generic tool {path.name}")
     passed += 1
 
-    total = 37
+    total = 40
     if passed != total:
         raise GateFailure(f"gate accounting mismatch: {passed}/{total}")
     print(f"(FiniteHornGSLTV1CanarySummary {total} {passed} 0)")

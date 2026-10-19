@@ -69,8 +69,8 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
      * then the explicit authority parameter issues the original public slot,
      * copies its token and acquires EXCLUSIVE before the first producer poll.
      * The private registry is never an enrollment or residual authority. */
-    assert(region->library->native_handle_len==0u);
+    assert(region->library->native_handle_registry==NULL);
     prime_native_registry_observation_enter(outcome);
-    assert(!top->owned.origin_authority && region->library->native_handle_len==0u);
+    assert(!top->owned.origin_authority && region->library->native_handle_registry==NULL);
     return top->owned.status;
 }

@@ -93,7 +93,11 @@ Atom *cetta_supervise_dispatch(CettaLibraryContext *ctx,Space *space,
         if (!cetta_native_handle_alloc(ctx,SUP_KIND,s,free_supervisor,&handle)) {
             cetta_supervisor_close(s); return failure(a,DURABLE_LIMIT);
         }
-        return cetta_native_handle_owned_atom(ctx,a,SUP_KIND,handle);
+        Atom *owner=cetta_native_handle_owned_atom(ctx,a,SUP_KIND,handle);
+        if (!owner) {
+            cetta_native_handle_close(ctx,SUP_KIND,handle); return failure(a,DURABLE_LIMIT);
+        }
+        return owner;
     }
     if ((!strcmp(name,"close") || !strcmp(name,"release")) && n==1) {
         const char *kind=!strcmp(name,"close")?SUP_KIND:PERMIT_KIND;
@@ -139,7 +143,14 @@ Atom *cetta_supervise_dispatch(CettaLibraryContext *ctx,Space *space,
                 cetta_dispatch_permit_generation(p),&ignored);
             cetta_dispatch_permit_free(p); return failure(a,DURABLE_LIMIT);
         }
-        return cetta_native_handle_owned_atom(ctx,a,PERMIT_KIND,handle);
+        Atom *owner=cetta_native_handle_owned_atom(ctx,a,PERMIT_KIND,handle);
+        if (!owner) {
+            bool ignored;
+            cetta_supervisor_uncertain(s,cetta_dispatch_permit_epoch(p),cetta_dispatch_permit_id(p),
+                cetta_dispatch_permit_generation(p),&ignored);
+            cetta_native_handle_close(ctx,PERMIT_KIND,handle); return failure(a,DURABLE_LIMIT);
+        }
+        return owner;
     }
     bool accepted=false;
     if (!strcmp(name,"abandon") && n==2 && text(args[1])) {

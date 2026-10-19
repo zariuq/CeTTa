@@ -1,0 +1,7 @@
+!(import! &self fs)
+!(import! &self system)
+!(let $owner (fs:open-read (system:arg 0))
+  (let $one (fs:read-chunk $owner 2)
+    (let $two (fs:read-chunk $owner 100)
+      (let $end (fs:read-chunk $owner 1)
+        (let $closed (fs:close $owner) (BytesExact $one $two $end))))))

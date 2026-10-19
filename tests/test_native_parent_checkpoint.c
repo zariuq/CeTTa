@@ -449,11 +449,11 @@ static void lifecycle_cases(void) {
   CHECK(!cetta_prime_checkpoint_copy_new(lib,textual,&status));
   CHECK(status==CETTA_CONTINUATION_INVALIDATED);
   if(mode==7u) {
-   uint64_t issued=lib->native_handle_next_id;uint32_t slots=lib->native_handle_len;
+   uint64_t issued=lib->native_handle_next_id;size_t slots=cetta_native_handle_count(lib);
    CHECK(!cetta_prime_checkpoint_copy_new(lib,handle,&status));
    CHECK(status==CETTA_CONTINUATION_UNSUPPORTED);
    CHECK(!memcmp(&original,source,sizeof(original)));
-   CHECK(lib->native_handle_next_id==issued&&lib->native_handle_len==slots);
+   CHECK(lib->native_handle_next_id==issued&&cetta_native_handle_count(lib)==slots);
    arena_free(&source->driver.prepared_pure_cache.execution_scratch);
    source->driver.prepared_pure_cache.execution_scratch_ready=false;
    original=*source;

@@ -408,8 +408,16 @@ SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
+/* The error a minimal instruction answers for arguments outside `expected`:
+ * (Error <call> "expected: <expected>, found: <call>"). */
+Atom *cetta_call_signature_error(Arena *a, Atom *call, const char *expected);
 /* Whether the running PeTTa version is of the typed line (1.1, 1.1.c). */
 bool eval_current_petta_typed_line(void) __attribute__((weak));
+/* Whether the program extends a classifier PeTTa's typed-call guard
+ * evaluates (get-type, get-metatype) with an equation at its one-input arity
+ * that can run; a protected default-program definition cannot. */
+bool eval_petta_classifier_extended(Space *space, SymbolId classifier)
+    __attribute__((weak));
 /* The shared profile-aware HE type inference engine. Returned arrays are heap
    allocated and must be freed by the caller; atoms live in `a`. */
 uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,

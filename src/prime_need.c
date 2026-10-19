@@ -1544,7 +1544,7 @@ static bool prime_need_snapshot_find_imported_cell(
 static bool prime_need_snapshot_allocate_with_storage_key(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, uint64_t source_occurrence_id,
-    uint64_t source_argument_index,
+    uint64_t source_argument_index, bool ready,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     bool capture_known, const VarId *capture_var_ids,
     size_t capture_var_count,
@@ -1613,7 +1613,9 @@ static bool prime_need_snapshot_allocate_with_storage_key(
     if (!prime_need_snapshot_push(
             owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
             import_key, source_occurrence_id, source_argument_index,
-            PRIME_NEED_CACHE_EMPTY, PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, term, NULL,
+            ready ? PRIME_NEED_CACHE_VALUE : PRIME_NEED_CACHE_EMPTY,
+            ready ? PRIME_NEED_VALUE_READY : PRIME_NEED_VALUE_DEMAND_RESULT,
+            0u, 0u, term, ready ? term : NULL,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
             capture_known, owned_capture_ids, owned_capture_count,
 #endif
@@ -1629,7 +1631,7 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, 0u, 0u,
+        owner, base, term, 0u, 0u, 0u, false,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -1656,7 +1658,7 @@ bool prime_need_snapshot_allocate_source_argument(
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
         owner, base, term, 0u, source_occurrence_id,
-        source_argument_index,
+        source_argument_index, false,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -1670,7 +1672,7 @@ bool prime_need_snapshot_allocate_persisted(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, 0u, 0u,
+        owner, base, term, storage_key, 0u, 0u, false,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -1707,7 +1709,7 @@ bool prime_need_snapshot_allocate_closure(
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, 0u, 0u, true,
+        owner, base, term, 0u, 0u, 0u, false, true,
         capture_var_ids, capture_var_count, out, out_thunk_id);
 }
 
@@ -1720,7 +1722,7 @@ bool prime_need_snapshot_allocate_source_argument_closure(
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
         owner, base, term, 0u, source_occurrence_id,
-        source_argument_index, true, capture_var_ids,
+        source_argument_index, false, true, capture_var_ids,
         capture_var_count, out, out_thunk_id);
 }
 
@@ -1732,10 +1734,29 @@ bool prime_need_snapshot_allocate_persisted_closure(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, 0u, 0u, true,
+        owner, base, term, storage_key, 0u, 0u, false, true,
+        capture_var_ids, capture_var_count, out, out_thunk_id);
+}
+bool prime_need_snapshot_allocate_ready_value_closure(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    const VarId *capture_var_ids, size_t capture_var_count,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, value, 0u, 0u, 0u, true, true,
         capture_var_ids, capture_var_count, out, out_thunk_id);
 }
 #endif
+
+bool prime_need_snapshot_allocate_ready_value(
+    Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
+    PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
+    return prime_need_snapshot_allocate_with_storage_key(
+        owner, base, value, 0u, 0u, 0u, true,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+        false, NULL, 0u,
+#endif
+        out, out_thunk_id);
+}
 
 static bool prime_need_snapshot_transition(
     Arena *owner, const PrimeNeedSnapshot *base, uint64_t thunk_id,
@@ -4895,6 +4916,7 @@ PrimeNeedRecordingCopy *prime_need_recording_copy_new(PrimeNeedRecording *source
         d->group = image;
         arena_init_detached(&d->arena);
         arena_set_block_capacity(&d->arena, s->arena.block_capacity);
+        d->arena.block_growth = s->arena.block_growth;
         arena_set_runtime_kind(&d->arena, s->arena.runtime_kind);
         arena_set_scalar_cache(&d->arena, s->arena.scalar_cache);
         d->node_quantum = s->node_quantum; d->byte_quantum = s->byte_quantum;

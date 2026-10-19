@@ -3382,6 +3382,11 @@ static int petta_compare_grounded_atoms(
             (uint64_t)(uintptr_t)right->ground.ptr);
     case GV_TENSOR:
         return cetta_tensor_compare(left->ground.ptr, right->ground.ptr);
+    case GV_SEAL:
+        /* Seal objects order by their private identity key: the order is
+         * consistent with identity equality and exposes no address. */
+        return petta_compare_u64(atom_seal_identity(left),
+                                 atom_seal_identity(right));
     case GV_PRIME_NEED_CAPABILITY:
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.prime_need_capability,

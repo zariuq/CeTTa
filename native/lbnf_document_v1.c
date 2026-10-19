@@ -13,6 +13,8 @@
 
 extern const uint8_t cetta_lbnf_bootstrap_v1_source[];
 extern const size_t cetta_lbnf_bootstrap_v1_source_len;
+extern const uint8_t cetta_bnfc_lexical_policy_v1_program[];
+extern const size_t cetta_bnfc_lexical_policy_v1_program_len;
 extern const uint8_t cetta_bnfc_lexical_policy_v1_source[];
 extern const size_t cetta_bnfc_lexical_policy_v1_source_len;
 
@@ -1042,11 +1044,10 @@ bool cetta_lbnf_document_v1_lower(
     if (!l.c_flex && !atom_is_symbol(policy->expr.elems[1], "bnfc-documented")) {
         fail(&l, "lexical-policy", "Expected bnfc-documented or the pinned C/Flex policy."); goto done;
     }
-    char error[512]; CettaDeterministicEquationStatusV1 status;
-    CettaDeterministicEquationInputV1 input = {cetta_bnfc_lexical_policy_v1_source,
-        cetta_bnfc_lexical_policy_v1_source_len, "BnfcLexicalPolicyV1"};
-    if (!cetta_deterministic_equation_plan_v1_load_inputs(&input, 1u, NULL,
-            &l.lexical, &status, error, sizeof(error))) {
+    char error[512];
+    if (!cetta_deterministic_equation_plan_v1_restore(cetta_bnfc_lexical_policy_v1_program,
+            cetta_bnfc_lexical_policy_v1_program_len, "bnfc-lexical-v1", NULL, false,
+            &l.lexical, error, sizeof(error))) {
         fail(&l, "lexical-policy", error); goto done;
     }
     Atom *rows = document->expr.elems[2]; size_t index = 0u;

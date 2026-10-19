@@ -406,6 +406,7 @@ static bool prime_replay_resource_word_open(PrimeReplayCapsule *capsule,
         (source->older_identity&&(!persistent||
             source->older_identity!=persistent->identity||persistent->older_identity)))return false;
     arena_set_block_capacity(image,source->block_capacity);
+    image->block_growth = source->block_growth;
     arena_set_runtime_kind(image,source->runtime_kind);
     arena_set_scalar_cache(image,source->scalar_cache);
     arena_set_hashcons(image,source->hashcons);

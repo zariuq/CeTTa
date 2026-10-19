@@ -1,4 +1,4 @@
-[(he mm2 petta ambient calculator imp lambda mettafull-legacy minskylite mm0lite pyashcore rhocalc prime subzero zero gslt-il zerouv metta-interact)]
+[(he mm2 petta ambient calculator imp lambda mettafull-legacy minskylite mm0lite pyashcore rhocalc prime subzero zero gslt-il zerouv metta-interact hol-light)]
 [((= (f x) x) (: f (-> A A)))]
 ["(-> set prop)"]
 [True]

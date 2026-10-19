@@ -1,0 +1,45 @@
+true
+true
+(Megalodon.declared "A")
+(Megalodon.declared "B")
+true
+true
+true
+true
+true
+(Megalodon.session-report paused (checked 1) (pending 2) (attempted 1) (work 2))
+false
+(Megalodon.session-report paused (checked 1) (pending 2) (attempted 0) (work 0))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses (Tm.named "A"))) (Tm.named "A"))
+(Megalodon.session-report finished (checked 2) (pending) (attempted 1) (work 5))
+true
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "A") (Tm.named "A")))
+(Megalodon.declared "AA")
+true
+true
+true
+(Megalodon.session-report finished (checked 2) (pending) (attempted 2) (work 8))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.named "AA"))
+true
+(Megalodon.session-report refused (checked 1) (pending 2) (stopped-at 2 "conclusion is not an implication") (attempted 2) (work 4))
+true
+(Megalodon.session-report exhausted (checked 0) (pending 1 2) (stopped-at 1 "budget") (attempted 1) (work 1))
+(Megalodon.session-report finished (checked 2) (pending) (attempted 2) (work 4))
+true
+true
+(Megalodon.session-report refused (checked 0) (pending 4 3) (stopped-at 4 "hypothesis does not state the conclusion") (attempted 1) (work 2))
+(Megalodon.session-report malformed (checked 0) (pending 3) (stopped-at 3 "parent not yet checked (future or absent)") (attempted 1) (work 1))
+(Megalodon.session-report malformed (checked 0) (pending 3) (stopped-at 3 "parent not yet checked (future or absent)") (attempted 0) (work 0))
+(refused (MegalodonUnfinished "the submitted batch has not finished"))
+true
+(Megalodon.session-report finished (checked 2) (pending) (attempted 0) (work 0))
+(Megalodon.withdrawn 1)
+(Megalodon.session-report finished (checked 2) (pending) (attempted 0) (work 0))
+(Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "A") (Tm.named "A")))
+true
+true
+(accepted (Megalodon.judgment (Megalodon.context 0 (types) (hypotheses)) (Tm.imp (Tm.named "A") (Tm.named "A"))))
+(refused (MegalodonRefused "a checked row changed"))
+(Megalodon.withdrawn 2)
+(refused (MegalodonRefused "the checkpoint depends on a changed declaration"))
+()

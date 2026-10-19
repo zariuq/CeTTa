@@ -7,13 +7,15 @@
 
 typedef void (*CettaNativeHandleFreeFn)(void *resource);
 
+typedef struct CettaNativeHandleRegistry CettaNativeHandleRegistry;
+
 typedef struct {
-    uint64_t id;
-    const char *kind;
-    void *resource;
-    CettaNativeHandleFreeFn free_resource;
-    CettaStorageVisitor storage;
-} CettaNativeHandleSlot;
+    size_t live;
+    size_t slot_capacity;
+    size_t index_capacity;
+    /* Registry metadata only, excluding resource payloads and stale holders. */
+    size_t storage_bytes;
+} CettaNativeHandleStats;
 
 struct CettaLibraryContext;
 
@@ -46,6 +48,9 @@ void *cetta_native_handle_get_owned(struct CettaLibraryContext *ctx,
     const char *kind, Atom *handle);
 bool cetta_native_handle_close(struct CettaLibraryContext *ctx, const char *kind,
                                uint64_t id);
+/* Counts committed live resources, independently of retained stale holders. */
+size_t cetta_native_handle_count(const struct CettaLibraryContext *ctx);
+CettaNativeHandleStats cetta_native_handle_stats(const struct CettaLibraryContext *ctx);
 void cetta_native_handle_cleanup_all(struct CettaLibraryContext *ctx);
 
 /* An acquired use keeps the resource alive after logical close. A lifetime
@@ -115,6 +120,8 @@ bool cetta_native_handle_use_fork_lifetime(CettaNativeHandleUse *destination,
     const CettaNativeHandleUse *source);
 
 #ifdef CETTA_NATIVE_HANDLE_TEST_HOOKS
+/* Fail an owner allocation after n successful owner allocations; -1 disables. */
+void cetta_native_handle_test_fail_owner_after(long n);
 /* Invokes the production reserve arithmetic without forging live owners. */
 bool cetta_native_handle_test_reserve_use_count(size_t *count);
 #endif

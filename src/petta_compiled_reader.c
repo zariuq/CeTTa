@@ -356,6 +356,46 @@ int petta_compiled_reader_v1_parse_text_ids(
         out_ids, receipt, error_buf, error_buf_size);
 }
 
+int petta_compiled_reader_v1_parse_term_bytes_id(
+    PeTTaCompiledReaderV1 *reader, const uint8_t *input,
+    size_t input_len, TermUniverse *universe, AtomId *out_id,
+    char *error_buf, size_t error_buf_size) {
+    PeTTaProjectionContextV1 context = {0};
+    GSLTDirectPeTTaProjectionV1 projection;
+    int result;
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (out_id)
+        *out_id = CETTA_ATOM_ID_NONE;
+    if (!reader || !reader->ready || reader->owner_symbols != g_symbols ||
+        reader->owner_symbols_instance_id !=
+            symbol_table_instance_id(g_symbols) ||
+        !universe || !out_id || input_len > UINT32_MAX ||
+        (input_len > 0u && !input)) {
+        petta_compiled_reader_v1_set_error(
+            error_buf, error_buf_size, "invalid compiled PeTTa term read");
+        return -1;
+    }
+    context.universe = universe;
+    projection = (GSLTDirectPeTTaProjectionV1){
+        .context = &context,
+        .begin_form = petta_projection_begin_form,
+        .token_bytes = petta_projection_token_bytes,
+        .variable_bytes = petta_projection_variable_bytes,
+        .string_bytes = petta_projection_string_bytes,
+        .dollar_symbol = petta_projection_dollar_symbol,
+        .expression = petta_projection_expression,
+        .finish_form = petta_projection_finish_form,
+        .list = petta_projection_list,
+    };
+    result = gslt_direct_petta_reader_v1_parse_term_bytes_id(
+        reader->plan, input, input_len, &projection, out_id,
+        error_buf, error_buf_size);
+    cetta_var_index_free(&context.variable_index);
+    free(context.variables);
+    return result;
+}
+
 static bool petta_compiled_reader_v1_read_file(
     const char *filename, uint8_t **bytes_out, size_t *len_out) {
     FILE *file = NULL;

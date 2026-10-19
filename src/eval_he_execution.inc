@@ -749,6 +749,16 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
     return aggregate;
 }
 
+/* Current machine coverage, not a restriction on HE. A head rejected here
+ * retains the canonical interpreter. Keep the root precheck and the full
+ * admission walk on the same predicate, including the library exception. */
+static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
+    bool intrinsic, bool collection, bool library_stream) {
+    return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
+        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+                           space_head_declares_type(space, head));
+}
+
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                                          Atom *source) {
     if (!he_execution_push(admission, source))
@@ -797,6 +807,11 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             continue;
         }
         if (!term || he_execution_term_holds_resource(term))
+            return false;
+        /* NotReducible is HE's call-return marker: a body that is
+         * NotReducible leaves its own call unreduced, at that call's
+         * boundary, which the canonical owner keeps. */
+        if (atom_is_symbol_id(term, g_builtin_syms.not_reducible))
             return false;
         /* A superpose's argument is a tuple of alternatives, each walked as
          * a term of its own; the tuple itself is no call. */
@@ -911,10 +926,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;
-        if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            !library_stream &&
-            (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-             space_head_declares_type(admission->space, head)))
+        if (he_execution_head_requires_canonical(admission->space, head,
+                intrinsic, collection, library_stream))
             return false;
         /* A streamed call of a relation must always meet an equation. */
         if (admission->stream && expression && !intrinsic &&
@@ -1990,6 +2003,15 @@ static inline __attribute__((always_inline)) bool he_shared_execution_candidate(
         (is_grounded_op(source_head) || symbol_id_is_builtin(source_head)) &&
         source_head != g_builtin_syms.match &&
         !he_execution_collection(source_head))
+        return false;
+    /* Typed ordinary heads are refused by full admission before their
+     * closure is visited. Do not first walk their argument/flow trees just
+     * to rediscover that refusal. This is an uncached fallback selection;
+     * the canonical call still observes the current declarations and body. */
+    if (source_head != g_builtin_syms.match &&
+        he_execution_head_requires_canonical(space, source_head, false,
+            he_execution_collection(source_head),
+            he_library_stream_aggregate(space, source) != SYMBOL_ID_NONE))
         return false;
     /* Such a root gains on the machine only when something in it computes;
      * a match that only builds data is the canonical frame's single query. */

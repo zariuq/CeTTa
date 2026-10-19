@@ -18,5 +18,6 @@
 (= (system:exit $code) (__cetta_lib_system_exit_with_code $code))
 (= (system:write $stream $bytes) (__cetta_lib_system_write $stream $bytes))
 (= (system:cwd) (__cetta_lib_system_cwd ()))
+(= (system:entry-directory) (__cetta_lib_system_entry_directory ()))
 (= (system:monotonic-ns) (__cetta_lib_system_monotonic_ns ()))
 (= (system:timed $suspension) (case (system:monotonic-ns) (($start (case (force $suspension) (($value (case (system:monotonic-ns) (($end (system:timed-result (- $end $start) $value)))))))))))

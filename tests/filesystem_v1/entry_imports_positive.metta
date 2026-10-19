@@ -1,0 +1,6 @@
+!(import! &self system)
+!(let $entry (system:entry-directory) (add-atom &self (saved-entry $entry)))
+!(import! &self fs)
+!(match &self (saved-entry $before)
+  (let $after (system:entry-directory)
+    (function (return (EntryStable $before $after)))))

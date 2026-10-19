@@ -3896,6 +3896,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -3940,6 +3941,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
@@ -6312,13 +6314,13 @@ bool space_equation_token_matches_live_space(
                space_projection_dependency_epoch(live_space, true);
 }
 
-/* An index entry without its atom id: read its row.  While rows are
- * marked, an index row is not a logical position. */
+/* Secondary indexes address local storage. Neither an inherited overlay
+ * prefix nor marked rows change an index entry into a logical position. */
 static __attribute__((noinline)) AtomId space_indexed_occurrence_row_atom_id(
     const Space *s, const CettaIndex *indices, CettaIndex position) {
     if (!s || !indices)
         return CETTA_ATOM_ID_NONE;
-    if (space_has_marks(s))
+    if (space_has_marks(s) || space_has_overlay_base(s))
         return indices[position] < s->native.len
             ? space_atom_id_storage_load_at(s->native.atom_ids,
                                             s->native.atom_id_width_bits,
@@ -6753,6 +6755,9 @@ typedef struct {
 
 typedef struct {
     SpaceProgramToken program;
+    /* The language the analysis read the program in: HE reads its macro
+     * calls as their expansions. */
+    CettaLanguageId language;
     SpaceEffectCacheEntry *entries;
     size_t len;
     size_t cap;
@@ -7058,9 +7063,15 @@ static bool space_effect_cache_rehash(
     return true;
 }
 
+static CettaLanguageId space_effect_language(void) {
+    return eval_current_language_id ? eval_current_language_id()
+                                    : (CettaLanguageId)0;
+}
+
 static SpaceEffectCacheShard *space_effect_cache_shard(
     Space *space, bool create) {
     SpaceProgramToken program = space_program_token(space);
+    CettaLanguageId language = space_effect_language();
     SpaceEffectCacheShard *reusable = NULL;
     for (size_t index = 0u;
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
@@ -7068,6 +7079,7 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
             &g_space_effect_cache.shards[index];
         if (shard->occupied &&
             space_program_token_eq(shard->program, program) &&
+            shard->language == language &&
             space_program_token_matches_live_space(
                 shard->program, space)) {
             return shard;
@@ -7107,6 +7119,7 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
                reusable->cap * sizeof(*reusable->entries));
     }
     reusable->program = program;
+    reusable->language = language;
     reusable->len = 0u;
     reusable->occupied = true;
     return reusable;
@@ -7258,15 +7271,25 @@ static bool space_effect_node_add_dependency(
     return true;
 }
 
+/* One term the walk analyzes.  A matched term is (part of) an operand an
+ * instruction compares with a pattern: its structure is not a call, while
+ * the calls in it count, as a binding may carry them where they are
+ * evaluated. */
+typedef struct {
+    Atom *term;
+    bool matched;
+} SpaceEffectScanItem;
+
 /* Push one term to analyze onto the walk's stack, growing it off the
  * inline array when full. */
-static bool space_effect_stack_push(Atom ***stack, size_t *len, size_t *cap,
-                                    Atom **inline_stack, Atom *term) {
+static bool space_effect_stack_push(
+    SpaceEffectScanItem **stack, size_t *len, size_t *cap,
+    SpaceEffectScanItem *inline_stack, Atom *term, bool matched) {
     if (*len == *cap) {
         if (*cap > SIZE_MAX / 2u || *cap * 2u > SIZE_MAX / sizeof(**stack))
             return false;
         size_t next_cap = *cap * 2u;
-        Atom **next = *stack == inline_stack
+        SpaceEffectScanItem *next = *stack == inline_stack
             ? malloc(sizeof(*next) * next_cap)
             : realloc(*stack, sizeof(*next) * next_cap);
         if (!next)
@@ -7276,22 +7299,45 @@ static bool space_effect_stack_push(Atom ***stack, size_t *len, size_t *cap,
         *stack = next;
         *cap = next_cap;
     }
-    (*stack)[(*len)++] = term;
+    (*stack)[(*len)++] = (SpaceEffectScanItem){
+        .term = term,
+        .matched = matched,
+    };
     return true;
 }
 
+/* HE reads a call of a macro definition as what it evaluates: the
+ * arguments evaluated before the call, and the body its expansion runs
+ * (he_macro_expansion.h).  The evaluator provides the expansion; a space
+ * linked without it reads every call as written. */
+bool he_macro_effect_expansion(Space *space, Arena *arena, Atom *call,
+                               Atom **evaluated, uint32_t capacity,
+                               uint32_t *evaluated_count, Atom **body_out)
+    __attribute__((weak));
+
+enum {
+    SPACE_EFFECT_MAX_EXPANSIONS = 64u,
+    SPACE_EFFECT_MAX_EXPANSION_ARITY = 64u,
+};
+
 static bool space_effect_scan_rhs(
     SpaceEffectGraph *graph, size_t node_index, Atom *root) {
-    Atom *inline_stack[32];
-    Atom **stack = inline_stack;
+    SpaceEffectScanItem inline_stack[32];
+    SpaceEffectScanItem *stack = inline_stack;
     size_t len = 0u;
     size_t cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    Arena expansions;
+    bool expansions_live = false;
+    uint32_t expansion_count = 0u;
+    bool ok = true;
+    bool he_language = space_effect_language() == CETTA_LANGUAGE_HE;
 
     if (!root)
         return false;
-    stack[len++] = root;
+    stack[len++] = (SpaceEffectScanItem){.term = root, .matched = false};
     while (len > 0u) {
-        Atom *current = stack[--len];
+        SpaceEffectScanItem item = stack[--len];
+        Atom *current = item.term;
         if (!current || current->kind != ATOM_EXPR ||
             current->expr.len == 0u) {
             continue;
@@ -7302,6 +7348,59 @@ static bool space_effect_scan_rhs(
          * operand and cannot change the authored control's effect. */
         CettaExprLen authored_len = atom_authored_len(current);
         Atom *head = current->expr.elems[0];
+        if (item.matched && (!head || head->kind != ATOM_SYMBOL)) {
+            for (CettaExprIndex i = 0u; ok && i < current->expr.len; i++) {
+                Atom *child = current->expr.elems[i];
+                if (child && child->kind == ATOM_EXPR)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, child, true);
+            }
+            if (!ok)
+                break;
+            continue;
+        }
+        if (head && head->kind == ATOM_SYMBOL && he_macro_effect_expansion &&
+            expansion_count < SPACE_EFFECT_MAX_EXPANSIONS) {
+            if (!expansions_live) {
+                arena_init_detached(&expansions);
+                expansions_live = true;
+            }
+            Atom *evaluated[SPACE_EFFECT_MAX_EXPANSION_ARITY];
+            uint32_t evaluated_count = 0u;
+            Atom *body = NULL;
+            if (he_macro_effect_expansion(
+                    graph->space, &expansions, current, evaluated,
+                    SPACE_EFFECT_MAX_EXPANSION_ARITY, &evaluated_count,
+                    &body)) {
+                expansion_count++;
+                for (uint32_t i = 0u; ok && i < evaluated_count; i++)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, evaluated[i],
+                        false);
+                if (ok)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, body, false);
+                if (!ok)
+                    break;
+                continue;
+            }
+        }
+        /* A tuple headed by a value or an expression reduces only through
+         * an equation without a head symbol; where there is none, its
+         * evaluation is its elements' (its head among them).  A variable
+         * head may name any head once it holds a value. */
+        if (head && head->kind != ATOM_SYMBOL && head->kind != ATOM_VAR &&
+            !space_equations_may_match_unnamed_head(graph->space)) {
+            for (CettaExprIndex i = 0u; ok && i < current->expr.len; i++) {
+                Atom *child = current->expr.elems[i];
+                if (child && child->kind == ATOM_EXPR)
+                    ok = space_effect_stack_push(
+                        &stack, &len, &cap, inline_stack, child, false);
+            }
+            if (!ok)
+                break;
+            continue;
+        }
         if (!head || head->kind != ATOM_SYMBOL) {
             graph->nodes[node_index].base_effect =
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
@@ -7325,9 +7424,8 @@ static bool space_effect_scan_rhs(
                 !grounded && defined && !sequence &&
                 !space_effect_node_add_dependency(
                     graph, node_index, atom_symbol_current_id(head))) {
-                if (stack != inline_stack)
-                    free(stack);
-                return false;
+                ok = false;
+                break;
             }
             if (cetta_gslt_query_effect_children_opaque(
                     atom_symbol_current_id(head), &g_builtin_syms)) {
@@ -7346,6 +7444,18 @@ static bool space_effect_scan_rhs(
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN)
                 continue;
             Atom *child = current->expr.elems[i];
+            if (head && head->kind == ATOM_SYMBOL && child &&
+                child->kind == ATOM_EXPR &&
+                cetta_gslt_query_effect_operand_matched(
+                    atom_symbol_current_id(head), current->expr.len - 1u, i - 1u,
+                    he_language, &g_builtin_syms)) {
+                if (!space_effect_stack_push(&stack, &len, &cap,
+                                             inline_stack, child, true)) {
+                    ok = false;
+                    break;
+                }
+                continue;
+            }
             /* Pattern pairs evaluate only their values; a malformed pair
              * leaves the form to the evaluator, so its effect is unknown. */
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS) {
@@ -7365,27 +7475,32 @@ static bool space_effect_scan_rhs(
                     Atom *value = pair->expr.elems[1];
                     if (value && value->kind == ATOM_EXPR &&
                         !space_effect_stack_push(&stack, &len, &cap,
-                                                 inline_stack, value)) {
-                        if (stack != inline_stack)
-                            free(stack);
-                        return false;
+                                                 inline_stack, value,
+                                                 false)) {
+                        ok = false;
+                        break;
                     }
                 }
+                if (!ok)
+                    break;
                 continue;
             }
             if (!child || child->kind != ATOM_EXPR)
                 continue;
             if (!space_effect_stack_push(&stack, &len, &cap,
-                                         inline_stack, child)) {
-                if (stack != inline_stack)
-                    free(stack);
-                return false;
+                                         inline_stack, child, false)) {
+                ok = false;
+                break;
             }
         }
+        if (!ok)
+            break;
     }
     if (stack != inline_stack)
         free(stack);
-    return true;
+    if (expansions_live)
+        arena_free(&expansions);
+    return ok;
 }
 
 static bool space_effect_scan_node(
@@ -7621,7 +7736,7 @@ static void ty_ann_index_rebuild(Space *s) {
     ty_ann_index_free(&s->native.ty_idx);
     ty_ann_index_init(&s->native.ty_idx);
     for (CettaIndex i = 0; i < s->native.len; i++) {
-        AtomId atom_id = space_get_atom_id_at64(s, i);
+        AtomId atom_id = space_local_get_atom_id_at64(s, i);
         ty_ann_index_note_row(&s->native.ty_idx, s, atom_id);
         AtomId subject_id = CETTA_ATOM_ID_NONE;
         AtomId type_id = CETTA_ATOM_ID_NONE;
@@ -10779,6 +10894,11 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol_literal(a, "Tensor");
     case GV_FOREIGN:
         return atom_symbol_literal(a, "Foreign");
+    case GV_SEAL: {
+        /* Sealed, SealFacet or Key: the kind of authority, never its brand. */
+        const char *name = atom_seal_type_name(atom);
+        return name ? atom_symbol(a, name) : atom_undefined_type(a);
+    }
     case GV_TERM_GRAPH:
         /* A rational term is a list or a compound term: an expression. */
         return atom_symbol_literal(a, "Expression");
@@ -10940,38 +11060,207 @@ static void space_annotated_types_append(SpaceAnnotatedTypes *list,
     list->types[list->count++] = type;
 }
 
-/* One member of a type lookup: the space's own declarations, then, unless
- * `own_only`, the ones it holds as imported atoms.  False when allocation
- * fails. */
+/* An inherited row keeps its source coordinate until every enclosing view
+ * has checked its ceiling and removals. Filtering candidates first would
+ * turn a removal coordinate into the rank of a different declaration. */
+typedef struct SpaceDeclarationView {
+    const Space *overlay;
+    const struct SpaceDeclarationView *outer;
+} SpaceDeclarationView;
+
+static bool space_declaration_row_visible(const SpaceDeclarationView *view,
+        CettaIndex coordinate, CettaIndex first, CettaIndex end) {
+    for (; view; view = view->outer) {
+        const Space *overlay = view->overlay;
+        if (overlay->module_own_view) {
+            CettaIndex imported = space_imported_length(overlay->overlay_base);
+            if (coordinate < imported)
+                return false;
+            coordinate -= imported;
+        } else {
+            if (coordinate >= overlay->overlay_base_visible_len)
+                return false;
+            CettaIndex removed = space_overlay_removed_lower_bound(overlay, coordinate);
+            if (removed < overlay->overlay_removed_base_len &&
+                overlay->overlay_removed_base_indices[removed] == coordinate)
+                return false;
+            coordinate -= removed;
+        }
+    }
+    return first <= coordinate && coordinate < end;
+}
+
+typedef enum {
+    SPACE_DECLARATION_NEXT,
+    SPACE_DECLARATION_STOP,
+    SPACE_DECLARATION_FAILED,
+} SpaceDeclarationVisit;
+
+typedef SpaceDeclarationVisit (*SpaceDeclarationVisitor)(
+    Space *source, AtomId annotation, void *context);
+
+/* Read an ordered projection of the existing local declaration indexes.
+ * Indexes, atom ids and universes stay with their physical source; only
+ * occurrence coordinates pass through the enclosing view. The caller holds
+ * the same shared transition as a canonical composed-space read. */
+static SpaceDeclarationVisit space_visit_declarations(
+        Space *s, SymbolId head, const SpaceDeclarationView *outer,
+        CettaIndex first, CettaIndex end, SpaceDeclarationVisitor visit,
+        void *context, SpaceDeclaredTypeLookupCost *cost) {
+    if (!s || first >= end)
+        return SPACE_DECLARATION_NEXT;
+    CettaCount offset = 0u;
+    if (space_has_overlay_base(s)) {
+        SpaceDeclarationView inherited = {.overlay = s, .outer = outer};
+        SpaceDeclarationVisit result = space_visit_declarations(
+            (Space *)s->overlay_base, head, &inherited, first, end,
+            visit, context, cost);
+        if (result != SPACE_DECLARATION_NEXT)
+            return result;
+        offset = space_overlay_visible_base_count(s);
+        if (space_local_length64(s) == 0u)
+            return SPACE_DECLARATION_NEXT;
+    }
+    ensure_ty_ann_index(s);
+    if (s->native.ty_idx_dirty) {
+        /* An unavailable accelerator leaves the canonical local rows in
+         * charge; it cannot manufacture an empty declaration answer. */
+        CettaCount local_len = space_local_length64(s);
+        for (CettaIndex i = 0u; i < local_len; i++) {
+            if (!space_declaration_row_visible(outer, offset + i, first, end))
+                continue;
+            if (cost)
+                cost->full_space_rows_examined++;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_FULL_SCAN_ROW);
+            SpaceDeclarationVisit result = visit(
+                s, space_local_get_atom_id_at64(s, i), context);
+            if (result != SPACE_DECLARATION_NEXT)
+                return result;
+        }
+        return SPACE_DECLARATION_NEXT;
+    }
+    if (cost)
+        cost->indexed_lookups++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
+    const SpaceHeadChains *index = &s->native.ty_idx.rows;
+    const SpaceHeadChain *chain = space_head_chains_find(index, head);
+    for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         i != SPACE_HEAD_CHAIN_END; i = index->next[i]) {
+        if (!space_declaration_row_visible(
+                outer, offset + index->atom_indices[i], first, end))
+            continue;
+        if (cost)
+            cost->indexed_rows_examined++;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_ROW);
+        SpaceDeclarationVisit result = visit(s,
+            space_indexed_occurrence_atom_id(s, index->atom_indices, index->atom_ids, i),
+            context);
+        if (result != SPACE_DECLARATION_NEXT)
+            return result;
+    }
+    return SPACE_DECLARATION_NEXT;
+}
+
+typedef struct {
+    Arena *arena;
+    Atom *subject;
+    SpaceAnnotatedTypes *list;
+    CettaTypeInferenceBudget *budget;
+    bool as_stored;
+} SpaceDeclaredTypeRead;
+
+static SpaceDeclarationVisit space_read_declared_type(
+        Space *source, AtomId annotation_id, void *context) {
+    SpaceDeclaredTypeRead *read = context;
+    SpaceAnnotatedTypes *list = read->list;
+    if (!type_inference_step(read->budget, 1)) {
+        list->stopped = true;
+        return SPACE_DECLARATION_STOP;
+    }
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    AtomId subject_id = CETTA_ATOM_ID_NONE, type_id = CETTA_ATOM_ID_NONE;
+    if (space_type_annotation_child_ids_at_id(source, annotation_id, &subject_id, &type_id)) {
+        if (term_universe_atom_id_eq(source->native.universe, subject_id, read->subject)) {
+            CettaFrameIdentity identity = 0u;
+            if (!read->as_stored && tu_has_vars(source->native.universe, type_id) &&
+                !cetta_frame_identity_scope_try(&frame_identity_scope, &identity))
+                return SPACE_DECLARATION_FAILED;
+            Atom *copy = identity
+                ? term_universe_copy_atom_epoch(source->native.universe, read->arena, type_id, identity)
+                : term_universe_copy_atom(source->native.universe, read->arena, type_id);
+            if (!copy)
+                return SPACE_DECLARATION_FAILED;
+            if (!type_inference_can_add(read->budget, list->count)) {
+                list->stopped = true;
+                return SPACE_DECLARATION_STOP;
+            }
+            space_annotated_types_append(list, copy);
+            return SPACE_DECLARATION_NEXT;
+        }
+    }
+    Atom *annotation = term_universe_get_atom(source->native.universe, annotation_id);
+    if (!annotation || annotation->kind != ATOM_EXPR || annotation->expr.len != 3u ||
+        !atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon) ||
+        !atom_eq(annotation->expr.elems[1], read->subject))
+        return SPACE_DECLARATION_NEXT;
+    if (!type_inference_can_add(read->budget, list->count)) {
+        list->stopped = true;
+        return SPACE_DECLARATION_STOP;
+    }
+    Atom *type = annotation->expr.elems[2];
+    Atom *copy = read->as_stored ? type : atom_has_vars(type)
+        ? cetta_instantiate_frame_syntax(read->arena, type)
+        : atom_deep_copy_shared(read->arena, type);
+    if (!copy)
+        return SPACE_DECLARATION_FAILED;
+    space_annotated_types_append(list, copy);
+    return SPACE_DECLARATION_NEXT;
+}
+
+/* One member of a type lookup: own declarations before imported atoms.
+ * Explicit row-work observers retain the canonical scan of an overlay,
+ * including its debits for rows which the index would exclude. */
 static inline __attribute__((always_inline)) bool
 space_member_annotated_types(
         Space *s, Arena *a, Atom *atom, SpaceAnnotatedTypes *list,
         CettaTypeInferenceBudget *budget,
         SpaceDeclaredTypeLookupCost *cost, bool own_only, bool as_stored) {
-    if (space_has_overlay_base(s) || !declared_type_index_enabled()) {
-        CettaCount logical_len = space_length64(s);
-        CettaIndex imported = space_imported_length(s);
-        if (imported > logical_len)
-            imported = 0u;
-        int passes = own_only || imported == 0u ? 1 : 2;
-        for (int pass = 0; pass < passes && !list->stopped; pass++)
-        for (CettaIndex i = pass == 0 ? imported : 0u;
-             i < (pass == 0 ? logical_len : imported); i++) {
+    if (!s)
+        return true;
+    CettaCount logical_len = space_length64(s);
+    CettaIndex imported = space_imported_length(s);
+    if (imported > logical_len)
+        imported = 0u;
+    int passes = own_only || imported == 0u ? 1 : 2;
+    SpaceDeclaredTypeRead read = {.arena = a, .subject = atom, .list = list,
+        .budget = budget, .as_stored = as_stored};
+    bool scan = !declared_type_index_enabled() ||
+        (space_has_overlay_base(s) && budget && budget->steps_limited);
+    for (int pass = 0; pass < passes && !list->stopped; pass++) {
+        CettaIndex first = pass == 0 ? imported : 0u;
+        CettaIndex end = pass == 0 ? logical_len : imported;
+        if (!scan) {
+            SpaceDeclarationVisit result = space_visit_declarations(
+                s, ty_ann_subject_head(atom), NULL, first, end,
+                space_read_declared_type, &read, cost);
+            if (result == SPACE_DECLARATION_FAILED)
+                return false;
+            continue;
+        }
+        for (CettaIndex i = first; i < end; i++) {
             if (cost)
                 cost->full_space_rows_examined++;
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_DECLARED_TYPE_FULL_SCAN_ROW);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_FULL_SCAN_ROW);
+            /* Use the logical row's owner here: an overlay's inherited id
+             * need not belong to the local universe of a selected module. */
             if (!type_inference_step(budget, 1)) {
                 list->stopped = true;
                 break;
             }
             Atom *annotation = space_get_at64(s, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3)
-                continue;
-            if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
-                continue;
-            if (!atom_eq(annotation->expr.elems[1], atom))
+            if (!annotation || annotation->kind != ATOM_EXPR || annotation->expr.len != 3u ||
+                !atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon) ||
+                !atom_eq(annotation->expr.elems[1], atom))
                 continue;
             if (!type_inference_can_add(budget, list->count)) {
                 list->stopped = true;
@@ -10979,86 +11268,11 @@ space_member_annotated_types(
             }
             Atom *type = annotation->expr.elems[2];
             Atom *copy = as_stored ? type : atom_has_vars(type)
-                ? cetta_instantiate_frame_syntax(a, type)
-                : atom_deep_copy_shared(a, type);
+                ? cetta_instantiate_frame_syntax(a, type) : atom_deep_copy_shared(a, type);
             if (!copy)
                 return false;
             space_annotated_types_append(list, copy);
         }
-        return true;
-    }
-    /* Use type annotation index for O(bucket_size) instead of O(N) */
-    ensure_ty_ann_index(s);
-    if (cost)
-        cost->indexed_lookups++;
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
-    const SpaceHeadChains *index = &s->native.ty_idx.rows;
-    const SpaceHeadChain *chain =
-        space_head_chains_find(index, ty_ann_subject_head(atom));
-    if (!chain || chain->count == 0u)
-        return true;
-    CettaIndex imported = s->imported_len;
-    int passes = own_only || imported == 0u ? 1 : 2;
-    /* The space's own declarations precede imported ones. */
-    for (int pass = 0; pass < passes && !list->stopped; pass++)
-    for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END; i = index->next[i]) {
-        if (imported != 0u &&
-            (index->atom_indices[i] < imported) != (pass == 1))
-            continue;
-        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-        if (cost)
-            cost->indexed_rows_examined++;
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_ROW);
-        if (!type_inference_step(budget, 1)) {
-            list->stopped = true;
-            break;
-        }
-        AtomId annotation_id = space_indexed_occurrence_atom_id(
-            s, index->atom_indices, index->atom_ids, i);
-        AtomId subject_id = CETTA_ATOM_ID_NONE;
-        AtomId type_id = CETTA_ATOM_ID_NONE;
-        if (space_type_annotation_child_ids_at_id(s, annotation_id,
-                                                  &subject_id, &type_id)) {
-            if (term_universe_atom_id_eq(s->native.universe, subject_id, atom)) {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                CettaFrameIdentity identity = 0u;
-                if (!as_stored && tu_has_vars(s->native.universe, type_id) &&
-                    !cetta_frame_identity_scope_try(&frame_identity_scope, &identity))
-                    return false;
-                Atom *type_copy = identity
-                    ? term_universe_copy_atom_epoch(s->native.universe, a, type_id, identity)
-                    : term_universe_copy_atom(s->native.universe, a, type_id);
-                if (!type_copy)
-                    return false;
-                if (!type_inference_can_add(budget, list->count)) {
-                    list->stopped = true;
-                    break;
-                }
-                space_annotated_types_append(list, type_copy);
-                continue;
-            }
-        }
-        Atom *annotation = space_indexed_occurrence_atom(
-            s, index->atom_indices, index->atom_ids, i);
-        if (!annotation || annotation->kind != ATOM_EXPR || annotation->expr.len != 3)
-            continue;
-        if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
-            continue;
-        if (!atom_eq(annotation->expr.elems[1], atom))
-            continue;
-        if (!type_inference_can_add(budget, list->count)) {
-            list->stopped = true;
-            break;
-        }
-        Atom *type = annotation->expr.elems[2];
-        Atom *copy = as_stored ? type : atom_has_vars(type)
-            ? cetta_instantiate_frame_syntax(a, type)
-            : atom_deep_copy_shared(a, type);
-        if (!copy)
-            return false;
-        space_annotated_types_append(list, copy);
     }
     return true;
 }
@@ -13309,77 +13523,51 @@ static bool prepared_register_compile_guarded_step(
     return true;
 }
 
-/* Whether one member of a composed read declares `head` with an arrow type
- * of the call arity: the space's declarations, or with `own_only` those that
- * are not imported atoms. */
+typedef struct {
+    SymbolId head;
+    CettaExprLen arity;
+    bool found;
+} SpaceArrowSignatureRead;
+
+static SpaceDeclarationVisit space_read_arrow_signature(
+        Space *source, AtomId annotation_id, void *context) {
+    SpaceArrowSignatureRead *read = context;
+    AtomId subject_id = CETTA_ATOM_ID_NONE, type_id = CETTA_ATOM_ID_NONE;
+    if (space_type_annotation_child_ids_at_id(source, annotation_id, &subject_id, &type_id) &&
+        tu_hdr(source->native.universe, subject_id) &&
+        tu_kind(source->native.universe, subject_id) == ATOM_SYMBOL &&
+        tu_sym(source->native.universe, subject_id) == read->head &&
+        tu_hdr(source->native.universe, type_id) &&
+        tu_kind(source->native.universe, type_id) == ATOM_EXPR &&
+        tu_arity(source->native.universe, type_id) == (CettaExprLen)(read->arity + 2u) &&
+        tu_head_sym(source->native.universe, type_id) == g_builtin_syms.arrow) {
+        read->found = true;
+        return SPACE_DECLARATION_STOP;
+    }
+    Atom *annotation = term_universe_get_atom(source->native.universe, annotation_id);
+    if (!annotation || annotation->kind != ATOM_EXPR || annotation->expr.len != 3u ||
+        !atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon) ||
+        !atom_is_symbol_id(annotation->expr.elems[1], read->head))
+        return SPACE_DECLARATION_NEXT;
+    Atom *type = annotation->expr.elems[2];
+    if (type && type->kind == ATOM_EXPR && type->expr.len == (CettaExprLen)(read->arity + 2u) &&
+        atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+        read->found = true;
+        return SPACE_DECLARATION_STOP;
+    }
+    return SPACE_DECLARATION_NEXT;
+}
+
+/* Exact type lookup and arrow presence share the same ordered declaration
+ * view. Presence can stop at its first witness without copying the type. */
 static bool space_member_has_arrow_signature(Space *s, SymbolId head,
                                              CettaExprLen arity,
                                              bool own_only) {
-    if (space_has_overlay_base(s)) {
-        CettaCount logical_len = space_length64(s);
-        for (CettaIndex i = own_only ? space_imported_length(s) : 0u;
-             i < logical_len; i++) {
-            Atom *annotation = space_get_at64(s, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
-                continue;
-            }
-            Atom *type = annotation->expr.elems[2];
-            if (type && type->kind == ATOM_EXPR &&
-                type->expr.len == (CettaExprLen)(arity + 2u) &&
-                atom_is_symbol_id(type->expr.elems[0],
-                                  g_builtin_syms.arrow)) {
-                return true;
-            }
-        }
-    } else {
-        ensure_ty_ann_index(s);
-        const SpaceHeadChains *index = &s->native.ty_idx.rows;
-        const SpaceHeadChain *chain = space_head_chains_find(index, head);
-        for (uint32_t i = chain ? chain->first : SPACE_HEAD_CHAIN_END;
-             i != SPACE_HEAD_CHAIN_END; i = index->next[i]) {
-            if (own_only && index->atom_indices[i] < s->imported_len)
-                continue;
-            AtomId annotation_id = space_indexed_occurrence_atom_id(
-                s, index->atom_indices, index->atom_ids, i);
-            AtomId subject_id = CETTA_ATOM_ID_NONE;
-            AtomId type_id = CETTA_ATOM_ID_NONE;
-            if (space_type_annotation_child_ids_at_id(
-                    s, annotation_id, &subject_id, &type_id) &&
-                tu_hdr(s->native.universe, subject_id) &&
-                tu_kind(s->native.universe, subject_id) == ATOM_SYMBOL &&
-                tu_sym(s->native.universe, subject_id) == head &&
-                tu_hdr(s->native.universe, type_id) &&
-                tu_kind(s->native.universe, type_id) == ATOM_EXPR &&
-                tu_arity(s->native.universe, type_id) ==
-                    (CettaExprLen)(arity + 2u) &&
-                tu_head_sym(s->native.universe, type_id) ==
-                    g_builtin_syms.arrow) {
-                return true;
-            }
-
-            Atom *annotation = space_indexed_occurrence_atom(
-                s, index->atom_indices, index->atom_ids, i);
-            if (!annotation || annotation->kind != ATOM_EXPR ||
-                annotation->expr.len != 3u ||
-                !atom_is_symbol_id(annotation->expr.elems[0],
-                                   g_builtin_syms.colon) ||
-                !atom_is_symbol_id(annotation->expr.elems[1], head)) {
-                continue;
-            }
-            Atom *type = annotation->expr.elems[2];
-            if (type && type->kind == ATOM_EXPR &&
-                type->expr.len == (CettaExprLen)(arity + 2u) &&
-                atom_is_symbol_id(type->expr.elems[0],
-                                  g_builtin_syms.arrow)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    SpaceArrowSignatureRead read = {.head = head, .arity = arity};
+    (void)space_visit_declarations(s, head, NULL,
+        own_only ? space_imported_length(s) : 0u, space_length64(s),
+        space_read_arrow_signature, &read, NULL);
+    return read.found;
 }
 
 /* A declared arrow signature at the call arity hands the head to the
@@ -13501,6 +13689,13 @@ bool space_head_declares_type(Space *s, SymbolId head) {
             return true;
     }
     return false;
+}
+
+bool space_head_call_untyped(Space *s, SymbolId head, CettaExprLen arity) {
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE)
+        return !space_head_declares_type(s, head);
+    return !space_head_has_arrow_signature(s, head, arity);
 }
 
 static bool space_prepare_single_equation_uncached(

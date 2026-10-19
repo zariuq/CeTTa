@@ -145,11 +145,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=Path)
     parser.add_argument('--stats', action='store_true')
+    parser.add_argument("--gmp", choices=("0", "1"), default="1")
     args = parser.parse_args()
     binary = args.binary.resolve()
     failures = []
     with tempfile.TemporaryDirectory(prefix="owned-consumers-", dir="runtime") as directory:
         for name, language, text, expected, expected_exit in CASES:
+            if name == 'numeric-overflow' and args.gmp == '0':
+                if language == 'he':
+                    expected = '[3]\n[(Error (+ (Error (+ 9223372036854775807 1) BigintArithmeticUnavailable) 2) (BadArgType 1 Number ErrorType))]\n'
+                else:
+                    expected, expected_exit = '', 2
             source = Path(directory) / (name + "-" + language + ".metta")
             source.write_text(text)
             command = [str(binary), "--lang", language, "--profile", "extended"]
@@ -161,6 +167,9 @@ def main():
                 failures.append((name, language, result.returncode, result.stdout, result.stderr))
             elif expected_exit and "uncaught PeTTa error:" not in result.stderr:
                 failures.append((name, language, "missing fault", result.stderr))
+            elif name == 'numeric-overflow' and args.gmp == '0' and language == 'petta' and \
+                    'BigintArithmeticUnavailable' not in result.stderr:
+                failures.append((name, language, "missing numeric capability fault", result.stderr))
             if args.stats and (name, language) in OWNED_CAPTURE_ADMISSION:
                 counters = {fields[1]: int(fields[2]) for line in result.stderr.splitlines()
                             if len(fields := line.split()) == 3 and fields[0] == 'runtime-counter'}

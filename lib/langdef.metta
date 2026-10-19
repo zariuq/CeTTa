@@ -160,11 +160,38 @@
 (: __cetta_lib_parser_parse_file (-> %Undefined% String Atom))
 (: __cetta_lib_parser_info (-> %Undefined% Atom))
 (: langdef:parser-parse-text (-> %Undefined% %Undefined% Atom))
+(: __cetta_lib_parser_parse_text_forest (-> %Undefined% String %Undefined% Atom))
+(: langdef:parser-parse-text-forest (-> %Undefined% %Undefined% %Undefined% Atom))
+(: ParserSelectionV1 (-> Atom Atom))
+(: ParserRejectFollowingClassV1 (-> Atom Atom Atom))
+(: ParserSelectionObligationV1 (-> Atom Atom Atom))
+(: __cetta_lib_parser_parse_text_forest_selected (-> %Undefined% String Atom %Undefined% Atom))
+(: langdef:parser-parse-text-forest-selected (-> %Undefined% %Undefined% Atom %Undefined% Atom))
+(: __cetta_lib_parser_parse_text_selected (-> %Undefined% String Atom Atom))
+(: langdef:parser-parse-text-selected (-> %Undefined% %Undefined% Atom Atom))
 (: langdef:parser-parse-file (-> %Undefined% %Undefined% Atom))
 (: langdef:parser-info (-> %Undefined% Atom))
 (= (langdef:parser-parse-text $handle $text)
    (function
      (chain (eval (__cetta_lib_parser_parse_text $handle $text))
+       $result (return $result))))
+; Retain the existing complete packed forest alongside the ordinary result.
+; This is evidence generation, not the separate GLL/GLR agreement audit.
+(= (langdef:parser-parse-text-forest $handle $text $item-limit)
+   (function
+     (chain (eval (__cetta_lib_parser_parse_text_forest $handle $text $item-limit))
+       $result (return $result))))
+; Select derivation families before expanding their semantic child products.
+; The returned packed forest remains the complete, unselected parse evidence.
+(= (langdef:parser-parse-text-forest-selected $handle $text $selection $item-limit)
+   (function
+     (chain (eval (__cetta_lib_parser_parse_text_forest_selected $handle $text $selection $item-limit))
+       $result (return $result))))
+; The same selected observation without serializing successful parse evidence.
+; Unresolved selections and grammar diagnostics retain their original forest.
+(= (langdef:parser-parse-text-selected $handle $text $selection)
+   (function
+     (chain (eval (__cetta_lib_parser_parse_text_selected $handle $text $selection))
        $result (return $result))))
 (= (langdef:parser-parse-file $handle $path)
    (function

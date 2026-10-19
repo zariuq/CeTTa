@@ -2,6 +2,7 @@
 #define CETTA_LIBRARY_H
 
 #include "atom.h"
+#include "native/native_modules.h"
 #include "call_outcome.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
@@ -19,7 +20,6 @@
 typedef struct ResultSet ResultSet;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
-#define CETTA_MAX_NATIVE_HANDLES 64
 
 typedef struct {
     char display_name[PATH_MAX];
@@ -158,7 +158,7 @@ typedef struct CettaLibraryContext {
     bool parser_cache_mutex_ready;
     struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
-    uint32_t active_mask;
+    CettaLibraryMask active_mask;
     char root_dir[4096];
     char working_dir[PATH_MAX];
     char script_path[PATH_MAX];
@@ -215,8 +215,7 @@ typedef struct CettaLibraryContext {
         char resource_dir[PATH_MAX];
     } *retired_modules;
     uint32_t retired_module_len, retired_module_cap;
-    CettaNativeHandleSlot native_handles[CETTA_MAX_NATIVE_HANDLES];
-    uint32_t native_handle_len;
+    CettaNativeHandleRegistry *native_handle_registry;
     uint64_t native_handle_next_id;
     SymbolId *petta_translator_rules;
     uint32_t petta_translator_rule_len;

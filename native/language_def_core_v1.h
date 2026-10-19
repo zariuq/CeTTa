@@ -170,6 +170,11 @@ typedef struct {
     uint32_t param_len;
     CettaLdSyntaxItemListV1 syntax_pattern;
     CettaLdOptionalTermEvalPolicyV1 eval_policy;
+    struct {
+        bool present;
+        bool flatten;
+        CettaLdOptionalTextV1 unit;
+    } algebra;
 } CettaLdGrammarRuleV1;
 
 typedef struct CettaLdPatternV1 CettaLdPatternV1;
@@ -241,7 +246,8 @@ typedef enum {
     CETTA_LD_PREMISE_FRESHNESS_V1 = 0,
     CETTA_LD_PREMISE_CONGRUENCE_V1,
     CETTA_LD_PREMISE_RELATION_QUERY_V1,
-    CETTA_LD_PREMISE_FOR_ALL_V1
+    CETTA_LD_PREMISE_FOR_ALL_V1,
+    CETTA_LD_PREMISE_SCOPED_STEP_V1
 } CettaLdPremiseKindV1;
 
 struct CettaLdPremiseV1 {
@@ -264,6 +270,12 @@ struct CettaLdPremiseV1 {
             CettaLdTextV1 parameter;
             CettaLdPremiseV1 *body;
         } for_all;
+        struct {
+            CettaLdTypeExprV1 *binders;
+            uint32_t binder_len;
+            CettaLdTypeExprV1 result_type;
+            CettaLdPatternV1 source, target;
+        } scoped_step;
     } as;
 };
 
@@ -272,6 +284,32 @@ typedef struct {
     CettaLdTypeExprV1 type;
 } CettaLdTypeBindingV1;
 
+/* Naturals are decimal strings, as for bound indices: ingress does not
+ * impose a machine-word bound on the finite mathematical presentation. */
+typedef struct {
+    CettaLdTextV1 name;
+    CettaLdTypeExprV1 *sorts;
+    uint32_t sort_len;
+} CettaLdRuleDependencyV1;
+
+typedef struct {
+    CettaLdTextV1 name;
+    enum { CETTA_LD_RULE_LEFT_V1, CETTA_LD_RULE_RIGHT_V1,
+           CETTA_LD_RULE_PREMISE_V1 } site;
+    char *premise_index, *quantifiers, *argument;
+    char **path;
+    uint32_t path_len;
+    CettaLdPatternListV1 arguments;
+} CettaLdRuleOccurrenceV1;
+
+typedef struct {
+    bool present;
+    CettaLdRuleDependencyV1 *dependencies;
+    uint32_t dependency_len;
+    CettaLdRuleOccurrenceV1 *occurrences;
+    uint32_t occurrence_len;
+} CettaLdRuleBindingSpecV1;
+
 typedef struct {
     CettaLdTextV1 name;
     CettaLdTypeBindingV1 *type_context;
@@ -279,6 +317,7 @@ typedef struct {
     CettaLdPremiseListV1 premises;
     CettaLdPatternV1 left;
     CettaLdPatternV1 right;
+    CettaLdRuleBindingSpecV1 bindings;
 } CettaLdRelationRuleV1;
 
 typedef struct {

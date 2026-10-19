@@ -546,6 +546,7 @@ static bool parent_copy_episode_admitted(const PrimeNativeControl *control) {
 static void parent_copy_episode_arena(Arena *image, const Arena *source) {
     arena_init_detached(image);
     arena_set_block_capacity(image, source->block_capacity);
+    image->block_growth = source->block_growth;
     arena_set_runtime_kind(image, source->runtime_kind);
     arena_set_scalar_cache(image, source->scalar_cache);
 }

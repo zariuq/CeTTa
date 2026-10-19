@@ -1,0 +1,15 @@
+!(import! &self fs)
+!(import! &self system)
+(= (walk-example:failed $path)
+  (let $owner (fs:walk-open $path)
+    (let $closed (fs:close $owner)
+      (let $space (context-space)
+        (case (_minimal-foldl-llist (LCons tick (LCons tick (LCons tick LNil)))
+            0 $acc $tick
+            (if (< $acc 0) $acc
+              (case (fs:walk-next $owner no-follow ())
+                (((fs:failed $kind $op $failed-path $code $progress $reason)
+                  (let $shown (println! (BatchFaultKind $kind)) -1))
+                 ($unexpected $acc)))) $space)
+          (((return $count) (function (return (BatchStopped $count))))))))))
+!(walk-example:failed (system:arg 0))

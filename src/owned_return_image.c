@@ -77,6 +77,10 @@ static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
     }
     if (leaf->kind != ATOM_GROUNDED)
         return NULL;
+    /* A seal object owns itself: the image's arena holds the same identity,
+     * independently of the producing evaluation. */
+    if (leaf->ground.gkind == GV_SEAL)
+        return atom_seal(arena, leaf->ground.ptr);
     switch (leaf->ground.gkind) {
     case GV_INT:
         if (!(leaf->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
