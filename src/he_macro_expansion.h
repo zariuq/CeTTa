@@ -6,10 +6,10 @@
  * and Expression parameters given an expression) and whose other parameters
  * are %Undefined%: HE evaluates each such other argument before the call.  A
  * call of it means its equation's body with each written argument
- * substituted for its parameter.  Its range is %Undefined% or Expression,
- * and what the body answers is evaluated.  (A range of Atom answers syntax,
- * which HE evaluates wherever a variable later carries it; the machine's
- * values are final, so such a head is not expanded.)
+ * substituted for its parameter.  Where its range is %Undefined% or
+ * Expression, what the body answers is evaluated; where it is Atom, the call
+ * answers that syntax as it is, which a callee whose range is not Atom
+ * evaluates in turn.
  *
  * The prepared machine compiles that body where the call is, and the effect
  * analysis reads what it evaluates, so a library form written as a macro is
@@ -51,11 +51,15 @@ typedef struct {
     /* Its body, each written argument substituted for its parameter. */
     Atom *body;
     HeMacroArgument arguments[HE_MACRO_MAX_ARITY];
+    /* The range is Atom: the call answers its body's syntax unevaluated. */
+    bool answers_syntax;
 } HeMacroExpansion;
 
 /* Whether `call` (a symbol-headed expression) calls a macro definition of
- * `space` under HE, and how it takes each argument. */
-bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments);
+ * `space` under HE, how it takes each argument, and whether it answers
+ * syntax (answers_syntax may be NULL). */
+bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments,
+                        bool *answers_syntax);
 
 /* Expand `call` into `arena` when it calls a macro definition. */
 HeMacroExpandResult he_macro_expand(Space *space, Arena *arena, Atom *call,

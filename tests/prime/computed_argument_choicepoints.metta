@@ -14,8 +14,8 @@
 !(choice:pick (choice:list 2))
 
 ; Unequal syntax below a shared constructor is not WHNF determinacy evidence:
-; the generated single-result machine must decline and preserve the ordinary
-; evaluator's exact answer.
+; every admitted return path must preserve the ordinary evaluator's exact
+; answer. Single-result compiler rejection is checked directly by its unit.
 (= (nested:select (Box A)) first)
 (= (nested:select (Box B)) second)
 !(nested:select (Box B))

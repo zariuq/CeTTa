@@ -32,7 +32,8 @@
   (((item 3 b)) ((item 2 a)) ((item 3 b)) ((item 3 b))))
 
 ; A pure but nonnumeric key may be prepared, but cannot authorize numeric
-; selection.  The ordinary fallback remains responsible for its exact fault.
+; selection. The ordinary fallback remains responsible for its dialect's
+; exact fault; HE and Prime have different error-propagation observations.
 (= (prepared-top-k:bad-key $item)
    nope)
 !(list:retain-top-k-by-number prepared-top-k:bad-key (a b) 1)

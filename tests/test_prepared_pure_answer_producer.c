@@ -2,6 +2,7 @@
 #include "parser.h"
 #include "petta_semantics.h"
 #include "prepared_pure_machine.h"
+#include "stats.h"
 #include "symbol.h"
 
 #include <assert.h>
@@ -354,6 +355,135 @@ static void test_entry_interpretation_precedes_equations(void) {
     }
     entry_projection_mode = CETTA_PREPARED_PURE_PROJECT_SOURCE;
     destroy(&fixture);
+}
+
+/* A completed graph may share inert nodes, but two occurrences of one
+ * suspended call need a virtual cell at publication. Pointer sharing alone
+ * is not that cell; an inert shared parent cannot hide its occurrences. */
+static void test_shared_suspension_publication(void) {
+    const char *equations[] = {
+        "(= (single $x) (Pair $x))",
+        "(= (duplicate $x) (Pair $x $x))",
+        "(= (duplicate-box $x) (let $box (Box $x) (Pair $box $box)))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 3u, "(single seed)");
+    const char *calls[] = {
+        "(single (+ 1 2))",
+        "(duplicate (+ 1 2))",
+        "(duplicate-box (+ 1 2))",
+    };
+    for (size_t i = 0u; i < sizeof(calls) / sizeof(calls[0]); i++) {
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed(
+                &fixture.space, parse(&fixture.source, calls[i]),
+                CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+                atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, false, true,
+                (CettaMatchDecisionSemanticIdentity){
+                    .compiler_identity = cetta_match_decision_compiler_identity(),
+                });
+        assert(program);
+        Atom *answer = NULL;
+        bool completed = cetta_prepared_pure_program_execute_closed(
+            program, &fixture.scratch, 0u, &answer);
+        if (i == 0u) {
+            assert(completed && answer);
+            assert(atom_eq(answer, parse(&fixture.source, "(Pair (+ 1 2))")));
+        } else {
+            assert(!completed);
+        }
+        cetta_prepared_pure_program_free(program);
+    }
+    destroy(&fixture);
+    puts("PASS: shared suspended occurrences require a virtual publication cell");
+}
+
+/* Private single-result execution has its own admission and nursery contract.
+ * A frontend that transports an invocation need not enter the Atom-only ABI
+ * to exercise that compiler or its Need update cells. */
+static void test_closed_need_admission_and_collection(void) {
+    const char *equations[] = {
+        "(= (entry) seed)",
+        "(= (vm-pick (Cons $x $xs)) $x)",
+        "(= (vm-pick (Cons $x (Cons $y $ys))) $y)",
+        "(= (vm-select (Box A)) first)",
+        "(= (vm-select (Box B)) second)",
+        "(= (vm-inc $x) (+ $x 1))",
+        "(= (vm-add $x $y) (+ $x $y))",
+        "(= (vm-twice $x) (vm-add $x $x))",
+        "(= (vm-delay-loop $n $value)"
+        "   (if (== $n 0) $value"
+        "       (vm-delay-loop (- $n 1) (vm-inc $value))))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, sizeof(equations) / sizeof(equations[0]),
+         "(entry)");
+    const char *calls[] = {
+        "(vm-pick (Cons 2 (Cons 1 Nil)))",
+        "(vm-select (Box B))",
+        "(vm-twice (vm-inc 10))",
+        "(vm-delay-loop 4000 0)",
+    };
+    for (size_t i = 0u; i < sizeof(calls) / sizeof(calls[0]); i++) {
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed(
+                &fixture.space, parse(&fixture.source, calls[i]),
+                CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+                atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, false, true,
+                (CettaMatchDecisionSemanticIdentity){
+                    .compiler_identity = cetta_match_decision_compiler_identity(),
+                });
+        if (i < 2u) {
+            assert(!program);
+            continue;
+        }
+        assert(program);
+        Atom *expected = parse(&fixture.source, i == 2u ? "22" : "4000");
+        for (unsigned collect = 0u; collect < 2u; collect++) {
+            Arena scratch;
+            arena_init_detached(&scratch);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            cetta_runtime_stats_reset();
+            cetta_runtime_stats_enable();
+#endif
+            Atom *answer = NULL;
+            assert(cetta_prepared_pure_program_execute_closed(
+                program, &scratch, collect ? 16u * 1024u : 0u, &answer));
+            assert(answer && atom_eq(answer, expected));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_disable();
+            assert(stats.counters[
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_THUNK_MEMO_STORE] > 0u);
+            if (i == 2u)
+                assert(stats.counters[
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_THUNK_MEMO_HIT] > 0u);
+            if (i == 3u) {
+                assert(stats.counters[
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_TAIL_REENTRY] > 0u);
+                if (collect) {
+                    assert(stats.counters[
+                        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_THUNK_PATH_COMPRESSION] > 0u);
+                    assert(stats.counters[
+                        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_GC_COLLECTION] > 0u);
+                    assert(stats.counters[
+                        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_EPHEMERON_RECLAIMED] > 0u);
+                }
+            }
+            assert(stats.counters[
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_THUNK_BLACKHOLE] == 0u);
+#endif
+            arena_free(&scratch);
+        }
+        cetta_prepared_pure_program_free(program);
+    }
+    destroy(&fixture);
+    puts("PASS: private Need compilation refuses ambiguous heads and preserves shared updates across collection");
 }
 
 /* Enabling retained services adds origin tracking, but it must not discard
@@ -3143,6 +3273,8 @@ int main(void) {
     test_allocation_limit_before_construction();
     test_constructor_cost_adapters();
     test_entry_interpretation_precedes_equations();
+    test_shared_suspension_publication();
+    test_closed_need_admission_and_collection();
     test_entry_value_certificate_survives_service_roles();
     test_single_result_projection();
     test_cursor_bounded_continuations();

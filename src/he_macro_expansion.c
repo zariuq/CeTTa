@@ -8,7 +8,10 @@
 
 enum { HE_MINIMAL_FOLD_MAX_DEPTH = 256u };
 
-bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments) {
+bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments,
+                        bool *answers_syntax) {
+    if (answers_syntax)
+        *answers_syntax = false;
     if (!space || !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
         call->expr.len - 1u > HE_MACRO_MAX_ARITY ||
@@ -33,7 +36,9 @@ bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments) {
         types[0]->expr.len == (CettaExprLen)(arity + 2u) &&
         atom_is_symbol_id(types[0]->expr.elems[0], g_builtin_syms.arrow);
     Atom *range = ok ? types[0]->expr.elems[arity + 1u] : NULL;
-    ok = ok && (atom_is_symbol_id(range, g_builtin_syms.undefined_type) ||
+    bool syntax = atom_is_symbol_id(range, g_builtin_syms.atom);
+    ok = ok && (syntax ||
+                atom_is_symbol_id(range, g_builtin_syms.undefined_type) ||
                 atom_is_symbol_id(range, g_builtin_syms.expression));
     bool any_written = false;
     for (CettaExprLen i = 0u; ok && i < arity; i++) {
@@ -59,13 +64,16 @@ bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments) {
     }
     free(types);
     arena_free(&scratch);
+    if (ok && any_written && answers_syntax)
+        *answers_syntax = syntax;
     return ok && any_written;
 }
 
 HeMacroExpandResult he_macro_expand(Space *space, Arena *arena, Atom *call,
                                     HeMacroExpansion *out) {
     if (!arena || !out ||
-        !he_macro_signature(space, call, out->arguments))
+        !he_macro_signature(space, call, out->arguments,
+                            &out->answers_syntax))
         return HE_MACRO_NOT_A_MACRO;
     Atom *equation = space_single_linear_equation(
         space, atom_symbol_current_id(call->expr.elems[0]));

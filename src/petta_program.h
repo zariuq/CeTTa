@@ -459,6 +459,9 @@ bool petta_program_synchronize_space(
  * The Atom callback supplies the completed source/image relation for every
  * ordered row. Plans retain every semantic key field and ordered child; only
  * their two source-specific compiled realization pointers are erased.
+ * Refresh mode is compared too. Enabled refresh compares derived planning
+ * shape and callable-name observations through scalar reads, with VALUE
+ * positions opaque; those constructed roots are not authored Atom-map edges.
  *
  * This provider requires scalar, atom, service and service_release. Service
  * admission reserves temporary bytes before allocation, and release follows

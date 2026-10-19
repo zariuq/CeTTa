@@ -372,9 +372,11 @@ static bool verify_backend(Store *st) {
     free(expected); free(actual);
     cetta_mork_bridge_bytes_free(packet.data,packet.size); return ok;
 }
-static bool atom_same(Atom *left, Atom *right) {
+static bool atom_same(Atom *left, Atom *right, bool *equal) {
     Bytes a = {0}, b = {0};
-    bool ok = wire(left, &a) && wire(right, &b) && same_bytes(a, b);
+    *equal=false;
+    bool ok = wire(left, &a) && wire(right, &b);
+    if (ok) *equal=same_bytes(a,b);
     bytes_free(&a); bytes_free(&b); return ok;
 }
 static bool has_nan(Atom *atom) {
@@ -387,30 +389,43 @@ static bool has_nan(Atom *atom) {
 }
 /* Alpha equality within a term. Ground membership uses the native index;
  * open terms and NaNs use canonical wire spelling, never query unification.
- * IEEE numeric equality cannot establish membership of a NaN's storage key. */
-static Atom *find_equal(Store *st, Atom *atom) {
+ * IEEE numeric equality cannot establish membership of a NaN's storage key.
+ * Failed lookup is distinct from absence: it must never acknowledge a removal
+ * as a successful no-op or admit a second occurrence to a set backend. */
+static bool find_equal(Store *st, Atom *atom, Atom **found) {
+    *found=NULL;
     if (!atom_has_vars(atom) && !has_nan(atom)) {
         /* Exact-index absence is authoritative only for indexable atoms.
          * Immutable tensor leaves use the retained-value fallback. */
-        if (space_atom_is_exact_indexable(atom) && !space_contains_exact(st->space, atom)) return NULL;
+        space_match_backend_clear_error();
+        if (space_atom_is_exact_indexable(atom)) {
+            bool present=space_contains_exact(st->space,atom);
+            if (space_match_backend_last_error_code()!=SPACE_MATCH_BACKEND_ERROR_NONE) return false;
+            if (!present) return true;
+        }
         CettaIndex *indices = NULL;
         CettaIndex n = space_match_candidates64(st->space, atom, &indices);
-        Atom *found = NULL;
-        for (CettaIndex i = 0; i < n && !found; ++i) {
+        bool ok=space_match_backend_last_error_code()==SPACE_MATCH_BACKEND_ERROR_NONE && (!n || indices);
+        for (CettaIndex i = 0; ok && i < n && !*found; ++i) {
             Atom *candidate = space_match_candidate_at64(st->space, indices[i]);
-            if (candidate && atom_same(candidate, atom)) found = candidate;
+            bool equal=false;
+            ok=candidate && atom_same(candidate,atom,&equal);
+            if (ok && equal) *found=candidate;
         }
-        free(indices); return found;
+        free(indices); return ok;
     }
     CettaCount n = space_length64(st->space);
     for (CettaIndex i = 0; i < n; ++i) {
         Atom *candidate = space_get_at64(st->space, i);
-        if (candidate && atom_same(candidate, atom)) return candidate;
+        bool equal=false;
+        if (!candidate || !atom_same(candidate,atom,&equal)) return false;
+        if (equal) { *found=candidate; return true; }
     }
-    return NULL;
+    return true;
 }
 static bool store_add(Store *st, Atom *atom) {
-    bool present=st->engine==SPACE_ENGINE_MORK && find_equal(st,atom);
+    Atom *present=NULL;
+    if (st->engine==SPACE_ENGINE_MORK && !find_equal(st,atom,&present)) return false;
     Bytes b = {0};
     if (!wire(atom, &b)) return false;
     size_t size = b.size;
@@ -423,7 +438,8 @@ static bool store_add(Store *st, Atom *atom) {
     return true;
 }
 static bool store_remove(Store *st, Atom *atom) {
-    Atom *found = find_equal(st, atom);
+    Atom *found=NULL;
+    if (!find_equal(st,atom,&found)) return false;
     if (!found) return true;
     Bytes b = {0};
     if (!wire(found, &b)) return false;
@@ -469,23 +485,28 @@ static Receipt *find_receipt(Service *s, uint32_t uid, const char *id) {
         if (s->receipts[i].uid == uid && !strcmp(s->receipts[i].id,id)) return &s->receipts[i];
     return NULL;
 }
-static bool receipt_fits(Bytes request, Bytes answer) {
-    return request.size <= RECEIPT_BYTES && answer.size <= RECEIPT_BYTES - request.size;
+/* Prepare owned messages before publication. Installation only moves ownership
+ * and evicts old receipts; it cannot fail after the durable decision. Recovery
+ * already owns its decoded messages and uses the same preparation boundary. */
+static bool receipt_prepare(Receipt *r, uint32_t uid, const char *id, Bytes *request, Bytes *answer) {
+    if (request->size > RECEIPT_BYTES || answer->size > RECEIPT_BYTES-request->size)
+        return false;
+    r->uid=uid;
+    snprintf(r->id,sizeof(r->id),"%s",id);
+    r->request=*request; r->reply=*answer;
+    *request=(Bytes){0}; *answer=(Bytes){0};
+    return true;
 }
-static bool remember(Service *s, uint32_t uid, const char *id, Bytes request, Bytes answer) {
-    if (!receipt_fits(request,answer)) return false;
+static void remember(Service *s, Receipt *r) {
+    size_t size=r->request.size+r->reply.size;
     while (s->receipt_count && (s->receipt_count == RECEIPTS ||
-            s->receipt_bytes + request.size + answer.size > RECEIPT_BYTES)) {
+            s->receipt_bytes + size > RECEIPT_BYTES)) {
         s->receipt_bytes -= s->receipts[0].request.size + s->receipts[0].reply.size;
         receipt_free(&s->receipts[0]);
         memmove(s->receipts,s->receipts+1,(--s->receipt_count)*sizeof(*s->receipts));
     }
-    Receipt *r = &s->receipts[s->receipt_count];
-    *r = (Receipt){.uid = uid}; snprintf(r->id,sizeof(r->id),"%s",id);
-    if (!bytes_copy(&r->request,request.data,request.size) ||
-        !bytes_copy(&r->reply,answer.data,answer.size)) { receipt_free(r); return false; }
-    s->receipt_bytes += request.size + answer.size; ++s->receipt_count;
-    return true;
+    s->receipts[s->receipt_count++]=*r;
+    s->receipt_bytes+=size; *r=(Receipt){0};
 }
 static bool write_all(int fd, const void *data, size_t size) {
     const unsigned char *p = data;
@@ -499,9 +520,7 @@ static bool write_all(int fd, const void *data, size_t size) {
 }
 /* Complete records have a bounded length and SHA-256. A short last record is
  * an unsynchronized tail. A complete invalid record fails recovery closed. */
-static bool journal_record(int fd, Atom *record, bool synchronize, uint64_t *written) {
-    Bytes b = {0};
-    if (!wire(record,&b)) return false;
+static bool journal_bytes(int fd, Bytes b, bool synchronize, uint64_t *written) {
     unsigned char header[72] = {'C','S','L','1'};
     for (size_t i = 0; i < 4; ++i) header[4+i] = (unsigned char)(b.size >> (24-8*i));
     char digest[65]; cetta_native_sha256_hex(b.data,b.size,digest);
@@ -509,9 +528,16 @@ static bool journal_record(int fd, Atom *record, bool synchronize, uint64_t *wri
     bool ok = write_all(fd,header,sizeof(header)) && write_all(fd,b.data,b.size);
     if (ok && synchronize) ok = fsync(fd) == 0;
     if (ok && written) *written += sizeof(header)+b.size;
+    return ok;
+}
+static bool journal_record(int fd, Atom *record, bool synchronize, uint64_t *written) {
+    Bytes b={0};
+    bool ok=wire(record,&b) && journal_bytes(fd,b,synchronize,written);
     bytes_free(&b); return ok;
 }
-static bool apply(Service *s, Atom *request) {
+/* Live open moves the backend prepared at admission. Replay creates it from
+ * the journal. Other mutations still fail closed if application cannot finish. */
+static bool apply(Service *s, Atom *request, Store **prepared_open) {
     if (atom_is_symbol(part(request,2),"open")) {
         const char *name = NULL; SpaceEngine e; uint64_t rev;
         if (!token(part(request,4),&name) || !engine(part(request,5),&e) ||
@@ -519,9 +545,12 @@ static bool apply(Service *s, Atom *request) {
             s->next_store >= INT64_MAX || find_name(s,name)) return false;
         size_t slot = store_slot(s);
         if (slot == STORES) return false;
-        Store *st = store_new(s->next_store,name,e,0);
+        Store *st = prepared_open ? *prepared_open : store_new(s->next_store,name,e,0);
         if (!st) return false;
+        if (prepared_open && (st->id!=s->next_store || strcmp(st->name,name) ||
+            st->engine!=e || st->revision)) return false;
         s->stores[slot] = st; ++s->next_store; ++s->catalog_revision;
+        if (prepared_open) *prepared_open=NULL;
         return true;
     }
     if (atom_is_symbol(part(request,2),"append")) {
@@ -574,30 +603,39 @@ static Atom *committed(Service *s, Arena *a, Atom *request, uint64_t id, uint64_
     Atom *args[] = {atom_string(a,s->uuid),atom_int(a,id),atom_int(a,rev)};
     return reply(a,request,true,form(a,"committed",args,3));
 }
-static Atom *commit(Service *s, Arena *a, uint32_t uid, Atom *request, Bytes raw, Atom *answer) {
+static Atom *commit(Service *s, Arena *a, uint32_t uid, Atom *request, Bytes raw, Atom *answer,
+                    Store *prepared_open) {
     const char *id = NULL;
-    if (!token(part(request,1),&id)) return error(a,request,"invalid-id");
-    Bytes result = {0}, record_bytes = {0};
-    if (!wire(answer,&result)) return error(a,request,"limit");
-    /* A receipt that could not be kept refuses the request before the
-     * durable decision; after it, only uncertain integrity may stop service. */
-    if (!receipt_fits(raw,result)) { bytes_free(&result); return error(a,request,"receipt-limit"); }
+    Bytes input={0}, result={0}, record_bytes={0}; Receipt receipt={0};
+    const char *reason="invalid-id";
+    if (!token(part(request,1),&id)) goto refused;
+    reason="limit";
+    if (!wire(answer,&result)) goto refused;
+    reason="allocation";
+    if (!bytes_copy(&input,raw.data,raw.size)) goto refused;
+    reason="receipt-limit";
+    if (!receipt_prepare(&receipt,uid,id,&input,&result)) goto refused;
     /* Persist the exact input bytes: number parsing can normalize spelling,
-     * and decoding/re-encoding cannot reconstruct an idempotence key. Records
-     * of the process account keep their original form. */
-    Atom *parts[] = {atom_int(a,uid),atom_string_n(a,(const char *)raw.data,raw.size),
-                    atom_string_n(a,(const char *)result.data,result.size)};
+     * and decoding/re-encoding cannot reconstruct an idempotence key. */
+    Atom *parts[] = {atom_int(a,uid),atom_string_n(a,(const char *)receipt.request.data,receipt.request.size),
+                    atom_string_n(a,(const char *)receipt.reply.data,receipt.reply.size)};
     Atom *record = uid == s->process_uid ? form(a,"event-bytes",parts+1,2)
                                          : form(a,"event-from",parts,3);
-    if (!wire(record,&record_bytes)) {
-        bytes_free(&result); bytes_free(&record_bytes); return error(a,request,"limit");
-    }
+    reason="limit";
+    if (!wire(record,&record_bytes)) goto refused;
+    bool recorded=journal_bytes(s->journal,record_bytes,true,&s->journal_bytes);
     bytes_free(&record_bytes);
-    if (!journal_record(s->journal,record,true,&s->journal_bytes) || !apply(s,request) ||
-        !remember(s,uid,id,raw,result)) {
-        s->poisoned = true; bytes_free(&result); return NULL;
+    if (!recorded || !apply(s,request,&prepared_open)) {
+        s->poisoned=true;
+        receipt_free(&receipt); store_free(prepared_open);
+        return NULL;
     }
-    bytes_free(&result); return answer;
+    remember(s,&receipt);
+    return answer;
+refused:
+    bytes_free(&input); bytes_free(&result); bytes_free(&record_bytes);
+    receipt_free(&receipt); store_free(prepared_open);
+    return error(a,request,reason);
 }
 static bool service_matches(Service *s, Atom *a) {
     const char *uuid = NULL; return text(a,&uuid) && !strcmp(uuid,s->uuid);
@@ -755,10 +793,18 @@ static Atom *append_admit(Service *s, Arena *a, Client *client, Store *st, Atom 
                 Bindings probe; bindings_init(&probe);
                 bool keyed = match_atoms(key,part(bundle,i),&probe,a);
                 bindings_free(&probe);
-                if (keyed) { named = true; same = find_equal(st,part(bundle,i)); }
+                if (keyed) {
+                    Atom *found=NULL;
+                    named=true;
+                    if (!find_equal(st,part(bundle,i),&found)) {
+                        outcome=error(a,request,"backend"); break;
+                    }
+                    same=found!=NULL;
+                }
             }
-            outcome = named && same ? reply(a,request,true,atom_symbol(a,"duplicate"))
-                                    : error(a,request,"id-conflict");
+            if (!outcome)
+                outcome = named && same ? reply(a,request,true,atom_symbol(a,"duplicate"))
+                                        : error(a,request,"id-conflict");
         }
     }
     bindings_free(&bindings); return outcome;
@@ -867,8 +913,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         Store *probe = store_new(s->next_store,name,e,0);
         if (!probe) return error(a,request,"backend");
         Atom *answer = reply(a,request,true,describe(s,a,probe));
-        store_free(probe);
-        return commit(s,a,client->uid,request,raw,answer);
+        return commit(s,a,client->uid,request,raw,answer,probe);
     }
     uint64_t store_id;
     if (!integer(part(request,4),&store_id)) return error(a,request,"invalid-space");
@@ -923,7 +968,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!(rights & RIGHT_APPEND)) return error(a,request,"forbidden");
         Atom *refused = append_admit(s,a,client,st,request);
         if (refused) return refused;
-        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"appended")));
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"appended")),NULL);
     }
     if (atom_is_symbol(part(request,2),"grant") && request->expr.len == 9) {
         if (!client->owner) return error(a,request,"forbidden");
@@ -935,7 +980,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             return error(a,request,"invalid-grant");
         if (granted && !find_grant(st,uid) && !grant_reserve(st)) return error(a,request,"memory");
         Atom *args[] = {part(request,5),rights_atom(a,granted)};
-        return commit(s,a,client->uid,request,raw,reply(a,request,true,form(a,"granted",args,2)));
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,form(a,"granted",args,2)),NULL);
     }
     /* Another account's mutations are checked against its rights before the
      * revision, so a refused account learns nothing about the store. */
@@ -954,7 +999,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!integer(part(request,6),&catalog) || catalog != s->catalog_revision)
             return error(a,request,"stale-catalog");
         if (catalog >= INT64_MAX) return error(a,request,"revision-limit");
-        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"dropped")));
+        return commit(s,a,client->uid,request,raw,reply(a,request,true,atom_symbol(a,"dropped")),NULL);
     }
     if (!atom_is_symbol(part(request,2),"batch") || request->expr.len != 7)
         return error(a,request,"unsupported-operation");
@@ -974,7 +1019,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         st->live_bytes + added_bytes > s->max_live_bytes) return error(a,request,"space-limit");
     /* Admission is conservative: a batch at the limit may remove first and
      * add later, but no effects are attempted until the whole batch fits. */
-    return commit(s,a,client->uid,request,raw,committed(s,a,request,st->id,st->revision+1));
+    return commit(s,a,client->uid,request,raw,committed(s,a,request,st->id,st->revision+1),NULL);
 }
 
 static bool record_messages(Arena *a,Atom *record,bool raw,Bytes *req,Bytes *ans,
@@ -992,10 +1037,11 @@ static bool record_messages(Arena *a,Atom *record,bool raw,Bytes *req,Bytes *ans
         *request=part(record,1); *answer=part(record,2);
         if (!wire(*request,req) || !wire(*answer,ans)) return false;
     }
+    bool same=false;
     return *request && (*request)->kind==ATOM_EXPR && (*request)->expr.len>=3 &&
         atom_is_symbol(part(*request,0),"request") && shape(*answer,"reply",4) &&
         atom_is_symbol(part(*answer,2),"ok") &&
-        atom_same(part(*request,1),part(*answer,1));
+        atom_same(part(*request,1),part(*answer,1),&same) && same;
 }
 static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
     if (first) {
@@ -1051,9 +1097,11 @@ static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
     bool raw_receipt=shape(record,"receipt-bytes",3);
     if ((raw_receipt || shape(record,"receipt",3)) && s->restoring) {
         const char *id=NULL; Bytes req={0},ans={0}; Atom *request=NULL,*answer=NULL;
+        Receipt receipt={0};
         bool ok=record_messages(a,record,raw_receipt,&req,&ans,&request,&answer) &&
             token(part(request,1),&id) && !find_receipt(s,(uint32_t)uid,id) &&
-            remember(s,(uint32_t)uid,id,req,ans);
+            receipt_prepare(&receipt,(uint32_t)uid,id,&req,&ans);
+        if (ok) remember(s,&receipt);
         bytes_free(&req); bytes_free(&ans); return ok;
     }
     if (shape(record,"sealed",4) && s->restoring) {
@@ -1075,10 +1123,12 @@ static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
     const char *id=NULL; Bytes req={0},ans={0};
     if (!record_messages(a,record,raw_event,&req,&ans,&request,&answer) ||
         !token(part(request,1),&id) || !service_matches(s,part(request,3)) ||
-        find_receipt(s,(uint32_t)uid,id) || !apply(s,request)) {
+        find_receipt(s,(uint32_t)uid,id) || !apply(s,request,NULL)) {
         bytes_free(&req); bytes_free(&ans); return false;
     }
-    bool ok=remember(s,(uint32_t)uid,id,req,ans);
+    Receipt receipt={0};
+    bool ok=receipt_prepare(&receipt,(uint32_t)uid,id,&req,&ans);
+    if (ok) remember(s,&receipt);
     bytes_free(&req); bytes_free(&ans); return ok;
 }
 static bool recover(Service *s) {

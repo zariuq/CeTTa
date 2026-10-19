@@ -7,6 +7,9 @@ generated header, make fragment, and fixtures.  The loader checks internal
 coherence (referenced values must be declared, heads must exist in the symbol
 table) and refuses constructions it has no compilation scheme for — it never
 pins the spec to a previously generated instance.
+
+Runtime mechanism checks also respect the frontend's return carrier. A
+source-fold law does not admit an Atom-only return that loses invocation state.
 """
 
 from __future__ import annotations
@@ -868,20 +871,24 @@ class Spec:
             raise SpecError(
                 "user-head analysis must be revision-keyed least-fixed-point")
         user_head_uncertain = entries(native, "user-head-uncertain")
-        if len(user_head_uncertain) != 1 or len(user_head_uncertain[0]) != 2:
+        if len(user_head_uncertain) != 1 or len(user_head_uncertain[0]) < 2:
             raise SpecError("native interpretation needs one user-head-uncertain")
-        self.user_head_uncertain = atom_text(
-            user_head_uncertain[0][1], "uncertain user-head effect")
-        if self.user_head_uncertain not in self.effect_flags:
+        # An uncertain head may do anything an effect names: the join of the
+        # values listed, which must be every non-unit value.
+        self.user_head_uncertain = [
+            atom_text(value, "uncertain user-head effect")
+            for value in user_head_uncertain[0][1:]]
+        if sorted(self.user_head_uncertain) != sorted(self.effect_flags):
             raise SpecError(
-                "uncertain user-head effect must be a non-unit effect")
+                "an uncertain user head must join every non-unit effect")
         user_head_inert = entries(native, "user-head-inert")
         if user_head_inert != [["user-head-inert", "pure"]]:
             raise SpecError("inert user-head symbols must map to pure")
         inert_children = entries(native, "inert-expression-children")
-        if inert_children != [["inert-expression-children", "opaque"]]:
+        if inert_children != [["inert-expression-children", "evaluated"]]:
             raise SpecError(
-                "native execution must keep inert-expression children opaque")
+                "an inert expression's children are evaluated, in HE and "
+                "PeTTa; their effects count")
         self.opaque_expression_heads: list[tuple[str, str]] = []
         for entry in entries(native, "opaque-expression-head"):
             if len(entry) != 2:
@@ -940,6 +947,40 @@ class Spec:
                 for item in entries(effect, "rule")):
             raise SpecError(
                 "matched operands need the matched-operand-effect rule")
+        self.pattern_pair_operands: list[tuple[str, int, int, str]] = []
+        for entry in entries(native, "pattern-pair-operands"):
+            if len(entry) != 5:
+                raise SpecError(
+                    f"malformed pattern-pair-operands: {sexpr(entry)}")
+            language = atom_text(entry[1], "pattern-pair operand language")
+            if language not in ("he", "all"):
+                raise SpecError(
+                    f"pattern-pair operands name an unknown language {language}")
+            name = atom_text(entry[2], "pattern-pair operand head")
+            arity_text = atom_text(entry[3], "pattern-pair operand arity")
+            index_text = atom_text(entry[4], "pattern-pair operand index")
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"pattern-pair operand head {name} has no symbol-table entry")
+            if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
+                raise SpecError("pattern-pair operand arity must be in [1, 16]")
+            if not index_text.isdigit() or int(index_text) >= int(arity_text):
+                raise SpecError(
+                    f"the pattern-pair operand of {name} must be an operand "
+                    "index below its arity")
+            if symbol_fields[name] in relational_fields:
+                raise SpecError(
+                    f"a relational head cannot take pattern pairs: {name}")
+            key = (symbol_fields[name], int(arity_text), int(index_text))
+            if any(item[:3] == key for item in self.pattern_pair_operands):
+                raise SpecError(
+                    f"pattern-pair operands of {name} are listed twice")
+            self.pattern_pair_operands.append((*key, language))
+        if self.pattern_pair_operands and not any(
+                len(item) >= 2 and item[1] == "pattern-pair-operand-effect"
+                for item in entries(effect, "rule")):
+            raise SpecError(
+                "pattern-pair operands need the pattern-pair-operand-effect rule")
 
         self.row_map: dict[str, str] = {}
         for entry in entries(native, "row"):
@@ -1245,12 +1286,21 @@ def render_header(spec: Spec) -> str:
         for index in indices
     )
     matched_operand_disjuncts = " ||\n           ".join(
-        ("" if language == "all" else "(he_language && ") +
+        "(" + ("" if language == "all" else "he_language && ") +
         f"head == builtins->{field} && arity == {arity}u && "
-        f"operand_index == {index}u" +
-        ("" if language == "all" else ")")
+        f"operand_index == {index}u)"
         for field, arity, indices, language in spec.matched_operands
         for index in indices
+    ) or "false"
+    pattern_pair_operand_rows = " \\\n".join(
+        f"    X({field}, {arity}u, {index}u, {language})"
+        for field, arity, index, language in spec.pattern_pair_operands
+    )
+    pattern_pair_operand_disjuncts = " ||\n           ".join(
+        "(" + ("" if language == "all" else "he_language && ") +
+        f"head == builtins->{field} && arity == {arity}u && "
+        f"operand_index == {index}u)"
+        for field, arity, index, language in spec.pattern_pair_operands
     ) or "false"
     total_integer_rows = " \\\n".join(
         f"    X({field}, {arity}u)"
@@ -1458,6 +1508,9 @@ def render_header(spec: Spec) -> str:
     diagnostic_env = spec.environments["diagnostic"]
     interval_env = spec.environments["diagnostic-interval"]
     effect_enum = "\n".join(effect_constants)
+    uncertain_union = " | ".join(
+        f"CETTA_GSLT_QUERY_EFFECT_{c_enum(value)}"
+        for value in spec.user_head_uncertain)
     prepared_constants = "\n".join(
         f"    CETTA_GSLT_EVIDENCE_{c_enum(value)} = 1u << {index},"
         for index, value in enumerate(spec.prepared_evidence)
@@ -1559,10 +1612,9 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
 #define CETTA_GSLT_USER_HEAD_EFFECT_REVISION_KEYED 1
 #define CETTA_GSLT_USER_HEAD_EFFECT_LEAST_FIXED_POINT 1
 #define CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD \
-    CETTA_GSLT_QUERY_EFFECT_{c_enum(spec.user_head_uncertain)}
+    ((CettaGsltQueryEffect)({uncertain_union}))
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL \
     CETTA_GSLT_QUERY_EFFECT_PURE
-#define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
 
 #define CETTA_GSLT_OPAQUE_EXPRESSION_HEAD_ROWS(X) \
 {opaque_expression_head_rows}
@@ -1583,6 +1635,20 @@ static inline bool cetta_gslt_query_effect_operand_matched(
     bool he_language, const BuiltinSyms *builtins) {{
     return builtins &&
            ({matched_operand_disjuncts});
+}}
+
+/* Operands a head reads as a list of (pattern value) pairs: a pattern is
+ * matched and never evaluated; a value is evaluated where its pattern
+ * matches, so its calls count. */
+#define CETTA_GSLT_PATTERN_PAIR_OPERAND_ROWS(X) \
+{pattern_pair_operand_rows}
+
+static inline bool cetta_gslt_query_effect_operand_pattern_pairs(
+    SymbolId head, uint32_t arity, uint32_t operand_index,
+    bool he_language, const BuiltinSyms *builtins) {{
+    (void)he_language;
+    return builtins &&
+           ({pattern_pair_operand_disjuncts});
 }}
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X) \
@@ -2138,6 +2204,23 @@ def fold_oracle_expected(
     return proc.stdout
 
 
+# These are frontend admission contracts, separate from the source fragment's
+# fold instructions. Prime must transport its selected Need world through the
+# retained return interface; its Atom-only prepared path is not admitted.
+FOLD_RUNTIME_RETURN_CARRIERS = {
+    "he": "atom",
+    "prime": "invocation",
+    "petta": "atom",
+}
+
+
+def fold_runtime_expectation(
+        language: str, counts: tuple[int | None, ...]) -> tuple[int | None, ...]:
+    if FOLD_RUNTIME_RETURN_CARRIERS[language] == "atom":
+        return counts
+    return tuple(None if count is None else 0 for count in counts)
+
+
 def verify_prepared_fold_runtime(
         cetta: Path, fixture_text: str, language: str,
         expected_output: str, expected_admissions: int,
@@ -2221,7 +2304,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cetta", type=Path, default=ROOT / "cetta")
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--check-fold-runtime", action="store_true")
+    parser.add_argument("--check-fold-runtime", action="store_true",
+                        help="check admitted return paths using a statistics-enabled main build")
     args = parser.parse_args()
     try:
         if args.check_fold_runtime and not args.check:
@@ -2279,21 +2363,24 @@ def main() -> int:
             for language, expected_output in fold_expected.items():
                 verify_prepared_fold_runtime(
                     args.cetta.resolve(), fold_fixture, language,
-                    expected_output, spec.fold_expected_admissions,
-                    spec.fold_expected_steps, spec.fold_expected_commits,
-                    spec.fold_expected_pure_admissions,
-                    spec.fold_expected_pure_steps,
-                    spec.fold_expected_pure_declines)
+                    expected_output, *fold_runtime_expectation(language, (
+                        spec.fold_expected_admissions,
+                        spec.fold_expected_steps, spec.fold_expected_commits,
+                        spec.fold_expected_pure_admissions,
+                        spec.fold_expected_pure_steps,
+                        spec.fold_expected_pure_declines)))
             verify_prepared_fold_runtime(
                 args.cetta.resolve(), prime_fold_fixture, "prime",
-                prime_fold_expected, spec.prime_fold_expected_admissions,
-                spec.prime_fold_expected_steps,
-                spec.prime_fold_expected_commits)
+                prime_fold_expected, *fold_runtime_expectation("prime", (
+                    spec.prime_fold_expected_admissions,
+                    spec.prime_fold_expected_steps,
+                    spec.prime_fold_expected_commits)))
             verify_prepared_fold_runtime(
                 args.cetta.resolve(), petta_fold_fixture, "petta",
-                petta_fold_expected, spec.petta_fold_expected_admissions,
-                spec.petta_fold_expected_steps,
-                spec.petta_fold_expected_commits)
+                petta_fold_expected, *fold_runtime_expectation("petta", (
+                    spec.petta_fold_expected_admissions,
+                    spec.petta_fold_expected_steps,
+                    spec.petta_fold_expected_commits)))
     except (SpecError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

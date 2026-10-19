@@ -1,0 +1,5 @@
+[ok]
+[ok]
+[True]
+[(pair (pair (pair 1 1) (pair 1 1)) (pair (pair 1 1) (pair 1 1)))]
+[(pair (pair $x $x) (pair $x $x))]

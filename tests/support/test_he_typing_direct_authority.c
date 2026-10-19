@@ -294,6 +294,9 @@ static void test_shared_profile_cache_admission(
     cetta_runtime_stats_reset();
     cetta_runtime_stats_enable();
 #endif
+    /* The expanded tree is huge, but its immutable graph is small. Input
+     * admission uses constructor summaries; compare both cached queries to
+     * the independent transient service. */
     for (unsigned repeat = 0u; repeat < 2u; repeat++) {
         Atom **types = NULL, **reference = NULL;
         uint32_t count = service->infer(&space, &arena, dag, &types);
@@ -309,8 +312,8 @@ static void test_shared_profile_cache_admission(
     CettaRuntimeStats stats;
     cetta_runtime_stats_snapshot(&stats);
     cetta_runtime_stats_disable();
-    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] == 0u);
-    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 0u);
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] == 1u);
+    assert(stats.counters[CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 1u);
 #endif
 
     /* A small input may have a large shared result. Declining its store must

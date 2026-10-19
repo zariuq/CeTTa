@@ -1,0 +1,7 @@
+(pair 1 $V0)
+(pair $V0 $V0)
+((box 1 $V0) (box 2 $V1) (box 3 $V2))
+((pair 4 $V0) (pair 3 $V1) (pair 2 $V2) (pair 1 $V3))
+(pair (pair 7 $V0) (pair 7 $V0))
+((pair 1 $V0) (pair 2 $V1))
+(pair ((pair 3 $V0) (pair 2 $V1) (pair 1 $V2)) ((pair 3 $V0) (pair 2 $V1) (pair 1 $V2)))

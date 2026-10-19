@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
@@ -1704,11 +1706,12 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
     stree_bucket_free(&bucket);
 }
 
-static void test_subst_tree_ground_identity_capacity(TermUniverse *universe,
-                                                     Arena *scratch) {
+static void test_subst_tree_ground_identity_capacity_bounded(
+        TermUniverse *universe, Arena *scratch) {
     /* More occurrences than the live frame inventory: ground facts must not
-     * need variable identities, and duplicate occurrences must remain rows. */
-    const CettaIndex count = (CettaIndex)CETTA_FRAME_HANDLE_MASK + 1u;
+     * need variable identities, and duplicate occurrences must remain rows.
+     * The caller bounds the inventory to 2^16 handles. */
+    const CettaIndex count = ((CettaIndex)1u << 16) + 1u;
     Atom *ground = atom_int(scratch, 71819);
     Atom *open = var(scratch, "index-open", 4171u);
     AtomId ground_id = term_universe_store_atom_id(universe, NULL, ground);
@@ -1754,6 +1757,23 @@ static void test_subst_tree_ground_identity_capacity(TermUniverse *universe,
         assert(!cetta_frame_identity_retain(epochs[0]));
         assert(!cetta_frame_identity_retain(epochs[1]));
     }
+}
+
+/* In a child, so that bounding the handle table leaves the rest of the
+ * suite's identities alone. */
+static void test_subst_tree_ground_identity_capacity(TermUniverse *universe,
+                                                     Arena *scratch) {
+    fflush(NULL);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        cetta_frame_identity_limit_handles(1u << 16);
+        test_subst_tree_ground_identity_capacity_bounded(universe, scratch);
+        _exit(0);
+    }
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
 static void test_subst_tree_adversarial_int_fanout(Arena *scratch) {

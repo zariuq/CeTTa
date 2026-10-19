@@ -244,6 +244,9 @@ size_t petta_program_equation_projection_retained_bytes(
 
 typedef struct {
     Atom *equation;
+    /* Authored occurrence identity is separate from the syntax used to build
+     * its plan, which may lower grades or rebind equation variables. */
+    Atom *planning_syntax;
     const PettaPlanNode *plan;
     const PettaEquationTemplateC0 *equation_template_c0;
     const PettaEquationTemplate *equation_template;
@@ -3084,8 +3087,15 @@ static void petta_plan_semantic_key(
     key[9] = 0u;
 }
 
+typedef struct {
+    const PettaPlanNode *left;
+    const PettaPlanNode *right;
+    const Atom *left_syntax;
+    const Atom *right_syntax;
+} PettaPlanSemanticPair;
+
 static bool petta_plan_comparison_reserve(
-    PettaPlanNodePair **work, size_t length, size_t *capacity,
+    PettaPlanSemanticPair **work, size_t length, size_t *capacity,
     size_t needed, const CettaCheckpointCompare *read) {
     if (needed <= *capacity)
         return true;
@@ -3100,7 +3110,7 @@ static bool petta_plan_comparison_reserve(
     size_t bytes = next * sizeof(**work);
     if (!read->service(read->context, "program.plan.allocate", 0u, bytes))
         return false;
-    PettaPlanNodePair *replacement = malloc(bytes);
+    PettaPlanSemanticPair *replacement = malloc(bytes);
     if (!replacement) {
         read->service_release(read->context, bytes);
         return false;
@@ -3122,21 +3132,90 @@ static bool petta_plan_comparison_reserve(
     return true;
 }
 
+/* Derived planning syntax is not an authored-row copy-map edge. Compare the
+ * observations used by callability refresh, under the held symbol environment.
+ * VALUE positions are opaque here even when their plan retains child metadata. */
+static int petta_plan_callability_compare(
+    PettaPlanSemanticPair pair, const CettaCheckpointCompare *read,
+    bool *descend) {
+    *descend = false;
+    if (!pair.left_syntax && !pair.right_syntax)
+        return 1;
+    if (!pair.left_syntax || !pair.right_syntax)
+        return 0;
+    if (pair.left->role == PETTA_PLAN_VALUE)
+        return 1;
+    bool a_expr = pair.left_syntax->kind == ATOM_EXPR;
+    bool b_expr = pair.right_syntax->kind == ATOM_EXPR;
+    if (!read->scalar(read->context, "program.plan.refresh.expression", a_expr, b_expr))
+        return -1;
+    if (a_expr != b_expr)
+        return 0;
+    if (!a_expr)
+        return 1;
+    CettaExprLen a_len = pair.left_syntax->expr.len;
+    CettaExprLen b_len = pair.right_syntax->expr.len;
+    if (!read->scalar(read->context, "program.plan.refresh.arity", a_len, b_len))
+        return -1;
+    if (a_len != b_len || a_len != pair.left->child_count ||
+        b_len != pair.right->child_count)
+        return 0;
+    const Atom *a_head = a_len ? pair.left_syntax->expr.elems[0] : NULL;
+    const Atom *b_head = b_len ? pair.right_syntax->expr.elems[0] : NULL;
+    if (a_len && (!a_head || !b_head))
+        return 0;
+    bool a_symbol = a_head && a_head->kind == ATOM_SYMBOL;
+    bool b_symbol = b_head && b_head->kind == ATOM_SYMBOL;
+    if (!read->scalar(read->context, "program.plan.refresh.symbol", a_symbol, b_symbol))
+        return -1;
+    if (a_symbol != b_symbol)
+        return 0;
+    if (a_symbol) {
+        SymbolId a_id = atom_symbol_current_id(a_head);
+        SymbolId b_id = atom_symbol_current_id(b_head);
+        if (!read->scalar(read->context, "program.plan.refresh.head", a_id, b_id))
+            return -1;
+        if (a_id != b_id)
+            return 0;
+        if (a_id == SYMBOL_ID_NONE) {
+            uint32_t a_bytes = atom_symbol_length(a_head);
+            uint32_t b_bytes = atom_symbol_length(b_head);
+            if (!read->scalar(read->context, "program.plan.refresh.head.length", a_bytes, b_bytes))
+                return -1;
+            if (a_bytes != b_bytes)
+                return 0;
+            const unsigned char *a = (const unsigned char *)atom_symbol_bytes(a_head);
+            const unsigned char *b = (const unsigned char *)atom_symbol_bytes(b_head);
+            if (a_bytes && (!a || !b))
+                return 0;
+            for (uint32_t i = 0u; i < a_bytes; i++) {
+                if (!read->scalar(read->context, "program.plan.refresh.head.byte", a[i], b[i]))
+                    return -1;
+                if (a[i] != b[i])
+                    return 0;
+            }
+        }
+    }
+    *descend = true;
+    return 1;
+}
+
 /* 1 agrees, 0 differs, -1 could not finish. Both plan owners remain held;
  * temporary stack reservations are released after their buffers are freed. */
 static int petta_plan_semantics_compare(
     const PettaPlanNode *left, const PettaPlanNode *right,
+    const Atom *left_syntax, const Atom *right_syntax,
     const CettaCheckpointCompare *read) {
-    PettaPlanNodePair *work = NULL;
+    PettaPlanSemanticPair *work = NULL;
     size_t length = 0u, capacity = 0u;
     int result = -1;
     if (!petta_plan_comparison_reserve(&work, 0u, &capacity, 1u, read))
         return -1;
-    work[length++] = (PettaPlanNodePair){left, right};
+    work[length++] = (PettaPlanSemanticPair){left, right, left_syntax, right_syntax};
     while (length) {
         if (!read->service(read->context, "program.plan.node", 1u, 0u))
             goto done;
-        PettaPlanNodePair pair = work[--length];
+        PettaPlanSemanticPair pair = work[--length];
         if (!pair.left || !pair.right) {
             result = 0;
             goto done;
@@ -3152,6 +3231,12 @@ static int petta_plan_semantics_compare(
                 goto done;
             }
         }
+        bool descend = false;
+        int syntax_equal = petta_plan_callability_compare(pair, read, &descend);
+        if (syntax_equal != 1) {
+            result = syntax_equal;
+            goto done;
+        }
         CettaExprLen count = pair.left->child_count;
         if ((count && (!pair.left->children || !pair.right->children)) ||
             count > SIZE_MAX - length) {
@@ -3164,9 +3249,11 @@ static int petta_plan_semantics_compare(
         for (CettaExprIndex child = count; child > 0u; child--) {
             if (!read->service(read->context, "program.plan.child", 1u, 0u))
                 goto done;
-            work[length++] = (PettaPlanNodePair){
+            work[length++] = (PettaPlanSemanticPair){
                 &pair.left->children[child - 1u],
-                &pair.right->children[child - 1u]};
+                &pair.right->children[child - 1u],
+                descend ? pair.left_syntax->expr.elems[child - 1u] : NULL,
+                descend ? pair.right_syntax->expr.elems[child - 1u] : NULL};
         }
     }
     result = 1;
@@ -3915,6 +4002,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
            the payload-erased equation lease below: they supply no code
            morphism that could make source plan pointers target-relative. */
         for (size_t index = 0u; index < entry->equation_len; index++) {
+            view->catalog.equations[index].planning_syntax = NULL;
             view->catalog.equations[index].equation_template_c0 = NULL;
             view->catalog.equations[index].equation_template = NULL;
             view->catalog.equations[index].static_variable_count = 0u;
@@ -4874,8 +4962,9 @@ bool petta_program_note_add(
         return true;
     if (lhs->expr.elems[0]->kind == ATOM_SYMBOL)
         head = atom_symbol_register_id(lhs->expr.elems[0]);
+    Atom *execution = atom;
     if (atom->expr.len != 3u) {
-        Atom *execution = space_equation_execution_view(&program->plans, atom);
+        execution = space_equation_execution_view(&program->plans, atom);
         if (!execution) return false;
         lhs = execution->expr.elems[1];
         rhs = execution->expr.elems[2];
@@ -4913,6 +5002,7 @@ bool petta_program_note_add(
         entry,
         (PettaProgramEquation){
             .equation = atom,
+            .planning_syntax = equation_template ? equation_template->equation : execution,
             .plan = plan,
             .equation_template_c0 = equation_template_c0,
             .equation_template = equation_template,
@@ -5028,8 +5118,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
             if (program->callability_cache_valid && program->callability_epoch &&
                 entry->plan_callability_epochs[index] == program->callability_epoch)
                 continue;
-            Atom *syntax = record->equation_template
-                ? record->equation_template->equation : record->equation;
+            Atom *syntax = record->planning_syntax;
             bool changed = false;
             ok = petta_plan_callability_changed(syntax, record->plan, domain, &changed);
             if (!ok)
@@ -5358,6 +5447,11 @@ int petta_program_snapshot_semantics_compare(
         return -1;
     if (left->graded_equations != right->graded_equations)
         return 0;
+    if (!read->scalar(read->context, "program.callability-refresh", left->refresh_callability,
+                       right->refresh_callability))
+        return -1;
+    if (left->refresh_callability != right->refresh_callability)
+        return 0;
     if (!read->scalar(read->context, "program.rule-forms", left->admitted_rule_forms,
                        right->admitted_rule_forms))
         return -1;
@@ -5399,13 +5493,16 @@ int petta_program_snapshot_semantics_compare(
         const PettaProgramEquation *q = &b->equations[equation];
         /* Current row pointers are the occurrence map. Equal old catalog
          * syntax is insufficient to authenticate a borrowed source root. */
-        if (p->equation != x || q->equation != y || !p->plan || !q->plan)
+        if (p->equation != x || q->equation != y || !p->plan || !q->plan ||
+            !p->planning_syntax || !q->planning_syntax)
             return 0;
         if (!read->scalar(read->context, "program.equation.head", p->head, q->head))
             return -1;
         if (p->head != q->head)
             return 0;
-        int equal = petta_plan_semantics_compare(p->plan, q->plan, read);
+        int equal = petta_plan_semantics_compare(p->plan, q->plan,
+            left->refresh_callability ? p->planning_syntax : NULL,
+            right->refresh_callability ? q->planning_syntax : NULL, read);
         if (equal != 1)
             return equal;
         equation++;

@@ -2458,11 +2458,8 @@ typedef enum {
 } ImportedCorefVerdict;
 
 static void imported_bucket_free(ImportedFlatBucket *bucket) {
-    for (uint32_t i = 0; i < bucket->len; i++) {
-        if (bucket->entries[i].owns_identity)
-            cetta_frame_identity_release(bucket->entries[i].epoch);
+    for (uint32_t i = 0; i < bucket->len; i++)
         free(bucket->entries[i].tokens);
-    }
     free(bucket->entries);
     bucket->entries = NULL;
     bucket->len = 0;
@@ -7535,10 +7532,12 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
     return true;
 }
 
+/* An indexed row holds no frame: a match names the row's variables in a
+ * frame of its own (imported_collect_bucket). */
 static void imported_bucket_push_builder(ImportedBridgeState *st,
                                          ImportedFlatBucket *bucket,
                                          ImportedFlatBuilder *builder,
-                                         CettaIndex atom_idx, uint32_t epoch) {
+                                         CettaIndex atom_idx, bool open) {
     if (!bucket || !builder)
         return;
     if (bucket->len >= bucket->cap) {
@@ -7547,8 +7546,7 @@ static void imported_bucket_push_builder(ImportedBridgeState *st,
                                         sizeof(ImportedFlatEntry) * bucket->cap);
     }
     bucket->entries[bucket->len].atom_idx = atom_idx;
-    bucket->entries[bucket->len].epoch = epoch;
-    bucket->entries[bucket->len].owns_identity = cetta_frame_identity_retain(epoch);
+    bucket->entries[bucket->len].open = open;
     bucket->entries[bucket->len].tokens = builder->items;
     bucket->entries[bucket->len].len = builder->len;
     bucket->len++;
@@ -7557,10 +7555,10 @@ static void imported_bucket_push_builder(ImportedBridgeState *st,
 
 static void imported_bucket_add_entry(ImportedBridgeState *st,
                                       ImportedFlatBucket *bucket, Atom *atom,
-                                      CettaIndex atom_idx, uint32_t epoch) {
+                                      CettaIndex atom_idx) {
     ImportedFlatBuilder b = {0};
     imported_flatten_atom(&b, atom);
-    imported_bucket_push_builder(st, bucket, &b, atom_idx, epoch);
+    imported_bucket_push_builder(st, bucket, &b, atom_idx, atom_has_vars(atom));
 }
 
 static ImportedFlatBucket *imported_bucket_for_atom(ImportedBridgeState *st, Atom *atom) {
@@ -7591,17 +7589,16 @@ static void imported_rebuild_flat(Space *s) {
         source_len = s->native.len;
     }
     for (CettaIndex i = 0; i < source_len; i++) {
-        CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         AtomId atom_id = source_from_projection
                              ? imported_projected_atom_id_at(st, i)
                              : shadow_storage_get_atom_id_at(s, i);
         if (s->native.universe && tu_hdr(s->native.universe, atom_id)) {
             ImportedFlatBuilder b = {0};
             if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 ImportedFlatBucket *bucket =
                     imported_bucket_for_atom_id(st, s->native.universe, atom_id);
-                imported_bucket_push_builder(st, bucket, &b, i, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                imported_bucket_push_builder(
+                    st, bucket, &b, i, tu_has_vars(s->native.universe, atom_id));
                 continue;
             }
             free(b.items);
@@ -7610,7 +7607,7 @@ static void imported_rebuild_flat(Space *s) {
             ? term_universe_get_atom(s->native.universe, atom_id)
             : shadow_storage_get_at(s, i);
         ImportedFlatBucket *bucket = imported_bucket_for_atom(st, atom);
-        imported_bucket_add_entry(st, bucket, atom, i, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+        imported_bucket_add_entry(st, bucket, atom, i);
     }
     if (source_from_projection && !imported_shadow_refresh_from_projection(s)) {
         imported_flat_state_clear(st);
@@ -8379,13 +8376,17 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
     for (CettaIndex i = 0; i < bucket->len; i++) {
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         const ImportedFlatEntry *entry = &bucket->entries[i];
-        uint32_t match_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
         if (entry->len == 0 || qlen == 0) continue;
         CettaIndex qnext = 0, cnext = 0;
         ImportedCorefState refs = {0};
         ImportedCorefVerdict verdict =
             imported_match_subtree_coref(qtokens, 0, entry->tokens, 0, &refs,
                                          &qnext, &cnext);
+        if (verdict == IMPORTED_COREF_FAIL)
+            continue;
+        /* The row's variables, if it has any, take a frame of their own. */
+        uint32_t match_epoch = entry->open
+            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
         if (verdict == IMPORTED_COREF_EXACT &&
             qnext == qlen && cnext == entry->len) {
             Bindings b;
@@ -8598,16 +8599,14 @@ static void imported_note_add(Space *s, AtomId atom_id, Atom *atom,
     if (tu_hdr(s->native.universe, atom_id)) {
         ImportedFlatBuilder b = {0};
         if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
-            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
             imported_bucket_push_builder(st,
                                          imported_bucket_for_atom_id(st, s->native.universe, atom_id),
-                                         &b, atom_idx, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                                         &b, atom_idx, tu_has_vars(s->native.universe, atom_id));
             return;
         }
         free(b.items);
     }
-    imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx,
-                              cetta_frame_identity_scope_fresh(&frame_identity_scope));
+    imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx);
 }
 
 /* Only the retained index observations need compact records. Auditing the
@@ -9821,18 +9820,15 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
             if (tu_hdr(s->native.universe, atom_id)) {
                 ImportedFlatBuilder b = {0};
                 if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
-                    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                     imported_bucket_push_builder(st,
                         imported_bucket_for_atom_id(st, s->native.universe, atom_id),
-                        &b, atom_idx, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                        &b, atom_idx, tu_has_vars(s->native.universe, atom_id));
                     return;
                 }
                 free(b.items);
             }
             if (atom) {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx,
-                                          cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx);
                 return;
             }
         }
@@ -9845,18 +9841,15 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
             if (tu_hdr(s->native.universe, atom_id)) {
                 ImportedFlatBuilder b = {0};
                 if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
-                    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                     imported_bucket_push_builder(st,
                         imported_bucket_for_atom_id(st, s->native.universe, atom_id),
-                        &b, atom_idx, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                        &b, atom_idx, tu_has_vars(s->native.universe, atom_id));
                     return;
                 }
                 free(b.items);
             }
             if (atom) {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx,
-                                          cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx);
                 return;
             }
         }
@@ -9868,18 +9861,15 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
         if (tu_hdr(s->native.universe, atom_id)) {
             ImportedFlatBuilder b = {0};
             if (imported_flatten_atom_id(&b, s->native.universe, atom_id)) {
-                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
                 imported_bucket_push_builder(st,
                     imported_bucket_for_atom_id(st, s->native.universe, atom_id),
-                    &b, atom_idx, cetta_frame_identity_scope_fresh(&frame_identity_scope));
+                    &b, atom_idx, tu_has_vars(s->native.universe, atom_id));
                 return;
             }
             free(b.items);
         }
         if (atom) {
-            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-            imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx,
-                                      cetta_frame_identity_scope_fresh(&frame_identity_scope));
+            imported_bucket_add_entry(st, imported_bucket_for_atom(st, atom), atom, atom_idx);
             return;
         }
         st->built = false;
@@ -11625,7 +11615,8 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
         Bindings b;
         if (!atom)
             continue;
-        epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+        epoch = atom_has_vars(atom)
+            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
         bindings_init(&b);
         if (match_atoms_epoch(query, atom, &b, a, epoch)) {
             subst_matchset_push(out, i, epoch, &b, true);

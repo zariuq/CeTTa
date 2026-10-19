@@ -600,8 +600,14 @@ static void library_context_init_services(CettaLibraryContext *ctx,
 #endif
     const CettaLanguageVersion *program_version =
         cetta_language_version_of(language_id, profile);
-    if (ctx->petta_program && language_id == CETTA_LANGUAGE_PETTA &&
-        cetta_language_version_petta_typed_line(program_version))
+    /* HE resolves a call's head when the call runs, and PeTTa's typed line
+     * does too: a plan compiled before a head had equations is rebuilt when
+     * the heads it read change.  PeTTa otherwise compiles an equation
+     * against the program as it stood when the equation was defined. */
+    if (ctx->petta_program &&
+        (language_id == CETTA_LANGUAGE_HE ||
+         (language_id == CETTA_LANGUAGE_PETTA &&
+          cetta_language_version_petta_typed_line(program_version))))
         (void)petta_program_enable_callability_refresh(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);

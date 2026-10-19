@@ -1,6 +1,6 @@
-; A nested match's legs before its last are read before any body runs, so
-; over one PathMap space their conjunction is read through the space's
-; index: one indexed query for each chain below.
+; A nested match whose bodies are shown pure reads its legs before its last
+; before any body runs, so over one PathMap space their conjunction is read
+; through the space's index: one indexed query for each chain below.
 !(bind! &data (new-space pathmap))
 !(add-atoms &data ((edge a b) (edge a b) (edge b c) (edge c d) (edge c e) (edge d f)))
 !(reset-runtime-stats!)

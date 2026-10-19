@@ -83,7 +83,6 @@
 !(println! (show-counter fc3-dup &dup-stats query-episode-promoted-answer-bytes))
 !(println! (show-counter fc3-dup &dup-stats query-episode-delayed-outcome-survivor-count))
 !(println! (show-counter fc3-dup &dup-stats match-result-direct-stream-count))
-!(println! (show-counter fc3-dup &dup-stats match-result-snapshot-count))
 !(println! (show-counter fc3-dup &dup-stats match-result-direct-generated-outcome-count))
 !(println! (show-counter fc3-dup &dup-stats match-result-direct-generated-outcome-peak))
 
@@ -126,6 +125,5 @@
 !(println! (show-counter fc3-nodup &nodup-stats query-episode-promoted-answer-bytes))
 !(println! (show-counter fc3-nodup &nodup-stats query-episode-delayed-outcome-survivor-count))
 !(println! (show-counter fc3-nodup &nodup-stats match-result-direct-stream-count))
-!(println! (show-counter fc3-nodup &nodup-stats match-result-snapshot-count))
 !(println! (show-counter fc3-nodup &nodup-stats match-result-direct-generated-outcome-count))
 !(println! (show-counter fc3-nodup &nodup-stats match-result-direct-generated-outcome-peak))

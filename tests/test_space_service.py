@@ -181,6 +181,27 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(space.describe()[6:], (revision, 0))
         self.assertEqual(space.match_count(S("prefix")), 0)
 
+    def test_transport_valid_batch_too_large_for_journal_has_no_effect(self):
+        space = self.space()
+        request_id = "large-preflight"
+        empty = E("ops", E("add", E("chunk", b"")), E("add", E("chunk", b"")))
+        request = E("request", request_id, S("batch"), space.uuid, space.id, space.revision, empty)
+        available = csp.MAX_BYTES - len(csp.encode(request)) - 32
+        chunks = (E("chunk", b"x" * (available // 2)),
+                  E("chunk", b"y" * (available - available // 2)))
+        self.assertTrue(all(len(csp.encode(chunk)) < 512 * 1024 for chunk in chunks))
+        ops = E("ops", *(E("add", chunk) for chunk in chunks))
+        request = E("request", request_id, S("batch"), space.uuid, space.id, space.revision, ops)
+        self.assertEqual(len(csp.encode(request)), csp.MAX_BYTES - 32)
+        journal = self.fixture.data / "journal.csl"
+        before = journal.read_bytes()
+        self.denied("limit", self.client.call, "batch", *request[3:], request_id=request_id)
+        self.assertEqual(journal.read_bytes(), before)
+        self.assertEqual(space.describe()[6:], (0, 0))
+        self.assertEqual(self.client.call("receipt", space.uuid, request_id), S("unknown-receipt"))
+        space.add(S("after-refusal"))
+        self.assertEqual(space.match_count(S("after-refusal")), 1)
+
     def test_snapshot_survives_mutation_and_compaction(self):
         space = self.space()
         space.batch(E("add", E("p", 1)), E("add", E("p", 2)))
