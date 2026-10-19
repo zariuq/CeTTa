@@ -747,10 +747,18 @@ static Atom *append_admit(Service *s, Arena *a, Client *client, Store *st, Atom 
         int seen = key ? store_any(st,key) : -1;
         if (seen < 0) outcome = error(a,request,"backend");
         else if (seen) {
-            bool same = true;
-            for (size_t i = 1; same && i < bundle->expr.len; ++i) same = find_equal(st,part(bundle,i));
-            outcome = same ? reply(a,request,true,atom_symbol(a,"duplicate"))
-                           : error(a,request,"id-conflict");
+            /* Identity is the record the pattern names. Its other records may
+             * already be consumed, as a pickup consumes a pending record, so
+             * a retry is a duplicate exactly when the named record is identical. */
+            bool named = false, same = true;
+            for (size_t i = 1; same && i < bundle->expr.len; ++i) {
+                Bindings probe; bindings_init(&probe);
+                bool keyed = match_atoms(key,part(bundle,i),&probe,a);
+                bindings_free(&probe);
+                if (keyed) { named = true; same = find_equal(st,part(bundle,i)); }
+            }
+            outcome = named && same ? reply(a,request,true,atom_symbol(a,"duplicate"))
+                                    : error(a,request,"id-conflict");
         }
     }
     bindings_free(&bindings); return outcome;

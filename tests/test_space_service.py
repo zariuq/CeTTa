@@ -831,6 +831,13 @@ class PrincipalTests(unittest.TestCase):
                                     E("seen", Var(0), Var(1), Var(3), Var(4))),
                          [E("seen", "m1", "receiver", sender, "hi")])
         self.assertEqual(mail.match_count(E("MailboxPending", 1, Var(0), Var(1), Var(2), Var(3))), 1)
+        # A pickup consumes the pending record but keeps the message, so an
+        # identical retry is still a duplicate and a changed one a conflict.
+        mail.batch(E("remove", letter("m1", "receiver", "writer", "hi")[1]))
+        member = self.as_member()
+        mail = member.open("mail")
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("duplicate"))
+        self.denied("id-conflict", post, letter("m1", "receiver", "writer", "changed"))
 
     @unittest.skipUnless(CETTA, "provide cetta for the MeTTa mailbox client")
     def test_mailbox_post_from_another_account_reaches_the_owner(self):
