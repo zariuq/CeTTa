@@ -124,7 +124,7 @@
      JsonNull
      (case
        $value
-       (((JsonNumber $text) (if (and (not (== $text "")) (str:all-in? digit $text)) $value (llm:v1:failure invalid-usage)))
+       (((JsonNumber $text) (if (and (not (== $text "")) (str:is-all-in digit $text)) $value (llm:v1:failure invalid-usage)))
          ($other (llm:v1:failure invalid-usage)))){$text $other}))
 (= (llm:v1:counter $object $key)
    (let $value (llm:v1:get $object $key) (llm:v1:count $value)))
@@ -948,7 +948,7 @@
 (= (llm:v1:output-limit $value)
    (case $value
      (((JsonNumber $text)
-       (if (and (not (== $text "")) (str:all-in? digit $text))
+       (if (and (not (== $text "")) (str:is-all-in digit $text))
          (let $number (str:string->number $text)
            (if (> $number 0) True (llm:v1:failure invalid-output-limit))){$number}
          (llm:v1:failure invalid-output-limit)))
