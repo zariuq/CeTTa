@@ -79,3 +79,24 @@
 (= (space:receipt $socket (space $uuid $id $name $backend $kind $rev $count) $request-id)
    (let $rid (space:request-id)
      (space:call $socket (request $rid receipt $uuid $request-id) 5000)))
+
+; The service names the connecting account from the kernel's credentials:
+; (principal (account UID LOGIN) owner) or (principal (account UID LOGIN) member).
+(= (space:whoami $socket)
+   (let $rid (space:request-id)
+     (space:call $socket (request $rid whoami) 5000)))
+
+; An append needs only the right to append: it names no revision and reads
+; nothing. The values form one (bundle ...) committed whole, or not at all.
+(= (space:append $socket (space $uuid $id $name $backend $kind $rev $count) $bundle)
+   (let $rid (space:request-id)
+     (space:call $socket (request $rid append $uuid $id $bundle) 5000)))
+
+; The owner sets what one account may do on a store: (rights observe read
+; append write), an optional (bundle ...) shape that its appends must match,
+; with (caller) standing for its authenticated account, and an optional
+; uniqueness pattern over the shape's variables. (rights) removes the grant.
+(= (space:grant $socket (space $uuid $id $name $backend $kind $rev $count)
+       $account $rights $shape $unique)
+   (let $rid (space:request-id)
+     (space:call $socket (request $rid grant $uuid $id $account $rights $shape $unique) 5000)))
