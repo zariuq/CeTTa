@@ -78,6 +78,7 @@
     (operator tptp-print-v1:quoted 3)
 
     (operator tptp-print-v1:call 3)
+    (operator tptp-print-v1:expression-head 4)
     (operator tptp-print-v1:call-next 4)
     (operator tptp-print-v1:ordinary-call 2)
     (operator tptp-print-v1:th-call 2)
@@ -97,6 +98,8 @@
     (operator tptp-print-v1:binary-left-view 4)
     (operator tptp-print-v1:binary-left-next 6)
     (operator tptp-print-v1:unary 3)
+    (operator tptp-print-v1:logical-operand 2)
+    (operator tptp-print-v1:logical-operand-in 3)
     (operator tptp-print-v1:quantified 4)
     (operator tptp-print-v1:variables 1)
     (operator tptp-print-v1:variables-view 1)
@@ -449,6 +452,25 @@
     (rule expr-expression-head (head (metta-equation
       (tptp-print-v1:expr-head-view
         ?mode ?arguments (LangDef:ExpressionValue ?items))
+      (tptp-print-v1:expression-head
+        (langdef:ground-equal ?mode TptpPrint:TH) ?mode ?items ?arguments))) (body))
+    ; In THF an expression in head position is a higher-order function,
+    ; not a tuple. Parenthesize both its head and its application so lambda
+    ; and quantifier scopes cannot absorb the arguments.
+    (rule expr-computed-thf-head (head (metta-equation
+      (tptp-print-v1:expression-head
+        LangDef:SameValue ?mode ?items ?arguments)
+      (tptp-print-v1:cat4
+        (bnf-v1:string->text "(")
+        (tptp-print-v1:cat3
+          (bnf-v1:string->text "(")
+          (tptp-print-v1:expr TptpPrint:TH (langdef:list->expression ?items))
+          (bnf-v1:string->text ")"))
+        (tptp-print-v1:th-arguments ?arguments)
+        (bnf-v1:string->text ")")))) (body))
+    (rule expr-computed-general-head (head (metta-equation
+      (tptp-print-v1:expression-head
+        LangDef:DifferentValue ?mode ?items ?arguments)
       (tptp-print-v1:brackets-view
         ?mode (LangDef:ExpressionValue
                 (LCons (langdef:list->expression ?items) ?arguments))))) (body))
@@ -717,16 +739,30 @@
       (tptp-print-v1:unary ?mode ?operator ?body)
       (tptp-print-v1:cat2
         (bnf-v1:string->text ?operator)
-        (tptp-print-v1:expr ?mode ?body)))) (body))
+        (tptp-print-v1:logical-operand ?mode ?body)))) (body))
+    ; THF consumers differ in the binding strength of equality and Boolean
+    ; connectives. Group compound operands explicitly there; FO/CNF retain
+    ; their own literal grammar, which does not admit arbitrary subgroups.
+    (rule logical-operand (head (metta-equation
+      (tptp-print-v1:logical-operand ?mode ?value)
+      (tptp-print-v1:logical-operand-in
+        (langdef:ground-equal ?mode TptpPrint:TH)
+        ?mode (langdef:value-view ?value)))) (body))
+    (rule logical-operand-th (head (metta-equation
+      (tptp-print-v1:logical-operand-in LangDef:SameValue ?mode ?view)
+      (tptp-print-v1:infix-operand-view ?mode ?view))) (body))
+    (rule logical-operand-other (head (metta-equation
+      (tptp-print-v1:logical-operand-in LangDef:DifferentValue ?mode ?view)
+      (tptp-print-v1:expr-view ?mode ?view))) (body))
     (rule binary-two (head (metta-equation
       (tptp-print-v1:binary
         ?mode ?operator ?head
         (LCons ?left (LCons ?right LNil)))
       (tptp-print-v1:cat5
         (bnf-v1:string->text "(")
-        (tptp-print-v1:expr ?mode ?left)
+        (tptp-print-v1:logical-operand ?mode ?left)
         (bnf-v1:string->text ?operator)
-        (tptp-print-v1:expr ?mode ?right)
+        (tptp-print-v1:logical-operand ?mode ?right)
         (bnf-v1:string->text ")")))) (body))
     (rule infix-two (head (metta-equation
       (tptp-print-v1:infix
@@ -797,7 +833,7 @@
       (tptp-print-v1:cat3
         (tptp-print-v1:binary-left ?mode ?operator ?head ?left)
         (bnf-v1:string->text ?operator)
-        (tptp-print-v1:expr ?mode ?right)))) (body))
+        (tptp-print-v1:logical-operand ?mode ?right)))) (body))
     (rule binary-left (head (metta-equation
       (tptp-print-v1:binary-left ?mode ?operator ?head ?value)
       (tptp-print-v1:binary-left-view
@@ -835,7 +871,8 @@
       (tptp-print-v1:binary-left-next
         LangDef:DifferentValue
         ?mode ?operator ?head ?child-head ?child-arguments)
-      (tptp-print-v1:expr-view
+      (tptp-print-v1:logical-operand-in
+        (langdef:ground-equal ?mode TptpPrint:TH)
         ?mode (LangDef:ExpressionValue (LCons ?child-head ?child-arguments))))) (body))
     (rule quantified (head (metta-equation
       (tptp-print-v1:quantified ?mode ?operator ?variables ?body)

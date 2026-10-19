@@ -9,29 +9,34 @@
 (: io:poll (-> Atom))
 (: io:cancel (-> Number Atom))
 
+(: __cetta_lib_io_capabilities (-> Atom Atom))
+(: __cetta_lib_io_submit (-> Atom Atom))
+(: __cetta_lib_io_poll (-> Atom Atom))
+(: __cetta_lib_io_cancel (-> Atom Atom))
+
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:header (-> String String Atom))
 (: http:response (-> Number String Atom))
 
 (= (io:capabilities)
    (function
-     (case (__cetta_lib_io_capabilities ())
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_io_capabilities ())) $result
+       (return $result))))
 
 (= (io:submit $request)
    (function
-     (case (__cetta_lib_io_submit $request)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_io_submit $request)) $result
+       (return $result))))
 
 (= (io:poll)
    (function
-     (case (__cetta_lib_io_poll ())
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_io_poll ())) $result
+       (return $result))))
 
 (= (io:cancel $id)
    (function
-     (case (__cetta_lib_io_cancel $id)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_io_cancel $id)) $result
+       (return $result))))
 
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))

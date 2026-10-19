@@ -2,10 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-(: io:capabilities (-> Expression))
-(: io:submit (-> Atom Atom))
-(: io:poll (-> Atom))
-(: io:cancel (-> Number Atom))
+(: io:submit (-> Atom %Undefined%))
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:header (-> String String Atom))
 (: http:response (-> Number String Atom))

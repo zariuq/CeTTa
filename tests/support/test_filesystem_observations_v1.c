@@ -19,6 +19,13 @@ static int last_directory_fd;
 static unsigned directory_reads;
 static const char *refused_strdup;
 static bool metadata_missing, directory_close_fault;
+static bool rename_cross_device;
+
+int __real_rename(const char *source, const char *target);
+int __wrap_rename(const char *source, const char *target) {
+    if (rename_cross_device) { errno = EXDEV; return -1; }
+    return __real_rename(source, target);
+}
 
 bool eval_native_interrupted(void) { return interrupted; }
 ssize_t __real_read(int fd, void *bytes, size_t size);
@@ -109,6 +116,47 @@ static Atom *chunk(CettaLibraryContext *ctx, Arena *arena, Atom *owner, int64_t 
 
 static void close_reader(CettaLibraryContext *ctx, Arena *arena, Atom *owner) {
     check(atom_is_symbol(call(ctx, arena, "close", &owner, 1u), "fs:closed"));
+}
+
+static void rename_controls(CettaLibraryContext *ctx, Arena *arena, const char *base) {
+    char source[4096], target[4096];
+    assert(snprintf(source, sizeof(source), "%s/rename-source", base) < (int)sizeof(source));
+    assert(snprintf(target, sizeof(target), "%s/rename-target", base) < (int)sizeof(target));
+    int fd = open(source, O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0600);
+    assert(fd >= 0 && write(fd, "n\0w", 3u) == 3 && fchmod(fd, 0640) == 0);
+    assert(close(fd) == 0);
+    fd = open(target, O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0600);
+    assert(fd >= 0 && write(fd, "old", 3u) == 3 && close(fd) == 0);
+    Atom *old = open_reader(ctx, arena, target);
+    Atom *args[] = {atom_string(arena, source), atom_string(arena, target)};
+    CettaCallOutcome outcome;
+    interrupted = true;
+    check(cetta_fs_call(ctx, arena, atom_symbol(arena, "__cetta_lib_fs_rename"), args, 2u, &outcome));
+    check(outcome.kind == CETTA_CALL_INTERRUPTED && access(source, F_OK) == 0);
+    interrupted = false;
+    rename_cross_device = true;
+    Atom *refused = call(ctx, arena, "rename", args, 2u);
+    check(headed(refused, "fs:failed", 7u) && refused->expr.elems[4]->ground.ival == EXDEV);
+    check(access(source, F_OK) == 0);
+    rename_cross_device = false;
+    Atom *result = call(ctx, arena, "rename", args, 2u);
+    check(result->kind == ATOM_EXPR && result->expr.len == 0u);
+    check(access(source, F_OK) == -1 && errno == ENOENT);
+    struct stat info;
+    check(stat(target, &info) == 0 && (info.st_mode & 0777) == 0640);
+    check(atom_string_equals_cstr(chunk(ctx, arena, old, 3)->expr.elems[1], "old"));
+    close_reader(ctx, arena, old);
+    Atom *current = open_reader(ctx, arena, target);
+    Atom *bytes = chunk(ctx, arena, current, 4)->expr.elems[1];
+    check(atom_string_len(bytes) == 3u && memcmp(bytes->ground.sval, "n\0w", 3u) == 0);
+    close_reader(ctx, arena, current);
+    refused = call(ctx, arena, "rename", args, 2u);
+    check(headed(refused, "fs:failed", 7u) && atom_is_symbol(refused->expr.elems[1], "fs:missing"));
+    args[0] = atom_string(arena, target);
+    args[1] = atom_string_n(arena, "bad\0path", 8u);
+    refused = call(ctx, arena, "rename", args, 2u);
+    check(headed(refused, "fs:failed", 7u) && atom_is_symbol(refused->expr.elems[1], "fs:invalid-argument"));
+    check(access(target, F_OK) == 0);
 }
 
 static Atom *walk_advance(CettaLibraryContext *ctx, Arena *arena, Atom *owner, const char *action) {
@@ -368,6 +416,7 @@ int main(int argc, char **argv) {
     check(fcntl(kept_fd, F_GETFD) == -1 && errno == EBADF);
     check(headed(chunk(ctx, &arena, owner, 1), "fs:failed", 7u));
 
+    rename_controls(ctx, &arena, argv[1]);
     pid_t child = fork();
     assert(child >= 0);
     if (!child) {
@@ -383,6 +432,7 @@ int main(int argc, char **argv) {
     assert(waitpid(child, &status, 0) == child);
     check(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     arena_free(&arena);
+    cetta_native_handle_cleanup_all(ctx);
     free(ctx);
     symbol_table_free(&symbols);
 #if CETTA_BUILD_WITH_RUNTIME_STATS

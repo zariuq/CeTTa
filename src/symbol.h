@@ -367,6 +367,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_try_canonical_under, "__cetta_lib_fs_try_canonical_under") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
     X(lib_fs_write, "__cetta_lib_fs_write") \
+    X(lib_fs_rename, "__cetta_lib_fs_rename") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
     X(lib_fs_metadata, "__cetta_lib_fs_metadata") \

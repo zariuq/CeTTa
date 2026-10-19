@@ -13893,6 +13893,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_has_prefix(head, "mm2:") ||
            symbol_name_has_prefix(head, "prolog:") ||
            symbol_name_equals(head, "fs:write") ||
+           symbol_name_equals(head, "fs:rename") ||
            symbol_name_equals(head, "fs:append-text") ||
            symbol_name_equals(head, "fs:read-text") ||
            symbol_name_equals(head, "fs:read-lines") ||
