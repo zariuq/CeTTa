@@ -506,6 +506,10 @@ static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
                                        Atom *acc_var, Atom *acc_val,
                                        Atom *item_var, Atom *item_val,
                                        FoldVarMap *fresh_vars) {
+    /* A closed subterm binds nothing and has nothing to freshen: a value the
+     * step captured is shared, not walked once per element. */
+    if (!atom_has_vars(atom))
+        return atom;
     switch (atom->kind) {
     case ATOM_VAR:
         if (acc_var && atom->var_id == acc_var->var_id)
@@ -519,19 +523,21 @@ static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
             return fold_var_map_add_fresh(fresh_vars, a, atom);
         }
     case ATOM_EXPR: {
-        Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
-        bool changed = false;
+        /* The children array is made at the first child that changes. */
+        Atom **elems = NULL;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-            elems[i] = foldl_bind_step_atom_impl(a, atom->expr.elems[i],
-                                                 acc_var, acc_val,
-                                                 item_var, item_val,
-                                                 fresh_vars);
-            if (elems[i] != atom->expr.elems[i])
-                changed = true;
+            Atom *child = foldl_bind_step_atom_impl(a, atom->expr.elems[i],
+                                                    acc_var, acc_val,
+                                                    item_var, item_val,
+                                                    fresh_vars);
+            if (!elems && child != atom->expr.elems[i]) {
+                elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                memcpy(elems, atom->expr.elems, sizeof(Atom *) * i);
+            }
+            if (elems)
+                elems[i] = child;
         }
-        if (!changed)
-            return atom;
-        return atom_expr(a, elems, atom->expr.len);
+        return elems ? atom_expr(a, elems, atom->expr.len) : atom;
     }
     default:
         return atom;

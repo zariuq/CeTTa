@@ -1453,10 +1453,14 @@ static bool bindings_value_collect_frame_ids(
                     }
                 }
             } else {
-                size_t slot = (size_t)(id * UINT64_C(0x9e3779b97f4a7c15)) &
-                    known_mask;
-                while (known_set[slot] != VAR_ID_NONE && known_set[slot] != id)
+                size_t slot = bindings_var_id_hash(id) & known_mask;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_LOOKUP);
+                while (known_set[slot] != VAR_ID_NONE && known_set[slot] != id) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_PROBE);
                     slot = (slot + 1u) & known_mask;
+                }
                 known = known_set[slot] == id;
                 if (!known)
                     known_set[slot] = id;
@@ -1490,8 +1494,7 @@ static bool bindings_value_collect_frame_ids(
                     grown[slot] = VAR_ID_NONE;
                 size_t mask = capacity - 1u;
                 for (size_t index = 0u; index < id_len; index++) {
-                    size_t slot = (size_t)(ids[index] *
-                                           UINT64_C(0x9e3779b97f4a7c15)) & mask;
+                    size_t slot = bindings_var_id_hash(ids[index]) & mask;
                     while (grown[slot] != VAR_ID_NONE)
                         slot = (slot + 1u) & mask;
                     grown[slot] = ids[index];
@@ -5084,6 +5087,9 @@ static bool bindings_apply_memo_store(BindingApplyMemo *memo, VarId id, Atom *va
 
 struct BindingsEpochAccelerator;
 
+/* The expressions ordinary substitution opens before it keeps node images. */
+#define BINDINGS_APPLY_GRAPH_AFTER 64u
+
 /* How a skeleton's variables are read.  The rewrite fold reads them in the
  * value's own context (`epoch`, `kind`).  The epoch fold reads them on the
  * original or the stored side of an activation (`original_side`), from an
@@ -5717,6 +5723,15 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
      * shared through the memo with one outside it. */
     const BindingsStructureHooks *hooks = g_bindings_structure_hooks;
     uint32_t depth = 0u;
+    /* A term that shares subterms is substituted once per path to each
+     * unless the fold keeps node images.  Ordinary substitution starts
+     * without them and keeps them from its BINDINGS_APPLY_GRAPH_AFTER-th
+     * expression on, where its images, like graph observation's, depend on
+     * the node and the scope alone: no hook, an acyclic environment. */
+    BindingApplyGraph observed = {0};
+    bool may_observe = !hooks && !graph && !epoch_fold && !fold->rewrite_var &&
+        !fold->track_cycles;
+    uint32_t expressions = 0u;
     Atom *result;
     for (;;) {
         /* Descend: the image of `atom`, or the frame that will receive it. */
@@ -5789,6 +5804,8 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
                         .atom = atom, .scope = scope, .seen_len = seen_len,
                         .code_depth = depth}))
                 goto failed;
+            if (may_observe && ++expressions == BINDINGS_APPLY_GRAPH_AFTER)
+                graph = &observed;
         } else if (!result) {
             result = atom;
         }
@@ -5854,9 +5871,11 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
             else if (result && top->draft && hooks && hooks->own_list &&
                      atom_sequence_is_own_list(top->atom))
                 result = hooks->own_list(fold->a, result);
-            if (graph) {
-                bindings_apply_graph_slot(
-                    graph, top->atom, top->scope, top->code_depth)->image = result;
+            if (graph && graph->cap) {
+                BindingApplyGraphEntry *entry = bindings_apply_graph_slot(
+                    graph, top->atom, top->scope, top->code_depth);
+                if (entry->source)
+                    entry->image = result;
                 if (graph->active_path)
                     bindings_apply_graph_slot(
                         graph->active_path, top->atom, top->scope, 0u)->active = false;
@@ -5870,10 +5889,12 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
     }
     if (frames.heap)
         free(frames.items);
+    free(observed.entries);
     return result;
 failed:
     if (frames.heap)
         free(frames.items);
+    free(observed.entries);
     return NULL;
 }
 

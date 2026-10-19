@@ -46,3 +46,18 @@
 ; 8. Without a bound every alternative runs, once each.
 !(collapse (gen all))
 !(collapse (match &self (made all $x) $x))
+
+; A reordered join cannot publish a pure row before an earlier stored effect
+; has been checked. A certificate that later fails cannot retract a prefix.
+(lazy-a x)
+(lazy-b y1 (add-atom &self lazy-hit))
+(lazy-b y2 Ok)
+(lazy-c x y2)
+(lazy-c x y1)
+!(select 1 (match &self (lazy-a $x)
+  (match &self (lazy-b $y $body) (match &self (lazy-c $x $y) $body))))
+!(collapse (match &self lazy-hit found))
+!(remove-atom &self lazy-hit)
+!(select 3 (match &self (lazy-a $x)
+  (match &self (lazy-b $y $body) (match &self (lazy-c $x $y) $body))))
+!(collapse (match &self lazy-hit found))

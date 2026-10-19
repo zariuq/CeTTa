@@ -1571,6 +1571,25 @@ typedef bool (*AtomTreePredicate)(const Atom *atom, void *context);
 bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
                    void *context);
 
+/* A set of atoms by address.  A value shares subterms, and a walk that asks
+ * a question of each subterm need ask it once per distinct subterm. */
+typedef struct {
+    const Atom **slots;
+    size_t cap;
+    size_t len;
+} AtomVisitSet;
+
+/* Whether `atom` was not yet in the set; it is in it afterwards.  False
+ * also where the set cannot grow, with *fault set: the caller then walks on
+ * without it. */
+bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault);
+void atom_visit_set_free(AtomVisitSet *set);
+
+/* atom_tree_any for a predicate whose answer at a node does not depend on
+ * the path to it: each distinct subexpression is visited once. */
+bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
+                    void *context);
+
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
 bool atom_eq(Atom *a, Atom *b);

@@ -1,4 +1,4 @@
-; A lazy accumulator graph shares earlier additions.  The generated Need
+; A lazy accumulator graph shares earlier additions. The retained Need
 ; machine must update a forced suspension once; re-evaluating immutable syntax
 ; turns this linear recurrence into exponential work.
 (= (sharing:fib-tr $n $a $b)
@@ -8,7 +8,7 @@
 
 !(sharing:fib-tr 1000 0 1)
 ; The comparison keeps the observable compact while forcing enough shared
-; recurrence work to cross the one-megabyte nursery gate.
+; recurrence work under the same small-collection-budget test profile.
 !(< (sharing:fib-tr 20000 0 1) 0)
 
 ; Two positional bindings retain the same suspension.  Updating the first
@@ -25,9 +25,10 @@
 !(sharing:identity (+ (+ 20 1) 1))
 
 ; User-defined suspension wrappers are deliberately outside the generated
-; total-integer normalization fragment.  This ladder therefore exercises
-; ephemeron collection and update-path compression rather than eager GMP
-; normalization, while keeping the observable result compact.
+; total-integer normalization fragment. This ladder therefore checks retained
+; suspension updates rather than eager GMP normalization, while keeping the
+; observable result compact. Private-VM nursery mechanisms are tested directly
+; in the answer-producer unit, independently of this frontend's return carrier.
 (= (sharing:delay-loop $n $value)
    (if (== $n 0)
        $value

@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#include "binding/frame_identity.h"
+#include "binding/frame_identity_diag.h"
 #include "atom.h"
 #include "run_cli.h"
 #include "run_guard.h"
@@ -2994,6 +2996,25 @@ static int main_run_langdef_source(const char *manifest_path,
 }
 
 static int cetta_main(int argc, char **argv) {
+    /* Frame identity diagnostics: a bound on live identities, to reach their
+     * exhaustion without holding millions of them, and a refusal point, to
+     * meet a refusal wherever one is minted. */
+    {
+        const char *limit = getenv("CETTA_DIAG_FRAME_IDENTITY_LIMIT");
+        if (limit && *limit) {
+            char *end = NULL;
+            unsigned long count = strtoul(limit, &end, 10);
+            if (end && *end == '\0' && count > 0ul && count <= UINT32_MAX)
+                cetta_frame_identity_limit_handles((uint32_t)count);
+        }
+        const char *refuse = getenv("CETTA_DIAG_FRAME_IDENTITY_REFUSE_FROM");
+        if (refuse && *refuse) {
+            char *end = NULL;
+            unsigned long long from = strtoull(refuse, &end, 10);
+            if (end && *end == '\0' && from > 0ull)
+                cetta_frame_identity_refuse_from((uint64_t)from);
+        }
+    }
     /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
     {
         stack_t ss;

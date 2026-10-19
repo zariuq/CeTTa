@@ -2062,6 +2062,57 @@ static void test_copy_reads_symbols_once_with_owned_values(void) {
     arena_free(&persistent);
 }
 
+/* A stored variable record spells its activation's epoch, so the universe
+ * holds that epoch live for as long as the record: one hold per record,
+ * however often the variable is interned again. */
+static void test_variable_record_holds_epoch_once(void) {
+    Arena persistent;
+    TermUniverse universe;
+    arena_init(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    SymbolId spelling = symbol_intern_cstr(g_symbols, "held");
+    AtomId name = tu_intern_symbol(&universe, spelling);
+    assert(name != CETTA_ATOM_ID_NONE);
+    uint32_t epoch = 0u;
+    {
+        CETTA_FRAME_IDENTITY_SCOPE(scope);
+        assert(cetta_frame_identity_scope_try(&scope, &epoch));
+        VarId x = var_epoch_id(41u, epoch), y = var_epoch_id(43u, epoch);
+        AtomId first = tu_intern_var(&universe, spelling, x);
+        assert(first != CETTA_ATOM_ID_NONE);
+        for (int i = 0; i < 1000; i++)
+            assert(tu_intern_var(&universe, spelling, x) == first);
+        assert(universe.frame_identities.len == 1u);
+        /* Another variable of the same activation is another record. */
+        AtomId second = tu_intern_var(&universe, spelling, y);
+        assert(second != CETTA_ATOM_ID_NONE && second != first);
+        assert(tu_intern_var(&universe, spelling, y) == second);
+        assert(universe.frame_identities.len == 2u);
+        AtomId named = tu_intern_named_var(&universe, name, x);
+        assert(named != CETTA_ATOM_ID_NONE && named != first);
+        for (int i = 0; i < 1000; i++)
+            assert(tu_intern_named_var(&universe, name, x) == named);
+        assert(universe.frame_identities.len == 3u);
+    }
+    /* The activation's own hold is gone; the records keep the epoch live. */
+    assert(cetta_frame_identity_retain(epoch));
+    cetta_frame_identity_release(epoch);
+    /* A variable whose activation has ended is stored without a hold. */
+    uint32_t ended = 0u;
+    {
+        CETTA_FRAME_IDENTITY_SCOPE(scope);
+        assert(cetta_frame_identity_scope_try(&scope, &ended));
+    }
+    assert(tu_intern_var(&universe, spelling, var_epoch_id(47u, ended)) !=
+           CETTA_ATOM_ID_NONE);
+    assert(universe.frame_identities.len == 3u);
+    term_universe_free(&universe);
+    /* Freeing the records returns every hold: the incarnation is over. */
+    assert(!cetta_frame_identity_retain(epoch));
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -2078,6 +2129,7 @@ int main(void) {
     test_batched_expression_identity();
     test_native_handle_id_retention();
     test_callable_value_store_contract();
+    test_variable_record_holds_epoch_once();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
     test_root_token_generation_contract();
