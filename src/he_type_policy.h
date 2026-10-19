@@ -67,6 +67,10 @@ uint32_t he_grounded_symbol_types(SymbolId symbol, bool extensions,
  * library module &self imports. */
 size_t he_library_declaration_count(void);
 Atom *he_library_declaration_at(size_t index);
+/* Standard equations of the same library module. The exact-semantics
+ * profile installs them beside the declarations; other profiles do not. */
+size_t he_library_equation_count(void);
+Atom *he_library_equation_at(size_t index);
 /* Whether a CeTTa library declaration with this subject concerns a name of
  * upstream's library: one upstream declares, or one it defines or uses
  * without declaring. */
@@ -151,6 +155,8 @@ typedef struct {
     /* HE treats metatype recognition as an early success; its mismatch
      * still permits inferred declared types. Other clients may reject it. */
     bool infer_after_metatype_mismatch;
+    /* Report the result type after the argument path's refinement. */
+    bool report_refined_result;
 } HeTypeApplicationServices;
 
 typedef enum {

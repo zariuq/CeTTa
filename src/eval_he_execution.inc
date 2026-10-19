@@ -278,6 +278,57 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
     return admitted;
 }
 
+/* The standard let row: three distinct variables on the left, and the right
+ * `(unify <atom> <pattern> <template> Empty)` using those same variables.
+ * Names are irrelevant. One such row is the library fast path; any other
+ * multiset, including a duplicate of this wiring, is not. */
+static bool he_let_library_wiring(const Atom *lhs, const Atom *rhs) {
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len != 4u ||
+        atom_head_symbol_id(lhs) != g_builtin_syms.let)
+        return false;
+    Atom *pattern = lhs->expr.elems[1];
+    Atom *atom = lhs->expr.elems[2];
+    Atom *template = lhs->expr.elems[3];
+    if (!pattern || !atom || !template ||
+        pattern->kind != ATOM_VAR || atom->kind != ATOM_VAR ||
+        template->kind != ATOM_VAR ||
+        pattern->var_id == atom->var_id || pattern->var_id == template->var_id ||
+        atom->var_id == template->var_id)
+        return false;
+    if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 5u ||
+        atom_head_symbol_id(rhs) != g_builtin_syms.unify)
+        return false;
+    Atom *value = rhs->expr.elems[1];
+    Atom *matched = rhs->expr.elems[2];
+    Atom *body = rhs->expr.elems[3];
+    return value && matched && body &&
+        value->kind == ATOM_VAR && value->var_id == atom->var_id &&
+        matched->kind == ATOM_VAR && matched->var_id == pattern->var_id &&
+        body->kind == ATOM_VAR && body->var_id == template->var_id &&
+        atom_is_symbol_id(rhs->expr.elems[4], g_builtin_syms.empty);
+}
+
+static bool he_let_proven_library_snapshot(Space *space) {
+    SpaceEquationCursor cursor;
+    if (!space || !space_equation_cursor_init(space, g_builtin_syms.let, &cursor))
+        return false;
+    unsigned count = 0u;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        SpaceEquationOccurrence occurrence;
+        if (step != SPACE_EQUATION_CURSOR_ITEM ||
+            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(), &occurrence) ||
+            !he_let_library_wiring(occurrence.lhs, occurrence.rhs))
+            return false;
+        if (++count > 1u)
+            return false;
+    }
+    return count == 1u;
+}
+
 /* Recognize the structural contracts, including every physical occurrence.
  * An additional, reordered, or altered equation is not silently ignored. */
 static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
@@ -582,7 +633,8 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                 return false;
             continue;
         }
-        if (!term || he_execution_term_holds_resource(term))
+        if (!term || he_execution_term_holds_resource(term) ||
+            he_not_reducible(term))
             return false;
         /* A superpose's argument is a tuple of alternatives, each walked as
          * a term of its own; the tuple itself is no call. */
@@ -687,7 +739,15 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                   expr_nargs(term->expr.elems[1]) != 2u)))
                 return false;
         }
+        bool let_library = head == g_builtin_syms.let &&
+            he_let_proven_library_snapshot(admission->space);
+        /* He-compat specializes let only for that one library row. No row,
+         * a different row, or a duplicate falls through to the equations. */
+        if (intrinsic && head == g_builtin_syms.let &&
+            active_profile_uses_rust_he_compat_semantics() && !let_library)
+            return false;
         if (intrinsic && eval_space_has_equations(admission->space, head) &&
+            !let_library &&
             ((head != g_builtin_syms.if_text && head != g_builtin_syms.empty_form) ||
              !he_execution_intrinsic_equations(admission->space, head)))
             return false;

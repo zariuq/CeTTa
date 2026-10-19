@@ -10220,6 +10220,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
+        if (eval_current_uses_rust_he_compat_semantics &&
+            eval_current_uses_rust_he_compat_semantics())
+            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"),
+                cell->content_type ? cell->content_type : atom_undefined_type(a));
         if (cell->content_type &&
             !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
             return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);

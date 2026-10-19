@@ -8040,6 +8040,44 @@ static bool eval_case_match_builder(Atom *pattern, Atom *value,
         : simple_match_builder(pattern, value, builder, arena);
 }
 
+/* A case replays one captured source outcome before matching its branch.
+ * Its pattern and body therefore share the bindings of that occurrence. */
+static bool he_case_match_source_builder(Atom *pattern, Atom *value,
+    const Bindings *source, BindingsBuilder *builder, Arena *arena) {
+    if (source) {
+        if (!bindings_builder_try_merge(builder, source))
+            return false;
+        bindings_builder_commit(builder);
+    }
+    pattern = bindings_apply_if_vars(
+        bindings_builder_bindings(builder), arena, pattern);
+    return eval_case_match_builder(pattern, value, builder, arena);
+}
+
+/* collapse-bind omits Empty occurrences with their captured bindings. Keep
+ * an already consumed prefix aligned when a streamed source completes. */
+static void he_case_capture_complete(Arena *arena, OutcomeSet *source,
+                                    CettaCount *cursor) {
+    CettaCount count = 0u, consumed = 0u;
+    for (CettaCount i = 0u; i < source->len; i++) {
+        if (outcome_atom_is_empty_result(arena, &source->items[i]))
+            continue;
+        if (cursor && i < *cursor)
+            consumed++;
+        if (count != i) {
+            outcome_free_fields(&source->items[count]);
+            outcome_init(&source->items[count]);
+            outcome_move(&source->items[count], &source->items[i]);
+        }
+        count++;
+    }
+    for (CettaCount i = count; i < source->len; i++)
+        outcome_free_fields(&source->items[i]);
+    source->len = count;
+    if (cursor)
+        *cursor = consumed;
+}
+
 /* `unify` is an HE builtin.  SWI-PeTTa has none: its lib_he defines `unify`
  * by equations, so plain PeTTa reads it as data unless a library defines it,
  * and only the extended profile offers the builtin. */
@@ -12761,6 +12799,9 @@ static bool he_canonical_query_closed(bool source_closed);
 static bool he_canonical_caller_schedule(Space *s, Arena *a, Atom *type,
     Atom *atom, int fuel, const Bindings *prefix,
     bool preserve_bindings, OutcomeSet *os);
+static bool he_dispatch_host_read_outcomes(Space *s, Arena *a, Atom *invocation,
+    Atom *declared_type, int fuel, const Bindings *env, bool preserve_bindings,
+    OutcomeSet *outcomes);
 static bool he_canonical_match_schedule(Space *s, Arena *a, Atom *atom,
     Atom *type, int fuel, const Bindings *env, bool preserve_bindings,
     OutcomeSet *os);
@@ -12769,6 +12810,7 @@ typedef struct {
     Space *space;
     Arena *arena;
     Atom *declared_type;
+    Atom *invocation;
     int fuel;
     const Bindings *base_env;
     bool preserve_bindings;
@@ -12787,6 +12829,82 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
 static bool type_cast_outcomes(Space *s, Arena *a, Atom *atom,
                                Atom *expectedType, const Bindings *prefix,
                                OutcomeSet *outcomes);
+
+/* HE-compat minimal case. The scrutinee is captured once. Each occurrence
+ * publishes its first substituted branch with the bindings that produced it.
+ * switch-minimal's `(eval (if-equal $res NotReducible Empty $res))` rewrites
+ * a selected NotReducible before eval_result; a selected function is left
+ * as a function so the raw-return continuation can enter it. This helper
+ * does not evaluate the branch. */
+static bool he_raw_case_collect(Space *s, Arena *a, Atom *atom, int fuel,
+                                const Bindings *env, OutcomeSet *raw) {
+    if (!active_profile_uses_rust_he_compat_semantics() || !atom ||
+        atom_head_symbol_id(atom) != g_builtin_syms.case_text ||
+        expr_nargs(atom) != 2u)
+        return false;
+
+    OutcomeSet scrut;
+    outcome_set_init(&scrut);
+    __attribute__((cleanup(eval_gc_root_frame_leave)))
+    EvalGcRootFrame source_root = {0};
+    eval_gc_root_frame_enter_outcome_continuation(
+        &source_root, NULL, 0u, &scrut, raw);
+    eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel, env, true, &scrut);
+    he_case_capture_complete(a, &scrut, NULL);
+    if (!scrut.len && !eval_unwinding())
+        outcome_set_add_prefixed(a, &scrut, atom_empty(a), env, NULL, true);
+    for (CettaCount si = 0u; si < scrut.len && !eval_unwinding(); si++) {
+        Atom *branches = expr_arg(atom, 1);
+        Outcome *source = &scrut.items[si];
+        bool matched = false;
+        if (branches && branches->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = 0u;
+                 i < branches->expr.len && !eval_unwinding(); i++) {
+                Atom *branch = branches->expr.elems[i];
+                if (!branch || branch->kind != ATOM_EXPR ||
+                    branch->expr.len != 2u)
+                    continue;
+                Atom *value = outcome_atom_materialize(a, source);
+                BindingsBuilder builder;
+                if (!bindings_builder_init(&builder, env)) {
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                    eval_gc_root_frame_leave(&source_root);
+                    outcome_set_free(&scrut);
+                    return true;
+                }
+                if (he_case_match_source_builder(
+                        branch->expr.elems[0], value, &source->env,
+                        &builder, a)) {
+                    const Bindings *matched_env =
+                        bindings_builder_bindings(&builder);
+                    Atom *body = bindings_apply_if_vars(
+                        matched_env, a, branch->expr.elems[1]);
+                    if (!body) {
+                        bindings_builder_free(&builder);
+                        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                        eval_gc_root_frame_leave(&source_root);
+                        outcome_set_free(&scrut);
+                        return true;
+                    }
+                    if (atom_is_symbol_id(body, g_builtin_syms.not_reducible))
+                        body = atom_empty(a);
+                    outcome_set_add_prefixed(
+                        a, raw, body, matched_env, NULL, true);
+                    matched = true;
+                }
+                bindings_builder_free(&builder);
+                if (matched)
+                    break;
+            }
+        }
+        if (!matched && !eval_unwinding())
+            outcome_set_add_prefixed(
+                a, raw, atom_empty(a), &source->env, env, true);
+    }
+    eval_gc_root_frame_leave(&source_root);
+    outcome_set_free(&scrut);
+    return true;
+}
 
 /* HE spec (interpret/metta_call): a produced result is checked against the
    return type of the SAME signature whose arguments admitted the call.
@@ -12831,7 +12949,7 @@ static bool he_inert_result_cast(Space *s, Arena *a, Atom *declared_type,
 }
 
 static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
-                                            Atom *declared_type,
+                                            Atom *invocation, Atom *declared_type,
                                             Outcome *seed, int fuel,
                                             bool preserve_bindings,
                                             OutcomeSet *outcomes) {
@@ -12841,19 +12959,19 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
     Atom *preview = outcome_preview_atom(seed);
     if (!seed || !preview)
         return;
+    Atom *raw = eval_current_language_id() == CETTA_LANGUAGE_HE
+        ? outcome_atom_materialize(a, seed) : preview;
     if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        he_not_reducible(preview)) {
-        /* The enclosing invocation restores itself before return typing. */
-        seed->result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
-        outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
+        he_not_reducible(raw)) {
+        outcome_set_add_prefixed(a, outcomes,
+            he_call_return_atom(invocation, raw), &seed->env, NULL,
+            preserve_bindings);
         return;
     }
     if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
-        atom_head_symbol_id(preview) == g_builtin_syms.function) {
-        Atom *result = outcome_atom_materialize(a, seed);
-        if (result)
-            he_eval_invocation_delimiter(s, a, result, declared_type, fuel,
-                                        &seed->env, preserve_bindings, outcomes);
+        atom_head_symbol_id(raw) == g_builtin_syms.function) {
+        he_eval_invocation_delimiter(s, a, raw, invocation, declared_type, fuel,
+                                    &seed->env, preserve_bindings, outcomes);
         return;
     }
 
@@ -12941,6 +13059,7 @@ static bool query_visit_eval_for_caller_common(Atom *result,
             eval_delayed_outcome_for_caller(
                 query_eval->space,
                 generated_arena,
+                query_eval->invocation,
                 result_eval_type_hint(query_eval->declared_type, result),
                 &delayed,
                 query_eval->fuel,
@@ -12963,6 +13082,7 @@ static bool query_visit_eval_for_caller_common(Atom *result,
             eval_delayed_outcome_for_caller(
                 query_eval->space,
                 query_eval->arena,
+                query_eval->invocation,
                 result_eval_type_hint(query_eval->declared_type, result),
                 &delayed,
                 query_eval->fuel,
@@ -12974,6 +13094,7 @@ static bool query_visit_eval_for_caller_common(Atom *result,
         eval_delayed_outcome_for_caller(
             query_eval->space,
             query_eval->arena,
+            query_eval->invocation,
             result_eval_type_hint(query_eval->declared_type, result),
             &delayed,
             query_eval->fuel,
@@ -13025,6 +13146,7 @@ static bool query_visit_eval_for_caller_answer_ref_common(
             eval_delayed_outcome_for_caller(
                 query_eval->space,
                 generated_arena,
+                query_eval->invocation,
                 query_eval->declared_type,
                 &delayed,
                 query_eval->fuel,
@@ -13047,6 +13169,7 @@ static bool query_visit_eval_for_caller_answer_ref_common(
             eval_delayed_outcome_for_caller(
                 query_eval->space,
                 query_eval->arena,
+                query_eval->invocation,
                 query_eval->declared_type,
                 &delayed,
                 query_eval->fuel,
@@ -13058,6 +13181,7 @@ static bool query_visit_eval_for_caller_answer_ref_common(
         eval_delayed_outcome_for_caller(
             query_eval->space,
             query_eval->arena,
+            query_eval->invocation,
             query_eval->declared_type,
             &delayed,
             query_eval->fuel,
@@ -14149,7 +14273,7 @@ static bool query_visit_shadowable_add_atoms_result(Atom *result,
                                          shadow->preserve_bindings);
     } else {
         eval_delayed_outcome_for_caller(shadow->space,
-                                        shadow->arena,
+                                        shadow->arena, NULL,
                                         result_eval_type_hint(
                                             shadow->declared_type, result),
                                         &delayed,
@@ -14486,6 +14610,9 @@ static bool query_prepared_equation_apply_single_tail(
         result = space_prepared_equation_instantiate_ground(
             &view->prepared, query, query_eval->arena);
     }
+    if (result && eval_current_language_id() == CETTA_LANGUAGE_HE &&
+        he_call_result_needs_invocation(result))
+        return false;
     if (!result || !bindings_project_control_continuation(
                        query_eval->arena, result, query_eval->base_env,
                        query_eval->preserve_bindings, tail_env)) {
@@ -14580,7 +14707,21 @@ query_equations_miss_single_tail_stream(Space *s, Atom *query,
         return QUERY_TABLE_TAIL_EMPTY;
     }
     if (stream.count == 1 && stream.first_ready) {
-        if (!allow_single_tail || stream.first_is_ref) {
+        bool needs_invocation = false;
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE &&
+            !stream.first_is_ref) {
+            Bindings merged;
+            const Bindings *effective = NULL;
+            if (bindings_effective_merge(&merged, &effective,
+                    query_eval->base_env, &stream.first_bindings, true)) {
+                Atom *raw = bindings_apply_if_vars(effective,
+                    query_eval->arena, stream.first_result);
+                needs_invocation = he_call_result_needs_invocation(raw);
+                if (effective == &merged)
+                    bindings_free(&merged);
+            }
+        }
+        if (!allow_single_tail || stream.first_is_ref || needs_invocation) {
             bool keep_going = query_miss_single_tail_publish_first(&stream);
             query_miss_single_tail_stream_ctx_free(&stream);
             return keep_going ? QUERY_TABLE_TAIL_MULTI
@@ -18330,6 +18471,9 @@ static bool let_branch_outcomes_are_resettable(const OutcomeSet *os,
     return true;
 }
 
+static bool he_orient_let_value(Arena *arena, Atom *value,
+                               BindingsBuilder *builder);
+
 static bool let_direct_branch_visit(Arena *a, Atom *atom,
                                     const Outcome *occurrence, void *ctx) {
     const Bindings *env = &occurrence->env;
@@ -18366,8 +18510,14 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
     bool ok = false;
     if (let_ctx->pat->kind == ATOM_VAR)
         ok = bindings_builder_add_var_fresh(&b, let_ctx->pat, atom);
-    else
+    else {
         ok = match_atoms_builder(atom, let_ctx->pat, &b, a);
+        if (ok && !he_orient_let_value(a, atom, &b)) {
+            bindings_builder_free(&b);
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return false;
+        }
+    }
     if (ok) {
         const Bindings *bb = bindings_builder_bindings(&b);
         Bindings visible;
@@ -26471,6 +26621,7 @@ static bool check_function_applicable(
         .accepted = accepted ? he_type_eval_accepted : NULL,
         .first_applicable = language == CETTA_LANGUAGE_HE,
         .infer_after_metatype_mismatch = language == CETTA_LANGUAGE_HE,
+        .report_refined_result = active_profile_uses_rust_he_compat_semantics(),
     };
     /* Dependent inference may evaluate types. The fold's local binding
      * alternatives are not moving-GC roots; retain their arena until the
@@ -32915,12 +33066,14 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
             !atom_eq(direct_grounded, atom)) {
             if (atom_head_symbol_id(direct_grounded) == g_builtin_syms.function)
                 he_eval_invocation_delimiter(
-                    s, a, direct_grounded, type, fuel, &empty, false, os);
+                    s, a, direct_grounded, atom, type, fuel, &empty, false, os);
             else
                 eval_for_caller(s, a, type, direct_grounded,
                                 fuel > 0 ? fuel - 1 : fuel, &empty, false, os);
             return;
         }
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE)
+            direct_grounded = he_call_return_atom(atom, direct_grounded);
         CettaCount first = os->len;
         outcome_set_add(os, direct_grounded, &empty);
         if (os->len > first)
@@ -32955,12 +33108,14 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
             !atom_eq(applied_grounded, applied)) {
             if (atom_head_symbol_id(applied_grounded) == g_builtin_syms.function)
                 he_eval_invocation_delimiter(
-                    s, a, applied_grounded, type, fuel, &empty, false, os);
+                    s, a, applied_grounded, applied, type, fuel, &empty, false, os);
             else
                 eval_for_caller(s, a, type, applied_grounded,
                                 fuel > 0 ? fuel - 1 : fuel, &empty, false, os);
             return;
         }
+        if (eval_current_language_id() == CETTA_LANGUAGE_HE)
+            applied_grounded = he_call_return_atom(applied, applied_grounded);
         CettaCount first = os->len;
         outcome_set_add(os, applied_grounded, &empty);
         if (os->len > first)
@@ -38858,7 +39013,7 @@ static void prime_need_eval_delayed_against_contracts(
     OutcomeSet evaluated;
     outcome_set_init(&evaluated);
     eval_delayed_outcome_for_caller(
-        s, a, NULL, seed, fuel, preserve_bindings, &evaluated);
+        s, a, NULL, NULL, seed, fuel, preserve_bindings, &evaluated);
 
     for (CettaCount i = 0u; i < evaluated.len; i++) {
         Outcome *candidate = &evaluated.items[i];
@@ -38916,7 +39071,7 @@ static void prime_need_eval_equation_seed(
     Atom *contract = single_result_contract
         ? single_result_contract : declared_type;
     eval_delayed_outcome_for_caller(
-        s, a, result_eval_type_hint(contract, seed->atom),
+        s, a, NULL, result_eval_type_hint(contract, seed->atom),
         seed, fuel, preserve_bindings, outcomes);
 }
 
@@ -40760,6 +40915,10 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         return true;
                                     }
                                     dispatched = true;
+                                } else if (he_dispatch_host_read_outcomes(
+                                               s, a, call_atom, inst_ret_type, fuel,
+                                               combo_ctx, preserve_bindings, &func_results)) {
+                                    dispatched = true;
                                 } else if (h->kind == ATOM_SYMBOL &&
                                            is_grounded_op(atom_symbol_current_id(h))) {
                                     CettaCallOutcome native_outcome;
@@ -40775,6 +40934,16 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         emit_completed_native_call(
                                             s, a, native_outcome, gr, inst_ret_type, combo_ctx,
                                             &func_results);
+                                        dispatched = true;
+                                    } else if (gr && eval_current_language_id() == CETTA_LANGUAGE_HE &&
+                                               he_call_result_needs_invocation(gr)) {
+                                        if (he_not_reducible(gr))
+                                            outcome_set_add(&func_results,
+                                                he_call_return_atom(call_atom, gr), combo_ctx);
+                                        else
+                                            he_eval_invocation_delimiter(s, a, gr, call_atom,
+                                                inst_ret_type, fuel, combo_ctx,
+                                                preserve_bindings, &func_results);
                                         dispatched = true;
                                     } else if (gr) {
                                         if (single_contract && only_function_types &&
@@ -40827,6 +40996,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                     &func_results,
                                     eval_query_episode_result_arena(&query_episode, a));
                             QueryEvalVisitorCtx query_eval = {
+                                .invocation = call_atom,
                                 .space = s,
                                 .arena = a,
                                     .declared_type = inst_ret_type,
@@ -41133,6 +41303,11 @@ query_done:
                     outcome_set_free(&tuples);
                     return true;
                 }
+                if (he_dispatch_host_read_outcomes(s, a, call_atom,
+                        untyped_result_type, fuel, tuple_bindings, preserve_bindings, os)) {
+                    outcome_set_free(&tuples);
+                    return true;
+                }
                 if (h->kind == ATOM_SYMBOL &&
                     is_grounded_op(atom_symbol_current_id(h))) {
                     CettaCallOutcome native_outcome;
@@ -41149,6 +41324,17 @@ query_done:
                     if (result && (native_outcome.result_form != CETTA_CALL_RESULT_EXPRESSION || eval_grounded_result_is_final())) {
                         emit_completed_native_call(
                             s, a, native_outcome, result, etype, tuple_bindings, os);
+                        outcome_set_free(&tuples);
+                        return true;
+                    }
+                    if (result && eval_current_language_id() == CETTA_LANGUAGE_HE &&
+                        he_call_result_needs_invocation(result)) {
+                        if (he_not_reducible(result))
+                            outcome_set_add(os, he_call_return_atom(call_atom, result),
+                                tuple_bindings);
+                        else
+                            he_eval_invocation_delimiter(s, a, result, call_atom,
+                                etype, fuel, tuple_bindings, preserve_bindings, os);
                         outcome_set_free(&tuples);
                         return true;
                     }
@@ -41180,6 +41366,7 @@ query_done:
             outcome_set_bind_owner_if_missing(
                 os, eval_query_episode_result_arena(&query_episode, a));
             QueryEvalVisitorCtx query_eval = {
+                .invocation = call_atom,
                 .space = s,
                 .arena = a,
                 .declared_type = untyped_result_type,
@@ -41292,6 +41479,9 @@ query_done:
                         tail_next, tail_type, tail_env, os)) {
                     continue;
                 }
+                if (he_dispatch_host_read_outcomes(s, a, call_atom,
+                        untyped_result_type, fuel, tuple_bindings, preserve_bindings, os))
+                    continue;
                 if (h->kind == ATOM_SYMBOL &&
                     is_grounded_op(atom_symbol_current_id(h))) {
                     CettaCallOutcome native_outcome;
@@ -41306,6 +41496,17 @@ query_done:
                     if (result && (native_outcome.result_form != CETTA_CALL_RESULT_EXPRESSION || eval_grounded_result_is_final())) {
                         emit_completed_native_call(
                             s, a, native_outcome, result, etype, tuple_bindings, os);
+                        continue;
+                    }
+                    if (result && eval_current_language_id() == CETTA_LANGUAGE_HE &&
+                        he_call_result_needs_invocation(result)) {
+                        if (he_not_reducible(result))
+                            outcome_set_add(os, he_call_return_atom(call_atom, result),
+                                tuple_bindings);
+                        else
+                            he_eval_invocation_delimiter(s, a, result, call_atom,
+                                untyped_result_type, fuel, tuple_bindings,
+                                preserve_bindings, os);
                         continue;
                     }
                     if (result) {
@@ -41325,6 +41526,7 @@ query_done:
                 continue;
             }
             QueryEvalVisitorCtx query_eval = {
+                .invocation = call_atom,
                 .space = s,
                 .arena = a,
                 .declared_type = untyped_result_type,
@@ -63098,7 +63300,17 @@ static CettaPreparedPureExpressionViewState
 he_prepared_pure_expression_view(
     Space *space, const Atom *expression, CettaPreparedPureExpressionView *view) {
     (void)view;
-    if (atom_has_registry_refs(expression) || prepared_pure_requires_native_handler(space, expression))
+    /* This accelerator has no saved HE invocation at a scalar return.
+     * Keep protocol-bearing source with the ordinary call continuation;
+     * never reinterpret an answer already declared completed by a producer. */
+    if (atom_has_registry_refs(expression) ||
+        atom_tree_any(expression, he_source_has_return_protocol, NULL) ||
+        prepared_pure_requires_native_handler(space, expression))
+        return CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY;
+    /* function is an invocation delimiter. Compiling its body would
+     * publish the body's value and skip the caller's witness. */
+    if (expression && expression->kind == ATOM_EXPR &&
+        atom_head_symbol_id(expression) == g_builtin_syms.function)
         return CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY;
     return (expression && expression->kind == ATOM_SYMBOL &&
             atom_symbol_current_id(expression) == g_builtin_syms.empty) ||
@@ -65891,6 +66103,55 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
 #include "eval_he_execution.inc"
 #include "eval_he_canonical.inc"
 
+/* A raw host producer and an equation share the same ordinary return
+ * continuation. The owned engine retains its frontier; the direct engine
+ * consumes it under the same saved invocation and declared demand. */
+static void he_host_results_return(Space *s, Arena *a, Atom *invocation,
+    Atom *declared_type, int fuel, bool preserve_bindings,
+    OutcomeSet *raw, OutcomeSet *outcomes) {
+    if (he_canonical_results_schedule(s, a, invocation, declared_type,
+            fuel, preserve_bindings, raw, outcomes))
+        return;
+    __attribute__((cleanup(eval_gc_root_frame_leave)))
+    EvalGcRootFrame lexical = {0};
+    eval_gc_root_frame_enter(&lexical, &invocation, NULL, &declared_type);
+    __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+    EvalGcOutcomeSuspension suspension = {0};
+    eval_gc_outcome_suspension_begin(&suspension, &lexical, outcomes, raw);
+    for (CettaCount i = 0u; i < raw->len && !eval_unwinding(); i++)
+        eval_delayed_outcome_for_caller(s, a, invocation, declared_type,
+            &raw->items[i], fuel, preserve_bindings, outcomes);
+}
+
+/* Enter only after the ordinary application interpreter has checked the
+ * signature and assembled one reached argument tuple. */
+static bool he_dispatch_host_read_outcomes(Space *s, Arena *a, Atom *invocation,
+    Atom *declared_type, int fuel, const Bindings *env, bool preserve_bindings,
+    OutcomeSet *outcomes) {
+    if (!active_profile_uses_rust_he_compat_semantics())
+        return false;
+    SymbolId head = atom_head_symbol_id(invocation);
+    if (head != g_builtin_syms.get_state && head != g_builtin_syms.get_atoms)
+        return false;
+    OutcomeSet raw;
+    outcome_set_init(&raw);
+    Atom *intrinsic_type = NULL;
+    __attribute__((cleanup(eval_gc_root_frame_leave)))
+    EvalGcRootFrame lexical = {0};
+    eval_gc_root_frame_enter(&lexical, &invocation, NULL, &declared_type);
+    __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+    EvalGcOutcomeSuspension suspension = {0};
+    eval_gc_outcome_suspension_begin(&suspension, &lexical, outcomes, &raw);
+    bool handled = he_compat_host_read_raw(s, a, invocation, env, NULL,
+                                         &raw, &intrinsic_type);
+    if (handled)
+        he_host_results_return(s, a, invocation,
+            head == g_builtin_syms.get_atoms ? intrinsic_type : declared_type,
+            fuel, preserve_bindings, &raw, outcomes);
+    outcome_set_free(&raw);
+    return handled;
+}
+
 /* The answer of an operation HE's library defines by an equation whose
  * result type is %Undefined%: HE evaluates it where it is answered, so a
  * value that could evaluate further is evaluated; in other languages, and
@@ -67019,6 +67280,9 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
     }
 
     /* ── get-atoms ─────────────────────────────────────────────────────── */
+    if (head_id == g_builtin_syms.get_atoms &&
+        active_profile_uses_rust_he_compat_semantics())
+        return METTA_DISPATCH_GENERIC;
     if (head_id == g_builtin_syms.get_atoms && nargs == 1 && g_registry) {
         Atom *space_ref = expr_arg((*call), 0);
         if (emit_generic_mork_handle_atoms_syntax(
@@ -68400,16 +68664,70 @@ static __attribute__((noinline)) MettaDispatchResult metta_case_dispatch(
             he_canonical_control_schedule(s, a, (*call), (*expected), expr_arg((*call), 0),
                 fuel, CURRENT_ENV, preserve_bindings, eval_gc_query_closed, false, os))
             return METTA_DISPATCH_HANDLED;
+        if (language_id == CETTA_LANGUAGE_HE) {
+            OutcomeSet scrut;
+            outcome_set_init(&scrut);
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension source_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &source_suspension, caller_root, os, &scrut);
+            eval_for_caller(s, a, NULL, expr_arg((*call), 0), fuel,
+                CURRENT_ENV, true, &scrut);
+            he_case_capture_complete(a, &scrut, NULL);
+            if (!scrut.len && !eval_unwinding())
+                outcome_set_add_prefixed(a, &scrut, atom_empty(a),
+                    CURRENT_ENV, NULL, true);
+            for (CettaCount si = 0u; si < scrut.len && !eval_unwinding(); si++) {
+                for (CettaExprIndex i = 0u;; i++) {
+                    /* Branch evaluation may collect: reacquire source syntax
+                     * and the captured outcome through their retained owners. */
+                    Atom *branches = expr_arg((*call), 1);
+                    if (branches->kind != ATOM_EXPR || i >= branches->expr.len)
+                        break;
+                    Atom *branch = branches->expr.elems[i];
+                    if (branch->kind != ATOM_EXPR || branch->expr.len != 2u)
+                        continue;
+                    Outcome *source = &scrut.items[si];
+                    Atom *value = outcome_atom_materialize(a, source);
+                    BindingsBuilder matched;
+                    if (!bindings_builder_init(&matched, CURRENT_ENV)) {
+                        outcome_set_free(&scrut);
+                        return METTA_DISPATCH_HANDLED;
+                    }
+                    bool match = he_case_match_source_builder(
+                        branch->expr.elems[0], value, &source->env, &matched, a);
+                    if (match) {
+                        const Bindings *env = bindings_builder_bindings(&matched);
+                        Atom *body = bindings_apply_if_vars(env, a, branch->expr.elems[1]);
+                        if (scrut.len == 1u) {
+                            Bindings continuation;
+                            bool retained = bindings_project_control_continuation(
+                                a, body, env, preserve_bindings, &continuation);
+                            bool merged = retained && bindings_builder_merge_commit(
+                                env_builder, &continuation);
+                            if (retained)
+                                bindings_free(&continuation);
+                            bindings_builder_free(&matched);
+                            outcome_set_free(&scrut);
+                            if (merged)
+                                CASE_TAIL(body);
+                            return METTA_DISPATCH_HANDLED;
+                        }
+                        eval_for_current_caller(s, a, NULL, body, fuel, env,
+                            CURRENT_ENV, preserve_bindings, os);
+                    }
+                    bindings_builder_free(&matched);
+                    if (match)
+                        break;
+                }
+            }
+            outcome_set_free(&scrut);
+            return METTA_DISPATCH_HANDLED;
+        }
         ResultSet scrut;
         result_set_init(&scrut);
         metta_eval(s, a, NULL,expr_arg((*call), 0), fuel, &scrut);
         Atom *branches = expr_arg((*call), 1);
-        /* HE's case switches on Empty when its atom has no results, as its
-         * definition does (`switch-minimal Empty $cases`): the first branch
-         * whose pattern matches Empty is taken, a variable pattern
-         * included. */
-        if (scrut.len == 0 && language_id == CETTA_LANGUAGE_HE)
-            result_set_add(&scrut, atom_empty(a));
         /* Single-scrutinee deterministic fast path with TCO.
            This avoids linear C-stack growth for tail-recursive
            loops expressed as let -> case recursion. */
@@ -68473,10 +68791,12 @@ static __attribute__((noinline)) MettaDispatchResult metta_case_dispatch(
 
     /* ── switch ────────────────────────────────────────────────────────── */
     /* Prime's `switch` is its `case` (above); this is the HE and PeTTa
-     * `switch` and every `switch-minimal`.  The scrutinee and each branch
-     * pattern are read through the current environment, as `let` reads its
-     * source, and a branch whose bindings conflict with that environment
-     * does not match, so the next branch is tried. */
+     * `switch`, and `switch-minimal` outside he-compat.  The scrutinee and
+     * each branch pattern are read through the current environment, as
+     * `let` reads its source, and a branch whose bindings conflict with
+     * that environment does not match, so the next branch is tried.
+     * he-compat `switch-minimal` is the library equation: after the arity
+     * error, the call is an ordinary typed invocation. */
     if (head_id == g_builtin_syms.switch_text ||
         head_id == g_builtin_syms.switch_minimal) {
         if (nargs != 2) {
@@ -68485,6 +68805,9 @@ static __attribute__((noinline)) MettaDispatchResult metta_case_dispatch(
                 empty);
             return METTA_DISPATCH_HANDLED;
         }
+        if (head_id == g_builtin_syms.switch_minimal &&
+            active_profile_uses_rust_he_compat_semantics())
+            return METTA_DISPATCH_GENERIC;
         Atom *scrutinee =
             bindings_apply_if_vars(CURRENT_ENV, a, expr_arg((*call), 0));
         Atom *branches = expr_arg((*call), 1);
@@ -69155,6 +69478,8 @@ static __attribute__((noinline)) MettaDispatchResult metta_state_dispatch(
         return METTA_DISPATCH_HANDLED;
     }
     if (head_id == g_builtin_syms.get_state) {
+        if (active_profile_uses_rust_he_compat_semantics())
+            return METTA_DISPATCH_DECLINED;
         if (nargs != 1) {
             outcome_set_add(os,
                 atom_error(a, (*call), atom_symbol(a, "IncorrectNumberOfArguments")),
@@ -70167,6 +70492,18 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
         petta_semantics_is_value_let(head_id);
     if ((head_id == g_builtin_syms.let || petta_value_let) &&
         nargs == 3u) {
+        if (language_id == CETTA_LANGUAGE_HE &&
+            head_id == g_builtin_syms.let &&
+            active_profile_uses_rust_he_compat_semantics() &&
+            !he_let_proven_library_snapshot(s)) {
+            /* No let row leaves the call unchanged. Any other row is
+             * interpreted from the equations, one result per occurrence. */
+            if (!eval_space_has_equations(s, g_builtin_syms.let)) {
+                outcome_set_add(os, *call, empty);
+                return METTA_DISPATCH_HANDLED;
+            }
+            return METTA_DISPATCH_DECLINED;
+        }
         Atom *pat = expr_arg((*call), 0);
         Atom *val_expr = expr_arg((*call), 1);
         Atom *body_let = expr_arg((*call), 2);
@@ -70365,6 +70702,11 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
                 }
                 ok = match_atoms_builder(val_atom, pat, &b, a);
                 outcome_set_free(&vals);
+                if (ok && !he_orient_let_value(a, val_atom, &b)) {
+                    bindings_builder_free(&b);
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                    return METTA_DISPATCH_HANDLED;
+                }
                 if (ok) {
                     const Bindings *bb = bindings_builder_bindings(&b);
                     Bindings visible;
@@ -70467,6 +70809,12 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
                 if (!bindings_builder_init(&b, val_env))
                     continue;
                 if (match_atoms_builder(val_atom, pat, &b, a)) {
+                    if (!he_orient_let_value(a, val_atom, &b)) {
+                        bindings_builder_free(&b);
+                        outcome_set_free(&vals);
+                        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                        return METTA_DISPATCH_HANDLED;
+                    }
                     const Bindings *bb = bindings_builder_bindings(&b);
                     Bindings visible;
                     if (!bindings_project_body_visible_env(a, body_let, bb, &visible)) {
@@ -70762,7 +71110,8 @@ static __attribute__((noinline)) MettaDispatchResult metta_chain_dispatch(
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
             if (!r || atom_is_legacy_empty_sentinel(r)) continue;
             const Bindings *env = &inner.items[i].env;
-            Atom *template = bindings_apply_value(env, a, binding_value_from_atom(tmpl_chain));
+            Atom *template = language_id == CETTA_LANGUAGE_HE ? tmpl_chain :
+                bindings_apply_value(env, a, binding_value_from_atom(tmpl_chain));
             Atom *next = template
                 ? instantiate_template_variable_once(a, template, var->var_id, r) : NULL;
             if (!next) continue;
@@ -71304,8 +71653,11 @@ static __attribute__((noinline)) MettaDispatchResult metta_function_dispatch(
             outcome_set_free(&inner);
             return METTA_DISPATCH_HANDLED;
         }
+        if (active_profile_uses_rust_he_compat_semantics()) {
+            he_minimal_run(s, a, (*call), fuel, environment, os);
+            return METTA_DISPATCH_HANDLED;
+        }
         OutcomeSet inner;
-        bool rust_compat = active_profile_uses_rust_he_compat_semantics();
         outcome_set_init(&inner);
         metta_eval_bind(s, a, body, fuel, &inner);
         for (CettaCount i = 0; i < inner.len; i++) {
@@ -71313,21 +71665,13 @@ static __attribute__((noinline)) MettaDispatchResult metta_function_dispatch(
             if (!r) continue;
             if (atom_head_symbol_id(r) == g_builtin_syms.return_text && r->expr.len == 2) {
                 outcome_set_add(os, r->expr.elems[1], &inner.items[i].env);
-            } else if (rust_compat) {
-                outcome_set_add(os,
-                    atom_var_with_id(a, "result", var_epoch_id(1, 17)),
-                    &inner.items[i].env);
             } else {
                 outcome_set_add(os, atom_error(a,
                     atom_expr2(a, atom_symbol(a, "function"), body),
                     atom_symbol(a, "NoReturn")), &inner.items[i].env);
             }
         }
-        if (inner.len == 0 && rust_compat) {
-            outcome_set_add(os,
-                atom_var_with_id(a, "result", var_epoch_id(1, 17)),
-                empty);
-        } else if (inner.len == 0) {
+        if (inner.len == 0) {
             outcome_set_add(os, atom_error(a,
                 atom_expr2(a, atom_symbol(a, "function"), body),
                 atom_symbol(a, "NoReturn")), empty);
@@ -73596,7 +73940,7 @@ generic_dispatch:
                         live, 3u, &current_env_builder.current, &tail_env,
                         &dispatch_results, os);
                     he_eval_invocation_delimiter(
-                        s, a, live[1], live[2] ? live[2] : etype,
+                        s, a, live[1], live[0], live[2] ? live[2] : etype,
                         fuel, &tail_env, preserve_bindings, &dispatch_results);
                     eval_gc_case_branch_suspension_end(&delimiter_suspension);
                     for (CettaCount i = 0u; i < dispatch_results.len; i++) {
@@ -73648,15 +73992,9 @@ generic_dispatch:
             }
             if (language_id == CETTA_LANGUAGE_HE) {
                 for (CettaCount i = 0u; i < dispatch_results.len; i++) {
-                    Atom *result = outcome_atom_materialize(a, &dispatch_results.items[i]);
-                    if (he_not_reducible(result))
-                        outcome_set_add_prefixed(a, os, atom,
-                            &dispatch_results.items[i].env, CURRENT_ENV,
-                            preserve_bindings);
-                    else
-                        outcome_set_add_prefixed_outcome(a, os,
-                            &dispatch_results.items[i], CURRENT_ENV,
-                            preserve_bindings);
+                    outcome_set_add_prefixed_outcome(a, os,
+                        &dispatch_results.items[i], CURRENT_ENV,
+                        preserve_bindings);
                 }
             } else {
                 outcome_set_append_prefixed(a, os, &dispatch_results, CURRENT_ENV,

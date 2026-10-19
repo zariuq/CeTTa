@@ -15,3 +15,7 @@
 [(1 2 3 4)]
 [(1 2 3 4)]
 [(1 2 3 4)]
+[(decline-once)]
+[(a)]
+[((decline-once) (decline-once))]
+[(a a b)]

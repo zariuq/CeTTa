@@ -46,3 +46,16 @@
 ; 8. Without a bound every alternative runs, once each.
 !(collapse (gen all))
 !(collapse (match &self (made all $x) $x))
+
+; A raw function refusal restores its call before bounded publication.
+; The unselected occurrence must not perform its effect.
+(= (decline-once)
+  (function (chain (eval (add-atom &self (decline-seen a))) $r
+    (return NotReducible))))
+(= (decline-once)
+  (function (chain (eval (add-atom &self (decline-seen b))) $r
+    (return NotReducible))))
+!(once (decline-once))
+!(collapse (match &self (decline-seen $x) $x))
+!(select 2 (decline-once))
+!(collapse (match &self (decline-seen $x) $x))

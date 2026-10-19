@@ -51,6 +51,15 @@ static bool telegram_he_prepare_library(Space *space, Arena *arena,
         if (!space_admit_atom(space, arena, declaration))
             space_add(space, declaration);
     }
+    for (size_t i = 0u; ok && !extensions && i < he_library_equation_count(); i++) {
+        Atom *equation = he_library_equation_at(i);
+        if (!equation) {
+            ok = false;
+            break;
+        }
+        if (!space_admit_atom(space, arena, equation))
+            space_add(space, equation);
+    }
     for (CettaCount i = 0u; ok && i < kept_len; i++)
         space_add_atom_id(space, kept[i]);
     free(mask);

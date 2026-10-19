@@ -31,6 +31,9 @@
 static bool he_minimal_instruction_head(SymbolId head);
 static bool he_minimal_instruction(Atom *atom);
 static bool he_not_reducible(Atom *atom);
+static Atom *he_call_return_atom(Atom *invocation, Atom *raw_result);
+static bool he_call_result_needs_invocation(Atom *result);
+static bool he_source_has_return_protocol(const Atom *atom, void *context);
 
 /* Complete an applicable public instruction under its instantiated codomain.
  * A true return means a single continuation was transferred to the existing
@@ -49,7 +52,7 @@ static bool he_eval_typed_instruction(
  * Atom demand, and from acquiring an ordinary raw invocation result.
  */
 static void he_eval_invocation_delimiter(
-    Space *s, Arena *a, Atom *atom, Atom *type, int fuel,
+    Space *s, Arena *a, Atom *atom, Atom *invocation, Atom *type, int fuel,
     const Bindings *prefix, bool preserve_bindings, OutcomeSet *os);
 
 #endif

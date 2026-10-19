@@ -31631,31 +31631,32 @@ test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards
 
 .PHONY: test-he-return-contract-correlation
 test-he-return-contract-correlation: $(BIN)
-	@expected=$$(cat tests/test_he_return_contract_correlation.expected); \
-	pass=0; fail=0; \
+	@pass=0; fail=0; \
+	for canonical in 0 1; do \
 	for profile in he he-compat extended he-prime; do \
-		result=$$($(CETTA_BIN_INVOKE) --lang he --profile $$profile \
-			tests/test_he_return_contract_correlation.metta 2>&1); \
-		if [ "$$result" = "$$expected" ]; then \
-			echo "PASS: HE return-contract correlation ($$profile)"; \
-			pass=$$((pass + 1)); \
-		else \
-			echo "FAIL: HE return-contract correlation ($$profile)"; \
-			diff <(echo "$$expected") <(echo "$$result") | head -40; \
-			fail=$$((fail + 1)); \
-		fi; \
-	done; \
-	result=$$(CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --lang he --profile he \
-		tests/test_he_return_contract_correlation.metta 2>&1); \
-	if [ "$$result" = "$$expected" ]; then \
-		echo "PASS: HE return-contract correlation (GC relocation)"; \
-		pass=$$((pass + 1)); \
-	else \
-		echo "FAIL: HE return-contract correlation (GC relocation)"; \
-		diff <(echo "$$expected") <(echo "$$result") | head -40; \
-		fail=$$((fail + 1)); \
-	fi; \
-	echo "---"; \
+	for mode in ordinary bounded gc; do \
+		options=(); environment=("CETTA_HE_CANONICAL_EXECUTION=$$canonical"); \
+		if [ "$$mode" = bounded ]; then options+=(--fuel 2000); fi; \
+		if [ "$$mode" = gc ]; then environment+=(CETTA_GC_BUDGET_MB=1); fi; \
+		for fixture in test_he_return_contract_correlation test_he_host_return_provenance test_he_raw_case_root test_he_let_step; do \
+			expected_file=tests/$$fixture.expected; \
+			if [ "$$fixture" = test_he_host_return_provenance ] || [ "$$fixture" = test_he_raw_case_root ] || [ "$$fixture" = test_he_let_step ]; then \
+				contract=completed; [ "$$profile" != he-compat ] || contract=he-compat; \
+				expected_file=tests/$$fixture.$$contract.expected; \
+			fi; \
+			expected=$$(cat "$$expected_file"); \
+			result=$$(env "$${environment[@]}" $(CETTA_BIN_INVOKE) --lang he \
+				--profile $$profile "$${options[@]}" tests/$$fixture.metta 2>&1); status=$$?; \
+			if [ $$status -eq 0 ] && [ "$$result" = "$$expected" ]; then \
+				echo "PASS: $$fixture ($$profile canonical=$$canonical $$mode)"; \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: $$fixture ($$profile canonical=$$canonical $$mode exit=$$status)"; \
+				diff <(echo "$$expected") <(echo "$$result") | head -40; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done; \
+	done; done; done; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 

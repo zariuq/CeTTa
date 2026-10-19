@@ -34,3 +34,28 @@
   (chain 1 $x
     (quote (chain 2 $x $x)))
   ((quote (chain 2 1 1))))
+
+; Equal rule occurrences remain separate, and every nested result retains
+; its sharing with the pending caller argument.
+(= (alias-dup $x) (Pair $x $x))
+(= (alias-dup $x) (Pair $x $x))
+(= (alias-wrap $x $tail) (Combined $x $tail))
+
+!(assertEqualToResult
+  (alias-wrap (alias-dup $a) $a)
+  ((Combined (Pair $a $a) $a) (Combined (Pair $a $a) $a)))
+
+!(assertEqualToResult
+  (alias-wrap (alias-dup (Node $a $b)) (Node $a $b))
+  ((Combined (Pair (Node $a $b) (Node $a $b)) (Node $a $b))
+   (Combined (Pair (Node $a $b) (Node $a $b)) (Node $a $b))))
+
+!(assertEqualToResult
+  (alias-wrap (alias-dup (Node $a $a)) (Node $a $a))
+  ((Combined (Pair (Node $a $a) (Node $a $a)) (Node $a $a))
+   (Combined (Pair (Node $a $a) (Node $a $a)) (Node $a $a))))
+
+; Distinct required values cannot satisfy the two uses of the same residual.
+!(assertEqualToResult
+  (let (Pair Left Right) (alias-dup $a) Bad)
+  ())
