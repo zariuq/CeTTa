@@ -223,6 +223,17 @@ typedef struct {
     uint32_t count;
 } DiscIntHashTable;
 
+/* The branches of one scalar kind.  An integer is keyed by its value; a
+ * string by its content's 64-bit hash, so different strings with equal
+ * hashes share a branch, which the matcher tells apart. */
+typedef struct {
+    DiscIntBranch *list;
+    uint32_t count;
+    uint32_t cap;
+    DiscIntHashTable ht;
+    bool hashed;
+} DiscScalarBranches;
+
 typedef struct {
     CettaExprLen arity;
     DiscNode *child;
@@ -238,11 +249,8 @@ typedef struct {
     DiscExprBranch *expr;
     uint32_t nexpr;
     uint32_t cexpr;
-    DiscIntBranch *ints;
-    uint32_t nints;
-    uint32_t cints;
-    DiscIntHashTable int_ht;
-    bool ints_hashed;
+    DiscScalarBranches ints;
+    DiscScalarBranches strs;
 } DiscBranchSet;
 
 typedef enum {
@@ -251,12 +259,14 @@ typedef enum {
     DISC_EDGE_VARIABLE,
     DISC_EDGE_EXPRESSION,
     DISC_EDGE_INTEGER,
+    DISC_EDGE_STRING,
     DISC_EDGE_MANY,
 } DiscEdgeKind;
 
 typedef union {
     SymbolId symbol;
     CettaExprLen arity;
+    /* An integer's value, or a string's content hash. */
     int64_t integer;
 } DiscEdgeKey;
 
@@ -419,6 +429,7 @@ static bool disc_edge_key_eq(
     case DISC_EDGE_EXPRESSION:
         return left.arity == right.arity;
     case DISC_EDGE_INTEGER:
+    case DISC_EDGE_STRING:
         return left.integer == right.integer;
     case DISC_EDGE_EMPTY:
     case DISC_EDGE_MANY:
@@ -537,17 +548,16 @@ static void disc_prepare_coordinate_leaves(DiscPool *pool, DiscNode *root) {
         for (uint32_t i = 0u; i < branches->nexpr; i++) {
             disc_node_vector_push(&pending, branches->expr[i].child);
         }
-        if (branches->ints_hashed) {
-            uint32_t cap = branches->int_ht.mask + 1u;
+        const DiscScalarBranches *scalars[] = {&branches->ints, &branches->strs};
+        for (size_t kind = 0u; kind < 2u; kind++) {
+            const DiscScalarBranches *each = scalars[kind];
+            uint32_t cap = each->hashed ? each->ht.mask + 1u : each->count;
             for (uint32_t i = 0u; i < cap; i++) {
-                if (branches->int_ht.entries[i].child) {
-                    disc_node_vector_push(&pending,
-                        branches->int_ht.entries[i].child);
-                }
-            }
-        } else {
-            for (uint32_t i = 0u; i < branches->nints; i++) {
-                disc_node_vector_push(&pending, branches->ints[i].child);
+                /* A hashed table's empty slots hold no child. */
+                DiscNode *child = each->hashed
+                    ? each->ht.entries[i].child : each->list[i].child;
+                if (child)
+                    disc_node_vector_push(&pending, child);
             }
         }
     }
@@ -698,15 +708,19 @@ static DiscBranchSet *disc_promote_singleton(DiscPool *pool,
         branches->nexpr = 1u;
         break;
     case DISC_EDGE_INTEGER:
-        branches->cints = 4u;
-        branches->ints = disc_pool_alloc(
-            pool, sizeof(*branches->ints) * branches->cints);
-        branches->ints[0] = (DiscIntBranch){
+    case DISC_EDGE_STRING: {
+        DiscScalarBranches *scalars = kind == DISC_EDGE_STRING
+            ? &branches->strs : &branches->ints;
+        scalars->cap = 4u;
+        scalars->list = disc_pool_alloc(
+            pool, sizeof(*scalars->list) * scalars->cap);
+        scalars->list[0] = (DiscIntBranch){
             .key = key.integer,
             .child = child,
         };
-        branches->nints = 1u;
+        scalars->count = 1u;
         break;
+    }
     case DISC_EDGE_EMPTY:
     case DISC_EDGE_MANY:
         break;
@@ -874,57 +888,78 @@ static void disc_int_ht_put(
     ht->count++;
 }
 
-static void disc_int_promote(DiscPool *pool, DiscBranchSet *branches) {
-    DiscIntBranch *old = branches->ints;
-    uint32_t count = branches->nints;
-    disc_int_ht_init(pool, &branches->int_ht, count + 16u);
+static void disc_scalar_promote(DiscPool *pool, DiscScalarBranches *scalars) {
+    DiscIntBranch *old = scalars->list;
+    uint32_t count = scalars->count;
+    disc_int_ht_init(pool, &scalars->ht, count + 16u);
     for (uint32_t i = 0u; i < count; i++)
-        disc_int_ht_put(pool, &branches->int_ht, old[i].key, old[i].child);
-    disc_pool_release(pool, old, sizeof(*old) * (size_t)branches->cints);
-    branches->ints = NULL;
-    branches->cints = 0u;
-    branches->ints_hashed = true;
+        disc_int_ht_put(pool, &scalars->ht, old[i].key, old[i].child);
+    disc_pool_release(pool, old, sizeof(*old) * (size_t)scalars->cap);
+    scalars->list = NULL;
+    scalars->cap = 0u;
+    scalars->hashed = true;
 }
 
-static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
-    DiscEdgeKey edge_key = {.integer = val};
+/* The child under scalar key `key` of edge kind `kind`, made if absent. */
+static DiscNode *disc_get_scalar(DiscPool *pool, DiscNode *n,
+                                 DiscEdgeKind kind, int64_t key) {
+    DiscEdgeKey edge_key = {.integer = key};
     if (n->edges.kind == DISC_EDGE_EMPTY)
-        return disc_singleton_insert(pool, n, DISC_EDGE_INTEGER, edge_key);
-    DiscNode *single = disc_singleton_find(
-        n, DISC_EDGE_INTEGER, edge_key);
+        return disc_singleton_insert(pool, n, kind, edge_key);
+    DiscNode *single = disc_singleton_find(n, kind, edge_key);
     if (single)
         return single;
     DiscBranchSet *branches = n->edges.kind == DISC_EDGE_MANY
         ? n->edges.payload.many
         : disc_promote_singleton(pool, n);
-    if (branches->ints_hashed) {
-        DiscNode *existing = disc_int_ht_get(&branches->int_ht, val);
+    DiscScalarBranches *scalars = kind == DISC_EDGE_STRING
+        ? &branches->strs : &branches->ints;
+    if (scalars->hashed) {
+        DiscNode *existing = disc_int_ht_get(&scalars->ht, key);
         if (existing)
             return existing;
         DiscNode *child = disc_pool_node(pool);
-        disc_int_ht_put(pool, &branches->int_ht, val, child);
-        branches->nints++;
+        disc_int_ht_put(pool, &scalars->ht, key, child);
+        scalars->count++;
         return child;
     }
-    for (uint32_t i = 0; i < branches->nints; i++)
-        if (branches->ints[i].key == val)
-            return branches->ints[i].child;
-    if (branches->nints >= branches->cints) {
-        size_t old_bytes = sizeof(branches->ints[0]) * branches->cints;
-        branches->cints = branches->cints ? branches->cints * 2u : 4u;
-        branches->ints = disc_pool_grow(
-            pool, branches->ints, old_bytes,
-            sizeof(branches->ints[0]) * branches->cints);
+    for (uint32_t i = 0; i < scalars->count; i++)
+        if (scalars->list[i].key == key)
+            return scalars->list[i].child;
+    if (scalars->count >= scalars->cap) {
+        size_t old_bytes = sizeof(scalars->list[0]) * scalars->cap;
+        scalars->cap = scalars->cap ? scalars->cap * 2u : 4u;
+        scalars->list = disc_pool_grow(
+            pool, scalars->list, old_bytes,
+            sizeof(scalars->list[0]) * scalars->cap);
     }
     DiscNode *child = disc_pool_node(pool);
-    branches->ints[branches->nints].key = val;
-    branches->ints[branches->nints].child = child;
-    branches->nints++;
-    if (branches->nints > DISC_HASH_THRESHOLD &&
+    scalars->list[scalars->count].key = key;
+    scalars->list[scalars->count].child = child;
+    scalars->count++;
+    if (scalars->count > DISC_HASH_THRESHOLD &&
         !CETTA_DISC_INT_HASH_REFERENCE) {
-        disc_int_promote(pool, branches);
+        disc_scalar_promote(pool, scalars);
     }
     return child;
+}
+
+static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
+    return disc_get_scalar(pool, n, DISC_EDGE_INTEGER, val);
+}
+
+/* A string's key: a hash of its bytes, which may hold NUL.  Equal strings
+ * from any arena or universe have equal keys. */
+static int64_t disc_string_key(const char *bytes, size_t len) {
+    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    for (size_t i = 0u; i < len; i++) {
+        hash ^= (unsigned char)bytes[i];
+        hash *= UINT64_C(0x100000001b3);
+    }
+    hash ^= hash >> 33u;
+    hash *= UINT64_C(0xff51afd7ed558ccd);
+    hash ^= hash >> 33u;
+    return (int64_t)hash;
 }
 
 /* Limit expansion of expression occurrences, not merely depth: a wide DAG
@@ -946,7 +981,11 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT)
             return disc_get_int(pool, node, a->ground.ival);
-        /* treat other grounded as wildcard for now */
+        if (a->ground.gkind == GV_STRING)
+            return disc_get_scalar(
+                pool, node, DISC_EDGE_STRING,
+                disc_string_key(a->ground.sval, a->ground.slen));
+        /* Other grounded values sit on the variable branch. */
         return disc_get_var(pool, node);
     case ATOM_EXPR: {
         /* A list pattern meets lists of every length at least its prefix's,
@@ -990,6 +1029,11 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
     case ATOM_GROUNDED:
         if (tu_ground_kind(universe, atom_id) == GV_INT) {
             *out_leaf = disc_get_int(pool, node, tu_int(universe, atom_id));
+        } else if (tu_ground_kind(universe, atom_id) == GV_STRING) {
+            *out_leaf = disc_get_scalar(
+                pool, node, DISC_EDGE_STRING,
+                disc_string_key(tu_string_cstr(universe, atom_id),
+                                tu_string_len(universe, atom_id)));
         } else {
             *out_leaf = disc_get_var(pool, node);
         }
@@ -1059,23 +1103,29 @@ static DiscNode *disc_find_symbol_branch(
     return NULL;
 }
 
-static DiscNode *disc_find_integer_branch(
-        const DiscNode *node, int64_t value) {
-    DiscEdgeKey edge_key = {.integer = value};
-    DiscNode *single = disc_singleton_find(
-        node, DISC_EDGE_INTEGER, edge_key);
+static DiscNode *disc_find_scalar_branch(
+        const DiscNode *node, DiscEdgeKind kind, int64_t key) {
+    DiscEdgeKey edge_key = {.integer = key};
+    DiscNode *single = disc_singleton_find(node, kind, edge_key);
     if (single)
         return single;
     const DiscBranchSet *branches = disc_many_branches(node);
     if (!branches)
         return NULL;
-    if (branches->ints_hashed)
-        return disc_int_ht_get(&branches->int_ht, value);
-    for (uint32_t i = 0u; i < branches->nints; i++) {
-        if (branches->ints[i].key == value)
-            return branches->ints[i].child;
+    const DiscScalarBranches *scalars = kind == DISC_EDGE_STRING
+        ? &branches->strs : &branches->ints;
+    if (scalars->hashed)
+        return disc_int_ht_get(&scalars->ht, key);
+    for (uint32_t i = 0u; i < scalars->count; i++) {
+        if (scalars->list[i].key == key)
+            return scalars->list[i].child;
     }
     return NULL;
+}
+
+static DiscNode *disc_find_integer_branch(
+        const DiscNode *node, int64_t value) {
+    return disc_find_scalar_branch(node, DISC_EDGE_INTEGER, value);
 }
 
 static DiscNode *disc_find_expression_branch(
@@ -1127,7 +1177,8 @@ static DiscNode *disc_path_step(DiscPath *path, DiscNode *node,
         child = disc_find_symbol_branch(node, key.symbol);
         break;
     case DISC_EDGE_INTEGER:
-        child = disc_find_integer_branch(node, key.integer);
+    case DISC_EDGE_STRING:
+        child = disc_find_scalar_branch(node, kind, key.integer);
         break;
     case DISC_EDGE_EXPRESSION:
         child = disc_find_expression_branch(node, key.arity);
@@ -1176,6 +1227,12 @@ static DiscNode *disc_find_atom_id_path(
             return disc_path_step(
                 path, node, DISC_EDGE_INTEGER,
                 (DiscEdgeKey){.integer = tu_int(universe, atom_id)});
+        if (tu_ground_kind(universe, atom_id) == GV_STRING)
+            return disc_path_step(
+                path, node, DISC_EDGE_STRING,
+                (DiscEdgeKey){.integer = disc_string_key(
+                    tu_string_cstr(universe, atom_id),
+                    tu_string_len(universe, atom_id))});
         return disc_path_step(path, node, DISC_EDGE_VARIABLE,
                               (DiscEdgeKey){0});
     case ATOM_EXPR: {
@@ -1270,20 +1327,24 @@ static void disc_unlink(const DiscPathStep *step) {
         }
         break;
     case DISC_EDGE_INTEGER:
-        if (branches->ints_hashed) {
-            disc_int_ht_delete(&branches->int_ht, step->key.integer);
-            branches->nints--;
+    case DISC_EDGE_STRING: {
+        DiscScalarBranches *scalars = step->kind == DISC_EDGE_STRING
+            ? &branches->strs : &branches->ints;
+        if (scalars->hashed) {
+            disc_int_ht_delete(&scalars->ht, step->key.integer);
+            scalars->count--;
             break;
         }
-        for (uint32_t i = 0u; i < branches->nints; i++) {
-            if (branches->ints[i].key != step->key.integer)
+        for (uint32_t i = 0u; i < scalars->count; i++) {
+            if (scalars->list[i].key != step->key.integer)
                 continue;
-            memmove(&branches->ints[i], &branches->ints[i + 1u],
-                    (branches->nints - i - 1u) * sizeof(branches->ints[0]));
-            branches->nints--;
+            memmove(&scalars->list[i], &scalars->list[i + 1u],
+                    (scalars->count - i - 1u) * sizeof(scalars->list[0]));
+            scalars->count--;
             break;
         }
         break;
+    }
     case DISC_EDGE_EXPRESSION:
         for (uint32_t i = 0u; i < branches->nexpr; i++) {
             if (branches->expr[i].arity != step->key.arity)
@@ -1309,8 +1370,9 @@ static bool disc_node_vacant(const DiscNode *node) {
     if (node->edges.kind == DISC_EDGE_EMPTY)
         return true;
     const DiscBranchSet *branches = disc_many_branches(node);
-    return branches && branches->nsym == 0u && branches->nints == 0u &&
-           branches->nexpr == 0u && !branches->var_child;
+    return branches && branches->nsym == 0u && branches->ints.count == 0u &&
+           branches->strs.count == 0u && branches->nexpr == 0u &&
+           !branches->var_child;
 }
 
 /* Drop one coordinate from the leaf an id was inserted at, and the nodes
@@ -1450,7 +1512,8 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
     }
 
     const DiscBranchSet *branches = node->edges.payload.many;
-    /* Symbol, variable and integer branches each consume one trie step. */
+    /* Symbol, variable, integer and string branches each consume one trie
+     * step. */
     if (branches->sym_hashed) {
         uint32_t cap = branches->sym_ht.mask + 1u;
         for (uint32_t i = 0u; i < cap; i++) {
@@ -1462,15 +1525,13 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
             dns_push(next, branches->sym[i].child);
     }
     dns_push(next, branches->var_child);
-    if (branches->ints_hashed) {
-        uint32_t cap = branches->int_ht.mask + 1u;
-        for (uint32_t i = 0u; i < cap; i++) {
-            if (branches->int_ht.entries[i].child)
-                dns_push(next, branches->int_ht.entries[i].child);
-        }
-    } else {
-        for (uint32_t i = 0u; i < branches->nints; i++)
-            dns_push(next, branches->ints[i].child);
+    const DiscScalarBranches *scalars[] = {&branches->ints, &branches->strs};
+    for (size_t kind = 0u; kind < 2u; kind++) {
+        const DiscScalarBranches *each = scalars[kind];
+        uint32_t cap = each->hashed ? each->ht.mask + 1u : each->count;
+        for (uint32_t i = 0u; i < cap; i++)
+            dns_push(next, each->hashed ? each->ht.entries[i].child
+                                        : each->list[i].child);
     }
     /* Expression branches consume their arity tag and complete subterms. */
     for (uint32_t i = 0u; i < branches->nexpr; i++) {
@@ -1518,10 +1579,10 @@ static void disc_push_he_float_ints(DiscNode *node, double value,
     const DiscBranchSet *branches = disc_many_branches(node);
     if (!branches)
         return;
-    if (branches->ints_hashed) {
-        uint32_t cap = branches->int_ht.mask + 1u;
+    if (branches->ints.hashed) {
+        uint32_t cap = branches->ints.ht.mask + 1u;
         for (uint32_t i = 0u; i < cap; i++) {
-            const DiscIntBranch *entry = &branches->int_ht.entries[i];
+            const DiscIntBranch *entry = &branches->ints.ht.entries[i];
             if (!entry->child)
                 continue;
             if (cetta_he_promoted_kind_equal(
@@ -1530,10 +1591,10 @@ static void disc_push_he_float_ints(DiscNode *node, double value,
         }
         return;
     }
-    for (uint32_t i = 0u; i < branches->nints; i++) {
+    for (uint32_t i = 0u; i < branches->ints.count; i++) {
         if (cetta_he_promoted_kind_equal(
-                GV_FLOAT, 0, value, GV_INT, branches->ints[i].key, 0.0))
-            dns_push(next, branches->ints[i].child);
+                GV_FLOAT, 0, value, GV_INT, branches->ints.list[i].key, 0.0))
+            dns_push(next, branches->ints.list[i].child);
     }
 }
 
@@ -1557,6 +1618,10 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
                 node, q->ground.ival));
         else if (q->ground.gkind == GV_FLOAT)
             disc_push_he_float_ints(node, q->ground.fval, next);
+        else if (q->ground.gkind == GV_STRING)
+            dns_push(next, disc_find_scalar_branch(
+                node, DISC_EDGE_STRING,
+                disc_string_key(q->ground.sval, q->ground.slen)));
         /* A variable in the indexed LHS matches any grounded value */
         dns_push(next, disc_find_variable_branch(node));
         break;
@@ -2236,7 +2301,7 @@ bool disc_count_rigid_exact_expression_coordinates(
 typedef struct {
     const DiscNode *node;
     CettaExprLen steps;
-    uint64_t sym_index, int_index;
+    uint64_t sym_index, int_index, str_index;
     bool variable_done;
 } DiscWildcardFoldFrame;
 
@@ -2258,13 +2323,23 @@ static const DiscNode *disc_wildcard_fold_next(
         if (branches->var_child)
             return branches->var_child;
     }
-    uint64_t int_cap = branches->ints_hashed
-        ? (uint64_t)branches->int_ht.mask + 1u : branches->nints;
+    uint64_t int_cap = branches->ints.hashed
+        ? (uint64_t)branches->ints.ht.mask + 1u : branches->ints.count;
     while (frame->int_index < int_cap) {
         uint64_t index = frame->int_index++;
-        const DiscNode *child = branches->ints_hashed
-            ? branches->int_ht.entries[index].child
-            : branches->ints[index].child;
+        const DiscNode *child = branches->ints.hashed
+            ? branches->ints.ht.entries[index].child
+            : branches->ints.list[index].child;
+        if (child)
+            return child;
+    }
+    uint64_t str_cap = branches->strs.hashed
+        ? (uint64_t)branches->strs.ht.mask + 1u : branches->strs.count;
+    while (frame->str_index < str_cap) {
+        uint64_t index = frame->str_index++;
+        const DiscNode *child = branches->strs.hashed
+            ? branches->strs.ht.entries[index].child
+            : branches->strs.list[index].child;
         if (child)
             return child;
     }
@@ -2448,21 +2523,16 @@ static bool disc_project_depth_column(
                 return false;
         }
     }
-    if (branches->ints_hashed) {
-        uint32_t cap = branches->int_ht.mask + 1u;
+    const DiscScalarBranches *scalars[] = {&branches->ints, &branches->strs};
+    for (size_t kind = 0u; kind < 2u; kind++) {
+        const DiscScalarBranches *each = scalars[kind];
+        uint32_t cap = each->hashed ? each->ht.mask + 1u : each->count;
         for (uint32_t index = 0u; index < cap; index++) {
-            if (!branches->int_ht.entries[index].child)
-                continue;
-            if (!disc_project_depth_column(
-                    space, branches->int_ht.entries[index].child,
-                    steps - 1u, column, count, sum, product, product_ok))
-                return false;
-        }
-    } else {
-        for (uint32_t index = 0u; index < branches->nints; index++) {
-            if (!disc_project_depth_column(
-                    space, branches->ints[index].child, steps - 1u, column,
-                    count, sum, product, product_ok))
+            const DiscNode *child = each->hashed
+                ? each->ht.entries[index].child : each->list[index].child;
+            if (child && !disc_project_depth_column(
+                    space, child, steps - 1u, column, count, sum, product,
+                    product_ok))
                 return false;
         }
     }
@@ -6007,6 +6077,14 @@ void space_execution_analysis_cache_free_for_current_thread(void) {
     memset(&g_space_effect_cache, 0, sizeof(g_space_effect_cache));
 }
 
+/* A call whose head a variable supplies runs whatever head the variable
+ * holds when it runs.  The analysis keeps it apart from the effects of the
+ * heads it can name: an executor that admits each such call when it runs, by
+ * the head it then has, reads only those; every other reader counts the call
+ * as one that may read and write anything.  The bit is the analysis's own
+ * and never leaves it. */
+#define SPACE_EFFECT_DYNAMIC_CALL ((CettaGsltQueryEffect)(1u << 7))
+
 typedef struct {
     SymbolId head;
     SymbolId *dependencies;
@@ -6428,14 +6506,20 @@ static bool space_effect_scan_rhs(
                 break;
             continue;
         }
-        if (!head || head->kind != ATOM_SYMBOL) {
+        if (head && head->kind == ATOM_VAR) {
             graph->nodes[node_index].base_effect =
-                CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+                cetta_gslt_query_effect_join(
+                    graph->nodes[node_index].base_effect,
+                    SPACE_EFFECT_DYNAMIC_CALL);
+        } else if (!head || head->kind != ATOM_SYMBOL) {
+            graph->nodes[node_index].base_effect =
+                cetta_gslt_query_effect_join(
+                    graph->nodes[node_index].base_effect,
+                    CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
         } else {
             has_control = space_generated_fold_control(
                 head->sym_id, current->expr.len - 1u, &control);
             bool grounded = is_grounded_op(head->sym_id);
-            bool builtin = symbol_id_is_builtin(head->sym_id);
             bool defined = space_equations_may_match_known_head(
                 graph->space, head->sym_id);
             CettaGsltQueryEffect direct =
@@ -6458,16 +6542,23 @@ static bool space_effect_scan_rhs(
                     head->sym_id, &g_builtin_syms)) {
                 continue;
             }
-            if (CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE &&
-                !grounded && !builtin && !defined) {
-                continue;
-            }
+            /* An expression whose head names nothing still has its
+             * elements evaluated: they are walked as any call's operands. */
         }
         for (CettaExprIndex i = 1u; i < current->expr.len; i++) {
             CettaGsltControlOperandRole role;
             bool has_role = has_control &&
                 cetta_gslt_fold_control_operand_role(
                     control, i - 1u, &role);
+            /* A case's or a switch's branches are pattern pairs as a bind
+             * sequence's bindings are: only their values are evaluated. */
+            if (!has_role && head && head->kind == ATOM_SYMBOL &&
+                cetta_gslt_query_effect_operand_pattern_pairs(
+                    head->sym_id, current->expr.len - 1u, i - 1u,
+                    he_language, &g_builtin_syms)) {
+                role = CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS;
+                has_role = true;
+            }
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN)
                 continue;
             Atom *child = current->expr.elems[i];
@@ -6488,7 +6579,9 @@ static bool space_effect_scan_rhs(
             if (has_role && role == CETTA_GSLT_CONTROL_OPERAND_PATTERN_PAIRS) {
                 if (!child || child->kind != ATOM_EXPR) {
                     graph->nodes[node_index].base_effect =
-                        CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+                        cetta_gslt_query_effect_join(
+                            graph->nodes[node_index].base_effect,
+                            CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
                     continue;
                 }
                 for (CettaExprIndex k = 0u; k < child->expr.len; k++) {
@@ -6496,7 +6589,9 @@ static bool space_effect_scan_rhs(
                     if (!pair || pair->kind != ATOM_EXPR ||
                         pair->expr.len != 2u) {
                         graph->nodes[node_index].base_effect =
-                            CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+                            cetta_gslt_query_effect_join(
+                                graph->nodes[node_index].base_effect,
+                                CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
                         continue;
                     }
                     Atom *value = pair->expr.elems[1];
@@ -6512,6 +6607,13 @@ static bool space_effect_scan_rhs(
                     break;
                 continue;
             }
+            /* unquote runs the syntax its quoted operand holds. */
+            if (head && head->kind == ATOM_SYMBOL &&
+                head->sym_id == g_builtin_syms.unquote && child &&
+                child->kind == ATOM_EXPR && child->expr.len == 2u &&
+                atom_is_symbol_id(child->expr.elems[0],
+                                  g_builtin_syms.quote))
+                child = child->expr.elems[1];
             if (!child || child->kind != ATOM_EXPR)
                 continue;
             if (!space_effect_stack_push(&stack, &len, &cap,
@@ -6596,7 +6698,7 @@ static bool space_effect_graph_solve(SpaceEffectGraph *graph) {
     return space_program_token_is_current(graph->program);
 }
 
-CettaGsltQueryEffect space_query_effect_for_head(
+static CettaGsltQueryEffect space_query_effect_for_head_analyzed(
     Space *space, SymbolId head, bool *out_defined) {
     if (out_defined)
         *out_defined = false;
@@ -6648,6 +6750,26 @@ CettaGsltQueryEffect space_query_effect_for_head(
         *out_defined = defined;
     space_effect_graph_free(&graph);
     return result;
+}
+
+CettaGsltQueryEffect space_query_effect_for_head(
+    Space *space, SymbolId head, bool *out_defined) {
+    CettaGsltQueryEffect effect =
+        space_query_effect_for_head_analyzed(space, head, out_defined);
+    return (effect & SPACE_EFFECT_DYNAMIC_CALL)
+        ? cetta_gslt_query_effect_join(
+              (CettaGsltQueryEffect)(effect & ~SPACE_EFFECT_DYNAMIC_CALL),
+              CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD)
+        : effect;
+}
+
+CettaGsltQueryEffect space_query_static_effect_for_head(
+    Space *space, SymbolId head, bool *out_defined, bool *out_dynamic) {
+    CettaGsltQueryEffect effect =
+        space_query_effect_for_head_analyzed(space, head, out_defined);
+    if (out_dynamic)
+        *out_dynamic = (effect & SPACE_EFFECT_DYNAMIC_CALL) != 0u;
+    return (CettaGsltQueryEffect)(effect & ~SPACE_EFFECT_DYNAMIC_CALL);
 }
 
 static bool space_equation_child_ids_at_id(const Space *s, AtomId atom_id,
@@ -9814,6 +9936,160 @@ static bool tuple_type_part_keep(Atom *type, bool is_head) {
     return true;
 }
 
+/* What one inference learned of the ground expressions it met.  A value
+ * shares subterms, and inference reads each argument's types, so a shared
+ * argument is inferred once per inference rather than once per path to it.
+ * Only ground answers are kept: a polymorphic type is instantiated afresh
+ * where it is read.  Nothing inference reads changes while it runs, and its
+ * answers live in the arena it was given until it returns.  A budgeted
+ * inference counts its steps, so it is never answered from here. */
+typedef struct HeTypingsMemoValue HeTypingsMemoValue;
+
+/* What a memo entry answers: the types of `get_atom_types`, with or without
+ * the subject's own declarations, or HE's typing derivations. */
+typedef enum {
+    TYPE_INFERENCE_MEMO_TYPES_INFERRED = 0,
+    TYPE_INFERENCE_MEMO_TYPES_DECLARED = 1,
+    TYPE_INFERENCE_MEMO_HE_TYPINGS = 2,
+} TypeInferenceMemoQuestion;
+
+typedef struct {
+    const Atom *atom;
+    TypeInferenceMemoQuestion question;
+    uint32_t count;
+    Atom **types;
+    HeTypingsMemoValue *typings;
+} TypeInferenceMemoEntry;
+
+typedef struct {
+    TypeInferenceMemoEntry *slots;
+    size_t cap;
+    size_t len;
+    uint32_t depth;
+    Space *space;
+    Arena *arena;
+} TypeInferenceMemo;
+
+static __thread TypeInferenceMemo g_type_inference_memo;
+
+static size_t type_inference_memo_slot(const Atom *atom,
+                                       TypeInferenceMemoQuestion question,
+                                       size_t cap) {
+    uintptr_t key = (uintptr_t)atom ^ (uintptr_t)question;
+    key ^= key >> 33u;
+    key *= (uintptr_t)UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+static TypeInferenceMemoEntry *type_inference_memo_find(
+        const Atom *atom, TypeInferenceMemoQuestion question) {
+    TypeInferenceMemo *memo = &g_type_inference_memo;
+    if (!memo->cap)
+        return NULL;
+    size_t slot = type_inference_memo_slot(atom, question, memo->cap);
+    while (memo->slots[slot].atom) {
+        TypeInferenceMemoEntry *entry = &memo->slots[slot];
+        if (entry->atom == atom && entry->question == question)
+            return entry;
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    return NULL;
+}
+
+/* A slot for `atom`, or NULL where the memo cannot grow (it is only a
+ * shortcut, so the caller then keeps nothing). */
+static TypeInferenceMemoEntry *type_inference_memo_claim(
+        const Atom *atom, TypeInferenceMemoQuestion question) {
+    TypeInferenceMemo *memo = &g_type_inference_memo;
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        TypeInferenceMemoEntry *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return NULL;
+        for (size_t i = 0u; i < memo->cap; i++) {
+            if (!memo->slots[i].atom)
+                continue;
+            size_t slot = type_inference_memo_slot(
+                memo->slots[i].atom, memo->slots[i].question, cap);
+            while (slots[slot].atom)
+                slot = (slot + 1u) & (cap - 1u);
+            slots[slot] = memo->slots[i];
+        }
+        free(memo->slots);
+        memo->slots = slots;
+        memo->cap = cap;
+    }
+    size_t slot = type_inference_memo_slot(atom, question, memo->cap);
+    while (memo->slots[slot].atom)
+        slot = (slot + 1u) & (memo->cap - 1u);
+    memo->len++;
+    memo->slots[slot].atom = atom;
+    memo->slots[slot].question = question;
+    return &memo->slots[slot];
+}
+
+static void he_typings_memo_value_free(HeTypingsMemoValue *value);
+
+static void type_inference_memo_clear(void) {
+    TypeInferenceMemo *memo = &g_type_inference_memo;
+    for (size_t i = 0u; i < memo->cap; i++) {
+        free(memo->slots[i].types);
+        he_typings_memo_value_free(memo->slots[i].typings);
+    }
+    free(memo->slots);
+    *memo = (TypeInferenceMemo){0};
+}
+
+/* Whether an inference of `atom` in `s` and `a` may read and fill the memo:
+ * it runs inside another one over the same program and arena, unbudgeted,
+ * and asks about a ground expression. */
+static bool type_inference_memo_applies(Space *s, Arena *a, const Atom *atom,
+                                        CettaTypeInferenceBudget *budget) {
+    TypeInferenceMemo *memo = &g_type_inference_memo;
+    return !budget && memo->depth > 0u && memo->space == s &&
+        memo->arena == a && atom && atom->kind == ATOM_EXPR &&
+        !atom_has_vars(atom);
+}
+
+/* Open or join the inference that owns the memo; false when this call runs
+ * over another program or arena than the one open, and so stays outside. */
+static bool type_inference_memo_enter(Space *s, Arena *a,
+                                      CettaTypeInferenceBudget *budget) {
+    TypeInferenceMemo *memo = &g_type_inference_memo;
+    if (budget)
+        return false;
+    if (memo->depth == 0u) {
+        memo->space = s;
+        memo->arena = a;
+    } else if (memo->space != s || memo->arena != a) {
+        return false;
+    }
+    memo->depth++;
+    return true;
+}
+
+static void type_inference_memo_leave(void) {
+    if (--g_type_inference_memo.depth == 0u)
+        type_inference_memo_clear();
+}
+
+static bool type_inference_types_ground(Atom *const *types, uint32_t count) {
+    for (uint32_t i = 0u; i < count; i++)
+        if (!types[i] || atom_has_vars(types[i]))
+            return false;
+    return true;
+}
+
+static Atom **type_inference_types_copy(Atom *const *types, uint32_t count) {
+    if (!count)
+        return NULL;
+    Atom **copy = malloc(sizeof(*copy) * count);
+    if (copy)
+        memcpy(copy, types, sizeof(*copy) * count);
+    return copy;
+}
+
 static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
                                            bool is_head, Atom ***out_types,
                                            CettaTypeInferenceBudget *budget);
@@ -9954,10 +10230,53 @@ static bool he_types_close_under_subtypes(const Space *s) {
         eval_current_language_id() == CETTA_LANGUAGE_HE;
 }
 
+static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
+                                             Atom ***out_types,
+                                             bool include_direct_annotations,
+                                             CettaTypeInferenceBudget *budget);
+
 static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
                                     bool include_direct_annotations,
                                     CettaTypeInferenceBudget *budget) {
+    TypeInferenceMemoQuestion question = include_direct_annotations
+        ? TYPE_INFERENCE_MEMO_TYPES_DECLARED
+        : TYPE_INFERENCE_MEMO_TYPES_INFERRED;
+    bool keyed = type_inference_memo_applies(s, a, atom, budget);
+    if (keyed) {
+        TypeInferenceMemoEntry *known = type_inference_memo_find(atom, question);
+        if (known) {
+            Atom **types = type_inference_types_copy(known->types, known->count);
+            if (types || !known->count) {
+                *out_types = types;
+                return known->count;
+            }
+        }
+    }
+    bool entered = type_inference_memo_enter(s, a, budget);
+    uint32_t count = get_atom_types_mode_inferred(
+        s, a, atom, out_types, include_direct_annotations, budget);
+    if (keyed && type_inference_types_ground(*out_types, count) &&
+        !type_inference_memo_find(atom, question)) {
+        Atom **kept = type_inference_types_copy(*out_types, count);
+        TypeInferenceMemoEntry *entry = (kept || !count)
+            ? type_inference_memo_claim(atom, question) : NULL;
+        if (entry) {
+            entry->count = count;
+            entry->types = kept;
+        } else {
+            free(kept);
+        }
+    }
+    if (entered)
+        type_inference_memo_leave();
+    return count;
+}
+
+static uint32_t get_atom_types_mode_inferred(Space *s, Arena *a, Atom *atom,
+                                             Atom ***out_types,
+                                             bool include_direct_annotations,
+                                             CettaTypeInferenceBudget *budget) {
     uint32_t count = 0;
     Atom **types = NULL;
     if (!type_inference_step(budget, 1)) {
@@ -10197,6 +10516,43 @@ static void he_typings_free(HeTypings *list) {
     *list = (HeTypings){0};
 }
 
+/* HE's typings of a ground expression, as one inference keeps them. */
+struct HeTypingsMemoValue {
+    HeTypings typings;
+};
+
+static void he_typings_memo_value_free(HeTypingsMemoValue *value) {
+    if (!value)
+        return;
+    he_typings_free(&value->typings);
+    free(value);
+}
+
+/* `dst` (empty) becomes a copy of `src`; false, and `dst` still empty,
+ * where it cannot be allocated. */
+static bool he_typings_copy(HeTypings *dst, const HeTypings *src) {
+    if (!src->len)
+        return true;
+    HeTyping *items = malloc(sizeof(*items) * src->len);
+    uint32_t *parents = malloc(sizeof(*parents) * src->len);
+    if (!items || !parents) {
+        free(items);
+        free(parents);
+        return false;
+    }
+    memcpy(items, src->items, sizeof(*items) * src->len);
+    memcpy(parents, src->parents, sizeof(*parents) * src->len);
+    *dst = (HeTypings){items, parents, src->len, src->len};
+    return true;
+}
+
+static bool he_typings_ground(const HeTypings *list) {
+    for (uint32_t i = 0u; i < list->len; i++)
+        if (!list->items[i].type || atom_has_vars(list->items[i].type))
+            return false;
+    return true;
+}
+
 static bool he_type_is_function(const Atom *type) {
     return type && type->kind == ATOM_EXPR && type->expr.len > 1u &&
         atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow);
@@ -10404,8 +10760,42 @@ static void he_application_typings(Space *s, Arena *a, Atom *call,
     bindings_free(&empty);
 }
 
+static void he_atom_typings_derived(Space *s, Arena *a, Atom *atom,
+                                    HeTypings *out,
+                                    CettaTypeInferenceBudget *budget);
+
 static void he_atom_typings(Space *s, Arena *a, Atom *atom, HeTypings *out,
                             CettaTypeInferenceBudget *budget) {
+    bool keyed = out->len == 0u &&
+        type_inference_memo_applies(s, a, atom, budget);
+    if (keyed) {
+        TypeInferenceMemoEntry *known =
+            type_inference_memo_find(atom, TYPE_INFERENCE_MEMO_HE_TYPINGS);
+        if (known && known->typings &&
+            he_typings_copy(out, &known->typings->typings))
+            return;
+    }
+    bool entered = type_inference_memo_enter(s, a, budget);
+    he_atom_typings_derived(s, a, atom, out, budget);
+    if (keyed && he_typings_ground(out) &&
+        !type_inference_memo_find(atom, TYPE_INFERENCE_MEMO_HE_TYPINGS)) {
+        HeTypingsMemoValue *value = calloc(1u, sizeof(*value));
+        TypeInferenceMemoEntry *entry =
+            value && he_typings_copy(&value->typings, out)
+            ? type_inference_memo_claim(atom, TYPE_INFERENCE_MEMO_HE_TYPINGS)
+            : NULL;
+        if (entry)
+            entry->typings = value;
+        else
+            he_typings_memo_value_free(value);
+    }
+    if (entered)
+        type_inference_memo_leave();
+}
+
+static void he_atom_typings_derived(Space *s, Arena *a, Atom *atom,
+                                    HeTypings *out,
+                                    CettaTypeInferenceBudget *budget) {
     if (!atom || !type_inference_step(budget, 1))
         return;
     Atom *native = get_native_handle_type(a, atom);

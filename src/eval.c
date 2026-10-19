@@ -4084,12 +4084,114 @@ static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
     return true;
 }
 
+/* What one walk learned of a node in a given position: a value shares
+ * subterms, and a walk whose answer at a node depends only on the node and
+ * on `aux` (a depth, a flag) computes it once per pair.  The first slots are
+ * kept inline, so a walk over a small term allocates nothing. */
+typedef struct {
+    const void *node;
+    uint32_t aux;
+    uintptr_t value;
+} EvalNodeMemoSlot;
+
+typedef struct {
+    EvalNodeMemoSlot inline_slots[8];
+    size_t inline_len;
+    EvalNodeMemoSlot *slots;
+    size_t cap;
+    size_t len;
+} EvalNodeMemo;
+
+static size_t eval_node_memo_slot(const void *node, uint32_t aux, size_t cap) {
+    uint64_t key = (uint64_t)(uintptr_t)node ^ ((uint64_t)aux << 48u);
+    key ^= key >> 33u;
+    key *= UINT64_C(0xff51afd7ed558ccd);
+    key ^= key >> 29u;
+    return (size_t)key & (cap - 1u);
+}
+
+static bool eval_node_memo_find(const EvalNodeMemo *memo, const void *node,
+                                uint32_t aux, uintptr_t *value) {
+    for (size_t i = 0u; i < memo->inline_len; i++)
+        if (memo->inline_slots[i].node == node &&
+            memo->inline_slots[i].aux == aux) {
+            *value = memo->inline_slots[i].value;
+            return true;
+        }
+    if (!memo->cap)
+        return false;
+    size_t slot = eval_node_memo_slot(node, aux, memo->cap);
+    while (memo->slots[slot].node) {
+        if (memo->slots[slot].node == node && memo->slots[slot].aux == aux) {
+            *value = memo->slots[slot].value;
+            return true;
+        }
+        slot = (slot + 1u) & (memo->cap - 1u);
+    }
+    return false;
+}
+
+/* Keep an answer; where the memo cannot grow it keeps nothing, and the walk
+ * computes the answer again where it meets the node again. */
+static void eval_node_memo_store(EvalNodeMemo *memo, const void *node,
+                                 uint32_t aux, uintptr_t value) {
+    size_t inline_cap = sizeof(memo->inline_slots) /
+        sizeof(memo->inline_slots[0]);
+    if (memo->inline_len < inline_cap) {
+        memo->inline_slots[memo->inline_len++] =
+            (EvalNodeMemoSlot){node, aux, value};
+        return;
+    }
+    if ((memo->len + 1u) * 2u > memo->cap) {
+        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        EvalNodeMemoSlot *slots = calloc(cap, sizeof(*slots));
+        if (!slots)
+            return;
+        for (size_t i = 0u; i < memo->cap; i++) {
+            if (!memo->slots[i].node)
+                continue;
+            size_t slot = eval_node_memo_slot(memo->slots[i].node,
+                                              memo->slots[i].aux, cap);
+            while (slots[slot].node)
+                slot = (slot + 1u) & (cap - 1u);
+            slots[slot] = memo->slots[i];
+        }
+        free(memo->slots);
+        memo->slots = slots;
+        memo->cap = cap;
+    }
+    size_t slot = eval_node_memo_slot(node, aux, memo->cap);
+    while (memo->slots[slot].node)
+        slot = (slot + 1u) & (memo->cap - 1u);
+    memo->slots[slot] = (EvalNodeMemoSlot){node, aux, value};
+    memo->len++;
+}
+
+static void eval_node_memo_free(EvalNodeMemo *memo) {
+    free(memo->slots);
+    memo->slots = NULL;
+    memo->cap = memo->len = memo->inline_len = 0u;
+}
+
+/* What one walk learned of a symbol at an arity: whether it heads a
+ * constructor.  The answer depends on nothing else, and nothing it depends on
+ * changes while the walk runs. */
+typedef struct {
+    SymbolId head;
+    CettaExprLen arity;
+    bool constructor;
+} EvalConstructorHeadMemo;
+
 static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
                                             int fuel) {
     Atom **stack = NULL;
     size_t len = 0;
     size_t cap = 0;
     bool ok = false;
+    bool fault = false;
+    AtomVisitSet seen = {0};
+    EvalConstructorHeadMemo memo[16];
+    size_t memo_len = 0u;
 
 #define PUSH_ATOM(candidate) do { \
     if (len == cap) { \
@@ -4122,7 +4224,31 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
         }
         if (cur->kind != ATOM_EXPR || cur->expr.len == 0)
             goto done;
-        if (!atom_has_constructor_head(s, a, cur))
+        /* A shared subterm passed the walk where it was first met. */
+        if (!atom_visit_set_add(&seen, cur, &fault)) {
+            if (fault)
+                goto done;
+            continue;
+        }
+        const Atom *head = cur->expr.elems[0];
+        bool named = head && head->kind == ATOM_SYMBOL;
+        CettaExprLen arity = cur->expr.len - 1u;
+        size_t known = memo_len;
+        for (size_t m = 0u; named && m < memo_len; m++) {
+            if (memo[m].head == head->sym_id && memo[m].arity == arity) {
+                known = m;
+                break;
+            }
+        }
+        bool constructor = known < memo_len
+            ? memo[known].constructor
+            : atom_has_constructor_head(s, a, cur);
+        if (known == memo_len && named &&
+            memo_len < sizeof(memo) / sizeof(memo[0]))
+            memo[memo_len++] = (EvalConstructorHeadMemo){
+                .head = head->sym_id, .arity = arity,
+                .constructor = constructor};
+        if (!constructor)
             goto done;
         for (CettaExprIndex i = 1; i < cur->expr.len; i++)
             PUSH_ATOM(cur->expr.elems[i]);
@@ -4131,6 +4257,7 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
 
 done:
     free(stack);
+    atom_visit_set_free(&seen);
 #undef PUSH_ATOM
     return ok;
 }
@@ -8454,7 +8581,9 @@ static bool collect_structural_var_failed(const Atom *atom, void *context) {
 }
 
 static bool collect_structural_vars(Atom *atom, FreeVarSet *free_vars) {
-    return !atom_tree_any(atom, collect_structural_var_failed, free_vars);
+    if (atom && !atom_has_vars(atom) && (atom->flags & ATOM_FLAG_TERM_STABLE))
+        return true;
+    return !atom_graph_any(atom, collect_structural_var_failed, free_vars);
 }
 
 static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *free_vars);
@@ -8815,6 +8944,11 @@ static bool collect_free_vars_fold_by_key(Atom *atom, CettaExprLen nargs,
 
 static bool collect_free_vars_rec(Atom *atom, BoundVarStack *bound, FreeVarSet *free_vars) {
     if (!atom)
+        return true;
+    /* No variable and no saved bindings anywhere inside: a saved bindings
+     * value is never term-stable, and term stability holds of an expression
+     * only where it holds of every part. */
+    if (!atom_has_vars(atom) && (atom->flags & ATOM_FLAG_TERM_STABLE))
         return true;
     if (atom->kind == ATOM_VAR) {
         if (bound_var_stack_contains(bound, atom->var_id))
@@ -9291,9 +9425,18 @@ static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
     rb_set_free(&inner);
 }
 
-static Atom *bindings_apply_projected_body_visible(const Bindings *visible,
-                                                   Arena *a, Atom *body) {
-    if (!bindings_has_bound_values(visible) || !body || !atom_has_vars(body))
+/* One substitution of a body: its images, kept from its 64th expression on,
+ * so a body sharing subterms is substituted once per distinct subterm; an
+ * image depends on the subterm alone, the environment being fixed. */
+typedef struct {
+    EvalNodeMemo images;
+    uint32_t expressions;
+} ProjectedBodySubstitution;
+
+static Atom *bindings_apply_projected_body_in(const Bindings *visible,
+                                              Arena *a, Atom *body,
+                                              ProjectedBodySubstitution *run) {
+    if (!body || !atom_has_vars(body))
         return body;
     if (body->kind == ATOM_VAR) {
         BindingValue val = bindings_lookup_value_id((Bindings *)visible, body->var_id);
@@ -9303,12 +9446,16 @@ static Atom *bindings_apply_projected_body_visible(const Bindings *visible,
     }
     if (body->kind != ATOM_EXPR)
         return body;
+    bool kept = ++run->expressions > 64u;
+    uintptr_t image = 0u;
+    if (kept && eval_node_memo_find(&run->images, body, 0u, &image))
+        return (Atom *)image;
 
     Atom **new_elems = NULL;
     for (CettaExprIndex i = 0; i < body->expr.len; i++) {
         Atom *child = body->expr.elems[i];
         Atom *next = atom_has_vars(child)
-            ? bindings_apply_projected_body_visible(visible, a, child)
+            ? bindings_apply_projected_body_in(visible, a, child, run)
             : child;
         if (!next)
             return NULL;
@@ -9320,7 +9467,20 @@ static Atom *bindings_apply_projected_body_visible(const Bindings *visible,
         if (new_elems)
             new_elems[i] = next;
     }
-    return new_elems ? atom_expr(a, new_elems, body->expr.len) : body;
+    Atom *result = new_elems ? atom_expr(a, new_elems, body->expr.len) : body;
+    if (kept && result)
+        eval_node_memo_store(&run->images, body, 0u, (uintptr_t)result);
+    return result;
+}
+
+static Atom *bindings_apply_projected_body_visible(const Bindings *visible,
+                                                   Arena *a, Atom *body) {
+    if (!bindings_has_bound_values(visible) || !body || !atom_has_vars(body))
+        return body;
+    ProjectedBodySubstitution run = {0};
+    Atom *result = bindings_apply_projected_body_in(visible, a, body, &run);
+    eval_node_memo_free(&run.images);
+    return result;
 }
 
 static Atom *bindings_apply_body_exact_env(Arena *a, Atom *body,
@@ -11373,9 +11533,9 @@ static Atom *he_match_decision_guarded_pattern(
         }
 
         HeGuardVariableIdentity identity = {.id = actual->var_id};
-        if (atom_tree_any(
+        if (atom_graph_any(
                 guard_pattern, he_guard_atom_has_variable, &identity) ||
-            atom_tree_any(
+            atom_graph_any(
                 guard->expr.elems[3],
                 he_guard_atom_has_variable, &identity)) {
             break;
@@ -11395,7 +11555,7 @@ static Atom *he_match_decision_guarded_pattern(
                 direct_index = index;
                 continue;
             }
-            if (atom_tree_any(
+            if (atom_graph_any(
                     child, he_guard_atom_has_variable, &identity)) {
                 ambiguous = true;
                 break;
@@ -12677,7 +12837,7 @@ static bool expression_may_run_relational(Space *space, Atom *root) {
         Atom *current = stack[--len];
         if (!current || current->kind != ATOM_EXPR || current->expr.len == 0u)
             continue;
-        if (query_effect_for_head(space, current->expr.elems[0]) ==
+        if (query_effect_for_head(space, current->expr.elems[0]) &
             CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) {
             if (stack != inline_stack)
                 free(stack);
@@ -13748,7 +13908,7 @@ static bool hyperpose_atom_has_nonspace_identity(
 
 static bool hyperpose_atom_parent_portable(Atom *atom) {
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        return !atom_tree_any(
+        return !atom_graph_any(
             atom, hyperpose_atom_has_nonspace_identity, NULL);
     }
     return !hyperpose_atom_has_thread_local_resource(atom);
@@ -18168,6 +18328,9 @@ static PreparedFoldResult prepared_collection_pull_single_result(
         : producer;
     CettaPreparedPureProgram *program = NULL;
     PreparedFoldResult outcome = PREPARED_FOLD_NOT_APPLICABLE;
+    /* A pull's receipt partitions its admissions into commits and declines;
+     * a call no program was compiled for was never admitted. */
+    bool admitted = false;
     if (!closed || atom_has_vars(closed) ||
         hyperpose_atom_has_thread_local_resource(closed)) {
         goto cleanup;
@@ -18210,6 +18373,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
             CETTA_GSLT_PURE_CALL_CALL_BY_NEED));
     if (!program)
         goto cleanup;
+    admitted = true;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_ADMISSION);
 
@@ -18311,10 +18475,11 @@ cleanup:
     arena_free(&carry[0]);
     arena_free(&scratch);
     arena_free(&closure);
-    cetta_runtime_stats_inc(
-        outcome == PREPARED_FOLD_VALUE
-            ? CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_COMMIT
-            : CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_DECLINE);
+    if (admitted)
+        cetta_runtime_stats_inc(
+            outcome == PREPARED_FOLD_VALUE
+                ? CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_COMMIT
+                : CETTA_RUNTIME_COUNTER_PREPARED_COLLECTION_PULL_DECLINE);
     return outcome;
 }
 
@@ -22443,8 +22608,15 @@ struct PreparedPureProgramCache {
     uint64_t entry_generation;
     PreparedPureDeclineSlot decline_slots[PREPARED_PURE_DECLINE_SLOTS];
     Space *root_space;
+    /* What compiled entries read besides the program: the libraries the
+     * session imported (a pattern module makes its operations callable),
+     * the language and its profile.  A program that would read the
+     * registry's bindings is declined, so the registry is no key. */
     SpaceProgramToken program;
     uint64_t capability_revision;
+    uint32_t library_mask;
+    const CettaProfile *profile;
+    CettaLanguageId language;
     Arena execution_scratch;
     bool execution_scratch_ready;
     bool answer_collection_budget_declined;
@@ -22495,6 +22667,8 @@ static void prepared_pure_program_cache_free(
     cache->root_space = NULL;
     memset(&cache->program, 0, sizeof(cache->program));
     cache->capability_revision = 0u;
+    cache->library_mask = 0u;
+    cache->profile = NULL;
 }
 
 static void prepared_pure_program_cache_destroy(PreparedPureProgramCache *cache) {
@@ -22538,13 +22712,21 @@ static bool prepared_pure_program_cache_prepare_revision(
     uint64_t capability_revision) {
     if (!cache || !space || cache->root_space != space)
         return false;
+    uint32_t library_mask = g_library_context ? g_library_context->active_mask : 0u;
+    const CettaProfile *profile = active_profile();
+    CettaLanguageId language = eval_current_language_id();
     if (space_program_token_matches_live_space(
             cache->program, space) &&
-        cache->capability_revision == capability_revision)
+        cache->capability_revision == capability_revision &&
+        cache->library_mask == library_mask && cache->profile == profile &&
+        cache->language == language)
         return true;
     prepared_pure_program_cache_clear_entries(cache);
     cache->program = space_program_token(space);
     cache->capability_revision = capability_revision;
+    cache->library_mask = library_mask;
+    cache->profile = profile;
+    cache->language = language;
     return cache->program.instance_id != 0u;
 }
 
@@ -27141,12 +27323,6 @@ static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int
 }
 
 typedef struct {
-    Atom **items;
-    CettaCount len;
-    CettaCount cap;
-} MatchResultSnapshot;
-
-typedef struct {
     Space **items;
     CettaCount len;
     CettaCount cap;
@@ -27156,9 +27332,6 @@ typedef struct {
     Arena arena;
     bool ready;
 } MatchResultDirectEvalScratch;
-
-static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
-                                       Atom *atom);
 
 static void deferred_space_set_free(DeferredSpaceSet *set) {
     if (!set)
@@ -27364,6 +27537,439 @@ static void match_chain_note_size_delta(size_t after_bytes,
                                    (uint64_t)(after_bytes - before_bytes));
 }
 
+/* Whether running the bodies of a nested match in another order than the
+ * source schedule, or reading its later legs before its earlier bodies run,
+ * can change what it answers.  That holds unless every body is shown to
+ * change nothing and read nothing: then each body's answers depend on its row
+ * alone.  A body's syntax does not show it.  The rows' values are evaluated
+ * too (data is code: a matched (add-atom ...) runs), syntax can be rearranged
+ * into calls, and a variable at a call's head runs whichever equation it
+ * unifies with.  So a body is shown pure only as a ground term every one of
+ * whose symbols would be pure at the head of a call, and whose calls' heads
+ * are such symbols or data: inert constructors, grounded operations that
+ * never touch the world, let and if, and authored heads every equation of
+ * which is shown pure in turn, its variables bound by its left side or a let.
+ * Authored heads are decided together with the heads they call, as the
+ * greatest fixed point of that graph, and kept per program.  A template,
+ * before its rows are known, may hold variables away from heads. */
+enum {
+    MATCH_PURITY_MAX_DEPTH = 256u,
+};
+
+typedef struct {
+    SymbolId head;
+    bool pure;
+    bool occupied;
+} MatchPurityEntry;
+
+typedef struct {
+    SpaceProgramToken program;
+    CettaLanguageId language;
+    MatchPurityEntry *entries;
+    size_t cap;
+    size_t len;
+} MatchPurityCache;
+
+static __thread MatchPurityCache g_match_purity;
+
+static size_t match_purity_slot(SymbolId head, size_t cap) {
+    return ((size_t)head * (size_t)0x9e3779b97f4a7c15ull) & (cap - 1u);
+}
+
+/* The verdicts kept for the program `space` now holds. */
+static MatchPurityCache *match_purity_cache(Space *space) {
+    SpaceProgramToken program = space_program_token(space);
+    CettaLanguageId language = eval_current_language_id();
+    MatchPurityCache *cache = &g_match_purity;
+    if (!space_program_token_eq(cache->program, program) ||
+        cache->language != language) {
+        if (cache->entries)
+            memset(cache->entries, 0, sizeof(*cache->entries) * cache->cap);
+        cache->len = 0u;
+        cache->program = program;
+        cache->language = language;
+    }
+    return cache;
+}
+
+static const MatchPurityEntry *match_purity_lookup(MatchPurityCache *cache,
+                                                   SymbolId head) {
+    if (!cache->cap)
+        return NULL;
+    for (size_t slot = match_purity_slot(head, cache->cap);
+         cache->entries[slot].occupied;
+         slot = (slot + 1u) & (cache->cap - 1u)) {
+        if (cache->entries[slot].head == head)
+            return &cache->entries[slot];
+    }
+    return NULL;
+}
+
+static void match_purity_store(MatchPurityCache *cache, SymbolId head,
+                               bool pure) {
+    if ((cache->len + 1u) * 4u >= cache->cap * 3u) {
+        size_t cap = cache->cap ? cache->cap * 2u : 64u;
+        MatchPurityEntry *entries = calloc(cap, sizeof(*entries));
+        if (!entries)
+            return;
+        for (size_t i = 0u; i < cache->cap; i++) {
+            if (!cache->entries[i].occupied)
+                continue;
+            size_t slot = match_purity_slot(cache->entries[i].head, cap);
+            while (entries[slot].occupied)
+                slot = (slot + 1u) & (cap - 1u);
+            entries[slot] = cache->entries[i];
+        }
+        free(cache->entries);
+        cache->entries = entries;
+        cache->cap = cap;
+    }
+    size_t slot = match_purity_slot(head, cache->cap);
+    while (cache->entries[slot].occupied && cache->entries[slot].head != head)
+        slot = (slot + 1u) & (cache->cap - 1u);
+    if (!cache->entries[slot].occupied)
+        cache->len++;
+    cache->entries[slot] =
+        (MatchPurityEntry){.head = head, .pure = pure, .occupied = true};
+}
+
+/* Builtin symbols whose own evaluation is known and touches nothing: values,
+ * types, and the control forms whose operands the walk reads as code. */
+static bool match_purity_builtin_pure(SymbolId id) {
+    return id == g_builtin_syms.let || id == g_builtin_syms.let_star ||
+        id == g_builtin_syms.if_text || id == g_builtin_syms.quote ||
+        id == g_builtin_syms.empty_form || id == g_builtin_syms.empty ||
+        id == g_builtin_syms.not_reducible || id == g_builtin_syms.error ||
+        id == g_builtin_syms.equals || id == g_builtin_syms.atom ||
+        id == g_builtin_syms.symbol || id == g_builtin_syms.variable ||
+        id == g_builtin_syms.expression ||
+        id == g_builtin_syms.undefined_type ||
+        id == g_builtin_syms.true_text || id == g_builtin_syms.false_text ||
+        id == g_builtin_syms.colon || id == g_builtin_syms.arrow;
+}
+
+/* The grounded operations that build terms with fresh binders or read syntax
+ * from text: what they answer is not a rearrangement of their operands. */
+static bool match_purity_grounded_builds_syntax(SymbolId id) {
+    return id == g_builtin_syms.abt_default_signatures ||
+        id == g_builtin_syms.abt_signature_admitted ||
+        id == g_builtin_syms.abt_shift || id == g_builtin_syms.abt_subst ||
+        id == g_builtin_syms.abt_close || id == g_builtin_syms.abt_open ||
+        id == g_builtin_syms.abt_bind || id == g_builtin_syms.abt_print ||
+        id == g_builtin_syms.abt_parse ||
+        id == g_builtin_syms.abt_scope_check ||
+        id == g_builtin_syms.abt_alpha_eq ||
+        id == g_builtin_syms.abt_free_names ||
+        id == g_builtin_syms.abt_substitute ||
+        id == g_builtin_syms.abt_rename_bound ||
+        id == g_builtin_syms.abt_named_alpha_eq;
+}
+
+static bool match_grounded_value_is_data(const Atom *atom) {
+    switch (atom->ground.gkind) {
+    case GV_INT:
+    case GV_FLOAT:
+    case GV_BOOL:
+    case GV_STRING:
+    case GV_BIGINT:
+    case GV_RATIONAL:
+    case GV_SPACE:
+    case GV_STATE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* One authored head of the graph being decided: whether its own equations
+ * are pure apart from the authored heads they call, and those heads. */
+typedef struct {
+    SymbolId head;
+    bool locally_pure;
+    SymbolId *calls;
+    size_t calls_len;
+    size_t calls_cap;
+} MatchPurityNode;
+
+typedef struct {
+    MatchPurityNode *nodes;
+    size_t len;
+    size_t cap;
+    bool failed;
+} MatchPurityGraph;
+
+/* What a walk reads a term under: the program, the variables bound where it
+ * is (a left side's and lets'), whether variables of a template are allowed,
+ * and the graph an authored head's walk records its calls in. */
+typedef struct {
+    Space *space;
+    MatchPurityCache *cache;
+    VarId *bound;
+    size_t bound_len;
+    size_t bound_cap;
+    bool template_vars;
+    MatchPurityGraph *graph;
+    size_t node;
+} MatchPurityWalk;
+
+static bool match_purity_bound(const MatchPurityWalk *walk, VarId id) {
+    for (size_t i = 0u; i < walk->bound_len; i++) {
+        if (walk->bound[i] == id)
+            return true;
+    }
+    return false;
+}
+
+static bool match_purity_bind_vars(MatchPurityWalk *walk, const Atom *pattern,
+                                   uint32_t depth) {
+    if (depth > MATCH_PURITY_MAX_DEPTH)
+        return false;
+    if (pattern->kind == ATOM_VAR) {
+        if (walk->bound_len == walk->bound_cap) {
+            size_t cap = walk->bound_cap ? walk->bound_cap * 2u : 8u;
+            VarId *bound = realloc(walk->bound, sizeof(*bound) * cap);
+            if (!bound)
+                return false;
+            walk->bound = bound;
+            walk->bound_cap = cap;
+        }
+        walk->bound[walk->bound_len++] = pattern->var_id;
+        return true;
+    }
+    if (pattern->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        if (!match_purity_bind_vars(walk, pattern->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+static size_t match_purity_graph_node(MatchPurityGraph *graph,
+                                      SymbolId head) {
+    for (size_t i = 0u; i < graph->len; i++) {
+        if (graph->nodes[i].head == head)
+            return i;
+    }
+    if (graph->len == graph->cap) {
+        size_t cap = graph->cap ? graph->cap * 2u : 8u;
+        MatchPurityNode *nodes = realloc(graph->nodes, sizeof(*nodes) * cap);
+        if (!nodes) {
+            graph->failed = true;
+            return SIZE_MAX;
+        }
+        graph->nodes = nodes;
+        graph->cap = cap;
+    }
+    graph->nodes[graph->len] =
+        (MatchPurityNode){.head = head, .locally_pure = true};
+    return graph->len++;
+}
+
+static bool match_purity_note_call(MatchPurityWalk *walk, SymbolId head) {
+    MatchPurityNode *node = &walk->graph->nodes[walk->node];
+    for (size_t i = 0u; i < node->calls_len; i++) {
+        if (node->calls[i] == head)
+            return true;
+    }
+    if (node->calls_len == node->calls_cap) {
+        size_t cap = node->calls_cap ? node->calls_cap * 2u : 4u;
+        SymbolId *calls = realloc(node->calls, sizeof(*calls) * cap);
+        if (!calls)
+            return false;
+        node->calls = calls;
+        node->calls_cap = cap;
+    }
+    node->calls[node->calls_len++] = head;
+    return true;
+}
+
+static bool match_user_head_shown_pure(MatchPurityWalk *walk, SymbolId head);
+
+/* Whether `id` would be pure at the head of a call. */
+static bool match_symbol_shown_pure(MatchPurityWalk *walk, SymbolId id) {
+    if (is_grounded_op(id)) {
+        if (!grounded_op_is_type_pure(id) ||
+            match_purity_grounded_builds_syntax(id))
+            return false;
+    } else if (symbol_id_is_builtin(id) && !match_purity_builtin_pure(id)) {
+        return false;
+    }
+    if (!space_equations_may_match_known_head(walk->space, id))
+        return true;
+    if (walk->graph)
+        return match_purity_note_call(walk, id);
+    return match_user_head_shown_pure(walk, id);
+}
+
+static bool match_term_shown_pure(MatchPurityWalk *walk, Atom *term,
+                                  uint32_t depth) {
+    if (!term || depth > MATCH_PURITY_MAX_DEPTH)
+        return false;
+    switch (term->kind) {
+    case ATOM_VAR:
+        return walk->template_vars || match_purity_bound(walk, term->var_id);
+    case ATOM_GROUNDED:
+        return match_grounded_value_is_data(term);
+    case ATOM_SYMBOL:
+        return match_symbol_shown_pure(walk, term->sym_id);
+    case ATOM_EXPR:
+        break;
+    default:
+        return false;
+    }
+    if (term->expr.len == 0u)
+        return true;
+    Atom *head = term->expr.elems[0];
+    if (head->kind == ATOM_VAR)
+        return false;
+    if (head->kind != ATOM_SYMBOL &&
+        space_equations_may_match_unnamed_head(walk->space))
+        return false;
+    /* A let binds its pattern's variables in its body; a let* binds each
+     * pair's in the pairs after it and the body. */
+    bool let = atom_is_symbol_id(head, g_builtin_syms.let) &&
+        term->expr.len == 4u;
+    bool let_star = atom_is_symbol_id(head, g_builtin_syms.let_star) &&
+        term->expr.len == 3u && term->expr.elems[1]->kind == ATOM_EXPR;
+    if (let || let_star) {
+        size_t saved = walk->bound_len;
+        bool ok = match_symbol_shown_pure(walk, head->sym_id);
+        if (let) {
+            ok = ok && match_term_shown_pure(walk, term->expr.elems[2],
+                                             depth + 1u) &&
+                match_purity_bind_vars(walk, term->expr.elems[1], depth + 1u);
+        } else {
+            Atom *pairs = term->expr.elems[1];
+            for (CettaExprIndex i = 0u; ok && i < pairs->expr.len; i++) {
+                Atom *pair = pairs->expr.elems[i];
+                ok = pair->kind == ATOM_EXPR && pair->expr.len == 2u &&
+                    match_term_shown_pure(walk, pair->expr.elems[1],
+                                          depth + 1u) &&
+                    match_purity_bind_vars(walk, pair->expr.elems[0],
+                                           depth + 1u);
+            }
+        }
+        ok = ok && match_term_shown_pure(walk,
+                                         term->expr.elems[term->expr.len - 1u],
+                                         depth + 1u);
+        walk->bound_len = saved;
+        return ok;
+    }
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        if (!match_term_shown_pure(walk, term->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* Decide `head` together with every undecided authored head it reaches: a
+ * head is impure where one of its equations is, apart from its calls, or
+ * where it calls an impure head; all the others are pure. */
+static bool match_user_head_shown_pure(MatchPurityWalk *walk, SymbolId head) {
+    const MatchPurityEntry *known = match_purity_lookup(walk->cache, head);
+    if (known)
+        return known->pure;
+    MatchPurityGraph graph = {0};
+    (void)match_purity_graph_node(&graph, head);
+    for (size_t index = 0u; !graph.failed && index < graph.len; index++) {
+        SpaceEquationCursor cursor;
+        bool pure = space_equation_cursor_init(walk->space,
+                                               graph.nodes[index].head,
+                                               &cursor);
+        MatchPurityWalk inner = {
+            .space = walk->space,
+            .cache = walk->cache,
+            .graph = &graph,
+            .node = index,
+        };
+        while (pure) {
+            SpaceEquationOccurrenceId id;
+            SpaceEquationCursorStep step =
+                space_equation_cursor_next(&cursor, &id);
+            if (step == SPACE_EQUATION_CURSOR_END)
+                break;
+            SpaceEquationOccurrence occurrence;
+            if (step != SPACE_EQUATION_CURSOR_ITEM ||
+                !space_equation_occurrence_resolve(id, &occurrence)) {
+                pure = false;
+                break;
+            }
+            inner.bound_len = 0u;
+            pure = match_purity_bind_vars(&inner, occurrence.lhs, 0u) &&
+                match_term_shown_pure(&inner, occurrence.rhs, 0u);
+        }
+        free(inner.bound);
+        graph.nodes[index].locally_pure = pure;
+        /* The calls it recorded join the graph, unless already decided. */
+        for (size_t c = 0u; pure && c < graph.nodes[index].calls_len; c++) {
+            SymbolId callee = graph.nodes[index].calls[c];
+            const MatchPurityEntry *decided =
+                match_purity_lookup(walk->cache, callee);
+            if (decided) {
+                if (!decided->pure)
+                    graph.nodes[index].locally_pure = false;
+                continue;
+            }
+            (void)match_purity_graph_node(&graph, callee);
+        }
+    }
+    bool changed = !graph.failed;
+    while (changed) {
+        changed = false;
+        for (size_t i = 0u; i < graph.len; i++) {
+            if (!graph.nodes[i].locally_pure)
+                continue;
+            for (size_t c = 0u; c < graph.nodes[i].calls_len; c++) {
+                const MatchPurityEntry *decided = match_purity_lookup(
+                    walk->cache, graph.nodes[i].calls[c]);
+                bool callee_pure = decided ? decided->pure : true;
+                for (size_t n = 0u; !decided && n < graph.len; n++) {
+                    if (graph.nodes[n].head == graph.nodes[i].calls[c])
+                        callee_pure = graph.nodes[n].locally_pure;
+                }
+                if (!callee_pure) {
+                    graph.nodes[i].locally_pure = false;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    bool pure = !graph.failed && graph.nodes[0].locally_pure;
+    for (size_t i = 0u; !graph.failed && i < graph.len; i++)
+        match_purity_store(walk->cache, graph.nodes[i].head,
+                           graph.nodes[i].locally_pure);
+    for (size_t i = 0u; i < graph.len; i++)
+        free(graph.nodes[i].calls);
+    free(graph.nodes);
+    return pure;
+}
+
+static bool match_term_pure_in(Space *space, Atom *term, bool template_vars) {
+    if (!space || space_equations_may_match_unnamed_head(space))
+        return false;
+    MatchPurityWalk walk = {
+        .space = space,
+        .cache = match_purity_cache(space),
+        .template_vars = template_vars,
+    };
+    bool pure = match_term_shown_pure(&walk, term, 0u);
+    free(walk.bound);
+    return pure;
+}
+
+/* A body of a match, instantiated by its row, shown pure. */
+static bool match_body_shown_pure(Space *space, Atom *body) {
+    return match_term_pure_in(space, body, false);
+}
+
+/* A match's body template, before its rows are known: each row's body may
+ * yet be shown pure. */
+static bool match_template_may_be_pure(Space *space, Atom *body) {
+    return match_term_pure_in(space, body, true);
+}
+
 static Space *match_result_target_space(Atom *result, Arena *a) {
     if (!result || result->kind != ATOM_EXPR || result->expr.len < 2)
         return NULL;
@@ -27409,105 +28015,113 @@ static bool match_result_targets_any_query_space(Space *target,
     return false;
 }
 
-static void match_result_apply_emit_or_snapshot(
+/* A fused chain read on the condition that no body touches anything: each
+ * row's body is checked before it runs, and the first one not shown pure
+ * stops the run.  Every body run until then answered and did nothing else,
+ * so the caller drops those answers and runs the chain on the source
+ * schedule. */
+typedef struct {
+    bool active;
+    bool failed;
+} MatchChainCertificate;
+
+static void match_outcomes_truncate(OutcomeSet *os, CettaCount len) {
+    for (CettaCount i = len; i < os->len; i++)
+        outcome_free_fields(&os->items[i]);
+    if (os->len > len)
+        os->len = len;
+}
+
+/* Run a row's body at once.  A write takes effect when it runs; a removal
+ * from a space the match reads names the stored atom by its source
+ * variables.  A write to another space defers that space's secondary index
+ * upkeep until the match finishes. */
+static void match_result_apply_emit(
     Space *s, Arena *a, int fuel, OutcomeSet *os,
-    MatchResultSnapshot *snapshot,
     DeferredSpaceSet *deferred_spaces,
     MatchResultDirectEvalScratch *direct_scratch,
     const Bindings *projected,
     Atom *template,
     Space **query_spaces,
-    uint32_t nquery_spaces) {
+    uint32_t nquery_spaces,
+    MatchChainCertificate *certificate) {
+    if (certificate && certificate->failed)
+        return;
     Bindings empty;
     Arena *scratch = match_result_direct_eval_scratch_arena(direct_scratch, a);
     Arena *apply_arena = scratch ? scratch : a;
     ArenaMark mark = scratch ? arena_mark(scratch) : (ArenaMark){0};
     Atom *result = bindings_apply_if_vars(projected, apply_arena, template);
-    Space *target = match_result_target_space(result, apply_arena);
-    bool targets_query_space = match_result_targets_any_query_space(
-        target, query_spaces, nquery_spaces);
-    SymbolId result_head = atom_head_symbol_id(result);
-    bindings_init(&empty);
-    if (!targets_query_space) {
-        OutcomeSet generated;
-        outcome_set_init(&generated);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_STREAM_COUNT);
-        (void)deferred_space_set_add(deferred_spaces, target);
-        /* Substituting visible syntax does not substitute an opaque saved
-         * binding or Need reference. Keep the matched row active through
-         * execution; only the publication boundary may discard it. */
-        const Bindings *continuation_env =
-            eval_current_language_id() == CETTA_LANGUAGE_PRIME ||
-            eval_current_language_id() == CETTA_LANGUAGE_HE
-                ? projected : &empty;
-        eval_for_caller(s, apply_arena, NULL, result, fuel,
-                        continuation_env, false, &generated);
-        cetta_runtime_stats_add(
-            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_COUNT,
-            generated.len);
-        cetta_runtime_stats_update_max(
-            CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_PEAK,
-            generated.len);
-        outcome_set_append_promoted(a, os, &generated, false);
-        outcome_set_free(&generated);
+    if (certificate && certificate->active &&
+        !match_body_shown_pure(s, result)) {
+        certificate->failed = true;
         if (scratch)
             arena_reset(scratch, mark);
         return;
     }
-    if (result_head == g_builtin_syms.remove_atom ||
-        result_head == g_builtin_syms.mork_remove_atom) {
+    Space *target = match_result_target_space(result, apply_arena);
+    bool targets_query_space = match_result_targets_any_query_space(
+        target, query_spaces, nquery_spaces);
+    SymbolId result_head = atom_head_symbol_id(result);
+    if (targets_query_space &&
+        (result_head == g_builtin_syms.remove_atom ||
+         result_head == g_builtin_syms.mork_remove_atom)) {
         Atom *restored = space_match_backend_restore_opening_provenance(
             apply_arena, result);
         if (restored)
             result = restored;
     }
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_RESULT_SNAPSHOT_COUNT);
-    if (scratch) {
-        Atom *promoted = atom_deep_copy(a, result);
-        if (promoted)
-            (void)match_result_snapshot_push(snapshot, promoted);
-        arena_reset(scratch, mark);
-        return;
-    }
-    (void)match_result_snapshot_push(snapshot, result);
-}
-
-static bool match_result_snapshot_push(MatchResultSnapshot *snapshot,
-                                       Atom *atom) {
-    if (!snapshot)
-        return false;
-    if (snapshot->len >= snapshot->cap) {
-        CettaCount next_cap;
-        if (!eval_next_capacity(snapshot->cap, snapshot->len + 1u,
-                                sizeof(Atom *), &next_cap))
-            return false;
-        snapshot->items =
-            cetta_realloc(snapshot->items, sizeof(Atom *) * (size_t)next_cap);
-        snapshot->cap = next_cap;
-    }
-    snapshot->items[snapshot->len++] = atom;
-    return true;
-}
-
-static void match_result_snapshot_eval(Space *s, Arena *a,
-                                       MatchResultSnapshot *snapshot,
-                                       int fuel, OutcomeSet *os) {
-    Bindings empty;
     bindings_init(&empty);
-    if (!snapshot)
-        return;
-    for (CettaCount i = 0; i < snapshot->len; i++)
-        eval_for_caller(s, a, NULL, snapshot->items[i], fuel, &empty, false, os);
+    OutcomeSet generated;
+    outcome_set_init(&generated);
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_STREAM_COUNT);
+    if (!targets_query_space)
+        (void)deferred_space_set_add(deferred_spaces, target);
+    /* Substituting visible syntax does not substitute an opaque saved
+     * binding or Need reference. Keep the matched row active through
+     * execution; only the publication boundary may discard it. */
+    const Bindings *continuation_env =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME ||
+        eval_current_language_id() == CETTA_LANGUAGE_HE
+            ? projected : &empty;
+    eval_for_caller(s, apply_arena, NULL, result, fuel,
+                    continuation_env, false, &generated);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_COUNT,
+        generated.len);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_MATCH_RESULT_DIRECT_GENERATED_OUTCOME_PEAK,
+        generated.len);
+    outcome_set_append_promoted(a, os, &generated, false);
+    outcome_set_free(&generated);
+    if (scratch)
+        arena_reset(scratch, mark);
 }
 
-static void match_result_snapshot_free(MatchResultSnapshot *snapshot) {
-    if (!snapshot)
+/* One row's body of a fused chain, run at once; with preserved bindings it
+ * runs in the row's environment. */
+static void match_chain_run_body(
+    Space *s, Arena *a, int fuel, OutcomeSet *os,
+    DeferredSpaceSet *deferred_spaces,
+    MatchResultDirectEvalScratch *direct_scratch,
+    const Bindings *projected, Atom *body, Space **query_spaces,
+    uint32_t nquery_spaces, bool preserve_bindings,
+    MatchChainCertificate *certificate) {
+    if (!preserve_bindings) {
+        match_result_apply_emit(s, a, fuel, os, deferred_spaces,
+                                direct_scratch, projected, body, query_spaces,
+                                nquery_spaces, certificate);
         return;
-    free(snapshot->items);
-    snapshot->items = NULL;
-    snapshot->len = 0;
-    snapshot->cap = 0;
+    }
+    Atom *result = bindings_apply_if_vars(projected, a, body);
+    if (certificate && certificate->active &&
+        !match_body_shown_pure(s, result)) {
+        certificate->failed = true;
+        return;
+    }
+    eval_for_caller(s, a, NULL, result, fuel, projected, preserve_bindings,
+                    os);
 }
 
 static __attribute__((unused)) void
@@ -29418,7 +30032,7 @@ typedef struct {
     Atom **step_patterns;
     uint32_t nsteps;
     MatchVisibleVarSet *visible;
-    MatchResultSnapshot *snapshot;
+    MatchChainCertificate *certificate;
     DeferredSpaceSet *deferred_spaces;
     MatchResultDirectEvalScratch *direct_scratch;
     Atom *body;
@@ -29475,16 +30089,18 @@ static void match_chain_note_progress(uint32_t factor_count,
    breadth-first path; answer bags are identical (order is ratified
    non-semantic). */
 static void match_chain_dfs(MatchChainDfsCtx *ctx, uint32_t si, Bindings *cur) {
+    if (ctx->certificate->failed)
+        return;
     if (si == ctx->nsteps) {
         __attribute__((cleanup(bindings_free))) Bindings projected;
         if (!project_match_visible_bindings(ctx->a, ctx->visible, cur,
                                             &projected))
             return;
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-        match_result_apply_emit_or_snapshot(
-            ctx->s, ctx->a, ctx->fuel, ctx->os, ctx->snapshot,
-            ctx->deferred_spaces, ctx->direct_scratch, &projected, ctx->body,
-            ctx->query_spaces, ctx->nquery_spaces);
+        match_result_apply_emit(
+            ctx->s, ctx->a, ctx->fuel, ctx->os, ctx->deferred_spaces,
+            ctx->direct_scratch, &projected, ctx->body, ctx->query_spaces,
+            ctx->nquery_spaces, ctx->certificate);
         match_chain_note_progress(ctx->nsteps, "seeded-dfs");
         return;
     }
@@ -29539,7 +30155,9 @@ typedef struct {
     Atom *body;
     Space *query_space;
     bool preserve_bindings;
-    MatchResultSnapshot *snapshot;
+    MatchChainCertificate *certificate;
+    /* Where set, each row's body is kept here, to run after the read. */
+    OutcomeSet *collected;
     DeferredSpaceSet *deferred_spaces;
     MatchResultDirectEvalScratch *direct_scratch;
     uint32_t factor_count;
@@ -29557,21 +30175,35 @@ static bool pathmap_conjunction_stream_row(
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
+    if (ctx->collected) {
+        /* A removal names the stored atom by the variables the read opened
+         * it with, so it is restored while the read is open. */
+        Atom *result = bindings_apply_if_vars(
+            &projected, ctx->arena, ctx->body);
+        Atom *restored = space_match_backend_restore_opening_provenance(
+            ctx->arena, result);
+        outcome_set_add(ctx->collected, restored ? restored : result,
+                        &projected);
+        return true;
+    }
     if (!ctx->preserve_bindings) {
-        match_result_apply_emit_or_snapshot(
+        match_result_apply_emit(
             ctx->space, ctx->arena, ctx->fuel, ctx->outcomes,
-            ctx->snapshot, ctx->deferred_spaces, ctx->direct_scratch,
-            &projected, ctx->body, &ctx->query_space, 1u);
+            ctx->deferred_spaces, ctx->direct_scratch, &projected, ctx->body,
+            &ctx->query_space, 1u, ctx->certificate);
     } else {
         Atom *result = bindings_apply_if_vars(
             &projected, ctx->arena, ctx->body);
-        eval_for_caller(
-            ctx->space, ctx->arena, NULL, result, ctx->fuel,
-            &projected, true, ctx->outcomes);
+        if (!match_body_shown_pure(ctx->space, result))
+            ctx->certificate->failed = true;
+        else
+            eval_for_caller(
+                ctx->space, ctx->arena, NULL, result, ctx->fuel,
+                &projected, true, ctx->outcomes);
     }
 
     match_chain_note_progress(ctx->factor_count, "pathmap-indexed");
-    return true;
+    return !ctx->certificate->failed;
 }
 
 static bool match_query_is_connective(Atom *pattern) {
@@ -29791,9 +30423,40 @@ static void match_chain_order_steps(MatchStep *steps, uint32_t *count) {
     #undef MAX_CHAIN
 }
 
+static bool handle_match_scheduled(Space *s, Arena *a, Atom *atom, int fuel,
+                                   bool preserve_bindings, OutcomeSet *os,
+                                   bool certify);
+
+/* A certificate failed: drop the answers its run gave, and run the call on
+ * the source schedule over the space it already resolved, whose expression
+ * is not evaluated again. */
+static bool match_chain_run_uncertified(
+    Space *s, Arena *a, Space *ms, Atom *pattern, Atom *template, int fuel,
+    bool preserve_bindings, OutcomeSet *os, CettaCount answered) {
+    match_outcomes_truncate(os, answered);
+    Atom *resolved_call = atom_expr(
+        a,
+        (Atom *[]){
+            atom_symbol_id(a, g_builtin_syms.match),
+            atom_space(a, ms),
+            pattern,
+            template,
+        },
+        4u);
+    return resolved_call &&
+        handle_match_scheduled(s, a, resolved_call, fuel, preserve_bindings,
+                               os, false);
+}
+
+/* A match call: one complete read of its space when it runs, its rows'
+ * bodies in the read's order, each to completion, a match in a body read
+ * when its branch is reached, every write at once.  A nested chain is fused
+ * past its second leg only on a certificate (MatchChainCertificate);
+ * `certify` false runs it on the source schedule. */
 static __attribute__((noinline)) bool
-handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
-             OutcomeSet *os) {
+handle_match_scheduled(Space *s, Arena *a, Atom *atom, int fuel,
+                       bool preserve_bindings, OutcomeSet *os,
+                       bool certify) {
     Bindings _empty; bindings_init(&_empty);
     __attribute__((cleanup(deferred_space_set_free)))
     DeferredSpaceSet deferred_spaces = {0};
@@ -29936,8 +30599,9 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 },
                 4u);
             if (!resolved_call ||
-                !handle_match(
-                    s, a, resolved_call, fuel, preserve_bindings, os)) {
+                !handle_match_scheduled(
+                    s, a, resolved_call, fuel, preserve_bindings, os,
+                    certify)) {
                 outcome_set_add(
                     os, atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
                     &_empty);
@@ -29976,7 +30640,6 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             return true;
         }
         if (!preserve_bindings) {
-            MatchResultSnapshot snapshot = {0};
             Space *query_spaces[] = { ms };
             for (CettaIndex bi = 0; bi < matches.len; bi++) {
                 __attribute__((cleanup(bindings_free))) Bindings projected;
@@ -29985,13 +30648,10 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     continue;
                 }
                 cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_MATCH_TEMPLATE);
-                match_result_apply_emit_or_snapshot(
-                    s, a, fuel, os, &snapshot, &deferred_spaces,
-                    &direct_scratch, &projected, template,
-                    query_spaces, 1);
+                match_result_apply_emit(
+                    s, a, fuel, os, &deferred_spaces, &direct_scratch,
+                    &projected, template, query_spaces, 1, NULL);
             }
-            match_result_snapshot_eval(s, a, &snapshot, fuel, os);
-            match_result_snapshot_free(&snapshot);
         } else {
             for (CettaIndex bi = 0; bi < matches.len; bi++) {
                 __attribute__((cleanup(bindings_free))) Bindings projected;
@@ -30051,14 +30711,25 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 (residual_head == g_builtin_syms.remove_atom ||
                  residual_head == g_builtin_syms.mork_remove_atom) &&
                 match_result_target_space(residual_body, a) == ms;
-            if (nsame >= 2 || single_remove_needs_opening_scope) {
+            /* The indexed conjunction reads every leg before any body runs:
+             * a chain whose bodies are shown pure, row by row.  A single
+             * removal of the rows it reads is read first and then run, so
+             * that each removal names its stored atom. */
+            bool certified_chain = nsame >= 2 && certify &&
+                match_template_may_be_pure(s, residual_body);
+            if (certified_chain || single_remove_needs_opening_scope) {
                 MatchVisibleVarSet visible;
                 match_visible_var_set_init(&visible);
                 if (!collect_match_visible_vars_many(same_space_patterns, nsame, &visible)) {
                     match_visible_var_set_free(&visible);
                     return true;
                 }
-                MatchResultSnapshot stream_snapshot = {0};
+                MatchChainCertificate certificate = {
+                    .active = certified_chain,
+                };
+                OutcomeSet collected;
+                outcome_set_init(&collected);
+                CettaCount answered = os->len;
                 PathmapConjunctionStreamCtx stream_ctx = {
                     .space = s,
                     .arena = a,
@@ -30068,7 +30739,8 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     .body = residual_body,
                     .query_space = ms,
                     .preserve_bindings = preserve_bindings,
-                    .snapshot = &stream_snapshot,
+                    .certificate = &certificate,
+                    .collected = certified_chain ? NULL : &collected,
                     .deferred_spaces = &deferred_spaces,
                     .direct_scratch = &direct_scratch,
                     .factor_count = nsame,
@@ -30077,11 +30749,23 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     space_match_backend_try_visit_conjunction_indexed(
                         ms, a, same_space_patterns, nsame, NULL,
                         pathmap_conjunction_stream_row, &stream_ctx);
+                if (certificate.failed) {
+                    outcome_set_free(&collected);
+                    match_visible_var_set_free(&visible);
+                    return match_chain_run_uncertified(
+                        s, a, ms, pattern, template, fuel, preserve_bindings,
+                        os, answered);
+                }
                 if (stream_result != SPACE_MATCH_PULL_VISIT_DECLINED) {
-                    if (!preserve_bindings)
-                        match_result_snapshot_eval(
-                            s, a, &stream_snapshot, fuel, os);
-                    match_result_snapshot_free(&stream_snapshot);
+                    Bindings no_row;
+                    bindings_init(&no_row);
+                    for (CettaCount ci = 0u; ci < collected.len; ci++)
+                        eval_for_caller(
+                            s, a, NULL, collected.items[ci].atom, fuel,
+                            preserve_bindings ? &collected.items[ci].env
+                                              : &no_row,
+                            preserve_bindings, os);
+                    outcome_set_free(&collected);
                     if (stream_result == SPACE_MATCH_PULL_VISIT_TERMINATED) {
                         outcome_set_add(
                             os,
@@ -30093,7 +30777,7 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_visible_var_set_free(&visible);
                     return true;
                 }
-                match_result_snapshot_free(&stream_snapshot);
+                outcome_set_free(&collected);
                 match_visible_var_set_free(&visible);
             }
         }
@@ -30104,17 +30788,17 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         #define MAX_CHAIN 16
         #define MAX_VARS_PER_PAT 32
 
-        bool allow_chain_flatten = true;
-
         MatchStep steps[MAX_CHAIN];
+        /* bodies[i]: the body under legs 0..i. */
+        Atom *bodies[MAX_CHAIN];
         uint32_t nsteps = 0;
 
         steps[nsteps].space = ms;
         steps[nsteps].pattern = pattern;
-        nsteps++;
+        bodies[nsteps++] = template;
 
         Atom *body = template;
-        while (allow_chain_flatten && nsteps < MAX_CHAIN &&
+        while (nsteps < MAX_CHAIN &&
                body->kind == ATOM_EXPR && body->expr.len == 4 &&
                atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match)) {
             Atom *inner_ref = resolve_registry_refs(a, body->expr.elems[1]);
@@ -30131,9 +30815,26 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
             if (!inner_sp) inner_sp = s;
             steps[nsteps].space = inner_sp;
             steps[nsteps].pattern = inner_pat;
-            nsteps++;
             body = body->expr.elems[3];
+            bodies[nsteps++] = body;
         }
+
+        /* Reading a later leg before an earlier row's body runs, or the legs
+         * in another order than written, is the source schedule only where
+         * no body touches anything.  A chain of more than two legs runs on a
+         * certificate where its template may be pure; any other fuses two
+         * legs, and each later leg is a match of its own, read when its
+         * branch is reached.  Two fused legs are the source schedule: the
+         * second is read for each row of the first when that row is
+         * reached, completely, before the row's bodies run. */
+        bool pure_template = certify && nsteps > 1u &&
+            match_template_may_be_pure(s, body);
+        if (nsteps > 2u && !pure_template) {
+            nsteps = 2u;
+            body = bodies[1];
+        }
+        MatchChainCertificate certificate = {.active = nsteps > 2u};
+        CettaCount answered = os->len;
 
         match_chain_order_steps(steps, &nsteps);
 
@@ -30145,33 +30846,37 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                 return true;
             }
         }
+        Space *query_spaces[MAX_CHAIN];
+        for (uint32_t qi = 0; qi < nsteps; qi++)
+            query_spaces[qi] = steps[qi].space;
 
+        /* The depth-first walk reads a leg's candidates as it reaches them:
+         * only on a certificate. */
         if (match_chain_join_fastpath_enabled() && !preserve_bindings &&
-            nsteps > 1) {
-            MatchResultSnapshot dfs_snapshot = {0};
-            Space *dfs_spaces[MAX_CHAIN];
+            nsteps > 1 && pure_template) {
+            certificate.active = true;
             Atom *dfs_patterns[MAX_CHAIN];
-            for (uint32_t qi = 0; qi < nsteps; qi++) {
-                dfs_spaces[qi] = steps[qi].space;
+            for (uint32_t qi = 0; qi < nsteps; qi++)
                 dfs_patterns[qi] = steps[qi].pattern;
-            }
             MatchChainDfsCtx dfs_ctx = {
                 .s = s, .a = a, .fuel = fuel, .os = os,
-                .step_spaces = dfs_spaces, .step_patterns = dfs_patterns,
+                .step_spaces = query_spaces, .step_patterns = dfs_patterns,
                 .nsteps = nsteps, .visible = &visible,
-                .snapshot = &dfs_snapshot,
+                .certificate = &certificate,
                 .deferred_spaces = &deferred_spaces,
                 .direct_scratch = &direct_scratch,
                 .body = body,
-                .query_spaces = dfs_spaces, .nquery_spaces = nsteps,
+                .query_spaces = query_spaces, .nquery_spaces = nsteps,
             };
             Bindings dfs_root;
             bindings_init(&dfs_root);
             match_chain_dfs(&dfs_ctx, 0, &dfs_root);
             bindings_free(&dfs_root);
-            match_result_snapshot_eval(s, a, &dfs_snapshot, fuel, os);
-            match_result_snapshot_free(&dfs_snapshot);
             match_visible_var_set_free(&visible);
+            if (certificate.failed)
+                return match_chain_run_uncertified(
+                    s, a, ms, pattern, template, fuel, preserve_bindings, os,
+                    answered);
             return true;
         }
 
@@ -30297,42 +31002,26 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
 
         if (nsteps > 1 && ncur > 0) {
             MatchStep *last = &steps[nsteps - 1];
-            if (!preserve_bindings) {
-                MatchResultSnapshot snapshot = {0};
-                Space *query_spaces[MAX_CHAIN];
-                uint32_t nquery_spaces = nsteps;
-                for (uint32_t qi = 0; qi < nsteps; qi++)
-                    query_spaces[qi] = steps[qi].space;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
-                    size_t grounded_before = a ? a->live_bytes : 0;
-                    Atom *grounded =
-                        bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
-                    match_chain_note_eval_live_delta(
-                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
-                        grounded_before);
-                    match_chain_note_eval_live_peak(
-                        a,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
-                    CettaIndex fp_hits = 0;
-                    if (match_chain_ground_exact_probe(last->space, grounded,
-                                                       &fp_hits)) {
-                        for (CettaIndex k = 0; k < fp_hits; k++) {
-                            __attribute__((cleanup(bindings_free))) Bindings projected;
-                            if (!project_match_visible_bindings(
-                                    a, &visible, &cur_binds[bi], &projected))
-                                break;
-                            cetta_runtime_stats_inc(
-                                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                            match_result_apply_emit_or_snapshot(
-                                s, a, fuel, os, &snapshot, &deferred_spaces,
-                                &direct_scratch, &projected, body,
-                                query_spaces, nquery_spaces);
-                            match_chain_note_progress(
-                                nsteps, "materialized-snapshot-exact");
-                        }
-                        continue;
-                    }
+            for (uint32_t bi = 0; bi < ncur && !certificate.failed; bi++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
+                size_t grounded_before = a ? a->live_bytes : 0;
+                Atom *grounded =
+                    bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
+                match_chain_note_eval_live_delta(
+                    a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
+                    grounded_before);
+                match_chain_note_eval_live_peak(
+                    a,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
+                BindingSet rows;
+                binding_set_init(&rows);
+                CettaIndex fp_hits = 0;
+                bool exact = match_chain_ground_exact_probe(last->space, grounded,
+                                                            &fp_hits);
+                if (exact) {
+                    for (CettaIndex k = 0; k < fp_hits; k++)
+                        (void)binding_set_push(&rows, &cur_binds[bi]);
+                } else {
                     SubstMatchSet smr;
                     smset_init(&smr);
                     size_t query_before = a ? a->live_bytes : 0;
@@ -30359,201 +31048,92 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
                     match_chain_note_eval_live_peak(
                         a,
                         CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
+                    /* The read is complete before its first body runs: a
+                     * stored row is matched again by its position, which a
+                     * body's write may move. */
                     for (CettaIndex ci = 0; ci < smr.len; ci++) {
                         Bindings mb;
                         size_t merge_entry_before = bindings_entry_active_bytes();
                         size_t merge_constraint_before =
                             bindings_constraint_active_bytes();
-                        if (space_subst_match_with_seed(last->space, grounded,
-                                                        &smr.items[ci],
-                                                        &cur_binds[bi], a, &mb)) {
-                            match_chain_note_size_delta(
-                                bindings_entry_active_bytes(),
-                                merge_entry_before,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
-                            match_chain_note_size_delta(
-                                bindings_constraint_active_bytes(),
-                                merge_constraint_before,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
-                            __attribute__((cleanup(bindings_free))) Bindings projected;
-                            size_t project_before = a ? a->live_bytes : 0;
-                            if (!project_match_visible_bindings(a, &visible, &mb,
-                                                                &projected)) {
-                                bindings_free(&mb);
-                                continue;
-                            }
-                            match_chain_note_eval_live_delta(
-                                a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
-                                project_before);
-                            match_chain_note_eval_live_peak(
-                                a,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
-                            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                            match_result_apply_emit_or_snapshot(
-                                s, a, fuel, os, &snapshot, &deferred_spaces,
-                                &direct_scratch, &projected, body,
-                                query_spaces, nquery_spaces);
+                        if (!space_subst_match_with_seed(last->space, grounded,
+                                                         &smr.items[ci],
+                                                         &cur_binds[bi], a, &mb))
+                            continue;
+                        match_chain_note_size_delta(
+                            bindings_entry_active_bytes(), merge_entry_before,
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
+                        match_chain_note_size_delta(
+                            bindings_constraint_active_bytes(),
+                            merge_constraint_before,
+                            CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
+                        if (!binding_set_push_move(&rows, &mb))
                             bindings_free(&mb);
-                            match_chain_note_progress(
-                                nsteps, "materialized-snapshot-query");
-                        }
                     }
                     smset_free(&smr);
                 }
-                match_result_snapshot_eval(s, a, &snapshot, fuel, os);
-                match_result_snapshot_free(&snapshot);
-            } else {
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_LAST);
-                    size_t grounded_before = a ? a->live_bytes : 0;
-                    Atom *grounded =
-                        bindings_apply_if_vars(&cur_binds[bi], a, last->pattern);
-                    match_chain_note_eval_live_delta(
-                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_GROUNDED_DELTA_BYTES_PEAK,
-                        grounded_before);
-                    match_chain_note_eval_live_peak(
-                        a,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_GROUNDED_PEAK);
-                    CettaIndex fp_hits = 0;
-                    if (match_chain_ground_exact_probe(last->space, grounded,
-                                                       &fp_hits)) {
-                        for (CettaIndex k = 0; k < fp_hits; k++) {
-                            __attribute__((cleanup(bindings_free))) Bindings projected;
-                            if (!project_match_visible_bindings(
-                                    a, &visible, &cur_binds[bi], &projected))
-                                break;
-                            cetta_runtime_stats_inc(
-                                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                            Atom *fp_result =
-                                bindings_apply_if_vars(&projected, a, body);
-                            eval_for_caller(s, a, NULL, fp_result, fuel,
-                                            &projected, preserve_bindings, os);
-                            match_chain_note_progress(
-                                nsteps, "materialized-exact");
-                        }
+                for (CettaIndex ri = 0; ri < rows.len && !certificate.failed;
+                     ri++) {
+                    __attribute__((cleanup(bindings_free))) Bindings projected;
+                    size_t project_before = a ? a->live_bytes : 0;
+                    if (!project_match_visible_bindings(a, &visible,
+                                                        &rows.items[ri],
+                                                        &projected))
                         continue;
-                    }
-                    SubstMatchSet smr;
-                    smset_init(&smr);
-                    size_t query_before = a ? a->live_bytes : 0;
-                    size_t query_entry_before = bindings_entry_active_bytes();
-                    size_t query_constraint_before =
-                        bindings_constraint_active_bytes();
-                    space_subst_query(last->space, a, grounded, &smr);
                     match_chain_note_eval_live_delta(
-                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_DELTA_BYTES_PEAK,
-                        query_before);
-                    match_chain_note_size_delta(
-                        bindings_entry_active_bytes(), query_entry_before,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_ENTRY_DELTA_PEAK);
-                    match_chain_note_size_delta(
-                        bindings_constraint_active_bytes(),
-                        query_constraint_before,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_QUERY_BINDINGS_CONSTRAINT_DELTA_PEAK);
-                    cetta_runtime_stats_update_max(
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBST_RESULTS_PEAK,
-                        smr.len);
-                    cetta_runtime_stats_update_max(
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SUBSTMATCHSET_BYTES_PEAK,
-                        (uint64_t)smr.cap * (uint64_t)sizeof(SubstMatch));
+                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                        project_before);
                     match_chain_note_eval_live_peak(
                         a,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_QUERY_PEAK);
-                    for (CettaIndex ci = 0; ci < smr.len; ci++) {
-                        Bindings mb;
-                        size_t merge_entry_before = bindings_entry_active_bytes();
-                        size_t merge_constraint_before =
-                            bindings_constraint_active_bytes();
-                        if (space_subst_match_with_seed(last->space, grounded,
-                                                        &smr.items[ci],
-                                                        &cur_binds[bi], a, &mb)) {
-                            match_chain_note_size_delta(
-                                bindings_entry_active_bytes(),
-                                merge_entry_before,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_ENTRY_DELTA_PEAK);
-                            match_chain_note_size_delta(
-                                bindings_constraint_active_bytes(),
-                                merge_constraint_before,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_SEED_MERGE_BINDINGS_CONSTRAINT_DELTA_PEAK);
-                            __attribute__((cleanup(bindings_free))) Bindings projected;
-                            size_t project_before = a ? a->live_bytes : 0;
-                            if (!project_match_visible_bindings(a, &visible, &mb,
-                                                                &projected)) {
-                                bindings_free(&mb);
-                                continue;
-                            }
-                            match_chain_note_eval_live_delta(
-                                a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
-                                project_before);
-                            match_chain_note_eval_live_peak(
-                                a,
-                                CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
-                            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                            Atom *result = bindings_apply_if_vars(&projected, a, body);
-                            eval_for_caller(s, a, NULL, result, fuel, &projected,
-                                            preserve_bindings, os);
-                            bindings_free(&mb);
-                            match_chain_note_progress(
-                                nsteps, "materialized-query");
-                        }
-                    }
-                    smset_free(&smr);
+                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                    match_chain_run_body(
+                        s, a, fuel, os, &deferred_spaces, &direct_scratch,
+                        &projected, body, query_spaces, nsteps,
+                        preserve_bindings, &certificate);
+                    match_chain_note_progress(
+                        nsteps, exact ? "materialized-exact"
+                                      : "materialized-query");
                 }
+                binding_set_free(&rows);
             }
         } else {
-            if (!preserve_bindings) {
-                MatchResultSnapshot snapshot = {0};
-                Space *query_spaces[MAX_CHAIN];
-                uint32_t nquery_spaces = nsteps;
-                for (uint32_t qi = 0; qi < nsteps; qi++)
-                    query_spaces[qi] = steps[qi].space;
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    __attribute__((cleanup(bindings_free))) Bindings projected;
-                    size_t project_before = a ? a->live_bytes : 0;
-                    if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
-                                                        &projected)) {
-                        continue;
-                    }
-                    match_chain_note_eval_live_delta(
-                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
-                        project_before);
-                    match_chain_note_eval_live_peak(
-                        a,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                    match_result_apply_emit_or_snapshot(
-                        s, a, fuel, os, &snapshot, &deferred_spaces,
-                        &direct_scratch, &projected, body,
-                        query_spaces, nquery_spaces);
+            for (uint32_t bi = 0; bi < ncur; bi++) {
+                __attribute__((cleanup(bindings_free))) Bindings projected;
+                size_t project_before = a ? a->live_bytes : 0;
+                if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
+                                                    &projected)) {
+                    continue;
                 }
-                match_result_snapshot_eval(s, a, &snapshot, fuel, os);
-                match_result_snapshot_free(&snapshot);
-            } else {
-                for (uint32_t bi = 0; bi < ncur; bi++) {
-                    __attribute__((cleanup(bindings_free))) Bindings projected;
-                    size_t project_before = a ? a->live_bytes : 0;
-                    if (!project_match_visible_bindings(a, &visible, &cur_binds[bi],
-                                                        &projected)) {
-                        continue;
-                    }
-                    match_chain_note_eval_live_delta(
-                        a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
-                        project_before);
-                    match_chain_note_eval_live_peak(
-                        a,
-                        CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
-                    Atom *result = bindings_apply_if_vars(&projected, a, body);
-                    eval_for_caller(s, a, NULL, result, fuel, &projected,
-                                    preserve_bindings, os);
-                }
+                match_chain_note_eval_live_delta(
+                    a, CETTA_RUNTIME_COUNTER_MATCH_CHAIN_PROJECT_DELTA_BYTES_PEAK,
+                    project_before);
+                match_chain_note_eval_live_peak(
+                    a,
+                    CETTA_RUNTIME_COUNTER_MATCH_CHAIN_EVAL_BYTES_AFTER_PROJECT_PEAK);
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EVAL_CHAIN_BODY);
+                match_chain_run_body(
+                    s, a, fuel, os, &deferred_spaces, &direct_scratch,
+                    &projected, body, query_spaces, nsteps,
+                    preserve_bindings, NULL);
             }
         }
         match_visible_var_set_free(&visible);
         bindings_array_release(cur_binds, ncur, cur_inline);
+        if (certificate.failed)
+            return match_chain_run_uncertified(
+                s, a, ms, pattern, template, fuel, preserve_bindings, os,
+                answered);
     }
 
     return true;
+}
+
+/* A match call on the source schedule's policy. */
+static bool handle_match(Space *s, Arena *a, Atom *atom, int fuel,
+                         bool preserve_bindings, OutcomeSet *os) {
+    return handle_match_scheduled(s, a, atom, fuel, preserve_bindings, os,
+                                  true);
 }
 
 static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
@@ -43795,7 +44375,7 @@ static bool petta_eval_machine_admits_root(
                 space, relation_head, &defined);
         PettaRelationSafety safety = PETTA_RELATION_SAFETY_UNSAFE;
         if (defined &&
-            effect == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) {
+            (effect & CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY)) {
             safety = petta_program_relation_safety(
                 g_library_context->petta_program, space,
                 relation_head,
@@ -44511,6 +45091,10 @@ static bool petta_eval_atom_holds_error(Atom *atom) {
     Atom **stack = inline_stack;
     size_t len = 0u, cap = 64u;
     bool found = false;
+    /* A shared subexpression is looked into where it is first met; where
+     * the set cannot grow the walk goes on without it. */
+    AtomVisitSet seen = {0};
+    bool fault = false;
     if (atom)
         stack[len++] = atom;
     while (len && !found) {
@@ -44521,6 +45105,9 @@ static bool petta_eval_atom_holds_error(Atom *atom) {
             found = true;
             break;
         }
+        if (current != atom && !fault &&
+            !atom_visit_set_add(&seen, current, &fault) && !fault)
+            continue;
         for (CettaExprIndex index = 0u; index < current->expr.len; index++) {
             if (len == cap) {
                 Atom **grown = cetta_malloc(sizeof(*grown) * cap * 2u);
@@ -44535,6 +45122,7 @@ static bool petta_eval_atom_holds_error(Atom *atom) {
     }
     if (stack != inline_stack)
         free(stack);
+    atom_visit_set_free(&seen);
     return found;
 }
 
@@ -46775,12 +47363,15 @@ static bool prepared_pure_reference_enabled(void) {
  * realization.  The single-result executor and the finite answer producer
  * differ only after this boundary; unsupported effects, tables, traces, and
  * language-owned forms therefore decline in exactly the same way. */
-/* Whether a symbol occurs in an atom, walked without recursion. */
+/* Whether a symbol occurs in an atom, walked without recursion; a shared
+ * subexpression is walked where it is first met. */
 static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
     Atom *inline_stack[32];
     Atom **stack = inline_stack;
     size_t len = 0u, cap = sizeof inline_stack / sizeof inline_stack[0];
     bool found = false;
+    AtomVisitSet seen = {0};
+    bool fault = false;
     stack[len++] = root;
     while (len && !found) {
         Atom *atom = stack[--len];
@@ -46791,6 +47382,11 @@ static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
             continue;
         }
         if (atom->kind != ATOM_EXPR)
+            continue;
+        /* Where the set cannot grow, walk on without it: the answer is the
+         * same. */
+        if (atom != root && !fault &&
+            !atom_visit_set_add(&seen, atom, &fault) && !fault)
             continue;
         for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
             if (len == cap) {
@@ -46808,6 +47404,7 @@ static bool atom_mentions_symbol_id(Atom *root, SymbolId symbol) {
     }
     if (stack != inline_stack)
         free(stack);
+    atom_visit_set_free(&seen);
     return found;
 }
 
