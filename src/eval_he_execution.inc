@@ -24,6 +24,10 @@ static bool he_raw_flow_rereads(const HeRawFlowFlags *flow) {
 typedef struct {
     Atom **terms;
     size_t length, capacity;
+    /* The expressions already queued: what a term contributes is the same
+     * wherever it occurs, so a subterm a value shares is judged once. */
+    AtomVisitSet queued;
+    bool queued_fault;
     SymbolId *heads;
     size_t head_count, head_capacity;
     Space *space;
@@ -242,6 +246,12 @@ static bool he_execution_effect_atom_plain(Atom *atom) {
 }
 
 static bool he_execution_push(HeExecutionAdmission *admission, Atom *term) {
+    if (term && term->kind == ATOM_EXPR && term->expr.len > 1u &&
+        !admission->queued_fault &&
+        !atom_visit_set_add(&admission->queued, term,
+                                 &admission->queued_fault) &&
+        !admission->queued_fault)
+        return true;
     if (admission->length == admission->capacity) {
         size_t capacity = admission->capacity ? admission->capacity * 2u : 64u;
         if (capacity < admission->capacity || capacity > SIZE_MAX / sizeof(Atom *))
@@ -1139,7 +1149,10 @@ static bool he_symbol_callable(Space *space, SymbolId symbol) {
 
 /* A value HE would not evaluate further: no variable, and no symbol or
  * expression head with equations, a grounded operation or a builtin. */
-static bool he_stream_value_inert(Space *space, const Atom *value) {
+/* A subexpression met again was inert where it was first met: the walk
+ * stops at the first part that is not. */
+static bool he_stream_value_inert_in(Space *space, const Atom *value,
+                                     AtomVisitSet *seen, bool *fault) {
     if (!value)
         return false;
     switch (value->kind) {
@@ -1150,12 +1163,24 @@ static bool he_stream_value_inert(Space *space, const Atom *value) {
     case ATOM_SYMBOL:
         return !he_symbol_callable(space, atom_symbol_current_id(value));
     case ATOM_EXPR:
+        if (value->expr.len > 1u && !*fault &&
+            !atom_visit_set_add(seen, value, fault) && !*fault)
+            return true;
         for (CettaExprIndex i = 0u; i < value->expr.len; i++)
-            if (!he_stream_value_inert(space, value->expr.elems[i]))
+            if (!he_stream_value_inert_in(space, value->expr.elems[i],
+                                          seen, fault))
                 return false;
         return true;
     }
     return false;
+}
+
+static bool he_stream_value_inert(Space *space, const Atom *value) {
+    AtomVisitSet seen = {0};
+    bool fault = false;
+    bool inert = he_stream_value_inert_in(space, value, &seen, &fault);
+    atom_visit_set_free(&seen);
+    return inert;
 }
 
 /* Whether calls of `head` with `arity` arguments may stream: the relation
@@ -1232,6 +1257,7 @@ static bool he_stream_admitted(Space *space, Arena *arena, SymbolId head) {
     }
     free(admission.terms);
     free(admission.heads);
+    atom_visit_set_free(&admission.queued);
     return admitted;
 }
 
@@ -1275,6 +1301,7 @@ static bool he_compiled_admitted(Space *space, Arena *arena, SymbolId head,
     }
     free(admission.terms);
     free(admission.heads);
+    atom_visit_set_free(&admission.queued);
     return admitted && !(raises && admission.raise_unshaped) &&
         !admission.fresh_variables &&
         !admission.match_bindings_escape && !admission.collected_fresh &&
@@ -1338,6 +1365,10 @@ typedef struct {
     HeBoundVariables raw;
     HeBoundVariables called;
     HeRawFlowFlags flags;
+    /* The ground subterms walked, with their depth and tail position: a
+     * ground subterm reads no binder, so what walking it adds to `flags` is
+     * the same wherever it occurs at that depth and position. */
+    EvalNodeMemo walked;
 } HeRawFlow;
 
 enum { HE_RAW_VALUE = 1, HE_CALL_VALUE = 2 };
@@ -1454,6 +1485,13 @@ static void he_raw_flow_walk(HeRawFlow *flow, const Atom *term, bool tail,
         flow->flags.raw_read = flow->flags.raw_literal = true;
         return;
     }
+    if (!atom_has_vars(term) && term->expr.len > 1u) {
+        uint32_t position = depth * 2u + (tail ? 1u : 0u);
+        uintptr_t walked = 0u;
+        if (eval_node_memo_find(&flow->walked, term, position, &walked))
+            return;
+        eval_node_memo_store(&flow->walked, term, position, 1u);
+    }
     SymbolId id = atom_head_symbol_id(term);
     CettaExprLen len = term->expr.len;
     if (id == g_builtin_syms.quote)
@@ -1569,6 +1607,7 @@ static void he_raw_flow_body(Space *space, const Atom *body, bool tail,
     he_raw_flow_merge(out, &flow.flags);
     free(flow.raw.items);
     free(flow.called.items);
+    eval_node_memo_free(&flow.walked);
 }
 
 /* Whether `term` has a variable not bound by an enclosing binder of `term`
@@ -1783,16 +1822,32 @@ static bool he_equation_introduces_variables(const Atom *lhs,
 
 /* Whether evaluating `term` collects alternatives (a collapse).  Past the
  * depth bound it answers yes, which only keeps the closure canonical. */
-static bool he_term_collects(const Atom *term, uint32_t depth) {
+/* The answer at a subterm depends on it and its depth, which keep the
+ * bound exact: a subterm a value shares is asked once per depth. */
+static bool he_term_collects_in(const Atom *term, uint32_t depth,
+                                EvalNodeMemo *memo) {
     if (!term || term->kind != ATOM_EXPR)
         return false;
     if (depth >= 256u ||
         eval_is_reify_head(atom_head_symbol_id(term)))
         return true;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++)
-        if (he_term_collects(term->expr.elems[index], depth + 1u))
-            return true;
-    return false;
+    uintptr_t known = 0u;
+    if (eval_node_memo_find(memo, term, depth, &known))
+        return known != 0u;
+    bool collects = false;
+    for (CettaExprIndex index = 0u; !collects && index < term->expr.len;
+         index++)
+        collects = he_term_collects_in(term->expr.elems[index], depth + 1u,
+                                       memo);
+    eval_node_memo_store(memo, term, depth, collects);
+    return collects;
+}
+
+static bool he_term_collects(const Atom *term, uint32_t depth) {
+    EvalNodeMemo memo = {0};
+    bool collects = he_term_collects_in(term, depth, &memo);
+    eval_node_memo_free(&memo);
+    return collects;
 }
 
 /*
@@ -2153,6 +2208,7 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
     }
     free(admission.terms);
     free(admission.heads);
+    atom_visit_set_free(&admission.queued);
     *plan = (HeSharedExecutionPlan){
         .effects = admission.effects,
         .rereads = he_raw_flow_rereads(&run_flow),

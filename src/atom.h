@@ -172,8 +172,17 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * the Atom layout and makes the summary free to copy with the term.
  */
 #define ATOM_FLAG_VAR_BLOOM_SHIFT 9u
-#define ATOM_FLAG_VAR_BLOOM_WIDTH 23u
-#define ATOM_FLAG_VAR_BLOOM_MASK UINT32_C(0xFFFFFE00)
+#define ATOM_FLAG_VAR_BLOOM_WIDTH 22u
+#define ATOM_FLAG_VAR_BLOOM_MASK UINT32_C(0x7FFFFE00)
+/*
+ * HE's evaluated mark: this expression is a value HE's evaluation answered,
+ * and evaluating it again answers it unchanged (Hyperon Experimental's
+ * metta).  The mark belongs to one occurrence of a value, not to the term:
+ * an expression never inherits it from a child, an interned node never
+ * carries it, equality and hashing ignore it, a copy of the value keeps it,
+ * and a space storing the atom drops it, since a space holds syntax.
+ */
+#define ATOM_FLAG_HE_EVALUATED UINT32_C(0x80000000)
 /*
  * Constructor-built atoms establish term-retention stability under the same
  * leaf and child-fold judgment as structural-hash stability.  Keep the
@@ -228,6 +237,11 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * This is a representation fact of that leaf alone, never an inherited
  * occurrence bit. String equality, hashing and printing still use bytes. */
 #define ATOM_STRUCTURAL_STRING_STORAGE UINT32_C(0x00001000)
+/* The atom or one of its descendants carries HE's evaluated mark
+ * (ATOM_FLAG_HE_EVALUATED).  A marked node sets it for itself; an expression
+ * has it when a child has it.  Storage that drops the mark copies such an
+ * atom rather than sharing it. */
+#define ATOM_STRUCTURAL_HAS_HE_EVALUATED UINT32_C(0x00002000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -238,7 +252,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
-                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE ==
+                       ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -247,7 +262,8 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
-                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE),
+                    ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED),
                "structural fact bits overlap");
 
 /*
@@ -654,6 +670,19 @@ static inline uint32_t atom_var_bloom_for_id(VarId id) {
            (UINT32_C(1) << (ATOM_FLAG_VAR_BLOOM_SHIFT + second));
 }
 
+static inline bool atom_is_he_evaluated(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           (atom->flags & ATOM_FLAG_HE_EVALUATED) != 0u;
+}
+
+/* Whether `atom` may hold an evaluated mark: its facts say so, or an
+ * expression's facts are not known. */
+static inline bool atom_may_hold_he_mark(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR &&
+           ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+            (atom->structural_facts & ATOM_STRUCTURAL_HAS_HE_EVALUATED) != 0u);
+}
+
 static inline uint32_t atom_variable_bloom(const Atom *atom) {
     return atom ? atom->flags & ATOM_FLAG_VAR_BLOOM_MASK : 0u;
 }
@@ -1052,18 +1081,18 @@ VarId   fresh_var_id(void);
  * substitution consult the coordinate at every variable edge; atom.c emits
  * external definitions as well for binary callers. */
 inline uint32_t var_base_id(VarId id) {
-    return (uint32_t)(id & UINT32_MAX);
+    return (uint32_t)CESTA_LAYOUT_VarId_base_BODY(id);
 }
 
 inline uint32_t var_epoch_suffix(VarId id) {
-    return (uint32_t)(id >> 32);
+    return (uint32_t)CESTA_LAYOUT_VarId_epoch_BODY(id);
 }
 
 inline VarId var_epoch_id(VarId id, uint32_t epoch) {
     uint32_t base = var_base_id(id);
     if (base == 0u)
         base = (uint32_t)fresh_var_id();
-    return ((VarId)epoch << 32) | (VarId)base;
+    return (VarId)CESTA_LAYOUT_VarId_encode_BODY(base, epoch);
 }
 
 #ifdef CETTA_TEST_HOOKS
@@ -1507,6 +1536,13 @@ Atom *atom_expr_builder_finish(Arena *a, Atom *draft);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
+/* `expression` marked as a value HE's evaluation answered: itself when it
+ * carries the mark or is not an expression, otherwise a copy that does. */
+Atom *atom_he_evaluated_copy(Arena *a, Atom *expression);
+/* Deep copies made between enter and leave drop HE's evaluated marks: a
+ * space stores syntax, never a value's evaluation state. */
+void atom_deep_copy_strip_he_marks_enter(void);
+void atom_deep_copy_strip_he_marks_leave(void);
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2);
 Atom *atom_expr3(Arena *a, Atom *a1, Atom *a2, Atom *a3);
 
@@ -1570,6 +1606,25 @@ static inline bool atom_has_thread_local_resource(const Atom *atom) {
 typedef bool (*AtomTreePredicate)(const Atom *atom, void *context);
 bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
                    void *context);
+
+/* A set of atoms by address.  A value shares subterms, and a walk that asks
+ * a question of each subterm need ask it once per distinct subterm. */
+typedef struct {
+    const Atom **slots;
+    size_t cap;
+    size_t len;
+} AtomVisitSet;
+
+/* Whether `atom` was not yet in the set; it is in it afterwards.  False
+ * also where the set cannot grow, with *fault set: the caller then walks on
+ * without it. */
+bool atom_visit_set_add(AtomVisitSet *set, const Atom *atom, bool *fault);
+void atom_visit_set_free(AtomVisitSet *set);
+
+/* atom_tree_any for a predicate whose answer at a node does not depend on
+ * the path to it: each distinct subexpression is visited once. */
+bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
+                    void *context);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 

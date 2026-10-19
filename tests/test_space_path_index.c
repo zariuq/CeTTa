@@ -147,7 +147,13 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
         space_length64(&space), &removed_count));
     assert(removed_count == 1u);
     free(removed);
-    assert(!space_path_indexes_info(&space, &info));
+    /* A stable removal carries the index to the surviving coordinates: it
+     * keeps its one keyed field and still accounts for every row, the added
+     * row in and the removed one out, and it answers as the reference does. */
+    assert(space_path_indexes_info(&space, &info));
+    assert(info.index_count == 1u && info.path_length == 1u);
+    assert(info.key_kind == CETTA_SPACE_PATH_INTEGER_KEY);
+    assert(info.uncertain_rows + info.keyed_rows == 5u + 128u);
     compare_reference(&space, arena, query);
     space_occurrence_cursor_release(&first);
     space_free(&space);

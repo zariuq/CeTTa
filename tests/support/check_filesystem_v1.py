@@ -67,6 +67,17 @@ def main():
 
     prefix = "!(import! &self fs)\n!(import! &self system)\n"
     for language in args.language or ("he", "petta", "prime"):
+        staged, published = output / f"{language}-staged", output / f"{language}-published"
+        staged.write_bytes(b"new\x00content")
+        staged.chmod(0o640)
+        published.write_bytes(b"old content")
+        observed = run(language, "rename-replace", prefix +
+            f'!(fs:rename {json.dumps(str(staged))} {json.dumps(str(published))})\n')
+        assert b"fs:failed" not in observed and published.read_bytes() == b"new\x00content", observed
+        assert not staged.exists() and published.stat().st_mode & 0o777 == 0o640
+        observed = run(language, "rename-missing", prefix +
+            f'!(fs:rename {json.dumps(str(staged))} {json.dumps(str(published))})\n')
+        assert b"fs:failed fs:missing rename" in observed and published.read_bytes() == b"new\x00content", observed
         observed = run(language, "protocol_empty_data_positive", cwd=empty)
         assert b"(FsDelivered (EmptyBytes))" in observed and b"(FsComplete)" not in observed, observed
         observed = run(language, "protocol_end_positive", cwd=empty)

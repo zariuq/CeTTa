@@ -47,7 +47,7 @@ typedef enum {
     CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME = 19,
     CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE = 20,
     CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN = 21,
-    CETTA_PROFILE_PETTA_CONTRACT = 22,
+    CETTA_PROFILE_PETTA_1_1_C = 22,
     CETTA_PROFILE_HOL_STANDARD = 23,
     CETTA_PROFILE_HOL_OPEN = 24,
     CETTA_PROFILE_HOL_SEALED = 25
@@ -108,15 +108,16 @@ typedef enum {
  * and PeTTa 1.1 is the typed language PeTTa's main line adopted with its
  * checker.  PeTTa 1.1.c is CeTTa's own version of that typed line: its
  * declarations are call contracts whose failed checks raise on every route
- * a call takes.  A version names the libraries its programs import first. */
+ * a call takes.  HE has one version, 0.2.10: CeTTa develops one fork of
+ * Hyperon Experimental 0.2.10, and its profiles are variants of that fork.
+ * A version names the libraries its programs import first. */
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
     CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
     CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
     CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
-    CETTA_LANGUAGE_VERSION_HE_0_0_1 = 4,
-    CETTA_LANGUAGE_VERSION_HE_COMPAT_0_2_10 = 5,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 6
+    CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
+    CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 5
 } CettaLanguageVersionId;
 
 typedef struct {
@@ -354,11 +355,11 @@ const CettaProfile *cetta_profile_petta_typecheck_v2(void);
 const CettaProfile *cetta_profile_petta_typecheck_v3(void);
 #endif
 bool cetta_profile_uses_petta_typing(const CettaProfile *profile);
-/* Whether `profile` runs PeTTa's declarations as call contracts (petta@1.1.c):
+/* Whether `profile` is petta@1.1.c, which runs declarations as call contracts:
  * a check commits to its first answer, a failed one raises the language's
  * type error, a position whose declared type is a variable is not checked,
  * and no run-time dispatch recovers a contract's error. */
-bool cetta_profile_petta_contracts(const CettaProfile *profile);
+bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile);
 /* Whether `version` is of PeTTa's typed line (1.1 and 1.1.c), whose
  * evaluation laws differ from release 1.0.6's. */
 bool cetta_language_version_petta_typed_line(

@@ -146,7 +146,7 @@ Reader/metadata examples receive their input path as the first program argument.
 The inline-entry negative control runs through -e without a file argument.
 For example:
 
-  ./cetta --lang he@0.0.1 --profile extended \
+  ./cetta --lang he --profile extended \
     tests/filesystem_v1/bytes_zero_positive.metta path/to/input
   ./cetta --lang petta@1.0.6 --profile extended \
     tests/filesystem_v1/directory_empty_positive.metta path/to/empty-directory

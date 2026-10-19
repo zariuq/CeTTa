@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#include "binding/frame_identity.h"
+#include "binding/frame_identity_diag.h"
 #include "atom.h"
 #include "run_cli.h"
 #include "run_guard.h"
@@ -1854,10 +1856,9 @@ static void print_usage(FILE *out) {
     fputs("       note: without --lang, cetta runs petta (petta@1.0.6)\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
-    fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta [--lang he[@0.2.10] --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
+    fputs("       note: HE is CeTTa's fork of Hyperon Experimental 0.2.10; he-compat keeps Rust's behavior where he differs\n", out);
     fputs("       cetta --lang prime [--profile <prime-default|identity-j|identity-scoped|identity-uip|identity-univalence>] <file.metta>\n", out);
-    fputs("       cetta --lang he@0.0.1 [--profile extended] <file.metta> # default CeTTa HE contract\n", out);
-    fputs("       cetta --lang he@0.2.10 <file.metta> # Rust-HE compatibility profile\n", out);
     fputs("       cetta --lang prime@0.0.1 <file.metta> # Prime runtime\n", out);
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
@@ -3006,6 +3007,25 @@ static int main_run_langdef_source(const char *manifest_path,
 }
 
 static int cetta_main(int argc, char **argv) {
+    /* Frame identity diagnostics: a bound on live identities, to reach their
+     * exhaustion without holding millions of them, and a refusal point, to
+     * meet a refusal wherever one is minted. */
+    {
+        const char *limit = getenv("CETTA_DIAG_FRAME_IDENTITY_LIMIT");
+        if (limit && *limit) {
+            char *end = NULL;
+            unsigned long count = strtoul(limit, &end, 10);
+            if (end && *end == '\0' && count > 0ul && count <= UINT32_MAX)
+                cetta_frame_identity_limit_handles((uint32_t)count);
+        }
+        const char *refuse = getenv("CETTA_DIAG_FRAME_IDENTITY_REFUSE_FROM");
+        if (refuse && *refuse) {
+            char *end = NULL;
+            unsigned long long from = strtoull(refuse, &end, 10);
+            if (end && *end == '\0' && from > 0ull)
+                cetta_frame_identity_refuse_from((uint64_t)from);
+        }
+    }
     /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
     {
         stack_t ss;

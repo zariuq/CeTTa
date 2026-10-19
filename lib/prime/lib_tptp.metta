@@ -45,6 +45,7 @@
 !(import! &self fs)
 !(import! &self list)
 !(import! &self str)
+!(import! &self system)
 
 ; Pinned official SyntaxBNF digest. A mismatch is a named fault, not a parse.
 (= (tptp:official-syntaxbnf-digest)
@@ -95,6 +96,13 @@
 (= (tptp:open-reader $profile)
    (function
      (case (__cetta_lib_tptp_reader_open_v1 $profile)
+       (((return $reader) (return $reader))
+        ($result (return $result)))){$reader $result}))
+; A caller can locate the prepared snapshot independently of its working
+; directory. The same profile, digest and manifest checks still apply.
+(= (tptp:open-reader $profile $snapshot)
+   (function
+     (case (__cetta_lib_tptp_reader_open_v1 $profile $snapshot)
        (((return $reader) (return $reader))
         ($result (return $result)))){$reader $result}))
 (= (tptp:reader-info $reader)
@@ -874,20 +882,33 @@
 
 ; Canonical printing is an executed authored transformation.  It normalizes
 ; layout while retaining the compact record structure on reparsing.
+(= (tptp:open-record-printer)
+   (let $root (system:runtime-root)
+     (case $root
+       (((Error $operation $message) $root)
+        ($path (tptp:open-record-printer $path))))))
+; An explicit package root overrides the runtime's installed language data.
+; No current-directory mutation or per-document preparation is required.
+(= (tptp:open-record-printer $root)
+   (langdef:load-deterministic-equations
+     (LangDef:EquationSources
+       (str:concat $root "/langdef/bnf/plain_bnf_denotation_v1.metta")
+       (str:concat $root "/langdef/tptp/official_records_to_text_v1.metta"))))
+(= (tptp:print-records-with $program $records)
+   (langdef:run-deterministic-equations-data $program
+     (LangDef:DeterministicCall tptp-print-v1:document $records)))
+(= (tptp:close-record-printer $program)
+   (langdef:close-deterministic-equations $program))
+
+; The authored record printer keeps explicit parentheses around infix
+; operands, useful for consumers with a stricter binding grammar. Repeated
+; printing uses one explicitly prepared program through print-records-with.
 (= (tptp:print-records $records)
-   (let $program
-        (langdef:load-deterministic-equations
-          (LangDef:EquationSources
-            "langdef/bnf/plain_bnf_denotation_v1.metta"
-            "langdef/tptp/official_records_to_text_v1.metta"))
+   (let $program (tptp:open-record-printer)
      (case $program
        (((NativeHandle $_kind $_id)
-          (let $answers
-               (collapse
-                 (langdef:run-deterministic-equations-data $program
-                   (LangDef:DeterministicCall
-                     tptp-print-v1:document $records)))
-            (let $_ (langdef:close-deterministic-equations $program)
+          (let $answers (collapse (tptp:print-records-with $program $records))
+            (let $_ (tptp:close-record-printer $program)
               (superpose $answers)){$_}){$answers})
         ($fault (TPTP:PrintProgramFailure $fault))))))
 
@@ -2863,3 +2884,95 @@
       (TPTP:AbstractSyntax $_source-digest
         (tptp92-ast:tptp-file:alt-1 $inputs)))
    (tptp:abstract-syntax-inputs-count $inputs))
+
+; SZS is an output envelope, not a proof checker. Status occurrences retain
+; their original lines; complete data blocks retain their line coordinates.
+; Unknown status/data-form words remain data. A missing end marker remains
+; unfinished, never a complete empty proof. Logical payloads use the existing
+; prepared TPTP reader, independently of this line protocol.
+(= (tptp:szs-output $text)
+   (let $separator (str:from-codepoints (10))
+     (let $lines (str:split $separator $text)
+       (tptp-szs:finish
+         (foldl-atom $lines
+           (TPTP:SZSScan () () TPTP:SZSOutside () 0) $state $line
+           (tptp-szs:step $state $line))))))
+(= (tptp-szs:reverse $items)
+   (foldl-atom $items () $out $item (cons-atom $item $out)))
+(= (tptp-szs:join-lines $lines)
+   (let $separator (str:from-codepoints (10))
+     (let $ordered (tptp-szs:reverse $lines)
+       (str:join $separator $ordered))))
+(= (tptp-szs:event $line)
+   (let $words (str:split-whitespace $line)
+     (if (< (size-atom $words) 4) (TPTP:SZSLine $line)
+       (if (and (== (index-atom $words 0) "%")
+                (== (index-atom $words 1) "SZS"))
+         (if (== (index-atom $words 2) "status")
+           (TPTP:SZSStatus (index-atom $words 3) $line)
+           (if (and (== (index-atom $words 2) "output")
+                    (>= (size-atom $words) 5))
+             (case (index-atom $words 3)
+               (("start" (TPTP:SZSStart (index-atom $words 4)))
+                ("end" (TPTP:SZSEnd (index-atom $words 4)))
+                ($other (TPTP:SZSLine $line)))){$other}
+             (TPTP:SZSLine $line)))
+         (TPTP:SZSLine $line)))))
+(= (tptp-szs:step (TPTP:SZSScan $statuses $blocks $active $issues $number) $line)
+   (case (tptp-szs:event $line)
+     (((TPTP:SZSStatus $word $raw)
+       (TPTP:SZSScan (cons-atom (TPTP:SZSStatus $word $raw) $statuses)
+         $blocks $active $issues (+ $number 1)))
+      ((TPTP:SZSStart $form)
+       (case $active
+         ((TPTP:SZSOutside
+           (TPTP:SZSScan $statuses $blocks (TPTP:SZSOpen $form () $number)
+             $issues (+ $number 1)))
+          ($open (TPTP:SZSScan $statuses $blocks $open
+                   (cons-atom (TPTP:SZSProtocolIssue nested-start $number $line) $issues)
+                   (+ $number 1))))){$open})
+      ((TPTP:SZSEnd $form)
+       (case $active
+         (((TPTP:SZSOpen $kind $lines $start)
+           (if (== $kind $form)
+             (TPTP:SZSScan $statuses
+               (cons-atom (TPTP:SZSData $kind
+                 (tptp-szs:join-lines $lines) $start $number) $blocks)
+               TPTP:SZSOutside $issues (+ $number 1))
+             (TPTP:SZSScan $statuses $blocks $active
+               (cons-atom (TPTP:SZSProtocolIssue mismatched-end $number $line) $issues)
+               (+ $number 1))))
+          ($outside (TPTP:SZSScan $statuses $blocks $outside
+            (cons-atom (TPTP:SZSProtocolIssue unexpected-end $number $line) $issues)
+            (+ $number 1))))){$kind $lines $start $outside})
+      ((TPTP:SZSLine $raw)
+       (case $active
+         (((TPTP:SZSOpen $kind $lines $start)
+           (TPTP:SZSScan $statuses $blocks
+             (TPTP:SZSOpen $kind (cons-atom $raw $lines) $start) $issues (+ $number 1)))
+          ($outside (TPTP:SZSScan $statuses $blocks $outside $issues (+ $number 1))))){$kind $lines $start $outside}))){$raw $form})
+(= (tptp-szs:finish (TPTP:SZSScan $statuses $blocks $active $issues $number))
+   (TPTP:SZSEnvelope (tptp-szs:reverse $statuses) (tptp-szs:reverse $blocks)
+     (tptp-szs:pending $active) (tptp-szs:reverse $issues)))
+(= (tptp-szs:pending TPTP:SZSOutside) TPTP:SZSComplete)
+(= (tptp-szs:pending (TPTP:SZSOpen $kind $lines $start))
+   (TPTP:SZSUnfinished $kind (tptp-szs:join-lines $lines) $start))
+(= (tptp:szs-status (TPTP:SZSEnvelope $statuses $blocks $pending $issues))
+   (let $observed (map-atom $statuses $entry (index-atom $entry 1))
+     (let $words (unique-atom $observed)
+       (if (== (size-atom $words) 0) TPTP:SZSUnreported
+         (if (== (size-atom $words) 1)
+           (TPTP:SZSReported (car-atom $words))
+           (TPTP:SZSConflictingStatuses $words))))))
+(= (tptp:szs-data (TPTP:SZSEnvelope $statuses $blocks $pending $issues)) $blocks)
+(= (tptp:szs-pending (TPTP:SZSEnvelope $statuses $blocks $pending $issues)) $pending)
+
+; Read input references from parsed annotations, not from formula text or
+; diagnostic strings that happen to contain the word file.
+(= (tptp:input-references $records)
+   (foldl-atom $records () $out $record
+     (new ($record-name) (case (tptp:record-source $record)
+       (((TPTP:RecordSource (file $path $name))
+         (let (TPTP:RecordName $record-name) (tptp:record-name $record)
+           (union-atom $out ((TPTP:InputReference $record-name $path $name)))){$record-name})
+        ($other $out))))))

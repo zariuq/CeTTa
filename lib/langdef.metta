@@ -479,8 +479,8 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
-; Test-scoped: the same deterministic run with an explicit work allowance,
-; so oracle comparisons can witness cases beyond the fixed production budget.
+; The same deterministic run with a caller-selected work allowance.
+; Ordinary run and run-data impose no implicit work or continuation ceiling.
 (= (langdef:run-deterministic-equations-allowance $handle $call $allowance)
    (function
      (case (__cetta_lib_deterministic_equations_run_allowance $handle $call $allowance)

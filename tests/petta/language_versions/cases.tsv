@@ -50,4 +50,4 @@ default_contract.metta	--lang petta@1.1.c	0	✅
 missing_import_raises.metta	--lang petta@1.1.c	0	✅
 contract_uncaught.metta	--lang petta@1.1.c	2	Type mismatch: got wrong but expected Number
 roman_library.metta	--lang petta@1.1.c --profile extended	2	is not a profile of petta@1.1.c
-roman_library.metta	--lang petta@1.0.6 --profile contract	2	is not a profile of petta@1.0.6
+roman_library.metta	--lang petta@1.0.6 --profile petta@1.1.c	2	is not a profile of petta@1.0.6

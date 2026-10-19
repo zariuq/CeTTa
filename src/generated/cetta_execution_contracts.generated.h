@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 02e41fd96aa8b14ec713f060f48fe15d723c913393021a648775b0e0e41b1f8b
+ * Source SHA-256: dd8a98d168f312dc0cd337ab513c337475107fab37c09de3496c846ea1cabdd1
  */
 
 #include <stdbool.h>
@@ -11,6 +11,7 @@
 typedef enum {
     CETTA_GSLT_QUERY_EFFECT_PURE = 0u,
     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY = 1u << 0,
+    CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE = 1u << 1,
 } CettaGsltQueryEffect;
 
 #define CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(X) \
@@ -18,7 +19,184 @@ typedef enum {
     X(get_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(mork_match_syntax, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(get_type, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
-    X(get_type_space, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY)
+    X(get_type_space, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(add_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(add_atom_nodup, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(add_atoms, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(add_reduct, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(remove_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(mork_add_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(mork_add_atoms, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(mork_remove_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(bind_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(new_space, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(new_state, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(change_state_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(println_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(readln_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(flush_output_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(trace_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(print_alternatives_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(import_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(include, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(register_module_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(mod_space_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(git_import_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(git_module_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(print_mods_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(module_inventory_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(pragma_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(space_set_backend_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(space_set_match_backend_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(reset_runtime_stats_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(step_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(petta_transaction, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(get_state, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(runtime_stats_bang, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_system_exit_with_code, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_system_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_system_cwd, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_system_monotonic_ns, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_proc_spawn, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_poll, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_wait, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_status, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_proc_cancel, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_abort_signal, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_await, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_run, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_prolog_query, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_exists, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_canonical_path, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_try_canonical_path, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_try_canonical_from_file, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_try_canonical_under, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_read_text, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_rename, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_append_text, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_read_lines, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_metadata, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_walk_open, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_walk_current, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_walk_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_walk_metadata, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_fs_open_directory, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_next_entry, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_open_read, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_read_chunk, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_io_submit, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_io_poll, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_io_cancel, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_include, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_open_act, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_dump_act, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_import_act, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_add_atoms, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_add_stream, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_add_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_remove_atom, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_space_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_space_size, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_space_count_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_space_match, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_clone, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_join, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_meet, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_subtract, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_restrict, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_path_exists, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_is_val, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_child_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_path_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_child_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_val_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_depth, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_zipper_reset, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_ascend, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_index, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_first, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_last, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_descend_until_max_bytes, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_ascend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_ascend_until_branch, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_next_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_prev_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_next_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_next_val, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_fork, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_make_map, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_zipper_make_snapshot_map, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_path_exists, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_is_val, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_child_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_path_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_child_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_val_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_depth, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_factor_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_focus_factor, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_path_indices, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_product_zipper_reset, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_ascend, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_index, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_first, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_last, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_descend_until_max_bytes, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_ascend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_ascend_until_branch, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_next_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_prev_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_next_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_product_zipper_next_val, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_path_exists, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_is_val, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_child_count, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_path_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_child_bytes, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_depth, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mork_overlay_zipper_reset, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_ascend, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_index, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_first, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_last, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_descend_until_max_bytes, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_ascend_until, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_ascend_until_branch, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_next_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_prev_sibling_byte, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mork_overlay_zipper_next_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_program_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_program_clear, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_program_add, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_load_file, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_program_size, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mm2_program_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mm2_context_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_clear, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_load_program, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_add, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_remove, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_run, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_step, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_mm2_context_size, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(lib_mm2_context_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY)
 
 static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
     CettaGsltQueryEffect left, CettaGsltQueryEffect right) {
@@ -30,9 +208,8 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
  * to become accelerator authority. */
 #define CETTA_GSLT_USER_HEAD_EFFECT_REVISION_KEYED 1
 #define CETTA_GSLT_USER_HEAD_EFFECT_LEAST_FIXED_POINT 1
-#define CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY
+#define CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD     ((CettaGsltQueryEffect)(CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY | CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE))
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL     CETTA_GSLT_QUERY_EFFECT_PURE
-#define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
 
 #define CETTA_GSLT_OPAQUE_EXPRESSION_HEAD_ROWS(X)     X(quote) \
     X(colon) \
@@ -67,6 +244,23 @@ static inline bool cetta_gslt_query_effect_operand_matched(
            (he_language && head == builtins->cons_atom && arity == 2u && operand_index == 1u) ||
            (he_language && head == builtins->error && arity == 2u && operand_index == 0u) ||
            (he_language && head == builtins->error && arity == 2u && operand_index == 1u));
+}
+
+/* Operands a head reads as a list of (pattern value) pairs: a pattern is
+ * matched and never evaluated; a value is evaluated where its pattern
+ * matches, so its calls count. */
+#define CETTA_GSLT_PATTERN_PAIR_OPERAND_ROWS(X)     X(case_text, 2u, 1u, all) \
+    X(switch_text, 2u, 1u, all) \
+    X(switch_minimal, 2u, 1u, all)
+
+static inline bool cetta_gslt_query_effect_operand_pattern_pairs(
+    SymbolId head, uint32_t arity, uint32_t operand_index,
+    bool he_language, const BuiltinSyms *builtins) {
+    (void)he_language;
+    return builtins &&
+           ((head == builtins->case_text && arity == 2u && operand_index == 1u) ||
+           (head == builtins->switch_text && arity == 2u && operand_index == 1u) ||
+           (head == builtins->switch_minimal && arity == 2u && operand_index == 1u));
 }
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X)     X(op_plus, 2u) \

@@ -6,13 +6,17 @@ CeTTa's binary version and a selected language contract are separate.
 registered dialect contract; --profile chooses a profile of that contract.
 Unversioned language names retain their existing defaults.
 
-  he@0.0.1       CeTTa's formal/default HE contract, including explicitly
-                 selected extended and he-prime profiles.
-  he@0.2.10      The existing Rust Hyperon Experimental compatibility profile.
-                 This does not certify full upstream equivalence.
+  he@0.2.10      Hyperon Experimental 0.2.10, the release CeTTa's HE forks.
+                 CeTTa develops one fork, not several HE versions; its
+                 profiles are variants of it: he (the default, the fork with
+                 its deliberate differences), he-compat (Rust's behavior
+                 where he differs, used to run Rust's own tests), extended
+                 and he-prime.
   petta@1.0.6    Untyped default PeTTa; extended remains an explicit profile.
   petta@1.1      Typed PeTTa; typecheck-v2 remains its default checker and
                  typecheck-v3 is selected explicitly when built in.
+  petta@1.1.c    PeTTa's typed line with declarations as call contracts; the
+                 version is its profile's name.
   prime@0.0.1    This line's Prime runtime and its named profiles, under the
                  registry's 0.0.1 spelling; it is not frozen here.
 

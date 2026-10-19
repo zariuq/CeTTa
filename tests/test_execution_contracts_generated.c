@@ -13,9 +13,14 @@ static void test_query_head_rows(void) {
     unsigned rows = 0u;
     bool saw_match = false, saw_get_atoms = false, saw_mork_match = false;
     bool saw_get_type = false, saw_get_type_space = false;
+    bool saw_add_atom = false, saw_remove_atom = false;
 #define COUNT_HEAD(head, effect) do { \
     assert((effect) != CETTA_GSLT_QUERY_EFFECT_PURE); \
     rows++; \
+    if (strcmp(#head, "add_atom") == 0) \
+        saw_add_atom = (effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE; \
+    if (strcmp(#head, "remove_atom") == 0) \
+        saw_remove_atom = (effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE; \
     if (strcmp(#head, "match") == 0) saw_match = true; \
     if (strcmp(#head, "get_atoms") == 0) saw_get_atoms = true; \
     if (strcmp(#head, "mork_match_syntax") == 0) saw_mork_match = true; \
@@ -27,8 +32,9 @@ static void test_query_head_rows(void) {
     assert(rows >= 5u);
     assert(saw_match && saw_get_atoms && saw_mork_match);
     assert(saw_get_type && saw_get_type_space);
+    assert(saw_add_atom && saw_remove_atom);
 
-    /* All four join laws of the two-point semilattice. */
+    /* Joining is union over the two flags. */
     assert(cetta_gslt_query_effect_join(
                CETTA_GSLT_QUERY_EFFECT_PURE,
                CETTA_GSLT_QUERY_EFFECT_PURE) ==
@@ -45,10 +51,27 @@ static void test_query_head_rows(void) {
                CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY,
                CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) ==
            CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+    assert(cetta_gslt_query_effect_join(
+               CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE,
+               CETTA_GSLT_QUERY_EFFECT_PURE) ==
+           CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE);
+    assert(cetta_gslt_query_effect_join(
+               CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY,
+               CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) ==
+           (CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY |
+            CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE));
+    assert(cetta_gslt_query_effect_join(
+               CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE,
+               CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) ==
+           cetta_gslt_query_effect_join(
+               CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY,
+               CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE));
     assert(CETTA_GSLT_USER_HEAD_EFFECT_REVISION_KEYED == 1);
     assert(CETTA_GSLT_USER_HEAD_EFFECT_LEAST_FIXED_POINT == 1);
+    /* An uncertain head may do anything. */
     assert(CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD ==
-           CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+           (CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY |
+            CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE));
     assert(CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL ==
            CETTA_GSLT_QUERY_EFFECT_PURE);
 }
