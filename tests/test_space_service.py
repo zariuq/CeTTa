@@ -860,6 +860,12 @@ class PrincipalTests(unittest.TestCase):
         self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("duplicate"))
         self.denied("id-conflict", post, letter("m1", "receiver", "writer", "changed"))
 
+        # Distinct IDs sharing the structural string hash still name distinct
+        # messages. A candidate collision must not become a duplicate/conflict.
+        for message_id in ("!c", '"@'):
+            self.assertEqual(post(letter(message_id, "receiver", "writer", "hi")), S("appended"))
+            self.assertEqual(post(letter(message_id, "receiver", "writer", "hi")), S("duplicate"))
+
     @unittest.skipUnless(CETTA, "provide cetta for the MeTTa mailbox client")
     def test_mailbox_post_from_another_account_reaches_the_owner(self):
         owner = self.connect()
