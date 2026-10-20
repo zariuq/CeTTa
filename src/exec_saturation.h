@@ -13,11 +13,12 @@
  * add-atom-nodup contract.  The space it leaves and its answer, (), are those
  * of the authored rounds.
  *
- * It is admitted only while the live definitions are the library's own,
+ * It is admitted only while the live equations and declarations are the library's own,
  * every directive is data the authored rounds read the same way (a flat
  * query, templates whose heads are constants other than `=` and `:`), and the
  * facts are not the program's own space.  Otherwise it declines, and the
- * authored definition runs. */
+ * authored definition runs. Hosts must retain ordinary matching when caller
+ * constraints or delayed goals can affect a query's rows. */
 
 typedef struct {
     void *context;
@@ -33,6 +34,14 @@ typedef enum {
     CETTA_EXEC_SATURATION_DONE,         /* *answer_out is () */
     CETTA_EXEC_SATURATION_ERROR,        /* *answer_out is the error */
 } CettaExecSaturationOutcome;
+
+/* The library's held-argument presentation. This permits a host boundary,
+ * not execution: the bound call must still pass the admission below. */
+bool cetta_exec_saturation_presentation_admitted(Space *program);
+
+/* Read-only call admission. No argument is evaluated and no fact is
+ * published on a decline. */
+bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts);
 
 /* `call` is `(exec:saturate SPACE DIRECTIVES)` with its arguments as data;
  * `program` holds the live definitions and `facts` is the space SPACE

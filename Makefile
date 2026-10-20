@@ -27792,6 +27792,70 @@ PETTA_SEMANTIC_ORACLE_STEMS = \
 .PHONY: test-petta-relational-head-phases
 test-petta-search-machine: test-petta-relational-head-phases
 test-petta-search-machine: test-petta-work-control
+test-petta-search-machine: test-petta-prepared-fold-persistence
+test-petta-search-machine: test-petta-prepared-filter-region
+
+.PHONY: test-petta-prepared-fold-persistence
+test-petta-prepared-fold-persistence: $(BIN) tests/petta/prepared_fold_persistence.metta tests/petta/prepared_fold_persistence.expected
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--emit-runtime-stats,) \
+		--lang petta tests/petta/prepared_fold_persistence.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	if [ "$$answers" != "$$(cat tests/petta/prepared_fold_persistence.expected)" ]; then \
+		echo "FAIL: persistent and scalar prepared folds"; \
+		diff <(cat tests/petta/prepared_fold_persistence.expected) \
+			<(printf '%s\n' "$$answers") | head -20; \
+		exit 1; \
+	fi; \
+	$(if $(filter 1,$(ENABLE_RUNTIME_STATS)), \
+		admitted=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-fold-admission" { print $$3 }'); \
+		steps=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-fold-step" { print $$3 }'); \
+		commits=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-fold-commit" { print $$3 }'); \
+		if [ "$$admitted" != 3 ] || [ "$$steps" != 7 ] || [ "$$commits" != 2 ]; then \
+			echo "FAIL: prepared fold receipts: admitted=$$admitted steps=$$steps commits=$$commits"; \
+			exit 1; \
+		fi;,) \
+	echo "PASS: persistent folds retain sharing while scalar folds stay prepared"
+
+.PHONY: test-petta-prepared-filter-region
+test-petta-prepared-filter-region: $(BIN) tests/petta/search_machine_filter_atom.metta tests/petta/search_machine_filter_atom.expected tests/petta/prepared_filter_revision.metta tests/petta/prepared_filter_revision.expected
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--emit-runtime-stats,) \
+		--lang petta tests/petta/search_machine_filter_atom.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	if [ "$$answers" != "$$(cat tests/petta/search_machine_filter_atom.expected)" ]; then \
+		echo "FAIL: prepared and relational filter regions"; \
+		diff <(cat tests/petta/search_machine_filter_atom.expected) \
+			<(printf '%s\n' "$$answers") | head -20; \
+		exit 1; \
+	fi; \
+	$(if $(filter 1,$(ENABLE_RUNTIME_STATS)), \
+		admitted=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-admission" { print $$3 }'); \
+		steps=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-step" { print $$3 }'); \
+		commits=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-commit" { print $$3 }'); \
+		declines=$$(printf '%s\n' "$$report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-decline" { print $$3 }'); \
+		if [ "$$admitted" != 4 ] || [ "$$steps" != 18 ] || [ "$$commits" != 4 ] || [ "$$declines" != 3 ]; then \
+			echo "FAIL: prepared filter receipts: admitted=$$admitted steps=$$steps commits=$$commits declines=$$declines"; \
+			exit 1; \
+		fi;,) \
+	revision_report=$$($(CETTA_BIN_INVOKE) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--emit-runtime-stats,) \
+		--lang petta tests/petta/prepared_filter_revision.metta 2>&1); \
+	revision_answers=$$(printf '%s\n' "$$revision_report" | grep -v '^runtime-counter '); \
+	if [ "$$revision_answers" != "$$(cat tests/petta/prepared_filter_revision.expected)" ]; then \
+		echo "FAIL: prepared filter revision invalidation"; \
+		exit 1; \
+	fi; \
+	$(if $(filter 1,$(ENABLE_RUNTIME_STATS)), \
+		revision_admitted=$$(printf '%s\n' "$$revision_report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-admission" { print $$3 }'); \
+		revision_steps=$$(printf '%s\n' "$$revision_report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-step" { print $$3 }'); \
+		revision_commits=$$(printf '%s\n' "$$revision_report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-commit" { print $$3 }'); \
+		revision_declines=$$(printf '%s\n' "$$revision_report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-decline" { print $$3 }'); \
+		revision_checks=$$(printf '%s\n' "$$revision_report" | awk '$$1 == "runtime-counter" && $$2 == "prepared-filter-safety-check" { print $$3 }'); \
+		if [ "$$revision_admitted" != 1 ] || [ "$$revision_steps" != 3 ] || [ "$$revision_commits" != 1 ] || [ "$$revision_declines" != 1 ] || [ "$$revision_checks" != 2 ]; then \
+			echo "FAIL: prepared filter revision receipts"; \
+			exit 1; \
+		fi;,) \
+	echo "PASS: pure filters use one prepared region while nondeterministic and effectful predicates stay relational"
 
 .PHONY: test-work-routes
 test-petta-search-machine: test-work-routes
@@ -32338,10 +32402,12 @@ endif
 # and no declined one did.
 test: test-exec-saturation
 test-exec-saturation: $(BIN)
-	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --machine 1 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --lang petta --machine 0 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
 test-exec-saturation-stats: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --stats
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --stats --machine 1 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --stats --lang petta --machine 0 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
@@ -32672,6 +32738,9 @@ bench-mam-linear-fibonacci: $(BIN)
 		bash scripts/bench_mam_linear_fibonacci.sh
 
 .PHONY: test-prepared-pure-call-machine-stats
+# Uncapped variable identities widened each Atom, so the same logical run
+# crosses eleven one-megabyte nursery intervals. The collection-count guard
+# keeps one interval of tolerance; byte and reclamation bounds remain strict.
 test-prepared-pure-call-machine-stats: $(BIN) test-prepared-pure-answer-resource-fallback
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
@@ -32701,7 +32770,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-gc-reclaimed-bytes" { print $$3 }'); \
 	if [ "$${admissions:-0}" -lt 2 ] || [ "$${commits:-0}" -lt 1 ] || \
 	   [ "$${declines:-0}" -lt 1 ] || [ "$${collections:-0}" -lt 1 ] || \
-	   [ "$${collections:-0}" -gt 10 ] || \
+	   [ "$${collections:-0}" -gt 12 ] || \
 	   [ "$${evacuated:-0}" -gt 1048576 ] || \
 	   [ "$${reclaimed:-0}" -lt 1 ] || \
 	   [ "$${answer_admissions:-0}" -lt 3 ] || \

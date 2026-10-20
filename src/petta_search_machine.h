@@ -47,6 +47,10 @@ typedef enum {
      * first; ordinary backtracking then reaches explicit relation equations.
      */
     PETTA_MACHINE_HOST_READY_RELATIONAL_EXTENSION,
+    /* An authored realization that cannot transport residual constraints.
+     * The machine uses READY_APPLICATION only when its current bindings
+     * and delay service are unconstrained; otherwise equation search runs. */
+    PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION,
 } PettaMachineHostMode;
 
 typedef enum {
@@ -489,6 +493,12 @@ typedef struct {
      * allocating one result variable and one relational goal per item.
      * NOT_APPLICABLE preserves the complete relational product. */
     PettaMachineFoldResult (*map_single_result)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *item_binder, Atom *body_expression,
+        const Bindings *environment, Atom **result_out);
+    /* A determinate Boolean condition may retain matching occurrences in one
+     * pass. NOT_APPLICABLE preserves filter-atom's existential answers. */
+    PettaMachineFoldResult (*filter_single_result)(
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *item_binder, Atom *body_expression,
         const Bindings *environment, Atom **result_out);

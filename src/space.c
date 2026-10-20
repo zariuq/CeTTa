@@ -8025,7 +8025,8 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
             return false;
         next_cap *= 2u;
     }
-    if ((size_t)next_cap > SIZE_MAX / sizeof(RegistryEntry))
+    if (next_cap != 0u &&
+        SIZE_MAX / (size_t)next_cap < sizeof(RegistryEntry))
         return false;
     if (r->entries == r->inline_entries) {
         next = cetta_malloc(sizeof(RegistryEntry) * (size_t)next_cap);

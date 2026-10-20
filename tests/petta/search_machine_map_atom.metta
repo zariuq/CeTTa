@@ -14,6 +14,12 @@
 ; The explicit-binder form substitutes independently for every item.
 !(test (map-atom (1 2) $x (+ $x 1)) (2 3))
 
+; A prepared constructor may retain shared list carriers inside the machine;
+; the public answer boundary still exposes ordinary PeTTa lists.
+!(test
+    (map-atom ((a) (b c)) $xs (cons-atom z $xs))
+    ((z a) (z b c)))
+
 ; Its list operand is demanded, rather than assumed to be inert tuple data.
 !(test
     (map-atom (append (a) (b)) identity-rel)

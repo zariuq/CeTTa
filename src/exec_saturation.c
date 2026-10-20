@@ -47,21 +47,21 @@ typedef struct {
     const char *head;
     const char *const *sources;
     size_t count;
+    const char *type;
 } ExecSaturationPresentation;
 
 static const ExecSaturationPresentation EXEC_SATURATION_PRESENTATION[] = {
-    {"exec:saturate", EXEC_SATURATE_EQUATIONS, 1u},
-    {"exec:round", EXEC_ROUND_EQUATIONS, 1u},
-    {"exec:size", EXEC_SIZE_EQUATIONS, 1u},
-    {"exec:emit", EXEC_EMIT_EQUATIONS, 1u},
-    {"exec:publish", EXEC_PUBLISH_EQUATIONS, 1u},
+    {"exec:saturate", EXEC_SATURATE_EQUATIONS, 1u, "(-> Atom Atom %Undefined%)"},
+    {"exec:round", EXEC_ROUND_EQUATIONS, 1u, "(-> Atom Atom %Undefined%)"},
+    {"exec:size", EXEC_SIZE_EQUATIONS, 1u, "(-> Atom %Undefined%)"},
+    {"exec:emit", EXEC_EMIT_EQUATIONS, 1u, "(-> Atom Atom %Undefined%)"},
+    {"exec:publish", EXEC_PUBLISH_EQUATIONS, 1u, "(-> Atom Atom %Undefined%)"},
+    {"exec", NULL, 0u, "(-> Atom Atom Atom Atom)"},
 };
 
-/* Admission of the presentation, per program space and revision. */
+/* Equations, declarations and imported boundaries of the presentation. */
 static _Thread_local struct {
-    const Space *space;
-    uint64_t instance_id;
-    uint64_t revision;
+    SpaceProgramToken program;
     bool admitted;
 } g_exec_saturation_presentation;
 
@@ -76,14 +76,11 @@ static bool exec_saturation_reference(void) {
     return reference != 0;
 }
 
-static bool exec_saturation_presentation_admitted(Space *program) {
-    if (exec_saturation_reference())
+bool cetta_exec_saturation_presentation_admitted(Space *program) {
+    if (!program || exec_saturation_reference())
         return false;
-    uint64_t instance_id = space_instance_id(program);
-    uint64_t revision = space_revision(program);
-    if (g_exec_saturation_presentation.space == program &&
-        g_exec_saturation_presentation.instance_id == instance_id &&
-        g_exec_saturation_presentation.revision == revision)
+    SpaceProgramToken token = space_program_token(program);
+    if (space_program_token_eq(g_exec_saturation_presentation.program, token))
         return g_exec_saturation_presentation.admitted;
     Arena scratch;
     arena_init(&scratch);
@@ -93,8 +90,15 @@ static bool exec_saturation_presentation_admitted(Space *program) {
     for (size_t i = 0u; admitted && i < count; i++) {
         const ExecSaturationPresentation *part =
             &EXEC_SATURATION_PRESENTATION[i];
-        admitted = cetta_equation_presentation_exact(
+        admitted = part->count == 0u || cetta_equation_presentation_exact(
             &scratch, program, part->head, part->sources, part->count);
+        Atom **types = NULL;
+        uint32_t ntypes = space_get_declared_types(
+            program, &scratch, atom_symbol(&scratch, part->head), &types);
+        Atom *expected = cetta_presentation_parse_one(&scratch, part->type);
+        admitted = admitted && expected && ntypes == 1u &&
+            atom_alpha_eq(types[0], expected);
+        free(types);
     }
     /* Directives are data: no equation may rewrite one. */
     SpaceEquationCursor cursor;
@@ -117,9 +121,7 @@ static bool exec_saturation_presentation_admitted(Space *program) {
             admitted = false;
     }
     arena_free(&scratch);
-    g_exec_saturation_presentation.space = program;
-    g_exec_saturation_presentation.instance_id = instance_id;
-    g_exec_saturation_presentation.revision = revision;
+    g_exec_saturation_presentation.program = token;
     g_exec_saturation_presentation.admitted = admitted;
     return admitted;
 }
@@ -176,6 +178,22 @@ static bool exec_saturation_rule(Atom *directive, ExecSaturationRule *rule) {
             ? rule->templates[i]->expr.elems[0] : rule->templates[i];
         if (!head || atom_has_vars(head) ||
             atom_is_symbol(head, "=") || atom_is_symbol(head, ":"))
+            return false;
+    }
+    return true;
+}
+
+bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts) {
+    if (!program || !facts || facts == program || !call ||
+        call->kind != ATOM_EXPR || call->expr.len != 3u ||
+        !atom_is_symbol_id(call->expr.elems[0], g_builtin_syms.exec_saturate) ||
+        !call->expr.elems[2] || call->expr.elems[2]->kind != ATOM_EXPR ||
+        !cetta_exec_saturation_presentation_admitted(program))
+        return false;
+    Atom *directives = call->expr.elems[2];
+    for (CettaExprLen i = 0u; i < directives->expr.len; i++) {
+        ExecSaturationRule rule;
+        if (!exec_saturation_rule(directives->expr.elems[i], &rule))
             return false;
     }
     return true;
@@ -274,10 +292,8 @@ CettaExecSaturationOutcome cetta_exec_saturate(
     Atom *space_ref = call && call->kind == ATOM_EXPR &&
             call->expr.len == 3u ? call->expr.elems[1] : NULL;
     Atom *directives = space_ref ? call->expr.elems[2] : NULL;
-    if (!program || !a || !facts || facts == program || !space_ref ||
-        !directives || directives->kind != ATOM_EXPR || !host ||
-        !host->add_nodup || !answer_out ||
-        !exec_saturation_presentation_admitted(program))
+    if (!a || !host || !host->add_nodup || !answer_out ||
+        !cetta_exec_saturation_admitted(program, call, facts))
         return CETTA_EXEC_SATURATION_DECLINED;
     CettaExprLen nrules = directives->expr.len;
     ExecSaturationRule *rules = nrules

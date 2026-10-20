@@ -16,7 +16,7 @@
 (= (chooseKl $L 0) (let $temp (cut) (())))
 (= (chooseKl () $k) (let $temp (cut) ()))
 (= (chooseKl (cons $h $t) $k)
-   (append (map-atom (chooseKl $t (- $k 1)) (|-> ($c) (cons $h $c)))
+   (append (map-atom (chooseKl $t (- $k 1)) $c (cons $h $c))
            (chooseKl $t $k)))
 (= (chooseK $L $k)
    (let $options (chooseKl $L $k) (superpose $options)))

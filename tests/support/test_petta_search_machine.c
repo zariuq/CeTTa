@@ -99,6 +99,30 @@ static void test_transient_value_plan_lifetime(void) {
     for (int i = 0; i < 100000; i++) deep = atom_expr2(&old, box, deep);
     assert(transient_plan_is_value(program, deep, &env));
     assert(transient_plan_is_value(program, deep, &env));
+
+    /* Runtime translation keeps a certified value argument opaque instead
+     * of rebuilding its plan.  A nested call prevents that collapse. */
+    space_add(&space, parse_one(
+        &syntax, "(= (runtime-call $value) $value)"));
+    assert(petta_program_synchronize_space(program, &space));
+    Atom *runtime_head = atom_symbol(&young, "runtime-call");
+    Atom *runtime_value = atom_expr2(&young, runtime_head, deep);
+    const PettaPlanNode *runtime_plan =
+        petta_program_plan_transient(program, runtime_value, &env);
+    assert(runtime_plan && runtime_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(runtime_plan->child_count == 2u);
+    assert(runtime_plan->children[1u].role == PETTA_PLAN_VALUE);
+    assert(runtime_plan->children[1u].child_count == 0u);
+    Atom *active_value = parse_one(&old, "(opaque-box (+ 1 2))");
+    const PettaPlanNode *active_plan = petta_program_plan_transient(
+        program, atom_expr2(&young, runtime_head, active_value), &env);
+    assert(active_plan && active_plan->child_count == 2u);
+    assert(active_plan->children[1u].role != PETTA_PLAN_VALUE);
+    assert(active_plan->children[1u].contains_call);
+    const PettaPlanNode *without_environment =
+        petta_program_plan_transient(program, runtime_value, NULL);
+    assert(without_environment &&
+           without_environment->role == PETTA_PLAN_STATIC_CALL);
     petta_program_free(program);
     space_free(&space);
     arena_free(&syntax); arena_free(&old); arena_free(&young);
@@ -3534,6 +3558,78 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     arena_free(&answers);
     space_free(&space);
     puts("PASS: compiled graph transport preserves sharing, open cells and answer lifetime");
+}
+
+static void test_compiled_stable_host_answer(
+        TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(
+        program, &space, arena,
+        "(= (stable-host-answer) (eval checkpoint))");
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space,
+        symbol_intern_cstr(g_symbols, "stable-host-answer"),
+        0u, NULL, NULL);
+    assert(compiled);
+    Arena answers, stable;
+    arena_init(&answers);
+    arena_set_hashcons(&answers, NULL);
+    arena_init(&stable);
+    arena_set_hashcons(&stable, NULL);
+    CettaOpenEquationRuntime runtime = {.stable = &stable};
+    for (unsigned borrowed = 0u; borrowed < 2u; borrowed++) {
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        Atom *value = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+               CETTA_OPEN_EQUATION_HOST);
+        Atom *goal = NULL, *destination = NULL;
+        Atom *const *variables = NULL;
+        uint32_t count = 0u;
+        const PettaPlanNode *plan = NULL;
+        CettaOpenEquationHostMode mode;
+        bool recovers = false;
+        assert(cetta_open_equation_cursor_host_goal(
+            cursor, &goal, &destination, &variables, &count,
+            &plan, &mode, &recovers));
+        Atom *source = parse_one(
+            borrowed ? &stable : &answers, "(payload (shared value))");
+        Atom **host_values = malloc(
+            sizeof(*host_values) * (count ? count : 1u));
+        assert(host_values);
+        bool found = false;
+        for (uint32_t index = 0u; index < count; index++) {
+            host_values[index] = variables[index];
+            if (var_id_eq(variables[index]->var_id,
+                          destination->var_id)) {
+                host_values[index] = source;
+                found = true;
+            }
+        }
+        assert(found);
+        uint32_t base = 0u;
+        assert(cetta_open_equation_cursor_accept(
+            cursor, NULL, variables, host_values, count, true, 0u, &base));
+        free(host_values);
+        assert(cetta_open_equation_cursor_continue(
+            cursor, NULL, base, &value, NULL) ==
+            CETTA_OPEN_EQUATION_ANSWER);
+        assert(atom_eq(value, source));
+        assert((value == source) == (borrowed != 0u));
+        if (borrowed)
+            assert(cetta_open_equation_cursor_detach(cursor, &stable));
+        cetta_open_equation_cursor_close(cursor);
+    }
+    arena_free(&stable);
+    arena_free(&answers);
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: stable ground host answers are borrowed; movable answers retain copying");
 }
 
 static bool test_compiled_builtin_allowed(void *context, SymbolId head) {
@@ -13163,6 +13259,7 @@ int main(int argc, char **argv) {
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
+    test_compiled_stable_host_answer(&universe, &persistent);
     test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_dependency_appends(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);
