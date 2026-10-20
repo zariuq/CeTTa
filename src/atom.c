@@ -274,6 +274,8 @@ typedef struct AtomDeepCopyMemo {
     uint64_t global_instance, global_symbols;
     uint32_t global_count;
     struct AtomDeepCopyMemo *global_nodes;
+    /* Whether copies drop HE's evaluated marks (a space storing syntax). */
+    bool strip_he_marks;
 } AtomDeepCopyMemo;
 
 typedef struct {
@@ -286,6 +288,35 @@ typedef struct {
     uint32_t destination_identity;
     uint64_t destination_epoch;
 } AtomDeepCopyObjectSlot;
+
+static _Thread_local unsigned g_atom_deep_copy_strip_he_marks;
+
+void atom_deep_copy_strip_he_marks_enter(void) {
+    g_atom_deep_copy_strip_he_marks++;
+}
+
+void atom_deep_copy_strip_he_marks_leave(void) {
+    if (g_atom_deep_copy_strip_he_marks)
+        g_atom_deep_copy_strip_he_marks--;
+}
+
+/* Whether copying `source` keeps HE's evaluated mark: the copy of a value
+ * is the same value, built unshared (never a list buffer view). */
+static inline bool atom_deep_copy_keeps_he_mark(const AtomDeepCopyMemo *memo,
+                                                const Atom *source) {
+    return !memo->strip_he_marks &&
+           (source->flags & ATOM_FLAG_HE_EVALUATED) != 0u;
+}
+
+/* Whether a copy may share `source` (a settled subtree or a list buffer)
+ * rather than rebuild it: a copy that drops evaluated marks rebuilds what
+ * may hold one. */
+static inline bool atom_deep_copy_may_share(const AtomDeepCopyMemo *memo,
+                                            const Atom *source) {
+    return !atom_deep_copy_keeps_he_mark(memo, source) &&
+           !(memo->strip_he_marks && atom_may_hold_he_mark(source));
+}
+
 typedef struct AtomDeepCopyInventory {
     const void *kind;
     void *value;
@@ -6006,7 +6037,9 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     if (departed_known &&
         !atom_summary_head_adjusts(expression->expr.elems[0]) &&
         (expression->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
-        uint32_t flags = expression->flags & ~ATOM_FLAG_HASH_VALID;
+        uint32_t flags = expression->flags &
+            ~(ATOM_FLAG_HASH_VALID | ATOM_FLAG_HE_EVALUATED);
+        /* A new expression: an evaluated mark is not inherited. */
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                            ATOM_STRUCTURAL_OWNER_CLOSED |
@@ -6248,7 +6281,9 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         /* The list's summary is its fold, since its head adjusts nothing;
          * the new head steps onto it and then adjusts it
          * (TailSummary.summary_prepend). */
-        uint32_t flags = list->flags & ~ATOM_FLAG_HASH_VALID;
+        uint32_t flags = list->flags &
+            ~(ATOM_FLAG_HASH_VALID | ATOM_FLAG_HE_EVALUATED);
+        /* A new expression: an evaluated mark is not inherited. */
         flags |= head->flags & ATOM_SUMMARY_INHERITED;
         flags &= head->flags | ~ATOM_SUMMARY_REQUIRED;
         bool head_closed = atom_summary_closed_child(head, a->identity);
@@ -6333,6 +6368,36 @@ Atom *atom_expr_builder_finish(Arena *a, Atom *draft) {
 
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len) {
     return atom_expr(a, elems, len);
+}
+
+/* An expression of `elems` carrying HE's evaluated mark.  It is never
+ * interned: it is built outside the hash-cons table, interning admits only a
+ * node whose flags are exactly those its children determine, which the mark
+ * is not, and an interned node's children are global, which a marked node is
+ * not.  Its other summaries are its children's, as for any expression. */
+static Atom *atom_he_evaluated_build(Arena *a, Atom **elems,
+                                     CettaExprLen len) {
+    uint32_t structural_facts = 0u;
+    uint32_t flags = atom_flags_from_children(
+        a->identity, a->older_identity, elems, len, &structural_facts);
+    VarId var_id = atom_single_variable_id_of(flags, elems, len);
+    if (structural_facts & ATOM_STRUCTURAL_FACTS_VALID)
+        structural_facts |= ATOM_STRUCTURAL_HAS_HE_EVALUATED;
+    return atom_expr_build(a, elems, len, flags | ATOM_FLAG_HE_EVALUATED,
+                           structural_facts, var_id);
+}
+
+Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len) {
+    return a && elems && len ? atom_he_evaluated_build(a, elems, len) : NULL;
+}
+
+Atom *atom_he_evaluated_copy(Arena *a, Atom *expression) {
+    if (!a || !expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u ||
+        (expression->flags & ATOM_FLAG_HE_EVALUATED) != 0u)
+        return expression;
+    return atom_he_evaluated_build(
+        a, expression->expr.elems, expression->expr.len);
 }
 
 Atom *atom_expr2(Arena *a, Atom *a1, Atom *a2) {
@@ -7745,6 +7810,7 @@ static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
     memo->global_instance = memo->global_symbols = 0u;
     memo->global_count = 0u;
     memo->global_nodes = NULL;
+    memo->strip_he_marks = g_atom_deep_copy_strip_he_marks != 0u;
     atom_deep_copy_memo_clear(memo->slots, memo->cap);
 }
 
@@ -8275,7 +8341,8 @@ static Atom *atom_deep_copy_impl(
             return NULL;
         return result;
     }
-    result = !view && src->kind == ATOM_EXPR
+    result = !view && src->kind == ATOM_EXPR &&
+             atom_deep_copy_may_share(memo, src)
         ? atom_deep_copy_buffer_view(dst, src, share, memo) : NULL;
     if (result) {
         if ((memo->arenas || memo->snapshot)) {
@@ -8296,6 +8363,7 @@ static Atom *atom_deep_copy_impl(
     CettaExprLen child_count = copy_source->kind == ATOM_EXPR \
         ? copy_source->expr.len : 1u; \
     if (!view && !(memo->arenas || memo->snapshot) && copy_source->kind == ATOM_EXPR && \
+        atom_deep_copy_may_share(memo, copy_source) && \
         atom_deep_copy_buffer_enabled(copy_destination, copy_source, share, memo)) { \
         AtomDeepCopyBufferSlot *buffer = atom_deep_copy_buffer_lookup( \
             memo, copy_source->expr.elems + copy_source->expr.len); \
@@ -8371,7 +8439,9 @@ static Atom *atom_deep_copy_impl(
             }
             bool retained = atom_deep_copy_retained(memo, child);
             if (retained ||
-                (!map && !view && !(memo->arenas || memo->snapshot) && atom_settled_in(dst, child))) {
+                (!map && !view && !(memo->arenas || memo->snapshot) &&
+                 !(memo->strip_he_marks && atom_may_hold_he_mark(child)) &&
+                 atom_settled_in(dst, child))) {
                 if (!atom_deep_copy_record(memo, child, child)) {
                     atom_deep_copy_stack_free(stack, stack_cap);
                     return NULL;
@@ -8403,7 +8473,8 @@ static Atom *atom_deep_copy_impl(
             Arena *child_destination = atom_deep_copy_destination(memo, dst, child);
             if (!child_destination) { atom_deep_copy_stack_free(stack, stack_cap); return NULL; }
             if (child->kind == ATOM_EXPR || atom_deep_copy_named_variable(memo, child)) {
-                child_copy = !view && child->kind == ATOM_EXPR
+                child_copy = !view && child->kind == ATOM_EXPR &&
+                             atom_deep_copy_may_share(memo, child)
                     ? atom_deep_copy_buffer_view(child_destination, child, share, memo) : NULL;
                 if (child_copy) {
                     if ((memo->arenas || memo->snapshot)) {
@@ -8444,7 +8515,11 @@ static Atom *atom_deep_copy_impl(
              * already names this same extent. The floor is physical space,
              * not additional FRONT_SLACK evidence for future execution. */
             result = frame->tail;
-        } else if (!view && atom_deep_copy_buffer_enabled(home, frame->src, share, memo)) {
+        } else if (atom_deep_copy_keeps_he_mark(memo, frame->src)) {
+            result = atom_he_evaluated_build(
+                home, frame->elems, frame->src->expr.len);
+        } else if (!view && atom_deep_copy_may_share(memo, frame->src) &&
+                   atom_deep_copy_buffer_enabled(home, frame->src, share, memo)) {
             if (frame->tail) {
                 result = frame->tail;
                 for (CettaExprLen i = frame->prefix_len; i > 0u; i--)

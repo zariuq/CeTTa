@@ -3701,6 +3701,11 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             Atom *part = head_id == g_builtin_syms.car_atom
                 ? elems[0]
                 : atom_sequence_rest(a, argument, elems, len);
+            if (head_id == g_builtin_syms.cdr_atom &&
+                atom_is_he_evaluated(argument) && part &&
+                part->kind == ATOM_EXPR && part->expr.len > 0u &&
+                !atom_has_vars(part))
+                part = atom_he_evaluated_copy(a, part);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
         return grounded_raise(

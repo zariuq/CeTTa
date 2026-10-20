@@ -102,6 +102,14 @@ static const char *const HE_LIBRARY_DECLARATIONS[] = {
     "(: case (-> Atom Expression %Undefined%))",
 };
 
+/* Upstream equations kept as physical occurrences. The first row stays
+ * let. switch-internal is already one row of lib/stdlib.metta, so it is
+ * not copied here. switch and case stay intrinsics. */
+static const char *const HE_LIBRARY_EQUATIONS[] = {
+    "(= (let $pattern $atom $template) (unify $atom $pattern $template Empty))",
+    "(= (switch-minimal $atom $cases) (function (chain (decons-atom $cases) $list (chain (eval (switch-internal $atom $list)) $res (chain (eval (if-equal $res NotReducible Empty $res)) $x (return $x))))))",
+};
+
 /* Names upstream's library defines or uses without declaring a type for
  * them.  A declaration CeTTa's library carries for such a name would retype
  * upstream's own calls, so HE profiles leave it out. */
@@ -255,8 +263,11 @@ static bool he_grounded_add(const char *name, const char *text,
 
 #define HE_LIBRARY_DECLARATION_COUNT \
     (sizeof HE_LIBRARY_DECLARATIONS / sizeof HE_LIBRARY_DECLARATIONS[0])
+#define HE_LIBRARY_EQUATION_COUNT \
+    (sizeof HE_LIBRARY_EQUATIONS / sizeof HE_LIBRARY_EQUATIONS[0])
 
 static Atom *g_he_library_declarations[HE_LIBRARY_DECLARATION_COUNT];
+static Atom *g_he_library_equations[HE_LIBRARY_EQUATION_COUNT];
 static SymbolId g_he_library_undeclared[
     sizeof HE_LIBRARY_UNDECLARED_NAMES / sizeof HE_LIBRARY_UNDECLARED_NAMES[0]];
 
@@ -267,6 +278,15 @@ size_t he_library_declaration_count(void) {
 Atom *he_library_declaration_at(size_t index) {
     return he_library_tables_init() && index < HE_LIBRARY_DECLARATION_COUNT
         ? g_he_library_declarations[index] : NULL;
+}
+
+size_t he_library_equation_count(void) {
+    return he_library_tables_init() ? HE_LIBRARY_EQUATION_COUNT : 0u;
+}
+
+Atom *he_library_equation_at(size_t index) {
+    return he_library_tables_init() && index < HE_LIBRARY_EQUATION_COUNT
+        ? g_he_library_equations[index] : NULL;
 }
 
 bool he_library_names_subject(const Atom *subject) {
@@ -324,6 +344,15 @@ static void he_library_tables_build(void) {
             declaration->expr.len != 3u)
             return;
         g_he_library_declarations[i] = declaration;
+    }
+    for (size_t i = 0u; i < HE_LIBRARY_EQUATION_COUNT; i++) {
+        size_t pos = 0u;
+        Atom *equation = parse_sexpr(
+            &g_he_grounded_arena, HE_LIBRARY_EQUATIONS[i], &pos);
+        if (!equation || equation->kind != ATOM_EXPR || equation->expr.len != 3u ||
+            !atom_is_symbol_id(equation->expr.elems[0], g_builtin_syms.equals))
+            return;
+        g_he_library_equations[i] = equation;
     }
     for (size_t i = 0u; i < sizeof g_he_library_undeclared /
                             sizeof g_he_library_undeclared[0]; i++) {
@@ -779,8 +808,10 @@ incomplete:
                 saved = services->accepted(services->context, contract,
                                           search_context_bindings(&trial));
         } else {
+            Atom *reported = services->report_refined_result
+                ? bindings_apply_if_vars(&paths.items[p], arena, result) : result;
             saved = he_type_errors_push(errors, atom_error(arena, expression,
-                        atom_expr3(arena, atom_symbol(arena, "BadType"), expected_result, result)));
+                        atom_expr3(arena, atom_symbol(arena, "BadType"), expected_result, reported)));
         }
         search_context_free(&trial);
         if (!saved) {

@@ -5065,6 +5065,27 @@ static bool prepared_pure_compile_eval_with_role(
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
     if (prepared_pure_intrinsic_program(
             head, arity, &intrinsic_instruction)) {
+        if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
+            (intrinsic_instruction ==
+                 CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS ||
+             intrinsic_instruction ==
+                 CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS)) {
+            /* In Prime, cons-atom and union-atom demand WHNF on their
+             * operands and build completed Data values without descending into
+             * non-callable subexpressions.  Decline when an operand is a
+             * non-empty non-opaque expression whose outer head is not callable. */
+            for (CettaExprIndex i = 1u; i <= arity; i++) {
+                Atom *operand = source->expr.elems[i];
+                if (operand->kind == ATOM_EXPR && operand->expr.len > 0u &&
+                    !prepared_pure_opaque_value(program, operand) &&
+                    prepared_pure_head_role(program, operand) !=
+                        PREPARED_PURE_HEAD_CALLABLE)
+                    return prepared_pure_reject(
+                        program,
+                        "Prime sequence value operand requires canonical completion",
+                        source);
+            }
+        }
         uint32_t *children = NULL;
         if (!prepared_pure_compile_children(
                 program, context, &source->expr.elems[1], arity,
@@ -7955,6 +7976,9 @@ static Atom *prepared_pure_execute_intrinsic(
             pair[1] = atom_sequence_rest(arena, list, elems, len);
             if (!pair[1])
                 return NULL;
+            if (atom_is_he_evaluated(list) && pair[1]->kind == ATOM_EXPR &&
+                pair[1]->expr.len > 0u && !atom_has_vars(pair[1]))
+                pair[1] = atom_he_evaluated_copy(arena, pair[1]);
         }
         return program->construct_value(arena, pair, 2u);
     }
@@ -15517,7 +15541,7 @@ bool cetta_prepared_pure_program_value_is_fully_evaluated(
     CettaPreparedPureProgram *program, Atom *value) {
     if (program && program->execution) return false;
     return program && value &&
-           !prepared_pure_value_graph_any(
+           !prepared_pure_value_tree_any(
                program, value, prepared_pure_value_has_callable_node, program);
 }
 

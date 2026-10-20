@@ -3,6 +3,7 @@
 
 (: system:monotonic-ns (-> Number))
 (: system:cwd (-> String))
+(: system:runtime-root (-> String))
 
 (= (system:wall-time)
    (function (case (__cetta_lib_system_host wall-time)
@@ -67,6 +68,11 @@
 ; The canonical directory of the top-level entry file, independent of imports.
 (= (system:entry-directory)
    (function (case (__cetta_lib_system_entry_directory ())
+     (($result (return $result)))){$result}))
+
+; The runtime's library and language-data root, independent of the entry file.
+(= (system:runtime-root)
+   (function (case (__cetta_lib_system_runtime_root ())
      (($result (return $result)))){$result}))
 
 (= (system:monotonic-ns)

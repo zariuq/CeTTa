@@ -8,85 +8,70 @@
 
 (= (str:byte-length $text)
    (function
-     (case (__cetta_lib_str byte-length $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str byte-length $text)) $result (return $result))))
 
 ; The bytes from start up to end; an offset outside the text is refused.
 (= (str:byte-slice $text $start $end)
    (function
-     (case (__cetta_lib_str byte-slice $text $start $end)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str byte-slice $text $start $end)) $result (return $result))))
 
 (= (str:concat $lhs $rhs)
    (function
-     (case (__cetta_lib_str concat $lhs $rhs)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str concat $lhs $rhs)) $result (return $result))))
 
 (= (str:join $separator $parts)
    (function
-     (case (__cetta_lib_str join $separator $parts)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str join $separator $parts)) $result (return $result))))
 
 (= (str:split $separator $text)
    (function
-     (case (__cetta_lib_str split $separator $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str split $separator $text)) $result (return $result))))
 
 (= (str:split-whitespace $text)
    (function
-     (case (__cetta_lib_str split-whitespace $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str split-whitespace $text)) $result (return $result))))
 
 (= (str:find $text $needle)
    (function
-     (case (__cetta_lib_str find $text $needle)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str find $text $needle)) $result (return $result))))
 
 (= (str:starts-with $text $prefix)
    (function
-     (case (__cetta_lib_str starts-with $text $prefix)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str starts-with $text $prefix)) $result (return $result))))
 
 (= (str:ends-with $text $suffix)
    (function
-     (case (__cetta_lib_str ends-with $text $suffix)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str ends-with $text $suffix)) $result (return $result))))
 
 (= (str:trim $text)
    (function
-     (case (__cetta_lib_str trim $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str trim $text)) $result (return $result))))
 
 ; The SHA-256 digest of the text's bytes, as 64 lowercase hex digits.
 (= (str:sha256 $text)
    (function
-     (case (__cetta_lib_str sha256 $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str sha256 $text)) $result (return $result))))
 
 ; -1, 0 or 1 by byte order, a proper prefix first.
 (= (str:compare $lhs $rhs)
    (function
-     (case (__cetta_lib_str compare $lhs $rhs)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str compare $lhs $rhs)) $result (return $result))))
 
 (= (str:codepoint-count $text)
    (function
-     (case (__cetta_lib_str codepoint-count $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str codepoint-count $text)) $result (return $result))))
 
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.
 (= (str:codepoints $text)
    (function
-     (case (__cetta_lib_str codepoints $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str codepoints $text)) $result (return $result))))
 
 ; One string from a list of codepoints, each a one-codepoint string or an
 ; integer scalar value.
 (= (str:from-codepoints $codepoints)
    (function
-     (case (__cetta_lib_str from-codepoints $codepoints)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str from-codepoints $codepoints)) $result (return $result))))
 
 ; Character classes over codepoints, those of the C locale: alpha, digit,
 ; alnum, lower, upper, space, blank, punct, print, graph, cntrl, xdigit, word
@@ -95,109 +80,91 @@
 ; whether its first codepoint is (the empty text has none).
 (= (str:is-all-in $class $text)
    (function
-     (case (__cetta_lib_str is-all-in $class $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-all-in $class $text)) $result (return $result))))
 
 (= (str:is-initial-in $class $text)
    (function
-     (case (__cetta_lib_str is-initial-in $class $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-initial-in $class $text)) $result (return $result))))
 
 ; Spelling tests: letters and digits only; a lower-case or an upper-case
 ; initial; and a lower word or an upper word, such an initial followed by word
 ; characters.
 (= (str:is-alphanumeric $text)
    (function
-     (case (__cetta_lib_str is-alphanumeric $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-alphanumeric $text)) $result (return $result))))
 
 (= (str:is-lower-initial $text)
    (function
-     (case (__cetta_lib_str is-lower-initial $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-lower-initial $text)) $result (return $result))))
 
 (= (str:is-upper-initial $text)
    (function
-     (case (__cetta_lib_str is-upper-initial $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-upper-initial $text)) $result (return $result))))
 
 (= (str:is-lower-word $text)
    (function
-     (case (__cetta_lib_str is-lower-word $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-lower-word $text)) $result (return $result))))
 
 (= (str:is-upper-word $text)
    (function
-     (case (__cetta_lib_str is-upper-word $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-upper-word $text)) $result (return $result))))
 
 ; A symbol from a string: nonempty UTF-8 without NUL.
 (= (str:string->symbol $text)
    (function
-     (case (__cetta_lib_str string->symbol $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str string->symbol $text)) $result (return $result))))
 
 (= (str:symbol->string $symbol)
    (function
-     (case (__cetta_lib_str symbol->string $symbol)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str symbol->string $symbol)) $result (return $result))))
 
 ; A number from its whole decimal spelling: an integer of any size, or a
 ; float with a point or an exponent, rounded to the nearest double; a float
 ; beyond the finite doubles is refused.
 (= (str:string->number $text)
    (function
-     (case (__cetta_lib_str string->number $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str string->number $text)) $result (return $result))))
 
 (= (str:number->string $number)
    (function
-     (case (__cetta_lib_str number->string $number)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str number->string $number)) $result (return $result))))
 
 ; A string set is built once from a list of strings and can be bound and
 ; shared; membership searches it without rebuilding it.
 (= (str:set $strings)
    (function
-     (case (__cetta_lib_str set $strings)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str set $strings)) $result (return $result))))
 
 (= (str:is-set-member $set $text)
    (function
-     (case (__cetta_lib_str is-set-member $set $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str is-set-member $set $text)) $result (return $result))))
 
 ; The quoting schemes are metta, json, tptp-single and tptp-double: the body
 ; of a MeTTa string literal, of a JSON string, of a TPTP quoted atom and of a
 ; TPTP distinct object.
 (= (str:escape $scheme $text)
    (function
-     (case (__cetta_lib_str escape $scheme $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str escape $scheme $text)) $result (return $result))))
 
 (= (str:unescape $scheme $text)
    (function
-     (case (__cetta_lib_str unescape $scheme $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str unescape $scheme $text)) $result (return $result))))
 
 ; ASCII letters in lower case; every other byte unchanged.
 (= (str:lower $text)
    (function
-     (case (__cetta_lib_str lower $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str lower $text)) $result (return $result))))
 
 ; Length and slices in characters: a well-formed UTF-8 sequence, or a byte
 ; that does not begin one.  Unlike the codepoint operations they take any
 ; bytes; a slice's offsets past the text are clamped to it.
 (= (str:char-length $text)
    (function
-     (case (__cetta_lib_str char-length $text)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str char-length $text)) $result (return $result))))
 
 (= (str:char-slice $text $start $end)
    (function
-     (case (__cetta_lib_str char-slice $text $start $end)
-       (($result (return $result))))))
+     (chain (eval (__cetta_lib_str char-slice $text $start $end)) $result (return $result))))
 
 ; Pure streaming states are ordinary data. Compute helpers in explicit let
 ; bindings before handing their state to another operation. The native uses

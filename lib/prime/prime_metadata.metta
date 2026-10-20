@@ -114,9 +114,10 @@
        (let $records (reify $record)
          (case (superpose $records)
          (((MetaRecordV1 $stored-key $stored-values)
-           ; Prime `let` is call-by-need: an unused receipt cannot sequence an
-           ; effect.  The unit eliminator demands the effect before the
-           ; admitted value crosses this authority boundary.
+           ; Prime function arguments are call-by-need, so an effect passed
+           ; as an argument runs only when demanded.  The unit eliminator
+           ; demands it before the admitted value crosses this authority
+           ; boundary.
            (prime-meta:after-unit
              (add-atom-nodup
                $space (MetaRecordV1 $stored-key $stored-values))

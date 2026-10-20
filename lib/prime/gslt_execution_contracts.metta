@@ -711,6 +711,7 @@
   (query-head __cetta_lib_fs_try_canonical_under relational-query)
   (query-head __cetta_lib_fs_read_text relational-query)
   (query-head __cetta_lib_fs_write world-write)
+  (query-head __cetta_lib_fs_rename world-write)
   (query-head __cetta_lib_fs_append_text world-write)
   (query-head __cetta_lib_fs_read_lines relational-query)
   (query-head __cetta_lib_fs_metadata relational-query)

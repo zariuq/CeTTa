@@ -6145,10 +6145,22 @@ void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
     }
 }
 
+/* A space stores syntax: copies made to store an atom drop HE's evaluated
+ * marks (atom_deep_copy_strip_he_marks_enter). */
+static void space_store_scope_leave(bool *entered) {
+    if (*entered)
+        atom_deep_copy_strip_he_marks_leave();
+}
+
+#define SPACE_STORE_SCOPE() \
+    __attribute__((cleanup(space_store_scope_leave))) bool space_store_scope = \
+        (atom_deep_copy_strip_he_marks_enter(), true)
+
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
+    SPACE_STORE_SCOPE();
     return term_universe_store_atom(s ? s->native.universe : NULL, fallback, atom);
 }
 
@@ -8080,8 +8092,10 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
     bool defer_secondary =
         space_defer_incremental_secondary_indices(s);
-    if (backend_needs_atom && space_tracks_atom_ids(s) &&
-        atom_id != CETTA_ATOM_ID_NONE) {
+    /* The stored atom, which holds no evaluated mark, stands for one that
+     * may: the space keeps syntax, also in its equation index. */
+    if ((backend_needs_atom || atom_may_hold_he_mark(backend_atom)) &&
+        space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE) {
         Atom *stored_backend_atom =
             term_universe_get_atom(s->native.universe, atom_id);
         if (stored_backend_atom) {
@@ -8311,6 +8325,7 @@ void space_add(Space *s, Atom *atom) {
     s = space_mutation_target(s);
     if (!s)
         return;
+    SPACE_STORE_SCOPE();
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
     if (space_store_atom_via_backend_primary(
@@ -8348,6 +8363,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
     bool transition_failed = false;
     if (!s || !atom)
         return false;
+    SPACE_STORE_SCOPE();
 
     if (space_store_atom_via_backend_primary(
             s, atom, &transition_failed))
@@ -11020,6 +11036,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
+        if (eval_current_uses_rust_he_compat_semantics &&
+            eval_current_uses_rust_he_compat_semantics())
+            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"),
+                cell->content_type ? cell->content_type : atom_undefined_type(a));
         if (cell->content_type &&
             !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
             return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);
@@ -11252,8 +11272,9 @@ static SpaceDeclarationVisit space_visit_declarations(
         }
         return SPACE_DECLARATION_NEXT;
     }
-    if (cost)
-        cost->indexed_lookups++;
+    /* Each physical level reads its own index, but the caller charges the
+     * composed read as one logical lookup: a judgment's cost must not depend
+     * on how many overlays present the same declarations. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     const SpaceHeadChains *index = &s->native.ty_idx.rows;
     const SpaceHeadChain *chain = space_head_chains_find(index, head);
@@ -11349,6 +11370,9 @@ space_member_annotated_types(
         .budget = budget, .as_stored = as_stored};
     bool scan = !declared_type_index_enabled() ||
         (space_has_overlay_base(s) && budget && budget->steps_limited);
+    /* One indexed lookup per member, however deep its overlay chain. */
+    if (!scan && cost)
+        cost->indexed_lookups++;
     for (int pass = 0; pass < passes && !list->stopped; pass++) {
         CettaIndex first = pass == 0 ? imported : 0u;
         CettaIndex end = pass == 0 ? logical_len : imported;

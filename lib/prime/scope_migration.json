@@ -60,9 +60,9 @@
     {
       "source": "fs.metta",
       "output": "fs.metta",
-      "source_sha256": "998ff100821bbd2a4a35aba65a69a092c6d9ea8c3d2850283d36d51a037f7e10",
-      "output_sha256": "74052ede023f7d483e774f892de4317cf2b5af04e7792a59ddd1584e4f912752",
-      "edits": 42,
+      "source_sha256": "3333204f956e968d6562941ce6967ef0cb0d39de7a9ebf39826bc109df82ecf9",
+      "output_sha256": "9e104cfc1b33cb279ce2fc9089b36e743a9eb51e5818c16c32ae3e9fb4c9dfe6",
+      "edits": 43,
       "code_diagnostics": 0
     },
     {
@@ -76,8 +76,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "ccbc5fbe08b7d592048b538825d00d03f1468d4de58579c072d545aa5c53e646",
-      "output_sha256": "c255959137049b6b82dd43721ef12f70b0f6a78818ec6f51a88c65cb43433b44",
+      "source_sha256": "dd8a98d168f312dc0cd337ab513c337475107fab37c09de3496c846ea1cabdd1",
+      "output_sha256": "9d9912e27737423d7e3c36bf06f2f2b1b87626708f453cf4fe75bf6eb6ccbe79",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -140,16 +140,16 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "10c96818c575d91c7e3d8a52393cfde2573b311ce8fed33450273b56cf35978c",
-      "output_sha256": "26c63d6eb8ec5267be34f4cebcf47ba925b01ecb8aa0fb74431641a18de84f35",
+      "source_sha256": "7ddf9f8a83d3b20d2a5f97a057af97207c4478727ca7d6fd134d23d4b270a111",
+      "output_sha256": "c504eb08aa3f58a7960de3dc4abce9c4065d81b005c873e0bcb054d89498648e",
       "edits": 15,
       "code_diagnostics": 0
     },
     {
       "source": "langdef.metta",
       "output": "langdef.metta",
-      "source_sha256": "dc2703216ca190f9672b47ef47b8c5704157ff5de1a4fb427cc524505b347443",
-      "output_sha256": "91dc8a185f752d6af4f240a54d2d417d855d42fd07e248380d89ea6b562d6e2f",
+      "source_sha256": "52e371c1c0aed949e17233c67edfe439e221d269950f1ad2d4fb92afae8ff720",
+      "output_sha256": "6db0bb1d1da2fde50770b496154576eb705225a26ab9ff291578547fedc11e7c",
       "edits": 71,
       "code_diagnostics": 0
     },
@@ -260,9 +260,9 @@
     {
       "source": "lib_tptp.metta",
       "output": "lib_tptp.metta",
-      "source_sha256": "219a932821705fa1bd4cd2556f48e9ca862de17939c1b35b73ab75cedc5b0593",
-      "output_sha256": "d234c7daf025c67360268eb6c2fe351d5f30167f1668ac6cab5d7da70adfecdc",
-      "edits": 142,
+      "source_sha256": "964783a73d59f0283f129eb113effa6135deca8b1eb60622cb116abcc645ad68",
+      "output_sha256": "f6aa6177c2368764d59b71325994850e5a572ef67d6046e445b98c5a6f7df0f3",
+      "edits": 150,
       "code_diagnostics": 1
     },
     {
@@ -404,8 +404,8 @@
     {
       "source": "prime_metadata.metta",
       "output": "prime_metadata.metta",
-      "source_sha256": "cc8277d1cf95e58f3f3d0b616a2c4013aea0d1e17935359746cf78feb6a88cef",
-      "output_sha256": "cf7bd25340f73c5adc3fab2116dd84c111ab34be1fb679b2600297dd6837b80a",
+      "source_sha256": "8b7e30d90b55bb8f25a64ed56c7efd6c214a1037a03111ce3cb2bffd16799f89",
+      "output_sha256": "9a46d13d5f5be2c355cc4ecfeeb9db254ae0281960c7ef42ce17e100774200dd",
       "edits": 9,
       "code_diagnostics": 0
     },
@@ -476,17 +476,17 @@
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "0c0d0ae9dc8aa46902598acc2087aca6cad14409f13f905bda36b071a3741a1f",
-      "output_sha256": "d254996caa8f8a0beae17f493895306fa0f94b977f88a48d891b7028474919fa",
+      "source_sha256": "5d2b3f73f072d77c820e6a43c65486fe30e80ed117f1c88eb0207b2804f69405",
+      "output_sha256": "80e7f06e90058449c4c0869e289143d8119f5b446b612e035c1290d0a209f1e8",
       "edits": 41,
       "code_diagnostics": 0
     },
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "1725ab7dfbc8792e9bcab35c4c06ea838a15282736c8f539f77230b1eccd919c",
-      "output_sha256": "618a1de582a6f35636854f816c9e4e683f13a15d336f83376e072ba52c486fd9",
-      "edits": 18,
+      "source_sha256": "2e089e8e8729956f9ef016cb9e508eca1cc0dd330825e377e93ee71d83edad2a",
+      "output_sha256": "aed728e015eb1d0f013263bbb19cd1715e13b628b3a7d7b200d35db6287e8c66",
+      "edits": 19,
       "code_diagnostics": 0
     },
     {

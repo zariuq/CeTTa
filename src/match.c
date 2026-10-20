@@ -5727,10 +5727,11 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
      * unless the fold keeps node images.  Ordinary substitution starts
      * without them and keeps them from its BINDINGS_APPLY_GRAPH_AFTER-th
      * expression on, where its images, like graph observation's, depend on
-     * the node and the scope alone: no hook, an acyclic environment. */
+     * the node and the scope alone: no hook, an acyclic environment.  A
+     * language's binding structure (hooks) keeps its own walk. */
     BindingApplyGraph observed = {0};
-    bool may_observe = !hooks && !graph && !epoch_fold && !fold->rewrite_var &&
-        !fold->track_cycles;
+    bool may_observe = !graph && !hooks && !epoch_fold &&
+        !fold->rewrite_var && !fold->track_cycles;
     uint32_t expressions = 0u;
     Atom *result;
     for (;;) {
@@ -5757,8 +5758,13 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
                 goto failed;
             BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
                 graph, atom, scope, depth, &created);
-            if (!entry) goto failed;
-            if (!created) {
+            /* Kept images are only a shortcut for ordinary substitution:
+             * where they cannot grow, it walks on without them. */
+            if (!entry && graph == &observed)
+                graph = NULL;
+            else if (!entry)
+                goto failed;
+            else if (!created) {
                 /* Native syntax must be a DAG. Rational terms use their
                  * explicit graph carrier, not a recursive Atom pointer. */
                 if (!entry->image) goto failed;

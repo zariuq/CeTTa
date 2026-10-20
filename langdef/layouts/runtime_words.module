@@ -1,0 +1,42 @@
+-- Runtime word representations; generated headers compile as ordinary C.
+Module CeTTaRuntimeWords {
+  Theory Variables() {
+    Empty Equations {
+      (VarId) == (Layout "cesta-layout/1"
+        (Word 64)
+        (Fields (Field base "value") (Field epoch "value"))
+        (Case
+          (Place base (Bits 0 32))
+          (Place epoch (Bits 32 32)))
+        (Location "immutable"));
+    }
+  }
+  Theory Frames() {
+    Variables() Equations {
+      (FrameIdentity) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Constants
+          (Const ClassOneFirst (Pow2 20))
+          (Const ClassTwoFirst (Sum ClassOneFirst (Pow2 24)))
+          (Const ClassThreeFirst (Sum ClassTwoFirst (Pow2 26)))
+          (Const HandleLimit (Sum ClassThreeFirst (Pow2 26))))
+        (Fields (Field handle "value") (Field generation "value"))
+        (Case (Prefix 1 0)
+          (Place handle (Bits 0 20) (Range 1 (Minus ClassOneFirst 1)))
+          (Place generation (Bits 20 11) (Range 1 2046)))
+        (Case (Prefix 2 2)
+          (Place handle (Bits 0 24) (Offset ClassOneFirst))
+          (Place generation (Bits 24 6) (Range 1 62)))
+        (Case (Prefix 3 6)
+          (Place handle (Bits 0 26) (Offset ClassTwoFirst))
+          (Place generation (Bits 26 3) (Range 1 6)))
+        (Case (Prefix 4 14)
+          (Place handle (Bits 0 26) (Offset ClassThreeFirst))
+          (Place generation (Bits 26 2) (Range 1 2)))
+        (Reserved (Prefix 4 15)
+          (Place handle (Bits 0 28) (Offset HandleLimit))
+          (Place generation (Bits 28 0)))
+        (Location "immutable"));
+    }
+  }
+}

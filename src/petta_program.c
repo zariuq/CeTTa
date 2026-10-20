@@ -315,10 +315,17 @@ typedef struct {
 } PettaProgramTypeBucket;
 
 typedef struct {
+    CettaExprLen supplied;
+    bool complete;
+} PettaProgramTypeArity;
+
+typedef struct {
     SymbolId head;
     PettaTypeCall *calls;
     uint32_t count;
     bool hold_body;
+    PettaProgramTypeArity *arities;
+    size_t arity_len, arity_cap;
 } PettaProgramTypeFamily;
 
 typedef struct {
@@ -3742,6 +3749,7 @@ static void petta_program_space_commit_catalog_mutation(
 static void petta_program_space_clear_type_families(PettaProgramSpace *entry) {
     for (size_t i = 0u; i < entry->type_family_len; i++) {
         free(entry->type_families[i].calls);
+        free(entry->type_families[i].arities);
     }
     if (entry->type_families_current)
         arena_free(&entry->type_family_storage);
@@ -4171,6 +4179,49 @@ static bool petta_program_type_family_build(
     return ok;
 }
 
+static bool petta_program_type_family_complete(
+    PettaProgram *program, Space *space, PettaProgramTypeFamily *family,
+    CettaExprLen supplied, bool retain, bool *complete) {
+    size_t low = 0u, high = family->arity_len;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (family->arities[middle].supplied < supplied)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    if (low < family->arity_len && family->arities[low].supplied == supplied) {
+        *complete = family->arities[low].complete;
+        return true;
+    }
+    /* Full predicate calls consume every declared domain. Only a genuine
+     * partial call may use a longer arrow. This fact shares the family's
+     * revision token, including equation changes, so warm calls need no
+     * repeated clause traversal. */
+    CettaExprLen minimum = 0u, maximum = 0u;
+    *complete = false;
+    bool source_callable = space_rule_head_arity_bounds(
+        space, family->head, &minimum, &maximum, complete, supplied,
+        petta_program_rule_forms(program));
+    if (!source_callable) {
+        for (uint32_t i = 0u; i < family->count; i++)
+            *complete = *complete || family->calls[i].arity == supplied;
+    }
+    if (retain) {
+        if (!petta_program_reserve((void **)&family->arities,
+                &family->arity_cap, family->arity_len + 1u,
+                sizeof(*family->arities)))
+            return false;
+        memmove(family->arities + low + 1u, family->arities + low,
+            (family->arity_len - low) * sizeof(*family->arities));
+        family->arities[low] = (PettaProgramTypeArity){
+            .supplied = supplied, .complete = *complete,
+        };
+        family->arity_len++;
+    }
+    return true;
+}
+
 bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
                               CettaExprLen supplied, Arena *arena,
                               PettaTypeCall **calls_out, uint32_t *count_out,
@@ -4229,14 +4280,19 @@ bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
         }
         family = &temporary;
     }
+    bool complete_call = false;
+    bool ok = petta_program_type_family_complete(
+        program, space, family, supplied, entry != NULL, &complete_call);
     uint32_t count = 0u;
-    for (uint32_t i = 0u; i < family->count; i++)
-        count += supplied <= family->calls[i].arity;
+    for (uint32_t i = 0u; ok && i < family->count; i++)
+        count += complete_call ? supplied == family->calls[i].arity
+                               : supplied <= family->calls[i].arity;
     PettaTypeCall *calls = count ? calloc(count, sizeof(*calls)) : NULL;
-    bool ok = !count || calls;
+    ok = ok && (!count || calls);
     uint32_t next = 0u;
     for (uint32_t i = 0u; ok && i < family->count; i++) {
-        if (supplied <= family->calls[i].arity)
+        if (complete_call ? supplied == family->calls[i].arity
+                          : supplied <= family->calls[i].arity)
             ok = petta_type_call_instantiate(arena, &family->calls[i], &calls[next++]);
     }
     ok = ok && space_program_token_matches_live_space(token, space);

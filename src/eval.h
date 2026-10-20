@@ -400,7 +400,7 @@ bool cetta_prime_open_code_head(SymbolId head);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
-bool eval_current_uses_rust_he_compat_semantics(void);
+bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));

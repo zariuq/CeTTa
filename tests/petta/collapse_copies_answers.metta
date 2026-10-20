@@ -27,3 +27,13 @@
 
 ; A variable bound before the collection is copied with its value.
 !(test (let $y 1 (collapse (superpose ((q $y) (q $y))))) ((q 1) (q 1)))
+
+; Equal answers stay two occurrences.
+!(test (collapse (superpose (A A))) (A A))
+
+; Error-shaped answers are collected as data, quoted or not.
+!(test (collapse (superpose ((Error marker text) A))) ((Error marker text) A))
+!(test (collapse (superpose ((quote (Error marker text)) A))) ((Error marker text) A))
+
+; A string spelled like a variable is not copied as one.
+!(test (collapse (superpose ("$x" "$x"))) ("$x" "$x"))

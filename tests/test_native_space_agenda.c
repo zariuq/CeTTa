@@ -401,12 +401,18 @@ static void partial_match_authority(Arena *arena,Bindings *env) {
         CettaNativeCostLedger meter;cetta_native_cost_init(&meter);
         CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&meter,37u);
         CHECK(cetta_space_agenda_match_run(match,7u));
-        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==7u);
+        /* A grant counts matcher steps. Entering a pair is a node; following
+         * a bound variable (each repeated $x after the first) is a step that
+         * is not a node, as a whole alias chain is one node. The seven steps
+         * leave the 98-field row unfinished and pay at most seven nodes. */
+        const uint64_t paid=meter.total.counts[CETTA_COST_MATCH_NODE];
+        CHECK(match->decision==CETTA_MATCH_CURSOR_PROGRESS);
+        CHECK(paid>0u && paid<=7u);
         if(install) {
             CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PROGRESS);
             CHECK(cetta_space_agenda_match_capture(a)==match);
         }
-        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==7u);
+        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==paid);
         CettaStorageCensus census={0};cetta_space_agenda_storage(a,&census);
         cetta_storage_finish(&census);
         CHECK(!census.incomplete && !census.overflow && census.bytes>0u);
@@ -416,7 +422,7 @@ static void partial_match_authority(Arena *arena,Bindings *env) {
         for(unsigned i=0u;i<2u;i++) {
             cetta_space_agenda_resume(a);
             CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PENDING);
-            CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==7u);
+            CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==paid);
         }
         CHECK(space_length64(&s)==3u && space_contains_exact(&s,row));
         CHECK(!space_contains_exact(&s,parse(arena,"NeverPublished")));
@@ -849,11 +855,14 @@ static void borrowed_capture_restart(Arena *arena,Bindings *env) {
         CettaNativeCostLedger meter;cetta_native_cost_init(&meter);
         CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&meter,0u);
         CHECK(cetta_space_agenda_match_run(match,7u));
-        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==7u);
+        /* Seven matcher steps, as above: at most seven of them nodes. */
+        const uint64_t paid=meter.total.counts[CETTA_COST_MATCH_NODE];
+        CHECK(match->decision==CETTA_MATCH_CURSOR_PROGRESS);
+        CHECK(paid>0u && paid<=7u);
         CHECK(space_admit_atom(&space,arena,wide_row(arena,atom_symbol(arena,"B"))));
         CHECK(!cetta_space_agenda_match_capture(a));
         CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_RETRY);
-        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==7u);
+        CHECK(meter.total.counts[CETTA_COST_MATCH_NODE]==paid);
         CHECK(!a->matching && !a->snapshot_ready && !a->current_ready);
         CHECK(a->retries==1u);
         cetta_native_cost_scope_leave(&scope);cetta_native_cost_free(&meter);

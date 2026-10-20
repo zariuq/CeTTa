@@ -133,10 +133,13 @@ int main(int argc, char **argv) {
         snprintf(name, sizeof(name), "d%d", i);
         declared[i] = atom_symbol(&persistent, name);
     }
+    /* The guard mints fresh variables for the types it builds; the test's
+     * variables take their identities from the same allocator, so a built
+     * type never reuses one of them. */
     for (int i = 0; i < SUBJECT_VARS; i++)
-        subject_vars[i] = atom_var_with_id(&persistent, "x", 5000u + (VarId)i);
+        subject_vars[i] = atom_var_with_id(&persistent, "x", fresh_var_id());
     for (int i = 0; i < TYPE_VARS; i++)
-        type_vars[i] = atom_var_with_id(&persistent, "t", 6000u + (VarId)i);
+        type_vars[i] = atom_var_with_id(&persistent, "t", fresh_var_id());
     const char *type_names[8] = {"Nat", "Number", "String", "Bool", "%Undefined%",
                                  "Symbol", "Expression", "u0"};
     for (int i = 0; i < 8; i++)

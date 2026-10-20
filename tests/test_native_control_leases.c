@@ -3362,7 +3362,8 @@ static void pattern_root_case(unsigned which) {
     }
     OutcomeSet out;outcome_set_init(&out);
     bool refined=prime_pattern_refine_scrutinee(
-        &space,&arena,root,which==8u?&branch:&env,&pattern,1u,-1,&out);
+        &space,&arena,root,which==8u?&branch:&env,
+        CETTA_CALL_RESULT_COMPLETED_VALUE,&pattern,1u,-1,&out);
     if(which==4u || which==8u || which==11u) {
         assert(!refined && out.len==0u);
     } else {
@@ -3612,7 +3613,7 @@ static void binding_role_case(unsigned which) {
     } else if(which==9u) {
         Outcome seed;outcome_init(&seed);seed.atom=atom_int(&arena,7);
         seed.result_form=CETTA_CALL_RESULT_EXPRESSION;
-        eval_delayed_outcome_for_caller(&space,&arena,NULL,&seed,-1,true,&rows);
+        eval_delayed_outcome_for_caller(&space,&arena,NULL,NULL,&seed,-1,true,&rows);
         assert(rows.len==1u && rows.items[0].result_form==CETTA_CALL_RESULT_COMPLETED_VALUE);
         outcome_free_fields(&seed);
     } else if(which==10u) {

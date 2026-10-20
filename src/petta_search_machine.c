@@ -7271,13 +7271,8 @@ static bool petta_machine_collect_choice_heap(
         arena_accounted_live_bytes(&machine->heap);
     size_t before_tenured_bytes =
         arena_accounted_live_bytes(&machine->tenured);
-    /* A major collection also releases identities retained by dead promoted
-     * frames.  It releases the old generation too: every cursor that may
-     * borrow from it takes its copies first (petta_copy_supported_choice_atoms
-     * detaches open cursors from both generations; a prepared cursor's detach
-     * copies everything it borrows). */
     bool major = (before_tenured_bytes >= machine->tenured_major_after ||
-        machine->identity_major_requested) &&
+                  machine->identity_major_requested) &&
         petta_choice_major_heap_supported(machine);
 #if CETTA_SYMBOL_READ_COVERAGE
     if (major)
@@ -23493,8 +23488,9 @@ static bool petta_machine_start_collapse(
         return false;
     }
     /* Collapse consumes owned values and delayed goals, then discards each
-     * returned environment. Keep answer materialization and Prime resources,
-     * but omit the ordinary visible exports that this private owner ignores
+     * returned environment. Keep answer materialization and the answer's
+     * resource leases, but omit the environment this private owner ignores:
+     * its visible exports and its Prime occurrence
      * (Collapse.Publication.collect_mapReceipts). Externalized child work
      * keeps the full publication contract. */
     inner->impl->discard_visible_bindings =
@@ -38398,7 +38394,12 @@ static bool petta_machine_emit(
         PETTA_ATOM_COPY_ANSWER, copies);
     if (!promoted)
         goto fail_exports;
-    if (bindings_prime_present(current)) {
+    /* A consumer that discards the returned environment (collapse) reads no
+     * Prime occurrence either: copying its Need world into the answer arena
+     * would be wasted work, and a parent's nursery that has an older
+     * generation cannot own Need storage, which made a collection's timing
+     * refuse the answer. */
+    if (bindings_prime_present(current) && !machine->discard_visible_bindings) {
         bindings_prime_assign(environment, current);
         Arena *occurrence_owner = machine->host.return_occurrence_owner
             ? machine->host.return_occurrence_owner(

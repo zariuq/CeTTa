@@ -83,7 +83,6 @@
 #define LANGDEF_DEFAULT_REPLAY_DEPTH 4096u
 #define LANGDEF_DEFAULT_RESULT_LIMIT 65536u
 #define LANGDEF_DEFAULT_INCLUDE_DEPTH 4096u
-#define LANGDEF_DEFAULT_EQUATION_CONTINUATIONS 65536u
 #define LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS UINT64_C(100000000)
 #define LANGDEF_GENERATED_PROOF_GOAL_DEPTH UINT32_MAX
 
@@ -7933,11 +7932,12 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         CettaTptpReaderV1 *resource;
         const char *snapshot_path;
         const char *profile;
+        char installed_path[PATH_MAX];
         uint64_t id;
 
-        if (nargs != 1u)
+        if (nargs != 1u && nargs != 2u)
             return langdef_error(
-                arena, head, "tptp reader open expects one profile");
+                arena, head, "tptp reader open expects a profile and optional snapshot path");
         if (atom_is_symbol(args[0], "strict")) {
             snapshot_path = CETTA_TPTP_OFFICIAL_SNAPSHOT_PATH_V1;
             profile = "strict";
@@ -7949,6 +7949,18 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
             return langdef_return(
                 arena, langdef_expr(
                     arena, "TPTP:UnknownReaderProfile", unknown, 1u));
+        }
+        if (nargs == 2u && !cetta_langdef_text_arg(args[1], &snapshot_path))
+            return langdef_error(
+                arena, head, "tptp reader snapshot expects a path");
+        if (nargs == 1u) {
+            if (!ctx->root_dir[0])
+                return langdef_error(arena, head, "runtime root is not established");
+            int written = snprintf(installed_path, sizeof(installed_path),
+                                   "%s/%s", ctx->root_dir, snapshot_path);
+            if (written < 0 || (size_t)written >= sizeof(installed_path))
+                return langdef_error(arena, head, "tptp reader snapshot path is too long");
+            snapshot_path = installed_path;
         }
         resource = tptp_reader_resource_load_bound(
             snapshot_path, profile, error, sizeof(error));
@@ -8974,8 +8986,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                     : cetta_deterministic_equation_plan_v1_run;
         if (!execute(
                 resource, call, langdef_deterministic_equation_primitive,
-                NULL, arena, LANGDEF_DEFAULT_EQUATION_CONTINUATIONS,
-                UINT64_C(100000000),
+                NULL, arena, 0u, 0u,
                 &result, &status, error, sizeof(error)))
             return langdef_error(
                 arena, head,
@@ -8985,10 +8996,8 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
     }
 
     if (atom_is_symbol(head, "__cetta_lib_deterministic_equations_run_allowance")) {
-        /* Test-scoped sibling of the ordinary deterministic run: the caller
-         * passes an explicit work allowance so oracle comparisons can run
-         * witnesses the fixed production budget cannot. Production uses the
-         * default run; this entry changes no default limit. */
+        /* A caller-selected work allowance. The evaluator owns a growable
+         * continuation stack; ordinary calls impose no implicit ceiling. */
         uint64_t id;
         uint64_t allowance;
         CettaDeterministicEquationPlanV1 *resource;
@@ -9016,7 +9025,7 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
                 error[0] ? error : "invalid deterministic call envelope");
         if (!cetta_deterministic_equation_plan_v1_run(
                 resource, call, langdef_deterministic_equation_primitive,
-                NULL, arena, LANGDEF_DEFAULT_EQUATION_CONTINUATIONS,
+                NULL, arena, 0u,
                 allowance,
                 &result, &status, error, sizeof(error)))
             return langdef_error(

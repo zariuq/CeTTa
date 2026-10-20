@@ -1,0 +1,7 @@
+[(W (Ret (VConst one)))]
+[(W (Ret (VClo Nil (Return (Const one)))))]
+[(W (Ret (VConst one)))]
+[(W (Ret (VConst one)))]
+[(W (Thunk (Return (Const one))))]
+[(W (Thunk (Return (Const one))))]
+[(W (Thunk (Return (Const one))))]

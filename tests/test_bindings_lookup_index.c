@@ -555,7 +555,9 @@ static bool frame_state_slots_are(const Bindings *bindings, uint32_t epoch,
     }
     BindingsFrameSlotStateView unchanged = {.source_id = UINT64_MAX};
     BindingsFrameStateView wrong_generation = view;
-    wrong_generation.ref.identity ^= UINT32_C(1) << CETTA_FRAME_HANDLE_BITS;
+    /* The lowest generation bit of a class-0 identity, above its 20 handle
+     * bits (the FrameIdentity layout). */
+    wrong_generation.ref.identity ^= UINT32_C(1) << 20;
     return !bindings_frame_state_read_slot(&view, 3u, &unchanged) &&
         unchanged.source_id == UINT64_MAX &&
         !bindings_frame_state_read_slot(&wrong_generation, 0u, &unchanged) &&

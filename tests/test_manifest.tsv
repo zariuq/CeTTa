@@ -482,9 +482,11 @@ tests/test_he_error_before_syntax_fault.metta	he	metta	extended	main	native	test
 tests/test_he_exact_index_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frame_schema_merge.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_frontier_algebra_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_host_return_provenance.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_he_joint_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_malformed.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_let_star_prepared.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_let_step.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_he_library_collections.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_case.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_machine_closed_answers.metta	he	metta	extended	main	native	test	golden	-
@@ -499,6 +501,7 @@ tests/test_he_path_index_open_rows.metta	he	metta	extended	main	native	test	gold
 tests/test_he_path_index_swap_removal.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_program_rule_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_raise_completion.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_raw_case_root.metta	he	metta	extended	main	native	test	diagnostic	diagnostic witness without golden oracle
 tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_relay_delivery.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_return_contract_correlation.metta	he	metta	extended	main	native	test	golden	-

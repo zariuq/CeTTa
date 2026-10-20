@@ -177,7 +177,10 @@ static bool he_canonical_enabled(void) {
         const char *setting = getenv("CETTA_HE_CANONICAL_EXECUTION");
         enabled = !setting || strcmp(setting, "1") == 0;
     }
-    return enabled && eval_current_language_id() == CETTA_LANGUAGE_HE;
+    /* The optional unbounded implementation switch cannot disable the
+     * machine that enforces an active bounded observation's effect policy. */
+    bool bounded = g_he_canonical_driver && g_he_canonical_driver->answer_limit;
+    return (enabled || bounded) && eval_current_language_id() == CETTA_LANGUAGE_HE;
 }
 
 /* ── Bounded observation: lazy selection ─────────────────────────────────
@@ -198,6 +201,7 @@ static bool he_canonical_enabled(void) {
 typedef enum {
     HE_STREAM_PASS,
     HE_STREAM_INVOKE,
+    HE_STREAM_RAW_RETURN,
     HE_STREAM_FILTER,
     HE_STREAM_EVALUATE,
 } HeStreamRule;
@@ -225,7 +229,7 @@ static OutcomeSet *he_canonical_stream_set(HeCanonicalFrame *frame,
         *rule = HE_STREAM_PASS;
         return frame->phase ? &frame->child : NULL;
     case HE_CANONICAL_RESULT:
-        *rule = HE_STREAM_PASS;
+        *rule = frame->selected ? HE_STREAM_RAW_RETURN : HE_STREAM_PASS;
         return frame->phase == 1u ? &frame->child : NULL;
     case HE_CANONICAL_CONTROL:
         *rule = HE_STREAM_INVOKE;
@@ -474,13 +478,13 @@ static void he_canonical_free_frames(HeCanonicalDriver *driver) {
 
 static inline __attribute__((always_inline)) void he_canonical_publish_one(
     HeCanonicalFrame *frame, Outcome *out, bool invocation) {
+    /* The call returns to its caller here: Rust's return stage keeps the
+     * caller's variables. */
+    if (invocation && frame->atom &&
+        !he_return_retain_invocation_outcome(frame->arena, frame->atom,
+                                             &frame->env, out))
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
     Atom *value = outcome_preview_atom(out);
-    if (invocation && he_not_reducible(value)) {
-        outcome_set_add_prefixed(frame->arena, frame->target,
-            frame->atom, &out->env, &frame->env,
-            frame->preserve_bindings);
-        return;
-    }
     /* The callee's bindings reach the caller only through the call, its
      * expected type (a delivery's owner's too) and the answer: keep what
      * those, and the answer's delayed goals, reach, then merge with the
@@ -516,6 +520,17 @@ static inline __attribute__((always_inline)) void he_canonical_publish_one(
         bindings_free(&projected.env);
 }
 
+static void he_canonical_publish_raw_return(HeCanonicalFrame *frame, Outcome *out) {
+    if (frame->atom &&
+        !he_return_retain_invocation_outcome(frame->arena, frame->atom,
+                                             NULL, out))
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    Atom *value = outcome_atom_materialize(frame->arena, out);
+    outcome_set_add_prefixed(frame->arena, frame->target,
+        he_call_return_atom(frame->atom, value), &out->env,
+        NULL, frame->preserve_bindings);
+}
+
 /* Retire only input roots whose consumer has finished. CALL phase one is a
  * non-invocation relay: publication reads its answers, not its original call,
  * type or prefix. A typed dispatch frontend can do the same after its sole
@@ -535,13 +550,26 @@ static void he_canonical_publish(HeCanonicalFrame *frame,
         he_canonical_publish_one(frame, &source->items[i], invocation);
 }
 
+/* An answer equal to the atom evaluated is a value (Rust HE's
+ * check_alternatives); the mark goes on a copy. */
+static Atom *he_canonical_evaluated_answer(HeCanonicalFrame *frame,
+                                           Atom *answer) {
+    if (answer && answer->kind == ATOM_EXPR &&
+        !atom_is_he_evaluated(answer) &&
+        !atom_is_legacy_empty_or_error(answer) &&
+        atom_eq(answer, frame->atom))
+        return atom_he_evaluated_copy(frame->arena, answer);
+    return answer;
+}
+
 static inline __attribute__((always_inline)) void
 he_canonical_publish_evaluated(HeCanonicalFrame *frame, Outcome *out) {
     Bindings empty;
     bindings_init(&empty);
     outcome_set_add(frame->target,
-        outcome_atom_materialize_traced(frame->arena, out,
-            CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL),
+        he_canonical_evaluated_answer(frame,
+            outcome_atom_materialize_traced(frame->arena, out,
+                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL)),
         &empty);
 }
 
@@ -600,8 +628,9 @@ static void he_canonical_finish_visible(HeCanonicalFrame *frame,
     bindings_init(&empty);
     for (CettaCount i = 0u; i < frame->child.len; i++)
         outcome_set_add(frame->target,
-            outcome_atom_materialize_traced(a, &frame->child.items[i],
-                CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL),
+            he_canonical_evaluated_answer(frame,
+                outcome_atom_materialize_traced(a, &frame->child.items[i],
+                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_TOP_LEVEL)),
             &empty);
 }
 
@@ -824,6 +853,8 @@ static void he_canonical_stream(HeCanonicalDriver *driver,
             }
             if (rule == HE_STREAM_EVALUATE)
                 he_canonical_publish_evaluated(frame, out);
+            else if (rule == HE_STREAM_RAW_RETURN)
+                he_canonical_publish_raw_return(frame, out);
             else
                 he_canonical_publish_one(frame, out,
                                          rule == HE_STREAM_INVOKE);
@@ -873,7 +904,7 @@ static void he_canonical_instruction_push(HeCanonicalFrame *parent,
     bool allow_tail, OutcomeSet *target) {
     HeCanonicalFrame *frame = he_canonical_push(HE_CANONICAL_INSTRUCTION,
         parent->space, parent->arena, atom, type, parent->fuel,
-        env, parent->preserve_bindings, target);
+        env, public_instruction ? parent->preserve_bindings : true, target);
     if (frame) {
         frame->typed = public_instruction;
         frame->selected = allow_tail;
@@ -1052,38 +1083,92 @@ static void he_canonical_resume_tuple(HeCanonicalFrame *frame) {
     he_canonical_pop();
 }
 
+/* Mark a metta-level frame's answers: its own buffer, or the range its
+ * children delivered into the run's buffer. */
+static void he_frame_mark_answers(HeCanonicalFrame *frame, OutcomeSet *own) {
+    if (frame->relay_redirected && frame->delivery)
+        he_mark_answers_of(frame->arena, frame->atom, frame->delivery->set,
+            frame->range_start);
+    else
+        he_mark_answers_of(frame->arena, frame->atom, own, 0u);
+}
+
+static void he_answer_evaluated(HeCanonicalFrame *frame, Atom *value,
+    Atom *type, bool check, const Bindings *env, OutcomeSet *sink) {
+    he_answer_evaluated_into(frame->space, frame->arena, value, type, check,
+        frame->preserve_bindings, env, sink);
+}
+
 static void he_canonical_result_push(HeCanonicalFrame *parent,
     Atom *type, Outcome *seed, OutcomeSet *target) {
     HeCanonicalFrame *frame = he_canonical_push(HE_CANONICAL_RESULT,
-        parent->space, parent->arena, NULL, type, parent->fuel,
+        parent->space, parent->arena, parent->atom, type, parent->fuel,
         NULL, parent->preserve_bindings, target);
     if (frame)
         outcome_set_add_existing(&frame->work, seed);
 }
 
+/* Transfer the raw frontier to an owned return sequencer. Its saved index
+ * advances before each child, so a pause cannot repeat a producer read. */
+static bool he_canonical_results_schedule(Space *s, Arena *a,
+    Atom *invocation, Atom *declared_type, int fuel, bool preserve_bindings,
+    OutcomeSet *raw, OutcomeSet *target) {
+    if (!g_he_canonical_driver || !he_canonical_enabled())
+        return false;
+    HeCanonicalFrame *result = he_canonical_push(HE_CANONICAL_RESULT,
+        s, a, invocation, declared_type, fuel, NULL, preserve_bindings, target);
+    if (result) {
+        for (CettaCount i = 0u; i < raw->len; i++)
+            outcome_set_add_existing_move(&result->work, &raw->items[i]);
+        result->phase = 2u;
+    }
+    return true;
+}
+
 static void he_canonical_resume_result(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     if (frame->phase) {
-        he_relay_finish(frame, &frame->child, false, false);
+        if (frame->selected) {
+            /* A function delimiter's results are raw at this invocation;
+             * its retained original call is the post-argument call. */
+            for (CettaCount i = frame->streamed; i < frame->child.len; i++)
+                he_canonical_publish_raw_return(frame, &frame->child.items[i]);
+        } else {
+            he_relay_finish(frame, &frame->child, false, false);
+        }
         he_canonical_pop();
         return;
     }
     Outcome *seed = &frame->work.items[0];
     Atom *preview = outcome_preview_atom(seed);
-    if (he_not_reducible(preview) || atom_is_legacy_empty_sentinel(preview) ||
+    Atom *candidate = outcome_atom_materialize(a, seed);
+    if (he_not_reducible(candidate)) {
+        outcome_set_add_prefixed(a, frame->target,
+            he_stuck_call_value(a, he_call_return_atom(frame->atom, candidate)),
+            &seed->env, NULL, frame->preserve_bindings);
+        he_canonical_pop();
+        return;
+    }
+    if (atom_is_legacy_empty_sentinel(preview) ||
         outcome_atom_is_error(a, seed)) {
         he_canonical_publish(frame, &frame->work, false);
         he_canonical_pop();
         return;
     }
-    if (atom_head_symbol_id(preview) == g_builtin_syms.function) {
+    if (atom_head_symbol_id(candidate) == g_builtin_syms.function) {
         frame->phase = 1u;
-        he_canonical_instruction_push(frame, outcome_atom_materialize(a, seed),
-            frame->type, &seed->env, false, false,
-            he_relay_sink(frame, &frame->child));
+        frame->selected = true;
+        he_canonical_instruction_push(frame, candidate,
+            frame->type, &seed->env, false, false, &frame->child);
         return;
     }
-    Atom *candidate = outcome_atom_materialize(a, seed);
+    if (atom_is_he_evaluated(candidate)) {
+        he_answer_evaluated(frame, candidate, frame->type, true, &seed->env,
+            &frame->child);
+        he_canonical_publish(frame, &frame->child, false);
+        he_canonical_pop();
+        return;
+    }
     if (preview->kind != ATOM_EXPR || !preview->expr.len ||
         (!prime_need_atom_has_observable_ref(candidate) &&
          atom_is_constructor_normal_form(frame->space, a, candidate, frame->fuel))) {
@@ -1095,6 +1180,10 @@ static void he_canonical_resume_result(HeCanonicalFrame *frame) {
             return;
         }
         if (!defer) {
+            if (preview->kind == ATOM_EXPR && preview->expr.len &&
+                (!frame->type || eval_atom_type_demand(a, candidate,
+                    frame->type) == HE_TYPE_INTERPRET))
+                he_mark_answers_of(a, candidate, &frame->work, 0u);
             he_canonical_publish(frame, &frame->work, false);
             he_canonical_pop();
             return;
@@ -1110,6 +1199,7 @@ static void he_canonical_resume_result(HeCanonicalFrame *frame) {
 static void he_canonical_resume_bind(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     if (frame->phase) {
+        he_frame_mark_answers(frame, &frame->child);
         he_relay_finish(frame, &frame->child, false, true);
         he_canonical_pop();
         return;
@@ -1145,15 +1235,24 @@ static void he_canonical_resume_bind(HeCanonicalFrame *frame) {
     Atom *type = frame->type ? frame->type : atom_undefined_type(a);
     HeTypeDemand demand = frame->typed
         ? eval_atom_type_demand(a, frame->atom, type) : HE_TYPE_INTERPRET;
-    if (atom_is_legacy_empty_or_error(frame->atom) || demand == HE_TYPE_KEEP ||
-        frame->atom->kind == ATOM_VAR ||
-        (!frame->typed && atom_eval_is_immediate_value(frame->atom, frame->fuel)) ||
+    if (atom_is_he_evaluated(frame->atom)) {
+        he_answer_evaluated(frame, frame->atom, frame->typed ? type : NULL,
+            frame->typed, &frame->env, frame->target);
+        he_canonical_pop();
+        return;
+    }
+    bool kept = atom_is_legacy_empty_or_error(frame->atom) ||
+        demand == HE_TYPE_KEEP || frame->atom->kind == ATOM_VAR ||
+        (!frame->typed && atom_eval_is_immediate_value(frame->atom, frame->fuel));
+    if (kept ||
         (atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
          eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel)) ||
         (demand == HE_TYPE_INTERPRET &&
          he_value_certified(frame->space, frame->fuel, frame->atom,
              frame->typed ? type : NULL))) {
-        outcome_set_add(frame->target, frame->atom, &frame->env);
+        outcome_set_add(frame->target,
+            kept ? frame->atom : he_answer_as_value(a, frame->atom),
+            &frame->env);
         he_canonical_pop();
     } else if (demand == HE_TYPE_CAST) {
         type_cast_outcomes(frame->space, a, frame->atom, type,
@@ -1199,13 +1298,21 @@ static void he_canonical_resume_evaluate(HeCanonicalFrame *frame) {
     frame->atom = materialize_runtime_token(frame->space, a, frame->atom);
     Atom *type = frame->type ? frame->type : atom_undefined_type(a);
     HeTypeDemand demand = eval_atom_type_demand(a, frame->atom, type);
-    if (atom_is_legacy_empty_or_error(frame->atom) || demand == HE_TYPE_KEEP ||
-        frame->atom->kind == ATOM_VAR ||
+    if (atom_is_he_evaluated(frame->atom)) {
+        he_answer_evaluated(frame, frame->atom, type, true, &empty,
+            frame->target);
+        he_canonical_pop();
+        return;
+    }
+    bool kept = atom_is_legacy_empty_or_error(frame->atom) ||
+        demand == HE_TYPE_KEEP || frame->atom->kind == ATOM_VAR;
+    if (kept ||
         (atom_is_symbol_id(type, g_builtin_syms.undefined_type) &&
          eval_has_normal_constructor_value(frame->space, a, frame->atom, frame->fuel)) ||
         (demand == HE_TYPE_INTERPRET &&
          he_value_certified(frame->space, frame->fuel, frame->atom, type))) {
-        outcome_set_add(frame->target, frame->atom, &empty);
+        outcome_set_add(frame->target,
+            kept ? frame->atom : he_answer_as_value(a, frame->atom), &empty);
         he_canonical_pop();
     } else if (demand == HE_TYPE_CAST) {
         ResultSet cast;
@@ -1232,6 +1339,11 @@ static void he_canonical_resume_caller(HeCanonicalFrame *frame) {
     }
     frame->phase = 1u;
     Atom *applied = bindings_apply_if_vars(&frame->env, a, frame->atom);
+    if (atom_is_he_evaluated(applied)) {
+        he_answer_evaluated(frame, applied, frame->type, true, &frame->env,
+            he_relay_sink(frame, &frame->child));
+        return;
+    }
     bool direct = !frame->type || atom_is_symbol_id(frame->type, g_builtin_syms.undefined_type);
     if (!frame->preserve_bindings && bindings_logically_empty(&frame->env) && direct) {
         CettaCallOutcome producer = cetta_call_value(NULL);
@@ -1245,6 +1357,8 @@ static void he_canonical_resume_caller(HeCanonicalFrame *frame) {
                 frame->type, &frame->env, he_relay_sink(frame, &frame->child));
             return;
         }
+        if (value && producer.result_form == CETTA_CALL_RESULT_EXPRESSION)
+            value = he_call_return_atom(applied, value);
         if (value && (value->kind != ATOM_EXPR || atom_eq(value, applied))) {
             if (!atom_is_legacy_empty_sentinel(value))
                 outcome_set_add(he_relay_sink(frame, &frame->child),
@@ -1435,13 +1549,16 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
             frame->observation = eval_observation_demand_enter(
                 (CettaObservationDemand){ .completion = CETTA_OBSERVATION_COMPLETE_BAG },
                 frame->live[0]);
-        bool atoms_only = observation || head == g_builtin_syms.case_text ||
+        bool capture_source = head == g_builtin_syms.case_text;
+        bool atoms_only = observation ||
             head == g_builtin_syms.switch_text || head == g_builtin_syms.assert_text ||
             head == g_builtin_syms.nop || head == g_builtin_syms.bind_bang;
         HeCanonicalFrame *source = he_canonical_push(
-            atoms_only ? HE_CANONICAL_EVALUATE : HE_CANONICAL_BIND,
+            capture_source ? HE_CANONICAL_CALLER :
+                (atoms_only ? HE_CANONICAL_EVALUATE : HE_CANONICAL_BIND),
             frame->space, a,
-            frame->live[0], NULL, frame->fuel, NULL, true, &frame->child);
+            frame->live[0], NULL, frame->fuel,
+            capture_source ? &frame->env : NULL, true, &frame->child);
 #ifdef CETTA_HE_LAZY_MUTATION_SOURCE_WHOLE
         /* Fault injection: the source is evaluated in full first. */
         if (source && false) {
@@ -1499,7 +1616,11 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
         he_canonical_pop();
         return;
     }
-    if (head == g_builtin_syms.case_text && !frame->child.len) {
+    if (head == g_builtin_syms.case_text && !source_open && frame->phase == 1u) {
+        he_case_capture_complete(a, &frame->child, &frame->index);
+        frame->phase = 2u;
+    }
+    if (head == g_builtin_syms.case_text && !source_open && !frame->child.len) {
         Bindings empty;
         bindings_init(&empty);
         outcome_set_add(&frame->child, atom_empty(a), &empty);
@@ -1513,6 +1634,11 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
     __attribute__((cleanup(he_canonical_consumed_source_release)))
     HeCanonicalConsumedSource consumed = {frame, frame->index};
     Atom *value = outcome_atom_materialize(a, source);
+    if (head == g_builtin_syms.case_text && source_open &&
+        atom_is_legacy_empty_sentinel(value)) {
+        frame->index++;
+        return;
+    }
     /* While the source runs, no value is known to be its only one. */
     bool single = !source_open && frame->child.len == 1u;
     if (head == g_builtin_syms.let && frame->phase == 1u) {
@@ -1545,16 +1671,21 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
             if (branch->kind != ATOM_EXPR || branch->expr.len != 2u)
                 continue;
             BindingsBuilder matched;
-            if (!bindings_builder_init(&matched, NULL))
+            bool capture_source = head == g_builtin_syms.case_text;
+            if (!bindings_builder_init(&matched,
+                    capture_source ? &frame->env : NULL))
                 return;
-            bool match = eval_case_match_builder(branch->expr.elems[0], value, &matched, a);
+            bool match = capture_source
+                ? he_case_match_source_builder(branch->expr.elems[0], value,
+                    &source->env, &matched, a)
+                : eval_case_match_builder(branch->expr.elems[0], value, &matched, a);
             if (match) {
                 const Bindings *env = bindings_builder_bindings(&matched);
                 Atom *body = bindings_apply_if_vars(env, a, branch->expr.elems[1]);
                 Bindings empty;
                 bindings_init(&empty);
                 he_canonical_control_body(frame, body,
-                    single && !frame->preserve_bindings ? &empty : env,
+                    single && !frame->preserve_bindings && !capture_source ? &empty : env,
                     single, single ? frame->type : NULL);
             }
             bindings_builder_free(&matched);
@@ -1662,6 +1793,12 @@ static void he_canonical_resume_control_in(HeCanonicalFrame *frame,
     bool admitted = pattern->kind == ATOM_VAR
         ? bindings_builder_add_var_fresh(&matched, pattern, value)
         : match_atoms_builder(value, pattern, &matched, a);
+    if (admitted && pattern->kind != ATOM_VAR &&
+        !he_orient_let_value(a, value, &matched)) {
+        bindings_builder_free(&matched);
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return;
+    }
     if (admitted) {
         Bindings visible;
         if (bindings_project_body_visible_env(a, body,
@@ -1828,6 +1965,9 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     Atom *return_type = frame->selected ? frame->live[1] : frame->type;
     if (return_type)
         return_type = bindings_apply_if_vars(env, a, return_type);
+    if (he_dispatch_host_read_outcomes(frame->space, a, source, return_type,
+            frame->fuel, env, frame->preserve_bindings, sink))
+        return;
     /* Curried arrows: a computed partial application applied further is
      * the call of its head with every argument, read afresh. */
     if (source->kind == ATOM_EXPR && source->expr.len > 1u &&
@@ -1914,7 +2054,17 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
             if (handled && produced.kind == CETTA_CALL_INTERRUPTED)
                 return;
             if (value) {
-                if (produced.result_form != CETTA_CALL_RESULT_EXPRESSION ||
+                if (produced.result_form == CETTA_CALL_RESULT_EXPRESSION &&
+                    he_not_reducible(value)) {
+                    outcome_set_add(sink, he_call_return_atom(source, value), env);
+                } else if (produced.result_form == CETTA_CALL_RESULT_EXPRESSION &&
+                    atom_head_symbol_id(value) == g_builtin_syms.function) {
+                    HeCanonicalFrame *returned = he_canonical_push(HE_CANONICAL_RESULT,
+                        frame->space, a, source, return_type, frame->fuel,
+                        NULL, frame->preserve_bindings, sink);
+                    if (returned)
+                        outcome_set_add(&returned->work, value, env);
+                } else if (produced.result_form != CETTA_CALL_RESULT_EXPRESSION ||
                     eval_grounded_result_is_final())
                     emit_completed_native_call(frame->space, a, produced,
                         value, return_type, env, sink);
@@ -1940,28 +2090,32 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
     if (!matched) {
         /* Its own value, answered with the bindings it was asked under: no
          * argument check or argument added one. */
-        if (frame->selected && frame->typed && source == frame->atom &&
-            bindings_eq(&call->env, &frame->env))
-            he_value_certify(frame->space, a, frame->fuel, source);
+        if (frame->selected && frame->typed &&
+            (source == frame->atom ||
+             he_value_same_value(source, frame->atom)) &&
+            bindings_eq(&call->env, &frame->env)) {
+            he_value_certify(frame->space, a, frame->fuel, frame->atom);
+            /* A certified source is its own value with its parts: answering
+             * it keeps the sharing it was built with, where the rebuilt
+             * call holds a fresh copy of each part. */
+            if (source != frame->atom && call->kind == CETTA_OUTCOME_INLINE &&
+                !variant_instance_present(&call->variant) &&
+                he_value_find(frame->atom)) {
+                call->atom = frame->atom;
+                call->materialized_atom = frame->atom;
+            }
+        }
+        he_stuck_call_outcome(a, call);
         outcome_set_add_existing(sink, call);
         outcome_set_free(&pending);
         return;
     }
     /* An equation whose body is NotReducible leaves this call unreduced:
-     * that alternative's value is the call, as when no equation applies,
-     * and the marker never runs as a body. */
-    CettaCount reducing = 0u;
-    for (CettaCount i = 0u; i < pending.len; i++) {
-        if (he_not_reducible(outcome_preview_atom(&pending.items[i])))
-            outcome_set_add(sink, source, &pending.items[i].env);
-        else
-            reducing++;
-    }
-    if (!reducing) {
-        outcome_set_free(&pending);
-        return;
-    }
-    if (frame->typed && pending.len == 1u) {
+     * the return sequencer answers that alternative with the call, as
+     * when no equation applies, and the marker never runs as a body. */
+    if (frame->typed && pending.len == 1u &&
+        !he_call_result_needs_invocation(
+            outcome_atom_materialize(a, &pending.items[0]))) {
         SearchContext context;
         if (search_context_init(&context, env, NULL)) {
             Atom *body = NULL, *type = NULL;
@@ -1981,15 +2135,8 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
         return;
     }
     /* Save this complete producer frontier in a child return sequencer. */
-    HeCanonicalFrame *result = he_canonical_push(HE_CANONICAL_RESULT,
-        frame->space, a, NULL, return_type, frame->fuel, NULL,
-        frame->preserve_bindings, sink);
-    if (result) {
-        for (CettaCount i = 0u; i < pending.len; i++)
-            if (!he_not_reducible(outcome_preview_atom(&pending.items[i])))
-                outcome_set_add_existing_move(&result->work, &pending.items[i]);
-        result->phase = 2u;
-    }
+    he_canonical_results_schedule(frame->space, a, source, return_type,
+        frame->fuel, frame->preserve_bindings, &pending, sink);
     outcome_set_free(&pending);
 }
 
@@ -2681,6 +2828,20 @@ static inline __attribute__((always_inline)) void he_canonical_resume_match_kern
     }
 }
 
+/* The call a frame's work belongs to: the nearest frame below it that
+ * holds an expression other than a minimal instruction, since an
+ * instruction is a step of the call that runs it.  NULL at the top level. */
+static Atom *he_canonical_enclosing_call(const HeCanonicalFrame *frame) {
+    for (const CettaOwnedFrameLink *link = frame->link.next; link;
+         link = link->next) {
+        const HeCanonicalFrame *below = (const HeCanonicalFrame *)link;
+        if (below->atom && below->atom->kind == ATOM_EXPR &&
+            !he_minimal_instruction(below->atom))
+            return below->atom;
+    }
+    return NULL;
+}
+
 static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
     Arena *a = frame->arena;
     SymbolId head = atom_head_symbol_id(frame->atom);
@@ -2701,6 +2862,15 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
                     ? HE_INSTRUCTION_RAW : HE_INSTRUCTION_RUN,
                 frame->space, a, frame->atom, frame->fuel,
                 &frame->env, &frame->work);
+            if (active_profile_uses_rust_he_compat_semantics() &&
+                frame->instructions.top &&
+                head == g_builtin_syms.function) {
+                HeCanonicalFrame *parent = (HeCanonicalFrame *)frame->link.next;
+                if (parent && parent->atom && parent->atom != frame->atom &&
+                    atom_head_symbol_id(parent->atom) != g_builtin_syms.function)
+                    ((HeInstructionFrame *)frame->instructions.top)->function_caller =
+                        parent->atom;
+            }
         }
         return;
     }
@@ -2712,8 +2882,8 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
             Outcome *source = &frame->child.items[frame->index++];
             Atom *value = outcome_atom_materialize(a, source);
             Atom *body = instantiate_template_variable_once(a,
-                expr_arg(frame->atom, 2), expr_arg(frame->atom, 1)->var_id,
-                value);
+                expr_arg(frame->atom, 2),
+                expr_arg(frame->atom, 1)->var_id, value);
             frame->phase = 2u;
             he_instruction_push(&frame->instructions, HE_INSTRUCTION_RUN,
                 frame->space, a, body, frame->fuel, &source->env, &frame->work);
@@ -2725,12 +2895,24 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
             he_instruction_resume(&frame->instructions);
             return;
         }
+        /* The instructions' answers return to the call they run in, and
+         * their bindings may be dropped from here on: Rust's return stage
+         * keeps that call's variables (apply_and_retain). */
+        if (!source_chain && active_profile_uses_rust_he_compat_semantics()) {
+            Atom *call = he_canonical_enclosing_call(frame);
+            for (CettaCount i = 0u; call && i < frame->work.len; i++)
+                if (!he_return_retain_invocation_outcome(a, call, NULL,
+                        &frame->work.items[i]))
+                    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        }
         frame->phase = source_chain ? 1u : 3u;
         return;
     }
+    bool raw_function_result = active_profile_uses_rust_he_compat_semantics() &&
+        head == g_builtin_syms.function;
     if (frame->phase == 3u) {
-        if (frame->typed && frame->selected && frame->work.len == 1u &&
-            !eval_unwinding()) {
+        if (!raw_function_result && frame->typed && frame->selected &&
+            frame->work.len == 1u && !eval_unwinding()) {
             Outcome *source = &frame->work.items[0];
             Atom *value = outcome_atom_materialize(a, source);
             if (value && !atom_is_legacy_empty_sentinel(value) &&
@@ -2754,6 +2936,23 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
             Atom *value = outcome_atom_materialize(a, source);
             if (!value || (frame->typed && atom_is_legacy_empty_sentinel(value)))
                 return;
+            if (raw_function_result) {
+                /* Errors, Empty, and NotReducible stay on this frame.
+                 * publish_raw_return still turns NotReducible into the
+                 * saved call. A public function is itself the call, so
+                 * its NotReducible answers this call. Any other returned
+                 * value is a caller step at this frame's type. */
+                if (frame->typed && he_not_reducible(value))
+                    outcome_set_add(&frame->paths, frame->atom, &source->env);
+                else if (atom_is_error(value) || he_not_reducible(value) ||
+                    atom_is_legacy_empty_sentinel(value))
+                    outcome_set_add(&frame->paths, value, &source->env);
+                else
+                    he_canonical_push(HE_CANONICAL_CALLER, frame->space, a,
+                        value, frame->type, frame->fuel, &source->env,
+                        frame->preserve_bindings, &frame->paths);
+                return;
+            }
             if (he_not_reducible(value)) {
                 if (frame->typed)
                     value = active_profile_uses_rust_he_compat_semantics() ||
@@ -2891,15 +3090,25 @@ static inline __attribute__((always_inline)) void he_canonical_resume(
         break;
     case HE_CANONICAL_CALL:
         if (frame->phase) {
+            he_frame_mark_answers(frame, &frame->child);
             he_relay_finish(frame, &frame->child, false, false);
             he_canonical_pop();
         } else {
             frame->phase = 1u;
             OutcomeSet *sink = he_relay_sink(frame, &frame->child);
+            if (atom_is_he_evaluated(frame->atom)) {
+                he_answer_evaluated(frame, frame->atom, frame->type, true,
+                    &frame->env, sink);
+                if (!g_he_canonical_driver->answer_limit)
+                    he_canonical_retire_input_roots(frame);
+                break;
+            }
             if (he_value_certified(frame->space, frame->fuel, frame->atom,
                     frame->type)) {
-                outcome_set_add(sink, frame->atom, &frame->env);
-                he_canonical_retire_input_roots(frame);
+                outcome_set_add(sink, he_answer_as_value(frame->arena,
+                    frame->atom), &frame->env);
+                if (!g_he_canonical_driver->answer_limit)
+                    he_canonical_retire_input_roots(frame);
                 break;
             }
             he_canonical_call(frame);
@@ -3446,7 +3655,7 @@ static bool he_canonical_bind_try(Space *s, Arena *a, Atom *type,
  * answers (see the notes on bounded observation). */
 static bool he_canonical_bounded_bind_try(Space *s, Arena *a, Atom *atom,
     int fuel, uint64_t limit, OutcomeSet *os) {
-    if (!he_canonical_enabled() || limit == 0u)
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE || limit == 0u)
         return false;
     he_canonical_run(HE_CANONICAL_BIND, s, a, atom, NULL, fuel, NULL,
         true, false, limit, os);

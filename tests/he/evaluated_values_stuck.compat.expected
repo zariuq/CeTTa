@@ -1,0 +1,5 @@
+[(fr a), (fr a)]
+[(wrap (fr a)), (wrap (fr a))]
+[(wrap (fr a)), (wrap (fr a)), (wrap (fr a)), (wrap (fr a))]
+[(wrap (fr a)), (wrap (fr a)), (wrap (fr a)), (wrap (fr a))]
+[(fr a), (fr a), (fr a), (fr a)]

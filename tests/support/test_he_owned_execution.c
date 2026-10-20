@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "grounded.h"
+#include "he_type_policy.h"
 #include "library.h"
 #include "parser.h"
 #include "symbol.h"
@@ -20,6 +21,7 @@ typedef struct {
 } Fixture;
 
 static unsigned checks;
+static const char *checking_case = "owned execution";
 static void fixture_eval(Fixture *f, const char *text);
 static void check(bool ok, const char *name) {
     if (!ok) {
@@ -46,7 +48,8 @@ static void fixture_add_source(Fixture *f, const char *source) {
     }
 }
 
-static void fixture_begin(Fixture *f, const char *source) {
+static void fixture_begin_profile(Fixture *f, const char *source,
+                                  const CettaProfile *profile) {
     memset(f, 0, sizeof(*f));
     arena_init(&f->source);
     arena_set_runtime_kind(&f->source, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
@@ -58,10 +61,13 @@ static void fixture_begin(Fixture *f, const char *source) {
         atom_space(&f->source, &f->space));
     f->library = calloc(1u, sizeof(*f->library));
     check(f->library != NULL, "library allocation");
-    cetta_eval_session_init(&f->library->session, CETTA_LANGUAGE_HE,
-        cetta_profile_he_extended());
+    cetta_eval_session_init(&f->library->session, CETTA_LANGUAGE_HE, profile);
     eval_set_library_context(f->library);
     fixture_add_source(f, source);
+}
+
+static void fixture_begin(Fixture *f, const char *source) {
+    fixture_begin_profile(f, source, cetta_profile_he_extended());
 }
 
 static void fixture_end(Fixture *f) {
@@ -128,8 +134,11 @@ static void render(const OutcomeSet *outcomes, Arena *arena,
         const char *text = atom_to_string(arena, value);
         int appended = snprintf(output + used, capacity - used, "%s%s",
             i ? "|" : "", text);
-        check(appended >= 0 && (size_t)appended < capacity - used,
-            "render capacity");
+        if (appended < 0 || (size_t)appended >= capacity - used) {
+            fprintf(stderr, "render overflow case %s after [%s] next [%s]\n",
+                checking_case, output, text ? text : "");
+            check(false, "render capacity");
+        }
         used += (size_t)appended;
     }
 }
@@ -139,7 +148,8 @@ static void expect(Fixture *f, CettaHeExecution *owner, const char *expected) {
     char output[32768];
     render(view.outcomes, &f->scratch, output, sizeof(output));
     if (strcmp(output, expected)) {
-        fprintf(stderr, "expected: %s\nactual: %s\n", expected, output);
+        fprintf(stderr, "case: %s\nexpected: %s\nactual: %s\n",
+            checking_case, expected, output);
         check(false, "exact ordered observations");
     }
     check(true, "exact ordered observations");
@@ -171,6 +181,40 @@ static const Case cases[] = {
     {"entered empty result", "(= (none) (empty))", "(none)", ""},
     {"minimal chain result", "(= (run) (function (chain (eval (+ 1 2)) $x (return $x))))",
         "(run)", "3"},
+    {"minimal chain local binder", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x A B refused) $x (return $x)))", "B"},
+    {"minimal chain renamed binder", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x A B refused) $y (return $y)))", "B"},
+    {"minimal chain prebound nested binder", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x A B refused) $r (chain C $x (return $x))))", "C"},
+    {"minimal chain aliased binder", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x $z B refused) $x (return $x)))", "B"},
+    {"minimal unify incoming conflict", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x A first refused) $r "
+        "(chain (unify $x B accepted refused) $s (return $s))))", "refused"},
+    {"minimal unify compatible incoming", "(: function (-> Atom Atom))",
+        "(function (chain (unify $x A first refused) $r "
+        "(chain (unify $x A accepted refused) $s (return (pair $x $s)))))", "(pair A accepted)"},
+    {"raw refusal restores evaluated call", "(= (decline $x) NotReducible)",
+        "(decline (+ 1 2))", "(decline 3)"},
+    {"duplicate raw refusal occurrences", "(= (decline $x) NotReducible) "
+        "(= (decline $x) NotReducible)",
+        "(decline 7)", "(decline 7)|(decline 7)"},
+    {"changed binding reaches refusal caller", "(= (decline A) NotReducible)",
+        "(let $r (decline $x) (pair $r $x))", "(pair (decline A) A)"},
+    {"function refusal retains selected call", "(= (decline $x) "
+        "(function (chain (unify $x A ok bad) $r (return NotReducible))))",
+        "(decline $x)", "(decline A)"},
+    {"minimal refusal stays protocol data", "(: function (-> Atom Atom)) "
+        "(= (decline $x) NotReducible)",
+        "(function (chain (eval (decline 7)) $r (return (pair $r raw))))",
+        "(pair NotReducible raw)"},
+    {"case keeps refused source bindings", "(= (decline A) NotReducible)",
+        "(case (decline $x) (((decline A) (pair $x yes))))", "(pair A yes)"},
+    {"case keeps ordinary source bindings", "(= (bind-a A) (val))",
+        "(case (bind-a $x) (((val) (pair $x yes))))", "(pair A yes)"},
+    {"case rejects conflicting captured branch", "(= (bind-a A) B)",
+        "(case (bind-a $x) (($x wrong) (B (pair $x right))))", "(pair A right)"},
     {"caller binding", "(= (same $x $x) ok)",
         "(let $v (same $a 2) ($a $v))", "(2 ok)"},
     {"typed constructor demand", "(: Box (-> Number Atom)) (= (step) (+ 1 2))",
@@ -191,6 +235,7 @@ static const Case cases[] = {
 static void prefix_and_interleave(void) {
     for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {
         const Case *test = &cases[c];
+        checking_case = test->name;
         Fixture f;
         fixture_begin(&f, test->source);
         CettaHeExecution *initial = begin(&f, test->query, CETTA_HE_ENTRY_EVALUATE);
@@ -223,6 +268,7 @@ static void prefix_and_interleave(void) {
         printf("PASS: %s at all %" PRIu64 " control prefixes\n", test->name, count + 1u);
         fixture_end(&f);
     }
+    checking_case = "owned execution";
 }
 
 static void collected_bindings(void) {
@@ -351,6 +397,271 @@ static void effect_prefixes(void) {
         fixture_end(&f);
     }
     printf("PASS: println!/change-state! at all %" PRIu64 " control prefixes\n", count + 1u);
+}
+
+static void nested_minimal_collapse_prefixes(void) {
+    checking_case = "nested minimal collapse";
+    const char *source = "(: function (-> Atom Atom)) "
+        "(= (saved A) token) (= (saved A) token) (= (saved B) token) "
+        "(= (saved ignored) Empty)";
+    const char *query =
+        "(function (chain (collapse-bind "
+        "(chain (metta (change-state! &cell (+ (get-state &cell) 1)) "
+        "%Undefined% &self) $effect (collapse-bind (eval (saved $x))))) $outer "
+        "(chain (superpose-bind $outer) $inner "
+        "(chain (superpose-bind $inner) $answer (return ($answer $x))))))";
+    const char *expected = "(token A)|(token A)|(token B)";
+    Fixture first;
+    fixture_begin(&first, source);
+    fixture_eval(&first, "(bind! &cell (new-state 0))");
+    CettaHeExecution *initial = begin(&first, query, CETTA_HE_ENTRY_EVALUATE);
+    drain(initial);
+    expect(&first, initial, expected);
+    uint64_t count = inspect(initial).advances;
+    check(eval_he_owned_destroy(initial), "destroy completed nested collapse");
+    fixture_end(&first);
+
+    uint64_t paused_after_effect = 0u;
+    for (uint64_t prefix = 0u; prefix <= count; prefix++) {
+        Fixture f;
+        fixture_begin(&f, source);
+        fixture_eval(&f, "(bind! &cell (new-state 0))");
+        Atom *cell_atom = registry_lookup_id(&f.registry,
+            symbol_intern_cstr(g_symbols, "&cell"));
+        check(cell_atom && cell_atom->kind == ATOM_GROUNDED &&
+            cell_atom->ground.gkind == GV_STATE, "nested collapse effect cell");
+        StateCell *cell = cell_atom->ground.ptr;
+        CettaHeExecution *owner = begin(&f, query, CETTA_HE_ENTRY_EVALUATE);
+        for (uint64_t i = 0u; i < prefix; i++) advance(owner);
+        CettaHeExecutionView before = inspect(owner);
+        bool effect_done = atom_eq(cell->value, atom_int(&f.scratch, 1));
+        check(effect_done || atom_eq(cell->value, atom_int(&f.scratch, 0)),
+            "nested effect has not been repeated at a prefix");
+        if (effect_done && !before.closed && before.outcomes->len == 0u)
+            paused_after_effect++;
+        for (unsigned i = 0u; i < 3u; i++) {
+            CettaHeExecutionView after = inspect(owner);
+            check(after.advances == before.advances &&
+                after.frames == before.frames && after.top_phase == before.top_phase &&
+                after.outcomes == before.outcomes && after.closed == before.closed &&
+                atom_eq(cell->value, atom_int(&f.scratch, effect_done ? 1 : 0)),
+                "inspection retains nested child and collector without replay");
+        }
+        intervening_evaluation(&f);
+        drain(owner);
+        expect(&f, owner, expected);
+        check(atom_eq(cell->value, atom_int(&f.scratch, 1)),
+            "nested child effect occurs exactly once across every pause");
+        check(eval_he_owned_destroy(owner), "release nested collapse prefix");
+        fixture_end(&f);
+    }
+    check(paused_after_effect > 0u,
+        "scheduler can pause after child effect before aggregate publication");
+
+    Fixture cancelled;
+    fixture_begin(&cancelled, source);
+    fixture_eval(&cancelled, "(bind! &cell (new-state 0))");
+    Atom *cell_atom = registry_lookup_id(&cancelled.registry,
+        symbol_intern_cstr(g_symbols, "&cell"));
+    check(cell_atom && cell_atom->kind == ATOM_GROUNDED &&
+        cell_atom->ground.gkind == GV_STATE, "cancelled nested collapse cell");
+    StateCell *cell = cell_atom->ground.ptr;
+    CettaHeExecution *owner = begin(&cancelled, query, CETTA_HE_ENTRY_EVALUATE);
+    for (uint64_t i = 0u; !atom_eq(cell->value, atom_int(&cancelled.scratch, 1)); i++) {
+        check(i < count, "nested effect reached before completed run");
+        advance(owner);
+    }
+    CettaHeExecutionView pending = inspect(owner);
+    check(!pending.closed && pending.outcomes->len == 0u,
+        "unfinished nested collector has no published partial aggregate");
+    check(eval_he_owned_cancel(owner), "cancel nested child after committed effect");
+    for (unsigned i = 0u; i < 3u; i++) {
+        check(eval_he_owned_advance(owner) == CETTA_HE_INTERRUPTED,
+            "cancelled child cannot resume or replay");
+        CettaHeExecutionView stopped = inspect(owner);
+        check(stopped.interrupted && !stopped.closed &&
+            stopped.outcomes->len == 0u && stopped.advances == pending.advances &&
+            atom_eq(cell->value, atom_int(&cancelled.scratch, 1)),
+            "cancellation retains the effect and does not complete the aggregate");
+    }
+    check(eval_he_owned_destroy(owner), "release cancelled nested collapse");
+    CettaHeExecution *restart = begin(&cancelled, query, CETTA_HE_ENTRY_EVALUATE);
+    drain(restart);
+    expect(&cancelled, restart, expected);
+    check(atom_eq(cell->value, atom_int(&cancelled.scratch, 2)),
+        "a new execution really repeats the effect, unlike retained resumption");
+    check(eval_he_owned_destroy(restart), "release explicit restarted control");
+    fixture_end(&cancelled);
+    printf("PASS: nested minimal collapse at %" PRIu64
+        " prefixes, captures, duplicate occurrences, one effect, cancellation\n", count + 1u);
+    checking_case = "owned execution";
+}
+
+static void lazy_refusal_prefixes(void) {
+    checking_case = "lazy raw refusal";
+    const char *source =
+        "(= (decline-once) (function (chain "
+        "(metta (change-state! &cell (+ (get-state &cell) 1)) %Undefined% &self) "
+        "$effect (return NotReducible)))) "
+        "(= (decline-once) (function (chain "
+        "(metta (change-state! &cell (+ (get-state &cell) 1)) %Undefined% &self) "
+        "$effect (return NotReducible))))";
+    const char *query = "(once (decline-once))";
+    Fixture first;
+    fixture_begin(&first, "");
+    fixture_eval(&first, "(pragma! select-mode lazy)");
+    fixture_eval(&first, "(bind! &cell (new-state 0))");
+    fixture_add_source(&first, source);
+    CettaHeExecution *initial = begin(&first, query, CETTA_HE_ENTRY_EVALUATE);
+    drain(initial);
+    expect(&first, initial, "(decline-once)");
+    uint64_t count = inspect(initial).advances;
+    check(eval_he_owned_destroy(initial), "destroy complete lazy refusal");
+    fixture_end(&first);
+    for (uint64_t prefix = 0u; prefix <= count; prefix++) {
+        Fixture f;
+        fixture_begin(&f, "");
+        fixture_eval(&f, "(pragma! select-mode lazy)");
+        fixture_eval(&f, "(bind! &cell (new-state 0))");
+        fixture_add_source(&f, source);
+        Atom *cell_atom = registry_lookup_id(&f.registry,
+            symbol_intern_cstr(g_symbols, "&cell"));
+        check(cell_atom && cell_atom->kind == ATOM_GROUNDED &&
+            cell_atom->ground.gkind == GV_STATE, "lazy refusal effect cell");
+        StateCell *cell = cell_atom->ground.ptr;
+        CettaHeExecution *owner = begin(&f, query, CETTA_HE_ENTRY_EVALUATE);
+        for (uint64_t i = 0u; i < prefix; i++) advance(owner);
+        check(atom_eq(cell->value, atom_int(&f.scratch, 0)) ||
+            atom_eq(cell->value, atom_int(&f.scratch, 1)),
+            "an unselected refusal does not execute before a pause");
+        CettaHeExecutionView paused = inspect(owner);
+        check(inspect(owner).advances == paused.advances,
+            "lazy refusal inspection does not advance work");
+        intervening_evaluation(&f);
+        drain(owner);
+        expect(&f, owner, "(decline-once)");
+        check(atom_eq(cell->value, atom_int(&f.scratch, 1)),
+            "resumption keeps one committed effect and one restored call");
+        check(eval_he_owned_advance(owner) == CETTA_HE_CLOSED &&
+            atom_eq(cell->value, atom_int(&f.scratch, 1)),
+            "completed bounded call cannot replay either occurrence");
+        check(eval_he_owned_destroy(owner), "release lazy refusal prefix");
+        fixture_end(&f);
+    }
+    printf("PASS: lazy raw refusal at all %" PRIu64
+        " control prefixes, one selected occurrence and one effect\n", count + 1u);
+    checking_case = "owned execution";
+}
+
+static StateCell *host_return_fixture(Fixture *f) {
+    fixture_begin(f, "(: function (-> Atom Atom))");
+    cetta_eval_session_init(&f->library->session, CETTA_LANGUAGE_HE,
+        cetta_profile_he_compat());
+    eval_set_library_context(f->library);
+    fixture_eval(f, "(bind! &count (new-state 0))");
+    /* Store a callable before its rule exists, so construction itself has
+     * no effect. The raw read must enter its saved ordinary continuation. */
+    fixture_eval(f, "(bind! &box (new-state (stored-tick)))");
+    fixture_eval(f, "(bind! &alias &box)");
+    fixture_add_source(f,
+        "(= (stored-tick) (function (chain "
+        "(metta (change-state! &count (+ (get-state &count) 1)) %Undefined% &self) "
+        "$effect (return (delivered)))))");
+    Atom *counter = registry_lookup_id(&f->registry,
+        symbol_intern_cstr(g_symbols, "&count"));
+    check(counter && counter->kind == ATOM_GROUNDED &&
+        counter->ground.gkind == GV_STATE, "host-return effect cell");
+    return counter->ground.ptr;
+}
+
+static void host_return_prefixes(void) {
+    checking_case = "raw host producer retained return";
+    const char *query = "(collapse (superpose ((get-state &box) (get-state &alias))))";
+    const char *expected = "((delivered) (delivered))";
+    Fixture first;
+    StateCell *counter = host_return_fixture(&first);
+    CettaHeExecution *initial = begin(&first, query, CETTA_HE_ENTRY_EVALUATE);
+    drain(initial);
+    expect(&first, initial, expected);
+    check(atom_eq(counter->value, atom_int(&first.scratch, 2)),
+        "two host read occurrences each execute their effect once");
+    uint64_t count = inspect(initial).advances;
+    check(eval_he_owned_destroy(initial), "destroy complete host return");
+    fixture_end(&first);
+
+    uint64_t pending_after_effect = 0u;
+    for (uint64_t prefix = 0u; prefix <= count; prefix++) {
+        Fixture f;
+        counter = host_return_fixture(&f);
+        CettaHeExecution *owner = begin(&f, query, CETTA_HE_ENTRY_EVALUATE);
+        for (uint64_t i = 0u; i < prefix; i++) advance(owner);
+        CettaHeExecutionView saved = inspect(owner);
+        Atom *before = counter->value;
+        bool first_effect = atom_eq(before, atom_int(&f.scratch, 1));
+        check(first_effect || atom_eq(before, atom_int(&f.scratch, 0)) ||
+            atom_eq(before, atom_int(&f.scratch, 2)),
+            "host-return prefix has not replayed a producer occurrence");
+        if (first_effect && !saved.closed && saved.outcomes->len == 0u)
+            pending_after_effect++;
+        check(inspect(owner).advances == saved.advances && counter->value == before,
+            "host-return inspection preserves saved child and effect");
+        intervening_evaluation(&f);
+        drain(owner);
+        expect(&f, owner, expected);
+        check(atom_eq(counter->value, atom_int(&f.scratch, 2)),
+            "resumption neither skips nor replays either stored call");
+        check(eval_he_owned_advance(owner) == CETTA_HE_CLOSED &&
+            atom_eq(counter->value, atom_int(&f.scratch, 2)),
+            "completed host return cannot execute again");
+        check(eval_he_owned_destroy(owner), "release host-return prefix");
+        fixture_end(&f);
+    }
+    check(pending_after_effect > 0u,
+        "host return can pause after an effect before aggregate publication");
+
+    Fixture cancelled;
+    counter = host_return_fixture(&cancelled);
+    CettaHeExecution *owner = begin(&cancelled, query, CETTA_HE_ENTRY_EVALUATE);
+    for (uint64_t i = 0u; !atom_eq(counter->value, atom_int(&cancelled.scratch, 1)); i++) {
+        check(i < count, "reach the first stored-call effect");
+        advance(owner);
+    }
+    CettaHeExecutionView saved = inspect(owner);
+    check(!saved.closed && saved.outcomes->len == 0u,
+        "unfinished host aggregate is not published");
+    check(eval_he_owned_cancel(owner), "cancel stored-call continuation");
+    check(eval_he_owned_advance(owner) == CETTA_HE_INTERRUPTED &&
+        !inspect(owner).closed && inspect(owner).outcomes->len == 0u &&
+        atom_eq(counter->value, atom_int(&cancelled.scratch, 1)),
+        "cancellation preserves committed effect without completing sibling work");
+    check(eval_he_owned_destroy(owner), "release cancelled host return");
+    fixture_end(&cancelled);
+
+    Fixture collected;
+    counter = host_return_fixture(&collected);
+    /* The deep let is the standard library equation on this he-compat space. */
+    Atom *let_equation = he_library_equation_at(0u);
+    check(let_equation != NULL, "standard let equation for host collection");
+    if (!space_admit_atom(&collected.space, &collected.source, let_equation))
+        space_add(&collected.space, let_equation);
+    fixture_eval(&collected, "(bind! &pressure (new-state 0))");
+    fixture_eval(&collected, "(bind! &long-box (new-state (stored-long)))");
+    fixture_add_source(&collected,
+        "(= (down $n) (if (== $n 0) 0 "
+        "(let $u (change-state! &pressure $n) (+ 1 (down (- $n 1)))))) "
+        "(= (stored-long) (let $u (change-state! &count 1) (down 3000)))");
+    owner = begin(&collected, "(get-state &long-box)", CETTA_HE_ENTRY_EVALUATE);
+    drain(owner);
+    expect(&collected, owner, "3000");
+    check(inspect(owner).collections > 0u,
+        "raw host continuation actually performs moving collection");
+    check(atom_eq(counter->value, atom_int(&collected.scratch, 1)),
+        "raw host continuation survives collection with one producer effect");
+    check(eval_he_owned_destroy(owner), "release collected host return");
+    fixture_end(&collected);
+    printf("PASS: host return at all %" PRIu64
+        " control prefixes, alias occurrences, effects, cancellation, collection\n", count + 1u);
+    checking_case = "owned execution";
 }
 
 static void cleanup_guards(void) {
@@ -556,6 +867,341 @@ static void native_fault_outcome_profiles(void) {
     fixture_end(&f);
 }
 
+static void install_he_declarations(Fixture *f) {
+    size_t count = he_library_declaration_count();
+    check(count > 0u, "HE library declarations load");
+    for (size_t i = 0u; i < count; i++) {
+        Atom *declaration = he_library_declaration_at(i);
+        check(declaration != NULL, "HE library declaration");
+        if (!space_admit_atom(&f->space, &f->source, declaration))
+            space_add(&f->space, declaration);
+    }
+}
+
+static void install_standard_let(Fixture *f) {
+    install_he_declarations(f);
+    Atom *equation = he_library_equation_at(0u);
+    check(he_library_equation_count() == 2u && equation != NULL &&
+        equation->kind == ATOM_EXPR && equation->expr.len == 3u &&
+        atom_head_symbol_id(equation->expr.elems[1]) == g_builtin_syms.let,
+        "the standard library keeps its let equation first");
+    if (!space_admit_atom(&f->space, &f->source, equation))
+        space_add(&f->space, equation);
+}
+
+static StateCell *bound_zero_cell(Fixture *f) {
+    fixture_eval(f, "(bind! &cell (new-state 0))");
+    Atom *cell_atom = registry_lookup_id(&f->registry,
+        symbol_intern_cstr(g_symbols, "&cell"));
+    check(cell_atom && cell_atom->kind == ATOM_GROUNDED &&
+        cell_atom->ground.gkind == GV_STATE, "let/function boundary cell");
+    return cell_atom->ground.ptr;
+}
+
+static bool rendered_has_item(const char *rendered, const char *item) {
+    size_t item_len = strlen(item);
+    const char *cursor = rendered;
+    while (*cursor) {
+        const char *bar = strchr(cursor, '|');
+        size_t len = bar ? (size_t)(bar - cursor) : strlen(cursor);
+        if (len == item_len && !memcmp(cursor, item, len))
+            return true;
+        if (!bar)
+            break;
+        cursor = bar + 1u;
+    }
+    return false;
+}
+
+static void capture_open(FILE **capture, int *saved) {
+    *capture = tmpfile();
+    check(*capture != NULL, "let/function capture");
+    fflush(stdout);
+    *saved = dup(STDOUT_FILENO);
+    check(*saved >= 0 && dup2(fileno(*capture), STDOUT_FILENO) >= 0,
+        "redirect let/function output");
+}
+
+static void capture_close(FILE *capture, int saved, char *output, size_t capacity) {
+    fflush(stdout);
+    check(dup2(saved, STDOUT_FILENO) >= 0, "restore let/function output");
+    close(saved);
+    rewind(capture);
+    size_t n = fread(output, 1u, capacity - 1u, capture);
+    output[n] = '\0';
+    check(n + 1u < capacity || feof(capture), "captured effect text fits");
+    fclose(capture);
+}
+
+/* He-compat occurrences of the real library let, and of a function body,
+ * across pause, resume, and cancellation. The extended println/change-state
+ * sweep above is a different profile and does not cross this boundary. */
+static void let_function_boundary(void) {
+    checking_case = "he-compat let/function boundary";
+    const char *raw_query =
+        "(eval (let $a (println! owned-raw-let) (change-state! &cell 7)))";
+    const char *full_query =
+        "(let $u (println! owned-full-let) "
+        "(let $v (change-state! &cell (+ (get-state &cell) 1)) (get-state &cell)))";
+    const char *function_source =
+        "(= (show) (function (println! owned-fn))) "
+        "(= (touch) (function (change-state! &cell 9))) "
+        "(= (give) (function (return (println! owned-return))))";
+    struct {
+        const char *name;
+        const char *source;
+        const char *query;
+        const char *outcome;
+        const char *printed;
+        int cell;
+        bool structural_raw;
+    } cases[] = {
+        {"raw let keeps the equation syntax", "", raw_query, NULL, "", 0, true},
+        {"full let runs the library step once", "", full_query, "1",
+            "owned-full-let\n", 1, false},
+        {"named function body is not executed", function_source, "(show)",
+            "(Error (show) NoReturn)", "", 0, false},
+        {"named function state body is not executed", function_source, "(touch)",
+            "(Error (touch) NoReturn)", "", 0, false},
+        {"returned effect runs once", function_source, "(give)",
+            "()", "owned-return\n", 0, false},
+        {"returned bound effect runs once",
+            "(= (give $x) (function (return (println! $x))))",
+            "(give owned-bound)",
+            "()", "owned-bound\n", 0, false},
+    };
+
+    for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        checking_case = cases[c].name;
+        Fixture baseline;
+        fixture_begin_profile(&baseline, cases[c].source, cetta_profile_he_compat());
+        install_standard_let(&baseline);
+        StateCell *base_cell = bound_zero_cell(&baseline);
+        CettaHeExecution *initial = begin(&baseline, cases[c].query,
+            CETTA_HE_ENTRY_EVALUATE);
+        FILE *capture = NULL;
+        int saved = -1;
+        capture_open(&capture, &saved);
+        drain(initial);
+        char printed[256];
+        capture_close(capture, saved, printed, sizeof(printed));
+        char outcome[4096];
+        render(inspect(initial).outcomes, &baseline.scratch, outcome, sizeof(outcome));
+        if (cases[c].structural_raw) {
+            bool raw_step = strstr(outcome, "(unify ") == outcome &&
+                strstr(outcome, "(println! owned-raw-let)") &&
+                strstr(outcome, "(change-state! (State 0) 7)") &&
+                strstr(outcome, " Empty)") &&
+                !strchr(outcome, '|');
+            if (!raw_step)
+                fprintf(stderr, "raw outcome: [%s]\nraw printed: [%s]\n",
+                    outcome, printed);
+            check(raw_step, "raw let returns the single unevaluated library step");
+        } else {
+            expect(&baseline, initial, cases[c].outcome);
+        }
+        check(!strcmp(printed, cases[c].printed), "baseline effect text");
+        check(atom_eq(base_cell->value, atom_int(&baseline.scratch, cases[c].cell)),
+            "baseline cell");
+        uint64_t count = inspect(initial).advances;
+        char raw_outcome[4096];
+        snprintf(raw_outcome, sizeof(raw_outcome), "%s", outcome);
+        check(eval_he_owned_destroy(initial), "destroy baseline boundary run");
+        fixture_end(&baseline);
+        bool saw_live_effect = false;
+
+        for (uint64_t prefix = 0u; prefix <= count; prefix++) {
+            Fixture f;
+            fixture_begin_profile(&f, cases[c].source, cetta_profile_he_compat());
+            install_standard_let(&f);
+            StateCell *cell = bound_zero_cell(&f);
+            CettaHeExecution *owner = begin(&f, cases[c].query,
+                CETTA_HE_ENTRY_EVALUATE);
+            capture_open(&capture, &saved);
+            for (uint64_t i = 0u; i < prefix; i++)
+                advance(owner);
+            int paused_cell = -1;
+            for (int value = 0; value <= 9; value++) {
+                if (atom_eq(cell->value, atom_int(&f.scratch, value)))
+                    paused_cell = value;
+            }
+            check(paused_cell == 0 || paused_cell == cases[c].cell,
+                "a prefix has not repeated the cell effect");
+            if (cases[c].cell != 0 && paused_cell == cases[c].cell &&
+                !inspect(owner).closed)
+                saw_live_effect = true;
+            CettaHeExecutionView paused = inspect(owner);
+            for (unsigned i = 0u; i < 3u; i++) {
+                CettaHeExecutionView again = inspect(owner);
+                check(again.advances == paused.advances &&
+                    again.outcomes == paused.outcomes &&
+                    again.frames == paused.frames &&
+                    atom_eq(cell->value, atom_int(&f.scratch, paused_cell)),
+                    "inspection does not commit or replay the boundary effect");
+            }
+            intervening_evaluation(&f);
+            check(atom_eq(cell->value, atom_int(&f.scratch, paused_cell)),
+                "an intervening evaluation does not replay the suspended effect");
+            drain(owner);
+            capture_close(capture, saved, printed, sizeof(printed));
+            check(!strcmp(printed, cases[c].printed),
+                "resume prints the effect exactly as the uninterrupted run");
+            render(inspect(owner).outcomes, &f.scratch, outcome, sizeof(outcome));
+            if (cases[c].structural_raw) {
+                if (strcmp(outcome, raw_outcome)) {
+                    fprintf(stderr, "baseline raw: %s\nresumed raw: %s\n",
+                        raw_outcome, outcome);
+                    check(false, "resume returns the same raw library step");
+                }
+                check(true, "resume returns the same raw library step");
+            } else {
+                expect(&f, owner, cases[c].outcome);
+            }
+            check(atom_eq(cell->value, atom_int(&f.scratch, cases[c].cell)),
+                "resume leaves the cell at the single committed value");
+            check(eval_he_owned_destroy(owner), "destroy resumed boundary run");
+            fixture_end(&f);
+        }
+        if (cases[c].cell != 0)
+            check(saw_live_effect,
+                "the cell effect is visible while the let boundary is still open");
+
+        Fixture cancelled;
+        fixture_begin_profile(&cancelled, cases[c].source, cetta_profile_he_compat());
+        install_standard_let(&cancelled);
+        StateCell *cell = bound_zero_cell(&cancelled);
+        CettaHeExecution *owner = begin(&cancelled, cases[c].query,
+            CETTA_HE_ENTRY_EVALUATE);
+        capture_open(&capture, &saved);
+        check(eval_he_owned_cancel(owner), "cancel before the boundary effect");
+        for (unsigned i = 0u; i < 3u; i++) {
+            check(eval_he_owned_advance(owner) == CETTA_HE_INTERRUPTED,
+                "a cancelled boundary does not resume");
+            CettaHeExecutionView stopped = inspect(owner);
+            check(stopped.interrupted && !stopped.closed &&
+                stopped.outcomes->len == 0u &&
+                atom_eq(cell->value, atom_int(&cancelled.scratch, 0)),
+                "early cancellation publishes neither a result nor an effect");
+        }
+        capture_close(capture, saved, printed, sizeof(printed));
+        check(printed[0] == '\0', "early cancellation prints nothing");
+        check(eval_he_owned_destroy(owner), "destroy early-cancelled boundary");
+
+        owner = begin(&cancelled, cases[c].query, CETTA_HE_ENTRY_EVALUATE);
+        capture_open(&capture, &saved);
+        uint64_t stepped = 0u;
+        while (!inspect(owner).closed &&
+               atom_eq(cell->value, atom_int(&cancelled.scratch, 0)) &&
+               stepped < count) {
+            advance(owner);
+            stepped++;
+        }
+        if (inspect(owner).closed && stepped > 0u) {
+            capture_close(capture, saved, printed, sizeof(printed));
+            check(eval_he_owned_destroy(owner),
+                "release a boundary that finished on its committing step");
+            cell = bound_zero_cell(&cancelled);
+            owner = begin(&cancelled, cases[c].query, CETTA_HE_ENTRY_EVALUATE);
+            capture_open(&capture, &saved);
+            for (uint64_t i = 1u; i < stepped; i++)
+                advance(owner);
+        }
+        check(!inspect(owner).closed, "cancellation stops a live boundary");
+        CettaHeExecutionView pending = inspect(owner);
+        char partial[4096];
+        render(pending.outcomes, &cancelled.scratch, partial, sizeof(partial));
+        int held_cell = atom_eq(cell->value, atom_int(&cancelled.scratch, cases[c].cell))
+            ? cases[c].cell : 0;
+        check(eval_he_owned_cancel(owner), "cancel a partially advanced boundary");
+        for (unsigned i = 0u; i < 3u; i++) {
+            check(eval_he_owned_advance(owner) == CETTA_HE_INTERRUPTED,
+                "partial cancellation does not continue");
+            CettaHeExecutionView stopped = inspect(owner);
+            char kept[4096];
+            render(stopped.outcomes, &cancelled.scratch, kept, sizeof(kept));
+            check(stopped.interrupted && stopped.advances == pending.advances &&
+                !strcmp(kept, partial) &&
+                atom_eq(cell->value, atom_int(&cancelled.scratch, held_cell)),
+                "cancellation retains committed work and does not replay it");
+        }
+        capture_close(capture, saved, printed, sizeof(printed));
+        check(strstr(printed, cases[c].printed) == printed ||
+            printed[0] == '\0',
+            "cancellation does not print a second copy of the effect");
+        if (cases[c].printed[0] != '\0')
+            check(printed[0] == '\0' || !strcmp(printed, cases[c].printed),
+                "a committed print is not repeated by cancellation");
+        check(eval_he_owned_destroy(owner), "destroy partially cancelled boundary");
+        CettaHeExecution *restart = begin(&cancelled, cases[c].query,
+            CETTA_HE_ENTRY_EVALUATE);
+        capture_open(&capture, &saved);
+        drain(restart);
+        capture_close(capture, saved, printed, sizeof(printed));
+        check(!strcmp(printed, cases[c].printed),
+            "a new execution repeats the effect once");
+        check(atom_eq(cell->value,
+                atom_int(&cancelled.scratch, held_cell + cases[c].cell)),
+            "a new execution is distinct from retained resumption");
+        check(eval_he_owned_destroy(restart), "destroy restarted boundary");
+        fixture_end(&cancelled);
+        printf("PASS: %s at %" PRIu64 " pause points, with cancellation\n",
+            cases[c].name, count + 1u);
+    }
+
+    checking_case = "duplicate let rows stay distinct";
+    Fixture duplicates;
+    fixture_begin_profile(&duplicates, "", cetta_profile_he_compat());
+    install_standard_let(&duplicates);
+    fixture_add_source(&duplicates,
+        "(= (let $pattern $atom $template) (unify $atom $pattern $template Empty))");
+    CettaHeExecution *owner = begin(&duplicates, "(let $a 7 $a)",
+        CETTA_HE_ENTRY_EVALUATE);
+    drain(owner);
+    char outcome[4096];
+    render(inspect(owner).outcomes, &duplicates.scratch, outcome, sizeof(outcome));
+    const char *split = strchr(outcome, '|');
+    bool same_row = split &&
+        (size_t)(split - outcome) == strlen(split + 1u) &&
+        !memcmp(outcome, split + 1u, (size_t)(split - outcome));
+    if (!same_row || inspect(owner).outcomes->len != 2u)
+        fprintf(stderr, "duplicate let outcomes: %s\n", outcome);
+    check(inspect(owner).outcomes->len == 2u && same_row && split != outcome,
+        "two identical let rows both reduce, and specialization stays off");
+    check(eval_he_owned_destroy(owner), "destroy duplicate let rows");
+    fixture_end(&duplicates);
+
+    checking_case = "user let alternative is kept";
+    Fixture alternatives;
+    fixture_begin_profile(&alternatives,
+        "(= (let $p $a $t) (user-let $a))", cetta_profile_he_compat());
+    install_standard_let(&alternatives);
+    owner = begin(&alternatives, "(let $x 1 $x)", CETTA_HE_ENTRY_EVALUATE);
+    drain(owner);
+    render(inspect(owner).outcomes, &alternatives.scratch, outcome, sizeof(outcome));
+    if (inspect(owner).outcomes->len != 2u ||
+        !rendered_has_item(outcome, "(user-let 1)") ||
+        !rendered_has_item(outcome, "1"))
+        fprintf(stderr, "user let outcomes: %s\n", outcome);
+    check(inspect(owner).outcomes->len == 2u &&
+        rendered_has_item(outcome, "(user-let 1)") &&
+        rendered_has_item(outcome, "1"),
+        "a different user let equation remains beside the library step");
+    check(eval_he_owned_destroy(owner), "destroy user let alternative");
+    fixture_end(&alternatives);
+
+    checking_case = "changed let row is interpreted";
+    Fixture changed;
+    fixture_begin_profile(&changed,
+        "(= (let $a $b $c) (other $b))", cetta_profile_he_compat());
+    install_he_declarations(&changed);
+    owner = begin(&changed, "(let $x 1 $x)", CETTA_HE_ENTRY_EVALUATE);
+    drain(owner);
+    expect(&changed, owner, "(other 1)");
+    check(eval_he_owned_destroy(owner), "destroy changed let row");
+    fixture_end(&changed);
+    checking_case = "owned execution";
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -568,10 +1214,14 @@ int main(void) {
     prefix_and_interleave();
     collected_bindings();
     effect_prefixes();
+    nested_minimal_collapse_prefixes();
+    lazy_refusal_prefixes();
+    host_return_prefixes();
     cleanup_guards();
     current_world_and_thread();
     transactional_caller_conflict();
     native_fault_outcome_profiles();
+    let_function_boundary();
     printf("PASS: %u retained execution checks\n", checks);
     var_intern_free(&variables);
     symbol_table_free(&symbols);
