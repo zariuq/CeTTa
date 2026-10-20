@@ -324,6 +324,7 @@ static inline SymbolSpelling symbol_spelling(
     X(llist_cons, "LCons") \
     X(minimal_map_atom, "_minimal-map-atom") \
     X(minimal_retain_top_k_by_number, "_minimal-retain-top-k-by-number") \
+    X(minimal_sum_by, "_minimal-sum-by") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
     X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
@@ -386,8 +387,9 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_io_cancel, "__cetta_lib_io_cancel") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
-    X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
+    X(lib_json_from_inspection_v1, "__cetta_lib_json_from_inspection_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
+    X(lib_json_project_v1, "__cetta_lib_json_project_v1") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \
     X(lib_json_members_v1, "__cetta_lib_json_members_v1") \
@@ -632,6 +634,7 @@ static inline SymbolSpelling symbol_spelling(
     X(if_equal) \
     X(sealed_text) \
     X(minimal_retain_top_k_by_number) \
+    X(minimal_sum_by) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
     X(minimal_foldl_sequence) \

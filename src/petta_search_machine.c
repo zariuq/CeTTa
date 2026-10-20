@@ -25068,7 +25068,7 @@ static const PettaPlanNode *petta_machine_condition_test_plan(
 static __attribute__((noinline)) bool petta_machine_filter_atom(
     PettaMachineImpl *machine, Atom *items, Atom *mapper_or_binder,
     Atom *body, Atom *expected, uint32_t barrier,
-    const PettaPlanNode *plan) {
+    const PettaPlanNode *plan, const Bindings *environment) {
     if (!machine || !items || !mapper_or_binder || !expected ||
         (body && mapper_or_binder->kind != ATOM_VAR)) {
         return false;
@@ -25076,6 +25076,22 @@ static __attribute__((noinline)) bool petta_machine_filter_atom(
     items = petta_machine_closed_list(machine, items);
     if (!items)
         return false;
+
+    if (body && machine->host.filter_single_result) {
+        Atom *prepared_result = NULL;
+        PettaMachineFoldResult prepared =
+            machine->host.filter_single_result(
+                machine->host.context, machine->space,
+                &machine->heap, items, mapper_or_binder, body,
+                environment, &prepared_result);
+        if (prepared == PETTA_MACHINE_FOLD_VALUE) {
+            return prepared_result &&
+                petta_push_unify(
+                    machine, prepared_result, expected, barrier);
+        }
+        if (prepared == PETTA_MACHINE_FOLD_INTERRUPTED)
+            return true;
+    }
 
     Atom *truth = machine->host.boolean_value
         ? machine->host.boolean_value(
@@ -35895,7 +35911,7 @@ static bool petta_machine_dispatch_goal(
         }
         return petta_machine_filter_atom(
             machine, first, second, body, expected,
-            goal.barrier, goal.plan);
+            goal.barrier, goal.plan, environment);
     }
 
     if (goal.kind == PETTA_GOAL_FILTER_KEEP_READY) {

@@ -123,7 +123,7 @@ class PredictiveArtifactTest(unittest.TestCase):
         source = '#include <stdint.h>\n'
         source += (self.output/compiler.ARTIFACT_FILES[0]).read_text()
         source += (self.output/compiler.ARTIFACT_FILES[1]).read_text()
-        source += (self.output/compiler.ARTIFACT_FILES[2]).read_text().split("static JsonStartV1", 1)[0]
+        source += (self.output/compiler.ARTIFACT_FILES[2]).read_text().split("static JsonLookaheadV1", 1)[0]
         return subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
                               ["-std=c11", "-x", "c", "-fsyntax-only", "-"],
                               input=source, capture_output=True, text=True)
