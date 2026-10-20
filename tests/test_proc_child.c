@@ -40,6 +40,15 @@ static int child_probe(const char *text, const char *group) {
     return 0;
 }
 
+static int scoped_child_probe(const char *text) {
+    int status = child_probe(text, "new");
+    if (status) return status;
+    char owner[5] = {0};
+    if (read(3, owner, 4) != 4 || strcmp(owner, "live")) return 21;
+    if (write(4, "done", 4) != 4) return 22;
+    return 0;
+}
+
 static void launch(const char *self, int inherited, const char *program,
                    const char *cwd, int expected_stage, int expected_error, int aliases,
                    int new_group) {
@@ -91,8 +100,57 @@ static void launch(const char *self, int inherited, const char *program,
     close(out[0]); close(err[0]); close(report[0]);
 }
 
+static void launch_scoped(const char *self, int inherited) {
+    int in[2], out[2], err[2], report[2], owner[2], receipt[2];
+    int probe = fcntl(inherited, F_DUPFD_CLOEXEC, 64);
+    if (probe < 0) { perror("fcntl"); exit(2); }
+    if (pipe2(in, O_CLOEXEC) || pipe2(out, O_CLOEXEC) ||
+        pipe2(err, O_CLOEXEC) ||
+        pipe2(report, O_CLOEXEC | O_NONBLOCK) ||
+        pipe2(owner, O_CLOEXEC) || pipe2(receipt, O_CLOEXEC)) {
+        perror("pipe2"); exit(2);
+    }
+    char number[32];
+    snprintf(number, sizeof number, "%d", probe);
+    char *arguments[] = {(char *)self, "--scoped-child", number, NULL};
+    char *environment[] = {"PROC_CHILD_FIXTURE=isolated", NULL};
+    sigset_t all, previous;
+    sigfillset(&all);
+    if (sigprocmask(SIG_SETMASK, &all, &previous)) exit(2);
+    pid_t pid = fork();
+    if (!pid) {
+        cetta_proc_child_exec_scoped(
+            self, arguments, environment, "/",
+            in[0], out[1], err[1], report[1], owner[0], receipt[1]);
+    }
+    if (sigprocmask(SIG_SETMASK, &previous, NULL) || pid < 0) exit(2);
+    close(in[0]); close(out[1]); close(err[1]); close(report[1]);
+    close(owner[0]); close(receipt[1]);
+    CHECK(write(in[1], "data", 4) == 4, "scoped stdin delivered");
+    close(in[1]);
+    CHECK(write(owner[1], "live", 4) == 4, "scoped owner descriptor delivered");
+    close(owner[1]);
+    int status = 0;
+    CHECK(waitpid(pid, &status, 0) == pid, "scoped child reaped");
+    CHECK(WIFEXITED(status) && !WEXITSTATUS(status),
+          "scoped child setup and pass-through descriptors");
+    int stopped[2] = {0};
+    CHECK(read(report[0], stopped, sizeof stopped) == 0,
+          "scoped successful exec closes report");
+    char bytes[5] = {0};
+    CHECK(read(receipt[0], bytes, 4) == 4 && !strcmp(bytes, "done"),
+          "scoped receipt descriptor preserved");
+    memset(bytes, 0, sizeof bytes);
+    CHECK(read(out[0], bytes, 4) == 3 && !strcmp(bytes, "out"),
+          "scoped stdout preserved");
+    close(out[0]); close(err[0]); close(report[0]); close(receipt[0]);
+    close(probe);
+}
+
 int main(int argc, char **argv) {
     if (argc == 4 && !strcmp(argv[1], "--child")) return child_probe(argv[2], argv[3]);
+    if (argc == 3 && !strcmp(argv[1], "--scoped-child"))
+        return scoped_child_probe(argv[2]);
     char self[4096];
     ssize_t length = readlink("/proc/self/exe", self, sizeof self - 1);
     if (length <= 0) return 2;
@@ -107,6 +165,7 @@ int main(int argc, char **argv) {
     launch(self, file, self, "/", 0, 0, 1, 1);
     /* A helper launch stays in the caller's process group. */
     launch(self, file, self, "/", 0, 0, 0, 0);
+    launch_scoped(self, file);
     launch(self, file, self, "/no-such-cetta-proc-directory", CETTA_PROC_CHILD_CWD, ENOENT, 0, 1);
     launch(self, file, "/no-such-cetta-proc-program", "/", CETTA_PROC_CHILD_EXEC, ENOENT, 0, 1);
     /* Above the old 65536-entry sweep; retain it across a lowered limit. */

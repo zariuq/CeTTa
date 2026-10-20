@@ -17,6 +17,14 @@ static CettaLanguageId test_language = CETTA_LANGUAGE_HE;
 CettaLanguageId eval_current_language_id(void) { return test_language; }
 #define CHECK(c) do { if (c) passed++; else { failed++; fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); } } while (0)
 
+static bool ordinary_bool(Atom *value, bool petta, bool truth) {
+    return petta
+        ? atom_is_symbol(value, truth ? "true" : "false")
+        : value && value->kind == ATOM_GROUNDED &&
+          value->ground.gkind == GV_BOOL &&
+          value->ground.bval == truth;
+}
+
 static uint8_t *read_bytes(const char *path, size_t *len) {
     FILE *file=fopen(path,"rb");
     if (!file) return NULL;
@@ -40,21 +48,66 @@ static CettaJsonRuntimeV1 *reference(void) {
     return runtime;
 }
 
+static bool fusion_agrees(Atom *ordinary, uint32_t work, uint32_t depth, size_t limit) {
+    Arena temporary; arena_init_detached(&temporary);
+    Atom *canonical = NULL, *normalized = NULL, *projected = NULL;
+    CettaJsonValueV1Status old_status, new_status, validation_status;
+    char error[256];
+    uint8_t *old_bytes = NULL, *new_bytes = NULL;
+    size_t old_len = 17u, new_len = 17u;
+    bool converted = cetta_json_value_v1_from_ordinary(&temporary, ordinary, work, depth,
+        &canonical, &old_status, error, sizeof(error));
+    CettaJsonValueV1Status conversion_status = old_status;
+    bool validated = cetta_json_value_v1_validate_ordinary(ordinary, work, depth,
+        &validation_status, error, sizeof(error));
+    bool ok = converted == validated && old_status == validation_status;
+    bool old_ok = converted && cetta_json_value_v1_emit(canonical, false, work, depth,
+        limit, &old_bytes, &old_len, &old_status, error, sizeof(error));
+    bool new_ok = cetta_json_value_v1_emit(ordinary, true, work, depth,
+        limit, &new_bytes, &new_len, &new_status, error, sizeof(error));
+    ok = ok && old_ok == new_ok && old_status == new_status && old_len == new_len &&
+        (old_ok ? !memcmp(old_bytes, new_bytes, old_len) : !old_bytes && !new_bytes);
+    if (converted && !work && !depth) {
+        ok = ok && cetta_json_value_v1_to_ordinary(&temporary, canonical, 0u, 0u,
+            &projected, &old_status, error, sizeof(error)) &&
+            cetta_json_value_v1_normalize_ordinary(&temporary, ordinary, &normalized,
+                &new_status, error, sizeof(error)) && atom_eq(projected, normalized);
+    }
+    if (!ok) fprintf(stderr, "fusion mismatch work=%u depth=%u bytes=%zu: conversion=%d/%u validation=%d/%u emission=%d/%u vs %d/%u\n",
+        work, depth, limit, converted, conversion_status, validated, validation_status,
+        old_ok, old_status, new_ok, new_status);
+    free(old_bytes); free(new_bytes); arena_free(&temporary);
+    return ok;
+}
+
 static bool agree(const CettaJsonRuntimeV1 *runtime, const uint8_t *bytes,size_t n) {
     Arena arena; arena_init(&arena);
-    Atom *fast=NULL,*slow=NULL,*legacy=NULL,*converted=NULL;
+    Atom *fast=NULL,*slow=NULL,*ordinary=NULL,*converted=NULL;
     CettaJsonRuntimeV1Limits limits;
     CettaJsonRuntimeV1Status a,b;
     CettaJsonValueV1Status codec;
     char error[512]={0};
     cetta_json_runtime_v1_default_limits(&limits);
     bool x=cetta_json_direct_v1_parse(&arena,bytes,n,false,false,0,&fast,&a,error,sizeof(error));
+    CettaJsonRuntimeV1Status direct_status = a;
+    Atom *probe_parts[] = {
+        atom_string(&arena, "__cetta_projection_absent_probe_v1__"),
+    };
+    Atom *probe_path = atom_expr(&arena, probe_parts, 1u);
+    Atom *probe_value = NULL;
+    bool probe_found = false;
+    CettaJsonRuntimeV1Status probe_status;
+    bool probe = cetta_json_direct_v1_project(
+        &arena, bytes, n, probe_path, false, false, 0u,
+        &probe_value, &probe_found, &probe_status, error, sizeof(error));
     bool y=cetta_json_runtime_v1_parse(runtime,&arena,bytes,n,&limits,&slow,&b,error,sizeof(error));
-    bool ok=x==y && (!x || atom_eq(fast,slow));
+    bool ok=x==y && probe==x &&
+        (x || probe_status == direct_status) &&
+        (!x || atom_eq(fast,slow));
     if (x && y) {
-        ok=ok && cetta_json_direct_v1_parse(&arena,bytes,n,true,false,0,&legacy,&a,error,sizeof(error)) &&
-            cetta_json_value_v1_to_legacy(&arena,slow,4000000,1024,&converted,&codec,error,sizeof(error)) &&
-            atom_eq(legacy,converted);
+        ok=ok && cetta_json_direct_v1_parse(&arena,bytes,n,true,false,0,&ordinary,&a,error,sizeof(error)) &&
+            cetta_json_value_v1_to_ordinary(&arena,slow,4000000,1024,&converted,&codec,error,sizeof(error)) &&
+            atom_eq(ordinary,converted) && fusion_agrees(ordinary, 0u, 0u, 0u);
     }
     if (!ok && x && !y && b==CETTA_JSON_RUNTIME_V1_RESOURCE_LIMIT) {
         /* A reference resource cap does not refute a grammar-derived value.
@@ -93,29 +146,50 @@ static void deep_values(void) {
         for (size_t i = 0; i < depth; i++) memcpy(text + prefix*i, object ? "{\"x\":" : "[", prefix);
         memcpy(text + prefix*depth, "true", 4u);
         memset(text + prefix*depth + 4u, object ? '}' : ']', depth);
-        for (unsigned legacy = 0; legacy < 2; legacy++) {
+        for (unsigned ordinary = 0; ordinary < 2; ordinary++) {
             for (unsigned petta = 0; petta < 2; petta++) {
                 Arena arena; arena_init(&arena);
                 Atom *value = NULL;
                 CettaJsonRuntimeV1Status status;
                 char error[256];
-                bool ok = cetta_json_direct_v1_parse(&arena, text, size, legacy, petta,
+                bool ok = cetta_json_direct_v1_parse(&arena, text, size, ordinary, petta,
                                                     0u, &value, &status, error, sizeof(error));
                 CHECK(ok);
+                Atom *path_step = object
+                    ? atom_string(&arena, "x") : atom_int(&arena, 0);
+                Atom **path_items = arena_alloc(
+                    &arena, sizeof(*path_items) * depth);
+                for (size_t i = 0u; path_items && i < depth; i++)
+                    path_items[i] = path_step;
+                Atom *path = path_items
+                    ? atom_expr(&arena, path_items, depth) : NULL;
+                Atom *selected = NULL;
+                bool found = false;
+                CHECK(path && cetta_json_direct_v1_project(
+                    &arena, text, size, path, ordinary, petta, 0u,
+                    &selected, &found, &status, error, sizeof(error)) &&
+                    found && selected &&
+                    (ordinary
+                        ? ordinary_bool(selected, petta, true)
+                        : selected->kind == ATOM_EXPR &&
+                          selected->expr.len == 2u &&
+                          ordinary_bool(
+                              selected->expr.elems[1], petta, true)));
                 Atom *leaf = value;
                 for (size_t i = 0; ok && i < depth; i++) {
                     ok = leaf && leaf->kind == ATOM_EXPR && leaf->expr.len == 2u;
                     Atom *items = ok ? leaf->expr.elems[1] : NULL;
                     ok = ok && items && items->kind == ATOM_EXPR && items->expr.len == 1u;
-                    if (ok) leaf = object ? items->expr.elems[0]->expr.elems[legacy ? 2 : 3] : items->expr.elems[0];
+                    if (ok) leaf = object ? items->expr.elems[0]->expr.elems[ordinary ? 2 : 3] : items->expr.elems[0];
                 }
-                CHECK(ok && leaf && leaf->kind == ATOM_EXPR && leaf->expr.len == 2u &&
-                    (petta ? atom_is_symbol(leaf->expr.elems[1], "true") :
-                     leaf->expr.elems[1]->kind == ATOM_GROUNDED && leaf->expr.elems[1]->ground.gkind == GV_BOOL &&
-                     leaf->expr.elems[1]->ground.bval));
+                CHECK(ok && leaf &&
+                    (ordinary
+                        ? ordinary_bool(leaf, petta, true)
+                        : leaf->kind == ATOM_EXPR && leaf->expr.len == 2u &&
+                          ordinary_bool(leaf->expr.elems[1], petta, true)));
                 uint8_t *encoded = NULL; size_t encoded_size = 0;
                 CettaJsonValueV1Status codec;
-                CHECK(ok && cetta_json_value_v1_emit(value, legacy, 0u, 0u, 0u, &encoded,
+                CHECK(ok && cetta_json_value_v1_emit(value, ordinary, 0u, 0u, 0u, &encoded,
                     &encoded_size, &codec, error, sizeof(error)) && encoded_size == size && !memcmp(encoded, text, size));
                 free(encoded);
                 CettaJsonLibraryRuntimeV1 *library = cetta_json_library_runtime_v1_new(error, sizeof(error));
@@ -123,19 +197,19 @@ static void deep_values(void) {
                 test_language = petta ? CETTA_LANGUAGE_PETTA : CETTA_LANGUAGE_HE;
                 Atom *source[] = {atom_string_n(&arena, (const char *)text, size)};
                 Atom *parsed = library ? cetta_json_library_dispatch_v1(library, &arena,
-                    atom_symbol(&arena, legacy ? "__cetta_lib_json_parse" : "__cetta_lib_json_parse_v1"), source, 1u) : NULL;
+                    atom_symbol(&arena, ordinary ? "__cetta_lib_json_parse" : "__cetta_lib_json_parse_v1"), source, 1u) : NULL;
                 CHECK(parsed && parsed->kind == ATOM_EXPR && atom_is_symbol(parsed->expr.elems[0],
-                    object ? (legacy ? "JsonObject" : "JsonObjectV1") : (legacy ? "JsonArray" : "JsonArrayV1")));
+                    object ? (ordinary ? "JsonObject" : "JsonObjectV1") : (ordinary ? "JsonArray" : "JsonArrayV1")));
                 if (parsed) value = parsed;
                 Atom *argument[] = {value};
                 Atom *written = library ? cetta_json_library_dispatch_v1(library, &arena,
-                    atom_symbol(&arena, legacy ? "__cetta_lib_json_stringify" : "__cetta_lib_json_stringify_v1"),
+                    atom_symbol(&arena, ordinary ? "__cetta_lib_json_stringify" : "__cetta_lib_json_stringify_v1"),
                     argument, 1u) : NULL;
                 CHECK(written && written->kind == ATOM_GROUNDED && written->ground.gkind == GV_STRING &&
                     atom_string_len(written) == size && !memcmp(written->ground.sval, text, size));
-                if (!legacy && library) {
+                if (!ordinary && library) {
                     Atom *projected = cetta_json_library_dispatch_v1(library, &arena,
-                        atom_symbol(&arena, "__cetta_lib_json_to_legacy_v1"), argument, 1u);
+                        atom_symbol(&arena, "__cetta_lib_json_from_inspection_v1"), argument, 1u);
                     argument[0] = projected;
                     written = cetta_json_library_dispatch_v1(library, &arena,
                         atom_symbol(&arena, "__cetta_lib_json_stringify"), argument, 1u);
@@ -149,24 +223,21 @@ static void deep_values(void) {
                             last->expr.elems[1]->expr.len == 1u;
                         if (shape) last = object ? last->expr.elems[1]->expr.elems[0]->expr.elems[2] : last->expr.elems[1]->expr.elems[0];
                     }
-                    CHECK(shape && last && last->kind == ATOM_EXPR &&
-                        (petta ? atom_is_symbol(last->expr.elems[1], "true") :
-                         last->expr.elems[1]->kind == ATOM_GROUNDED && last->expr.elems[1]->ground.gkind == GV_BOOL &&
-                         last->expr.elems[1]->ground.bval));
+                    CHECK(shape && ordinary_bool(last, petta, true));
                 }
                 cetta_json_library_runtime_v1_free(library);
                 Atom *converted = NULL;
-                bool converted_ok = legacy
-                    ? cetta_json_value_v1_from_legacy(&arena, value, 0u, 0u, &converted, &codec, error, sizeof(error))
-                    : cetta_json_value_v1_to_legacy(&arena, value, 0u, 0u, &converted, &codec, error, sizeof(error));
+                bool converted_ok = ordinary
+                    ? cetta_json_value_v1_from_ordinary(&arena, value, 0u, 0u, &converted, &codec, error, sizeof(error))
+                    : cetta_json_value_v1_to_ordinary(&arena, value, 0u, 0u, &converted, &codec, error, sizeof(error));
                 CHECK(ok && converted_ok);
                 encoded = NULL; encoded_size = 0;
-                CHECK(converted_ok && cetta_json_value_v1_emit(converted, !legacy, 0u, 0u, 0u, &encoded,
+                CHECK(converted_ok && cetta_json_value_v1_emit(converted, !ordinary, 0u, 0u, 0u, &encoded,
                     &encoded_size, &codec, error, sizeof(error)) && encoded_size == size && !memcmp(encoded, text, size));
                 free(encoded);
                 ArenaMark mark = arena_mark(&arena);
                 Atom *sentinel = value;
-                CHECK(!cetta_json_direct_v1_parse(&arena, text, size-1u, legacy, petta, 0u,
+                CHECK(!cetta_json_direct_v1_parse(&arena, text, size-1u, ordinary, petta, 0u,
                     &value, &status, error, sizeof(error)) && value == sentinel && arena.live_bytes == mark.live_bytes);
                 arena_free(&arena);
             }
@@ -175,7 +246,233 @@ static void deep_values(void) {
     }
 }
 
+static void lookup_controls(void) {
+    Arena arena; arena_init_detached(&arena);
+    CettaJsonLibraryRuntimeV1 *library = cetta_json_library_runtime_v1_new(NULL, 0);
+    CHECK(library != NULL);
+    if (!library) { arena_free(&arena); return; }
+    for (unsigned lane = 0; lane < 2u; lane++) {
+        test_language = lane ? CETTA_LANGUAGE_PETTA : CETTA_LANGUAGE_HE;
+        for (unsigned truth = 0; truth < 2u; truth++) {
+            Atom *boolean = lane
+                ? atom_symbol(&arena, truth ? "true" : "false")
+                : atom_bool(&arena, truth != 0u);
+            Atom *pair[] = {atom_symbol(&arena, "JsonPair"), atom_string(&arena, "key"), boolean};
+            Atom *pairs[] = {atom_expr(&arena, pair, 3u)};
+            Atom *object[] = {atom_symbol(&arena, "JsonObject"), atom_expr(&arena, pairs, 1u)};
+            Atom *args[] = {atom_expr(&arena, object, 2u), atom_string(&arena, "key")};
+            Atom *result = cetta_json_library_dispatch_v1(library, &arena,
+                atom_symbol(&arena, "__cetta_lib_json_object_get"), args, 2u);
+            CHECK(ordinary_bool(result, lane != 0u, truth != 0u));
+        }
+    }
+    test_language = CETTA_LANGUAGE_HE;
+    Atom *invalid_number[] = {
+        atom_symbol(&arena, "InvalidJsonNumberV1"),
+        atom_string(&arena, "01")};
+    Atom *first[] = {atom_symbol(&arena, "JsonPair"), atom_string(&arena, "key"), atom_expr(&arena, invalid_number, 2u)};
+    const char invalid[] = {(char)0xc0, (char)0x80};
+    Atom *last[] = {atom_symbol(&arena, "JsonPair"), atom_string(&arena, "later"), atom_string_n(&arena, invalid, sizeof(invalid))};
+    Atom *pairs[] = {atom_expr(&arena, first, 3u), atom_expr(&arena, last, 3u)};
+    Atom *object[] = {atom_symbol(&arena, "JsonObject"), atom_expr(&arena, pairs, 2u)};
+    Atom *args[] = {atom_expr(&arena, object, 2u), atom_string(&arena, "key")};
+    CHECK(fusion_agrees(args[0], 0u, 0u, 0u));
+    Atom *local = cetta_json_library_dispatch_v1(library, &arena,
+        atom_symbol(&arena, "__cetta_lib_json_object_get"), args, 2u);
+    /* Projection is not a whole-document validation pass. Invalid unrelated
+     * payloads still fail emission; a small selected field stays local. */
+    CHECK(local && local->kind == ATOM_EXPR &&
+          atom_is_symbol(local->expr.elems[0], "InvalidJsonNumberV1"));
+    object[1] = atom_expr(&arena, pairs, 1u); args[0] = atom_expr(&arena, object, 2u);
+    /* Lookup validates value structure, not the number's JSON spelling. */
+    Atom *selected = cetta_json_library_dispatch_v1(library, &arena,
+        atom_symbol(&arena, "__cetta_lib_json_object_get"), args, 2u);
+    CHECK(selected && selected->kind == ATOM_EXPR && atom_is_symbol(selected->expr.elems[0], "InvalidJsonNumberV1") &&
+          atom_string_equals_cstr(selected->expr.elems[1], "01"));
+    Atom *copies[] = {selected};
+    Atom *rejected_number = cetta_json_library_dispatch_v1(library, &arena,
+        atom_symbol(&arena, "__cetta_lib_json_stringify"), copies, 1u);
+    CHECK(rejected_number && rejected_number->kind == ATOM_EXPR && atom_is_symbol(rejected_number->expr.elems[0], "JsonFailureV1"));
+    cetta_json_library_runtime_v1_free(library); arena_free(&arena);
+}
+
+static Atom *ordinary_first_path(Atom *value, Atom *path) {
+    if (!value || !path || path->kind != ATOM_EXPR)
+        return NULL;
+    for (CettaExprIndex step = 0u; step < path->expr.len; step++) {
+        Atom *component = path->expr.elems[step];
+        if (component->kind == ATOM_GROUNDED &&
+            component->ground.gkind == GV_STRING) {
+            if (!value || value->kind != ATOM_EXPR ||
+                value->expr.len != 2u ||
+                !atom_is_symbol(value->expr.elems[0], "JsonObject") ||
+                value->expr.elems[1]->kind != ATOM_EXPR) {
+                return NULL;
+            }
+            Atom *selected = NULL;
+            Atom *pairs = value->expr.elems[1];
+            for (CettaExprIndex at = 0u; at < pairs->expr.len; at++) {
+                Atom *pair = pairs->expr.elems[at];
+                if (!pair || pair->kind != ATOM_EXPR ||
+                    pair->expr.len != 3u ||
+                    !atom_is_symbol(pair->expr.elems[0], "JsonPair")) {
+                    return NULL;
+                }
+                Atom *key = pair->expr.elems[1];
+                if (key->kind == ATOM_GROUNDED &&
+                    key->ground.gkind == GV_STRING &&
+                    atom_string_len(key) == atom_string_len(component) &&
+                    memcmp(key->ground.sval, component->ground.sval,
+                           atom_string_len(key)) == 0) {
+                    selected = pair->expr.elems[2];
+                    break;
+                }
+            }
+            value = selected;
+        } else if (component->kind == ATOM_GROUNDED &&
+                   component->ground.gkind == GV_INT &&
+                   component->ground.ival >= 0) {
+            if (!value || value->kind != ATOM_EXPR ||
+                value->expr.len != 2u ||
+                !atom_is_symbol(value->expr.elems[0], "JsonArray") ||
+                value->expr.elems[1]->kind != ATOM_EXPR ||
+                (uint64_t)component->ground.ival >=
+                    value->expr.elems[1]->expr.len) {
+                return NULL;
+            }
+            value = value->expr.elems[1]
+                ->expr.elems[(CettaExprIndex)component->ground.ival];
+        } else {
+            return NULL;
+        }
+        if (!value)
+            return NULL;
+    }
+    return value;
+}
+
+static bool projection_agrees(const char *text, Atom *path, bool petta) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Atom *whole = NULL, *projected = NULL;
+    bool found = false;
+    CettaJsonRuntimeV1Status whole_status, projected_status;
+    char error[256] = {0};
+    bool parsed = cetta_json_direct_v1_parse(
+        &arena, (const uint8_t *)text, strlen(text), true, petta, 0u,
+        &whole, &whole_status, error, sizeof(error));
+    bool selected = cetta_json_direct_v1_project(
+        &arena, (const uint8_t *)text, strlen(text), path, true, petta, 0u,
+        &projected, &found, &projected_status, error, sizeof(error));
+    Atom *expected = parsed ? ordinary_first_path(whole, path) : NULL;
+    bool ok = parsed == selected &&
+        (!parsed
+            ? whole_status == projected_status
+            : found == (expected != NULL) &&
+              (!found || atom_eq(projected, expected)));
+    if (!ok) {
+        fprintf(stderr,
+            "projection disagreement petta=%d parsed=%d selected=%d found=%d whole-status=%u projected-status=%u text=%s\n",
+            petta, parsed, selected, found, whole_status, projected_status,
+            text);
+    }
+    arena_free(&arena);
+    return ok;
+}
+
+static void projection_controls(void) {
+    Arena paths;
+    arena_init_detached(&paths);
+    Atom *empty = atom_expr(&paths, NULL, 0u);
+    Atom *nested_parts[] = {
+        atom_string(&paths, "choices"), atom_int(&paths, 1),
+        atom_string(&paths, "message"), atom_string(&paths, "content"),
+    };
+    Atom *nested = atom_expr(&paths, nested_parts, 4u);
+    Atom *duplicate_parts[] = {atom_string(&paths, "x")};
+    Atom *duplicate = atom_expr(&paths, duplicate_parts, 1u);
+    const char nul_key[] = {'a', 0, 'b'};
+    Atom *nul_parts[] = {atom_string_n(&paths, nul_key, sizeof(nul_key))};
+    Atom *nul = atom_expr(&paths, nul_parts, 1u);
+    Atom *missing_parts[] = {atom_string(&paths, "missing"), atom_int(&paths, 9)};
+    Atom *missing = atom_expr(&paths, missing_parts, 2u);
+    Atom *paths_to_check[] = {empty, nested, duplicate, nul, missing};
+    const char *documents[] = {
+        "{\"choices\":[{\"message\":{\"content\":\"first\"}},{\"message\":{\"content\":\"λ\\u0000z\"}}],\"x\":1,\"x\":2,\"a\\u0000b\":true}",
+        "{\"choices\":[{\"message\":{\"content\":\"first\"}},{\"message\":{\"content\":\"λ\\u0000z\"}}],\"x\":1,\"x\":2,\"a\\u0000b\":true}",
+        "{\"x\":1,\"x\":2}",
+        "{\"a\\u0000b\":false,\"later\":[1,2,3]}",
+        "{\"present\":null}",
+    };
+    for (unsigned lane = 0u; lane < 2u; lane++)
+        for (unsigned at = 0u; at < 5u; at++)
+            CHECK(projection_agrees(
+                documents[at], paths_to_check[at], lane != 0u));
+
+    Atom *bad_parts[] = {atom_bool(&paths, true)};
+    Atom *bad_path = atom_expr(&paths, bad_parts, 1u);
+    Arena output;
+    arena_init_detached(&output);
+    Atom *sentinel = atom_symbol(&output, "unchanged");
+    Atom *result = sentinel;
+    bool found = true;
+    CettaJsonRuntimeV1Status status;
+    char error[256] = {0};
+    ArenaMark mark = arena_mark(&output);
+    CHECK(!cetta_json_direct_v1_project(
+        &output, (const uint8_t *)"{\"x\":1}", 7u, bad_path,
+        true, false, 0u, &result, &found, &status, error, sizeof(error)) &&
+        result == NULL && !found &&
+        status == CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT &&
+        output.live_bytes == mark.live_bytes);
+    result = sentinel;
+    found = true;
+    mark = arena_mark(&output);
+    const char *malformed = "{\"x\":1,\"bad\":[1,]}";
+    CHECK(!cetta_json_direct_v1_project(
+        &output, (const uint8_t *)malformed, strlen(malformed), duplicate,
+        true, false, 0u, &result, &found, &status, error, sizeof(error)) &&
+        result == NULL && !found &&
+        status == CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED &&
+        output.live_bytes == mark.live_bytes);
+    arena_free(&output);
+    arena_free(&paths);
+}
+
+static void pretty_controls(void) {
+    const char *inputs[] = {"null", "[]", "{}", "[1,2]", "{\"a\":[1,{},[]],\"a\":\"x\\u0000y\"}"};
+    const char *expected[] = {"null", "[]", "{}", "[\n  1,\n  2\n]",
+        "{\n  \"a\": [\n    1,\n    {},\n    []\n  ],\n  \"a\": \"x\\u0000y\"\n}"};
+    for (unsigned mode = 0u; mode < 2u; mode++) {
+        for (unsigned at = 0u; at < sizeof(inputs)/sizeof(*inputs); at++) {
+            Arena arena; arena_init_detached(&arena);
+            Atom *value = NULL, *parsed = NULL;
+            CettaJsonRuntimeV1Status parse_status;
+            CettaJsonValueV1Status status;
+            char error[256]; uint8_t *text = NULL; size_t size = 0u;
+            CHECK(cetta_json_direct_v1_parse(&arena, (const uint8_t *)inputs[at], strlen(inputs[at]),
+                mode != 0u, false, 0u, &value, &parse_status, error, sizeof(error)));
+            CHECK(cetta_json_value_v1_emit_pretty(value, mode != 0u, 0u, 0u, 0u,
+                &text, &size, &status, error, sizeof(error)) && size == strlen(expected[at]) &&
+                !memcmp(text, expected[at], size));
+            CHECK(cetta_json_direct_v1_parse(&arena, text, size, true, false, 0u,
+                &parsed, &parse_status, error, sizeof(error)));
+            free(text); text = NULL; size = 0u;
+            CHECK(cetta_json_value_v1_emit(parsed, true, 0u, 0u, 0u, &text, &size, &status,
+                error, sizeof(error)) && size == strlen(inputs[at]) && !memcmp(text, inputs[at], size));
+            free(text); text = NULL; size = 17u;
+            CHECK(!cetta_json_value_v1_emit_pretty(value, mode != 0u, 0u, 0u, 1u,
+                &text, &size, &status, error, sizeof(error)) && !text && size == 17u &&
+                status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT);
+            arena_free(&arena);
+        }
+    }
+}
+
 static void unit(const CettaJsonRuntimeV1 *runtime) {
+    lookup_controls();
+    projection_controls();
+    pretty_controls();
     const char *cases[]={"null","false","true","0","-0","-12.50e+2"," \t\r\n[  ] ","{\"x\":1,\"x\":2}",
         "{\"λ\": \"λ\\u0000z\", \"x\":[{ },[ ]]}","\"\\uD834\\uDD1E\"","\"a\\tb\\nc\\rd\\fe\\bf\\/g\\\\h\\\"\"",
         "{ }","{  }","[  ]","[1,]","01","-","1e","[","{\"x\":}","\"\\uD800\"","\"\\uDC00\"","\"\\x\"",
@@ -195,14 +492,34 @@ static void unit(const CettaJsonRuntimeV1 *runtime) {
     const char *nested="[[[[0]]]]";
     CHECK(!cetta_json_direct_v1_parse(&arena,(const uint8_t *)nested,strlen(nested),true,false,4,&value,&status,error,sizeof(error)) && status==CETTA_JSON_RUNTIME_V1_RESOURCE_LIMIT);
     CHECK(cetta_json_direct_v1_parse(&arena,(const uint8_t *)nested,strlen(nested),true,false,5,&value,&status,error,sizeof(error)));
+    for (unsigned work = 0; work < 8u; work++)
+        for (unsigned depth = 0; depth < 7u; depth++)
+            for (unsigned bytes = 0; bytes < 12u; bytes++)
+                CHECK(fusion_agrees(value, work, depth, bytes));
+    Atom *symbolic = atom_symbol(&arena, "text");
+    CHECK(fusion_agrees(symbolic, 0u, 0u, 0u));
+    for (unsigned i = 0; i < 4u; i++) {
+        CHECK(fusion_agrees(atom_string_n(
+            &arena, (const char *)invalid[i] + 1u, lengths[i] - 2u),
+            0u, 0u, 0u));
+    }
+    const uint8_t scalars[] = {0, 1, 8, 9, 10, 12, 13, 31, 34, 92, 127,
+        0xc2, 0x80, 0xdf, 0xbf, 0xe0, 0xa0, 0x80, 0xed, 0x9f, 0xbf,
+        0xee, 0x80, 0x80, 0xef, 0xbf, 0xbf, 0xf0, 0x90, 0x80, 0x80,
+        0xf4, 0x8f, 0xbf, 0xbf};
+    Atom *boundary = atom_string_n(
+        &arena, (const char *)scalars, sizeof(scalars));
+    for (unsigned work = 0; work < 24u; work++)
+        for (unsigned bytes = 0; bytes < 80u; bytes++)
+            CHECK(fusion_agrees(boundary, work, 0u, bytes));
     Atom *canonical = NULL, *limited = sentinel;
     CettaJsonValueV1Status value_status;
     CHECK(cetta_json_direct_v1_parse(&arena,(const uint8_t *)nested,strlen(nested),false,false,0,&canonical,&status,error,sizeof(error)));
     ArenaMark before_conversion = arena_mark(&arena);
-    CHECK(!cetta_json_value_v1_to_legacy(&arena, canonical, 2u, 0u, &limited, &value_status,
+    CHECK(!cetta_json_value_v1_to_ordinary(&arena, canonical, 2u, 0u, &limited, &value_status,
         error, sizeof(error)) && value_status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT && limited == sentinel &&
         arena.live_bytes == before_conversion.live_bytes);
-    CHECK(!cetta_json_value_v1_to_legacy(&arena, canonical, 0u, 4u, &limited, &value_status,
+    CHECK(!cetta_json_value_v1_to_ordinary(&arena, canonical, 0u, 4u, &limited, &value_status,
         error, sizeof(error)) && value_status == CETTA_JSON_VALUE_V1_RESOURCE_LIMIT && limited == sentinel &&
         arena.live_bytes == before_conversion.live_bytes);
     uint8_t *limited_text = NULL; size_t limited_size = 17u;
@@ -315,13 +632,118 @@ static bool lines(const CettaJsonRuntimeV1 *runtime,const char *path,bool compar
     free(line); fclose(stream); return ok;
 }
 
+/* Separate representation, emission and lookup costs; no timing assertions. */
+static bool value_cost(size_t size) {
+    const char prefix[] = "{\"payload\":\"";
+    const char suffix[] = "\",\"needle\":1}";
+    if (size > SIZE_MAX - sizeof(prefix) - sizeof(suffix)) return false;
+    size_t length = sizeof(prefix) - 1u + size + sizeof(suffix) - 1u;
+    char *text = malloc(length + 1u);
+    if (!text) return false;
+    memcpy(text, prefix, sizeof(prefix)-1u);
+    memset(text + sizeof(prefix)-1u, 'x', size);
+    memcpy(text + sizeof(prefix)-1u + size, suffix, sizeof(suffix));
+    CettaJsonLibraryRuntimeV1 *library = cetta_json_library_runtime_v1_new(NULL, 0);
+    bool ok = library != NULL;
+    for (unsigned ordinary = 0; ok && ordinary < 2u; ordinary++) {
+        Arena input; arena_init_detached(&input);
+        Atom *source[] = {atom_string_n(&input, text, length)};
+        double start = now();
+        Atom *value = cetta_json_library_dispatch_v1(library, &input,
+            atom_symbol(&input, ordinary ? "__cetta_lib_json_parse" : "__cetta_lib_json_parse_v1"), source, 1u);
+        double elapsed = now() - start;
+        ok = value && value->kind == ATOM_EXPR && atom_is_symbol(value->expr.elems[0], ordinary ? "JsonObject" : "JsonObjectV1");
+        printf("{\"operation\":\"parse\",\"native_strings\":%s,\"payload_bytes\":%zu,\"seconds\":%.9f,\"arena_bytes\":%zu}\n",
+            ordinary ? "true" : "false", size, elapsed, arena_accounted_live_bytes(&input));
+        if (ok && ordinary) {
+            const char *operations[] = {"__cetta_lib_json_stringify",
+                "__cetta_lib_json_object_get", "__cetta_lib_json_project_v1"};
+            for (unsigned operation = 0; ok && operation < 3u; operation++) {
+                Arena output; arena_init_detached(&output);
+                Atom *key = atom_string(&output, "needle");
+                Atom *path_items[] = {key};
+                Atom *args[] = {
+                    operation == 2u ? source[0] : value,
+                    operation == 2u
+                        ? atom_expr(&output, path_items, 1u) : key,
+                };
+                start = now();
+                Atom *result = cetta_json_library_dispatch_v1(library, &output,
+                    atom_symbol(&output, operations[operation]), args,
+                    operation ? 2u : 1u);
+                elapsed = now() - start;
+                ok = operation ? result && result->kind == ATOM_GROUNDED &&
+                      result->ground.gkind == GV_INT && result->ground.ival == 1
+                    : result && result->kind == ATOM_GROUNDED && result->ground.gkind == GV_STRING &&
+                      atom_string_len(result) == length && !memcmp(result->ground.sval, text, length);
+                printf("{\"operation\":\"%s\",\"native_strings\":true,\"payload_bytes\":%zu,\"seconds\":%.9f,\"arena_bytes\":%zu}\n",
+                    operation == 0u ? "emit" : operation == 1u ? "lookup" : "project",
+                    size, elapsed, arena_accounted_live_bytes(&output));
+                arena_free(&output);
+            }
+            /* The unfused composition remains executable in the same binary,
+             * so timing comparisons need no historical executable or parser. */
+            for (unsigned operation = 0; ok && operation < 2u; operation++) {
+                Arena temporary, output;
+                arena_init_detached(&temporary); arena_init_detached(&output);
+                Atom *canonical = NULL, *result = NULL;
+                CettaJsonValueV1Status status;
+                char error[256];
+                start = now();
+                ok = cetta_json_value_v1_from_ordinary(&temporary, value, 0u, 0u,
+                    &canonical, &status, error, sizeof(error));
+                if (ok && !operation) {
+                    uint8_t *bytes = NULL; size_t size_out = 0u;
+                    ok = cetta_json_value_v1_emit(canonical, false, 0u, 0u, 0u,
+                        &bytes, &size_out, &status, error, sizeof(error));
+                    if (ok) result = atom_string_n(&output, (const char *)bytes, size_out);
+                    free(bytes);
+                } else if (ok) {
+                    Atom *key = NULL;
+                    ok = cetta_json_value_v1_from_ordinary(&temporary, atom_string(&temporary, "needle"),
+                        0u, 0u, &key, &status, error, sizeof(error));
+                    Atom *members = canonical->expr.elems[1];
+                    for (CettaExprIndex at = 0u; ok && at < members->expr.len; at++) {
+                        Atom *member = members->expr.elems[at];
+                        if (atom_eq(member->expr.elems[2], key)) {
+                            ok = cetta_json_value_v1_to_ordinary(&output, member->expr.elems[3],
+                                0u, 0u, &result, &status, error, sizeof(error));
+                            break;
+                        }
+                    }
+                }
+                elapsed = now() - start;
+                ok = ok && (operation ? result && result->kind == ATOM_GROUNDED &&
+                      result->ground.gkind == GV_INT && result->ground.ival == 1
+                    : result && result->kind == ATOM_GROUNDED && result->ground.gkind == GV_STRING &&
+                      atom_string_len(result) == length && !memcmp(result->ground.sval, text, length));
+                printf("{\"operation\":\"%s-conversion-reference\",\"native_strings\":true,\"payload_bytes\":%zu,\"seconds\":%.9f,\"arena_bytes\":%zu}\n",
+                    operation ? "lookup" : "emit", size, elapsed,
+                    arena_accounted_live_bytes(&temporary) + arena_accounted_live_bytes(&output));
+                arena_free(&output); arena_free(&temporary);
+            }
+        }
+        arena_free(&input);
+    }
+    cetta_json_library_runtime_v1_free(library);
+    free(text);
+    return ok;
+}
+
 int main(int argc,char **argv) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
-    bool fast_only=argc==3 && (!strcmp(argv[1],"--bench") || !strcmp(argv[1],"--corpus-fast"));
+    bool values=argc==3 && !strcmp(argv[1],"--value-cost");
+    bool fast_only=values || (argc==3 && (!strcmp(argv[1],"--bench") || !strcmp(argv[1],"--corpus-fast")));
     CettaJsonRuntimeV1 *runtime=fast_only?NULL:reference();
     bool ok=fast_only || runtime;
-    if(ok && argc==1) { unit(runtime); printf("JsonDirectSummary %u %u\n",passed,failed); ok=!failed; }
+    if(ok && values) {
+        char *end = NULL;
+        unsigned long long size = strtoull(argv[2], &end, 10);
+        ok = end && *end == '\0' && end != argv[2] && argv[2][0] != '-' && size <= SIZE_MAX;
+        if (ok) ok = value_cost((size_t)size);
+    }
+    else if(ok && argc==1) { unit(runtime); printf("JsonDirectSummary %u %u\n",passed,failed); ok=!failed; }
     else if(ok && argc==3 && !strncmp(argv[1],"--corpus",8)) ok=corpus(runtime,argv[2],!fast_only);
     else if(ok && argc==3) ok=lines(runtime,argv[2],!fast_only);
     else ok=false;

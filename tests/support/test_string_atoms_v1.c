@@ -222,6 +222,38 @@ static void natives(Arena *a) {
     Atom *symbol = call_str(a, "string->symbol", word, &refusal);
     Atom *back = symbol ? call_str(a, "symbol->string", &symbol, &refusal) : NULL;
     expect(back && atom_eq(back, word[0]), "string->symbol->string is the identity");
+    struct {
+        const char *text;
+        int64_t value;
+    } bounded_numbers[] = {
+        {"0", 0}, {"+0", 0}, {"-0", 0},
+        {"9223372036854775807", INT64_MAX},
+        {"-9223372036854775808", INT64_MIN},
+    };
+    for (size_t i = 0u;
+         i < sizeof(bounded_numbers) / sizeof(bounded_numbers[0]); i++) {
+        Atom *argument[1] = {atom_string(a, bounded_numbers[i].text)};
+        refusal = (CettaStrRefusal){0};
+        Atom *number = call_str(a, "string->number", argument, &refusal);
+        expect(number && number->kind == ATOM_GROUNDED &&
+                   number->ground.gkind == GV_INT &&
+                   number->ground.ival == bounded_numbers[i].value,
+               "bounded decimal integer is read exactly");
+    }
+    const char *unbounded_numbers[] = {
+        "9223372036854775808", "-9223372036854775809",
+    };
+    for (size_t i = 0u;
+         i < sizeof(unbounded_numbers) / sizeof(unbounded_numbers[0]); i++) {
+        Atom *argument[1] = {atom_string(a, unbounded_numbers[i])};
+        refusal = (CettaStrRefusal){0};
+        Atom *number = call_str(a, "string->number", argument, &refusal);
+        expect(number && number->kind == ATOM_GROUNDED &&
+                   number->ground.gkind == GV_BIGINT &&
+                   strcmp(atom_bigint_cstr(number),
+                          unbounded_numbers[i]) == 0,
+               "an integer beyond Int64 remains an exact BigInt");
+    }
     Atom *huge[1] = {atom_string(a, "1e999")};
     refusal = (CettaStrRefusal){0};
     expect(!call_str(a, "string->number", huge, &refusal) && refusal.reason &&

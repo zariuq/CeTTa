@@ -11742,3 +11742,25 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
            cetta_foreign_call_native(ctx->foreign_runtime,
                                      space, a, head, args, nargs, out);
 }
+
+bool cetta_library_call_native_prepared_view(
+    CettaLibraryContext *ctx, Space *space,
+    Arena *a, Atom *head, Atom **args,
+    uint32_t nargs, CettaCallOutcome *out) {
+    if (!ctx || !a || !head || !out)
+        return false;
+#if CETTA_BUILD_WITH_JSON_GSLT
+    if (ctx->active_mask & CETTA_LIBRARY_JSON) {
+        Atom *value = NULL;
+        if (cetta_json_library_borrowed_value_v1(
+                ctx->json_runtime, a, head, args, nargs, &value)) {
+            if (!value)
+                return false;
+            *out = cetta_call_completed_value(value);
+            return true;
+        }
+    }
+#endif
+    return cetta_library_call_native(
+        ctx, space, a, head, args, nargs, out);
+}

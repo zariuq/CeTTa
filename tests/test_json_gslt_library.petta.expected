@@ -1,11 +1,11 @@
 true
 (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1") (JsonSourceSpanV1 1 6)) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2") (JsonSourceSpanV1 7 12))))
-(JsonObject ((JsonPair "x" (JsonNumber "1")) (JsonPair "x" (JsonNumber "2"))))
+(JsonObject ((JsonPair "x" 1) (JsonPair "x" 2)))
 (JsonMatchesV1 ((JsonNumberV1 "1") (JsonNumberV1 "2")))
 (JsonFoundV1 0 (JsonNumberV1 "1"))
 (JsonFoundV1 1 (JsonNumberV1 "2"))
 JsonMissingV1
-(JsonNumber "1")
+1
 JsonNull
 "message"
 (assertEqualToResult true (true))
@@ -14,5 +14,5 @@ JsonNull
 "{\"permissions\":{\"write\":[\"/repo/runtime\"]},\"scope\":\"turn\"}"
 (JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 (__cetta_lib_json_parse_v1 "01") "JSON byte 1: expected end of JSON text")
 (JsonFailureV1 JsonStringifyV1 JsonRoundtripDisagreementV1 (__cetta_lib_json_stringify_v1 (JsonNumberV1 "01")) "JSON syntax rejected by authored grammar")
-"{\"x\":-12.50e+2,\"x\":[true,false,null,\"λ\\u0000z\"]}"
+"{\"x\":-1250.0,\"x\":[true,false,null,\"λ\\u0000z\"]}"
 JsonMalformedValueV1

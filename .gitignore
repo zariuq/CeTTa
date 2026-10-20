@@ -1,6 +1,7 @@
 # Build outputs
 /cetta
 /cetta-stage0
+*.proc-scope
 /src/*.d
 /src/*.stage0.d
 /native/*.d

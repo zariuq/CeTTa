@@ -7,18 +7,18 @@
 (= (JsonNumberV1 $x) (Rewritten $x))
 (= (JsonBoolV1 $x) (Rewritten $x))
 
-!(json:parse "[1, true]")
-!(json:stringify (json:parse "[1, true]"))
-!(json:get-first (json:parse "{\"k\": 5, \"k\": 6}") "k")
-!(json:get-last (json:parse "{\"k\": 5, \"k\": 6}") "k")
-!(json:get-all (json:parse "{\"k\": 5, \"k\": 6}") "k")
-!(json:members (json:parse "{\"k\": 5}"))
-!(json:stringify (json:parse "{\"nested\": [[1], {\"t\": true}]}"))
-!(json-stringify (json:to-legacy (json:parse "[1,true]")))
+!(json:inspect "[1, true]")
+!(json:inspect-stringify (json:inspect "[1, true]"))
+!(json:inspect-get-first (json:inspect "{\"k\": 5, \"k\": 6}") "k")
+!(json:inspect-get-last (json:inspect "{\"k\": 5, \"k\": 6}") "k")
+!(json:inspect-get-all (json:inspect "{\"k\": 5, \"k\": 6}") "k")
+!(json:inspect-members (json:inspect "{\"k\": 5}"))
+!(json:inspect-stringify (json:inspect "{\"nested\": [[1], {\"t\": true}]}"))
+!(json:stringify (json:from-inspection (json:inspect "[1,true]")))
 
 ; A value the program passes through a variable is that program's value.
 ; HE interprets an argument at a parameter that is not Atom-typed, as
 ; upstream HE does (tests/he/untyped_parameter_interprets_data), so the
 ; program's equation applies there; PeTTa passes a variable's value on as
 ; it is.
-!(let $v (json:parse "[1]") (json:stringify $v))
+!(let $v (json:inspect "[1]") (json:inspect-stringify $v))
