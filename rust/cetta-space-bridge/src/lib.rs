@@ -307,10 +307,12 @@ const QUERY_ONLY_V2_VERSION: u16 = 5;
 const QUERY_ONLY_V2_FLAG_QUERY_KEYS_ONLY: u16 = 1 << 0;
 const QUERY_ONLY_V2_FLAG_RAW_EXPR_BYTES: u16 = 1 << 1;
 const QUERY_ONLY_V2_FLAG_WIDE_TOKENS: u16 = 1 << 4;
-const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 6;
-const CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION: u16 = 9;
+const CONTEXTUAL_ROWS_WIRE_VERSION: u16 = 10;
+const CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION: u16 = 11;
 const CONTEXTUAL_EXACT_ROWS_FLAGS: u16 = 0;
 const OPEN_VAR_REF_EXACT: u8 = 0;
+/// A CeTTa VarId in an exact context: its base and epoch words.
+const EXACT_VAR_ID_BYTES: usize = 16;
 const OPEN_VAR_REF_QUERY_SLOT: u8 = 1;
 const OPEN_VAR_REF_MATCHED_EXACT: u8 = 2;
 const OPEN_VAR_REF_MATCHED_INSTANCE: u8 = 3;
@@ -1939,10 +1941,10 @@ fn validate_contextual_exact_context(context: &[u8], var_count: u16) -> Result<(
         }
         *seen_slot = true;
 
-        if context.len().saturating_sub(offset) < 8 {
+        if context.len().saturating_sub(offset) < EXACT_VAR_ID_BYTES {
             return Err("contextual exact context truncated while reading VarId".to_string());
         }
-        offset += 8;
+        offset += EXACT_VAR_ID_BYTES;
         let spelling_len = read_u32_be_at(context, &mut offset)? as usize;
         if spelling_len == 0 {
             return Err("contextual exact context contains empty variable spelling".to_string());
@@ -2195,11 +2197,11 @@ fn append_matched_exact_context_entry_remapped(
         if kind != OPEN_VAR_REF_EXACT {
             return Err("stored exact context contains non-exact ref kind".to_string());
         }
-        if exact_context.len().saturating_sub(offset) < 8 {
+        if exact_context.len().saturating_sub(offset) < EXACT_VAR_ID_BYTES {
             return Err("stored exact context truncated while reading VarId".to_string());
         }
-        let var_id_bytes = &exact_context[offset..offset + 8];
-        offset += 8;
+        let var_id_bytes = &exact_context[offset..offset + EXACT_VAR_ID_BYTES];
+        offset += EXACT_VAR_ID_BYTES;
         let spelling_len = read_u32_be_at(exact_context, &mut offset)? as usize;
         if exact_context.len().saturating_sub(offset) < spelling_len {
             return Err("stored exact context truncated while reading spelling".to_string());
@@ -2250,11 +2252,11 @@ fn append_matched_instance_context_entry_remapped(
         if kind != OPEN_VAR_REF_EXACT {
             return Err("stored exact context contains non-exact ref kind".to_string());
         }
-        if exact_context.len().saturating_sub(offset) < 8 {
+        if exact_context.len().saturating_sub(offset) < EXACT_VAR_ID_BYTES {
             return Err("stored exact context truncated while reading VarId".to_string());
         }
-        let var_id_bytes = &exact_context[offset..offset + 8];
-        offset += 8;
+        let var_id_bytes = &exact_context[offset..offset + EXACT_VAR_ID_BYTES];
+        offset += EXACT_VAR_ID_BYTES;
         let spelling_len = read_u32_be_at(exact_context, &mut offset)? as usize;
         if exact_context.len().saturating_sub(offset) < spelling_len {
             return Err("stored exact context truncated while reading spelling".to_string());
@@ -7734,6 +7736,20 @@ mod tests {
         )
     }
 
+    /// An exact variable id as the wire spells it: the base word, then the
+    /// frame identity word, each big-endian.
+    fn exact_var_id(base: u64, epoch: u64) -> u128 {
+        (u128::from(base) << 64) | u128::from(epoch)
+    }
+
+    fn read_u128_be(data: &[u8], offset: usize) -> u128 {
+        u128::from_be_bytes(
+            data[offset..offset + 16]
+                .try_into()
+                .expect("test packet has enough bytes for u128"),
+        )
+    }
+
     fn read_u64_be(data: &[u8], offset: usize) -> u64 {
         u64::from_be_bytes(
             data[offset..offset + 8]
@@ -7764,17 +7780,17 @@ mod tests {
                 match kind {
                     OPEN_VAR_REF_QUERY_SLOT => offset += 2,
                     OPEN_VAR_REF_EXACT => {
-                        offset += 8;
+                        offset += EXACT_VAR_ID_BYTES;
                         let spelling_len = read_u32_be(data, offset) as usize;
                         offset += 4 + spelling_len;
                     }
                     OPEN_VAR_REF_MATCHED_EXACT => {
-                        offset += 2 + 8;
+                        offset += 2 + EXACT_VAR_ID_BYTES;
                         let spelling_len = read_u32_be(data, offset) as usize;
                         offset += 4 + spelling_len;
                     }
                     OPEN_VAR_REF_MATCHED_INSTANCE => {
-                        offset += 4 + 2 + 8;
+                        offset += 4 + 2 + EXACT_VAR_ID_BYTES;
                         let spelling_len = read_u32_be(data, offset) as usize;
                         offset += 4 + spelling_len;
                     }
@@ -9241,7 +9257,7 @@ mod tests {
         append_u16_be(&mut context, 0);
         context.push(OPEN_VAR_REF_EXACT);
         context.push(0);
-        let stored_var_id = 0x1122_3344_5566_7788u64;
+        let stored_var_id = 0x1122_3344_5566_7788_99aa_bbcc_ddee_ff01u128;
         context.extend_from_slice(&stored_var_id.to_be_bytes());
         let spelling = b"stored";
         append_u32_be(&mut context, spelling.len() as u32);
@@ -9291,8 +9307,8 @@ mod tests {
             offset += 4;
             assert_eq!(read_u16_be(data, offset), 0);
             offset += 2;
-            assert_eq!(read_u64_be(data, offset), stored_var_id);
-            offset += 8;
+            assert_eq!(read_u128_be(data, offset), stored_var_id);
+            offset += EXACT_VAR_ID_BYTES;
             let spelling_len = read_u32_be(data, offset) as usize;
             offset += 4;
             assert_eq!(&data[offset..offset + spelling_len], spelling);
@@ -9312,7 +9328,7 @@ mod tests {
         }
         assert_eq!(offset, data.len());
         assert!(
-            data.windows(8)
+            data.windows(EXACT_VAR_ID_BYTES)
                 .any(|bytes| bytes == stored_var_id.to_be_bytes())
         );
         assert!(data.windows(spelling.len()).any(|bytes| bytes == spelling));
@@ -9347,11 +9363,11 @@ mod tests {
         for (source, stored_var_id) in [
             (
                 b"(schema $stored first)".as_slice(),
-                0x1122_3344_0000_0001u64,
+                exact_var_id(1, 0x1122_3344),
             ),
             (
                 b"(schema $stored second)".as_slice(),
-                0x1122_3344_0000_0002u64,
+                exact_var_id(2, 0x1122_3344),
             ),
         ] {
             let expr_bytes = parse_single_expr(&mut scratch, source).unwrap();
@@ -9486,9 +9502,9 @@ mod tests {
         .unwrap();
 
         let stored_vars = [
-            (0u16, 0x0000_0001_0000_0101u64, b"psi".as_slice()),
-            (1u16, 0x0000_0001_0000_0202u64, b"phi".as_slice()),
-            (2u16, 0x0000_0003_0000_0101u64, b"psi".as_slice()),
+            (0u16, exact_var_id(0x101, 1), b"psi".as_slice()),
+            (1u16, exact_var_id(0x202, 1), b"phi".as_slice()),
+            (2u16, exact_var_id(0x101, 3), b"psi".as_slice()),
         ];
         let mut context = Vec::new();
         append_u32_be(&mut context, stored_vars.len() as u32);
@@ -9536,8 +9552,8 @@ mod tests {
             offset += 4;
             assert_eq!(read_u16_be(data, offset), expected_slot);
             offset += 2;
-            let var_id = read_u64_be(data, offset);
-            offset += 8;
+            let var_id = read_u128_be(data, offset);
+            offset += EXACT_VAR_ID_BYTES;
             let spelling_len = read_u32_be(data, offset) as usize;
             offset += 4;
             let spelling = data[offset..offset + spelling_len].to_vec();
@@ -9550,9 +9566,9 @@ mod tests {
         assert_eq!(decoded[1].2, b"phi");
         assert_eq!(decoded[2].2, b"psi");
         assert_ne!(decoded[0].1, decoded[2].1);
-        assert_eq!(decoded[0].1, 0x0000_0001_0000_0101u64);
-        assert_eq!(decoded[1].1, 0x0000_0001_0000_0202u64);
-        assert_eq!(decoded[2].1, 0x0000_0003_0000_0101u64);
+        assert_eq!(decoded[0].1, exact_var_id(0x101, 1));
+        assert_eq!(decoded[1].1, exact_var_id(0x202, 1));
+        assert_eq!(decoded[2].1, exact_var_id(0x101, 3));
 
         mork_bytes_free(packet.data, packet.len);
         mork_query_cursor_free(cursor);
@@ -9604,7 +9620,7 @@ mod tests {
         assert!(!counted.is_null());
         let mut scratch = Space::new();
         let outer = parse_single_expr(&mut scratch, b"(outer $stored)").unwrap();
-        for var_id in [0x0000_0001_0000_0101u64, 0x0000_0002_0000_0101u64] {
+        for var_id in [exact_var_id(0x101, 1), exact_var_id(0x101, 2)] {
             let mut context = Vec::new();
             append_u32_be(&mut context, 1);
             append_u16_be(&mut context, 0);
@@ -9651,18 +9667,18 @@ mod tests {
                     match kind {
                         OPEN_VAR_REF_QUERY_SLOT => offset += 2,
                         OPEN_VAR_REF_EXACT => {
-                            offset += 8;
+                            offset += EXACT_VAR_ID_BYTES;
                             let spelling_len = read_u32_be(data, offset) as usize;
                             offset += 4 + spelling_len;
                         }
                         OPEN_VAR_REF_MATCHED_EXACT => {
-                            offset += 2 + 8;
+                            offset += 2 + EXACT_VAR_ID_BYTES;
                             let spelling_len = read_u32_be(data, offset) as usize;
                             offset += 4 + spelling_len;
                         }
                         OPEN_VAR_REF_MATCHED_INSTANCE => {
                             packet_groups.push(read_u32_be(data, offset));
-                            offset += 4 + 2 + 8;
+                            offset += 4 + 2 + EXACT_VAR_ID_BYTES;
                             let spelling_len = read_u32_be(data, offset) as usize;
                             offset += 4 + spelling_len;
                         }
@@ -10075,7 +10091,7 @@ mod tests {
         append_u16_be(&mut context, 0);
         context.push(OPEN_VAR_REF_EXACT);
         context.push(0);
-        let stored_var_id = 0x0102_0304_0506_0708u64;
+        let stored_var_id = 0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10u128;
         context.extend_from_slice(&stored_var_id.to_be_bytes());
         let spelling = b"stored";
         append_u32_be(&mut context, spelling.len() as u32);
@@ -10104,17 +10120,17 @@ mod tests {
         assert_eq!(data[32], 1);
         assert_eq!(data[33], 0);
         assert_eq!(
-            u64::from_be_bytes(data[34..42].try_into().unwrap()),
+            u128::from_be_bytes(data[34..50].try_into().unwrap()),
             stored_var_id
         );
-        assert_eq!(read_u32_be(data, 42), spelling.len() as u32);
-        assert_eq!(&data[46..52], spelling);
-        assert_eq!(read_u32_be(data, 52), 1);
-        assert_eq!(read_u16_be(data, 56), 0);
-        assert_eq!(read_u32_be(data, 58), 0);
-        assert_eq!(read_u32_be(data, 62), 0);
-        assert_eq!(read_u32_be(data, 66), 1);
-        assert_eq!(data[70], BRIDGE_EXPR_TAG_NEWVAR);
+        assert_eq!(read_u32_be(data, 50), spelling.len() as u32);
+        assert_eq!(&data[54..60], spelling);
+        assert_eq!(read_u32_be(data, 60), 1);
+        assert_eq!(read_u16_be(data, 64), 0);
+        assert_eq!(read_u32_be(data, 66), 0);
+        assert_eq!(read_u32_be(data, 70), 0);
+        assert_eq!(read_u32_be(data, 74), 1);
+        assert_eq!(data[78], BRIDGE_EXPR_TAG_NEWVAR);
         mork_bytes_free(packet.data, packet.len);
         mork_space_free(counted);
     }

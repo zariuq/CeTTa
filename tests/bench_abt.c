@@ -176,7 +176,7 @@ int main(void) {
         ArenaMark mark = arena_mark(&scratch);
         uint64_t start = monotonic_ns();
         Atom *result = atom_freshen_epoch(
-            &scratch, metavariables, i + 1u);
+            &scratch, metavariables, (CettaFrameIdentity){i + 1u});
         freshen_ns[i] = monotonic_ns() - start;
         assert(result && result != metavariables);
         arena_reset(&scratch, mark);

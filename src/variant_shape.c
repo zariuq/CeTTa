@@ -23,15 +23,15 @@ static const char *variant_shape_slot_name_or_default(const CettaVariantShapeOpt
 /*
  * Private variant slots need a detectable namespace so generic Bindings merge
  * paths can reject accidental leaks before they corrupt semantic env state.
- * This tag is a practical reservation rather than a theorem about all VarIds;
- * the eventual opaque instance layer will make the separation stronger.
+ * Their epoch is one the frame identity facility never issues (generation
+ * zero), so no activation's variable can carry it.
  */
 VarId variant_shape_slot_id(uint32_t ordinal) {
-    return CETTA_VARIANT_PRIVATE_SLOT_TAG | (VarId)ordinal;
+    return (VarId){ordinal, CETTA_VARIANT_PRIVATE_SLOT_EPOCH};
 }
 
 uint32_t variant_shape_slot_ordinal(VarId id) {
-    return (uint32_t)(id & 0xFFFFFFFFu);
+    return (uint32_t)id.base;
 }
 
 bool variant_private_var_id(VarId id) {

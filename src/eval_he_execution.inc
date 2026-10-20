@@ -275,7 +275,7 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
         if (head == g_builtin_syms.op_eq) {
             admitted = parts[1]->kind == ATOM_VAR &&
                 parts[2]->kind == ATOM_VAR &&
-                parts[1]->var_id == parts[2]->var_id &&
+                var_id_eq(parts[1]->var_id, parts[2]->var_id) &&
                 he_execution_type_name(parts[3], "Bool");
         } else {
             bool arithmetic = head == g_builtin_syms.op_plus ||
@@ -332,7 +332,7 @@ static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
                 if (!atom_is_computation_zero_form(rhs))
                     return false;
             } else if (!rhs || rhs->kind != ATOM_VAR ||
-                       rhs->var_id != lhs->expr.elems[truth ? 2u : 3u]->var_id) {
+                       !var_id_eq(rhs->var_id, lhs->expr.elems[truth ? 2u : 3u]->var_id)) {
                 return false;
             }
         }
@@ -495,8 +495,7 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
         for (CettaExprIndex i = 1u; single && i < lhs->expr.len; i++) {
             single = lhs->expr.elems[i]->kind == ATOM_VAR;
             for (CettaExprIndex j = 1u; single && j < i; j++)
-                single = lhs->expr.elems[j]->var_id !=
-                    lhs->expr.elems[i]->var_id;
+                single = !var_id_eq(lhs->expr.elems[j]->var_id, lhs->expr.elems[i]->var_id);
         }
         body = occurrence.rhs;
     }
@@ -716,7 +715,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         if (params[index]->kind != ATOM_VAR)
             return SYMBOL_ID_NONE;
     }
-    if (arity == 2u && params[0]->var_id == params[1]->var_id)
+    if (arity == 2u && var_id_eq(params[0]->var_id, params[1]->var_id))
         return SYMBOL_ID_NONE;
     /* The collections bind in order, then the aggregate, then the emit. */
     const Atom *collected[2] = {NULL, NULL};
@@ -730,7 +729,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         if (value->kind != ATOM_EXPR || value->expr.len != 2u ||
             !eval_is_reify_head(atom_head_symbol_id(value)) ||
             value->expr.elems[1]->kind != ATOM_VAR ||
-            value->expr.elems[1]->var_id != params[index]->var_id)
+            !var_id_eq(value->expr.elems[1]->var_id, params[index]->var_id))
             return SYMBOL_ID_NONE;
         collected[index] = body->expr.elems[1];
         body = body->expr.elems[3];
@@ -747,13 +746,12 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         return SYMBOL_ID_NONE;
     for (uint32_t index = 0u; index < arity; index++)
         if (combined->expr.elems[index + 1u]->kind != ATOM_VAR ||
-            combined->expr.elems[index + 1u]->var_id !=
-                collected[index]->var_id)
+            !var_id_eq(combined->expr.elems[index + 1u]->var_id, collected[index]->var_id))
             return SYMBOL_ID_NONE;
     if (emit->kind != ATOM_EXPR || emit->expr.len != 2u ||
         !atom_is_symbol_id(emit->expr.elems[0], g_builtin_syms.superpose) ||
         emit->expr.elems[1]->kind != ATOM_VAR ||
-        emit->expr.elems[1]->var_id != result->var_id)
+        !var_id_eq(emit->expr.elems[1]->var_id, result->var_id))
         return SYMBOL_ID_NONE;
     return aggregate;
 }
@@ -1039,7 +1037,7 @@ static bool he_stream_head_total(Space *space, SymbolId head,
             Atom *argument = lhs->expr.elems[i];
             general = argument->kind == ATOM_VAR;
             for (CettaExprIndex j = 1u; general && j < i; j++)
-                general = lhs->expr.elems[j]->var_id != argument->var_id;
+                general = !var_id_eq(lhs->expr.elems[j]->var_id, argument->var_id);
         }
         if (general)
             return true;
@@ -1255,7 +1253,7 @@ typedef struct {
 
 static bool he_bound_contains(const HeBoundVariables *bound, VarId id) {
     for (size_t index = bound->len; index > 0u; index--)
-        if (bound->items[index - 1u] == id)
+        if (var_id_eq(bound->items[index - 1u], id))
             return true;
     return false;
 }
@@ -1610,7 +1608,7 @@ static size_t he_variable_occurrences(const Atom *term, VarId id,
     if (depth >= 256u)
         return SIZE_MAX;
     if (term->kind == ATOM_VAR)
-        return term->var_id == id;
+        return var_id_eq(term->var_id, id);
     size_t count = 0u;
     if (term->kind == ATOM_EXPR)
         for (CettaExprIndex index = 0u; index < term->expr.len; index++) {

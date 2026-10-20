@@ -106,7 +106,7 @@ static AtomId petta_projection_variable_bytes(
             }
         } else {
             uint32_t proposed = cetta_var_index_propose(
-                &context->variable_index, (VarId)spelling);
+                &context->variable_index, var_id_from_base(spelling));
             if (proposed < context->variable_len &&
                 context->variables[proposed].spelling == spelling)
                 found = proposed;
@@ -136,10 +136,10 @@ static AtomId petta_projection_variable_bytes(
                     return CETTA_ATOM_ID_NONE;
                 for (uint32_t index = 0u; index < context->variable_len; index++)
                     cetta_var_index_record(&context->variable_index,
-                        (VarId)context->variables[index].spelling, index);
+                        var_id_from_base(context->variables[index].spelling), index);
             } else {
                 cetta_var_index_record(&context->variable_index,
-                    (VarId)spelling, context->variable_len - 1u);
+                    var_id_from_base(spelling), context->variable_len - 1u);
             }
         }
     }

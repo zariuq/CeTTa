@@ -491,19 +491,19 @@ static bool petta_program_variable_slot(
     if (slot_out)
         *slot_out = 0u;
     if (!variable_ids || variable_count == 0u ||
-        id == VAR_ID_NONE || !slot_out) {
+        var_id_is_none(id) || !slot_out) {
         return false;
     }
     uint32_t low = 0u;
     uint32_t high = variable_count;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
-        if (variable_ids[middle] < id)
+        if (var_id_lt(variable_ids[middle], id))
             low = middle + 1u;
         else
             high = middle;
     }
-    if (low >= variable_count || variable_ids[low] != id)
+    if (low >= variable_count || !var_id_eq(variable_ids[low], id))
         return false;
     *slot_out = low;
     return true;
@@ -736,7 +736,7 @@ static size_t petta_program_var_lower_bound(
     size_t high = variables ? variables->len : 0u;
     while (low < high) {
         size_t middle = low + (high - low) / 2u;
-        if (variables->items[middle] < id)
+        if (var_id_lt(variables->items[middle], id))
             low = middle + 1u;
         else
             high = middle;
@@ -747,11 +747,11 @@ static size_t petta_program_var_lower_bound(
 static bool petta_program_var_insert(
     PettaProgramVarSet *variables, Atom *variable) {
     if (!variables || !variable || variable->kind != ATOM_VAR ||
-        variable->var_id == VAR_ID_NONE)
+        var_id_is_none(variable->var_id))
         return false;
     VarId id = variable->var_id;
     size_t index = petta_program_var_lower_bound(variables, id);
-    if (index < variables->len && variables->items[index] == id)
+    if (index < variables->len && var_id_eq(variables->items[index], id))
         return true;
     if (variables->len == variables->cap) {
         size_t next_cap = variables->cap ? variables->cap * 2u : 8u;
@@ -840,7 +840,7 @@ static bool petta_program_variables_contained(
         size_t found = petta_program_var_lower_bound(
             container, contained->items[index]);
         if (found >= container->len ||
-            container->items[found] != contained->items[index]) {
+            !var_id_eq(container->items[found], contained->items[index])) {
             return false;
         }
     }
@@ -853,10 +853,10 @@ static bool petta_program_variables_beyond(
     size_t left_index = 0u;
     for (size_t right_index = 0u; right_index < right->len; right_index++) {
         while (left_index < left->len &&
-               left->items[left_index] < right->items[right_index])
+               var_id_lt(left->items[left_index], right->items[right_index]))
             left_index++;
         if (left_index >= left->len ||
-            left->items[left_index] != right->items[right_index])
+            !var_id_eq(left->items[left_index], right->items[right_index]))
             return true;
     }
     return false;
@@ -892,10 +892,10 @@ static bool petta_program_variable_union_count(
     while (left_index < left->len || right_index < right->len) {
         if (right_index >= right->len ||
             (left_index < left->len &&
-             left->items[left_index] < right->items[right_index])) {
+             var_id_lt(left->items[left_index], right->items[right_index]))) {
             left_index++;
         } else if (left_index >= left->len ||
-                   right->items[right_index] < left->items[left_index]) {
+                   var_id_lt(right->items[right_index], left->items[left_index])) {
             right_index++;
         } else {
             left_index++;
@@ -938,7 +938,7 @@ static const PettaEquationTemplate *petta_program_compile_equation_template(
     VarId *slots = variable_count
         ? cetta_malloc(sizeof(*slots) * (size_t)variable_count) : NULL;
     for (uint32_t slot = 0u; slot < variable_count; slot++) {
-        slots[slot] = (VarId)slot + 1u;
+        slots[slot] = var_id_from_base((uint64_t)slot + 1u);
         template->source_variables[slot] = inventory.items[slot].mapped_var;
     }
     template->frame_schema = bindings_frame_schema_new_presented(
@@ -1070,24 +1070,24 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         !atom_structural_may_have_list(lhs);
     size_t union_variables =
         (size_t)*static_variable_count_out;
-    VarId union_first_variable = 1u;
-    VarId union_last_variable = 0u;
+    VarId union_first_variable = var_id_from_base(1u);
+    VarId union_last_variable = VAR_ID_NONE;
     if (open_admitted && union_variables != 0u) {
         bool lhs_nonempty = lhs_variables.len != 0u;
         bool rhs_nonempty = rhs_variables.len != 0u;
         union_first_variable = lhs_nonempty && rhs_nonempty
-            ? (lhs_variables.items[0] < rhs_variables.items[0]
+            ? (var_id_lt(lhs_variables.items[0], rhs_variables.items[0])
                    ? lhs_variables.items[0] : rhs_variables.items[0])
             : lhs_nonempty
                 ? lhs_variables.items[0] : rhs_variables.items[0];
         VarId lhs_last = lhs_nonempty
-            ? lhs_variables.items[lhs_variables.len - 1u] : 0u;
+            ? lhs_variables.items[lhs_variables.len - 1u] : VAR_ID_NONE;
         VarId rhs_last = rhs_nonempty
-            ? rhs_variables.items[rhs_variables.len - 1u] : 0u;
-        union_last_variable = lhs_last > rhs_last
+            ? rhs_variables.items[rhs_variables.len - 1u] : VAR_ID_NONE;
+        union_last_variable = var_id_lt(rhs_last, lhs_last)
             ? lhs_last : rhs_last;
         uint64_t union_span =
-            union_last_variable - union_first_variable + 1u;
+            union_last_variable.base - union_first_variable.base + 1u;
         open_admitted =
             union_span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
     }
@@ -1101,13 +1101,13 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         petta_program_variables_contained(
             &rhs_variables, &lhs_variables) &&
         lhs_variables.len <= UINT32_MAX;
-    VarId first_variable = 1u;
+    VarId first_variable = var_id_from_base(1u);
     uint32_t variable_width = 0u;
     if (admitted && lhs_variables.len != 0u) {
         first_variable = lhs_variables.items[0];
         VarId last_variable =
             lhs_variables.items[lhs_variables.len - 1u];
-        uint64_t span = last_variable - first_variable + 1u;
+        uint64_t span = last_variable.base - first_variable.base + 1u;
         admitted = span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
         if (admitted)
             variable_width = (uint32_t)span;

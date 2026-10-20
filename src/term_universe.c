@@ -712,7 +712,7 @@ static bool term_universe_atom_contains_epoch_var(Atom *atom) {
         if (!cur)
             continue;
         if (cur->kind == ATOM_VAR) {
-            if (var_epoch_suffix(cur->var_id) != 0) {
+            if (!cetta_frame_identity_is_none(var_epoch_suffix(cur->var_id))) {
                 found = true;
                 goto done;
             }
@@ -1170,9 +1170,7 @@ typedef struct {
 static Atom *term_universe_create_canonical_var(Arena *dst, Atom *src_var,
                                                 uint32_t ordinal, void *ctx) {
     (void)ctx;
-    VarId canonical_id = (VarId)ordinal;
-    if (canonical_id == VAR_ID_NONE)
-        canonical_id = 1u;
+    VarId canonical_id = var_id_from_base(ordinal ? ordinal : 1u);
     return atom_var_like(dst, src_var, canonical_id);
 }
 
@@ -1180,9 +1178,7 @@ static Atom *term_universe_create_alpha_key_var(Arena *dst, Atom *src_var,
                                                 uint32_t ordinal, void *ctx) {
     (void)src_var;
     (void)ctx;
-    VarId canonical_id = (VarId)ordinal;
-    if (canonical_id == VAR_ID_NONE)
-        canonical_id = 1u;
+    VarId canonical_id = var_id_from_base(ordinal ? ordinal : 1u);
     /* Alpha keys intentionally erase both symbol and structural name-key
        presentation.  Only the equality partition induced by repeated VarIds
        belongs in the key. */
@@ -1428,6 +1424,20 @@ static void term_universe_store_u64(uint8_t *dst, uint64_t value) {
     memcpy(dst, &value, sizeof(value));
 }
 
+/* A variable record's payload: the id's base and epoch words, then, for a
+ * name-keyed variable, the key's atom id. */
+#define TERM_UNIVERSE_VAR_ID_BYTES (2u * sizeof(uint64_t))
+
+static void term_universe_store_var_id(uint8_t *dst, VarId id) {
+    term_universe_store_u64(dst, id.base);
+    term_universe_store_u64(dst + sizeof(uint64_t), id.epoch.word);
+}
+
+static VarId term_universe_load_var_id(const uint8_t *src) {
+    return (VarId){term_universe_load_u64(src),
+                   {term_universe_load_u64(src + sizeof(uint64_t))}};
+}
+
 static void term_universe_store_i64(uint8_t *dst, int64_t value) {
     memcpy(dst, &value, sizeof(value));
 }
@@ -1542,8 +1552,8 @@ static bool term_universe_record_payload_len(const TermUniverse *universe,
         return true;
     case ATOM_VAR:
         *out_len = hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY
-                       ? 2u * sizeof(uint64_t)
-                       : sizeof(uint64_t);
+                       ? TERM_UNIVERSE_VAR_ID_BYTES + sizeof(uint64_t)
+                       : TERM_UNIVERSE_VAR_ID_BYTES;
         return true;
     case ATOM_GROUNDED:
         switch ((GroundedKind)hdr->subtag) {
@@ -1723,14 +1733,15 @@ static uint64_t term_universe_record_slot_hash(
     case ATOM_SYMBOL:
         break;
     case ATOM_VAR:
-        if (payload_len >= sizeof(uint64_t)) {
-            h = term_universe_index_mix(
-                h, term_universe_load_u64(payload));
+        if (payload_len >= TERM_UNIVERSE_VAR_ID_BYTES) {
+            VarId var_id = term_universe_load_var_id(payload);
+            h = term_universe_index_mix(h, var_id.base);
+            h = term_universe_index_mix(h, var_id.epoch.word);
         }
         if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY &&
-            payload_len >= 2u * sizeof(uint64_t)) {
+            payload_len >= TERM_UNIVERSE_VAR_ID_BYTES + sizeof(uint64_t)) {
             AtomId key_id = (AtomId)term_universe_load_u64(
-                payload + sizeof(uint64_t));
+                payload + TERM_UNIVERSE_VAR_ID_BYTES);
             h = term_universe_index_mix(h, tu_hash32(universe, key_id));
         }
         break;
@@ -1859,7 +1870,8 @@ static uint64_t term_universe_atom_slot_hash(Atom *atom) {
     case ATOM_SYMBOL:
         break;
     case ATOM_VAR:
-        h = term_universe_index_mix(h, atom->var_id);
+        h = term_universe_index_mix(h, atom->var_id.base);
+        h = term_universe_index_mix(h, atom->var_id.epoch.word);
         if (atom->name_key) {
             h = term_universe_index_mix(
                 h, atom_hash(atom->name_key));
@@ -1930,15 +1942,17 @@ static uint32_t term_universe_hash_symbol_id(SymbolId sym_id) {
     h = term_universe_hash_mix(h, (uint32_t)ATOM_SYMBOL);
     h = term_universe_hash_mix(h, (uint32_t)(sh & 0xffffffffu));
     h = term_universe_hash_mix(h, (uint32_t)(sh >> 32));
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_var_id(VarId var_id) {
     uint32_t h = 5381u;
     h = term_universe_hash_mix(h, (uint32_t)ATOM_VAR);
-    h = term_universe_hash_mix(h, (uint32_t)(var_id & 0xffffffffu));
-    h = term_universe_hash_mix(h, (uint32_t)(var_id >> 32));
-    return h;
+    h = term_universe_hash_mix(h, (uint32_t)(var_id.base & 0xffffffffu));
+    h = term_universe_hash_mix(h, (uint32_t)((var_id.base >> 32) ^
+                                             var_id.epoch.word ^
+                                             (var_id.epoch.word >> 32)));
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_int_value(int64_t value) {
@@ -1946,7 +1960,7 @@ static uint32_t term_universe_hash_int_value(int64_t value) {
     h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
     h = term_universe_hash_mix(h, (uint32_t)GV_INT);
     h = term_universe_hash_mix(h, (uint32_t)(value & 0xffffffffu));
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_float_value(double value) {
@@ -1960,7 +1974,7 @@ static uint32_t term_universe_hash_float_value(double value) {
     h = term_universe_hash_mix(h, (uint32_t)GV_FLOAT);
     h = term_universe_hash_mix(h, (uint32_t)(conv.u & 0xffffffffu));
     h = term_universe_hash_mix(h, (uint32_t)(conv.u >> 32));
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_bool_value(bool value) {
@@ -1968,7 +1982,7 @@ static uint32_t term_universe_hash_bool_value(bool value) {
     h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
     h = term_universe_hash_mix(h, (uint32_t)GV_BOOL);
     h = term_universe_hash_mix(h, value ? 1u : 0u);
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_list_tag_value(int64_t tag) {
@@ -1976,7 +1990,7 @@ static uint32_t term_universe_hash_list_tag_value(int64_t tag) {
     h = term_universe_hash_mix(h, (uint32_t)ATOM_GROUNDED);
     h = term_universe_hash_mix(h, (uint32_t)GV_INTERNAL_TAG);
     h = term_universe_hash_mix(h, (uint32_t)(tag & 0xFFFFFFFF));
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_text_value(GroundedKind kind,
@@ -1986,7 +2000,7 @@ static uint32_t term_universe_hash_text_value(GroundedKind kind,
     h = term_universe_hash_mix(h, (uint32_t)kind);
     for (const char *p = value; p && *p; p++)
         h = term_universe_hash_mix(h, (uint32_t)*p);
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 /* A string hashes over its bytes, embedded NUL included, exactly as
@@ -1998,7 +2012,7 @@ static uint32_t term_universe_hash_string_bytes(const char *bytes,
     h = term_universe_hash_mix(h, (uint32_t)GV_STRING);
     for (size_t i = 0; i < len; i++)
         h = term_universe_hash_mix(h, (uint32_t)bytes[i]);
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static uint32_t term_universe_hash_bigint_value(const char *value) {
@@ -2018,7 +2032,7 @@ static uint32_t term_universe_hash_expr_ids(const TermUniverse *universe,
     h = term_universe_hash_mix(h, 0u);
     for (uint32_t i = 0; i < arity; i++)
         h = term_universe_hash_mix(h, tu_hash32(universe, child_ids[i]));
-    return h;
+    return ATOM_HASH_SPELL(h);
 }
 
 static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId id,
@@ -2041,13 +2055,13 @@ static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId i
         return have_hdr->sym_or_head == want_hdr->sym_or_head;
     case ATOM_VAR:
         if (!have_payload || !want_payload ||
-            term_universe_load_u64(have_payload) !=
-                term_universe_load_u64(want_payload)) {
+            !var_id_eq(term_universe_load_var_id(have_payload),
+                       term_universe_load_var_id(want_payload))) {
             return false;
         }
         return want_hdr->subtag != CETTA_VAR_SPELLING_NAME_KEY ||
-               term_universe_load_u64(have_payload + sizeof(uint64_t)) ==
-                   term_universe_load_u64(want_payload + sizeof(uint64_t));
+               term_universe_load_u64(have_payload + TERM_UNIVERSE_VAR_ID_BYTES) ==
+                   term_universe_load_u64(want_payload + TERM_UNIVERSE_VAR_ID_BYTES);
     case ATOM_GROUNDED:
         switch ((GroundedKind)want_hdr->subtag) {
         case GV_INT:
@@ -2633,7 +2647,7 @@ VarId tu_var_id(const TermUniverse *universe, AtomId id) {
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (hdr) {
         if (hdr->tag == ATOM_VAR)
-            return (VarId)term_universe_load_u64(term_universe_payload(universe, id));
+            return term_universe_load_var_id(term_universe_payload(universe, id));
         return VAR_ID_NONE;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
@@ -2649,7 +2663,7 @@ AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id) {
         hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
         const uint8_t *payload = term_universe_payload(universe, id);
         return payload
-                   ? (AtomId)term_universe_load_u64(payload + sizeof(uint64_t))
+                   ? (AtomId)term_universe_load_u64(payload + TERM_UNIVERSE_VAR_ID_BYTES)
                    : CETTA_ATOM_ID_NONE;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
@@ -2853,8 +2867,8 @@ bool tu_has_vars(const TermUniverse *universe, AtomId id) {
 
 static int term_variable_base_id_compare(const void *left,
                                          const void *right) {
-    uint32_t a = *(const uint32_t *)left;
-    uint32_t b = *(const uint32_t *)right;
+    uint64_t a = *(const uint64_t *)left;
+    uint64_t b = *(const uint64_t *)right;
     return (a > b) - (a < b);
 }
 
@@ -2864,7 +2878,7 @@ static bool term_universe_variable_support_build(
     AtomId *work = NULL;
     size_t work_len = 0u;
     size_t work_cap = 0u;
-    uint32_t *base_ids = NULL;
+    uint64_t *base_ids = NULL;
     size_t base_len = 0u;
     size_t base_cap = 0u;
     *out = NULL;
@@ -2954,11 +2968,11 @@ static bool term_universe_variable_support_build(
     support->first_base_id = base_ids[0];
     support->representation = dense
         ? CETTA_TERM_VARIABLE_SUPPORT_DENSE64
-        : CETTA_TERM_VARIABLE_SUPPORT_SPARSE32;
+        : CETTA_TERM_VARIABLE_SUPPORT_SPARSE64;
     support->dense_mask = 0u;
     if (dense) {
         for (size_t i = 0u; i < unique_len; i++) {
-            uint32_t offset = base_ids[i] - support->first_base_id;
+            uint32_t offset = (uint32_t)(base_ids[i] - support->first_base_id);
             support->dense_mask |= UINT64_C(1) << offset;
         }
     } else {
@@ -3055,12 +3069,12 @@ AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id) {
 
 AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id) {
     CettaTermHdr hdr = {0};
-    uint8_t payload[sizeof(uint64_t)] = {0};
+    uint8_t payload[TERM_UNIVERSE_VAR_ID_BYTES] = {0};
     hdr.tag = (uint8_t)ATOM_VAR;
     hdr.sym_or_head = sym_id;
     hdr.aux32 = term_universe_aux_make(0u, true);
     hdr.hash32 = term_universe_hash_var_id(var_id);
-    term_universe_store_u64(payload, var_id);
+    term_universe_store_var_id(payload, var_id);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
     bool inserted;
     AtomId result = term_universe_intern_record_noting(
@@ -3081,14 +3095,14 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
         return CETTA_ATOM_ID_NONE;
     }
     CettaTermHdr hdr = {0};
-    uint8_t payload[2u * sizeof(uint64_t)] = {0};
+    uint8_t payload[TERM_UNIVERSE_VAR_ID_BYTES + sizeof(uint64_t)] = {0};
     hdr.tag = (uint8_t)ATOM_VAR;
     hdr.subtag = (uint8_t)CETTA_VAR_SPELLING_NAME_KEY;
     hdr.sym_or_head = SYMBOL_ID_NONE;
     hdr.aux32 = term_universe_aux_make(0u, true);
     hdr.hash32 = term_universe_hash_var_id(var_id);
-    term_universe_store_u64(payload, var_id);
-    term_universe_store_u64(payload + sizeof(uint64_t), name_key_id);
+    term_universe_store_var_id(payload, var_id);
+    term_universe_store_u64(payload + TERM_UNIVERSE_VAR_ID_BYTES, name_key_id);
     TU_DIAG_INC(universe, direct_constructor_leaf_hits);
     bool inserted;
     AtomId result = term_universe_intern_record_noting(
@@ -3417,7 +3431,7 @@ static bool term_universe_prepare_expr(const TermUniverse *universe,
     hdr->arity_or_len = arity > UINT16_MAX ? UINT16_MAX : (uint16_t)arity;
     hdr->sym_or_head = head_sym;
     hdr->aux32 = term_universe_aux_make(arity, has_vars);
-    hdr->hash32 = hash;
+    hdr->hash32 = ATOM_HASH_SPELL(hash);
     *coordinate = term_universe_coordinate(
         term_universe_expr_ids_slot_hash(hdr, child_ids, arity));
     return true;
@@ -4197,9 +4211,9 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
         term_universe_sb_append_cstr(sb, symbol_bytes(g_symbols, hdr->sym_or_head));
         return;
     case ATOM_VAR: {
-        char suffix_buf[16];
+        char suffix_buf[24];
         VarId var_id = tu_var_id(universe, id);
-        uint32_t epoch = var_epoch_suffix(var_id);
+        CettaFrameIdentity epoch = var_epoch_suffix(var_id);
         if (hdr->subtag == CETTA_VAR_SPELLING_NAME_KEY) {
             term_universe_sb_append_cstr(sb, "$@");
             term_universe_sb_append_atom_text(
@@ -4209,8 +4223,8 @@ static void term_universe_sb_append_atom_text(TermUniverseStringBuilder *sb,
             term_universe_sb_append_cstr(
                 sb, symbol_bytes(g_symbols, hdr->sym_or_head));
         }
-        if (epoch != 0) {
-            int printed = snprintf(suffix_buf, sizeof(suffix_buf), "#%u", epoch);
+        if (!cetta_frame_identity_is_none(epoch)) {
+            int printed = snprintf(suffix_buf, sizeof(suffix_buf), "#%" PRIu64, epoch.word);
             if (printed > 0)
                 term_universe_sb_append_span(sb, suffix_buf, (size_t)printed);
         }
@@ -4466,7 +4480,7 @@ static Atom *term_universe_copy_read_leaf(Arena *dst, Atom *atom, void *context)
 
 static Atom *term_universe_copy_atom_impl(const TermUniverse *universe,
                                           Arena *dst, AtomId id,
-                                          uint32_t epoch,
+                                          CettaFrameIdentity epoch,
                                           bool rename_epoch_vars,
                                           TermUniverseCopyMemo *memo) {
     Atom *out = NULL;
@@ -4592,7 +4606,7 @@ Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
-    Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
+    Atom *out = term_universe_copy_atom_impl(universe, dst, id, CETTA_FRAME_IDENTITY_NONE, false, &memo);
     term_universe_copy_memo_free(&memo);
     return out;
 }
@@ -4605,13 +4619,13 @@ Atom *term_universe_copy_atom_read_symbols(
     memo.read_symbol = read;
     memo.read_context = context;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
-    Atom *out = term_universe_copy_atom_impl(universe, dst, id, 0u, false, &memo);
+    Atom *out = term_universe_copy_atom_impl(universe, dst, id, CETTA_FRAME_IDENTITY_NONE, false, &memo);
     term_universe_copy_memo_free(&memo);
     return out;
 }
 
 Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
-                                    AtomId id, uint32_t epoch) {
+                                    AtomId id, CettaFrameIdentity epoch) {
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
@@ -4855,7 +4869,7 @@ static bool term_universe_entry_eq_atom(const TermUniverse *universe, AtomId id,
         return src->kind == ATOM_SYMBOL && src->sym_id == hdr->sym_or_head;
     case ATOM_VAR:
         return src->kind == ATOM_VAR &&
-               src->var_id == (VarId)term_universe_load_u64(payload);
+               var_id_eq(src->var_id, term_universe_load_var_id(payload));
     case ATOM_GROUNDED:
         if (src->kind != ATOM_GROUNDED ||
             src->ground.gkind != (GroundedKind)hdr->subtag) {
@@ -5394,11 +5408,11 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
                 universe, tu_var_name_key_id(universe, id));
             return key ? atom_var_with_name_key(
                              dst, key,
-                             (VarId)term_universe_load_u64(payload))
+                             term_universe_load_var_id(payload))
                        : NULL;
         }
         return atom_var_with_spelling(
-            dst, hdr->sym_or_head, (VarId)term_universe_load_u64(payload));
+            dst, hdr->sym_or_head, term_universe_load_var_id(payload));
     case ATOM_GROUNDED:
         switch (tu_ground_kind(universe, id)) {
         case GV_INT:

@@ -173,6 +173,9 @@ SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
+/* Whether the active PeTTa profile checks each step application (the
+ * typecheck profiles): native folds have no such evidence. */
+bool eval_petta_steps_are_typed(void) __attribute__((weak));
 /* The error a minimal instruction answers for arguments outside `expected`:
  * (Error <call> "expected: <expected>, found: <call>"). */
 Atom *cetta_call_signature_error(Arena *a, Atom *call, const char *expected);

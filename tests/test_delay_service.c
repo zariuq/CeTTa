@@ -50,7 +50,7 @@ int main(void) {
     CHECK(service != NULL, "service allocates");
     CHECK(!cetta_delay_watching(service), "a new service watches nothing");
 
-    const VarId x = 11u, y = 12u, z = 13u;
+    const VarId x = var_id_from_base(11u), y = var_id_from_base(12u), z = var_id_from_base(13u);
     VarId xy[2] = {x, y};
     CHECK(cetta_delay_suspend(service, 1u, CETTA_DELAY_CLIENT_PROLOG,
                               goal_named(&arena, "first"), &x, 1u, false),
@@ -129,7 +129,7 @@ int main(void) {
      * change at 5 predates both and stays, one at 12 belongs to 10, one at
      * 25 to 20 (rollback_rebase). */
     CettaDelayService *history = cetta_delay_service_new();
-    const VarId p = 21u, q = 22u, r = 23u;
+    const VarId p = var_id_from_base(21u), q = var_id_from_base(22u), r = var_id_from_base(23u);
     CHECK(cetta_delay_suspend(history, 5u, CETTA_DELAY_CLIENT_PROLOG,
                               goal_named(&arena, "old"), &p, 1u, false) &&
               cetta_delay_suspend(history, 12u, CETTA_DELAY_CLIENT_PROLOG,
@@ -175,7 +175,7 @@ int main(void) {
     /* Only waiting goals are indexed; a rollback across a rehash puts a
      * woken goal back in its place. */
     CettaDelayService *indexed = cetta_delay_service_new();
-    const VarId av = 41u;
+    const VarId av = var_id_from_base(41u);
     CHECK(cetta_delay_suspend(indexed, 1u, CETTA_DELAY_CLIENT_PROLOG,
                               goal_named(&arena, "a1"), &av, 1u, false) &&
               cetta_delay_suspend(indexed, 2u, CETTA_DELAY_CLIENT_PROLOG,
@@ -187,7 +187,7 @@ int main(void) {
           "woken goals leave the index");
     bool filled = true;
     for (uint32_t i = 0u; i < 100u; i++) {
-        VarId filler = 100u + i;
+        VarId filler = var_id_from_base(100u + i);
         filled = filled &&
             cetta_delay_suspend(indexed, 4u + i, CETTA_DELAY_CLIENT_PROLOG,
                                 goal_named(&arena, "filler"), &filler, 1u,
@@ -209,12 +209,12 @@ int main(void) {
               "and wake in the order they were suspended");
     }
     for (uint32_t i = 0u; i < 1000u; i++) {
-        VarId churn = 7u;
+        VarId churn = var_id_from_base(7u);
         cetta_delay_suspend(indexed, 10u + 2u * i, CETTA_DELAY_CLIENT_PROLOG,
                             goal_named(&arena, "churn"), &churn, 1u, false);
         cetta_delay_withdraw(indexed, 11u + 2u * i, churn);
     }
-    const VarId churn_var = 7u;
+    const VarId churn_var = var_id_from_base(7u);
     CHECK(cetta_delay_goals_on(indexed, churn_var, on_a, 4u) == 0u &&
               !cetta_delay_watches(indexed, churn_var),
           "a thousand withdrawn goals leave nothing indexed");

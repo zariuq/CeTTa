@@ -101,7 +101,7 @@ static void test_duplicate_order_and_open_patterns(
         int64_t value = (i == 2u || i == 3u) ? 7 : (int64_t)(100u + i);
         source[i] = store_atom(universe, edge_value(scratch, edge, value));
     }
-    Atom *x = atom_var_with_spelling(scratch, x_spelling, UINT64_C(70001));
+    Atom *x = atom_var_with_spelling(scratch, x_spelling, var_id_from_base(UINT64_C(70001)));
     source[20] = store_atom(universe, binary(scratch, open, x, x));
     source[21] = store_atom(
         universe, binary(scratch, open, x, atom_symbol_id(scratch, tail)));
@@ -491,7 +491,7 @@ static void test_occurrence_cursor_exact_clone(
 
     Atom *query = atom_var_with_spelling(
         scratch, symbol_intern_cstr(g_symbols, "cursor-clone-x"),
-        UINT64_C(81001));
+        var_id_from_base(UINT64_C(81001)));
     SpaceOccurrenceCursor source;
     SpaceOccurrenceCursor clone;
     assert(space_occurrence_cursor_init(&space, query, &source));
@@ -543,7 +543,7 @@ static void test_atom_id_removal_preserves_pinned_view(
 
     Atom *query = atom_var_with_spelling(
         scratch, symbol_intern_cstr(g_symbols, "cursor-remove-x"),
-        UINT64_C(81002));
+        var_id_from_base(UINT64_C(81002)));
     SpaceOccurrenceCursor before_remove;
     SpaceOccurrenceCursor after_remove;
     assert(space_occurrence_cursor_init(
@@ -619,7 +619,7 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
         rows[i] = store_atom(universe, edge_value(scratch, edge, (int64_t)i));
     rows[20] = rows[7];
     Atom *variable = atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols, "cold-x"), UINT64_C(91001));
+        symbol_intern_cstr(g_symbols, "cold-x"), var_id_from_base(UINT64_C(91001)));
     rows[21] = store_atom(universe, binary(scratch, edge, variable, variable));
     rows[22] = store_atom(universe, binary(scratch, other, variable, variable));
     uint64_t revision = space.revision;
@@ -627,7 +627,7 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
     assert(space.native.len == 23u && space.revision == revision + 1u);
     Atom *query = binary(scratch, edge, atom_int(scratch, 7),
         atom_var_with_spelling(scratch,
-            symbol_intern_cstr(g_symbols, "cold-y"), UINT64_C(91002)));
+            symbol_intern_cstr(g_symbols, "cold-y"), var_id_from_base(UINT64_C(91002))));
     SpaceOccurrenceCursor cursor, clone;
     assert(space_occurrence_cursor_init(&space, query, &cursor));
     assert(cursor.flat_mode && cursor.node_len == 0u);

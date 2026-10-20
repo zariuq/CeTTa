@@ -1,4 +1,5 @@
 #include "fold_algebra.h"
+#include "exact_integer.h"
 
 #include <string.h>
 
@@ -9,18 +10,14 @@ static bool fold_fit(__int128 value, int64_t *out) {
     return true;
 }
 
-bool cetta_fold_floor_mod(int64_t value, int64_t divisor, int64_t *out) {
-    if (divisor == 0)
-        return false;
-    if (divisor == -1) {
-        *out = 0;
-        return true;
+/* The exact-integer operation an arithmetic node computes. */
+static CettaExactIntegerV1Operation fold_operation(CettaFoldExprKind kind) {
+    switch (kind) {
+    case CETTA_FOLD_EXPR_ADD: return CETTA_EXACT_INTEGER_V1_ADD;
+    case CETTA_FOLD_EXPR_SUB: return CETTA_EXACT_INTEGER_V1_SUB;
+    case CETTA_FOLD_EXPR_MUL: return CETTA_EXACT_INTEGER_V1_MUL;
+    default: return CETTA_EXACT_INTEGER_V1_FREM;
     }
-    int64_t rem = value % divisor;
-    if (rem != 0 && ((rem < 0) != (divisor < 0)))
-        rem += divisor;
-    *out = rem;
-    return true;
 }
 
 bool cetta_fold_expr_leaf(CettaFoldExpr *expr, CettaFoldExprKind kind,
@@ -42,7 +39,7 @@ bool cetta_fold_expr_binary(CettaFoldExpr *expr, CettaFoldExprKind kind,
     if (!expr || !index_out || expr->len >= CETTA_FOLD_EXPR_CAPACITY ||
         left >= expr->len || right >= expr->len ||
         (kind != CETTA_FOLD_EXPR_ADD && kind != CETTA_FOLD_EXPR_SUB &&
-         kind != CETTA_FOLD_EXPR_MUL && kind != CETTA_FOLD_EXPR_MOD &&
+         kind != CETTA_FOLD_EXPR_MUL && kind != CETTA_FOLD_EXPR_FREM &&
          kind != CETTA_FOLD_EXPR_MIN && kind != CETTA_FOLD_EXPR_MAX))
         return false;
     expr->nodes[expr->len] = (CettaFoldExprNode){
@@ -71,24 +68,19 @@ CettaFoldStatus cetta_fold_expr_eval(const CettaFoldExpr *expr, uint8_t root,
             values[index] = acc;
             break;
         case CETTA_FOLD_EXPR_ADD:
-            if (!fold_fit((__int128)values[node->left] +
-                          values[node->right], &values[index]))
-                return CETTA_FOLD_OVERFLOW;
-            break;
         case CETTA_FOLD_EXPR_SUB:
-            if (!fold_fit((__int128)values[node->left] -
-                          values[node->right], &values[index]))
-                return CETTA_FOLD_OVERFLOW;
-            break;
         case CETTA_FOLD_EXPR_MUL:
-            if (!fold_fit((__int128)values[node->left] *
-                          values[node->right], &values[index]))
+        case CETTA_FOLD_EXPR_FREM:
+            switch (cetta_exact_integer_small(
+                        fold_operation(node->kind), values[node->left],
+                        values[node->right], &values[index])) {
+            case CETTA_EXACT_INTEGER_VALUE:
+                break;
+            case CETTA_EXACT_INTEGER_PROMOTE:
                 return CETTA_FOLD_OVERFLOW;
-            break;
-        case CETTA_FOLD_EXPR_MOD:
-            if (!cetta_fold_floor_mod(values[node->left],
-                                      values[node->right], &values[index]))
+            case CETTA_EXACT_INTEGER_UNDEFINED:
                 return CETTA_FOLD_UNDEFINED;
+            }
             break;
         case CETTA_FOLD_EXPR_MIN:
             values[index] = values[node->left] < values[node->right]
@@ -413,7 +405,7 @@ bool cetta_fold_step_classify(const CettaFoldExpr *source, uint8_t root,
     const CettaFoldExprNode *top = &source->nodes[root];
     uint8_t affine_root = root;
     int64_t modulus = 0;
-    if (top->kind == CETTA_FOLD_EXPR_MOD) {
+    if (top->kind == CETTA_FOLD_EXPR_FREM) {
         const CettaFoldExprNode *divisor = &source->nodes[top->right];
         if (divisor->kind != CETTA_FOLD_EXPR_LITERAL || divisor->literal <= 0)
             return true;
@@ -721,19 +713,13 @@ CettaFoldStatus cetta_fold_step_apply_big(const CettaFoldStep *step,
             mpz_set(value, big->acc);
             break;
         case CETTA_FOLD_EXPR_ADD:
-            mpz_add(value, big->values[node->left], big->values[node->right]);
-            break;
         case CETTA_FOLD_EXPR_SUB:
-            mpz_sub(value, big->values[node->left], big->values[node->right]);
-            break;
         case CETTA_FOLD_EXPR_MUL:
-            mpz_mul(value, big->values[node->left], big->values[node->right]);
-            break;
-        case CETTA_FOLD_EXPR_MOD:
-            if (mpz_sgn(big->values[node->right]) == 0)
+        case CETTA_FOLD_EXPR_FREM:
+            if (!cetta_exact_integer_big(fold_operation(node->kind),
+                                         big->values[node->left],
+                                         big->values[node->right], value))
                 return CETTA_FOLD_UNDEFINED;
-            mpz_fdiv_r(value, big->values[node->left],
-                       big->values[node->right]);
             break;
         case CETTA_FOLD_EXPR_MIN:
             mpz_set(value, mpz_cmp(big->values[node->left],

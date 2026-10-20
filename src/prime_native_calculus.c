@@ -1,5 +1,7 @@
 #include "prime_native_calculus.h"
 
+#include "equation_presentation.h"
+
 #include "prime_regular_pattern.h"
 #include "prime_typed_finite_relation.h"
 #include "prime_typed_flow_boundary.h"
@@ -385,92 +387,6 @@ static const char *const PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1[] = {
     "(superpose ()))))",
 };
 
-static Atom *prime_native_parse_one(
-    Arena *owner, const char *source) {
-    size_t position = 0u;
-    Atom *term = owner && source
-        ? parse_sexpr(owner, source, &position)
-        : NULL;
-    return term && parser_rest_is_delimiters(source, &position)
-        ? term
-        : NULL;
-}
-
-static bool prime_native_patterns_overlap(Atom *left, Atom *right) {
-    if (!left || !right) return false;
-    /* Only the verdict is kept; the unifier and its syntax are dropped. */
-    Arena scratch;
-    arena_init(&scratch);
-    Bindings overlap;
-    bindings_init(&overlap);
-    bool result = match_atoms(left, right, &overlap, &scratch);
-    bindings_free(&overlap);
-    arena_free(&scratch);
-    return result;
-}
-
-static bool prime_native_equation_profile_exact(
-    Arena *scratch, Space *space, const char *head_name,
-    const char *const *expected_sources, size_t expected_count) {
-    if (!scratch || !space || !head_name || !expected_sources ||
-        expected_count == 0u || !g_symbols) {
-        return false;
-    }
-    SymbolId head = symbol_intern_cstr(g_symbols, head_name);
-    SpaceEquationCursor cursor;
-    if (head == SYMBOL_ID_NONE ||
-        !space_equation_cursor_init(space, head, &cursor)) {
-        return false;
-    }
-    Atom **expected = arena_alloc(
-        scratch, expected_count * sizeof(*expected));
-    Atom **expected_lhs = arena_alloc(
-        scratch, expected_count * sizeof(*expected_lhs));
-    if (!expected || !expected_lhs) return false;
-    for (size_t index = 0u; index < expected_count; index++) {
-        expected[index] = prime_native_parse_one(
-            scratch, expected_sources[index]);
-        expected_lhs[index] = expected[index] &&
-                expected[index]->kind == ATOM_EXPR &&
-                expected[index]->expr.len == 3u &&
-                atom_is_symbol(expected[index]->expr.elems[0], "=")
-            ? expected[index]->expr.elems[1]
-            : NULL;
-        if (!expected_lhs[index]) return false;
-    }
-
-    size_t matched = 0u;
-    for (;;) {
-        SpaceEquationOccurrenceId occurrence_id;
-        SpaceEquationCursorStep step =
-            space_equation_cursor_next(&cursor, &occurrence_id);
-        if (step == SPACE_EQUATION_CURSOR_END) break;
-        if (step != SPACE_EQUATION_CURSOR_ITEM) return false;
-        SpaceEquationOccurrence occurrence;
-        if (!space_equation_occurrence_resolve(
-                occurrence_id, &occurrence)) {
-            return false;
-        }
-        if (matched < expected_count &&
-            atom_alpha_eq(occurrence.equation, expected[matched])) {
-            matched++;
-            continue;
-        }
-
-        /* The Space cursor intentionally includes wildcard-head equations:
-         * they might match this operation.  An equation whose structured
-         * head is provably disjoint is merely a consumer of the operation,
-         * not another definition of it.  Any overlapping wildcard still
-         * invalidates the exact admitted presentation. */
-        for (size_t index = 0u; index < expected_count; index++) {
-            if (prime_native_patterns_overlap(
-                    occurrence.lhs, expected_lhs[index])) {
-                return false;
-            }
-        }
-    }
-    return matched == expected_count;
-}
 
 /* `hyp:run` is an authored open relation.  Its native realization is current
  * only while the exact presentation whose recursion it replaces is the live
@@ -487,12 +403,12 @@ static bool prime_native_hyp_presentation_admitted(
         return g_prime_native_hyp_presentation_cache.admitted;
     }
     bool admitted =
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:run",
             PRIME_NATIVE_HYP_RUN_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_RUN_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_RUN_EQUATIONS_V1[0])) &&
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:run-chain",
             PRIME_NATIVE_HYP_RUN_CHAIN_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_RUN_CHAIN_EQUATIONS_V1) /
@@ -524,12 +440,12 @@ static bool prime_native_hyp_candidate_presentation_admitted(
         return g_prime_native_hyp_candidate_presentation_cache.admitted;
     }
     bool admitted =
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:primitive-declaration",
             PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1[0])) &&
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:chain-candidate-typed",
             PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_CHAIN_CANDIDATE_TYPED_EQUATIONS_V1) /
@@ -561,17 +477,17 @@ static bool prime_native_hyp_path_candidate_presentation_admitted(
         return g_prime_native_hyp_path_candidate_presentation_cache.admitted;
     }
     bool admitted =
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:primitive-declaration",
             PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_PRIMITIVE_DECLARATION_EQUATIONS_V1[0])) &&
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:path:prepend",
             PRIME_NATIVE_HYP_PATH_PREPEND_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_PATH_PREPEND_EQUATIONS_V1) /
                 sizeof(PRIME_NATIVE_HYP_PATH_PREPEND_EQUATIONS_V1[0])) &&
-        prime_native_equation_profile_exact(
+        cetta_equation_presentation_exact(
             scratch, space, "hyp:path-candidate-typed",
             PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1,
             sizeof(PRIME_NATIVE_HYP_PATH_CANDIDATE_TYPED_EQUATIONS_V1) /
@@ -601,7 +517,7 @@ static bool prime_native_map_rel_presentation_admitted(
             revision) {
         return g_prime_native_map_rel_presentation_cache.admitted;
     }
-    bool admitted = prime_native_equation_profile_exact(
+    bool admitted = cetta_equation_presentation_exact(
         scratch, space, "map-rel:run",
         PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1,
         sizeof(PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1) /
@@ -1893,7 +1809,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
                 occurrence.lhs->expr.len == 2u &&
                 atom_eq(occurrence.lhs->expr.elems[0], relation_term);
             if (!exact_fact) {
-                if (prime_native_patterns_overlap(
+                if (cetta_patterns_overlap(
                         occurrence.lhs, relation_probe)) {
                     return PRIME_NATIVE_PLAN_DECLINED;
                 }

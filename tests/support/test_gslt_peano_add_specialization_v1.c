@@ -43,9 +43,9 @@ typedef struct {
 static AddRulesV1 add_rules(
     Arena *arena, const char *relation, const char *zero,
     const char *successor, uint32_t first_step) {
-    Atom *left = atom_var_with_id(arena, "left", 1u);
-    Atom *right = atom_var_with_id(arena, "right", 2u);
-    Atom *result = atom_var_with_id(arena, "result", 3u);
+    Atom *left = atom_var_with_id(arena, "left", var_id_from_base(1u));
+    Atom *right = atom_var_with_id(arena, "right", var_id_from_base(2u));
+    Atom *result = atom_var_with_id(arena, "result", var_id_from_base(3u));
     Atom *zero_arguments[] = {
         atom_symbol(arena, zero), right, right,
     };
@@ -182,10 +182,10 @@ int main(void) {
            "an unrecognized input defers to the ordinary rule machine");
 
     {
-        Atom *wrong = atom_var_with_id(&arena, "wrong", 99u);
-        Atom *left = atom_var_with_id(&arena, "left", 1u);
-        Atom *right = atom_var_with_id(&arena, "right", 2u);
-        Atom *result_var = atom_var_with_id(&arena, "result", 3u);
+        Atom *wrong = atom_var_with_id(&arena, "wrong", var_id_from_base(99u));
+        Atom *left = atom_var_with_id(&arena, "left", var_id_from_base(1u));
+        Atom *right = atom_var_with_id(&arena, "right", var_id_from_base(2u));
+        Atom *result_var = atom_var_with_id(&arena, "result", var_id_from_base(3u));
         Atom *successor_arguments[] = {
             unary(&arena, "TraceSucc", left), right,
             unary(&arena, "TraceSucc", result_var),

@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "../exact_integer.h"
+
 typedef enum {
     CETTA_GSLT_QUERY_EFFECT_PURE = 0u,
     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY = 1u << 0,
@@ -976,15 +978,15 @@ static inline bool cetta_gslt_register_execute_small_binary(
     *promote_out = false;
     switch (instruction) {
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD:
-        *promote_out = __builtin_add_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_ADD, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_SUBTRACT:
-        *promote_out = __builtin_sub_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_SUB, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_MULTIPLY:
-        *promote_out = __builtin_mul_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_MUL, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL:
@@ -1008,11 +1010,11 @@ static inline bool cetta_gslt_register_execute_small_binary(
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
-        if (right == 0) { return false; } *integer_out = (left == INT64_MIN && right == -1) ? 0 : left % right;
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_TREM, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
-        if (right == 0) { return false; } if (left == INT64_MIN && right == -1) { *integer_out = 0; } else { *integer_out = left % right; if (*integer_out != 0 && ((*integer_out < 0) != (right < 0))) *integer_out += right; }
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_FREM, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     default:
@@ -1033,15 +1035,15 @@ static inline bool cetta_gslt_register_execute_binary(
         return false;
     switch (instruction) {
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD:
-        mpz_add(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_ADD, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_SUBTRACT:
-        mpz_sub(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_SUB, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_MULTIPLY:
-        mpz_mul(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_MUL, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL:
@@ -1065,11 +1067,11 @@ static inline bool cetta_gslt_register_execute_binary(
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
-        if (mpz_sgn(right) == 0) { return false; } mpz_tdiv_r(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_TREM, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
-        if (mpz_sgn(right) == 0) { return false; } mpz_fdiv_r(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_FREM, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     default:

@@ -16,7 +16,6 @@ def main():
     binary = args.cetta.resolve()
     fixtures = args.fixtures.resolve()
     profiles = [(['--lang', 'petta'], False),
-                (['--lang', 'petta@1.0.6'], False),
                 (['--lang', 'petta@1.1'], True),
                 (['--lang', 'petta', '--profile', 'typecheck-v2'], True),
                 (['--lang', 'petta', '--profile', 'typecheck-v3'], True)]

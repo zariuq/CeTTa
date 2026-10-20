@@ -2193,7 +2193,7 @@ static PettaLibplImport *petta_libpl_probe_system_function(
 
 static PettaLibplVar *petta_libpl_var_find(
     PettaLibplVarMap *variables, VarId id) {
-    if (!variables || id == VAR_ID_NONE)
+    if (!variables || var_id_is_none(id))
         return NULL;
     size_t index = cetta_var_index_find_records(
         &variables->index, variables->items, sizeof(*variables->items),
@@ -3495,7 +3495,7 @@ static bool petta_libpl_var_list_add(PettaLibplVarList *list, Atom *var) {
 static int petta_libpl_var_compare(const void *left, const void *right) {
     VarId a = (*(Atom *const *)left)->var_id;
     VarId b = (*(Atom *const *)right)->var_id;
-    return (a > b) - (a < b);
+    return var_id_cmp(a, b);
 }
 
 /* Each variable of `list` once, ordered by id. */
@@ -3506,7 +3506,7 @@ static void petta_libpl_var_list_unique(PettaLibplVarList *list) {
           petta_libpl_var_compare);
     size_t kept = 1u;
     for (size_t index = 1u; index < list->len; index++) {
-        if (list->items[index]->var_id != list->items[kept - 1u]->var_id)
+        if (!var_id_eq(list->items[index]->var_id, list->items[kept - 1u]->var_id))
             list->items[kept++] = list->items[index];
     }
     list->len = kept;
@@ -3519,8 +3519,8 @@ typedef struct {
 
 static int petta_libpl_var_pair_compare(const void *left, const void *right) {
     const PettaLibplVarPair *a = left, *b = right;
-    if (a->var != b->var)
-        return (a->var > b->var) - (a->var < b->var);
+    if (!var_id_eq(a->var, b->var))
+        return var_id_cmp(a->var, b->var);
     return (a->goal > b->goal) - (a->goal < b->goal);
 }
 
@@ -3746,7 +3746,7 @@ static bool petta_libpl_delay_answer(Arena *arena,
                   petta_libpl_var_pair_compare);
     }
     for (size_t index = 1u; ok && index < pair_len; index++) {
-        if (pairs[index].var != pairs[index - 1u].var)
+        if (!var_id_eq(pairs[index].var, pairs[index - 1u].var))
             continue;
         /* Roots are the least goals of their sets; finds halve paths. */
         uint32_t ra = pairs[index - 1u].goal;
@@ -3845,7 +3845,7 @@ static bool petta_libpl_solution_bindings(
             if (variables->native_variable) {
                 value = variables->native_variable(variables->slot_context, arena,
                                                     variable->term);
-                if (value && value->var_id == variable->id)
+                if (value && var_id_eq(value->var_id, variable->id))
                     continue;
             }
             if (!value) {

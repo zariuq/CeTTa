@@ -12,6 +12,12 @@ of CETTA_FOLD_ARITH_REFERENCE=1 (the ordinary fold) exactly, errors
 included.  With --stats the binary must be a runtime-stats build, and every
 native route (ordered scan, run of one item, join moments, bigint
 continuation) must have been taken at least once.
+
+Declared steps are fixed controls: a step whose declaration integer folds
+break (a String result, a String argument) answers as the ordinary fold does,
+its failed steps keeping the accumulator, and is never folded natively; a
+step declared (-> Number Number Number) answers alike and, with --stats,
+takes a native route.
 """
 import os
 import random
@@ -126,6 +132,32 @@ def program(rng, index):
     # An error answer ends a PeTTa document, so each fold is its own document.
     return [base + fold + "\n" for fold in folds]
 
+# (declaration, natively folded?) for the fixed declared-step controls.
+DECLARED_STEPS = [
+    ("(-> Number Number String)", False),
+    ("(-> String Number Number)", False),
+    ("(-> Number Number Number)", True),
+]
+
+
+def declared_program(declaration):
+    return (f"(: step {declaration})\n"
+            "(= (step $item $acc) (+ $item $acc))\n"
+            "(item 3)\n(item 4)\n"
+            "!(foldall step (match &self (item $x) $x) 0)\n")
+
+
+def native_routes(stderr):
+    taken = 0
+    for line in stderr.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == "runtime-counter" and \
+                parts[1] in ("native-fold-ordered-scan", "native-fold-run",
+                             "native-fold-moments", "native-fold-bigint"):
+            taken += int(parts[2])
+    return taken
+
+
 def run(binary, path, reference, stats):
     env = dict(os.environ)
     if reference:
@@ -183,6 +215,23 @@ def main():
                             parts[1].startswith("native-fold-"):
                         counters[parts[1]] = counters.get(parts[1], 0) + \
                             int(parts[2])
+        for declaration, native_expected in DECLARED_STEPS:
+            path = os.path.join(directory, "declared.metta")
+            with open(path, "w") as handle:
+                handle.write(declared_program(declaration))
+            native = run(binary, path, False, stats)
+            reference = run(binary, path, True, False)
+            if native[1] != reference[1]:
+                sys.stderr.write(
+                    f"FAIL declared step {declaration}: native "
+                    f"{native[1].strip()!r}, ordinary {reference[1].strip()!r}\n")
+                return 1
+            if stats and (native_routes(native[2]) > 0) != native_expected:
+                sys.stderr.write(
+                    f"FAIL declared step {declaration}: native route "
+                    f"{'not taken' if native_expected else 'taken'}\n")
+                return 1
+            folds += 1
     if stats:
         for route in ("native-fold-ordered-scan", "native-fold-run",
                       "native-fold-moments", "native-fold-bigint"):

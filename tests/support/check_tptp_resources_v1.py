@@ -85,7 +85,7 @@ def main():
    (resource-test:roundtrip "cnf(a,axiom,p|~q)."))
 """
     checks = 0
-    for host in ("he", "petta@1.0.6"):
+    for host in ("he", "petta"):
         dependency = (quote(ROOT / "lib/lib_tptp.metta") if host == "he"
                       else "(library lib_tptp)")
         source = (f"!(import! &self {dependency})\n" + resource_checks + protocol_checks + print_checks

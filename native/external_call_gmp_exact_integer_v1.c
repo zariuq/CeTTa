@@ -1,4 +1,5 @@
 #include "external_call_gmp_exact_integer_v1.h"
+#include "../src/exact_integer.h"
 
 void cetta_external_call_gmp_exact_integer_init_v1(
     CettaExternalCallExactIntegerV1 *value) {
@@ -23,94 +24,33 @@ bool cetta_external_call_exact_integer_is_zero_v1(
     return value && mpz_sgn(value->value) == 0;
 }
 
-static CettaExternalCallGeneratedExternalV1 gmp_arguments_ok(
+/* Every operation is the exact-integer core's; a missing argument or a
+ * zero divisor is an invalid call, which the generated guard never makes. */
+static CettaExternalCallGeneratedExternalV1 gmp_operation(
+    CettaExactIntegerV1Operation operation,
     const CettaExternalCallExactIntegerV1 *first,
     const CettaExternalCallExactIntegerV1 *second,
     CettaExternalCallExactIntegerV1 *output) {
-    return first && second && output
-        ? CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1
-        : CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_ENGINE_FAULT_V1;
-}
-
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_add_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    CettaExternalCallGeneratedExternalV1 status =
-        gmp_arguments_ok(first, second, output);
-    if (status != CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1)
-        return status;
-    mpz_add(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
-
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_sub_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    CettaExternalCallGeneratedExternalV1 status =
-        gmp_arguments_ok(first, second, output);
-    if (status != CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1)
-        return status;
-    mpz_sub(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
-
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_mul_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    CettaExternalCallGeneratedExternalV1 status =
-        gmp_arguments_ok(first, second, output);
-    if (status != CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1)
-        return status;
-    mpz_mul(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
-
-static bool gmp_division_arguments_ok(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    return first && second && output && mpz_sgn(second->value) != 0;
-}
-
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_tquot_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    if (!gmp_division_arguments_ok(first, second, output))
+    if (!first || !second || !output ||
+        !cetta_exact_integer_big(operation, first->value, second->value,
+                                 output->value))
         return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_ENGINE_FAULT_V1;
-    mpz_tdiv_q(output->value, first->value, second->value);
     return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
 }
 
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_fquot_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    if (!gmp_division_arguments_ok(first, second, output))
-        return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_ENGINE_FAULT_V1;
-    mpz_fdiv_q(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
+#define GMP_OPERATION_V1(name, operation)                                   \
+    CettaExternalCallGeneratedExternalV1                                    \
+    cetta_external_call_exact_integer_##name##_v1(                          \
+        const CettaExternalCallExactIntegerV1 *first,                       \
+        const CettaExternalCallExactIntegerV1 *second,                      \
+        CettaExternalCallExactIntegerV1 *output) {                          \
+        return gmp_operation(operation, first, second, output);            \
+    }
 
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_trem_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    if (!gmp_division_arguments_ok(first, second, output))
-        return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_ENGINE_FAULT_V1;
-    mpz_tdiv_r(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
-
-CettaExternalCallGeneratedExternalV1 cetta_external_call_exact_integer_frem_v1(
-    const CettaExternalCallExactIntegerV1 *first,
-    const CettaExternalCallExactIntegerV1 *second,
-    CettaExternalCallExactIntegerV1 *output) {
-    if (!gmp_division_arguments_ok(first, second, output))
-        return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_ENGINE_FAULT_V1;
-    mpz_fdiv_r(output->value, first->value, second->value);
-    return CETTA_EXTERNAL_CALL_GENERATED_EXTERNAL_VALUE_V1;
-}
+GMP_OPERATION_V1(add, CETTA_EXACT_INTEGER_V1_ADD)
+GMP_OPERATION_V1(sub, CETTA_EXACT_INTEGER_V1_SUB)
+GMP_OPERATION_V1(mul, CETTA_EXACT_INTEGER_V1_MUL)
+GMP_OPERATION_V1(tquot, CETTA_EXACT_INTEGER_V1_TQUOT)
+GMP_OPERATION_V1(fquot, CETTA_EXACT_INTEGER_V1_FQUOT)
+GMP_OPERATION_V1(trem, CETTA_EXACT_INTEGER_V1_TREM)
+GMP_OPERATION_V1(frem, CETTA_EXACT_INTEGER_V1_FREM)

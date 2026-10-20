@@ -12,8 +12,8 @@ static void check(bool condition, const char *name) {
 static bool renamed_pair(Atom *result, Atom *x, Atom *y) {
     return result && result->kind == ATOM_EXPR && result->expr.len == 2u &&
         result->expr.elems[0]->kind == ATOM_VAR &&
-        result->expr.elems[0]->var_id != x->var_id &&
-        result->expr.elems[1]->var_id == y->var_id;
+        !var_id_eq(result->expr.elems[0]->var_id, x->var_id) &&
+        var_id_eq(result->expr.elems[1]->var_id, y->var_id);
 }
 
 int __wrap_main(int argc, char **argv) {
@@ -45,8 +45,8 @@ int __wrap_main(int argc, char **argv) {
     Atom *duplicated = atom_expr2(&arena, deep, deep);
     Atom *xx = rename_vars_only(&arena, atom_expr2(&arena, x, x), duplicated);
     check(xx && xx->kind == ATOM_EXPR &&
-          xx->expr.elems[0]->var_id == xx->expr.elems[1]->var_id &&
-          xx->expr.elems[0]->var_id != x->var_id,
+          var_id_eq(xx->expr.elems[0]->var_id, xx->expr.elems[1]->var_id) &&
+          !var_id_eq(xx->expr.elems[0]->var_id, x->var_id),
           "repeated occurrences receive one fresh identity");
 
     Atom *dag = x;
@@ -58,15 +58,15 @@ int __wrap_main(int argc, char **argv) {
     Atom *xyz = atom_expr3(&arena, x, y, z);
     Atom *renamed = rename_vars_only(&arena, xyz, mixed);
     check(renamed && renamed->kind == ATOM_EXPR &&
-          renamed->expr.elems[0]->var_id != x->var_id &&
-          renamed->expr.elems[1]->var_id != y->var_id &&
-          renamed->expr.elems[2]->var_id == z->var_id &&
-          renamed->expr.elems[0]->var_id != renamed->expr.elems[1]->var_id,
+          !var_id_eq(renamed->expr.elems[0]->var_id, x->var_id) &&
+          !var_id_eq(renamed->expr.elems[1]->var_id, y->var_id) &&
+          var_id_eq(renamed->expr.elems[2]->var_id, z->var_id) &&
+          !var_id_eq(renamed->expr.elems[0]->var_id, renamed->expr.elems[1]->var_id),
           "multi-variable support is not confused with singleton support");
     Atom *except = rename_vars_except(&arena, pair, duplicated);
     check(except && except->kind == ATOM_EXPR &&
-          except->expr.elems[0]->var_id == x->var_id &&
-          except->expr.elems[1]->var_id != y->var_id,
+          var_id_eq(except->expr.elems[0]->var_id, x->var_id) &&
+          !var_id_eq(except->expr.elems[1]->var_id, y->var_id),
           "the complementary renaming operation preserves selected identities");
 
     Atom *tag = atom_internal_tag(&arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
@@ -98,8 +98,8 @@ int __wrap_main(int argc, char **argv) {
     Atom *roots[] = { duplicated };
     bool ok = bindings_project_reachable(&source, roots, 1u, &projected);
     check(ok && projected.len == 2u &&
-          projected.entries[0].var_id == x->var_id &&
-          projected.entries[1].var_id == y->var_id,
+          var_id_eq(projected.entries[0].var_id, x->var_id) &&
+          var_id_eq(projected.entries[1].var_id, y->var_id),
           "projection retains the transitive chain in source binding order");
     if (ok) bindings_free(&projected);
     roots[0] = ground;
