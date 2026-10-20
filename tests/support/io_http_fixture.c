@@ -74,6 +74,24 @@ static void fixture_response(int fd, int status, const char *reason,
         (void)fixture_write_all(fd, body, length);
 }
 
+static void fixture_pause_ms(long milliseconds) {
+    struct timespec pause = {.tv_sec = milliseconds / 1000,
+        .tv_nsec = (milliseconds % 1000) * 1000000L};
+    while (nanosleep(&pause, &pause) != 0 && errno == EINTR) {}
+}
+
+static void fixture_stream_chunks(int fd, const unsigned char *const *chunks,
+                                  const size_t *sizes, size_t count,
+                                  size_t announced_length, long pause_ms) {
+    if (!fixture_header(fd, 200, "OK", "text/plain; charset=utf-8",
+                        announced_length, NULL))
+        return;
+    for (size_t index = 0u; index < count; ++index) {
+        if (!fixture_write_all(fd, chunks[index], sizes[index])) return;
+        if (index + 1u < count && pause_ms) fixture_pause_ms(pause_ms);
+    }
+}
+
 static bool fixture_parse_content_length(const char *headers,
                                          size_t *length_out) {
     const char *line = strstr(headers, "\r\n") + 2;
@@ -252,6 +270,65 @@ static void fixture_get(int fd, const char *root, const char *path) {
         static const char body[] = "{\"x\":1,\"x\":2}";
         fixture_response(fd, 200, "OK", "application/json", body,
                          sizeof(body) - 1u, NULL);
+    } else if (strcmp(path, "/incremental") == 0 ||
+               strcmp(path, "/incremental-counted") == 0) {
+        static const unsigned char first[] = "first-";
+        static const unsigned char euro_lead[] = "\xe2";
+        static const unsigned char euro_tail[] = "\x82\xac-last";
+        const unsigned char *chunks[] = {first, euro_lead, euro_tail};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(euro_lead) - 1u,
+                                sizeof(euro_tail) - 1u};
+        if (strcmp(path, "/incremental-counted") == 0)
+            (void)atomic_fetch_add(&counted_requests, 1);
+        fixture_stream_chunks(fd, chunks, sizes, 3u,
+            sizes[0] + sizes[1] + sizes[2], 250L);
+    } else if (strcmp(path, "/incremental-truncate") == 0) {
+        static const unsigned char first[] = "truncate-safe-prefix-";
+        static const unsigned char second[] = "overflow-tail";
+        const unsigned char *chunks[] = {first, second};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(second) - 1u};
+        fixture_stream_chunks(fd, chunks, sizes, 2u, sizes[0] + sizes[1],
+                              250L);
+    } else if (strcmp(path, "/incremental-fail") == 0) {
+        static const unsigned char first[] = "failure-safe-prefix";
+        const unsigned char *chunks[] = {first};
+        const size_t sizes[] = {sizeof(first) - 1u};
+        fixture_stream_chunks(fd, chunks, sizes, 1u, sizes[0] + 32u, 0L);
+    } else if (strcmp(path, "/incremental-cancel") == 0) {
+        static const unsigned char first[] = "cancel-safe-prefix";
+        static const unsigned char second[] = "-late-bytes-after-cancel";
+        const unsigned char *chunks[] = {first, second};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(second) - 1u};
+        fixture_stream_chunks(fd, chunks, sizes, 2u, sizes[0] + sizes[1],
+                              1500L);
+    } else if (strcmp(path, "/credential-stream") == 0) {
+        static const unsigned char first[] =
+            "VISIBLE-COMMENTARY-abcdefghijklmnopqrstuvwxyz-split-";
+        static const unsigned char second[] = "secret-";
+        static const unsigned char third[] = "credential";
+        static const unsigned char fourth[] = "|after";
+        const unsigned char *chunks[] = {first, second, third, fourth};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(second) - 1u,
+                                sizeof(third) - 1u, sizeof(fourth) - 1u};
+        fixture_stream_chunks(fd, chunks, sizes, 4u,
+            sizes[0] + sizes[1] + sizes[2] + sizes[3], 250L);
+    } else if (strcmp(path, "/credential-utf8-guard") == 0) {
+        /* With the test credential's 22-byte guard, this 24-byte first write
+         * places the raw exposure boundary after the first byte of U+20AC. */
+        static const unsigned char first[] =
+            "A\xe2\x82\xac" "abcdefghijklmnopqrst";
+        static const unsigned char second[] = "UVWXYZ";
+        const unsigned char *chunks[] = {first, second};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(second) - 1u};
+        fixture_stream_chunks(fd, chunks, sizes, 2u, sizes[0] + sizes[1],
+                              1500L);
+    } else if (strcmp(path, "/incremental-invalid-utf8") == 0) {
+        static const unsigned char first[] = "valid-prefix-";
+        static const unsigned char invalid[] = {0xffu};
+        const unsigned char *chunks[] = {first, invalid};
+        const size_t sizes[] = {sizeof(first) - 1u, sizeof(invalid)};
+        fixture_stream_chunks(fd, chunks, sizes, 2u, sizes[0] + sizes[1],
+                              100L);
     } else if (strcmp(path, "/drip") == 0) {
         unsigned char chunk[1024];
         for (size_t index = 0u; index < sizeof(chunk); index++)

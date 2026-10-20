@@ -172,6 +172,67 @@ static unsigned remote_count(const char *base) {
     unsigned count=(unsigned)strtoul((char *)result.body,NULL,10);
     cetta_http_result_free(&result); cetta_http_worker_free(w); return count;
 }
+
+static void incremental_reads(const char *base) {
+    static const unsigned char expected[] = "first-\xe2\x82\xac-last";
+    unsigned before = remote_count(base);
+    CettaHttpWorker *w = worker(NULL, NULL);
+    char endpoint[512]; url(endpoint, base, "/incremental-counted");
+    CettaHttpRequest input = request(1, endpoint);
+    assert(cetta_http_worker_submit(w, &input) == HTTP_WORKER_OK);
+
+    CettaHttpRead early = {0};
+    uint64_t generation = 0, deadline = now_ms() + 5000;
+    for (;;) {
+        CettaHttpReadStatus status =
+            cetta_http_worker_read(w, 1, 0, 4, &early);
+        assert(status == HTTP_READ_OK && now_ms() < deadline);
+        if (early.response_size >= 6 && !early.terminal) break;
+        cetta_http_read_free(&early);
+        generation = cetta_http_worker_wait(w, generation, 50);
+    }
+    assert(early.offset == 0 && early.bytes_size == 4 &&
+           !memcmp(early.bytes, "firs", 4));
+    CettaHttpResult unavailable;
+    assert(!cetta_http_worker_take_id(w, 1, &unavailable));
+
+    CettaHttpRead second = {0};
+    assert(cetta_http_worker_read(w, 1, 4, 2, &second) == HTTP_READ_OK);
+    assert(second.bytes_size == 2 && !memcmp(second.bytes, "t-", 2));
+    cetta_http_read_free(&second);
+    assert(cetta_http_worker_read(w, 999, 0, 1, &second) == HTTP_READ_UNKNOWN);
+    assert(cetta_http_worker_read(w, 1, 1025, 1, &second) == HTTP_READ_OFFSET);
+    assert(cetta_http_worker_read(w, 1, 0, CETTA_HTTP_READ_MAX_BYTES + 1u,
+                                  &second) == HTTP_READ_INVALID);
+
+    CettaHttpRead metadata = {0};
+    do {
+        cetta_http_read_free(&metadata);
+        assert(cetta_http_worker_read(w, 1, 0, 0, &metadata) == HTTP_READ_OK);
+        if (!metadata.terminal)
+            generation = cetta_http_worker_wait(w, generation, 50);
+    } while (!metadata.terminal && now_ms() < deadline);
+    assert(metadata.terminal && metadata.complete &&
+           metadata.response_size == sizeof(expected) - 1u);
+    cetta_http_read_free(&metadata);
+
+    CettaHttpRead final = {0};
+    assert(cetta_http_worker_read(w, 1, 0, sizeof(expected), &final) ==
+           HTTP_READ_OK);
+    assert(final.terminal && final.complete &&
+           final.bytes_size == sizeof(expected) - 1u &&
+           !memcmp(final.bytes, expected, sizeof(expected) - 1u));
+    assert(early.bytes_size == 4 && !memcmp(early.bytes, "firs", 4));
+    cetta_http_read_free(&final);
+    cetta_http_read_free(&early);
+
+    CettaHttpResult result = take(w);
+    body(&result, expected, sizeof(expected) - 1u);
+    cetta_http_result_free(&result);
+    assert(cetta_http_worker_free(w) == 0);
+    assert(remote_count(base) == before + 1);
+}
+
 static void durable(const char *base, const char *path) {
     Journal j={.caller=pthread_self(),.id=1,.expected_started=true};
     assert(cetta_durable_open(path,NULL,&j.store)==DURABLE_OK);
@@ -468,12 +529,13 @@ int main(int argc, char **argv) {
         connection_policy(argv[2],!strcmp(argv[3],"idempotent"),argv[4]); return 0;
     }
     assert(argc==3);
-    ephemeral(argv[1]); durable(argv[1],argv[2]); concurrency(argv[1]);
+    ephemeral(argv[1]); durable(argv[1],argv[2]);
+    incremental_reads(argv[1]); concurrency(argv[1]);
     recording_failure(argv[1],argv[2],false,false,false);
     recording_failure(argv[1],argv[2],true,false,false);
     recording_failure(argv[1],argv[2],true,true,false);
     recording_failure(argv[1],argv[2],true,true,true);
     cancellation_and_redirects(argv[1]);
-    puts("HTTP worker: bounds, concurrency, durable claims, no replay, bounded recording retries, escalation/resume, minimal fact recovery, cancellation and redirect policy passed");
+    puts("HTTP worker: bounds, owned incremental snapshots, concurrency, durable claims, no replay, bounded recording retries, escalation/resume, minimal fact recovery, cancellation and redirect policy passed");
     return 0;
 }

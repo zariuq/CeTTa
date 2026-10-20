@@ -66,6 +66,29 @@ typedef struct {
     size_t response_bytes;
 } CettaHttpProgress;
 
+/* A response snapshot is intentionally small enough to copy while holding the
+ * worker mutex. The caller owns bytes and releases them with
+ * cetta_http_read_free. max_bytes==0 requests metadata only. */
+#define CETTA_HTTP_READ_MAX_BYTES (64u * 1024u)
+
+typedef enum {
+    HTTP_READ_OK, HTTP_READ_INVALID, HTTP_READ_UNKNOWN,
+    HTTP_READ_OFFSET, HTTP_READ_NOMEM, HTTP_READ_UNAVAILABLE
+} CettaHttpReadStatus;
+
+typedef struct {
+    uint64_t id;
+    size_t offset;
+    unsigned char *bytes;
+    size_t bytes_size;
+    size_t response_size;           /* bytes received at this snapshot */
+    bool terminal;
+    /* True only for a terminal, complete transport response. A terminal
+     * cancellation, limit failure, allocation failure, or transport error is
+     * not complete even when it retained a response prefix. */
+    bool complete;
+} CettaHttpRead;
+
 typedef enum {
     HTTP_PREPARE_READY,             /* claim is durable: networking may start */
     HTTP_PREPARE_DEFER,             /* no network; retry after a bounded wait */
@@ -134,6 +157,12 @@ bool cetta_http_worker_take_id(CettaHttpWorker *worker, uint64_t id,
 /* Non-consuming, bounded metadata only; no response bytes or authority. */
 bool cetta_http_worker_progress(CettaHttpWorker *worker, uint64_t id,
                                 CettaHttpProgress *out);
+/* Non-consuming owned response bytes. No hook or evaluator callback runs;
+ * bytes are copied under the same mutex that protects receive/retirement.
+ * Reading neither advances transport state nor sends another request. */
+CettaHttpReadStatus cetta_http_worker_read(CettaHttpWorker *worker,
+    uint64_t id, size_t offset, size_t max_bytes, CettaHttpRead *out);
+void cetta_http_read_free(CettaHttpRead *read);
 void cetta_http_result_free(CettaHttpResult *result);
 
 /* Wait for a completion/progress notification or timeout, using a monotonic

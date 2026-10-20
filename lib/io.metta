@@ -1,14 +1,17 @@
 ; Portable, nonblocking host-I/O boundary.
 ;
-; A provider may finish work between evaluator turns, but completion enters
-; MeTTa only through io:poll or the native blocking io:wait. Requests receive
-; host-assigned correlation IDs; each completion is observed at most once.
+; A provider may finish work between evaluator turns, but terminal completion
+; enters MeTTa only through io:poll or the native blocking io:wait. The opt-in
+; native io:http-read exposes inert provisional text without consuming that
+; completion. Requests receive host-assigned correlation IDs; each completion
+; is observed at most once.
 
 (: io:capabilities (-> Expression))
 (: io:submit (-> %Undefined% Expression))
 (: io:poll (-> Expression))
 (: io:poll (-> Number Expression))
 (: io:status (-> Number Expression))
+(: io:http-read (-> Number Number Number Expression))
 (: io:wait (-> Number Expression))
 ; The two-argument spelling is id/timeout or timeout/progress-path. One
 ; declaration describes both shapes; the native call validates the values.
@@ -25,6 +28,7 @@
 (: http:timeouts (-> Number Number Number Atom))
 (: http:header (-> String String Atom))
 (: http:response (-> Number String Atom))
+(: http:chunk (-> Number String Atom Atom))
 ; Add retry-after after the three http:timeouts values to request metadata.
 ; The response carries Retry-After seconds, or -1 when the header is absent.
 ; Requests without that option retain the ordinary http:response shape.
@@ -37,6 +41,7 @@
 (: __cetta_lib_io_submit (-> Atom Atom))
 (: __cetta_lib_io_poll (-> Atom Atom))
 (: __cetta_lib_io_status (-> Atom Atom))
+(: __cetta_lib_io_http_read (-> Atom Atom Atom Atom))
 (: __cetta_lib_io_wait (-> Atom Atom))
 (: __cetta_lib_io_wait (-> Atom Atom Atom))
 (: __cetta_lib_io_wait (-> Atom Atom Atom Atom))
@@ -62,6 +67,14 @@
 ; Non-consuming metadata. Byte activity is not a completed provider answer.
 (= (io:status $id)
    (function (chain (eval (__cetta_lib_io_status $id)) $result (return $result))))
+
+; Opt-in, owned and non-consuming native response text. NEXT is a raw byte
+; offset and TEXT contains only complete UTF-8 scalars:
+; (http:chunk NEXT TEXT waiting|complete|failed).
+; This provisional data never authorizes evaluation or replaces io:poll's
+; complete response validation.
+(= (io:http-read $id $offset $max-bytes)
+   (function (chain (eval (__cetta_lib_io_http_read $id $offset $max-bytes)) $result (return $result))))
 
 (= (io:cancel $id)
    (function (chain (eval (__cetta_lib_io_cancel $id)) $result (return $result))))
