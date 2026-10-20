@@ -277,7 +277,7 @@ static bool pattern_is_left_linear_at(
         return false;
     if (term->kind == ATOM_VAR) {
         for (size_t index = 0u; index < *count; index++) {
-            if ((*variables)[index] == term->var_id)
+            if (var_id_eq((*variables)[index], term->var_id))
                 return false;
         }
         if (*count == *capacity) {
@@ -362,7 +362,7 @@ static bool patterns_overlap(const Atom *left, const Atom *right) {
 static bool variable_bound(
     const VarId *variables, size_t count, VarId variable) {
     for (size_t index = count; index > 0u; index--) {
-        if (variables[index - 1u] == variable)
+        if (var_id_eq(variables[index - 1u], variable))
             return true;
     }
     return false;
@@ -858,7 +858,7 @@ static const Atom *environment_lookup(
     if (!environment)
         return NULL;
     for (uint32_t index = environment->count; index > 0u; index--) {
-        if (environment->items[index - 1u].variable == variable)
+        if (var_id_eq(environment->items[index - 1u].variable, variable))
             return environment->items[index - 1u].value;
     }
     return NULL;
@@ -1892,7 +1892,7 @@ static bool equation_scope_push(DeterministicEquationScopeV1 *scope, VarId varia
 
 static bool equation_scope_find(const DeterministicEquationScopeV1 *scope, VarId variable, uint32_t *slot) {
     for (uint32_t i = scope->len; i > 0u; i--)
-        if (scope->variables[i - 1u] == variable) { *slot = scope->slots[i - 1u]; return true; }
+        if (var_id_eq(scope->variables[i - 1u], variable)) { *slot = scope->slots[i - 1u]; return true; }
     return false;
 }
 
@@ -2480,7 +2480,7 @@ static void prepared_write_atom(CettaPreparedWriterV1 *w,
         cpw_u64(w, a->kind == ATOM_SYMBOL ? PREPARED_SYMBOL : PREPARED_VARIABLE);
         if (a->kind == ATOM_VAR) {
             size_t i = 0;
-            for (; i < variables->len && variables->items[i]->var_id != a->var_id; ++i) {}
+            for (; i < variables->len && !var_id_eq(variables->items[i]->var_id, a->var_id); ++i) {}
             if (i == variables->len && !prepared_variable(variables, (Atom *)a)) w->failed = true;
             cpw_u64(w, i);
         }

@@ -82,25 +82,25 @@ static Atom *spine_leaf(Atom *term, Atom *head) {
 
 static void exercise(Arena *arena, const char *operation) {
     Atom *head = atom_symbol(arena, "depth-node");
-    Atom *x = atom_var_with_id(arena, "same-name", UINT64_C(90001));
-    Atom *y = atom_var_with_id(arena, "same-name", UINT64_C(90002));
+    Atom *x = atom_var_with_id(arena, "same-name", var_id_from_base(UINT64_C(90001)));
+    Atom *y = atom_var_with_id(arena, "same-name", var_id_from_base(UINT64_C(90002)));
     Atom *left = spine(arena, head, x);
     if (!strcmp(operation, "rename")) {
-        Atom *renamed = rename_vars(arena, left, 17u);
+        Atom *renamed = rename_vars(arena, left, (CettaFrameIdentity){17u});
         Atom *leaf = spine_leaf(renamed, head);
         assert(leaf && leaf->kind == ATOM_VAR);
-        assert(leaf->var_id == var_epoch_id(x->var_id, 17u));
+        assert(var_id_eq(leaf->var_id, var_epoch_id(x->var_id, (CettaFrameIdentity){17u})));
     } else if (!strcmp(operation, "freshen")) {
-        Atom *renamed = atom_freshen_epoch(arena, left, 19u);
+        Atom *renamed = atom_freshen_epoch(arena, left, (CettaFrameIdentity){19u});
         Atom *leaf = spine_leaf(renamed, head);
         assert(leaf && leaf->kind == ATOM_VAR);
-        assert(leaf->var_id == var_epoch_id(x->var_id, 19u));
+        assert(var_id_eq(leaf->var_id, var_epoch_id(x->var_id, (CettaFrameIdentity){19u})));
     } else if (!strcmp(operation, "only") || !strcmp(operation, "except")) {
         Atom *renamed = !strcmp(operation, "only")
             ? rename_vars_only(arena, left, x)
             : rename_vars_except(arena, left, y);
         Atom *leaf = spine_leaf(renamed, head);
-        assert(leaf && leaf->kind == ATOM_VAR && leaf->var_id != x->var_id);
+        assert(leaf && leaf->kind == ATOM_VAR && !var_id_eq(leaf->var_id, x->var_id));
     } else if (!strcmp(operation, "simple")) {
         Bindings bindings;
         bindings_init(&bindings);
@@ -142,29 +142,29 @@ static void exercise(Arena *arena, const char *operation) {
 
 static void controls(Arena *arena) {
     Atom *head = atom_symbol(arena, "control-node");
-    Atom *x = atom_var_with_id(arena, "equal-spelling", UINT64_C(91001));
-    Atom *y = atom_var_with_id(arena, "equal-spelling", UINT64_C(91002));
-    Atom *u = atom_var_with_id(arena, "equal-spelling", UINT64_C(91003));
+    Atom *x = atom_var_with_id(arena, "equal-spelling", var_id_from_base(UINT64_C(91001)));
+    Atom *y = atom_var_with_id(arena, "equal-spelling", var_id_from_base(UINT64_C(91002)));
+    Atom *u = atom_var_with_id(arena, "equal-spelling", var_id_from_base(UINT64_C(91003)));
     Atom *one = atom_int(arena, 1), *two = atom_int(arena, 2);
     Atom *shared = atom_expr3(arena, head, x, x);
     Atom *dag = atom_expr3(arena, head, shared, shared);
-    Atom *renamed = rename_vars(arena, dag, 23u);
+    Atom *renamed = rename_vars(arena, dag, (CettaFrameIdentity){23u});
     assert(renamed && renamed->expr.elems[1] == renamed->expr.elems[2]);
     Atom *row = renamed->expr.elems[1];
-    assert(row->expr.elems[1]->var_id == var_epoch_id(x->var_id, 23u));
+    assert(var_id_eq(row->expr.elems[1]->var_id, var_epoch_id(x->var_id, (CettaFrameIdentity){23u})));
     assert(row->expr.elems[1] == row->expr.elems[2]);
     assert(rename_vars_only(arena, dag, y) == dag);
     assert(rename_vars_except(arena, dag, x) == dag);
-    assert(atom_freshen_epoch(arena, atom_expr2(arena, head, one), 23u)
+    assert(atom_freshen_epoch(arena, atom_expr2(arena, head, one), (CettaFrameIdentity){23u})
         ->expr.elems[1] == one);
     Atom *named_key = atom_expr2(arena, head, one);
-    Atom *named = atom_var_with_name_key(arena, named_key, UINT64_C(92001));
-    Atom *named_fresh = atom_freshen_epoch(arena, named, 25u);
-    assert(named_fresh && named_fresh->var_id == var_epoch_id(named->var_id, 25u));
+    Atom *named = atom_var_with_name_key(arena, named_key, var_id_from_base(UINT64_C(92001)));
+    Atom *named_fresh = atom_freshen_epoch(arena, named, (CettaFrameIdentity){25u});
+    assert(named_fresh && var_id_eq(named_fresh->var_id, var_epoch_id(named->var_id, (CettaFrameIdentity){25u})));
     assert(atom_eq(named_fresh->name_key, named_key));
     Atom *context = atom_prime_context_bind(arena, NULL, head, x);
-    assert(rename_vars(arena, context, 29u) == context);
-    assert(atom_freshen_epoch(arena, context, 29u) == context);
+    assert(rename_vars(arena, context, (CettaFrameIdentity){29u}) == context);
+    assert(atom_freshen_epoch(arena, context, (CettaFrameIdentity){29u}) == context);
     assert(atom_alpha_eq(shared, atom_expr3(arena, head, y, y)));
     assert(!atom_alpha_eq(shared, atom_expr3(arena, head, y, u)));
     assert(!atom_alpha_eq(atom_expr3(arena, head, x, y),
@@ -207,8 +207,8 @@ static void controls(Arena *arena) {
 
     Atom *cycle = atom_expr2(arena, head, x);
     cycle->expr.elems[1] = cycle;
-    assert(rename_vars(arena, cycle, 31u) == NULL);
-    assert(atom_freshen_epoch(arena, cycle, 31u) == NULL);
+    assert(rename_vars(arena, cycle, (CettaFrameIdentity){31u}) == NULL);
+    assert(atom_freshen_epoch(arena, cycle, (CettaFrameIdentity){31u}) == NULL);
     assert(rename_vars_only(arena, cycle, x) == NULL);
     assert(rename_vars_except(arena, cycle, y) == NULL);
     assert(!atom_alpha_eq(cycle, cycle));

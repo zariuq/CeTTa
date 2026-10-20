@@ -119,7 +119,7 @@ static bool relational_exact_key(
 
 static size_t relational_variable(const CettaRelationalPlan *plan, VarId id) {
     for (size_t i = 0u; i < plan->info.variable_count; i++)
-        if (plan->variables[i] == id)
+        if (var_id_eq(plan->variables[i], id))
             return i;
     return SIZE_MAX;
 }
@@ -132,7 +132,7 @@ static size_t relational_covering_factor(const CettaRelationalPlan *plan,
             bool found = false;
             for (CettaExprIndex c = 0u; c < patterns[f]->expr.len; c++) {
                 const Atom *item = patterns[f]->expr.elems[c];
-                if (item->kind == ATOM_VAR && item->var_id == plan->variables[v]) {
+                if (item->kind == ATOM_VAR && var_id_eq(item->var_id, plan->variables[v])) {
                     found = true;
                     break;
                 }
@@ -478,7 +478,7 @@ bool cetta_relational_plan_prepare(
             for (size_t f = 0u; f < pattern_count; f++) {
                 for (CettaExprIndex c = 0u; c < resolved[f]->expr.len; c++) {
                     Atom *item = resolved[f]->expr.elems[c];
-                    if (item->kind == ATOM_VAR && item->var_id == id) {
+                    if (item->kind == ATOM_VAR && var_id_eq(item->var_id, id)) {
                         factors++;
                         break;
                     }
@@ -504,7 +504,7 @@ bool cetta_relational_plan_prepare(
         for (size_t v = 0u; v < plan->info.variable_count; v++) {
             for (CettaExprIndex c = 0u; c < pattern->expr.len; c++) {
                 if (pattern->expr.elems[c]->kind == ATOM_VAR &&
-                    pattern->expr.elems[c]->var_id == plan->variables[v]) {
+                    var_id_eq(pattern->expr.elems[c]->var_id, plan->variables[v])) {
                     columns++;
                     break;
                 }
@@ -523,7 +523,7 @@ bool cetta_relational_plan_prepare(
             bool found = false;
             for (CettaExprIndex c = 0u; c < pattern->expr.len; c++) {
                 if (pattern->expr.elems[c]->kind == ATOM_VAR &&
-                    pattern->expr.elems[c]->var_id == plan->variables[v]) {
+                    var_id_eq(pattern->expr.elems[c]->var_id, plan->variables[v])) {
                     positions[c] = local;
                     found = true;
                 }
@@ -569,7 +569,7 @@ bool cetta_relational_plan_prepare(
                         for (CettaExprIndex previous = 0u; previous < c; previous++) {
                             Atom *item = pattern->expr.elems[previous];
                             if (item->kind == ATOM_VAR &&
-                                item->var_id == pattern->expr.elems[c]->var_id &&
+                                var_id_eq(item->var_id, pattern->expr.elems[c]->var_id) &&
                                 tu_child(space->native.universe, id, previous) != value) {
                                 matched = false;
                                 break;

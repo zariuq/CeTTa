@@ -217,7 +217,7 @@ static bool key_build(Arena *arena, Atom *root, MorkCompactKeyV1 *key) {
         case ATOM_VAR: {
             size_t slot = 0u;
             while (slot < variable_len &&
-                   variables[slot] != atom->var_id)
+                   !var_id_eq(variables[slot], atom->var_id))
                 slot++;
             bool introduction = slot == variable_len;
             if (introduction) {

@@ -362,10 +362,10 @@ static bool match_decision_collect_equalities_node(
         return true;
     }
     if (node->kind == ATOM_VAR) {
-        if (node->var_id == VAR_ID_NONE)
+        if (var_id_is_none(node->var_id))
             return true;
         for (size_t index = 0u; index < *variable_count; index++) {
-            if ((*variables)[index].id != node->var_id)
+            if (!var_id_eq((*variables)[index].id, node->var_id))
                 continue;
             return match_decision_add_equality(
                 decision, (*variables)[index].path,

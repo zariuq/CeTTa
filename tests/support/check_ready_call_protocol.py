@@ -142,7 +142,6 @@ def main():
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=False)
     profiles = [(['--lang', 'petta'], 'petta'),
-                (['--lang', 'petta@1.0.6'], 'petta'),
                 (['--lang', 'petta', '--profile', 'extended'], 'petta'),
                 (['--lang', 'he'], 'he'),
                 (['--lang', 'he', '--profile', 'he-compat'], 'he'),

@@ -486,10 +486,10 @@ static VarId parser_bare_dollar_id(ParserVarScope *scope,
 
 static NameId parser_var_scope_name_key_id(ParserVarScope *scope,
                                            Atom *name_key) {
-    if (!scope || !name_key) return VAR_ID_NONE;
+    if (!scope || !name_key) return NAME_ID_NONE;
     if (!scope->name_keys)
         scope->name_keys = name_key_table_new(32u);
-    if (!scope->name_keys) return VAR_ID_NONE;
+    if (!scope->name_keys) return NAME_ID_NONE;
     return name_key_intern(scope->name_keys, name_key);
 }
 
@@ -570,7 +570,7 @@ static Atom *parser_lower_syn_expression(Arena *a, Atom *expr,
         Atom *key = NULL;
         if (parser_quote_payload(arg, &key)) {
             VarId id = parser_var_scope_name_id(scope, key);
-            if (id != VAR_ID_NONE)
+            if (!var_id_is_none(id))
                 return atom_var_with_name_key(a, key, id);
         }
         return NULL;
@@ -670,7 +670,7 @@ static ParserSynLowerStatus parser_lower_syn_expression_id(
         if (parser_quote_payload_id(universe, arg, &key_id)) {
             Atom *key = term_universe_copy_atom(universe, scratch, key_id);
             VarId id = key ? parser_var_scope_name_id(scope, key) : VAR_ID_NONE;
-            if (id != VAR_ID_NONE) {
+            if (!var_id_is_none(id)) {
                 if (lowered_out)
                     *lowered_out = tu_intern_named_var(universe, key_id, id);
                 return PARSER_SYN_LOWER_OK;
@@ -1283,7 +1283,7 @@ static ParserReadValue parser_read_id_container(ParserReadContext *ctx,
 static Atom *parser_read_prefix_atom(ParserReadContext *ctx, ParserReadKind kind, Atom *payload) {
     if (kind == PARSER_READ_VARIABLE) {
         VarId id = parser_var_scope_name_id(ctx->scope, payload);
-        return id == VAR_ID_NONE ? NULL : atom_var_with_name_key(ctx->arena, payload, id);
+        return var_id_is_none(id) ? NULL : atom_var_with_name_key(ctx->arena, payload, id);
     }
     if (kind == PARSER_READ_REF) {
         if (parser_var_scope_name_key_id(ctx->scope, payload) == NAME_ID_NONE)
@@ -1300,7 +1300,7 @@ static ParserReadValue parser_read_id_prefix(ParserReadContext *ctx, ParserReadK
     AtomId result = CETTA_ATOM_ID_NONE;
     if (kind == PARSER_READ_VARIABLE) {
         VarId id = parser_var_scope_name_id(ctx->scope, payload);
-        if (id != VAR_ID_NONE) {
+        if (!var_id_is_none(id)) {
             AtomId key = term_universe_store_atom_id(ctx->universe, ctx->arena, payload);
             if (key != CETTA_ATOM_ID_NONE)
                 result = tu_intern_named_var(ctx->universe, key, id);
@@ -1617,7 +1617,7 @@ typedef struct {
 static ParserRenderVar *parser_render_var_find(ParserRenderContext *ctx,
                                                VarId id) {
     for (size_t i = 0; i < ctx->len; i++)
-        if (ctx->vars[i].id == id)
+        if (var_id_eq(ctx->vars[i].id, id))
             return &ctx->vars[i];
     return NULL;
 }

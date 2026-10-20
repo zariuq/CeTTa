@@ -656,7 +656,7 @@ static bool petta_solver_changes(PettaSolverClient *client, Arena *arena,
         if (!variable)
             continue; /* A released epoch is no longer observable by this owner. */
         Atom *value = petta_libpl_from_term(arena, value_term, variables, back, 0u);
-        if (!value || (value->kind != ATOM_VAR || value->var_id != variable->id)) {
+        if (!value || (value->kind != ATOM_VAR || !var_id_eq(value->var_id, variable->id))) {
             Atom *prototype = value ? atom_var_like(arena, variable->prototype, variable->id) : NULL;
             if (!prototype || count == UINT32_MAX ||
                 !petta_solver_grow((void **)&prototypes, &prototype_cap, count + 1u,

@@ -322,7 +322,7 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
                 return;
             } else if (active_profile_uses_rust_he_compat_semantics()) {
                 outcome_set_add(os, atom_var_with_id(
-                    a, "result", var_epoch_id(1, 17)), &item->env);
+                    a, "result", (VarId){1u, {17u}}), &item->env);
             } else {
                 outcome_set_add(os, atom_error(a, frame->atom,
                     atom_symbol(a, "NoReturn")), &item->env);

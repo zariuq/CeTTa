@@ -20,7 +20,7 @@ enum {
     WRITER_ROUNDS = 360,
 };
 
-static const VarId QUERY_VALUE_ID = UINT64_C(900001);
+static const VarId QUERY_VALUE_ID = {UINT64_C(900001)};
 static const int64_t OPTIONAL_VALUE = INT64_C(10000);
 
 typedef struct {

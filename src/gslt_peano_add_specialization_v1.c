@@ -31,7 +31,7 @@ static bool cetta_gslt_peano_add_unary_v1(
 static bool cetta_gslt_peano_add_same_variable_v1(
     const Atom *left, const Atom *right) {
     return left && right && left->kind == ATOM_VAR &&
-           right->kind == ATOM_VAR && left->var_id == right->var_id;
+           right->kind == ATOM_VAR && var_id_eq(left->var_id, right->var_id);
 }
 
 typedef struct {

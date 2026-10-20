@@ -72,9 +72,9 @@ int main(void) {
         &storage->arena, open, &source_slots, NULL, &options);
     Atom *one = variant_shape_materialize_atom(&first, canonical, &goal_slots, &first_locals);
     Atom *two = variant_shape_materialize_atom(&second, canonical, &goal_slots, &second_locals);
-    assert(one && two && one->expr.elems[0]->var_id == one->expr.elems[1]->var_id);
-    assert(two->expr.elems[0]->var_id == two->expr.elems[1]->var_id);
-    assert(one->expr.elems[0]->var_id != two->expr.elems[0]->var_id);
+    assert(one && two && var_id_eq(one->expr.elems[0]->var_id, one->expr.elems[1]->var_id));
+    assert(var_id_eq(two->expr.elems[0]->var_id, two->expr.elems[1]->var_id));
+    assert(!var_id_eq(one->expr.elems[0]->var_id, two->expr.elems[0]->var_id));
     cetta_var_map_free(&source_slots);
     cetta_var_map_free(&goal_slots);
     cetta_var_map_free(&first_locals);

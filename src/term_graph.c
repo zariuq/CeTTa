@@ -1427,7 +1427,7 @@ CettaTermMatchStatus term_graph_match_extend(
             /* A subject discovered later can invalidate a previously legal
              * image, but can never refine it by binding the subject. */
             if (cetta_var_map_lookup(&subject_vars, variable->var_id)) {
-                if (value->kind != ATOM_VAR || value->var_id != variable->var_id) {
+                if (value->kind != ATOM_VAR || !var_id_eq(value->var_id, variable->var_id)) {
                     result = CETTA_TERM_MATCH_MISMATCH;
                     goto done;
                 }
@@ -1483,7 +1483,7 @@ CettaTermMatchStatus term_graph_match_extend(
                     goto done;
                 }
                 Atom *previous = cetta_var_map_lookup(&reverse_vars, b.leaf->var_id);
-                if (previous && previous->var_id != a.leaf->var_id) {
+                if (previous && !var_id_eq(previous->var_id, a.leaf->var_id)) {
                     result = CETTA_TERM_MATCH_MISMATCH;
                     goto done;
                 }
@@ -1493,7 +1493,7 @@ CettaTermMatchStatus term_graph_match_extend(
             }
             if (cetta_var_map_lookup(&subject_vars, a.leaf->var_id)) {
                 if (b.kind != SHAPE_LEAF || b.leaf->kind != ATOM_VAR ||
-                    a.leaf->var_id != b.leaf->var_id) {
+                    !var_id_eq(a.leaf->var_id, b.leaf->var_id)) {
                     result = CETTA_TERM_MATCH_MISMATCH;
                     goto done;
                 }

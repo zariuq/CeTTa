@@ -153,6 +153,7 @@ static inline SymbolSpelling symbol_spelling(
     X(cdr_atom, "cdr-atom") \
     X(unify, "unify") \
     X(case_text, "case") \
+    X(case_value_text, "%case-value%") \
     X(switch_text, "switch") \
     X(switch_minimal, "switch-minimal") \
     X(let_star, "let*") \
@@ -214,6 +215,7 @@ static inline SymbolSpelling symbol_spelling(
     X(add_atom, "add-atom") \
     X(add_atoms, "add-atoms") \
     X(add_atom_nodup, "add-atom-nodup") \
+    X(exec_saturate, "exec:saturate") \
     X(mork_add_atoms, "mork:add-atoms") \
     X(mork_add_atom, "mork:add-atom") \
     X(mork_remove_atom, "mork:remove-atom") \

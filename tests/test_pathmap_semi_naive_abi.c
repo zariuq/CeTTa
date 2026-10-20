@@ -120,9 +120,9 @@ static uint64_t bool_matrix_count(const bool *matrix) {
 
 static void run_transitive_closure_gate(
     Arena *arena, TermUniverse *universe, SymbolId edge, SymbolId reach) {
-    const VarId from_var = 2001;
-    const VarId mid_var = 2002;
-    const VarId to_var = 2003;
+    const VarId from_var = var_id_from_base(2001);
+    const VarId mid_var = var_id_from_base(2002);
+    const VarId to_var = var_id_from_base(2003);
     SymbolId nodes[CLOSURE_NODE_COUNT];
     bool reached[CLOSURE_NODE_COUNT * CLOSURE_NODE_COUNT] = {false};
     bool frontier[CLOSURE_NODE_COUNT * CLOSURE_NODE_COUNT] = {false};
@@ -258,11 +258,11 @@ static void run_transitive_closure_gate(
 }
 
 int main(void) {
-    const VarId x_var = 1001;
-    const VarId y_var = 1002;
-    const VarId z_var = 1003;
-    const VarId independent_lhs_var = 1004;
-    const VarId independent_rhs_var = 1005;
+    const VarId x_var = var_id_from_base(1001);
+    const VarId y_var = var_id_from_base(1002);
+    const VarId z_var = var_id_from_base(1003);
+    const VarId independent_lhs_var = var_id_from_base(1004);
+    const VarId independent_rhs_var = var_id_from_base(1005);
     SymbolTable symbols;
     Arena persistent;
     Arena arena;

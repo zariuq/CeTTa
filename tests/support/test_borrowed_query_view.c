@@ -17,13 +17,13 @@ static void compare(Space *space, Arena *arena, Atom **parts, CettaExprLen len) 
     for (CettaIndex position = 0u; position < space_length64(space); position++) {
         Bindings reference; bindings_init(&reference);
         bool succeeds = match_atoms_atom_id_epoch(query, space->native.universe,
-            space_get_atom_id_at64(space, position), &reference, arena, 333u);
+            space_get_atom_id_at64(space, position), &reference, arena, (CettaFrameIdentity){333u});
         bindings_free(&reference);
         if (!succeeds) continue;
         while (matched < actual) {
             Bindings trial; bindings_init(&trial);
             bool kept = match_atoms_atom_id_epoch(query, space->native.universe,
-                space_get_atom_id_at64(space, borrowed[matched]), &trial, arena, 334u);
+                space_get_atom_id_at64(space, borrowed[matched]), &trial, arena, (CettaFrameIdentity){334u});
             bindings_free(&trial);
             if (kept) break;
             matched++;
@@ -33,7 +33,7 @@ static void compare(Space *space, Arena *arena, Atom **parts, CettaExprLen len) 
     while (matched < actual) {
         Bindings trial; bindings_init(&trial);
         assert(!match_atoms_atom_id_epoch(query, space->native.universe,
-            space_get_atom_id_at64(space, borrowed[matched++]), &trial, arena, 335u));
+            space_get_atom_id_at64(space, borrowed[matched++]), &trial, arena, (CettaFrameIdentity){335u}));
         bindings_free(&trial);
     }
     assert(expected == actual);
@@ -54,7 +54,7 @@ int main(void) {
     term_universe_set_persistent_arena(&universe, &arena);
     Space storage; Space *space = &storage; space_init_with_universe(space, &universe);
     Atom *head = atom_symbol(&arena, "view-row");
-    Atom *x = atom_var_with_id(&arena, "x", 1201), *y = atom_var_with_id(&arena, "y", 1202);
+    Atom *x = atom_var_with_id(&arena, "x", var_id_from_base(1201)), *y = atom_var_with_id(&arena, "y", var_id_from_base(1202));
     for (int i = 0; i < 100; i++) {
         Atom *row = atom_expr3(&arena, head, atom_int(&arena, i % 17), atom_int(&arena, i % 17));
         AtomId id = term_universe_store_atom_id(&universe, NULL, row);
@@ -87,7 +87,7 @@ int main(void) {
         Atom *parts[] = {
             atom_symbol(&temporary, "view-row"),
             atom_int(&temporary, iteration % 17),
-            atom_var_with_id(&temporary, "temporary", 5000u + iteration),
+            atom_var_with_id(&temporary, "temporary", var_id_from_base(5000u + iteration)),
         };
         compare(space, &temporary, parts, 3);
         arena_free(&temporary);

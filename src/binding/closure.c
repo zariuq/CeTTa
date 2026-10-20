@@ -208,7 +208,7 @@ static bool captured_renaming_equal(const CettaBindingsValue *left,
     for (uint32_t i = 0u; i < a->mapping.len; ++i) {
         const CettaVarMapEntry *entry = &a->mapping.items[i];
         Atom *other = cetta_var_map_lookup(&b->mapping, entry->source_id);
-        if (!other || other->var_id != entry->mapped_var->var_id) return false;
+        if (!other || !var_id_eq(other->var_id, entry->mapped_var->var_id)) return false;
     }
     return true;
 }
@@ -275,7 +275,7 @@ done:
 typedef struct {
     SymbolId spelling;
     VarId id;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     bool ambiguous;
 } ScopedName;
 
@@ -283,8 +283,9 @@ static bool scoped_name_visit(const Atom *atom, void *raw) {
     ScopedName *name = raw;
     if (atom->kind != ATOM_VAR || atom->name_key || atom->sym_id != name->spelling)
         return false;
-    VarId id = name->epoch ? var_epoch_id(atom->var_id, name->epoch) : atom->var_id;
-    if (name->id != VAR_ID_NONE && name->id != id) name->ambiguous = true;
+    VarId id = !cetta_frame_identity_is_none(name->epoch)
+            ? var_epoch_id(atom->var_id, name->epoch) : atom->var_id;
+    if (!var_id_is_none(name->id) && !var_id_eq(name->id, id)) name->ambiguous = true;
     name->id = id;
     return name->ambiguous;
 }
@@ -297,14 +298,14 @@ static bool scoped_name_resolve(SymbolId spelling, const Atom *scope,
     Binding binding;
     while (!name.ambiguous && bindings_iterator_next(&iterator, &binding)) {
         if (!binding.name_key && binding.spelling == spelling) {
-            if (name.id != VAR_ID_NONE && name.id != binding.var_id) name.ambiguous = true;
+            if (!var_id_is_none(name.id) && !var_id_eq(name.id, binding.var_id)) name.ambiguous = true;
             name.id = binding.var_id;
         }
         name.epoch = binding_value_is_contextual(binding.value)
-            ? binding.value.epoch : 0u;
+            ? binding_value_epoch(binding.value) : CETTA_FRAME_IDENTITY_NONE;
         atom_tree_any(binding.value.skeleton, scoped_name_visit, &name);
     }
-    if (name.ambiguous || name.id == VAR_ID_NONE) return false;
+    if (name.ambiguous || var_id_is_none(name.id)) return false;
     *out = name.id;
     return true;
 }

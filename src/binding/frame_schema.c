@@ -48,7 +48,7 @@ void bindings_frame_schema_publish(
     schema->source_first_id = len ? schema->source_ids[0] : VAR_ID_NONE;
     schema->source_ids_contiguous = true;
     for (uint32_t i = 1u; i < len; i++) {
-        if (schema->source_ids[i] != schema->source_ids[i - 1u] + UINT64_C(1))
+        if (schema->source_ids[i].base != schema->source_ids[i - 1u].base + UINT64_C(1))
             schema->source_ids_contiguous = false;
     }
 }
@@ -59,8 +59,8 @@ BindingsFrameSchema *bindings_frame_schema_new(
         (size_t)source_len > (SIZE_MAX - sizeof(BindingsFrameSchema)) / sizeof(VarId))
         return NULL;
     for (uint32_t i = 0u; i < source_len; i++) {
-        if (source_ids[i] == VAR_ID_NONE || var_epoch_suffix(source_ids[i]) != 0u ||
-            (i > 0u && source_ids[i - 1u] >= source_ids[i]))
+        if (var_id_is_none(source_ids[i]) || !cetta_frame_identity_is_none(var_epoch_suffix(source_ids[i])) ||
+            (i > 0u && source_ids[i - 1u].base >= source_ids[i].base))
             return NULL;
     }
     BindingsFrameSchema *schema = bindings_frame_schema_alloc(source_len);
@@ -75,7 +75,7 @@ BindingsFrameSchema *bindings_frame_schema_dense(uint32_t count) {
     if (!schema)
         return NULL;
     for (uint32_t slot = 0u; slot < count; slot++)
-        schema->source_ids[slot] = (VarId)slot + 1u;
+        schema->source_ids[slot] = var_id_from_base((uint64_t)slot + 1u);
     bindings_frame_schema_publish(schema, count);
     return schema;
 }
@@ -92,7 +92,7 @@ BindingsFrameSchema *bindings_frame_schema_new_presented(
     for (uint32_t slot = 0u; slot < source_len; slot++) {
         Atom *variable = source_variables[slot];
         if (!variable || variable->kind != ATOM_VAR ||
-            (VarId)var_base_id(variable->var_id) != source_ids[slot]) {
+            !var_id_eq(var_source_id(variable->var_id), source_ids[slot])) {
             bindings_frame_schema_release(schema);
             return NULL;
         }
@@ -121,12 +121,12 @@ uint32_t bindings_frame_schema_len(const BindingsFrameSchema *schema) {
 bool bindings_frame_schema_find_slot(
         const BindingsFrameSchema *schema, VarId source_id,
         uint32_t *slot_out) {
-    if (!schema || !slot_out || source_id == VAR_ID_NONE)
+    if (!schema || !slot_out || var_id_is_none(source_id))
         return false;
     if (schema->source_ids_contiguous) {
-        if (source_id < schema->source_first_id)
+        if (source_id.base < schema->source_first_id.base)
             return false;
-        uint64_t offset = source_id - schema->source_first_id;
+        uint64_t offset = source_id.base - schema->source_first_id.base;
         if (offset >= schema->len)
             return false;
         *slot_out = (uint32_t)offset;
@@ -136,12 +136,12 @@ bool bindings_frame_schema_find_slot(
     uint32_t high = schema->len;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
-        if (schema->source_ids[middle] < source_id)
+        if (schema->source_ids[middle].base < source_id.base)
             low = middle + 1u;
         else
             high = middle;
     }
-    if (low >= schema->len || schema->source_ids[low] != source_id)
+    if (low >= schema->len || !var_id_eq(schema->source_ids[low], source_id))
         return false;
     *slot_out = low;
     return true;

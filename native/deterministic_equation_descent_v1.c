@@ -263,7 +263,7 @@ static bool descent_pattern_has_var(const Atom *p, VarId var) {
     if (!p)
         return false;
     if (p->kind == ATOM_VAR)
-        return p->var_id == var;
+        return var_id_eq(p->var_id, var);
     if (p->kind != ATOM_EXPR)
         return false;
     for (CettaExprIndex k = 0u; k < p->expr.len; k++) {
@@ -275,7 +275,7 @@ static bool descent_pattern_has_var(const Atom *p, VarId var) {
 
 static bool descent_uses_has(const DescentUses *uses, VarId var) {
     for (uint32_t i = 0u; i < uses->len; i++) {
-        if (uses->items[i] == var)
+        if (var_id_eq(uses->items[i], var))
             return true;
     }
     return false;
@@ -300,7 +300,7 @@ static int64_t descent_unused(const Atom *p, const DescentUses *uses) {
 static const DescentLet *descent_env_lookup(const DescentLet *env,
                                             uint32_t count, VarId var) {
     for (uint32_t i = count; i > 0u; i--) {
-        if (env[i - 1u].var == var)
+        if (var_id_eq(env[i - 1u].var, var))
             return &env[i - 1u];
     }
     return NULL;
@@ -403,7 +403,7 @@ static bool descent_collect_calls(DescentContext *ctx, uint32_t f, uint32_t rule
             env->items = grown;
             env->cap = cap;
         }
-        VarId carried = 0;
+        VarId carried = VAR_ID_NONE;
         bool carries = descent_carried(ctx, term->expr.elems[2], env->items,
                                        env->len, &carried);
         env->items[env->len++] = (DescentLet){
@@ -544,7 +544,7 @@ static bool descent_cost(const DescentContext *ctx, const DescentEdge *edge,
 /* A use of a variable, through views and carrying binders. */
 static bool descent_plain(const DescentContext *ctx, const DescentEdge *edge,
                           const Atom *a) {
-    VarId carried = 0;
+    VarId carried = VAR_ID_NONE;
     return descent_carried(ctx, a, edge->env, edge->env_count, &carried);
 }
 

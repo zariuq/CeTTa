@@ -71,7 +71,6 @@ def main():
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=False)
     profiles = [('petta', ['--lang', 'petta'], True, False),
-                ('petta-explicit', ['--lang', 'petta@1.0.6'], True, False),
                 ('petta-extended', ['--lang', 'petta', '--profile', 'extended'], True, False),
                 ('petta11', ['--lang', 'petta@1.1'], True, True),
                 ('he', ['--lang', 'he'], False, False),

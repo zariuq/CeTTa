@@ -9,7 +9,7 @@
 
 enum {
     CTBR_MAGIC = 0x43544252u,
-    CTBR_VERSION = 6u,
+    CTBR_VERSION = 10u,
     CTBR_EXACT_ROWS_FLAGS = 0u,
     CTBR_QUERY_ROWS_FLAGS = 0u,
     CTBR_OPEN_REF_EXACT = 0u,
@@ -134,7 +134,9 @@ static void add_contextual_edge_xx(CettaMorkSpaceHandle *space) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x12, 0x34,
+        0x00, 0x00, 0x12, 0x34,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'x',
     };
@@ -244,7 +246,9 @@ static void test_variable_rows_with_opening_context(void) {
         0x00, 0x00,                   /* slot 0 */
         CTBR_OPEN_REF_EXACT, 0x00,    /* exact, reserved */
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x12, 0x34,       /* VarId */
+        0x00, 0x00, 0x12, 0x34,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,       /* spelling length */
         '$', 'x',
     };
@@ -262,7 +266,7 @@ static void test_variable_rows_with_opening_context(void) {
 
     assert(rows == 1);
     assert(packet != NULL);
-    assert(len >= 70);
+    assert(len >= 78);
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
@@ -276,6 +280,7 @@ static void test_variable_rows_with_opening_context(void) {
     assert(packet[off++] == CTBR_OPEN_REF_EXACT);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x1234u); off += 8;
+    assert(read_u64_be(packet, off) == 0u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
     assert(packet[off++] == '$');
     assert(packet[off++] == 'x');
@@ -309,7 +314,9 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x12, 0x34,
+        0x00, 0x00, 0x12, 0x34,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'x',
     };
@@ -318,7 +325,9 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x56, 0x78,
+        0x00, 0x00, 0x56, 0x78,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'y',
     };
@@ -358,6 +367,7 @@ static void test_contextual_exact_remove_keeps_requested_identity(void) {
     assert(packet[off++] == CTBR_OPEN_REF_EXACT);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x5678u); off += 8;
+    assert(read_u64_be(packet, off) == 0u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
     assert(packet[off++] == '$');
     assert(packet[off++] == 'y');
@@ -405,7 +415,9 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x9A, 0xBC,
+        0x00, 0x00, 0x9A, 0xBC,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'v',
     };
@@ -421,7 +433,7 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
 
     assert(rows == 1);
     assert(packet != NULL);
-    assert(len >= 61);
+    assert(len >= 69);
     assert(read_u32_be(packet, 0) == CTBR_MAGIC);
     assert(read_u16_be(packet, 4) == CTBR_VERSION);
     assert(read_u16_be(packet, 6) == CTBR_QUERY_ROWS_FLAGS);
@@ -437,6 +449,7 @@ static void test_contextual_query_rows_open_exact_value_refs(void) {
     assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x9ABCu); off += 8;
+    assert(read_u64_be(packet, off) == 0u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
     assert(packet[off++] == '$');
     assert(packet[off++] == 'v');
@@ -473,7 +486,9 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x11, 0x11,
+        0x00, 0x00, 0x11, 0x11,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'a',
     };
@@ -482,7 +497,9 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x22, 0x22,
+        0x00, 0x00, 0x22, 0x22,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'b',
     };
@@ -516,6 +533,7 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x1111u); off += 8;
+    assert(read_u64_be(packet, off) == 0u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
     assert(packet[off++] == '$');
     assert(packet[off++] == 'a');
@@ -528,6 +546,7 @@ static void test_contextual_query_rows_split_exact_presentations(void) {
     assert(packet[off++] == 1);
     assert(packet[off++] == 0);
     assert(read_u64_be(packet, off) == 0x2222u); off += 8;
+    assert(read_u64_be(packet, off) == 0u); off += 8;
     assert(read_u32_be(packet, off) == 2); off += 4;
     assert(packet[off++] == '$');
     assert(packet[off++] == 'b');
@@ -573,7 +592,9 @@ static void test_contextual_query_rows_emit_query_slot_refs(void) {
         0x00, 0x00,
         CTBR_OPEN_REF_EXACT, 0x00,
         0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x77, 0x77,
+        0x00, 0x00, 0x77, 0x77,       /* VarId base */
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,       /* frame identity: none */
         0x00, 0x00, 0x00, 0x02,
         '$', 'z',
     };
@@ -617,21 +638,19 @@ static void test_contextual_query_rows_emit_query_slot_refs(void) {
                 assert(reserved == 0);
                 if (kind == CTBR_OPEN_REF_EXACT) {
                     uint32_t spelling_len = 0;
-                    assert(off + 12 <= len);
-                    /* var_id */
-                    (void)read_u64_be(packet, off);
-                    off += 8;
+                    assert(off + 20 <= len);
+                    /* var_id: base, then frame identity */
+                    off += 16;
                     spelling_len = read_u32_be(packet, off);
                     off += 4;
                     assert(off + spelling_len <= len);
                     off += spelling_len;
                 } else if (kind == CTBR_OPEN_REF_MATCHED_EXACT) {
                     uint32_t spelling_len = 0;
-                    assert(off + 14 <= len);
+                    assert(off + 22 <= len);
                     assert(packet[off++] != 0);
                     assert(packet[off++] == 0);
-                    (void)read_u64_be(packet, off);
-                    off += 8;
+                    off += 16;
                     spelling_len = read_u32_be(packet, off);
                     off += 4;
                     assert(off + spelling_len <= len);
