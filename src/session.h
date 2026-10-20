@@ -23,27 +23,7 @@
 
 typedef struct Space Space;
 
-typedef enum {
-    CETTA_PROFILE_HE_FORMAL = 0,
-    CETTA_PROFILE_HE_COMPAT = 1,
-    CETTA_PROFILE_HE_EXTENDED = 2,
-    CETTA_PROFILE_HE_PRIME = 3,
-    CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
-    CETTA_PROFILE_RHOCALC_COST = 5,
-    CETTA_PROFILE_PRIME_DEFAULT = 6,
-    CETTA_PROFILE_PETTA_EXTENDED = 7,
-    CETTA_PROFILE_PETTA_TYPECHECK_V2 = 8,
-    CETTA_PROFILE_ZERO_EXP = 9,
-    CETTA_PROFILE_MM2_GSLT = 10,
-    CETTA_PROFILE_ZERO_EMIT = 11,
-    CETTA_PROFILE_ZERO_INTERACT = 12,
-    CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13,
-    CETTA_PROFILE_RHOCALC_RHOMETTA = 14,
-    CETTA_PROFILE_PETTA_1_1_C = 15,
-    CETTA_PROFILE_HOL_STANDARD = 16,
-    CETTA_PROFILE_HOL_OPEN = 17,
-    CETTA_PROFILE_HOL_SEALED = 18
-} CettaProfileId;
+#include "generated/cetta_profiles.generated.h"
 
 typedef enum {
     CETTA_PROFILE_MASK_HE_FORMAL = 1u << 0,
@@ -85,15 +65,6 @@ typedef enum {
  * a call takes.  HE has one version, 0.2.10: CeTTa develops one fork of
  * Hyperon Experimental 0.2.10, and its profiles are variants of that fork.
  * A version names the libraries its programs import first. */
-typedef enum {
-    CETTA_LANGUAGE_VERSION_NONE = 0,
-    CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
-    CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
-    CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 5
-} CettaLanguageVersionId;
-
 typedef struct {
     CettaLanguageVersionId id;
     CettaLanguageId language_id;

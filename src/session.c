@@ -3,201 +3,35 @@
 #include <stdio.h>
 #include <string.h>
 
-static const CettaProfile CETTA_PROFILE_HE_FORMAL_VALUE = {
-    .id = CETTA_PROFILE_HE_FORMAL,
-    .language_id = CETTA_LANGUAGE_HE,
-    .name = "he",
-    .note = "Hyperon Experimental 0.2.10 with CeTTa's deliberate differences; the default.",
-    .he_compatible_builtin = true,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
-};
+#define CETTA_CHECK_LANGUAGE_ID(language, ident) \
+    _Static_assert(language == ident, "profile table language ID mismatch");
+CETTA_LANGUAGE_ID_ROWS(CETTA_CHECK_LANGUAGE_ID)
+#undef CETTA_CHECK_LANGUAGE_ID
 
-static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
-    .id = CETTA_PROFILE_HE_COMPAT,
-    .language_id = CETTA_LANGUAGE_HE,
-    .name = "he-compat",
-    .note = "Rust Hyperon Experimental 0.2.10's behavior, also where he differs.",
-    .he_compatible_builtin = true,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = true,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
-};
+#define CETTA_DEFINE_PROFILE(object, ident, lang, text, description, he, ext, dep, rust, ver) \
+    static const CettaProfile object = { \
+        .id = ident, .language_id = lang, .name = text, .note = description, \
+        .he_compatible_builtin = he, .enable_cetta_extensions = ext, \
+        .enable_dependent_telescope = dep, .rust_he_compat_semantics = rust, .version = ver \
+    };
 
-static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
-    .id = CETTA_PROFILE_HE_EXTENDED,
-    .language_id = CETTA_LANGUAGE_HE,
-    .name = "extended",
-    .note = "HE-compatible syntax plus labeled CeTTa extensions.",
-    .he_compatible_builtin = true,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
-};
-
-static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
-    .id = CETTA_PROFILE_HE_PRIME,
-    .language_id = CETTA_LANGUAGE_HE,
-    .name = "he-prime",
-    .note = "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = true,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_HE_0_2_10,
-};
-
-static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
-    .id = CETTA_PROFILE_PRIME_DEFAULT,
-    .language_id = CETTA_LANGUAGE_PRIME,
-    .name = "prime-default",
-    .note = "Frozen MeTTa-Prime 0.0.1 draft policy.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = true,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_PRIME_0_0_1,
-};
-
-static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
-    .id = CETTA_PROFILE_PETTA_EXTENDED,
-    .language_id = CETTA_LANGUAGE_PETTA,
-    .name = "extended",
-    .note = "PeTTa semantics plus labeled shared CeTTa extensions.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_PETTA_1_0_6,
-};
-
-static const CettaProfile CETTA_PROFILE_PETTA_1_1_C_VALUE = {
-    .id = CETTA_PROFILE_PETTA_1_1_C,
-    .language_id = CETTA_LANGUAGE_PETTA,
-    .name = "petta@1.1.c",
-    .note = "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1_C,
-};
+CETTA_PROFILE_BEFORE_ROWS(CETTA_DEFINE_PROFILE)
 
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
-    .id = CETTA_PROFILE_PETTA_TYPECHECK_V2,
-    .language_id = CETTA_LANGUAGE_PETTA,
-    .name = "typecheck-v2",
-    .note = "PeTTa with native Roman-compatible residual type checking.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1,
-};
-
-static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE = {
-    .id = CETTA_PROFILE_PETTA_TYPECHECK_V3,
-    .language_id = CETTA_LANGUAGE_PETTA,
-    .name = "typecheck-v3",
-    .note = "PeTTa with native v3 judgments and coherent typecheck-v2 delegation.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-    .version = CETTA_LANGUAGE_VERSION_PETTA_1_1,
-};
+CETTA_PROFILE_TYPING_ROWS(CETTA_DEFINE_PROFILE)
 #endif
 
-static const CettaProfile CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE = {
-    .id = CETTA_PROFILE_RHOCALC_STRICT_CORE,
-    .language_id = CETTA_LANGUAGE_RHOCALC,
-    .name = "strict-core",
-    .note = "Strict-core rho-calculus without cost-layer extensions.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
+CETTA_PROFILE_AFTER_ROWS(CETTA_DEFINE_PROFILE)
 
-static const CettaProfile CETTA_PROFILE_RHOCALC_COST_VALUE = {
-    .id = CETTA_PROFILE_RHOCALC_COST,
-    .language_id = CETTA_LANGUAGE_RHOCALC,
-    .name = "cost",
-    .note = "Meredith cost-accounted rho extension (ground-signature token-gated slice).",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
-static const CettaProfile CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE = {
-    .id = CETTA_PROFILE_RHOCALC_RHOMETTA,
-    .language_id = CETTA_LANGUAGE_RHOCALC,
-    .name = "rhometta",
-    .note = "Rho-calculus with inert MeTTa values and transactional COMM-time payload evaluation.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = true,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
-static const CettaProfile CETTA_PROFILE_ZERO_EXP_VALUE = {
-    .id = CETTA_PROFILE_ZERO_EXP,
-    .language_id = CETTA_LANGUAGE_ZERO,
-    .name = "exp",
-    .note = "Experimental authored semantic work and continuation layer.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
-static const CettaProfile CETTA_PROFILE_ZERO_EMIT_VALUE = {
-    .id = CETTA_PROFILE_ZERO_EMIT,
-    .language_id = CETTA_LANGUAGE_ZERO,
-    .name = "emit",
-    .note = "Experimental revision-threaded match/let/eval/emit profile; add-atom is the persistent-emission compatibility spelling.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
-static const CettaProfile CETTA_PROFILE_ZERO_INTERACT_VALUE = {
-    .id = CETTA_PROFILE_ZERO_INTERACT,
-    .language_id = CETTA_LANGUAGE_ZERO,
-    .name = "interact",
-    .note = "Experimental match/let/eval/emit profile over authenticated immutable space revisions; add-atom is an emit alias.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
-static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
-    .id = CETTA_PROFILE_MM2_GSLT,
-    .language_id = CETTA_LANGUAGE_MM2,
-    .name = "gslt",
-    .note = "Authored strict support-transform GSLT with open-world directives and exact fuel.",
-    .he_compatible_builtin = false,
-    .enable_cetta_extensions = false,
-    .enable_dependent_telescope = false,
-    .rust_he_compat_semantics = false,
-};
-
+#undef CETTA_DEFINE_PROFILE
+#define CETTA_PROFILE_ENTRY(object, ident, lang, text, description, he, ext, dep, rust, ver) \
+    {.id = ident, .language_id = lang, .name = text, .note = description, \
+     .he_compatible_builtin = he, .enable_cetta_extensions = ext, \
+     .enable_dependent_telescope = dep, .rust_he_compat_semantics = rust, .version = ver},
 static const CettaProfile CETTA_HOL_PROFILES[] = {
-    {.id = CETTA_PROFILE_HOL_STANDARD, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
-     .name = "standard", .note = "Default: permit only checked HOL Light standard axioms."},
-    {.id = CETTA_PROFILE_HOL_OPEN, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
-     .name = "open", .note = "Permit explicit user axioms and retain their dependencies."},
-    {.id = CETTA_PROFILE_HOL_SEALED, .language_id = CETTA_LANGUAGE_HOL_LIGHT,
-     .name = "sealed", .note = "Permit no new axioms."},
+    CETTA_PROFILE_HOL_ROWS(CETTA_PROFILE_ENTRY)
 };
+#undef CETTA_PROFILE_ENTRY
 
 /* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {

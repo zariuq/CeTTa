@@ -383,7 +383,8 @@ static bool frame_identity_scope_reserve(CettaFrameIdentityScope *scope) {
         if (scope->cap > UINT32_MAX / 2u)
             return false;
         uint32_t capacity = scope->cap * 2u;
-        if ((size_t)capacity > SIZE_MAX / sizeof(*scope->identities))
+        if (capacity != 0u &&
+            SIZE_MAX / (size_t)capacity < sizeof(*scope->identities))
             return false;
         CettaFrameIdentity *grown = cetta_malloc((size_t)capacity * sizeof(*grown));
         memcpy(grown, scope->identities, (size_t)scope->len * sizeof(*grown));

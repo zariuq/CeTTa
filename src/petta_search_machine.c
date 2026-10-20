@@ -13,6 +13,7 @@
 #include "grounded.h"
 #include "library_pattern.h"
 #include "match.h"
+#include "binding/term_cursor.h"
 #include "petta_semantics.h"
 #include "petta_type_policy.h"
 #include "petta_specializer.h"
@@ -10976,11 +10977,19 @@ static bool petta_machine_planned_value_ready(
     PettaMachineImpl *machine, Atom *value,
     const PettaPlanNode *plan);
 
+static bool petta_equation_result_is_explicit_function(
+        const Atom *result) {
+    return result && result->kind == ATOM_EXPR &&
+        result->expr.len == 2u && result->expr.elems[0] &&
+        atom_is_symbol_id(result->expr.elems[0], g_builtin_syms.function);
+}
+
 /* A closed instance of an authored relation call which the activation path
  * sends to CALL_READY: an admitted relation head over argument occurrences
  * that carry no call, so the instance's arguments are their ready values.
- * The ready goal applies the same relation admission; a deferral takes the
- * ordinary ready-call route. */
+ * A signature still owns its argument policy and pre/postconditions: ready
+ * arguments alone cannot bypass that dispatch. An untyped ready goal applies
+ * the same relation admission; a deferral takes the ordinary ready route. */
 static bool petta_machine_closed_relation_call_ready(
     PettaMachineImpl *machine, Atom *result, const PettaPlanNode *plan) {
     if (!plan || !plan->contains_call || !plan->relation_head_admitted ||
@@ -10988,6 +10997,9 @@ static bool petta_machine_closed_relation_call_ready(
         !result || result->kind != ATOM_EXPR || result->expr.len == 0u ||
         !result->expr.elems[0] ||
         result->expr.elems[0]->kind != ATOM_SYMBOL ||
+        (!petta_equation_result_is_explicit_function(result) &&
+         space_head_declares_type(
+             machine->space, result->expr.elems[0]->sym_id)) ||
         plan->child_count != result->expr.len || atom_has_vars(result) ||
         machine->host.source_output_constraints ||
         machine->host.analysis ||
@@ -11015,9 +11027,16 @@ static bool petta_push_equation_result(
     uint32_t barrier, bool evaluate_result,
     bool translate_result, bool count_collection_result,
     const PettaPlanNode *plan, bool result_fully_resolved) {
-    if (!evaluate_result)
-        return petta_push_unify(
-            machine, result, expected, barrier);
+    /* A raw `Atom` result keeps an ordinary equation body as data.  An
+     * explicit `function` wrapper is the source language's execution marker,
+     * however: it runs to produce that raw Atom.  Quoted wrappers never reach
+     * this head position. */
+    if (!evaluate_result) {
+        if (!petta_equation_result_is_explicit_function(result))
+            return petta_push_unify(
+                machine, result, expected, barrier);
+        evaluate_result = true;
+    }
     if (count_collection_result && !translate_result) {
         return result_fully_resolved
             ? petta_push_counted_collection_planned_resolved(
@@ -13046,7 +13065,7 @@ static bool petta_equation_pattern_may_match_source(
         },
         .arguments = arguments,
         .arity = arity,
-        .observer = {bindings_resolve_term_cursor_v1, &bindings},
+        .observer = {bindings_resolve_scoped_term_cursor_v1, &bindings},
     };
     ok = petta_equation_pattern_view_may_match_now(
         machine, pattern, NULL, &view, pattern_role,
@@ -13677,7 +13696,7 @@ petta_match_decision_select_candidates(
     CettaMatchDecisionQueryViewV1 fields = {
         .head = {.source = query->head},
         .arguments = arguments, .arity = query->arity,
-        .observer = {bindings_resolve_term_cursor_v1, &bindings},
+        .observer = {bindings_resolve_scoped_term_cursor_v1, &bindings},
     };
     /* Every query form, whole, split or contextual, reaches the same index
      * policy: a call open at every discriminator attempts its equations in
@@ -25111,7 +25130,7 @@ static const PettaPlanNode *petta_machine_condition_test_plan(
 static __attribute__((noinline)) bool petta_machine_filter_atom(
     PettaMachineImpl *machine, Atom *items, Atom *mapper_or_binder,
     Atom *body, Atom *expected, uint32_t barrier,
-    const PettaPlanNode *plan) {
+    const PettaPlanNode *plan, const Bindings *environment) {
     if (!machine || !items || !mapper_or_binder || !expected ||
         (body && mapper_or_binder->kind != ATOM_VAR)) {
         return false;
@@ -25119,6 +25138,22 @@ static __attribute__((noinline)) bool petta_machine_filter_atom(
     items = petta_machine_closed_list(machine, items);
     if (!items)
         return false;
+
+    if (body && machine->host.filter_single_result) {
+        Atom *prepared_result = NULL;
+        PettaMachineFoldResult prepared =
+            machine->host.filter_single_result(
+                machine->host.context, machine->space,
+                &machine->heap, items, mapper_or_binder, body,
+                environment, &prepared_result);
+        if (prepared == PETTA_MACHINE_FOLD_VALUE) {
+            return prepared_result &&
+                petta_push_unify(
+                    machine, prepared_result, expected, barrier);
+        }
+        if (prepared == PETTA_MACHINE_FOLD_INTERRUPTED)
+            return true;
+    }
 
     Atom *truth = machine->host.boolean_value
         ? machine->host.boolean_value(
@@ -29835,6 +29870,58 @@ static bool petta_machine_reclaim_host_goal(PettaMachineImpl *machine,
     return true;
 }
 
+/* A nonterminal host answer may immediately cross back into another host
+ * goal.  Move its ground expression roots into the cursor's stable arena
+ * once, preserving graph sharing; the cursor then borrows them until a
+ * collection detaches it.  Variables and a failed best-effort promotion keep
+ * the ordinary import-and-remap path. */
+static bool petta_machine_stabilize_open_host_values(
+        PettaMachineImpl *machine, Atom **values, uint32_t count) {
+    if (!machine || (!values && count != 0u) ||
+        (size_t)count > SIZE_MAX / sizeof(*values)) {
+        return false;
+    }
+    Atom *inline_values[8];
+    Atom **stable = count <= 8u
+        ? inline_values : malloc((size_t)count * sizeof(*stable));
+    if (!stable)
+        return false;
+    if (count)
+        memcpy(stable, values, (size_t)count * sizeof(*stable));
+    ArenaMark mark = arena_mark(&machine->tenured);
+    AtomDeepCopySession *copies = NULL;
+    bool changed = false;
+    for (uint32_t index = 0u; index < count; index++) {
+        Atom *value = values[index];
+        if (!value || value->kind != ATOM_EXPR || atom_has_vars(value) ||
+            value->arena_id == machine->tenured.identity) {
+            continue;
+        }
+        if (!copies)
+            copies = atom_deep_copy_session_new(&machine->tenured);
+        stable[index] = copies
+            ? atom_deep_copy_session_copy(copies, value) : NULL;
+        if (!stable[index]) {
+            atom_deep_copy_session_free(copies);
+            arena_reset(&machine->tenured, mark);
+            petta_machine_link_generations(machine);
+            if (stable != inline_values)
+                free(stable);
+            return false;
+        }
+        changed = true;
+    }
+    atom_deep_copy_session_free(copies);
+    if (changed) {
+        if (count)
+            memcpy(values, stable, (size_t)count * sizeof(*values));
+        petta_machine_link_generations(machine);
+    }
+    if (stable != inline_values)
+        free(stable);
+    return true;
+}
+
 /* One answer of a host goal reached its OPEN_RESUME goal: the cursor of
  * the choice that waits resumes with the values of the goal's variables.
  * Frames it makes from here belong to a new choice above the goal's own; the
@@ -29902,6 +29989,12 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
+    }
+    Atom **terminal_query_values = NULL;
+    if (!cetta_open_equation_cursor_host_terminal(
+            open->cursor, &terminal_query_values)) {
+        (void)petta_machine_stabilize_open_host_values(
+            machine, host_values, count);
     }
     /* The goal may have changed the host's authorities, which the cursor
      * observes before its continuation calls anything, as it does between
@@ -34206,6 +34299,12 @@ static bool petta_machine_dispatch_solve(
         ? machine->host.classify(
               machine->host.context, machine->space, expression)
         : PETTA_MACHINE_HOST_NONE;
+    if (host_mode == PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION) {
+        const CettaDelayView delay = petta_machine_delay_view(machine);
+        const Bindings *bindings = search_context_bindings(&machine->search);
+        host_mode = bindings->eq_len == 0u && !cetta_delay_holds(delay.service)
+            ? PETTA_MACHINE_HOST_READY_APPLICATION : PETTA_MACHINE_HOST_NONE;
+    }
     if (goal->builtin_only) {
         if (host_mode == PETTA_MACHINE_HOST_STRICT_RELATIONAL_EXTENSION)
             host_mode = PETTA_MACHINE_HOST_STRICT_APPLICATION;
@@ -35947,7 +36046,7 @@ static bool petta_machine_dispatch_goal(
         }
         return petta_machine_filter_atom(
             machine, first, second, body, expected,
-            goal.barrier, goal.plan);
+            goal.barrier, goal.plan, environment);
     }
 
     if (goal.kind == PETTA_GOAL_FILTER_KEEP_READY) {

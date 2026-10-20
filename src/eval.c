@@ -17023,12 +17023,53 @@ static bool petta_eval_machine_prime_atom_is_episode_value(
     Space *space, Atom *atom, uint32_t depth);
 static bool is_petta_runtime_callable(Atom *atom);
 
-static void prepared_map_debug(
-        const char *reason, Atom *body, Atom *items) {
+typedef enum {
+    PREPARED_UNARY_COLLECTION_MAP = 0,
+    PREPARED_UNARY_COLLECTION_FILTER,
+} PreparedUnaryCollectionKind;
+
+typedef enum {
+    PREPARED_UNARY_ADMISSION = 0,
+    PREPARED_UNARY_STEP,
+    PREPARED_UNARY_COMMIT,
+    PREPARED_UNARY_DECLINE,
+    PREPARED_UNARY_SAFETY_CHECK,
+    PREPARED_UNARY_SAFETY_REUSE,
+} PreparedUnaryCollectionEvent;
+
+static void prepared_unary_collection_count(
+    PreparedUnaryCollectionKind kind,
+    PreparedUnaryCollectionEvent event) {
+    static const CettaRuntimeCounter counters[2][6] = {
+        {
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_ADMISSION,
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_STEP,
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_COMMIT,
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE,
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_CHECK,
+            CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_REUSE,
+        },
+        {
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_ADMISSION,
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_STEP,
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_COMMIT,
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_DECLINE,
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_SAFETY_CHECK,
+            CETTA_RUNTIME_COUNTER_PREPARED_FILTER_SAFETY_REUSE,
+        },
+    };
+    cetta_runtime_stats_inc(counters[(unsigned)kind][(unsigned)event]);
+}
+
+static void prepared_unary_collection_debug(
+        PreparedUnaryCollectionKind kind, const char *reason,
+        Atom *body, Atom *items) {
     const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
     if (!debug || debug[0] == '\0' || debug[0] == '0')
         return;
-    fprintf(stderr, "prepared-map decline: %s body=", reason);
+    fprintf(stderr, "prepared-%s decline: %s body=",
+            kind == PREPARED_UNARY_COLLECTION_MAP ? "map" : "filter",
+            reason);
     atom_print(body, stderr);
     fputs(" items=", stderr);
     atom_print(items, stderr);
@@ -17104,15 +17145,18 @@ static Atom *prepared_full_demand_body(Space *space, Arena *arena, Atom *body,
         ? expr_arg(body, 0u) : body;
 }
 
-/* Execute a revision-pinned, effect-free lexical map as one transactional
- * collection operation.  The ordinary relational map remains authoritative
- * unless every item produces exactly one prepared value. */
-static bool prepared_map_cached_replay_safe(Space *space, Atom *body);
+/* Execute a revision-pinned, effect-free lexical unary collection operation.
+ * The relational map/filter remains authoritative unless every item produces
+ * exactly one prepared value, and a filter value is an exact Boolean. */
+static bool prepared_collection_cached_replay_safe(
+    Space *space, Atom *body, PreparedUnaryCollectionKind kind);
 
-static PreparedFoldResult prepared_map_single_result(
+static PreparedFoldResult prepared_unary_collection_single_result(
     Space *s, Arena *result_arena, Atom *items, Atom *item_binder,
     Atom *body_expression, const Bindings *outer_environment,
-    int fuel, Atom **source_items_out, Atom **result_out) {
+    int fuel, PreparedUnaryCollectionKind kind,
+    bool preserve_internal_values,
+    Atom **source_items_out, Atom **result_out) {
     body_expression = prepared_full_demand_body(
         s, result_arena, body_expression, outer_environment);
     if (source_items_out)
@@ -17124,14 +17168,14 @@ static PreparedFoldResult prepared_map_single_result(
         item_binder->kind != ATOM_VAR ||
         hyperpose_atom_has_thread_local_resource(items) ||
         hyperpose_atom_has_thread_local_resource(body_expression) ||
-        prime_need_receipt_observer_requested()) {
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prime_need_receipt_observer_requested() ||
+        (kind == PREPARED_UNARY_COLLECTION_FILTER &&
+         eval_current_language_id() != CETTA_LANGUAGE_PETTA)) {
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
     if (gslt_match_chain_trace_active()) {
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
@@ -17154,12 +17198,13 @@ static PreparedFoldResult prepared_map_single_result(
         if (projected_items) {
             if (!prepared_map_prime_data_value(
                     s, source_items, 0u)) {
-                prepared_map_debug(
+                prepared_unary_collection_debug(
+                    kind,
                     "projected Prime collection is executable",
                     closed_body, source_items);
                 arena_reset(result_arena, result_mark);
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+                prepared_unary_collection_count(
+                    kind, PREPARED_UNARY_DECLINE);
                 return PREPARED_FOLD_NOT_APPLICABLE;
             }
             closed_items = source_items;
@@ -17170,20 +17215,19 @@ static PreparedFoldResult prepared_map_single_result(
         hyperpose_atom_has_thread_local_resource(closed_body) ||
         hyperpose_atom_has_thread_local_resource(closed_items)) {
         arena_reset(result_arena, result_mark);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
         (prime_need_atom_contains_private_capability(closed_body) ||
          prime_need_atom_contains_private_capability(closed_items))) {
-        prepared_map_debug(
+        prepared_unary_collection_debug(
+            kind,
             "private Prime capability remains",
             closed_body, closed_items);
         arena_reset(result_arena, result_mark);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
@@ -17193,13 +17237,14 @@ static PreparedFoldResult prepared_map_single_result(
     }
 
     SpaceReadToken replay_read = space_read_token(s);
-    bool replay_safe = prepared_map_cached_replay_safe(s, closed_body);
+    bool replay_safe = prepared_collection_cached_replay_safe(
+        s, closed_body, kind);
     if (!replay_safe) {
-        prepared_map_debug(
+        prepared_unary_collection_debug(
+            kind,
             "body is not replay-safe", closed_body, closed_items);
         arena_reset(result_arena, result_mark);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
@@ -17243,17 +17288,16 @@ static PreparedFoldResult prepared_map_single_result(
             prepared_pure_match_decision_semantics(
                 CETTA_GSLT_PURE_CALL_CALL_BY_NEED));
     if (!program) {
-        prepared_map_debug(
+        prepared_unary_collection_debug(
+            kind,
             "generated pure program declined", closed_body, closed_items);
         arena_reset(result_arena, result_mark);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_MACHINE_ADMISSION);
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PREPARED_MAP_ADMISSION);
+    prepared_unary_collection_count(kind, PREPARED_UNARY_ADMISSION);
 
     Arena nursery;
     arena_init(&nursery);
@@ -17261,10 +17305,20 @@ static PreparedFoldResult prepared_map_single_result(
         &nursery, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
     arena_set_hashcons(&nursery, NULL);
     ArenaMark nursery_origin = arena_mark(&nursery);
-    Atom *draft = atom_expr_builder_begin(
-        result_arena, closed_items->expr.len);
-    PreparedFoldResult outcome = draft
-        ? PREPARED_FOLD_VALUE : PREPARED_FOLD_NOT_APPLICABLE;
+    Atom *draft = kind == PREPARED_UNARY_COLLECTION_MAP
+        ? atom_expr_builder_begin(result_arena, closed_items->expr.len)
+        : NULL;
+    Atom **kept = kind == PREPARED_UNARY_COLLECTION_FILTER &&
+            closed_items->expr.len > 0u &&
+            cetta_expr_len_mul_fits_size(
+                closed_items->expr.len, sizeof(*kept))
+        ? malloc(sizeof(*kept) * (size_t)closed_items->expr.len)
+        : NULL;
+    CettaExprLen kept_len = 0u;
+    PreparedFoldResult outcome =
+        (kind == PREPARED_UNARY_COLLECTION_MAP && draft) ||
+        (kind == PREPARED_UNARY_COLLECTION_FILTER && kept)
+            ? PREPARED_FOLD_VALUE : PREPARED_FOLD_NOT_APPLICABLE;
 
     for (CettaExprIndex index = 0u;
          outcome == PREPARED_FOLD_VALUE &&
@@ -17291,8 +17345,7 @@ static PreparedFoldResult prepared_map_single_result(
         }
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_MACHINE_STEP);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_STEP);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_STEP);
         if (!candidate || atom_is_error(candidate) ||
             atom_is_legacy_empty_sentinel(candidate) ||
             hyperpose_atom_has_thread_local_resource(candidate) ||
@@ -17301,7 +17354,23 @@ static PreparedFoldResult prepared_map_single_result(
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
         }
-        Atom *published = language_id == CETTA_LANGUAGE_PETTA
+        if (kind == PREPARED_UNARY_COLLECTION_FILTER) {
+            bool keep = false;
+            if (!petta_semantics_truth_value(candidate, &keep)) {
+                outcome = PREPARED_FOLD_NOT_APPLICABLE;
+                break;
+            }
+            if (keep)
+                kept[kept_len++] = item;
+            continue;
+        }
+        /* The PeTTa search machine already owns the public answer boundary.
+         * Keep its internal cons carriers here so mapped values can share
+         * settled tails; direct evaluator consumers still receive ordinary
+         * public values. */
+        Atom *published =
+            language_id == CETTA_LANGUAGE_PETTA &&
+                    !preserve_internal_values
             ? petta_semantics_materialize_value(
                   result_arena, candidate)
             : atom_deep_copy(result_arena, candidate);
@@ -17313,24 +17382,45 @@ static PreparedFoldResult prepared_map_single_result(
     }
 
     if (outcome == PREPARED_FOLD_VALUE) {
-        *result_out = atom_expr_builder_finish(
-            result_arena, draft);
+        *result_out = kind == PREPARED_UNARY_COLLECTION_MAP
+            ? atom_expr_builder_finish(result_arena, draft)
+            : atom_expr(result_arena, kept, kept_len);
         if (!*result_out)
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
     }
+    free(kept);
     cetta_prepared_pure_program_free(program);
     arena_free(&nursery);
     if (outcome != PREPARED_FOLD_VALUE) {
         arena_reset(result_arena, result_mark);
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PREPARED_MAP_DECLINE);
+        prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return outcome;
     }
     if (source_items_out)
         *source_items_out = closed_items;
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PREPARED_MAP_COMMIT);
+    prepared_unary_collection_count(kind, PREPARED_UNARY_COMMIT);
     return PREPARED_FOLD_VALUE;
+}
+
+static PreparedFoldResult prepared_map_single_result(
+    Space *s, Arena *result_arena, Atom *items, Atom *item_binder,
+    Atom *body_expression, const Bindings *outer_environment,
+    int fuel, bool preserve_internal_values,
+    Atom **source_items_out, Atom **result_out) {
+    return prepared_unary_collection_single_result(
+        s, result_arena, items, item_binder, body_expression,
+        outer_environment, fuel, PREPARED_UNARY_COLLECTION_MAP,
+        preserve_internal_values, source_items_out, result_out);
+}
+
+static PreparedFoldResult prepared_filter_single_result(
+    Space *s, Arena *result_arena, Atom *items, Atom *item_binder,
+    Atom *body_expression, const Bindings *outer_environment,
+    int fuel, Atom **result_out) {
+    return prepared_unary_collection_single_result(
+        s, result_arena, items, item_binder, body_expression,
+        outer_environment, fuel, PREPARED_UNARY_COLLECTION_FILTER,
+        true, NULL, result_out);
 }
 
 /* The public list operation denotes map(key) followed by exact numeric top-k
@@ -17375,7 +17465,7 @@ static PreparedFoldResult prepared_retain_top_k_by_number_single_result(
     Atom *keys = NULL;
     PreparedFoldResult mapped = prepared_map_single_result(
         s, &scratch, items, item_binder, key_expression,
-        outer_environment, fuel, &source_items, &keys);
+        outer_environment, fuel, false, &source_items, &keys);
     if (mapped != PREPARED_FOLD_VALUE) {
         arena_free(&scratch);
         cetta_runtime_stats_inc(
@@ -17936,6 +18026,47 @@ deliver_completed_erasure:
  * in a resettable nursery; the next accumulator is evacuated into the
  * alternate carry arena before the prior carry is reclaimed.  All other fold
  * semantics retain the ordinary evaluator/search-machine path. */
+typedef struct {
+    const Atom *root;
+    Atom *accumulator;
+} PreparedFoldAccumulatorOccurrence;
+
+static bool prepared_fold_is_accumulator(
+    const Atom *atom, void *context) {
+    PreparedFoldAccumulatorOccurrence *occurrence = context;
+    return occurrence && atom != occurrence->root &&
+        (atom == occurrence->accumulator ||
+         atom_eq((Atom *)atom, occurrence->accumulator));
+}
+
+static bool prepared_fold_sequence_retains_accumulator(
+    Atom *candidate, Atom *accumulator) {
+    Atom *const *candidate_elements = NULL;
+    Atom *const *accumulator_elements = NULL;
+    CettaExprLen candidate_length = 0u;
+    CettaExprLen accumulator_length = 0u;
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !petta_semantics_sequence_view(
+            candidate, &candidate_elements, &candidate_length) ||
+        !petta_semantics_sequence_view(
+            accumulator, &accumulator_elements, &accumulator_length) ||
+        accumulator_length == 0u ||
+        candidate_length <= accumulator_length ||
+        atom_is_list(candidate) != atom_is_list(accumulator)) {
+        return false;
+    }
+    CettaExprLen offset = candidate_length - accumulator_length;
+    for (CettaExprIndex index = 0u;
+         index < accumulator_length; index++) {
+        if (!atom_eq(
+                candidate_elements[offset + index],
+                accumulator_elements[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static PreparedFoldResult prepared_foldl_single_result(
     Space *s, Arena *result_arena, Atom *items, Atom *initial,
     Atom *accumulator_binder, Atom *item_binder, Atom *step_expression,
@@ -18223,6 +18354,28 @@ static PreparedFoldResult prepared_foldl_single_result(
         }
         if (!candidate ||
             hyperpose_atom_has_thread_local_resource(candidate)) {
+            outcome = PREPARED_FOLD_NOT_APPLICABLE;
+            break;
+        }
+        if (candidate == accumulator) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_FOLD_STEP);
+            continue;
+        }
+        /* Alternating carry arenas bound storage only when the next value
+         * does not retain the previous one.  A persistent result would copy
+         * its complete shared spine at every step.  This attempt is pure, so
+         * decline before publication and let the relational machine keep the
+         * shared carrier instead. */
+        PreparedFoldAccumulatorOccurrence occurrence = {
+            .root = candidate,
+            .accumulator = accumulator,
+        };
+        if (candidate->kind == ATOM_EXPR &&
+            accumulator->kind == ATOM_EXPR &&
+            (atom_graph_any(
+                 candidate, prepared_fold_is_accumulator, &occurrence) ||
+             prepared_fold_sequence_retains_accumulator(
+                 candidate, accumulator))) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
         }
@@ -22869,7 +23022,7 @@ static bool prepared_pure_program_cache_prepare_revision(
 
 /* This bounds optimization metadata, not program admission. Larger keys
  * use the ordinary check without retaining copies of captured data. */
-static bool prepared_map_small_replay_key(Atom *body) {
+static bool prepared_collection_small_replay_key(Atom *body) {
     Atom *pending[128];
     size_t length = 1u, nodes = 0u, bytes = 0u;
     pending[0] = body;
@@ -22890,7 +23043,8 @@ static bool prepared_map_small_replay_key(Atom *body) {
     return true;
 }
 
-static bool prepared_map_cached_replay_safe(Space *space, Atom *body) {
+static bool prepared_collection_cached_replay_safe(
+        Space *space, Atom *body, PreparedUnaryCollectionKind kind) {
     CettaLanguageId language = eval_current_language_id();
     /* Minimal HE callbacks may borrow no library profile. NULL is a valid,
      * distinct preparation dependency, not an implicit default profile. */
@@ -22901,7 +23055,7 @@ static bool prepared_map_cached_replay_safe(Space *space, Atom *body) {
         ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
     if (!prepared_pure_program_cache_prepare_revision(cache, space, capabilities))
         cache = NULL;
-    if (cache && !prepared_map_small_replay_key(body)) cache = NULL;
+    if (cache && !prepared_collection_small_replay_key(body)) cache = NULL;
     if (cache) {
         for (size_t i = 0; i < cache->replay_len; i++)
             if (cache->replay[i].language == language &&
@@ -22910,12 +23064,13 @@ static bool prepared_map_cached_replay_safe(Space *space, Atom *body) {
                 /* Replay safety observes variable roles, not fresh names;
                  * alpha-equivalence does not license answer memoization. */
                 atom_alpha_eq(cache->replay[i].body, body)) {
-                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_REUSE);
+                prepared_unary_collection_count(
+                    kind, PREPARED_UNARY_SAFETY_REUSE);
                 return cache->replay[i].safe;
             }
     }
     PreparedFoldSafety safety = {.space = space, .read = space_read_token(space)};
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_MAP_SAFETY_CHECK);
+    prepared_unary_collection_count(kind, PREPARED_UNARY_SAFETY_CHECK);
     bool safe = prepared_fold_expression_replay_safe(&safety, body);
     bool current = space_read_token_is_current(safety.read);
     free(safety.heads);
@@ -24716,12 +24871,23 @@ static Atom *eval_exec_saturation_add_nodup(void *context, Atom *space_ref,
 static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
                                      int fuel, const Bindings *environment,
                                      OutcomeSet *os) {
+    if (fuel >= 0 || gslt_match_chain_trace_active() ||
+        !active_builtin_allowed("add-atom-nodup") ||
+        (environment && environment->eq_len != 0u) ||
+        cetta_delay_holds(g_petta_eval_delay_service))
+        return false;
     Atom *call = environment && !bindings_logically_empty(environment)
         ? bindings_apply_if_vars((Bindings *)environment, a, atom)
         : atom;
-    Space *facts = call ? resolve_single_space_arg_write(
-                              s, a, call->expr.elems[1], fuel)
-                        : NULL;
+    /* Admission must not evaluate a space-producing expression and then
+     * replay its effects when the realization declines. Only a ready space
+     * reference crosses this boundary. */
+    Space *facts = call && call->kind == ATOM_EXPR && call->expr.len == 3u
+        ? resolve_registry_space_payload(g_registry, call->expr.elems[1])
+        : NULL;
+    if (!cetta_exec_saturation_admitted(s, call, facts))
+        return false;
+    facts = payload_resolve_space_write(facts);
     if (!facts)
         return false;
     EvalExecSaturationHost context = {
@@ -36401,7 +36567,7 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
             s, a,
             expr_arg(atom, 0u), expr_arg(atom, 1u),
             expr_arg(atom, 2u), outer_environment, fuel,
-            NULL, &mapped_value);
+            false, NULL, &mapped_value);
         if (mapped == PREPARED_FOLD_VALUE) {
             *instruction_out = atom_expr2(
                 a, atom_symbol_id(a, g_builtin_syms.return_text),
@@ -43002,6 +43168,20 @@ static bool petta_eval_open_builtin_equations(
            mode == PETTA_MACHINE_BUILTIN_EQUATIONS_OWNED;
 }
 
+/* Keep an admitted authored region at its host boundary even when an open
+ * compiled caller could otherwise inline its equations. The full bound call
+ * still decides whether the realization runs. */
+static bool petta_eval_exec_saturation_host_owned(
+    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *owner = context;
+    return head == g_builtin_syms.exec_saturate && arity == 2u &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !petta_eval_typed_line() && active_builtin_allowed("add-atom-nodup") &&
+        (!owner || (owner->fuel < 0 && !owner->transaction)) &&
+        !gslt_match_chain_trace_active() &&
+        cetta_exec_saturation_presentation_admitted(space);
+}
+
 static PettaMachineHostMode petta_eval_machine_classify_host(
     void *context, Space *space, Atom *expression) {
     (void)context;
@@ -43017,6 +43197,14 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     PeTTaForm form = head->kind == ATOM_SYMBOL
         ? petta_semantics_form(head->sym_id)
         : PETTA_FORM_NONE;
+    /* A checked authored region uses the same host boundary as other data
+     * operations. A changed presentation or unsupported call remains in
+     * ordinary equation search. Typed-line contracts retain their own path. */
+    if (head->kind == ATOM_SYMBOL && petta_eval_exec_saturation_host_owned(
+            context, space, head->sym_id, expression->expr.len - 1u) &&
+        cetta_exec_saturation_admitted(space, expression,
+            resolve_registry_space_payload(g_registry, expression->expr.elems[1])))
+        return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
     if (form == PETTA_FORM_TRACE && expression->expr.len != 3u)
         return PETTA_MACHINE_HOST_NONE;
     if (head->kind == ATOM_SYMBOL && petta_native_fallback_owned(
@@ -44344,7 +44532,28 @@ static PettaMachineFoldResult petta_eval_machine_map_single_result(
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
     PreparedFoldResult result = prepared_map_single_result(
         space, arena, items, item_binder, body_expression,
-        environment, eval_context->fuel, NULL, result_out);
+        environment, eval_context->fuel, true, NULL, result_out);
+    switch (result) {
+    case PREPARED_FOLD_VALUE:
+        return PETTA_MACHINE_FOLD_VALUE;
+    case PREPARED_FOLD_INTERRUPTED:
+        return PETTA_MACHINE_FOLD_INTERRUPTED;
+    case PREPARED_FOLD_NOT_APPLICABLE:
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    }
+    return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+}
+
+static PettaMachineFoldResult petta_eval_machine_filter_single_result(
+    void *context, Space *space, Arena *arena,
+    Atom *items, Atom *item_binder, Atom *body_expression,
+    const Bindings *environment, Atom **result_out) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || eval_context->transaction)
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    PreparedFoldResult result = prepared_filter_single_result(
+        space, arena, items, item_binder, body_expression,
+        environment, eval_context->fuel, result_out);
     switch (result) {
     case PREPARED_FOLD_VALUE:
         return PETTA_MACHINE_FOLD_VALUE;
@@ -45401,6 +45610,8 @@ static PettaMachineHost petta_eval_machine_host(
         .foldl_producer = petta_eval_machine_foldl_producer,
         .map_single_result =
             petta_eval_machine_map_single_result,
+        .filter_single_result =
+            petta_eval_machine_filter_single_result,
         .pull_collection_single_result =
             petta_eval_machine_pull_collection_single_result,
         .named_state = petta_eval_machine_named_state,
@@ -48757,6 +48968,8 @@ static bool petta_eval_open_may_delay(void *context, SymbolId head,
 
 static bool petta_eval_open_body_admitted(
     void *context, Space *space, SymbolId head, uint32_t arity) {
+    if (petta_eval_exec_saturation_host_owned(context, space, head, arity))
+        return false;
     if (eval_petta_builtin_definition_protected(
             g_registry, space, head, (CettaExprLen)arity))
         return false;
@@ -49918,7 +50131,9 @@ tail_call: ;
     /* exec:saturate runs its rounds semi-naively while the library's own
      * presentation is live (exec_saturation.h); otherwise, or on a decline,
      * the authored rounds run below. */
-    if (language_id == CETTA_LANGUAGE_HE && nargs == 2u &&
+    if ((language_id == CETTA_LANGUAGE_HE ||
+         (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line())) &&
+        nargs == 2u &&
         head_id == g_builtin_syms.exec_saturate &&
         eval_try_exec_saturation(s, a, atom, fuel, CURRENT_ENV, os))
         return;

@@ -71,16 +71,16 @@ class ModuleArtifactBuildTest(unittest.TestCase):
         self.assertIn('"build-module:composed-binding"', program)
         self.assertIn('"build-import:RewriteBundles"', program)
 
-    def test_compiler_runs_on_pinned_petta_not_prime(self):
+    def test_compiler_runs_on_current_petta_not_prime(self):
         completed = SimpleNamespace(returncode=0, stdout="(CompiledV1 7)\n", stderr="")
         with mock.patch.object(build.subprocess, "run", return_value=completed) as invoke:
             self.assertEqual(build.run_compiler(ROOT / "cetta", self.output, "compiler",
                                                "!(CompiledV1 7)\n", 1),
                              [(Symbol("CompiledV1"), 7)])
         self.assertEqual(invoke.call_args.args[0][1:5],
-                         ["--lang", "petta@1.0.6", "--profile", "extended"])
+                         ["--lang", "petta", "--profile", "extended"])
 
-    def test_shared_hosts_preserve_profiles_and_frozen_prime(self):
+    def test_shared_hosts_preserve_profiles_and_current_prime(self):
         completed = SimpleNamespace(returncode=0, stdout="(HostV1 7)\n", stderr="")
         for language, (endpoint, profile) in hosts.HOST_ENDPOINTS.items():
             with self.subTest(language=language), \
@@ -92,7 +92,7 @@ class ModuleArtifactBuildTest(unittest.TestCase):
                 if profile:
                     expected += ["--profile", profile]
                 self.assertEqual(invoke.call_args.args[0][:-1], expected)
-        self.assertEqual(hosts.HOST_ENDPOINTS["prime"], ("prime@0.0.1", None))
+        self.assertEqual(hosts.HOST_ENDPOINTS["prime"], ("prime", None))
 
     def test_host_and_compiler_failure_do_not_publish_success(self):
         completed = SimpleNamespace(returncode=2, stdout="(HostV1 7)\n", stderr="refused")

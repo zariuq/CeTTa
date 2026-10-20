@@ -10136,8 +10136,8 @@ static Atom *oem_fresh_var(CettaOpenEquationCursor *cursor, VarId id);
  * variables are the call's cells and whose ground parts are shared; a stored
  * row's copy, whose variables are fresh cells; a collected answer, copied out
  * of the collection's storage, whose variables are fresh cells; a host's
- * answer, copied whole, whose variables are the goal's cells, the call's, or
- * fresh ones. */
+ * stable ground answer, borrowed, and every other host answer copied with its
+ * variables mapped to the goal's cells, the call's, or fresh ones. */
 typedef enum {
     OEM_IMPORT_CALL,
     OEM_IMPORT_ROW,
@@ -10251,6 +10251,11 @@ static Atom *oem_import_node(CettaOpenEquationCursor *cursor,
             if (position != UINT32_MAX)
                 return cursor->query_cells[position];
             return oem_fresh_var(cursor, atom->var_id);
+        }
+        if (cursor->runtime.stable && !atom_has_vars(atom) &&
+            atom->arena_id == cursor->runtime.stable->identity) {
+            oem_note_borrow(cursor, atom);
+            return atom;
         }
         if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
             return oem_import_copy(cursor, import, atom);

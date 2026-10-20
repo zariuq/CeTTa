@@ -1,4 +1,5 @@
 #include "match.h"
+#include "binding/term_cursor.h"
 #include "eval.h"
 #include "binding/slot_store_internal.h"
 #include "stats.h"
@@ -5041,24 +5042,52 @@ static bool bindings_activation_view_lookup(
     return bindings_activation_read_lookup(&read, source_id, value_out, present_out);
 }
 
-CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
+/* A directory scope must belong to this binding image before it is read.
+ * Sharing the slot payload does not make another image's directory valid. */
+static const BindingsFrameIndexEntry *bindings_cursor_scope_entry(
+        const Bindings *bindings, const void *scope) {
+    const BindingsFrameIndex *index = bindings->frame_index;
+    if (!index || !index->frames || !scope)
+        return NULL;
+    uintptr_t address = (uintptr_t)scope;
+    uintptr_t begin = (uintptr_t)index->frames;
+    if (address < begin)
+        return NULL;
+    uintptr_t offset = address - begin;
+    if (offset % sizeof(*index->frames) != 0u ||
+        offset / sizeof(*index->frames) >= index->len)
+        return NULL;
+    const BindingsFrameIndexEntry *entry = scope;
+    return bindings_frame_index_find_frame_const(index, entry->epoch) == entry
+        ? entry : NULL;
+}
+
+static CettaGsltTermViewStatusV1 bindings_resolve_cursor(
         void *raw_context, CettaGsltTermCursorV1 source,
-        CettaGsltTermCursorV1 *target_out) {
-    BindingsTermCursorContextV1 *context = raw_context;
+        CettaGsltTermCursorV1 *target_out, bool scoped) {
+    const BindingsTermCursorContextV1 *context = raw_context;
     if (target_out)
         *target_out = (CettaGsltTermCursorV1){0};
     if (!context || !context->bindings || !source.source || !target_out)
         return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     const BindingsActivationView *frame = context->frame;
-    BindingsActivationRead read;
-    if (source.scope &&
-        (source.scope != frame ||
-         !bindings_activation_view_borrow(context->bindings, frame, &read))) {
-        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-    }
     Atom *root = source.source;
-    if (source.scope && root->kind == ATOM_VAR) {
-        BindingValue value = binding_value_from_atom(NULL);
+    BindingValue value = binding_value_from_atom(root);
+    if (source.scope && source.scope != frame) {
+        const BindingsFrameIndexEntry *entry = scoped
+            ? bindings_cursor_scope_entry(context->bindings, source.scope) : NULL;
+        if (!entry)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+        value = binding_value_from_context(root, entry->epoch);
+    } else if (source.scope) {
+        BindingsActivationRead read;
+        if (!bindings_activation_view_borrow(context->bindings, frame, &read))
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+        if (root->kind != ATOM_VAR) {
+            *target_out = source;
+            return CETTA_GSLT_TERM_VIEW_OK_V1;
+        }
+        value = binding_value_from_atom(NULL);
         bool present = false;
         bool known = bindings_activation_read_lookup(
             &read, root->var_id, &value, &present);
@@ -5075,21 +5104,33 @@ CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
             *target_out = source;
             return CETTA_GSLT_TERM_VIEW_OK_V1;
         }
-        if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton))
-            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-        root = value.skeleton;
-        source.scope = NULL;
     }
-    if (!source.scope) {
-        BindingValue value;
-        if (!bindings_resolve_value_preview((Bindings *)context->bindings,
-                                        binding_value_from_atom(root), &value) ||
-            (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)))
+    if ((!scoped && binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) ||
+        !bindings_resolve_value_preview((Bindings *)context->bindings, value, &value))
+        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    const void *scope = NULL;
+    if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) {
+        if (!scoped)
             return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-        root = value.skeleton;
+        scope = bindings_frame_index_find_frame_const(
+            context->bindings->frame_index, binding_value_epoch(value));
+        if (!scope)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
     }
-    *target_out = (CettaGsltTermCursorV1){root, source.scope};
+    *target_out = (CettaGsltTermCursorV1){value.skeleton, scope};
     return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
+CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
+        void *context, CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *target_out) {
+    return bindings_resolve_cursor(context, source, target_out, false);
+}
+
+CettaGsltTermViewStatusV1 bindings_resolve_scoped_term_cursor_v1(
+        void *context, CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *target_out) {
+    return bindings_resolve_cursor(context, source, target_out, true);
 }
 
 static bool bindings_resolve_ground_value(

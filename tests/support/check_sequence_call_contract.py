@@ -59,6 +59,42 @@ def cases(petta, modern):
     entries += [('effects', EFFECTS, (0, effects, '')),
                 ('returned-choice', CHOICE, (0, choice, '')),
                 ('live-callability', LIVE, (0, live, ''))]
+    if petta and not modern:
+        entries.append(('returned-argument-contract', '''(: pure-guarded-input (-> Number Number))
+(= (pure-guarded-input $x) (+ $x 1))
+(= (pure-returned-input $role) (pure-guarded-input "bad"))
+!(pure-returned-input 0)
+(: guarded-input (-> Number Number))
+(= (guarded-input $x)
+   (let $_ (add-atom &self (input-body $x)) 7))
+(= (returned-input $role) (guarded-input "bad"))
+(= (valid-returned-input $role) (guarded-input 4))
+!(returned-input 0)
+!(collapse (match &self (input-body $x) $x))
+!(valid-returned-input 0)
+!(collapse (match &self (input-body $x) $x))
+''', (0, '()\n7\n(4)\n', '')))
+        entries.append(('returned-result-contract', '''(: pure-guarded-result (-> Number Number))
+(= (pure-guarded-result $x) "bad")
+(= (pure-returned-result $role) (pure-guarded-result 4))
+!(pure-returned-result 0)
+(: guarded-result (-> Number Number))
+(= (guarded-result $x)
+   (let $_ (add-atom &self (result-body $x)) "bad"))
+(= (returned-result $role) (guarded-result 4))
+!(returned-result 0)
+!(collapse (match &self (result-body $x) $x))
+''', (0, '(4)\n', '')))
+        entries.append(('returned-held-and-duplicate-contracts', '''(: held-result (-> Atom Atom))
+(= (held-result $x) $x)
+(= (returned-held $role) (held-result (+ 1 2)))
+(: guarded-duplicate (-> Number Number))
+(= (guarded-duplicate $x) $x)
+(= (returned-duplicate $role) (guarded-duplicate 4))
+(= (returned-duplicate $role) (guarded-duplicate 4))
+!(returned-held 0)
+!(returned-duplicate 0)
+''', (0, '(+ 1 2)\n4\n4\n', '')))
     return entries
 
 

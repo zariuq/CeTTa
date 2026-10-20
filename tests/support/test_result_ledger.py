@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import importlib.util
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -67,6 +68,41 @@ class LedgerContract(unittest.TestCase):
         data['results'][0]['variants'][1]['metrics']['wall_s'] = None
         ledger.validate(data)
         self.assertEqual(ledger.ratios(data['results'][0], 'wall_s'), {})
+
+    def test_metric_ranges_are_validated_rendered_and_exported(self):
+        data = record()
+        candidate = data['results'][0]['variants'][1]
+        candidate['metric_ranges'] = {
+            'wall_s': dict(min=.8, q1=.9, q3=1.1, max=1.2),
+            'peak_rss_mib': dict(min=11, q1=11.5, q3=12.5, max=13),
+        }
+        ledger.validate(data)
+        rendered = ledger.render(data)
+        self.assertIn('ranges min; Q1..Q3; max:', rendered)
+        self.assertIn('wall_s=[0.8; 0.9..1.1; 1.2]', rendered)
+        stream = io.StringIO()
+        ledger.write_csv(data, stream)
+        self.assertIn('wall_s_min', stream.getvalue().splitlines()[0])
+        self.assertIn(',0.8,0.9,1.1,1.2,', stream.getvalue().splitlines()[2])
+
+    def test_metric_ranges_cannot_hide_bad_or_unordered_samples(self):
+        invalid = [
+            dict(min=.8, q1=.9, q3=1.1),
+            dict(min=.8, q1=1.1, q3=.9, max=1.2),
+            dict(min=.8, q1=.9, q3=1.1, max=float('nan')),
+            dict(min=.8, q1=.9, q3=1.1, max=True),
+        ]
+        for values in invalid:
+            data = record()
+            data['results'][0]['variants'][1]['metric_ranges'] = {'wall_s': values}
+            with self.assertRaises(ValueError):
+                ledger.validate(data)
+        data = record()
+        data['results'][0]['variants'][1]['metric_ranges'] = {
+            'instructions': dict(min=1, q1=1, q3=1, max=1),
+        }
+        with self.assertRaises(ValueError):
+            ledger.validate(data)
 
     def test_evidence_identity_and_bundle_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
