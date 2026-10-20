@@ -175,12 +175,17 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
 #define ATOM_FLAG_VAR_BLOOM_WIDTH 22u
 #define ATOM_FLAG_VAR_BLOOM_MASK UINT32_C(0x7FFFFE00)
 /*
- * HE's evaluated mark: this expression is a value HE's evaluation answered,
- * and evaluating it again answers it unchanged (Hyperon Experimental's
- * metta).  The mark belongs to one occurrence of a value, not to the term:
- * an expression never inherits it from a child, an interned node never
- * carries it, equality and hashing ignore it, a copy of the value keeps it,
- * and a space storing the atom drops it, since a space holds syntax.
+ * The evaluated mark: this expression is a value, and evaluating it again
+ * answers it unchanged.  HE marks the answer its evaluation gives (Hyperon
+ * Experimental's metta), at that answer's root.  Prime marks a completed
+ * value, a datum its producer completed (a native operation's completed
+ * value, the datum of `return`), at every expression of that datum: the
+ * parts a pattern takes from it are values in turn, and a Need cell inside
+ * it is still a computation (prime_completed_value in eval.c).  The mark
+ * belongs to one occurrence of a value, not to the term: an expression never
+ * inherits it from a child, an interned node never carries it, equality and
+ * hashing ignore it, a copy of the value keeps it, and a space storing the
+ * atom drops it, since a space holds syntax.
  */
 #define ATOM_FLAG_HE_EVALUATED UINT32_C(0x80000000)
 /*
@@ -1539,6 +1544,8 @@ Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
 /* `expression` marked as a value HE's evaluation answered: itself when it
  * carries the mark or is not an expression, otherwise a copy that does. */
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression);
+/* An expression of `elems` carrying the evaluated mark, never interned. */
+Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len);
 /* Deep copies made between enter and leave drop HE's evaluated marks: a
  * space stores syntax, never a value's evaluation state. */
 void atom_deep_copy_strip_he_marks_enter(void);

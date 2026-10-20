@@ -468,6 +468,9 @@ static bool prime_replay_compare_hub(const CettaContinuationHub *a,const CettaCo
     if(a->initialized!=b->initialized)return false;
     if(!a->initialized)return true;
     RC_S("hub.duty",a->selection_duty,b->selection_duty);
+    RC_S("hub.fair_descent",a->fair_descent,b->fair_descent);
+    RC_S("hub.last_lane",a->last_lane,b->last_lane);
+    RC_S("hub.oldest_from_old_region",a->oldest_from_old_region,b->oldest_from_old_region);
     RC_S("hub.observed",a->observed_occurrences,b->observed_occurrences);
     RC_S("hub.readout",a->plan.readout,b->plan.readout);
     RC_S("hub.activation",a->plan.activation,b->plan.activation);
@@ -491,6 +494,7 @@ static bool prime_replay_compare_hub(const CettaContinuationHub *a,const CettaCo
     RC_S("store.next_occurrence",s->next_occurrence_id,t->next_occurrence_id);
     RC_S("store.next_lease",s->next_lease,t->next_lease);
     RC_F("store.begin",s->begin,t->begin);RC_F("store.end",s->end,t->end);
+    RC_F("store.mid",s->mid,t->mid);
     RC_F("store.capacity",s->capacity,t->capacity);
     RC_F("store.storage",(uintptr_t)s->items,(uintptr_t)t->items);
     for(size_t i=0u;i<s->end-s->begin;i++) {

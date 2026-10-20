@@ -1,0 +1,22 @@
+; HE-compat minimal case returns the selected branch. A selected function is
+; entered by the raw-return continuation. A selected NotReducible becomes
+; Empty. Arithmetic and println stay raw until a later eval.
+!(ordinary (case A ((A Hit) ($other Miss))))
+!(function (chain (eval (case A ((A (+ 1 2)) ($other Miss)))) $r (return (add $r))))
+!(function (chain (eval (case A ((A (println! raw-branch))))) $r (return (held $r))))
+!(function (chain (eval (case A ((A (println! raw-branch))))) $r (chain (eval $r) $v (return (follow $v)))))
+!(function (chain (eval (case Empty ((ok ok) (Empty nok)))) $r (return (empty $r))))
+!(function (chain (eval (case A ((B Miss) ($other Hit)))) $r (return (fallback $r))))
+!(function (chain (eval (case A ((B Miss)))) $r (return (miss $r))))
+!(function (chain (eval (case (superpose (A A)) ((A HitA)))) $r (return (dup $r))))
+!(function (chain (eval (case A ((A First) (A Second)))) $r (return (first $r))))
+!(let $k 9 (function (chain (eval (case A ((A (+ $k 1))))) $r (return (outer $r)))))
+!(function (chain (eval (case (Pair 7) (((Pair $n) (kept $n)) ($other Miss)))) $r (return (pat $r))))
+!(function (chain (eval (case A ((A (case B ((B Inner))))))) $r (return (nested $r))))
+!(function (chain (eval (case A ((A (function (return payload)))))) $r (return (fn $r))))
+!(function (chain (eval (case A ((A (return payload))))) $r (return (ret $r))))
+!(function (chain (eval (case A ((A (chain (unify A A X Fail) $v (return $v)))))) $r (return (ch $r))))
+!(function (chain (eval (case A ((A NotReducible)))) $r (return (nr $r))))
+!(function (chain (eval (case A ((A (function (return (println! selected-function-effect))))))) $r (return (fe $r))))
+!(bare (eval (case A ((A (+ 1 2))))))
+!(metta-atom (metta (eval (case A ((A (+ 1 2))))) Atom &self))

@@ -307,6 +307,13 @@ bool cetta_selection_automaton_fifo(
     CettaSelectionAutomaton *automaton);
 bool cetta_selection_automaton_lifo(
     CettaSelectionAutomaton *automaton);
+/* The newest share of the fair-descent schedule an observation that names
+ * no control takes: deep selections, then one oldest, cyclic.  Every share
+ * is fair; a search whose answers lie deep pays at most (share + 1) / share
+ * of its descent, one whose answers wait behind an infinite first branch at
+ * most share + 1 times its oldest lane's work. */
+#define CETTA_FAIR_DESCENT_NEWEST_SHARE 4u
+
 /* NEWEST_SHARE deep selections followed by one OLDEST selection, cyclic.
  * A zero share degenerates to FIFO. */
 bool cetta_selection_automaton_ratio(
@@ -517,6 +524,9 @@ typedef struct {
 typedef struct {
     CettaOwnedContinuation *items;
     size_t begin;
+    /* The boundary of a fair-descent hub's two regions (old [begin, mid),
+     * deep [mid, end)); begin otherwise. */
+    size_t mid;
     size_t end;
     size_t capacity;
     uint64_t next_occurrence_id;
@@ -539,6 +549,12 @@ typedef struct {
     CettaControlPlan plan;
     uint64_t observed_occurrences;
     bool initialized;
+    /* Fair descent (cetta_continuation_hub_enable_fair_descent): the lane of
+     * the last selection places what its service queues, and the oldest
+     * lane alternates between the two regions. */
+    bool fair_descent;
+    CettaSelectionLane last_lane;
+    bool oldest_from_old_region;
 } CettaContinuationHub;
 
 /* One entry in the parent's prepared payload transport. SOURCE borrows an
@@ -770,6 +786,13 @@ bool cetta_continuation_hub_select(
 bool cetta_continuation_hub_switch_schedule(
     CettaContinuationHub *hub,
     const CettaSelectionAutomaton *schedule);
+/* Fair descent: the newest lane serves the top of the deep region, the
+ * oldest lane serves the front of the old region and the bottom of the deep
+ * region in turn, and what a service queues joins the deep region after a
+ * newest selection and the old region after an oldest one.  Every queued
+ * occurrence is served after finitely many oldest ticks, and the oldest
+ * lane's work never displaces the descent.  Only an empty hub switches. */
+bool cetta_continuation_hub_enable_fair_descent(CettaContinuationHub *hub);
 /* A lease authorizes return to this exact store. Refusal retains both the
  * queue and caller's residual. Release revokes a completed external owner. */
 bool cetta_continuation_hub_take_for_resume(CettaContinuationHub *hub, size_t index,

@@ -6369,6 +6369,10 @@ static Atom *atom_he_evaluated_build(Arena *a, Atom **elems,
                            structural_facts, var_id);
 }
 
+Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len) {
+    return a && elems && len ? atom_he_evaluated_build(a, elems, len) : NULL;
+}
+
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression) {
     if (!a || !expression || expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u ||

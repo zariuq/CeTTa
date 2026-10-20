@@ -5508,6 +5508,86 @@ test-prime-need-match-pattern: $(BIN) tests/prime/need_match_pattern_values.mett
 	done; \
 	echo "PASS: a Need cell in a match, unify or let pattern is matched as its value"
 
+# An application that does not reduce answers the source it was written as;
+# a pattern that takes its argument passes that source on, and a call inside
+# it runs when demanded.  Both the prepared machine and the reference route.
+test-prime-need-stuck-application: $(BIN) \
+		tests/prime/need_stuck_application_argument.metta \
+		tests/prime/need_stuck_application_argument.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang prime \
+			tests/prime/need_stuck_application_argument.metta \
+			| diff -u tests/prime/need_stuck_application_argument.expected -; \
+	done; \
+	echo "PASS: the argument of an application that does not reduce stays source a demand runs"
+
+# The part a quotation pattern takes is a value: no later demand runs it, on
+# every route that takes the quotation apart; an explicit evaluation runs it.
+test-prime-need-quoted-part: $(BIN) \
+		tests/prime/need_quoted_part_values.metta \
+		tests/prime/need_quoted_part_values.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang prime \
+			tests/prime/need_quoted_part_values.metta \
+			| diff -u tests/prime/need_quoted_part_values.expected -; \
+	done; \
+	echo "PASS: the part a quotation pattern takes is a value, which only an explicit evaluation runs"
+
+# A lambda binds its argument as one Need cell, as an equation and the
+# canonical application do: shared choices, one effect, unused never runs.
+test-prime-need-lambda-argument: $(BIN) \
+		tests/prime/need_lambda_argument_shared.metta \
+		tests/prime/need_lambda_argument_shared.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang prime \
+			tests/prime/need_lambda_argument_shared.metta 2>&1 \
+			| diff -u tests/prime/need_lambda_argument_shared.expected -; \
+	done; \
+	echo "PASS: a lambda shares its argument's one computation with every use"
+
+# A first answer of a non-empty bag is a member of it: behind an infinite
+# first alternative, through a space read around a cycle, and deep; a named
+# control at the top level runs as inside an expression; effects keep their
+# source order.  Both the prepared machine and the reference route.
+test: test-prime-first-answer-fair
+test-prime-first-answer-fair: $(BIN) tests/prime/first_answer_fair.metta \
+		tests/prime/first_answer_fair.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) \
+			--lang prime tests/prime/first_answer_fair.metta 2>&1 \
+			| diff -u tests/prime/first_answer_fair.expected -; \
+	done; \
+	echo "PASS: a first answer is a member of the bag wherever its members lie"
+
+# The ContextualCBPV realization (lib/prime/cbpv.metta) as an oracle for the
+# draft: its curriculum, the zero, need and value layers, the elaborations of
+# other fixtures, and the fixtures that state a finding against the draft,
+# each with its controls.  Both the prepared machine and the reference route.
+PRIME_CBPV_FIXTURES = $(sort $(wildcard tests/prime/cbpv/*.metta))
+test: test-prime-cbpv
+test-prime-cbpv: $(BIN) lib/prime/cbpv.metta $(PRIME_CBPV_FIXTURES) \
+		$(PRIME_CBPV_FIXTURES:.metta=.expected)
+	@set -u; pass=0; fail=0; \
+	for f in $(PRIME_CBPV_FIXTURES); do \
+		for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+			actual=$$(env $$route timeout $(PRIME_COMPLETION_TIMEOUT) \
+				$(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+			if [ "$$actual" = "$$(cat "$${f%.metta}.expected")" ]; then \
+				pass=$$((pass + 1)); \
+			else \
+				echo "FAIL: $$f on the $${route:-default} route"; \
+				diff <(cat "$${f%.metta}.expected") <(printf '%s\n' "$$actual") | head -20; \
+				fail=$$((fail + 1)); \
+			fi; \
+		done; \
+	done; \
+	echo "Prime CBPV oracle: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+
 test-prime-suspension-rights: $(BIN)
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang prime \
@@ -5754,6 +5834,9 @@ test-prime-need-scratch-owner-mutation-body: $(BIN)
 		echo "PASS: Prime Need SCRATCH_OWNER mutation killed: a heap in scratch blocks collection ($$collections collections, mutant $${mutant_collections:-0})"
 
 ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
+# Each mutation below changes some answer.  SCRATCH_OWNER changes none: its
+# mutant keeps the Need heap in scratch, which blocks collection, so
+# test-prime-need-scratch-owner-mutation kills it by its collection count.
 test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		test-prime-need-correspondence test-prime-need-gc-lifetime \
 		test-prime-need-boundaries \
@@ -5770,7 +5853,7 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 	if [ "$$actual" != "$$(cat tests/prime/need_lexical_scope.expected)" ]; then \
 		echo "FAIL: Prime Need lexical-scope control"; exit 1; \
 	fi; \
-	for mutation in EAGER CBN STORAGE_LEAK SCRATCH_OWNER FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT DYNAMIC_SCOPE; do \
+	for mutation in EAGER CBN STORAGE_LEAK FUNCTION_BINDING_LEAK RULE_LOCAL_THUNKS DROP_RESIDUAL REGISTRY_PATTERN_INERT DROP_RESULT_CONTRACT DYNAMIC_SCOPE; do \
 		case "$$mutation" in \
 			EAGER) source=tests/prime/need_application.metta; \
 			       expected=tests/prime/need_application.expected ;; \
@@ -5780,8 +5863,6 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 			              expected=tests/prime/need_storage_boundary.expected ;; \
 			FUNCTION_BINDING_LEAK) source=tests/prime/need_application.metta; \
 			                       expected=tests/prime/need_application.expected ;; \
-			SCRATCH_OWNER) source=tests/prime/need_gc_lifetime.metta; \
-			               expected=tests/prime/need_gc_lifetime.expected ;; \
 			RULE_LOCAL_THUNKS|DROP_RESIDUAL|REGISTRY_PATTERN_INERT) source=tests/prime/need_application.metta; \
 			                                                          expected=tests/prime/need_application.expected ;; \
 			DROP_RESULT_CONTRACT) source=tests/prime/gradual/annotation_boundary.metta; \
@@ -24856,6 +24937,11 @@ test-curriculum-lf-normalization: $(BIN)
 
 test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra test-curriculum-port-repairs \
 	test-prime-need-match-pattern \
+	test-prime-need-stuck-application \
+	test-prime-need-quoted-part \
+	test-prime-need-lambda-argument \
+	test-prime-cbpv \
+	test-prime-first-answer-fair \
 	test-prime-need-native-handles \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \
@@ -46885,7 +46971,7 @@ endif
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-hol-checker-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
-.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-need-match-pattern test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-hol-checker-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
+.PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-need-match-pattern test-prime-need-stuck-application test-prime-need-quoted-part test-prime-need-lambda-argument test-prime-cbpv test-prime-first-answer-fair test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-hol-checker-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
 .PHONY: test-rhometta-macro-audit test-eval-gc-adversarial test-eval-gc-survivor-reset test-eval-gc-asan-selected test-eval-gc-asan-selected-body test-eval-gc-asan-full-differential test-eval-gc-asan-full-differential-body test-tsan test-tsan-main test-tsan-mork bench-rho-rhometta-deduction-farm bench-rho-hot-frontier bench-rho-hot-successors bench-rho-threaded bench-rho-threaded-heavy bench-rho-threaded-corpus bench-rho-threaded-generated bench-rho-threaded-generated-runtime-stats

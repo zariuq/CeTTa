@@ -2,17 +2,20 @@
 ; value the pattern consumes: the cell is forced and the pattern matches its
 ; value.  Syntax written in the pattern stays data, and a cell with several
 ; values matches once per value.
+; Prime binds pattern variables lexically fresh, and quote seals its own, so
+; the crossing set {$x} brings the parameter's cell into match, let and quote.
+; unify keeps its sharing without one.
 (fact 1 one)
 (fact 2 two)
 (fact (+ 1 1) syn)
 (fact $any wild)
 (pair 2 b)
 (pair (+ 1 1) c)
-(= (q $x) (match &self (fact $x $y) $y))
-(= (qp $x) (match &self (pair $x $y) $y))
-(= (qq $x) (quote $x))
+(= (q $x) (match &self (fact $x $y) $y){$x})
+(= (qp $x) (match &self (pair $x $y) $y){$x})
+(= (qq $x) (quote $x){$x})
 (= (u $x) (unify (fact $x $y) (fact 2 two) $y no))
-(= (l $x) (let (fact $x $y) (fact 2 two) $y))
+(= (l $x) (let (fact $x $y) (fact 2 two) $y){$x})
 (= (either) 1)
 (= (either) 2)
 ; The cell (+ 1 1) is the value 2.

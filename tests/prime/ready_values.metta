@@ -109,6 +109,9 @@
 !(let $s (mk 19) (Box $s 0))
 !(collapse (Box 28 1))
 !(let $r (fold (superpose ()) (+ 14 15) $acc $x $acc) (* $r 2))
+; The accumulator no step answered is that source too: equality runs it as
+; arithmetic does.
+!(let $r (fold (superpose ()) (+ 14 15) $acc $x $acc) (== $r 29))
 (= (double $x) (* 2 $x))
 !(let $n (+ 6 6) (double $n))
 (= (weight $x) (+ $x 1))

@@ -8,6 +8,7 @@ from collections import Counter
 import csv
 import os
 from pathlib import Path
+import re
 import statistics
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from petta_machine_stats import (  # noqa: E402
     aggregate_invocations,
     extract_machine_and_controller_stats,
 )
+from check_search_controller import metta_list_occurrences  # noqa: E402
 
 
 REQUIRED_COLUMNS = (
@@ -37,6 +39,7 @@ REQUIRED_COLUMNS = (
     "contrast",
     "profile",
     "transition_limit",
+    "prime",
 )
 AVAILABILITY = frozenset(("runnable", "asset", "planned"))
 PROFILES = frozenset(("-", "extended"))
@@ -49,6 +52,12 @@ RUNNABLE_IDS = frozenset(
      "absorbing-once", "once-recursive-first", "finite-prefix-recursive",
      "reverse-prefix-completion", "flat-complete-bag",
      "compression-induction")
+)
+# What Prime must answer for a row, run with no control named: one source
+# witness, a prefix of members of the declared length, the complete bag, or
+# the exact answer.  `-` runs no Prime column for the row.
+PRIME_CONTRACTS = frozenset(
+    ("-", "first-witness", "bounded-prefix", "complete-bag", "exact")
 )
 CONTINUATION_COMPONENTS = (
     "authority", "terms", "bindings", "control_state",
@@ -108,6 +117,14 @@ def validate_manifest(
                 raise ValueError(
                     f"{identifier}: missing repository asset {row['source']!r}"
                 )
+        if row["prime"] not in PRIME_CONTRACTS:
+            raise ValueError(
+                f"{identifier}: invalid Prime contract {row['prime']!r}"
+            )
+        if row["prime"] != "-" and row["availability"] != "runnable":
+            raise ValueError(
+                f"{identifier}: a Prime contract needs a runnable row"
+            )
         if row["availability"] == "runnable":
             runnable.add(identifier)
             if limit == 0:
@@ -197,6 +214,133 @@ def _run(
         "controller_receipts": controller_receipts,
     }
     return result
+
+
+def _run_prime(
+    binary: Path, row: dict[str, str], timeout_seconds: float
+) -> dict[str, Any]:
+    """The row's program under Prime, with no control named."""
+    environment = os.environ.copy()
+    environment.pop("CETTA_SEARCH_CONTROLLER", None)
+    environment.pop("CETTA_SEARCH_ACT_DIR", None)
+    started = time.monotonic_ns()
+    try:
+        process = subprocess.run(
+            [str(binary), "--lang", "prime", str(ROOT / row["source"])],
+            cwd=ROOT, env=environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=timeout_seconds, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "completion": "timeout",
+                "elapsed_ns": time.monotonic_ns() - started, "aggregate": {}}
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"{row['id']} prime: exit {process.returncode}\n"
+            f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+        )
+    return {"stdout": process.stdout, "completion": "complete",
+            "elapsed_ns": time.monotonic_ns() - started, "aggregate": {}}
+
+
+def _prime_results(stdout: str) -> list[list[str]]:
+    """The printed result lists of a Prime run, one per query."""
+    return [metta_list_occurrences(line) for line in stdout.splitlines()
+            if line.startswith("[")]
+
+
+def _tuple_items(term: str) -> list[str]:
+    """The items of one printed tuple, `(a b c)`."""
+    if len(term) < 2 or term[0] != "(" or term[-1] != ")":
+        raise ValueError(f"not a printed tuple: {term!r}")
+    items, depth, start = [], 0, None
+    for index, character in enumerate(term[1:-1], start=1):
+        if character == "(":
+            if depth == 0 and start is None:
+                start = index
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0 and start is not None:
+                items.append(term[start:index + 1])
+                start = None
+        elif character == " " and depth == 0:
+            if start is not None:
+                items.append(term[start:index])
+                start = None
+        elif start is None:
+            start = index
+    if start is not None:
+        items.append(term[start:len(term) - 1])
+    return items
+
+
+_PEANO_ANSWER = re.compile(r"\(answer (\(S )*Z\)*\)")
+
+
+def _peano_answer(term: str) -> bool:
+    """`(answer n)` for a numeral n written with S and Z."""
+    if not _PEANO_ANSWER.fullmatch(term):
+        return False
+    return term.count("(S ") + 1 == term.count(")")
+
+
+def _lawful_witness(identifier: str, term: str) -> bool:
+    if identifier == "absorbing-once":
+        return term in _expected(
+            "benchmarks/controller_diversity/deep_once.witnesses"
+        ).splitlines()
+    if identifier == "once-recursive-first":
+        return _peano_answer(term)
+    if identifier == "compression-induction":
+        return term == _expected(
+            "benchmarks/controller_diversity/compression_guidance.expected"
+        ).strip()
+    raise RuntimeError(f"no Prime witnesses for row {identifier!r}")
+
+
+_PRIME_PREFIX_LENGTH = {"fair-starvation": 13, "finite-prefix-recursive": 2}
+
+
+def _qualify_prime(row: dict[str, str], prime: dict[str, Any]) -> None:
+    """Prime's answer meets the row's observation contract."""
+    identifier = row["id"]
+    contract = row["prime"]
+    if prime["completion"] != "complete":
+        raise RuntimeError(f"{identifier} prime: no answer within the timeout")
+    results = _prime_results(prime["stdout"])
+    if contract == "first-witness":
+        if len(results) != 1 or len(results[0]) != 1 or not _lawful_witness(
+                identifier, results[0][0]):
+            raise RuntimeError(
+                f"{identifier} prime: first answer is not one source witness"
+            )
+    elif contract == "bounded-prefix":
+        if len(results) != 1 or len(results[0]) != 1:
+            raise RuntimeError(f"{identifier} prime: not one prefix")
+        items = _tuple_items(results[0][0])
+        if (len(items) != _PRIME_PREFIX_LENGTH[identifier] or
+                len(set(items)) != len(items) or
+                not all(_peano_answer(item) for item in items)):
+            raise RuntimeError(
+                f"{identifier} prime: prefix is not distinct members"
+            )
+    elif contract == "complete-bag":
+        expected = _expected(
+            "benchmarks/controller_diversity/flat_complete_bag.expected"
+        )
+        if len(results) != 1 or Counter(results[0]) != Counter(
+                expected.splitlines()):
+            raise RuntimeError(f"{identifier} prime: bag changed")
+    elif contract == "exact":
+        expected = _expected(
+            "benchmarks/controller_diversity/"
+            "reverse_prefix_requires_completion.expected"
+        )
+        if results != [expected.splitlines()]:
+            raise RuntimeError(f"{identifier} prime: answer changed")
+    else:
+        raise RuntimeError(f"{identifier}: no Prime contract {contract!r}")
 
 
 def _work_signature(aggregate: dict[str, Any]) -> dict[str, Any]:
@@ -634,6 +778,13 @@ def run_current(
             results.append(_result(
                 row["id"], controller, controller_samples
             ))
+    for row in rows:
+        if row["availability"] != "runnable" or row["prime"] == "-":
+            continue
+        prime_samples = [_run_prime(binary, row, timeout_seconds)
+                         for _ in range(runs)]
+        _qualify_prime(row, prime_samples[0])
+        results.append(_result(row["id"], "prime", prime_samples))
     return results
 
 

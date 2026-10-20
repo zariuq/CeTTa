@@ -10,3 +10,6 @@
 !(eqself ((route 3) 5))
 ; The same value read twice through a `let` is computed once as well.
 !(let $r ((route 4) 5) (Pair (== $r $r) (== $r $r)))
+; What the operands read is the computed head, which the value shows.
+(= (eqshow $r) (Pair (== $r $r) $r))
+!(eqshow ((route 7) 8))
