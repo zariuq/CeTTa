@@ -3341,6 +3341,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_activation_operand.metta \
 	tests/prime/need_native_operands.metta \
 	tests/prime/ready_values.metta \
+	tests/prime/data_atom_path_a.metta \
 	tests/prime/cardinality_observer_dynamic_space.metta \
 	tests/prime/quote_head_matching.metta \
 	tests/prime/lift_brackets.metta \
@@ -5562,6 +5563,20 @@ test-prime-first-answer-fair: $(BIN) tests/prime/first_answer_fair.metta \
 			| diff -u tests/prime/first_answer_fair.expected -; \
 	done; \
 	echo "PASS: a first answer is a member of the bag wherever its members lie"
+
+# Path A for Data vs Atom: destructors take values and preserve existing Data
+# marks without stamping new ones; cons-atom/union-atom build Data; Data stays
+# Data through let, arguments, ==, sort-atom, unique-atom; wrapper congruence.
+test: test-prime-data-atom-path-a
+test-prime-data-atom-path-a: $(BIN) tests/prime/data_atom_path_a.metta \
+		tests/prime/data_atom_path_a.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) \
+			--lang prime tests/prime/data_atom_path_a.metta 2>&1 \
+			| diff -u tests/prime/data_atom_path_a.expected -; \
+	done; \
+	echo "PASS: Path A Data vs Atom laws hold on both routes"
 
 # The ContextualCBPV realization (lib/prime/cbpv.metta) as an oracle for the
 # draft: its curriculum, the zero, need and value layers, the elaborations of
@@ -24942,6 +24957,7 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra te
 	test-prime-need-lambda-argument \
 	test-prime-cbpv \
 	test-prime-first-answer-fair \
+	test-prime-data-atom-path-a \
 	test-prime-need-native-handles \
 	test-prime-need-he-noninterference \
 	test-prime-need-correspondence \

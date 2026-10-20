@@ -30920,6 +30920,8 @@ static bool prime_completed_value_descends(Space *s, Arena *a, Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
         !atom_is_he_evaluated(atom) && !atom_has_vars(atom) &&
         !atom_prime_held_is(atom) && !atom_is_legacy_empty_or_error(atom) &&
+        !prime_need_is_stored_thunk(atom, NULL, NULL, NULL) &&
+        !prime_need_is_stored_promise(atom, NULL, NULL, NULL) &&
         !prime_observation_value_barrier(s, a, atom);
 }
 
@@ -31252,10 +31254,7 @@ static Atom *prime_need_strict_demand_value(Space *s, Arena *a, Atom *source,
  * (emit_completed_native_value). */
 static bool prime_builds_value_head(SymbolId head) {
     return head == g_builtin_syms.cons_atom ||
-           head == g_builtin_syms.union_atom ||
-           head == g_builtin_syms.decons_atom ||
-           head == g_builtin_syms.car_atom ||
-           head == g_builtin_syms.cdr_atom;
+           head == g_builtin_syms.union_atom;
 }
 
 /* The outcomes from `first` on, each a completed value
@@ -32176,7 +32175,8 @@ static bool prime_need_returned_value_ref(
     if (!occurrence || !prime_need_allocate_source_argument_ref(
             arena, value, occurrence, 0u, environment, &next, reference))
         return false;
-    if (result_form == CETTA_CALL_RESULT_EXPRESSION) {
+    if (result_form == CETTA_CALL_RESULT_EXPRESSION &&
+        !prime_is_completed_value(value)) {
         bindings_replace(environment, &next);
         return true;
     }
@@ -43463,7 +43463,7 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
         PRIME_DEMAND_RULE(g_builtin_syms.get_metatype, 1u, 1u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_SHAPE),
         PRIME_DEMAND_RULE(g_builtin_syms.decons_atom, 1u, 1u, 0u, 0u,
-                          PRIME_NEED_ARGUMENT_SHAPE),
+                          PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.match, 2u, 2u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_PATTERN),
         PRIME_DEMAND_RULE(g_builtin_syms.match, 3u, 3u, 1u, 1u,
@@ -43473,9 +43473,9 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
         PRIME_DEMAND_RULE(g_builtin_syms.abt_let_v1, 3u, 3u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_PATTERN),
         PRIME_DEMAND_RULE(g_builtin_syms.car_atom, 1u, 1u, 0u, 0u,
-                          PRIME_NEED_ARGUMENT_SHAPE),
+                          PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.cdr_atom, 1u, 1u, 0u, 0u,
-                          PRIME_NEED_ARGUMENT_SHAPE),
+                          PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.superpose, 1u, 1u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_SHAPE),
         PRIME_DEMAND_RULE(g_builtin_syms.superpose_bind, 1u, 1u, 0u, 0u,
@@ -43486,10 +43486,10 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
          * apart, as superpose takes apart its alternatives. */
         PRIME_DEMAND_RULE(g_builtin_syms.superpose_bind, 1u, 1u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_SHAPE),
-        PRIME_DEMAND_RULE(g_builtin_syms.cons_atom, 2u, 2u, 1u, 1u,
-                          PRIME_NEED_ARGUMENT_SHAPE),
+        PRIME_DEMAND_RULE(g_builtin_syms.cons_atom, 2u, 2u, 0u, 1u,
+                          PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.union_atom, 2u, UINT64_MAX, 0u, 1u,
-                          PRIME_NEED_ARGUMENT_SHAPE),
+                          PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.unify, 2u, UINT64_MAX, 0u, 1u,
                           PRIME_NEED_ARGUMENT_PATTERN),
         PRIME_DEMAND_RULE(g_builtin_syms.alpha_eq, 2u, 2u, 0u, 1u,
@@ -43656,13 +43656,16 @@ static PrimeNeedArgumentMode prime_need_pattern_demand(
 static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
                                         CettaExprLen nargs,
                                         Atom *call, const Bindings *env,
+                                        int first_candidate,
                                         PrimeNeedArgumentMode *out_mode,
                                         uint64_t *pattern_cell_out) {
     if (out_mode)
         *out_mode = PRIME_NEED_ARGUMENT_DATA;
     if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !call)
         return -1;
-    for (CettaExprIndex i = 0u; i < nargs; i++) {
+    CettaExprIndex start =
+        first_candidate >= 0 ? (CettaExprIndex)(first_candidate + 1) : 0u;
+    for (CettaExprIndex i = start; i < nargs; i++) {
         PrimeNeedArgumentMode mode = prime_need_argument_mode(head, nargs, i);
         if (nargs == 1u && i == 0u &&
             (head == prime_need_symbols()->cost_storage ||
@@ -43678,7 +43681,16 @@ static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
         if (prime_need_interaction_arity(head,nargs))
             mode = PRIME_NEED_ARGUMENT_WHNF;
         Atom *argument = expr_arg(call, i);
+        bool cons_or_union = head == g_builtin_syms.cons_atom ||
+                             head == g_builtin_syms.union_atom;
+        bool pending_elem_tuple = cons_or_union && argument &&
+            argument->kind == ATOM_EXPR && argument->expr.len > 0u &&
+            prime_need_cell_pending(argument->expr.elems[0],
+                                    &g_prime_need_active, NULL);
         bool demanded = mode == PRIME_NEED_ARGUMENT_WHNF &&
+            !(head == g_builtin_syms.cons_atom && i == 0u &&
+              prime_need_cell_pending(argument, &g_prime_need_active, NULL)) &&
+            !pending_elem_tuple &&
             prime_need_strict_argument_needs_eval(s, a, argument);
         if (mode == PRIME_NEED_ARGUMENT_SHAPE)
             demanded = prime_need_shape_argument_needs_eval(argument);
@@ -43767,24 +43779,21 @@ static bool prime_need_strict_argument_needs_eval(Space *s, Arena *a,
                head->ground.gkind == GV_FOREIGN;
     if (head->kind != ATOM_SYMBOL)
         return false;
-    if (registry_lookup_atom(head) || is_grounded_op(atom_symbol_current_id(head)) ||
+    SymbolId id = atom_symbol_current_id(head);
+    if (id == g_builtin_syms.quote)
+        return eval_space_has_equations(s, id);
+    if (registry_lookup_atom(head) || is_grounded_op(id) ||
+        id == g_builtin_syms.cons_atom ||
+        id == g_builtin_syms.union_atom ||
+        id == g_builtin_syms.decons_atom ||
+        id == g_builtin_syms.car_atom ||
+        id == g_builtin_syms.cdr_atom ||
         (g_library_context && g_library_context->foreign_runtime &&
          cetta_foreign_is_callable_atom(head)) ||
-        eval_space_has_equations(s, atom_symbol_current_id(head)))
+        eval_space_has_equations(s, id))
         return true;
-    Atom **types = NULL;
-    uint32_t ntypes = eval_get_atom_types_profiled(s, a, head, &types);
-    bool function_head = false;
-    for (uint32_t i = 0u; i < ntypes; i++) {
-        if (is_function_type(types[i])) {
-            function_head = true;
-            break;
-        }
-    }
-    free(types);
-    if (function_head)
-        return true;
-    return atom_symbol_current_id(head) == g_builtin_syms.cons_atom;
+    return space_head_declares_type(s, id) &&
+           eval_atom_has_function_type_profiled(s, a, head);
 }
 
 static bool he_evaluated_call_answers_try(
@@ -51384,6 +51393,10 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
                 frame->space, frame->arena, frame->strict_source,
                 prime_need_observe_data(frame->arena, value, &only->env),
                 &only->env);
+        else if (frame->strict_argument != PRIME_EVAL_STACK_READY_HEAD)
+            value = prime_need_strict_demand_value(
+                frame->space, frame->arena, frame->strict_source, value,
+                &only->env);
         if (value && !atom_is_legacy_empty_sentinel(value) &&
             (!atom_is_error(value) || frame->strict_error_is_data)) {
             if (atom_eq(value, frame->strict_source)) {
@@ -51433,6 +51446,10 @@ static inline __attribute__((always_inline)) void prime_eval_stack_resume_strict
             value = prime_need_strict_demand_value(
                 frame->space, frame->arena, frame->strict_source,
                 prime_need_observe_data(frame->arena, value, &item->env),
+                &item->env);
+        else if (frame->strict_argument != PRIME_EVAL_STACK_READY_HEAD)
+            value = prime_need_strict_demand_value(
+                frame->space, frame->arena, frame->strict_source, value,
                 &item->env);
         if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
@@ -51488,6 +51505,10 @@ static PrimeEvalStackTake prime_eval_stack_strict_take(
             value = prime_need_strict_demand_value(
                 frame->space, frame->arena, frame->strict_source,
                 prime_need_observe_data(frame->arena, value, &item->env),
+                &item->env);
+        else if (frame->strict_argument != PRIME_EVAL_STACK_READY_HEAD)
+            value = prime_need_strict_demand_value(
+                frame->space, frame->arena, frame->strict_source, value,
                 &item->env);
     if (!value || atom_is_legacy_empty_sentinel(value))
         return PRIME_EVAL_STACK_TAKE_SKIPPED;
@@ -75676,14 +75697,22 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
         if (language_id == CETTA_LANGUAGE_PETTA && !(sequence && e_len > 0))
             return METTA_DISPATCH_HANDLED;
         if (sequence && e_len > 0) {
-            /* The parts of held syntax are held syntax. */
+            /* The parts of held syntax are held syntax; the tail of a
+             * completed value keeps its mark. */
             Atom *hd = e_elems[0];
             Atom *tl = atom_sequence_rest(a, e, e_elems, e_len);
+            if (prime_is_completed_value(e) && tl && tl->kind == ATOM_EXPR &&
+                tl->expr.len > 0u && !atom_has_vars(tl))
+                tl = atom_he_evaluated_copy(a, tl);
             if (held) {
                 hd = atom_prime_held_wrap(a, hd);
                 tl = atom_prime_held_wrap(a, tl);
             }
+            CettaCount first = os->len;
             outcome_set_add(os, atom_expr2(a, hd, tl), empty);
+            if (language_id == CETTA_LANGUAGE_PRIME && !held &&
+                !prime_is_completed_value(e) && os->len > first)
+                os->items[first].result_form = CETTA_CALL_RESULT_EXPRESSION;
         } else if (language_id == CETTA_LANGUAGE_PRIME && sequence) {
             /* The empty expression is a valid sequence with no head/tail
              * decomposition.  Prime reports that known no-solution as
@@ -75735,10 +75764,19 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
         CettaSequenceProjectionCall projection = petta_plan_sequence_call(
             NULL, head_id, nargs, language_id == CETTA_LANGUAGE_HE
                 ? CETTA_SEQUENCE_HE_LIBRARY_VALUE : CETTA_SEQUENCE_STRICT_VALUE).call;
-        if (atom_sequence_view(e, &e_elems, &e_len) && e_len > 0)
-            he_library_answer(s, a, projection,
-                              held ? atom_prime_held_wrap(a, e_elems[0])
-                                   : e_elems[0], fuel, os);
+        if (atom_sequence_view(e, &e_elems, &e_len) && e_len > 0) {
+            Atom *hd = held ? atom_prime_held_wrap(a, e_elems[0]) : e_elems[0];
+            if (language_id == CETTA_LANGUAGE_HE) {
+                he_library_answer(s, a, projection, hd, fuel, os);
+            } else {
+                CettaCount first = os->len;
+                outcome_set_add(os, hd, empty);
+                if (language_id == CETTA_LANGUAGE_PRIME && !held &&
+                    !prime_is_completed_value(e) &&
+                    !prime_is_completed_value(hd) && os->len > first)
+                    os->items[first].result_form = CETTA_CALL_RESULT_EXPRESSION;
+            }
+        }
         else
             outcome_set_add(os,
                 atom_error(a, (*call),
@@ -75756,9 +75794,20 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
                 ? CETTA_SEQUENCE_HE_LIBRARY_VALUE : CETTA_SEQUENCE_STRICT_VALUE).call;
         if (atom_sequence_view(e, &e_elems, &e_len) && e_len > 0) {
             Atom *tl = atom_sequence_rest(a, e, e_elems, e_len);
-            he_library_answer(s, a, projection,
-                              held ? atom_prime_held_wrap(a, tl) : tl,
-                              fuel, os);
+            if (prime_is_completed_value(e) && tl && tl->kind == ATOM_EXPR &&
+                tl->expr.len > 0u && !atom_has_vars(tl))
+                tl = atom_he_evaluated_copy(a, tl);
+            Atom *ans = held ? atom_prime_held_wrap(a, tl) : tl;
+            if (language_id == CETTA_LANGUAGE_HE) {
+                he_library_answer(s, a, projection, ans, fuel, os);
+            } else {
+                CettaCount first = os->len;
+                outcome_set_add(os, ans, empty);
+                if (language_id == CETTA_LANGUAGE_PRIME && !held &&
+                    !prime_is_completed_value(e) &&
+                    !prime_is_completed_value(ans) && os->len > first)
+                    os->items[first].result_form = CETTA_CALL_RESULT_EXPRESSION;
+            }
         }
         else
             outcome_set_add(os,
@@ -79485,10 +79534,18 @@ tail_call: ;
         }
     }
 
+    int strict_cursor =
+#if CETTA_PRIME_EVAL_STACK
+        strict_ready_argument >= 0 ? strict_ready_argument : -1;
+#else
+        -1;
+#endif
+prime_need_next_strict_argument: ;
     PrimeNeedArgumentMode strict_mode = PRIME_NEED_ARGUMENT_DATA;
     uint64_t pattern_cell = 0u;
     int strict_argument = prime_need_demanded_argument(
-        s, a, head_id, nargs, atom, CURRENT_ENV, &strict_mode, &pattern_cell);
+        s, a, head_id, nargs, atom, CURRENT_ENV, strict_cursor,
+        &strict_mode, &pattern_cell);
     Atom *strict_source = strict_argument >= 0
         ? expr_arg(atom, (CettaExprIndex)strict_argument) : NULL;
     bool strict_error_is_data =
@@ -79612,6 +79669,9 @@ tail_call: ;
                     s, a, strict_source,
                     prime_need_observe_data(a, value, &values.items[0].env),
                     &values.items[0].env);
+            else
+                value = prime_need_strict_demand_value(
+                    s, a, strict_source, value, &values.items[0].env);
             if (value && !atom_is_legacy_empty_sentinel(value) &&
                 (!atom_is_error(value) || strict_error_is_data)) {
                 if (atom_eq(value, strict_source)) {
@@ -79624,7 +79684,8 @@ tail_call: ;
                         return;
                     }
                     outcome_set_free(&values);
-                    goto prime_need_strict_argument_ready;
+                    strict_cursor = strict_argument;
+                    goto prime_need_next_strict_argument;
                 }
                 Atom **elems = arena_alloc(a,
                     sizeof(*elems) * (size_t)atom->expr.len);
@@ -79648,6 +79709,9 @@ tail_call: ;
                     s, a, strict_source,
                     prime_need_observe_data(a, value, &values.items[i].env),
                     &values.items[i].env);
+            else
+                value = prime_need_strict_demand_value(
+                    s, a, strict_source, value, &values.items[i].env);
             if (!value || atom_is_legacy_empty_sentinel(value))
                 continue;
             if (atom_is_error(value) && !strict_error_is_data) {
@@ -79668,8 +79732,6 @@ tail_call: ;
         return;
     }
 
-prime_need_strict_argument_ready:
-    ;
     if(language_id==CETTA_LANGUAGE_PRIME&&prime_native_replay_dispatch(
         s,a,atom,CURRENT_ENV,preserve_bindings,os))return;
 #if CETTA_PRIME_EVAL_STACK

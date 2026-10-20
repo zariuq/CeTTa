@@ -45,6 +45,7 @@
 ; Values are forced with let before they are compared, deconstructed or
 ; passed on: an atom builtin in argument position reaches its callee as
 ; syntax, not as its value.
+(: pf:member (-> Atom (Data Atom) Bool))
 (= (pf:member $x $list)
    (if (== $list ()) False
        (let $h (car-atom $list)
