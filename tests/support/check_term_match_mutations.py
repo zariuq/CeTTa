@@ -59,8 +59,8 @@ mutants['lost-protection'] = prefix + replace_once(kernel,
     'term_match_subject_vars(pairs, pair_count, mode, &subject_vars)',
     'term_match_subject_vars(pairs, 0u, mode, &subject_vars)')
 mutants['noninjective-renaming'] = prefix + replace_once(kernel,
-    'if (previous && previous->var_id != a.leaf->var_id)',
-    'if (false && previous && previous->var_id != a.leaf->var_id)')
+    'if (previous && !var_id_eq(previous->var_id, a.leaf->var_id))',
+    'if (false && previous && !var_id_eq(previous->var_id, a.leaf->var_id))')
 mutants['partial-publication'] = prefix + replace_once(kernel,
     'CettaTermMatchStatus result = CETTA_TERM_MATCH_NO_MEMORY;\n',
     'out->images.count = 0u;\n    CettaTermMatchStatus result = CETTA_TERM_MATCH_NO_MEMORY;\n')

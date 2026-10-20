@@ -176,7 +176,7 @@ static void test_failed_retain_is_not_cached(void) {
           "failed retain is not cached membership");
 
     /* Zero is the ambient inventory: it owns nothing and is not a record. */
-    check(arena_retain_frame_identity(&a, 0u), "zero identity is a no-op");
+    check(arena_retain_frame_identity(&a, (CettaFrameIdentity){0u}), "zero identity is a no-op");
     check_u32(arena_frame_identity_count_test(&a), 0u,
               "zero identity creates no record");
 
@@ -378,7 +378,7 @@ static void test_variable_atoms_share_one_record(void) {
     Arena a;
     arena_init(&a);
     CettaFrameIdentity identity = fresh();
-    VarId id = var_epoch_id((VarId)7u, identity);
+    VarId id = var_epoch_id(var_id_from_base(7u), identity);
 
     for (int i = 0; i < 256; i++) {
         Atom *var = atom_var_with_spelling(&a, SYMBOL_ID_NONE, id);

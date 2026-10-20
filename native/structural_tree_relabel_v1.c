@@ -161,7 +161,7 @@ static int source_variable_index(const Atom *pattern, VarId variable) {
     for (index = 1u; index < pattern->expr.len; index++) {
         const Atom *child = pattern->expr.elems[index];
         if (child && child->kind == ATOM_VAR &&
-            child->var_id == variable)
+            var_id_eq(child->var_id, variable))
             return (int)(index - 1u);
     }
     return -1;
@@ -284,8 +284,7 @@ static bool append_rule(
                     rule_name ? rule_name : "tree relabel rule");
             }
             for (right = 1u; right < left; right++) {
-                if (source_pattern->expr.elems[right]->var_id ==
-                    variable->var_id) {
+                if (var_id_eq(source_pattern->expr.elems[right]->var_id, variable->var_id)) {
                     if (status)
                         *status = CETTA_TREE_RELABEL_V1_UNSUPPORTED_RULE;
                     return tree_relabel_error(

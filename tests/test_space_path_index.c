@@ -23,7 +23,7 @@ static bool direct_match(Space *space, Arena *arena, Atom *pattern,
     Bindings bindings;
     bindings_init(&bindings);
     bool matches = match_atoms_atom_id_epoch(pattern, space->native.universe,
-        space_get_atom_id_at64(space, position), &bindings, arena, 77u);
+        space_get_atom_id_at64(space, position), &bindings, arena, (CettaFrameIdentity){77u});
     bindings_free(&bindings);
     return matches;
 }
@@ -38,7 +38,7 @@ static void compare_query_reference(Space *space, Arena *arena, Atom *pattern) {
         Bindings reference;
         bindings_init(&reference);
         bool expected = match_atoms_atom_id_epoch(pattern, space->native.universe,
-            space_get_atom_id_at64(space, position), &reference, arena, 77u);
+            space_get_atom_id_at64(space, position), &reference, arena, (CettaFrameIdentity){77u});
         if (expected) {
             Bindings actual;
             bool found = false;

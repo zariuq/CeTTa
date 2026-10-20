@@ -14,6 +14,7 @@
 #if CETTA_BUILD_WITH_GMP
 #include <gmp.h>
 #endif
+#include "exact_integer.h"
 #include <inttypes.h>
 #include <string.h>
 #include <math.h>
@@ -279,9 +280,13 @@ static bool petta_repra_render(
             break;
         case ATOM_VAR: {
             char variable[64];
-            int length = snprintf(
-                variable, sizeof(variable), "_V%" PRIu64,
-                (uint64_t)atom->var_id);
+            int length = cetta_frame_identity_is_none(
+                             var_epoch_suffix(atom->var_id))
+                ? snprintf(variable, sizeof(variable), "_V%" PRIu64,
+                           atom->var_id.base)
+                : snprintf(variable, sizeof(variable),
+                           "_V%" PRIu64 "_%" PRIu64, atom->var_id.base,
+                           atom->var_id.epoch.word);
             if (length <= 0 || (size_t)length >= sizeof(variable)) {
                 ok = false;
                 break;
@@ -472,7 +477,7 @@ static void fold_var_map_free(FoldVarMap *map) {
 
 static Atom *fold_var_map_lookup(FoldVarMap *map, VarId var_id) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].var_id == var_id)
+        if (var_id_eq(map->items[i].var_id, var_id))
             return map->items[i].mapped;
     }
     return NULL;
@@ -510,9 +515,9 @@ static Atom *foldl_bind_step_atom_impl(Arena *a, Atom *atom,
         return atom;
     switch (atom->kind) {
     case ATOM_VAR:
-        if (acc_var && atom->var_id == acc_var->var_id)
+        if (acc_var && var_id_eq(atom->var_id, acc_var->var_id))
             return acc_val;
-        if (item_var && atom->var_id == item_var->var_id)
+        if (item_var && var_id_eq(atom->var_id, item_var->var_id))
             return item_val;
         {
             Atom *mapped = fold_var_map_lookup(fresh_vars, atom->var_id);
@@ -1166,6 +1171,30 @@ static bool grounded_current_language_is_petta(void) {
            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
 }
 
+/* The exact-integer operation an integer spelling names in this dialect.
+ * `%` floors where division floors and truncates elsewhere; `/` is the
+ * truncating quotient in he-compat.  Elsewhere `/` names no integer
+ * operation: an inexact division answers a rational or a float. */
+static bool grounded_integer_operation(SymbolId head_id, bool rust_compat,
+                                       CettaExactIntegerV1Operation *out) {
+    if (head_id == g_builtin_syms.op_plus)
+        *out = CETTA_EXACT_INTEGER_V1_ADD;
+    else if (head_id == g_builtin_syms.op_minus)
+        *out = CETTA_EXACT_INTEGER_V1_SUB;
+    else if (head_id == g_builtin_syms.op_mul)
+        *out = CETTA_EXACT_INTEGER_V1_MUL;
+    else if (head_id == g_builtin_syms.op_floor_div)
+        *out = CETTA_EXACT_INTEGER_V1_FQUOT;
+    else if (head_id == g_builtin_syms.op_mod)
+        *out = grounded_mod_uses_floor_division()
+            ? CETTA_EXACT_INTEGER_V1_FREM : CETTA_EXACT_INTEGER_V1_TREM;
+    else if (head_id == g_builtin_syms.op_div && rust_compat)
+        *out = CETTA_EXACT_INTEGER_V1_TQUOT;
+    else
+        return false;
+    return true;
+}
+
 #if CETTA_BUILD_WITH_GMP
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                                      Atom **args, uint32_t nargs,
@@ -1253,44 +1282,21 @@ static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
     }
 
     Atom *result = NULL;
-    if (head_id == g_builtin_syms.op_plus) {
-        mpz_add(ri, ai.value, bi.value);
-        result = atom_bigint_take_mpz(a, ri);
-    } else if (head_id == g_builtin_syms.op_minus) {
-        mpz_sub(ri, ai.value, bi.value);
-        result = atom_bigint_take_mpz(a, ri);
-    } else if (head_id == g_builtin_syms.op_mul) {
-        mpz_mul(ri, ai.value, bi.value);
-        result = atom_bigint_take_mpz(a, ri);
+    CettaExactIntegerV1Operation operation;
+    if (grounded_integer_operation(head_id, rust_compat, &operation)) {
+        result = cetta_exact_integer_big(operation, ai.value, bi.value, ri)
+            ? atom_bigint_take_mpz(a, ri)
+            : grounded_division_by_zero(a, head, args, nargs);
     } else if (head_id == g_builtin_syms.op_div) {
         if (mpz_sgn(bi.value) == 0) {
             result = grounded_division_by_zero(a, head, args, nargs);
-        } else if (rust_compat) {
-            mpz_tdiv_q(ri, ai.value, bi.value);
-            result = atom_bigint_take_mpz(a, ri);
         } else if (mpz_divisible_p(ai.value, bi.value)) {
-            mpz_tdiv_q(ri, ai.value, bi.value);
+            (void)cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_TQUOT,
+                                          ai.value, bi.value, ri);
             result = atom_bigint_take_mpz(a, ri);
         } else {
             result = atom_float(
                 a, mpz_get_d(ai.value) / mpz_get_d(bi.value));
-        }
-    } else if (head_id == g_builtin_syms.op_floor_div) {
-        if (mpz_sgn(bi.value) == 0) {
-            result = grounded_division_by_zero(a, head, args, nargs);
-        } else {
-            mpz_fdiv_q(ri, ai.value, bi.value);
-            result = atom_bigint_take_mpz(a, ri);
-        }
-    } else if (head_id == g_builtin_syms.op_mod) {
-        if (mpz_sgn(bi.value) == 0) {
-            result = grounded_division_by_zero(a, head, args, nargs);
-        } else {
-            if (grounded_mod_uses_floor_division())
-                mpz_fdiv_r(ri, ai.value, bi.value);
-            else
-                mpz_tdiv_r(ri, ai.value, bi.value);
-            result = atom_bigint_take_mpz(a, ri);
         }
     } else {
         int cmp = mpz_cmp(ai.value, bi.value);
@@ -1437,23 +1443,6 @@ static bool numeric_arg_is_integral(const NumArg *arg) {
     if (!isfinite(arg->val)) return false;
     double whole = 0.0;
     return modf(arg->val, &whole) == 0.0;
-}
-
-static int64_t floor_div_i64(int64_t lhs, int64_t rhs) {
-    int64_t q = lhs / rhs;
-    int64_t r = lhs % rhs;
-    if (r != 0 && ((r > 0) != (rhs > 0)))
-        q -= 1;
-    return q;
-}
-
-static int64_t floor_mod_i64(int64_t lhs, int64_t rhs) {
-    if (lhs == INT64_MIN && rhs == -1)
-        return 0;
-    int64_t remainder = lhs % rhs;
-    if (remainder != 0 && ((remainder < 0) != (rhs < 0)))
-        remainder += rhs;
-    return remainder;
 }
 
 /* ── Number order ─────────────────────────────────────────────────────── */
@@ -2771,7 +2760,7 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
 
 
     char tmp_name[256];
-    snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%u", cetta_frame_identity_scope_fresh(&frame_identity_scope));
+    snprintf(tmp_name, sizeof(tmp_name), "$__foldl_step#%" PRIu64, cetta_frame_identity_scope_fresh(&frame_identity_scope).word);
     Atom *tmp = atom_var(a, tmp_name);
 
     Atom *metta_args[4] = {
@@ -4188,24 +4177,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         int64_t ai = na.ival;
         int64_t bi = nb.ival;
 
-        if (head_id == g_builtin_syms.op_plus) {
-            __int128 sum = (__int128)ai + (__int128)bi;
-            if (sum >= INT64_MIN && sum <= INT64_MAX)
-                return atom_int(a, (int64_t)sum);
-            return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                           prefer_rationals, rust_compat);
-        }
-        if (head_id == g_builtin_syms.op_minus) {
-            __int128 diff = (__int128)ai - (__int128)bi;
-            if (diff >= INT64_MIN && diff <= INT64_MAX)
-                return atom_int(a, (int64_t)diff);
-            return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                           prefer_rationals, rust_compat);
-        }
-        if (head_id == g_builtin_syms.op_mul) {
-            __int128 prod = (__int128)ai * (__int128)bi;
-            if (prod >= INT64_MIN && prod <= INT64_MAX)
-                return atom_int(a, (int64_t)prod);
+        CettaExactIntegerV1Operation operation;
+        if (grounded_integer_operation(head_id, rust_compat, &operation)) {
+            int64_t exact = 0;
+            switch (cetta_exact_integer_small(operation, ai, bi, &exact)) {
+            case CETTA_EXACT_INTEGER_VALUE:
+                return atom_int(a, exact);
+            case CETTA_EXACT_INTEGER_UNDEFINED:
+                return grounded_division_by_zero(a, head, args, nargs);
+            case CETTA_EXACT_INTEGER_PROMOTE:
+                break;
+            }
             return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
                                            prefer_rationals, rust_compat);
         }
@@ -4215,30 +4197,12 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             if (ai == INT64_MIN && bi == -1)
                 return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
                                                prefer_rationals, rust_compat);
-            if (rust_compat)
-                return atom_int(a, ai / bi);
             if (ai % bi == 0)
                 return atom_int(a, ai / bi);
             if (prefer_rationals || grounded_petta_prefers_rationals())
                 return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
                                                true, rust_compat);
             return atom_float(a, (double)ai / (double)bi);
-        }
-        if (head_id == g_builtin_syms.op_floor_div) {
-            if (bi == 0)
-                return grounded_division_by_zero(a, head, args, nargs);
-            if (ai == INT64_MIN && bi == -1)
-                return eval_integer_binary_gmp(a, head, head_id, args, nargs, &na, &nb,
-                                               prefer_rationals, rust_compat);
-            return atom_int(a, floor_div_i64(ai, bi));
-        }
-        if (head_id == g_builtin_syms.op_mod) {
-            if (bi == 0)
-                return grounded_division_by_zero(a, head, args, nargs);
-            if (grounded_mod_uses_floor_division())
-                return atom_int(a, floor_mod_i64(ai, bi));
-            return atom_int(a,
-                            ai == INT64_MIN && bi == -1 ? 0 : ai % bi);
         }
         if (head_id == g_builtin_syms.op_lt)  return ai < bi  ? atom_true(a) : atom_false(a);
         if (head_id == g_builtin_syms.op_gt)  return ai > bi  ? atom_true(a) : atom_false(a);

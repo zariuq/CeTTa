@@ -145,12 +145,12 @@ static void term_stability(Arena *a) {
     expect(!atom_grounded_is_term_stable(carrier),
            "a machine carrier tag is not a term");
     Atom copy = *tag;
-    copy.flags &= ~ATOM_FLAG_HASH_VALID;
-    expect(atom_hash(&copy) == tag->hash_cache,
+    copy.hash_cache = 0u;
+    expect(atom_hash(&copy) == atom_hash_cache_load(tag),
            "the list tag's precomputed hash is its computed hash");
     Atom rest_copy = *rest_tag;
-    rest_copy.flags &= ~ATOM_FLAG_HASH_VALID;
-    expect(atom_hash(&rest_copy) == rest_tag->hash_cache,
+    rest_copy.hash_cache = 0u;
+    expect(atom_hash(&rest_copy) == atom_hash_cache_load(rest_tag),
            "the rest tag's precomputed hash is its computed hash");
     Atom *ab = list_of(a, 2, sym(a, "a"), sym(a, "b"));
     expect((ab->flags & ATOM_FLAG_HASH_STABLE) != 0u &&
@@ -300,13 +300,13 @@ static void matching(Arena *a) {
     bindings_init(&eb);
     Atom *rule = expr_of(a, 2, sym(a, "len"), rest_of(a, 1, t, h));
     expect(match_atoms_epoch(expr_of(a, 2, sym(a, "len"), list_of(a, 3, x, y, z)),
-                             rule, &eb, a, 29u) &&
-               atom_eq(bindings_apply_epoch(&eb, a, t, 29u), list_of(a, 2, y, z)),
+                             rule, &eb, a, (CettaFrameIdentity){29u}) &&
+               atom_eq(bindings_apply_epoch(&eb, a, t, (CettaFrameIdentity){29u}), list_of(a, 2, y, z)),
            "equation dispatch binds a head's list rest");
     bindings_free(&eb);
     bindings_init(&eb);
     expect(!match_atoms_epoch(expr_of(a, 2, sym(a, "len"), expr_of(a, 2, x, y)),
-                              rule, &eb, a, 31u),
+                              rule, &eb, a, (CettaFrameIdentity){31u}),
            "a head's list pattern does not match an expression argument");
     bindings_free(&eb);
 
@@ -315,7 +315,7 @@ static void matching(Arena *a) {
     bindings_builder_init(&rb, NULL);
     expect(match_atoms_epoch_builder_rule_local(
                expr_of(a, 2, sym(a, "len"), list_of(a, 3, x, y, z)), rule, &rb, a,
-               37u),
+               (CettaFrameIdentity){37u}),
            "a rule-local activation binds a head's list rest");
     bindings_builder_free(&rb);
 }
@@ -387,13 +387,13 @@ static void term_store(Arena *a) {
     Atom *query = expr_of(a, 2, sym(a, "len"),
                           list_of(a, 3, sym(a, "a"), sym(a, "b"), sym(a, "c")));
     expect(head_id != CETTA_ATOM_ID_NONE &&
-               match_atoms_atom_id_epoch(query, &universe, head_id, &b, a, 41u),
+               match_atoms_atom_id_epoch(query, &universe, head_id, &b, a, (CettaFrameIdentity){41u}),
            "a stored list pattern matches a list query by id");
     bindings_free(&b);
     bindings_init(&b);
     expect(!match_atoms_atom_id_epoch(
                expr_of(a, 2, sym(a, "len"), list_of(a, 0)), &universe, head_id,
-               &b, a, 43u),
+               &b, a, (CettaFrameIdentity){43u}),
            "a stored list pattern does not match []");
     bindings_free(&b);
     term_universe_free(&universe);

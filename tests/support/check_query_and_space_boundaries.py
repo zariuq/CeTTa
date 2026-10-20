@@ -21,7 +21,7 @@ for profile in ("he", "he-compat", "extended"):
         checks.append(("tests/test_match_bound_query.metta",
                        ["--lang", "he", "--profile", profile], route))
 for reference in ("0", "1"):
-    for args in (["--lang", "petta@1.0.6"], ["--lang", "petta@1.1"],
+    for args in (["--lang", "petta"], ["--lang", "petta@1.1"],
                  ["--lang", "petta", "--profile", "extended"]):
         checks.append(("tests/petta/named_space_first_mutation.metta", args,
                        {"CETTA_OPEN_EQUATIONS_REFERENCE": reference}))

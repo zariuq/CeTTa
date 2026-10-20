@@ -1044,7 +1044,7 @@ static bool oem_reject(OemCompile *compile, const char *reason) {
 
 static bool oem_slot_of(OemCompile *compile, VarId id, uint32_t *slot_out) {
     for (uint32_t index = 0u; index < compile->var_len; index++) {
-        if (compile->vars[index] == id) {
+        if (var_id_eq(compile->vars[index], id)) {
             *slot_out = index;
             return true;
         }
@@ -1060,7 +1060,7 @@ static bool oem_register_vars(OemCompile *compile, Atom *atom,
         return oem_reject(compile, "equation too deep");
     if (atom->kind == ATOM_VAR) {
         for (uint32_t index = 0u; index < compile->var_len; index++) {
-            if (compile->vars[index] == atom->var_id)
+            if (var_id_eq(compile->vars[index], atom->var_id))
                 return true;
         }
         if (compile->var_len >= OEM_MAX_EQUATION_SLOTS ||
@@ -2055,7 +2055,7 @@ static uint64_t oem_var_occurrences(const Atom *atom, VarId id,
     if (!atom || depth > OEM_MAX_DEPTH)
         return UINT64_MAX / 4u;
     if (atom->kind == ATOM_VAR)
-        return atom->var_id == id ? 1u : 0u;
+        return var_id_eq(atom->var_id, id) ? 1u : 0u;
     if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
         return 0u;
     uint64_t total = 0u;
@@ -2089,7 +2089,7 @@ static bool oem_count_only_binder(OemCompile *compile, Atom *binder,
                                   bool may_count) {
     if (!compile->host || !compile->host->count_fusion || !may_count ||
         !binder || binder->kind != ATOM_VAR ||
-        binder->var_id == VAR_ID_NONE ||
+        var_id_is_none(binder->var_id) ||
         cetta_observation_atom_contains_var(producer, binder->var_id))
         return false;
     uint64_t uses = 0u;
@@ -2297,7 +2297,7 @@ static bool oem_shared_vars(OemCompile *compile, Atom *body, Atom ***out,
         if (atom->kind == ATOM_VAR) {
             bool seen = false;
             for (uint32_t index = 0u; !seen && index < len; index++)
-                seen = vars[index]->var_id == atom->var_id;
+                seen = var_id_eq(vars[index]->var_id, atom->var_id);
             if (seen)
                 continue;
             uint64_t inside = oem_var_occurrences(body, atom->var_id, 0u);
@@ -5797,9 +5797,10 @@ typedef enum {
 static inline bool oem_is_cell(const CettaOpenEquationCursor *cursor,
                                const Atom *atom, uint32_t *index_out) {
     if (atom->kind != ATOM_VAR ||
-        var_epoch_suffix(atom->var_id) != cursor->epoch)
+        !cetta_frame_identity_eq(var_epoch_suffix(atom->var_id), cursor->epoch))
         return false;
-    *index_out = var_base_id(atom->var_id) - 1u;
+    /* Cells are the cursor's own variables, numbered from one. */
+    *index_out = (uint32_t)(var_base_id(atom->var_id) - 1u);
     return true;
 }
 
@@ -5849,7 +5850,7 @@ static Atom *oem_new_cell(CettaOpenEquationCursor *cursor) {
             return NULL;
         Atom *var = atom_var_with_spelling(
             &cursor->names, cursor->program->spelling,
-            var_epoch_id((VarId)index + 1u, cursor->epoch));
+            var_epoch_id(var_id_from_base((uint64_t)index + 1u), cursor->epoch));
         if (!var)
             return NULL;
         cursor->cell_names[cursor->cell_name_len++] = var;
@@ -6183,11 +6184,11 @@ static bool oem_occurs(CettaOpenEquationCursor *cursor, uint32_t index,
         if (!atom_has_vars(atom))
             return false;
         VarId support = atom_single_variable_id(atom);
-        if (support == VAR_ID_NONE)
+        if (var_id_is_none(support))
             break;
-        if (var_epoch_suffix(support) != cursor->epoch)
+        if (!cetta_frame_identity_eq(var_epoch_suffix(support), cursor->epoch))
             return false;
-        uint32_t other = var_base_id(support) - 1u;
+        uint32_t other = (uint32_t)(var_base_id(support) - 1u);
         Atom *value = cursor->cells[other];
         if (!value)
             return other == index;
@@ -6243,10 +6244,10 @@ static OemUnify oem_unify(CettaOpenEquationCursor *cursor, Atom *left,
         if (pair.right_offset) {
             if (b->kind != ATOM_EXPR || pair.right_offset > b->expr.len)
                 return OEM_UNIFY_ERROR;
-            right_view = *b;
+            atom_header_copy(&right_view, b);
             right_view.expr.elems += pair.right_offset;
             right_view.expr.len -= pair.right_offset;
-            right_view.flags &= ~ATOM_FLAG_HASH_VALID;
+            right_view.hash_cache = 0u;
             /* The parent's summaries need not describe its suffix. Keep
              * them unknown until a retained header computes exact facts. */
             right_view.structural_facts = 0u;
@@ -13735,7 +13736,7 @@ static Atom *oem_fresh_var(CettaOpenEquationCursor *cursor, VarId id) {
     uint32_t len = cursor->fresh_var_len;
     if (len <= CETTA_VAR_INDEX_SCAN) {
         for (uint32_t index = 0u; index < len; index++) {
-            if (cursor->fresh_vars[index].id == id)
+            if (var_id_eq(cursor->fresh_vars[index].id, id))
                 return cursor->fresh_vars[index].cell;
         }
     } else {
@@ -13743,7 +13744,7 @@ static Atom *oem_fresh_var(CettaOpenEquationCursor *cursor, VarId id) {
          * entries left by an earlier copy are never confirmed. */
         uint32_t position =
             cetta_var_index_propose(&cursor->fresh_index, id);
-        if (position < len && cursor->fresh_vars[position].id == id)
+        if (position < len && var_id_eq(cursor->fresh_vars[position].id, id))
             return cursor->fresh_vars[position].cell;
     }
     Atom *cell = oem_new_cell(cursor);
@@ -13939,7 +13940,7 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     /* A cursor that cannot open is not opened, and its caller evaluates
      * the call the reference way: the refusal loses nothing. */
     if (!cetta_frame_identity_acquire_quiet(&cursor->epoch)) {
-        cursor->epoch = 0u;
+        cursor->epoch = CETTA_FRAME_IDENTITY_NONE;
         cetta_open_equation_cursor_close(cursor);
         return NULL;
     }
@@ -15476,7 +15477,7 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
         arena_free(&cursor->scratch);
     free(cursor->cell_names);
     petta_contract_memo_free(cursor->contract_memo);
-    if (cursor->epoch)
+    if (!cetta_frame_identity_is_none(cursor->epoch))
         cetta_frame_identity_release(cursor->epoch);
     free(cursor->cells);
     free(cursor->trail);

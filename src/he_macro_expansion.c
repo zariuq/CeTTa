@@ -112,7 +112,7 @@ HeMacroExpandResult he_macro_expand(Space *space, Arena *arena, Atom *call,
 static bool he_minimal_fold_has_var_id(
     const Atom *atom, VarId id, uint32_t depth) {
     if (atom->kind == ATOM_VAR)
-        return atom->var_id == id;
+        return var_id_eq(atom->var_id, id);
     if (atom->kind != ATOM_EXPR || depth > HE_MINIMAL_FOLD_MAX_DEPTH)
         return atom->kind == ATOM_EXPR;
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
@@ -145,7 +145,7 @@ static HeMinimalFold he_minimal_fold_match(
     bool left_meta = he_minimal_fold_is_metavariable(folder, left);
     bool right_meta = he_minimal_fold_is_metavariable(folder, right);
     if (left_meta || right_meta) {
-        if (left_meta && right_meta && left->var_id == right->var_id)
+        if (left_meta && right_meta && var_id_eq(left->var_id, right->var_id))
             return HE_MINIMAL_FOLD_STATIC;
         Atom *var = left_meta ? left : right;
         Atom *value = left_meta ? right : left;
@@ -156,7 +156,7 @@ static HeMinimalFold he_minimal_fold_match(
     }
     if (left->kind == ATOM_VAR || right->kind == ATOM_VAR)
         return left->kind == ATOM_VAR && right->kind == ATOM_VAR &&
-                left->var_id == right->var_id
+                var_id_eq(left->var_id, right->var_id)
             ? HE_MINIMAL_FOLD_STATIC : HE_MINIMAL_FOLD_DYNAMIC;
     /* HE queries a space a pattern meets; a run decides what it holds. */
     if (left->kind == ATOM_GROUNDED || right->kind == ATOM_GROUNDED) {
@@ -312,7 +312,7 @@ typedef struct {
 
 static bool he_macro_var_occurs(const Atom *atom, VarId id, uint32_t depth) {
     if (atom->kind == ATOM_VAR)
-        return atom->var_id == id;
+        return var_id_eq(atom->var_id, id);
     if (atom->kind != ATOM_EXPR || depth > HE_MINIMAL_FOLD_MAX_DEPTH)
         return false;
     for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
@@ -327,7 +327,7 @@ static bool he_macro_effect_metavariable(const void *context, VarId id) {
     for (CettaExprLen i = 0u; i < fold->arity; i++) {
         const Atom *parameter = fold->expansion->lhs->expr.elems[i + 1u];
         if (fold->expansion->arguments[i] == HE_MACRO_ARGUMENT_EVALUATED &&
-            parameter->var_id == id)
+            var_id_eq(parameter->var_id, id))
             return false;
     }
     return he_macro_var_occurs(fold->expansion->fresh, id, 0u);

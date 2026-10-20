@@ -41,7 +41,7 @@ static void expect(const Atom *left, const Atom *right, int expected) {
 static void expression_boundary_cases(Arena *arena) {
     const uint8_t embedded[] = {'[', ']', 0u, 'x'};
     Atom *leaves[] = {
-        atom_var_with_id(arena, "x", 7u), atom_int(arena, -1),
+        atom_var_with_id(arena, "x", var_id_from_base(7u)), atom_int(arena, -1),
         atom_float(arena, NAN), atom_string(arena, "[]"),
         atom_symbol(arena, "A"), atom_symbol(arena, "[]"),
         atom_symbol(arena, "z"), atom_bool(arena, false),
@@ -86,7 +86,7 @@ static void finite_cases(Arena *arena) {
         if (!i || kind < 2u)
             nodes[i] = atom_int(arena, (int)(next_random() % 17u) - 8);
         else if (kind == 2u)
-            nodes[i] = atom_var_with_id(arena, "x", next_random() % 17u + 1u);
+            nodes[i] = atom_var_with_id(arena, "x", var_id_from_base(next_random() % 17u + 1u));
         else if (kind == 3u)
             nodes[i] = atom_expr2(arena, nodes[next_random() % i], nodes[next_random() % i]);
         else {
@@ -119,9 +119,9 @@ static void finite_cases(Arena *arena) {
     expect(atom_float(arena, INFINITY), integer, 1);
     expect(atom_int(arena, INT64_C(9007199254740993)),
            atom_float(arena, 9007199254740992.0), 1);
-    Atom *x = atom_var_with_id(arena, "x", 20u);
-    Atom *same_x = atom_var_with_id(arena, "renamed", 20u);
-    Atom *other_x = atom_var_with_id(arena, "x", 21u);
+    Atom *x = atom_var_with_id(arena, "x", var_id_from_base(20u));
+    Atom *same_x = atom_var_with_id(arena, "renamed", var_id_from_base(20u));
+    Atom *other_x = atom_var_with_id(arena, "x", var_id_from_base(21u));
     expect(x, same_x, 0);
     expect(x, other_x, -1);
     expect(x, integer, -1);

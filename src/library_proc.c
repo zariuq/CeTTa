@@ -2,6 +2,7 @@
 #include "library_proc.h"
 #include "library.h"
 #include "eval.h"
+#include "proc_child.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -188,11 +189,13 @@ static void kill_owned(pid_t pid) {
 static void *execute(void *resource) {
     ProcJob *job = resource;
     int input[2] = {-1,-1}, output[2][2] = {{-1,-1},{-1,-1}};
+    int report[2] = {-1,-1};
     pid_t pid = -1;
     if (cancelled(job)) { job->cancelled = true; goto finish; }
     if (owned_pipe(input, O_CLOEXEC) || owned_pipe(output[0], O_CLOEXEC) || owned_pipe(output[1], O_CLOEXEC)) {
         job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
     }
+#if defined(__GLIBC__) && !defined(CETTA_PROC_FORK_SPAWN)
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attributes;
     int error = posix_spawn_file_actions_init(&actions);
@@ -219,6 +222,24 @@ static void *execute(void *resource) {
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     if (error) { job->launch_error = error; job->launch_stage = "spawn"; goto finish; }
+#else
+    /* musl has no closefrom spawn action. Reuse the owned fork/exec child
+     * setup instead of enumerating a concurrently changing parent FD table. */
+    if (owned_pipe(report, O_CLOEXEC | O_NONBLOCK)) {
+        job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
+    }
+    sigset_t blocked, previous;
+    sigfillset(&blocked);
+    int error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
+    if (error) { job->launch_error = error; job->launch_stage = "spawn-signals"; goto finish; }
+    pid = fork();
+    if (!pid) cetta_proc_child_exec(job->program, job->argv, job->env, job->cwd,
+        input[0], output[0][1], output[1][1], report[1]);
+    int fork_error = errno;
+    (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (pid < 0) { job->launch_error = fork_error; job->launch_stage = "fork"; goto finish; }
+    close(report[1]); report[1] = -1;
+#endif
     close(input[0]); input[0] = -1;
     for (int i = 0; i < 2; i++) { close(output[i][1]); output[i][1] = -1; }
     if (fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
@@ -268,9 +289,20 @@ static void *execute(void *resource) {
         job->waited = waited == pid;
         if (!job->waited && !job->host_error) job->host_error = errno;
     }
+    if (report[0] >= 0 && job->waited) {
+        /* Read only after reaping, never wait for EOF: another concurrent
+         * fork may have inherited a writer. The child's report is atomic. */
+        int stopped[2];
+        ssize_t count;
+        do count = read(report[0], stopped, sizeof stopped); while (count < 0 && errno == EINTR);
+        if (count == (ssize_t)sizeof stopped) {
+            job->launch_error = stopped[1]; job->launch_stage = "spawn";
+        } else if ((count < 0 && errno != EAGAIN) || count > 0) job->host_error = EIO;
+    }
     for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
 finish:
     for (int i = 0; i < 2; i++) {
+        if (report[i] >= 0) close(report[i]);
         if (input[i] >= 0) close(input[i]);
         for (int j = 0; j < 2; j++) if (output[i][j] >= 0) close(output[i][j]);
     }

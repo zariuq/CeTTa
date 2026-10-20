@@ -585,7 +585,7 @@ static const Atom *v3_source_environment_lookup(
     if (!environment || !variable || variable->kind != ATOM_VAR)
         return NULL;
     for (size_t index = environment->count; index > 0u; index--) {
-        if (environment->bindings[index - 1u].variable == variable->var_id)
+        if (var_id_eq(environment->bindings[index - 1u].variable, variable->var_id))
             return environment->bindings[index - 1u].type;
     }
     return NULL;
@@ -596,7 +596,7 @@ static const Atom *v3_source_environment_evidence(
     if (!environment || !variable || variable->kind != ATOM_VAR)
         return NULL;
     for (size_t index = environment->count; index > 0u; index--) {
-        if (environment->bindings[index - 1u].variable == variable->var_id)
+        if (var_id_eq(environment->bindings[index - 1u].variable, variable->var_id))
             return environment->bindings[index - 1u].evidence;
     }
     return NULL;
@@ -653,7 +653,7 @@ static V3UniqueDecision v3_manifest_boolean(
         return V3_UNIQUE_ONE;
     if (expression->kind == ATOM_VAR && environment) {
         for (size_t index = environment->count; index > 0u; index--)
-            if (environment->bindings[index - 1u].variable == expression->var_id)
+            if (var_id_eq(environment->bindings[index - 1u].variable, expression->var_id))
                 return environment->bindings[index - 1u].boolean_bound
                     ? V3_UNIQUE_ONE : V3_UNIQUE_NONE;
         return V3_UNIQUE_NONE;
@@ -845,7 +845,7 @@ static V3PatternAdmission v3_bind_source_variable(
     V3PatternAdmission admission = {0};
     for (size_t index = environment->count; index > 0u; index--) {
         V3SourceBinding *binding = &environment->bindings[index - 1u];
-        if (binding->variable != variable->var_id)
+        if (!var_id_eq(binding->variable, variable->var_id))
             continue;
         admission = v3_pattern_overlap(
             program, providers, arena, binding->type, expected,
@@ -1346,7 +1346,7 @@ static V3SourceCompilation v3_compile_identity_bindings(
                 size_t index = 0u;
                 bool found = false;
                 for (size_t prior = count; prior > 0u; prior--) {
-                    if (binders[prior - 1u]->var_id == value->var_id) {
+                    if (var_id_eq(binders[prior - 1u]->var_id, value->var_id)) {
                         index = count - prior;
                         found = true;
                         break;
@@ -1393,7 +1393,7 @@ static V3SourceCompilation v3_compile_identity_bindings(
     size_t body_index = 0u;
     bool body_found = false;
     for (size_t prior = count; prior > 0u; prior--) {
-        if (binders[prior - 1u]->var_id == body->var_id) {
+        if (var_id_eq(binders[prior - 1u]->var_id, body->var_id)) {
             body_index = count - prior;
             body_found = true;
             break;
@@ -2919,7 +2919,7 @@ static bool v3_decide_definition_internal_v1(
                 v3_head_is(domain, "V3Prim") && domain->expr.len == 2u &&
                 v3_symbol_is(domain->expr.elems[1], "V3Bool")) {
                 for (size_t binding = source_environment.count; binding > 0u; binding--)
-                    if (source_environment.bindings[binding - 1u].variable == pattern->var_id) {
+                    if (var_id_eq(source_environment.bindings[binding - 1u].variable, pattern->var_id)) {
                         source_environment.bindings[binding - 1u].boolean_bound = true;
                         break;
                     }

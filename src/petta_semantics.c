@@ -1675,7 +1675,7 @@ static bool petta_cons_cells_end_in_expression(Atom *cells) {
 
 static bool petta_semantics_match_cons_constraint_mode(
     Arena *arena, Atom *constraint, Atom *value,
-    BindingsBuilder *builder, bool authored_cons, uint32_t source_epoch) {
+    BindingsBuilder *builder, bool authored_cons, CettaFrameIdentity source_epoch) {
     if (!arena || !constraint || !value || !builder)
         return false;
     uint32_t entry_mark = bindings_builder_save(builder);
@@ -1685,7 +1685,8 @@ static bool petta_semantics_match_cons_constraint_mode(
     CettaTermGraphAssumptions assumed = {0};
     if (!petta_cons_match_pair_push(
             &pairs, &length, &capacity,
-            source_epoch ? binding_value_from_context(constraint, source_epoch)
+            !cetta_frame_identity_is_none(source_epoch)
+            ? binding_value_from_context(constraint, source_epoch)
                          : binding_value_from_atom(constraint),
             binding_value_from_atom(value))) {
         return false;
@@ -1737,10 +1738,10 @@ static bool petta_semantics_match_cons_constraint_mode(
                 bool fresh = false;
                 const void *left_key = term_graph_assumption_key(
                     &assumed, left,
-                    ((uint64_t)left_value.kind << 32) | left_value.epoch);
+                    binding_value_epoch(left_value).word);
                 const void *right_key = term_graph_assumption_key(
                     &assumed, right,
-                    ((uint64_t)right_value.kind << 32) | right_value.epoch);
+                    binding_value_epoch(right_value).word);
                 if (!left_key || !right_key ||
                     !term_graph_assume(&assumed, left_key, right_key,
                                        &fresh))
@@ -1846,28 +1847,12 @@ static bool petta_semantics_match_cons_constraint_mode(
         }
         if (!petta_cons_match_pair_push(
                 &pairs, &length, &capacity,
-                (BindingValue){
-                    .skeleton = left_tail,
-                    .epoch = left_value.epoch,
-                    .kind = left_value.kind,
-                },
-                (BindingValue){
-                    .skeleton = right_tail,
-                    .epoch = right_value.epoch,
-                    .kind = right_value.kind,
-                }) ||
+                binding_value_with_skeleton(left_value, left_tail),
+                binding_value_with_skeleton(right_value, right_tail)) ||
             !petta_cons_match_pair_push(
                 &pairs, &length, &capacity,
-                (BindingValue){
-                    .skeleton = left_head,
-                    .epoch = left_value.epoch,
-                    .kind = left_value.kind,
-                },
-                (BindingValue){
-                    .skeleton = right_head,
-                    .epoch = right_value.epoch,
-                    .kind = right_value.kind,
-                })) {
+                binding_value_with_skeleton(left_value, left_head),
+                binding_value_with_skeleton(right_value, right_head))) {
             goto fail;
         }
     }
@@ -1889,18 +1874,18 @@ bool petta_semantics_match_cons_constraint(
     Arena *arena, Atom *constraint, Atom *value,
     BindingsBuilder *builder) {
     return petta_semantics_match_cons_constraint_mode(
-        arena, constraint, value, builder, true, 0u);
+        arena, constraint, value, builder, true, CETTA_FRAME_IDENTITY_NONE);
 }
 
 bool petta_semantics_match_lowered_head(
     Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder) {
     return petta_semantics_match_cons_constraint_mode(
-        arena, head, value, builder, false, 0u);
+        arena, head, value, builder, false, CETTA_FRAME_IDENTITY_NONE);
 }
 
 bool petta_semantics_match_lowered_head_epoch(
     Arena *arena, Atom *head, Atom *value,
-    BindingsBuilder *builder, uint32_t epoch) {
+    BindingsBuilder *builder, CettaFrameIdentity epoch) {
     return petta_semantics_match_cons_constraint_mode(
         arena, head, value, builder, false, epoch);
 }
@@ -3437,7 +3422,7 @@ static bool petta_term_compare_leaf(
 
     switch (left_class) {
     case PETTA_TERM_VARIABLE:
-        *ordering = petta_compare_u64(left->var_id, right->var_id);
+        *ordering = var_id_cmp(left->var_id, right->var_id);
         return true;
     case PETTA_TERM_NUMBER:
         return petta_compare_numbers(left, right, ordering);
@@ -3665,7 +3650,7 @@ bool petta_semantics_term_compare(
             return true;
         }
         if (left->kind == ATOM_VAR) {
-            *ordering = petta_compare_u64(left->var_id, right->var_id);
+            *ordering = var_id_cmp(left->var_id, right->var_id);
             return true;
         }
         if (left->kind == ATOM_GROUNDED &&

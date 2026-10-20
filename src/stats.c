@@ -1089,6 +1089,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "bindings-frame-id-set-lookup",
     "bindings-frame-id-set-probe",
     "petta-identity-pressure-collection",
+    "exec-saturation-admitted",
+    "exec-saturation-round",
+    "exec-saturation-proposal",
 };
 
 static int64_t clamp_counter(uint64_t value) {

@@ -430,20 +430,20 @@ int main(void) {
     BindingsBuilder contextual_builder;
     Atom *context_source = atom_var(&result, "context-source");
     Atom *context_key = atom_var_with_id(&result, "context-source",
-        var_epoch_id(context_source->var_id, 421u));
+        var_epoch_id(context_source->var_id, (CettaFrameIdentity){421u}));
     Atom *context_term = atom_expr2(&result, atom_symbol(&result, "context-inert"),
                                    atom_var(&result, "context-hole"));
     VarId context_ids[] = {context_source->var_id};
     Atom *context_variables[] = {context_source};
     CHECK(bindings_builder_init(&contextual_builder, NULL) &&
           bindings_builder_register_contextual_frame(
-              &contextual_builder, context_ids, 1u, 421u) &&
+              &contextual_builder, context_ids, 1u, (CettaFrameIdentity){421u}) &&
           bindings_builder_add_var_fresh(&contextual_builder, context_key, context_term),
           "construct a materialized dense supplier");
     BindingsActivationView context_frame;
     bindings_activation_view_init(&context_frame);
     CHECK(bindings_activation_view_prepare(&context_frame, &contextual_builder,
-              context_ids, context_variables, 1u, 421u, 0u), "prepare the supplier frame");
+              context_ids, context_variables, 1u, (CettaFrameIdentity){421u}, 0u), "prepare the supplier frame");
     BindingsTermCursorContextV1 typed_context = {
         .bindings = &contextual_builder.current, .frame = &context_frame};
     CettaGsltTermCursorObserverV1 typed_observer = {
@@ -455,10 +455,10 @@ int main(void) {
           "materialized inert supplier establishes the initial forest fact");
     CHECK(bindings_rewrite_value_id(
               &contextual_builder.current, context_key->var_id,
-              binding_value_from_context(context_term, 422u)),
+              binding_value_from_context(context_term, (CettaFrameIdentity){422u})),
           "change the supplier slot's lexical interpretation");
     CHECK(bindings_activation_view_prepare(&context_frame, &contextual_builder,
-              context_ids, context_variables, 1u, 421u, 0u) &&
+              context_ids, context_variables, 1u, (CettaFrameIdentity){421u}, 0u) &&
           petta_specializer_query_view_execution_admission(
               &space, consumer, &typed_argument, 1u, typed_observer) ==
               PETTA_SPECIALIZER_RELATION_DEFER,

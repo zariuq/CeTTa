@@ -24,7 +24,7 @@ static bool bindings_frame_index_recycle_entry(
 static bool bindings_frame_index_initialize_entry(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *entry,
         const VarId *source_ids, uint32_t source_len,
-        uint32_t epoch, BindingsFrameSchema *prepared_schema);
+        CettaFrameIdentity epoch, BindingsFrameSchema *prepared_schema);
 
 static BindingsFrameIndex *bindings_frame_index_alloc(void);
 
@@ -36,7 +36,7 @@ static BindingsFrameIndex *bindings_frame_index_clone(
         const BindingsFrameIndex *source);
 
 static bool bindings_frame_index_write_slot(
-        Bindings *bindings, uint32_t epoch, uint32_t slot,
+        Bindings *bindings, CettaFrameIdentity epoch, uint32_t slot,
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out);
 
@@ -188,7 +188,7 @@ static void bindings_frame_table_relocate(BindingsFrameIndex *index) {
     memset(index->handle_table, 0,
         ((size_t)index->handle_table_mask + 1u) * sizeof(*index->handle_table));
     for (uint32_t i = 0u; i < index->len; i++) {
-        if (index->frames[i].epoch != 0u)
+        if (!cetta_frame_identity_is_none(index->frames[i].epoch))
             bindings_frame_table_insert(index, &index->frames[i]);
     }
 }
@@ -304,7 +304,7 @@ static bool bindings_frame_index_recycle_entry(
     if (entry->owns_identity)
         cetta_frame_identity_release(entry->epoch);
     entry->owns_identity = false;
-    entry->epoch = 0u;
+    entry->epoch = CETTA_FRAME_IDENTITY_NONE;
     entry->activation_write_boundary = 0u;
     entry->has_activation_write_boundary = false;
     entry->schema_complete = false;
@@ -316,8 +316,8 @@ static bool bindings_frame_index_recycle_entry(
 static bool bindings_frame_index_initialize_entry(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *entry,
         const VarId *source_ids, uint32_t source_len,
-        uint32_t epoch, BindingsFrameSchema *prepared_schema) {
-    if (!index || !entry || !source_ids || source_len == 0u || epoch == 0u)
+        CettaFrameIdentity epoch, BindingsFrameSchema *prepared_schema) {
+    if (!index || !entry || !source_ids || source_len == 0u || cetta_frame_identity_is_none(epoch))
         return false;
     BindingsFrameIndexEntry storage = {0};
     uint32_t spare = index->spare_len;
@@ -432,7 +432,7 @@ bool bindings_frame_index_grow_slots(Bindings *bindings,
     const BindingsFrameIndexEntry *known = bindings_frame_index_find_frame_const(
         bindings->frame_index, identity);
     if (!known || !known->schema->source_ids_contiguous ||
-        known->schema->source_first_id != 1u)
+        !var_id_eq(known->schema->source_first_id, var_id_from_base(1u)))
         return false;
     if (needed <= known->slot_len)
         return true;
@@ -478,15 +478,15 @@ static bool bindings_frame_index_contains_sources(
         const VarId *source_ids, uint32_t source_len) {
     if (!frame || (source_len > 0u && !source_ids))
         return false;
-    if (frame->schema->source_ids_contiguous && frame->schema->source_first_id == 1u)
-        return source_len == 0u || (source_ids[0] >= 1u &&
-            source_ids[source_len - 1u] <= frame->slot_len);
+    if (frame->schema->source_ids_contiguous && var_id_eq(frame->schema->source_first_id, var_id_from_base(1u)))
+        return source_len == 0u || (source_ids[0].base >= 1u &&
+            source_ids[source_len - 1u].base <= frame->slot_len);
     uint32_t frame_slot = 0u;
     uint32_t source_slot = 0u;
     while (frame_slot < frame->schema->len && source_slot < source_len) {
-        if (frame->schema->source_ids[frame_slot] < source_ids[source_slot]) {
+        if (frame->schema->source_ids[frame_slot].base < source_ids[source_slot].base) {
             frame_slot++;
-        } else if (frame->schema->source_ids[frame_slot] == source_ids[source_slot]) {
+        } else if (var_id_eq(frame->schema->source_ids[frame_slot], source_ids[source_slot])) {
             frame_slot++;
             source_slot++;
         } else {
@@ -549,13 +549,13 @@ bool bindings_frame_index_ensure_presentation_slot(
         VarId id, SymbolId spelling, Atom *name_key) {
     if (!bindings || !bindings->frame_index ||
         !bindings_frame_ref_is_valid(ref) ||
-        ref.identity != var_epoch_suffix(id)) {
+        !cetta_frame_identity_eq(ref.identity, var_epoch_suffix(id))) {
         return false;
     }
     BindingsFrameIndexEntry *frame = bindings_frame_index_find_ref(
         bindings->frame_index, ref);
     if (!frame || slot >= frame->slot_len ||
-        bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id)) {
+        !var_id_eq(bindings_frame_slot_source_id(frame, slot), var_source_id(id))) {
         return false;
     }
     if (slot >= frame->schema->len)
@@ -575,7 +575,7 @@ bool bindings_frame_index_ensure_presentation_slot(
         return false;
     frame = bindings_frame_index_find_ref(bindings->frame_index, ref);
     if (!frame || slot >= frame->slot_len ||
-        bindings_frame_slot_source_id(frame, slot) != (VarId)var_base_id(id))
+        !var_id_eq(bindings_frame_slot_source_id(frame, slot), var_source_id(id)))
         return false;
     BindingsFrameSchema *schema = bindings_frame_schema_clone(
         frame->schema);
@@ -724,7 +724,7 @@ bool bindings_frame_index_fill_slot(
 }
 
 static bool bindings_frame_index_write_slot(
-        Bindings *bindings, uint32_t epoch, uint32_t slot,
+        Bindings *bindings, CettaFrameIdentity epoch, uint32_t slot,
         BindingValue value, uint64_t *version_out,
         bool *authority_moved_out) {
     BindingsFrameIndexEntry *frame = bindings && bindings->frame_index
@@ -765,21 +765,21 @@ bool bindings_frame_index_mark_activation_boundary_ref(
 
 bool bindings_frame_index_register_kind(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch, bool schema_complete,
+        uint32_t source_len, CettaFrameIdentity epoch, bool schema_complete,
         BindingsFrameSchema *prepared_schema,
         BindingsFrameRef *ref_out,
         bool registration_change_proved) {
     if (ref_out)
         *ref_out = (BindingsFrameRef){0};
-    if (!bindings || epoch == 0u ||
+    if (!bindings || cetta_frame_identity_is_none(epoch) ||
         (source_len > 0u && !source_ids)) {
         return false;
     }
     if (!prepared_schema) {
         for (uint32_t i = 0u; i < source_len; i++) {
-            if (source_ids[i] == VAR_ID_NONE ||
-                var_epoch_suffix(source_ids[i]) != 0u ||
-                (i > 0u && source_ids[i - 1u] >= source_ids[i])) {
+            if (var_id_is_none(source_ids[i]) ||
+                !cetta_frame_identity_is_none(var_epoch_suffix(source_ids[i])) ||
+                (i > 0u && source_ids[i - 1u].base >= source_ids[i].base)) {
                 return false;
             }
         }
@@ -832,10 +832,10 @@ bool bindings_frame_index_register_kind(
         while (old_slot < existing->schema->len || new_slot < source_len) {
             if (new_slot >= source_len ||
                 (old_slot < existing->schema->len &&
-                 existing->schema->source_ids[old_slot] < source_ids[new_slot])) {
+                 existing->schema->source_ids[old_slot].base < source_ids[new_slot].base)) {
                 old_slot++;
             } else if (old_slot >= existing->schema->len ||
-                       source_ids[new_slot] < existing->schema->source_ids[old_slot]) {
+                       source_ids[new_slot].base < existing->schema->source_ids[old_slot].base) {
                 new_slot++;
             } else {
                 old_slot++;
@@ -870,11 +870,11 @@ bool bindings_frame_index_register_kind(
         while (old_slot < existing->schema->len || new_slot < source_len) {
             if (new_slot >= source_len ||
                 (old_slot < existing->schema->len &&
-                 existing->schema->source_ids[old_slot] < source_ids[new_slot])) {
+                 existing->schema->source_ids[old_slot].base < source_ids[new_slot].base)) {
                 merged_ids[merged_slot++] =
                     existing->schema->source_ids[old_slot++];
             } else if (old_slot >= existing->schema->len ||
-                       source_ids[new_slot] < existing->schema->source_ids[old_slot]) {
+                       source_ids[new_slot].base < existing->schema->source_ids[old_slot].base) {
                 merged_ids[merged_slot++] = source_ids[new_slot++];
             } else {
                 merged_ids[merged_slot++] = source_ids[new_slot];
@@ -894,12 +894,12 @@ bool bindings_frame_index_register_kind(
             VarId source_id = existing->schema->source_ids[slot];
             while (low < high) {
                 uint32_t middle = low + (high - low) / 2u;
-                if (merged_ids[middle] < source_id)
+                if (merged_ids[middle].base < source_id.base)
                     low = middle + 1u;
                 else
                     high = middle;
             }
-            assert(low < merged_len && merged_ids[low] == source_id);
+            assert(low < merged_len && var_id_eq(merged_ids[low], source_id));
             merged_values[low] = existing->values[slot];
             merged_versions[low] = existing->write_version[slot];
             merged_schema->spellings[low] =
@@ -985,7 +985,7 @@ bool bindings_frame_index_register_kind(
 
 bool bindings_frame_index_register(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch) {
+        uint32_t source_len, CettaFrameIdentity epoch) {
     return bindings_frame_index_register_kind(
         bindings, source_ids, source_len, epoch, false, NULL, NULL,
         false);
@@ -998,7 +998,7 @@ bool bindings_frame_index_register(
 static BindingsFrameSchema *bindings_frame_positional_schema(
         const BindingsFrameIndexEntry *frame) {
     if (!frame->schema->source_ids_contiguous ||
-        frame->schema->source_first_id != 1u ||
+        !var_id_eq(frame->schema->source_first_id, var_id_from_base(1u)) ||
         frame->slot_len <= frame->schema->len ||
         (size_t)frame->slot_len > SIZE_MAX / sizeof(VarId))
         return NULL;
@@ -1052,21 +1052,21 @@ bool bindings_frame_index_merge_schemas(
 
 bool bindings_register_contextual_frame(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch) {
+        uint32_t source_len, CettaFrameIdentity epoch) {
     return bindings_frame_index_register(
         bindings, source_ids, source_len, epoch);
 }
 
 bool bindings_register_complete_contextual_frame(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch) {
+        uint32_t source_len, CettaFrameIdentity epoch) {
     return bindings_frame_index_register_kind(
         bindings, source_ids, source_len, epoch, true, NULL, NULL,
         false);
 }
 
 bool bindings_register_complete_frame_schema(
-        Bindings *bindings, BindingsFrameSchema *schema, uint32_t epoch) {
+        Bindings *bindings, BindingsFrameSchema *schema, CettaFrameIdentity epoch) {
     return schema && bindings_frame_index_register_kind(
         bindings, schema->source_ids, schema->len, epoch, true, schema, NULL,
         false);
@@ -1074,20 +1074,20 @@ bool bindings_register_complete_frame_schema(
 
 bool bindings_builder_register_frame_kind(
         BindingsBuilder *builder, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch, bool schema_complete,
+        uint32_t source_len, CettaFrameIdentity epoch, bool schema_complete,
         BindingsFrameSchema *prepared_schema,
         BindingsFrameRef *ref_out) {
     if (ref_out)
         *ref_out = (BindingsFrameRef){0};
-    if (!builder || epoch == 0u ||
+    if (!builder || cetta_frame_identity_is_none(epoch) ||
         (source_len > 0u && !source_ids)) {
         return false;
     }
     if (!prepared_schema) {
         for (uint32_t i = 0u; i < source_len; i++) {
-            if (source_ids[i] == VAR_ID_NONE ||
-                var_epoch_suffix(source_ids[i]) != 0u ||
-                (i > 0u && source_ids[i - 1u] >= source_ids[i])) {
+            if (var_id_is_none(source_ids[i]) ||
+                !cetta_frame_identity_is_none(var_epoch_suffix(source_ids[i])) ||
+                (i > 0u && source_ids[i - 1u].base >= source_ids[i].base)) {
                 return false;
             }
         }
@@ -1173,28 +1173,28 @@ bool bindings_builder_register_frame_kind(
 
 bool bindings_builder_register_frame(
         BindingsBuilder *builder, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch) {
+        uint32_t source_len, CettaFrameIdentity epoch) {
     return bindings_builder_register_frame_kind(
         builder, source_ids, source_len, epoch, false, NULL, NULL);
 }
 
 bool bindings_builder_register_frame_schema(
         BindingsBuilder *builder, BindingsFrameSchema *schema,
-        uint32_t epoch) {
+        CettaFrameIdentity epoch) {
     return schema && bindings_builder_register_frame_kind(
         builder, schema->source_ids, schema->len, epoch, false, schema, NULL);
 }
 
 bool bindings_builder_register_complete_frame_schema(
         BindingsBuilder *builder, BindingsFrameSchema *schema,
-        uint32_t epoch) {
+        CettaFrameIdentity epoch) {
     return schema && bindings_builder_register_frame_kind(
         builder, schema->source_ids, schema->len, epoch, true, schema, NULL);
 }
 
 bool bindings_builder_register_complete_frame_schema_ref(
         BindingsBuilder *builder, BindingsFrameSchema *schema,
-        uint32_t epoch, BindingsFrameRef *ref_out) {
+        CettaFrameIdentity epoch, BindingsFrameRef *ref_out) {
     return schema && ref_out && bindings_builder_register_frame_kind(
         builder, schema->source_ids, schema->len, epoch, true, schema,
         ref_out);
@@ -1202,7 +1202,7 @@ bool bindings_builder_register_complete_frame_schema_ref(
 
 bool bindings_builder_register_contextual_frame(
         BindingsBuilder *builder, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch) {
+        uint32_t source_len, CettaFrameIdentity epoch) {
     return bindings_builder_register_frame(
         builder, source_ids, source_len, epoch);
 }
@@ -1214,19 +1214,19 @@ static bool bindings_builder_merge_frame_by_growth(
             builder->current.frame_index, frame->epoch);
     /* Only the fixed-inventory refusal is answered by growth. */
     if (!known || !known->schema->source_ids_contiguous ||
-        known->schema->source_first_id != 1u ||
+        !var_id_eq(known->schema->source_first_id, var_id_from_base(1u)) ||
         !(known->schema_complete ||
           known->slot_len > known->schema->len))
         return false;
     uint32_t needed = frame->schema->source_ids_contiguous &&
-                              frame->schema->source_first_id == 1u
+                              var_id_eq(frame->schema->source_first_id, var_id_from_base(1u))
                           ? frame->slot_len : 0u;
     for (uint32_t id = 0u; id < frame->schema->len; id++) {
         VarId source_id = frame->schema->source_ids[id];
-        if (source_id > UINT32_MAX)
+        if (source_id.base > UINT32_MAX)
             return false;
-        if ((uint32_t)source_id > needed)
-            needed = (uint32_t)source_id;
+        if ((uint32_t)source_id.base > needed)
+            needed = (uint32_t)source_id.base;
     }
     return bindings_frame_index_grow_slots(
         &builder->current, frame->epoch, needed);
@@ -1241,17 +1241,17 @@ static bool bindings_frame_merge_slot_extent(
         const BindingsFrameIndexEntry *frame, uint32_t *needed) {
     if (!known || known->slot_len <= known->schema->len ||
         !known->schema->source_ids_contiguous ||
-        known->schema->source_first_id != 1u)
+        !var_id_eq(known->schema->source_first_id, var_id_from_base(1u)))
         return false;
     uint32_t extent = frame->schema->source_ids_contiguous &&
-            frame->schema->source_first_id == 1u
+            var_id_eq(frame->schema->source_first_id, var_id_from_base(1u))
         ? frame->slot_len : 0u;
     for (uint32_t k = 0u; k < frame->schema->len; k++) {
         VarId id = frame->schema->source_ids[k];
-        if (id == VAR_ID_NONE || id > UINT32_MAX)
+        if (var_id_is_none(id) || id.base > UINT32_MAX)
             return false;
-        if ((uint32_t)id > extent)
-            extent = (uint32_t)id;
+        if ((uint32_t)id.base > extent)
+            extent = (uint32_t)id.base;
     }
     *needed = extent;
     return true;
@@ -1323,7 +1323,7 @@ static BindingsFrameSchema *bindings_manufacture_schema(SymbolId spelling) {
         atomic_load_explicit(&published, memory_order_acquire);
     if (schema)
         return schema->spellings[0] == spelling ? schema : NULL;
-    VarId first = 1u;
+    VarId first = var_id_from_base(1u);
     BindingsFrameSchema *fresh = bindings_frame_schema_new(&first, 1u);
     if (!fresh)
         return NULL;
@@ -1340,22 +1340,22 @@ static BindingsFrameSchema *bindings_manufacture_schema(SymbolId spelling) {
 
 Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
                                     CettaFrameIdentity identity) {
-    if (!builder || !arena || identity == 0u)
+    if (!builder || !arena || cetta_frame_identity_is_none(identity))
         return NULL;
     const BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame_const(
         builder->current.frame_index, identity);
     if (frame && (!frame->schema->source_ids_contiguous ||
-                  frame->schema->source_first_id != 1u))
+                  !var_id_eq(frame->schema->source_first_id, var_id_from_base(1u))))
         return NULL;
     uint32_t slot = 0u;
     if (!cetta_frame_identity_new_slot(identity, frame ? frame->slot_len : 0u, &slot))
         return NULL;
     Atom *variable = atom_var_with_literal(
-        arena, "__petta_machine", var_epoch_id(slot, identity));
+        arena, "__petta_machine", var_epoch_id(var_id_from_base(slot), identity));
     if (!variable)
         return NULL;
     if (!frame) {
-        VarId first = 1u;
+        VarId first = var_id_from_base(1u);
         BindingsFrameSchema *shared = bindings_manufacture_schema(
             variable->sym_id);
         BindingsFrameSchema *schema = shared;
@@ -1387,13 +1387,13 @@ Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
  */
 bool bindings_frame_index_ensure_id(
         Bindings *bindings, VarId id) {
-    if (!bindings || id == VAR_ID_NONE)
+    if (!bindings || var_id_is_none(id))
         return false;
-    uint32_t epoch = var_epoch_suffix(id);
-    if (epoch == 0u || bindings_frame_index_owns_id(bindings, id))
+    CettaFrameIdentity epoch = var_epoch_suffix(id);
+    if (cetta_frame_identity_is_none(epoch) || bindings_frame_index_owns_id(bindings, id))
         return true;
-    VarId source_id = (VarId)var_base_id(id);
-    if (bindings_frame_index_grow_slots(bindings, epoch, (uint32_t)source_id))
+    VarId source_id = var_source_id(id);
+    if (bindings_frame_index_grow_slots(bindings, epoch, (uint32_t)source_id.base))
         return true;
     return bindings_frame_index_register(
         bindings, &source_id, 1u, epoch);
@@ -1401,19 +1401,19 @@ bool bindings_frame_index_ensure_id(
 
 bool bindings_builder_frame_index_ensure_id(
         BindingsBuilder *builder, VarId id) {
-    if (!builder || id == VAR_ID_NONE)
+    if (!builder || var_id_is_none(id))
         return false;
-    uint32_t epoch = var_epoch_suffix(id);
-    if (epoch == 0u ||
+    CettaFrameIdentity epoch = var_epoch_suffix(id);
+    if (cetta_frame_identity_is_none(epoch) ||
         bindings_frame_index_owns_id(&builder->current, id)) {
         return true;
     }
-    VarId source_id = (VarId)var_base_id(id);
-    if (bindings_frame_index_grow_slots(&builder->current, epoch, (uint32_t)source_id))
+    VarId source_id = var_source_id(id);
+    if (bindings_frame_index_grow_slots(&builder->current, epoch, (uint32_t)source_id.base))
         return true;
     uint32_t extent = 0u;
     if (cetta_frame_identity_slot_count(epoch, &extent) &&
-        source_id <= extent) {
+        source_id.base <= extent) {
         BindingsFrameSchema *schema = bindings_frame_schema_dense(extent);
         if (!schema)
             return false;
@@ -1440,9 +1440,9 @@ bool bindings_builder_restore_frame_values(
             bindings_frame_index_find_ref_const(
                 bb->current.frame_index, ref);
         if (!current_frame || slot >= current_frame->slot_len ||
-            bindings_frame_slot_source_id(current_frame, slot) != undo->source_id) {
+            bindings_frame_slot_source_id(current_frame, slot).base != undo->source_id) {
             VarId id = var_epoch_id(
-                (VarId)undo->source_id, ref.identity);
+                var_id_from_base(undo->source_id), ref.identity);
             if (!bindings_frame_index_find_coordinate(
                     &bb->current, id, &current_frame, &slot)) {
                 return false;
@@ -1460,7 +1460,7 @@ bool bindings_builder_restore_frame_values(
         BindingsFrameIndexEntry *frame = bindings_frame_index_find_ref(
             bb->current.frame_index, ref);
         if (!frame || slot >= frame->slot_len ||
-            bindings_frame_slot_source_id(frame, slot) != undo->source_id ||
+            bindings_frame_slot_source_id(frame, slot).base != undo->source_id ||
             !bindings_frame_index_entry_detach(frame)) {
             return false;
         }
@@ -1513,7 +1513,7 @@ static bool bindings_builder_restore_frame_registration_count(
                 uint32_t current_slot = 0u;
                 VarId source_id = previous_slot < undo->previous_schema->len
                     ? undo->previous_schema->source_ids[previous_slot]
-                    : (VarId)previous_slot + 1u;
+                    : var_id_from_base((uint64_t)previous_slot + 1u);
                 if (!bindings_frame_index_find_slot(
                         frame, source_id,
                         &current_slot)) {
