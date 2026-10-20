@@ -7413,6 +7413,58 @@ bool space_admit_atom_from_source_arena(
     return space_admit_atom_impl(s, fallback, source_arena, atom);
 }
 
+bool space_admit_atoms_batch_from_source_arena(
+    Space *s, Arena *fallback, const Arena *source_arena,
+    Atom *const *atoms, CettaCount atom_count) {
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
+    s = space_mutation_target(s);
+    if (!s || (!atoms && atom_count != 0u) ||
+        atom_count > SIZE_MAX / sizeof(AtomId)) {
+        return false;
+    }
+    if (atom_count == 0u)
+        return true;
+
+    /* Engines without canonical ids retain the exact singular path.  The
+     * id-backed engines can prepare the whole occurrence block without
+     * publishing it, then use their existing bag-preserving batch store. */
+    if (!space_tracks_atom_ids(s)) {
+        for (CettaCount i = 0u; i < atom_count; i++) {
+            if (!space_admit_atom_impl(
+                    s, fallback, source_arena, atoms[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    SPACE_STORE_SCOPE();
+    AtomId *ids = cetta_malloc(sizeof(*ids) * (size_t)atom_count);
+    if (!ids)
+        return false;
+    bool ready = true;
+    for (CettaCount i = 0u; i < atom_count; i++) {
+        if (!atoms[i]) {
+            ready = false;
+            break;
+        }
+        ids[i] = source_arena
+            ? term_universe_store_atom_id_from_source_arena(
+                  s->native.universe, fallback, source_arena, atoms[i])
+            : term_universe_store_atom_id(
+                  s->native.universe, fallback, atoms[i]);
+        if (ids[i] == CETTA_ATOM_ID_NONE) {
+            ready = false;
+            break;
+        }
+    }
+    bool stored = ready && space_add_atom_ids_batch(s, ids, atom_count);
+    free(ids);
+    return stored;
+}
+
 Space *space_heap_clone_shallow(Space *src) {
     Space *clone;
     CettaCount logical_len = 0;

@@ -405,6 +405,13 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom);
+/* Store one already-evaluated occurrence sequence with one backend
+ * publication where the active engine supports it.  Source order and
+ * duplicate occurrences are authoritative; unsupported engines replay the
+ * same singular admissions in order. */
+bool space_admit_atoms_batch_from_source_arena(
+    Space *s, Arena *fallback, const Arena *source_arena,
+    Atom *const *atoms, CettaCount atom_count);
 TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);

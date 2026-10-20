@@ -61,6 +61,22 @@ static void real_double(const char *text, bool ok_expected, double expected) {
     }
 }
 
+static void real_nearest(const char *text, bool ok_expected, double expected) {
+    double value = -1.0;
+    bool ok = cetta_decimal_real_nearest_v1(text, &value);
+    bool same = isinf(expected)
+        ? isinf(value) && signbit(value) == signbit(expected)
+        : value == expected && signbit(value) == signbit(expected);
+    if (ok != ok_expected || (ok && !same)) {
+        fprintf(stderr, "nearest %s: got %s %.17g, expected %s %.17g\n",
+                text, ok ? "ok" : "none", value,
+                ok_expected ? "ok" : "none", expected);
+        failed++;
+    } else {
+        passed++;
+    }
+}
+
 int main(void) {
     rational("1/2", "1", "2");
     rational("2/4", "1", "2");
@@ -125,6 +141,12 @@ int main(void) {
     real_double("-1.8E308", false, 0.0);
     real_double("1.7976931348623157E308", true, 1.7976931348623157E308);
     real_double("1", false, 0.0);
+    real_nearest("1.25", true, 1.25);
+    real_nearest("1E400", true, INFINITY);
+    real_nearest("-1E400", true, -INFINITY);
+    real_nearest("1E-400", true, 0.0);
+    real_nearest("-1E-400", true, -0.0);
+    real_nearest("1", false, 0.0);
     {
         static const struct { double value; const char *text; } cases[] = {
             {1.02, "1.02"}, {0.1, "0.1"}, {0.30000000000000004, "0.30000000000000004"},

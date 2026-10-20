@@ -82,6 +82,16 @@ def main():
    (resource-test:roundtrip "thf(g,conjecture,?[Z:$o]:((^[X:$o]:X) @ Z)).")
    (resource-test:roundtrip "thf(g,conjecture,~((f @ x)!=x)).")
    (resource-test:roundtrip "fof(g,axiom,p,inference(copy,[status(thm)],[a,b])).")
+   (resource-test:roundtrip "fof(g,axiom,(p&q&r&s)).")
+   (resource-test:roundtrip "fof(g,axiom,(p|q|p|r)).")
+   (resource-test:roundtrip "thf(g,axiom,(p&q&r&s)).")
+   (resource-test:roundtrip "thf(g,axiom,(p|q|p|r)).")
+   (case (tptp:print-records ((thf g axiom (∧))))
+     (((Error $empty-operation $empty-reason) True) ($empty-other False)))
+   (case (tptp:print-records ((thf g axiom (∨ p))))
+     (((Error $unary-operation $unary-reason) True) ($unary-other False)))
+   (case (tptp:print-records ((thf g axiom (→ p q r))))
+     (((Error $implication-operation $implication-reason) True) ($implication-other False)))
    (resource-test:roundtrip "cnf(a,axiom,p|~q)."))
 """
     checks = 0
@@ -104,7 +114,7 @@ def main():
                                     capture_output=True, check=False)
             if result.returncode:
                 raise AssertionError((host, mode, result.stderr or result.stdout))
-            for label, count in (("ResourceChecks", 8), ("ProtocolChecks", 4), ("PrintChecks", 5)):
+            for label, count in (("ResourceChecks", 8), ("ProtocolChecks", 4), ("PrintChecks", 12)):
                 found = re.findall(r"\(" + label + r" ([^()]*)\)", result.stdout)
                 expected = ["true"] * count
                 if len(found) != 1 or found[0].lower().split() != expected:

@@ -1591,7 +1591,7 @@ static void reusable_runtime_gate(TestCounts *counts) {
     Atom *value = NULL;
     Atom *sentinel;
     char *actual = NULL;
-    Atom *legacy = NULL;
+    Atom *ordinary = NULL;
     CettaJsonValueV1Status value_status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
     uint8_t *json_bytes = NULL;
     size_t json_len = 0u;
@@ -1652,36 +1652,36 @@ static void reusable_runtime_gate(TestCounts *counts) {
     error[0] = '\0';
     (void)expect(
         counts,
-        cetta_json_value_v1_to_legacy(
-            &arena, value, 100000u, 1024u, &legacy,
+        cetta_json_value_v1_to_ordinary(
+            &arena, value, 100000u, 1024u, &ordinary,
             &value_status, error, sizeof(error)),
-        error[0] ? error : "project canonical JSON through legacy codec");
-    actual = legacy ? render(legacy) : NULL;
+        error[0] ? error : "project inspected JSON to ordinary data");
+    actual = ordinary ? render(ordinary) : NULL;
     (void)expect(
         counts,
         actual && strcmp(
             actual,
-            "(JsonObject ((JsonPair \"x\" (JsonNumber \"1\")) "
-            "(JsonPair \"x\" (JsonNumber \"2\"))))") == 0,
-        "legacy projection retains member order and duplicates");
+            "(JsonObject ((JsonPair \"x\" 1) "
+            "(JsonPair \"x\" 2)))") == 0,
+        "ordinary projection retains member order and duplicates");
     free(actual);
     actual = NULL;
     error[0] = '\0';
     (void)expect(
         counts,
         cetta_json_value_v1_stringify(
-            runtime, legacy, true, 2000000u, 1024u, 1024u,
+            runtime, ordinary, true, 2000000u, 1024u, 1024u,
             &json_bytes, &json_len, &value_status,
             error, sizeof(error)) && json_len == 13u &&
             memcmp(json_bytes, "{\"x\":1,\"x\":2}", 13u) == 0,
         error[0] ? error :
-            "legacy JSON stringification round-trips through grammar");
+            "ordinary JSON stringification round-trips through grammar");
     free(json_bytes);
     json_bytes = NULL;
 
     {
         Atom *bad_items[2] = {
-            atom_symbol(&arena, "JsonNumber"),
+            atom_symbol(&arena, "InvalidJsonScalarV1"),
             atom_string(&arena, "01"),
         };
         Atom *bad_number = atom_expr(&arena, bad_items, 2u);
@@ -1692,8 +1692,8 @@ static void reusable_runtime_gate(TestCounts *counts) {
                 runtime, bad_number, true, 100000u, 128u, 64u,
                 &json_bytes, &json_len, &value_status,
                 error, sizeof(error)) &&
-                value_status == CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
-            "legacy stringifier rejects number text outside authored grammar");
+                value_status == CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+            "ordinary stringifier rejects a non-JSON scalar term");
     }
 
     value = NULL;
@@ -1704,29 +1704,27 @@ static void reusable_runtime_gate(TestCounts *counts) {
             runtime, &arena, (const uint8_t *)"\"\\u0000\"", 8u,
             &limits, &value, &status, error, sizeof(error)),
         error[0] ? error : "parse canonical embedded-NUL string");
-    legacy = NULL;
+    ordinary = NULL;
     error[0] = '\0';
     (void)expect(
         counts,
-        cetta_json_value_v1_to_legacy(
-            &arena, value, 100000u, 128u, &legacy,
+        cetta_json_value_v1_to_ordinary(
+            &arena, value, 100000u, 128u, &ordinary,
             &value_status, error, sizeof(error)) &&
             value_status == CETTA_JSON_VALUE_V1_OK &&
-            legacy && legacy->kind == ATOM_EXPR && legacy->expr.len == 2u &&
-            atom_is_symbol(legacy->expr.elems[0], "JsonString") &&
-            legacy->expr.elems[1]->kind == ATOM_GROUNDED &&
-            legacy->expr.elems[1]->ground.gkind == GV_STRING &&
-            atom_string_len(legacy->expr.elems[1]) == 1u &&
-            legacy->expr.elems[1]->ground.sval[0] == '\0',
-        "legacy projection preserves U+0000 as one stored byte");
+            ordinary && ordinary->kind == ATOM_GROUNDED &&
+            ordinary->ground.gkind == GV_STRING &&
+            atom_string_len(ordinary) == 1u &&
+            ordinary->ground.sval[0] == '\0',
+        "ordinary projection preserves U+0000 as one stored byte");
     {
         Atom *roundtrip = NULL;
         (void)expect(
             counts,
-            cetta_json_value_v1_from_legacy(
-                &arena, legacy, 100000u, 128u, &roundtrip,
+            cetta_json_value_v1_from_ordinary(
+                &arena, ordinary, 100000u, 128u, &roundtrip,
                 &value_status, error, sizeof(error)) && atom_eq(roundtrip, value),
-            "legacy embedded-NUL string round-trips to its canonical value");
+            "ordinary embedded-NUL string round-trips to its inspection value");
     }
     error[0] = '\0';
     (void)expect(
@@ -1742,10 +1740,9 @@ static void reusable_runtime_gate(TestCounts *counts) {
 
     sentinel = atom_symbol(&arena, "stable-runtime-output");
     {
-        /* Both legacy text paths must validate bytes after an embedded NUL. */
+        /* Both ordinary text paths validate bytes after an embedded NUL. */
         static const char invalid_utf8[] = {'x', '\0', (char)0xff};
         Atom *text = atom_string_n(&arena, invalid_utf8, sizeof(invalid_utf8));
-        Atom *string_items[2] = {atom_symbol(&arena, "JsonString"), text};
         Atom *pair_items[3] = {
             atom_symbol(&arena, "JsonPair"), text,
             atom_symbol(&arena, "JsonNull"),
@@ -1755,7 +1752,7 @@ static void reusable_runtime_gate(TestCounts *counts) {
             atom_symbol(&arena, "JsonObject"), atom_expr(&arena, &pair, 1u),
         };
         Atom *inputs[2] = {
-            atom_expr(&arena, string_items, 2u),
+            text,
             atom_expr(&arena, object_items, 2u),
         };
         for (size_t i = 0; i < 2u; i++) {
@@ -1763,17 +1760,17 @@ static void reusable_runtime_gate(TestCounts *counts) {
             error[0] = '\0';
             (void)expect(
                 counts,
-                !cetta_json_value_v1_from_legacy(
+                !cetta_json_value_v1_from_ordinary(
                     &arena, inputs[i], 100000u, 128u, &converted,
                     &value_status, error, sizeof(error)) &&
                     value_status == CETTA_JSON_VALUE_V1_INVALID_UTF8 &&
                     converted == sentinel,
-                i == 0u ? "legacy string validates UTF-8 after NUL atomically"
-                        : "legacy key validates UTF-8 after NUL atomically");
+                i == 0u ? "ordinary string validates UTF-8 after NUL atomically"
+                        : "ordinary key validates UTF-8 after NUL atomically");
         }
         static const char invalid_number[] = {'1', '\0', 'j'};
         Atom *number_items[2] = {
-            atom_symbol(&arena, "JsonNumber"),
+            atom_symbol(&arena, "InvalidJsonScalarV1"),
             atom_string_n(&arena, invalid_number, sizeof(invalid_number)),
         };
         (void)expect(
@@ -1782,9 +1779,9 @@ static void reusable_runtime_gate(TestCounts *counts) {
                 runtime, atom_expr(&arena, number_items, 2u), true,
                 100000u, 128u, 64u, &json_bytes, &json_len, &value_status,
                 error, sizeof(error)) &&
-                value_status == CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT &&
+                value_status == CETTA_JSON_VALUE_V1_MALFORMED_VALUE &&
                 json_bytes == NULL,
-            "legacy number keeps NUL suffix for whole-lexeme validation");
+            "ordinary emission rejects a non-JSON scalar atomically");
     }
     value = sentinel;
     limits.kernel = (CettaJsonKernelV1)99;

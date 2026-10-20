@@ -513,6 +513,11 @@ struct CettaPreparedPureProgram {
     SpaceProgramToken source_program;
     SpaceEquationToken equation_projection;
     CettaPreparedPureBooleanValue boolean_value;
+    /* Immutable Boolean leaves copied into program-owned storage at compile
+     * time. Register and observation instructions reuse them instead of
+     * allocating the same scalar on every loop iteration. */
+    Atom boolean_atoms[2];
+    bool boolean_atoms_ready;
     CettaPreparedPureConstructValue construct_value;
     CettaPreparedPureConstructsExpression constructs_expression;
     CettaPreparedPureOpaqueValue opaque_value;
@@ -787,9 +792,14 @@ static bool prepared_pure_runtime_decline(
     const CettaPreparedPureProgram *program, const char *reason,
     const PreparedPureNode *node) {
     (void)program;
-    (void)node;
-    if (prepared_pure_debug_enabled())
+    if (prepared_pure_debug_enabled()) {
         fprintf(stderr, "prepared-pure runtime decline: %s\n", reason);
+        if (node && node->atom) {
+            fputs("prepared-pure declining operation: ", stderr);
+            atom_print(node->atom, stderr);
+            fputc('\n', stderr);
+        }
+    }
     return false;
 }
 
@@ -3096,6 +3106,41 @@ static Arena *prepared_pure_syntax_arena(CettaPreparedPureProgram *program) {
             arena_init_detached(program->syntax_arena);
     }
     return program->syntax_arena;
+}
+
+static bool prepared_pure_cache_boolean_atoms(
+    CettaPreparedPureProgram *program) {
+    if (!program || !program->boolean_value)
+        return false;
+    Arena temporary;
+    arena_init_detached(&temporary);
+    Atom *falsity = program->boolean_value(&temporary, false);
+    Atom *truth = program->boolean_value(&temporary, true);
+    bool supported = falsity && truth &&
+        ((falsity->kind == ATOM_SYMBOL && truth->kind == ATOM_SYMBOL) ||
+         (falsity->kind == ATOM_GROUNDED && truth->kind == ATOM_GROUNDED &&
+          falsity->ground.gkind == GV_BOOL &&
+          truth->ground.gkind == GV_BOOL));
+    if (supported) {
+        program->boolean_atoms[0] = *falsity;
+        program->boolean_atoms[1] = *truth;
+        /* Program storage, like a global leaf, outlives every execution
+         * arena. No child or byte payload is borrowed from `temporary`. */
+        program->boolean_atoms[0].arena_id = 0u;
+        program->boolean_atoms[1].arena_id = 0u;
+        program->boolean_atoms_ready = true;
+    }
+    arena_free(&temporary);
+    return true;
+}
+
+static Atom *prepared_pure_boolean_atom(
+    const CettaPreparedPureProgram *program, Arena *arena, bool value) {
+    if (!program || !program->boolean_value)
+        return NULL;
+    return program->boolean_atoms_ready
+        ? (Atom *)&program->boolean_atoms[value ? 1u : 0u]
+        : program->boolean_value(arena, value);
 }
 
 /* HE's unify matches its first two operands with each other; the machine
@@ -7318,7 +7363,8 @@ static Atom *prepared_pure_execute_register(
         if (atom_result_kind != expected_kind ||
             atom_result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
             return NULL;
-        return program->boolean_value(arena, atom_boolean_result);
+        return prepared_pure_boolean_atom(
+            program, arena, atom_boolean_result);
     }
     if (arguments[0] && arguments[1] &&
         arguments[0]->kind == ATOM_GROUNDED &&
@@ -7340,7 +7386,8 @@ static Atom *prepared_pure_execute_register(
             return atom_int(arena, integer_result);
         if (!promote &&
             actual_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
-            return program->boolean_value(arena, boolean_result);
+            return prepared_pure_boolean_atom(
+                program, arena, boolean_result);
     }
 #if CETTA_BUILD_WITH_GMP
     PreparedPureIntegerView left = {0};
@@ -7359,7 +7406,8 @@ static Atom *prepared_pure_execute_register(
     if (ok && actual_kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
         result = atom_bigint_take_mpz(arena, integer_result);
     else if (ok && actual_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
-        result = program->boolean_value(arena, boolean_result);
+        result = prepared_pure_boolean_atom(
+            program, arena, boolean_result);
     prepared_pure_integer_view_clear(&right);
     prepared_pure_integer_view_clear(&left);
     mpz_clear(integer_result);
@@ -7390,6 +7438,12 @@ static Atom *prepared_pure_execute_intrinsic(
             arena, head, (Atom **)arguments, arity);
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH:
+        return program->source_view.native_value
+            ? program->source_view.native_value(
+                  program->source_view.native_context,
+                  program->space, arena, head, arguments, arity)
+            : NULL;
     /* The structural intrinsics read an expression's children or a list's
      * elements, and build a result of the same kind; a list pattern is
      * declined to the canonical evaluator. */
@@ -7523,9 +7577,9 @@ static Atom *prepared_pure_execute_register_intrinsic(
         if (!program->boolean_value)
             return NULL;
         if (prepared_pure_is_true(result))
-            return program->boolean_value(arena, true);
+            return prepared_pure_boolean_atom(program, arena, true);
         if (prepared_pure_is_false(result))
-            return program->boolean_value(arena, false);
+            return prepared_pure_boolean_atom(program, arena, false);
         return NULL;
     }
     return result;
@@ -7869,7 +7923,8 @@ static Atom *prepared_pure_inline_value(
                 &scalar)) {
             *budget = scalar_budget;
             if (scalar.is_boolean)
-                return program->boolean_value(arena, scalar.boolean);
+                return prepared_pure_boolean_atom(
+                    program, arena, scalar.boolean);
             if (scalar.atom)
                 return scalar.atom;
             return scalar.is_integer ? atom_int(arena, scalar.integer) : NULL;
@@ -8555,6 +8610,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
+    (void)prepared_pure_cache_boolean_atoms(program);
     program->construct_value = construct_value;
     program->constructs_expression = constructs_expression;
     program->opaque_value = opaque_value;
@@ -10228,6 +10284,7 @@ prepared_pure_program_compile_closed_mode(
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
+    (void)prepared_pure_cache_boolean_atoms(program);
     program->construct_value = construct_value;
     program->constructs_expression = constructs_expression;
     program->opaque_value = opaque_value;
@@ -12201,7 +12258,8 @@ static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_register(
         prepared_pure_code_register_scalar(
             program, node, values[0], values[1], &scalar)) {
         if (scalar.is_boolean)
-            return program->boolean_value(arena, scalar.boolean);
+            return prepared_pure_boolean_atom(
+                program, arena, scalar.boolean);
         if (scalar.is_integer)
             return atom_int(arena, scalar.integer);
     }
@@ -12257,6 +12315,7 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
     Atom *returned = NULL;
     Atom *result = NULL;
     const char *decline = NULL;
+    const PreparedPureNode *decline_node = NULL;
     for (;;) {
         const PreparedPureCode *code = &program->code[frame->pc++];
         const uint32_t *operands =
@@ -12324,6 +12383,7 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
         case PREPARED_PURE_CODE_INTRINSIC:
         case PREPARED_PURE_CODE_OBSERVE: {
             const PreparedPureNode *node = &program->nodes[code->auxiliary];
+            decline_node = node;
             uint32_t count = code->operand_count;
             Atom **values = inline_operands;
             if (count > PREPARED_PURE_CODE_INLINE_OPERANDS) {
@@ -12371,12 +12431,14 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                     decline = "pattern test failed";
                     goto declined;
                 }
-                value = program->boolean_value(
+                value = prepared_pure_boolean_atom(
+                    program,
                     arena, tested == PREPARED_PURE_MATCH_MATCHED);
             } else if (node->auxiliary ==
                        PREPARED_PURE_OBSERVE_ATOM_EXPRESSION) {
                 value = count == 1u && values[0]
-                    ? program->boolean_value(
+                    ? prepared_pure_boolean_atom(
+                          program,
                           arena, values[0]->kind == ATOM_EXPR)
                     : NULL;
             } else {
@@ -12388,11 +12450,22 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 }
                 Atom *operand = count == 1u ? values[0] : node->atom;
                 value = operand
-                    ? program->boolean_value(
+                    ? prepared_pure_boolean_atom(
+                          program,
                           arena, petta_semantics_is_closed_list(operand))
                     : NULL;
             }
             if (!value) {
+                if (prepared_pure_debug_enabled() && node->atom) {
+                    fputs("prepared-pure declined operands for ", stderr);
+                    atom_print(node->atom, stderr);
+                    fputs(":", stderr);
+                    for (uint32_t i = 0u; i < count; i++) {
+                        fputc(' ', stderr);
+                        atom_print(values[i], stderr);
+                    }
+                    fputc('\n', stderr);
+                }
                 decline = "operation declined";
                 goto declined;
             }
@@ -12698,7 +12771,7 @@ finished:
     return true;
 declined:
     program->code_frame_len = 0u;
-    return prepared_pure_runtime_decline(program, decline, NULL);
+    return prepared_pure_runtime_decline(program, decline, decline_node);
 }
 
 /* Run the root of a program that answers once: its locals cleared, then
@@ -13386,7 +13459,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                     program, "invalid expression observation", node);
             Atom *operand = program->values[frame->value_base];
             Atom *result = operand
-                ? program->boolean_value(arena, operand->kind == ATOM_EXPR)
+                ? prepared_pure_boolean_atom(
+                      program, arena, operand->kind == ATOM_EXPR)
                 : NULL;
             program->value_len = frame->value_base;
             if (!result || !prepared_pure_push_value(program, result))
@@ -13413,8 +13487,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 tested != PREPARED_PURE_MATCH_MISMATCH)
                 return prepared_pure_runtime_decline(
                     program, "pattern test failed", node);
-            Atom *result = program->boolean_value(
-                arena, tested == PREPARED_PURE_MATCH_MATCHED);
+            Atom *result = prepared_pure_boolean_atom(
+                program, arena, tested == PREPARED_PURE_MATCH_MATCHED);
             program->value_len = frame->value_base;
             if (!result || !prepared_pure_push_value(program, result))
                 return prepared_pure_runtime_decline(
@@ -13432,7 +13506,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 ? program->values[frame->value_base]
                 : node->atom;
             Atom *result = operand
-                ? program->boolean_value(
+                ? prepared_pure_boolean_atom(
+                      program,
                       arena,
                       petta_semantics_is_closed_list(operand))
                 : NULL;

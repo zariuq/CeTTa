@@ -1,0 +1,10 @@
+; The test recipe imports the shared library in the selected dialect.
+!(println! (list:drop 2 (a b c d)))
+!(println! (list:drop 2 [a b c d]))
+!(println! (list:drop 0 (a b)))
+!(println! (list:drop -2 [a b]))
+!(println! (list:drop 8 (a b)))
+!(println! (list:drop 8 [a b]))
+!(println! (list:drop 2 ()))
+!(println! (list:drop 2 []))
+!(println! (list:append (list:take 2 [a b c]) (list:drop 2 [a b c])))
