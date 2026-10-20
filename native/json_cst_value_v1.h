@@ -31,7 +31,8 @@ typedef enum {
  *     ((JsonMemberV1 occurrence key value
  *        (JsonSourceSpanV1 start stop)) ...))
  *
- * Scalar lists make every JSON string representable, including U+0000.
+ * Scalar lists expose string structure for explicit syntax inspection.
+ * Native text also represents U+0000 using its stored byte length.
  * Object order, duplicate occurrences, and exact half-open member spans are
  * retained.  Escaped surrogate
  * pairs are decoded; isolated surrogates are a semantic-profile rejection,

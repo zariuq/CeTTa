@@ -2,11 +2,14 @@
 ; not build parse forests or certify each input. Reference operations below
 ; explicitly select the authored ParserPack for diagnostics and qualification.
 ;
-; The json:* operations expose the canonical occurrence-preserving V1 value.
-; Canonical failures are ordinary JsonFailureV1 evidence so HE, PeTTa, and
-; Prime can preserve them without sharing an engine-exception policy.
-; The historical json-* operations retain the older JsonObject/JsonPair data
-; as an explicit compatibility codec for existing clients.
+; Ordinary operations use JsonObject/JsonPair, JsonArray and JsonNull around
+; native String, Int/BigInt, Float and Bool leaves. Object members retain
+; order and duplicates. Exact scalar spellings belong to inspection.
+; json:inspect explicitly expands strings into Unicode scalar atoms and
+; records member occurrences/source spans. json:from-inspection forgets that
+; metadata without a wire round trip. Reference calls additionally request
+; the authored diagnostic parser. Failures are JsonFailureV1 data in every
+; view, not dialect-specific engine exceptions.
 ;
 ; Every operation computes its arguments, like any function, and hands the
 ; computed values to its native as they are, through eval.  Each native
@@ -31,15 +34,20 @@
 (: __cetta_lib_json_capabilities_v1 (-> Atom Atom))
 (: __cetta_lib_json_parse_v1 (-> String Atom))
 (: __cetta_lib_json_parse_v1 (-> String Atom Atom))
-(: __cetta_lib_json_to_legacy_v1 (-> Atom Atom))
+(: __cetta_lib_json_from_inspection_v1 (-> Atom Atom))
 (: __cetta_lib_json_stringify_v1 (-> Atom Atom))
 (: __cetta_lib_json_stringify_v1 (-> Atom Atom Atom))
 (: __cetta_lib_json_members_v1 (-> Atom Atom))
+(: __cetta_lib_json_members_v1 (-> Atom Atom Atom))
 (: __cetta_lib_json_get_all_v1 (-> Atom String Atom))
+(: __cetta_lib_json_get_all_v1 (-> Atom String Atom Atom))
 (: __cetta_lib_json_get_first_v1 (-> Atom String Atom))
+(: __cetta_lib_json_get_first_v1 (-> Atom String Atom Atom))
 (: __cetta_lib_json_get_last_v1 (-> Atom String Atom))
+(: __cetta_lib_json_get_last_v1 (-> Atom String Atom Atom))
 (: __cetta_lib_json_parse (-> String Atom))
 (: __cetta_lib_json_parse (-> String Atom Atom))
+(: __cetta_lib_json_project_v1 (-> String Expression Atom))
 (: __cetta_lib_json_stringify (-> Atom Atom))
 (: __cetta_lib_json_stringify (-> Atom Atom Atom))
 (: __cetta_lib_json_object_get (-> Atom String Atom))
@@ -53,87 +61,134 @@
 (: json:parse (-> %Undefined% Atom))
 (= (json:parse $text)
    (function
-     (chain (eval (__cetta_lib_json_parse_v1 $text)) $result
+     (chain (eval (__cetta_lib_json_parse $text)) $result
        (return $result))))
 
 (: json:parse-reference (-> %Undefined% Atom))
 (= (json:parse-reference $text)
    (function
-     (chain (eval (__cetta_lib_json_parse_v1 $text JsonReferenceV1)) $result
+     (chain (eval (__cetta_lib_json_parse $text JsonReferenceV1)) $result
        (return $result))))
 
-(: json:parse-legacy-reference (-> %Undefined% Atom))
-(= (json:parse-legacy-reference $text)
+; Parse the complete document and materialize only the value at a path of
+; text keys and zero-based integer indices. Object steps choose the first
+; occurrence, like json:get. Missing is JsonMissingV1; malformed input is a
+; JsonFailureV1, so an explicit null remains distinguishable from both.
+(: json:parse-at (-> %Undefined% %Undefined% Atom))
+(= (json:parse-at $text $path)
    (function
-     (chain (eval (__cetta_lib_json_parse $text JsonReferenceV1)) $result
+     (chain (eval (__cetta_lib_json_project_v1 $text $path)) $result
+       (return $result))))
+
+(: json:inspect (-> %Undefined% Atom))
+(= (json:inspect $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse_v1 $text)) $result
+       (return $result))))
+
+(: json:inspect-reference (-> %Undefined% Atom))
+(= (json:inspect-reference $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse_v1 $text JsonReferenceV1)) $result
        (return $result))))
 
 (: json:stringify-reference (-> %Undefined% Atom))
 (= (json:stringify-reference $value)
    (function
-     (chain (eval (__cetta_lib_json_stringify_v1 $value JsonReferenceV1)) $result
+     (chain (eval (__cetta_lib_json_stringify $value JsonReferenceV1)) $result
        (return $result))))
 
 (: json:stringify (-> %Undefined% Atom))
 (= (json:stringify $value)
    (function
+     (chain (eval (__cetta_lib_json_stringify $value)) $result
+       (return $result))))
+
+(: json:pretty (-> %Undefined% Atom))
+(= (json:pretty $value)
+   (function
+     (chain (eval (__cetta_lib_json_stringify $value JsonPrettyV1)) $result
+       (return $result))))
+
+(: json:inspect-stringify (-> %Undefined% Atom))
+(= (json:inspect-stringify $value)
+   (function
      (chain (eval (__cetta_lib_json_stringify_v1 $value)) $result
        (return $result))))
 
-; Structural compatibility conversion, without emitting or reparsing text.
-; Member order, duplicates, number lexemes and full string bytes survive;
-; occurrence identities and source spans are omitted by the historical shape.
-(: json:to-legacy (-> %Undefined% Atom))
-(= (json:to-legacy $value)
+(: json:inspect-stringify-reference (-> %Undefined% Atom))
+(= (json:inspect-stringify-reference $value)
    (function
-     (chain (eval (__cetta_lib_json_to_legacy_v1 $value)) $result
+     (chain (eval (__cetta_lib_json_stringify_v1 $value JsonReferenceV1)) $result
+       (return $result))))
+
+(: json:from-inspection (-> %Undefined% Atom))
+(= (json:from-inspection $value)
+   (function
+     (chain (eval (__cetta_lib_json_from_inspection_v1 $value)) $result
        (return $result))))
 
 (: json:members (-> %Undefined% Atom))
 (= (json:members $object)
    (function
-     (chain (eval (__cetta_lib_json_members_v1 $object)) $result
+     (chain (eval (__cetta_lib_json_members_v1 $object JsonOrdinaryV1)) $result
        (return $result))))
 
 (: json:get-all (-> %Undefined% %Undefined% Atom))
 (= (json:get-all $object $key)
    (function
-     (chain (eval (__cetta_lib_json_get_all_v1 $object $key)) $result
+     (chain (eval (__cetta_lib_json_get_all_v1 $object $key JsonOrdinaryV1)) $result
        (return $result))))
 
 (: json:get-first (-> %Undefined% %Undefined% Atom))
 (= (json:get-first $object $key)
    (function
-     (chain (eval (__cetta_lib_json_get_first_v1 $object $key)) $result
+     (chain (eval (__cetta_lib_json_get_first_v1 $object $key JsonOrdinaryV1)) $result
        (return $result))))
 
 (: json:get-last (-> %Undefined% %Undefined% Atom))
 (= (json:get-last $object $key)
    (function
-     (chain (eval (__cetta_lib_json_get_last_v1 $object $key)) $result
+     (chain (eval (__cetta_lib_json_get_last_v1 $object $key JsonOrdinaryV1)) $result
        (return $result))))
 
-; GödelClaw-compatible aliases retained for existing programs.
-(: json-parse (-> %Undefined% Atom))
-(= (json-parse $text)
-   (function
-     (chain (eval (__cetta_lib_json_parse $text)) $result
-       (return $result))))
-
-(: json-stringify (-> %Undefined% Atom))
-(= (json-stringify $value)
-   (function
-     (chain (eval (__cetta_lib_json_stringify $value)) $result
-       (return $result))))
-
-(: json-object-get (-> %Undefined% %Undefined% Atom))
-(= (json-object-get $object $key)
+; First occurrence, or JsonNull when absent (like a dictionary get with a
+; null default). get-first/get-last distinguish JsonMissingV1 from JsonNull.
+; Lookup checks object/member structure, not unrelated payloads; parse and
+; stringify validate the full document at the external-data boundaries.
+(: json:get (-> %Undefined% %Undefined% Atom))
+(= (json:get $object $key)
    (function
      (chain (eval (__cetta_lib_json_object_get $object $key)) $result
        (return $result))))
 
-(= (json-string-value (JsonString $text)) $text)
-(= (json-number-value (JsonNumber $text)) $text)
-(= (json-bool-value (JsonBool $value)) $value)
-(= (json-array-items (JsonArray $items)) $items)
-(= (json-object-pairs (JsonObject $pairs)) $pairs)
+(: json:inspect-members (-> %Undefined% Atom))
+(= (json:inspect-members $object)
+   (function
+     (chain (eval (__cetta_lib_json_members_v1 $object)) $result
+       (return $result))))
+
+(: json:inspect-get-all (-> %Undefined% %Undefined% Atom))
+(= (json:inspect-get-all $object $key)
+   (function
+     (chain (eval (__cetta_lib_json_get_all_v1 $object $key)) $result
+       (return $result))))
+
+(: json:inspect-get-first (-> %Undefined% %Undefined% Atom))
+(= (json:inspect-get-first $object $key)
+   (function
+     (chain (eval (__cetta_lib_json_get_first_v1 $object $key)) $result
+       (return $result))))
+
+(: json:inspect-get-last (-> %Undefined% %Undefined% Atom))
+(= (json:inspect-get-last $object $key)
+   (function
+     (chain (eval (__cetta_lib_json_get_last_v1 $object $key)) $result
+       (return $result))))
+
+(: json:array-items (-> %Undefined% Atom))
+(= (json:array-items $value)
+   (function (case $value (((JsonArray $items) (return $items))))))
+(: json:object-pairs (-> %Undefined% Atom))
+(= (json:object-pairs $value)
+   (function (case $value (((JsonObject $pairs) (return $pairs))))))

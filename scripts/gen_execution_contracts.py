@@ -123,6 +123,7 @@ PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "deconstruct-nonempty-expression",
     "construct-expression-cons",
     "concatenate-expressions",
+    "library-value-dispatch",
 }
 PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
 

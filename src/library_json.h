@@ -24,4 +24,17 @@ Atom *cetta_json_library_dispatch_v1(
     Atom **args,
     uint32_t nargs);
 
+/* A pure prepared caller may borrow an immutable result from its arguments
+ * for the duration of that prepared execution.  True means the operation was
+ * handled; `*value_out` is either argument-owned or allocated in `arena`.
+ * Ordinary callers use cetta_json_library_dispatch_v1 and receive an owned
+ * value. */
+bool cetta_json_library_borrowed_value_v1(
+    CettaJsonLibraryRuntimeV1 *runtime,
+    Arena *arena,
+    Atom *head,
+    Atom **args,
+    uint32_t nargs,
+    Atom **value_out);
+
 #endif /* CETTA_LIBRARY_JSON_H */

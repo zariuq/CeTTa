@@ -153,6 +153,15 @@ typedef struct {
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
+    /* Execute a native whose head/arity was positively admitted by the
+     * generated intrinsic contract.  NULL is a speculative refusal: the
+     * caller discards the prepared attempt and runs the canonical evaluator.
+     * The native context is separate because a language's source-plan owner
+     * and its library registry have distinct lifetimes and representations. */
+    void *native_context;
+    Atom *(*native_value)(
+        void *context, Space *space, Arena *arena,
+        Atom *head, Atom *const *arguments, uint32_t arity);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(

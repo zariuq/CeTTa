@@ -496,11 +496,14 @@ typedef struct {
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *item_binder, Atom *body_expression,
         const Bindings *environment, Atom **result_out);
-    /* A determinate Boolean condition may retain matching occurrences in one
-     * pass. NOT_APPLICABLE preserves filter-atom's existential answers. */
+    /* A generated determinate predicate may own a lexical filter.  It keeps
+     * each source occurrence whose unique pure result is the active
+     * language's true value, preserving order and duplicates.  Any effect,
+     * choice, suspension, stale read, or unsupported result declines before
+     * publication, leaving the existential relational filter authoritative. */
     PettaMachineFoldResult (*filter_single_result)(
         void *context, Space *space, Arena *arena,
-        Atom *items, Atom *item_binder, Atom *body_expression,
+        Atom *items, Atom *item_binder, Atom *predicate_expression,
         const Bindings *environment, Atom **result_out);
     /* Pull a determinate, effect-free collection without materializing its
      * spine.  The callback is the consumer algebra; length is only its first

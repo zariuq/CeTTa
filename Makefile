@@ -124,6 +124,7 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
+CETTA_PROC_FORK_SPAWN ?= 0
 PRIME_NEED_ALGEBRA_CHECKS := 109
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
@@ -163,6 +164,9 @@ $(error ENABLE_GMP must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_SANITIZERS),0 1),$(ENABLE_SANITIZERS))
 $(error ENABLE_SANITIZERS must be 0 or 1)
+endif
+ifneq ($(filter $(CETTA_PROC_FORK_SPAWN),0 1),$(CETTA_PROC_FORK_SPAWN))
+$(error CETTA_PROC_FORK_SPAWN must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PIC),0 1),$(ENABLE_PIC))
 $(error ENABLE_PIC must be 0 or 1)
@@ -579,6 +583,9 @@ endif
 ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).langdef-diagnostics
 endif
+ifeq ($(CETTA_PROC_FORK_SPAWN),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).proc-fork-spawn
+endif
 # Generated source basenames also occupy the filesystem's component budget.
 # Keep long feature combinations distinct without exceeding that budget.
 ifeq ($(shell test $$(printf '%s' '$(BUILD_OBJ_TAG)' | wc -c) -gt 160 && printf yes),yes)
@@ -643,7 +650,11 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+PROC_FORK_SPAWN_CPPFLAGS =
+ifeq ($(CETTA_PROC_FORK_SPAWN),1)
+PROC_FORK_SPAWN_CPPFLAGS = -DCETTA_PROC_FORK_SPAWN=1
+endif
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) $(PROC_FORK_SPAWN_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
 # Libraries a binary does not use are not recorded as its dependencies, with
@@ -6430,7 +6441,11 @@ define link_cetta_binary
 	mv "$$tmp_out" $@
 endef
 
-$(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
+$(BIN).proc-scope: tools/process_scope_v1.c native/process_scope_v1.h Makefile
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -I. tools/process_scope_v1.c -o $@
+
+$(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE) | $(BIN).proc-scope
 	$(link_cetta_binary)
 
 # The compiler links the normal runtime, stdlib and ABT signatures, but an
@@ -26571,6 +26586,10 @@ test-petta-type-policy: $(BIN)
 				actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 					--lang petta $$profile tests/petta/$$fixture.metta); \
 				expected_file=tests/petta/$$fixture.expected; \
+				if [ "$(LIB_PROLOG_ENABLED)" != 1 ] && \
+					[ -f tests/petta/$$fixture.disabled.expected ]; then \
+					expected_file=tests/petta/$$fixture.disabled.expected; \
+				fi; \
 				if [ -n "$$profile" ] && [ -f tests/petta/$$fixture.extended.expected ]; then \
 					expected_file=tests/petta/$$fixture.extended.expected; \
 				fi; \
@@ -32201,8 +32220,19 @@ test: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN) --gmp $(ENABLE_GMP)
 
-.PHONY: test-effects-v1
-test: test-effects-v1
+.PHONY: test-effects-v1 test-process-scope-v1 test-process-scope-fork-v1 test-list-drop-v1
+test: test-effects-v1 test-process-scope-v1 test-list-drop-v1
+test-process-scope-v1: $(BIN) tests/support/check_process_scope_v1.py
+	@python3 tests/support/check_process_scope_v1.py ./$(BIN)
+test-process-scope-fork-v1:
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1
+test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
+	@set -e; for language in he petta@1.0.6 prime; do \
+		library=list; test $$language != petta@1.0.6 || library='(library list)'; \
+		profile='--profile extended'; test $$language != prime || profile=; \
+		./$(BIN) --no-results --lang $$language $$profile -e "!(import! &self $$library) $$(cat tests/list_value/list_drop.metta)" | \
+			diff -u tests/list_value/list_drop.expected -; \
+	 done
 test-effects-v1: $(BIN) lib/proc.metta tests/support/check_effects_v1.py \
   tests/support/proc_fixture_v1.c tests/support/check_native_mutation_rejected.metta
 	@python3 tests/support/check_effects_v1.py ./$(BIN)
@@ -41343,6 +41373,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
 	native/json_direct_v1.c \
+	native/decimal_value_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
 	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
@@ -41414,6 +41445,7 @@ JSON_NATIVE_HEADERS_V1 = \
 	native/json_runtime_v1.h \
 	native/json_value_v1.h \
 	native/json_direct_v1.h \
+	native/decimal_value_v1.h \
 	$(JSON_PREDICTIVE_OUTPUTS_V1)
 
 LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
@@ -45028,8 +45060,71 @@ test-io-json-bridge:
 		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
 		test-io-json-bridge-body
 
+JSON_PROJECTION_REFINEMENT_LEAN_V1 ?= \
+	tests/langdef/json/json_projection_refinement_v1.lean
+
+.PHONY: qualify-json-projection-refinement-lean-v1
+qualify-json-projection-refinement-lean-v1:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
+		echo 'METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project' >&2; exit 2; \
+	}; \
+	client="$(abspath $(JSON_PROJECTION_REFINEMENT_LEAN_V1))"; \
+	if grep -En '\b(sorry|admit|axiom|native_decide|theorem_wanted)\b|_wanted' "$$client"; then \
+		echo 'JSON projection refinement contains a proof placeholder' >&2; exit 1; \
+	fi; \
+	if grep -En 'cetta-prime-nik|/home/|/shared/' "$$client"; then \
+		echo 'JSON projection refinement contains a checkout-specific path' >&2; exit 1; \
+	fi; \
+	(cd "$$lean_root" && lake build \
+		Mettapedia.GSLT.LanguageDef.RFC8259ValueSemantics \
+		Mettapedia.GSLT.Dynamics.PartialRegionPlan && \
+		lake env lean -DwarningAsError=true "$$client")
+	@echo '(JsonProjectionRefinementLeanV1Summary 8 8 0)'
+
+.PHONY: test-petta-add-atoms-batch-v1
+test-petta-add-atoms-batch-v1: $(BIN) \
+		tests/petta/add_atoms_batch.metta \
+		tests/petta/add_atoms_batch.expected \
+		tests/petta/add_atoms_override.metta \
+		tests/petta/add_atoms_override.expected
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-add-atoms-batch.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_batch.metta > "$$actual"; \
+	diff -u tests/petta/add_atoms_batch.expected "$$actual"; \
+	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_override.metta > "$$actual"; \
+	diff -u tests/petta/add_atoms_override.expected "$$actual"; \
+	echo '(PettaAddAtomsBatchV1Summary 5 1 0)'
+
+test: test-petta-add-atoms-batch-v1
+
+.PHONY: test-petta-prepared-sum-by-v1
+test-petta-prepared-sum-by-v1: $(BIN) \
+		tests/petta/prepared_sum_by_number.metta \
+		tests/petta/prepared_sum_by_number.expected
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-prepared-sum.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	for fuel in unlimited bounded; do \
+		option=; \
+		if [ "$$fuel" = bounded ]; then option='--fuel 1000000'; fi; \
+		$(CETTA_BIN_INVOKE) $$option --lang petta@1.0.6 \
+			tests/petta/prepared_sum_by_number.metta >"$$actual"; \
+		diff -u tests/petta/prepared_sum_by_number.expected "$$actual"; \
+	done; \
+	echo '(PreparedSumByV1Summary 8 2 0)'
+
+test: test-petta-prepared-sum-by-v1
+
 .PHONY: test-json-gslt-library-body
-test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prime/json.metta \
+test-json-gslt-library-body: $(BIN) \
+		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
+		examples/json_scripting_v1.metta tests/support/check_json_workflows_v1.py \
 		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
@@ -45078,6 +45173,7 @@ test-json-gslt-library-body: $(BIN) lib/json.metta lib/petta/json.metta lib/prim
 	$(BIN) --lang prime tests/test_json_direct_reference.metta > "$$actual"; \
 	diff -u tests/test_json_direct_reference.expected "$$actual"; \
 	python3 tests/test_json_deep_v1.py "$(BIN)"; \
+	python3 tests/support/check_json_workflows_v1.py --cetta "$(BIN)"; \
 	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library
